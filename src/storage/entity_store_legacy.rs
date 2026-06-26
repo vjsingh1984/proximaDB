@@ -1138,9 +1138,9 @@ impl ProximaEntityStore {
 
     fn convert_metadata_filter(
         filter: &Option<MetadataFilter>,
-    ) -> Option<crate::core::search::FilterExpression> {
-        use crate::core::search::{ComparisonOperator as Op, FilterExpression as FE};
+    ) -> Option<proximadb_filter_expression::FilterExpression> {
         use crate::proto::proximadb_v1::{ComparisonOp, LogicalOp, filter_clause};
+        use proximadb_filter_expression::{ComparisonOperator as Op, FilterExpression as FE};
         let f = filter.as_ref()?;
         let mut terms: Vec<FE> = Vec::new();
         for c in &f.clauses {

@@ -355,10 +355,10 @@ fn evaluate_is_not_null(batch: &RecordBatch, col_name: &str) -> Result<BooleanAr
 fn evaluate_comparison_mask(
     batch: &RecordBatch,
     field: &str,
-    operator: &crate::core::search::ComparisonOperator,
+    operator: &proximadb_filter_expression::ComparisonOperator,
     value: &serde_json::Value,
 ) -> Result<BooleanArray> {
-    use crate::core::search::ComparisonOperator;
+    use proximadb_filter_expression::ComparisonOperator;
 
     match operator {
         ComparisonOperator::Equals => evaluate_equals(batch, field, value),
@@ -419,9 +419,9 @@ fn evaluate_comparison_mask(
 /// caller can fall back to the (correct, structure-preserving) row-at-a-time path.
 fn evaluate_filter_expression_mask(
     batch: &RecordBatch,
-    expr: &crate::core::search::FilterExpression,
+    expr: &proximadb_filter_expression::FilterExpression,
 ) -> Result<BooleanArray> {
-    use crate::core::search::FilterExpression;
+    use proximadb_filter_expression::FilterExpression;
 
     match expr {
         FilterExpression::Comparison {
@@ -463,7 +463,7 @@ fn evaluate_filter_expression_mask(
 /// which case the caller must fall back to row-at-a-time evaluation to stay correct.
 pub fn vectorized_filter_batch_expr(
     batch: RecordBatch,
-    expr: &crate::core::search::FilterExpression,
+    expr: &proximadb_filter_expression::FilterExpression,
 ) -> Result<Option<RecordBatch>> {
     let mask = match evaluate_filter_expression_mask(&batch, expr) {
         Ok(mask) => mask,

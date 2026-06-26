@@ -18,8 +18,8 @@
 
 use std::sync::Arc;
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 use crate::proto::proximadb_v1::{MetadataItem, VectorRecord};
 #[allow(deprecated)]
 use crate::storage::engines::swift::{SwiftEngine, SwiftFile};

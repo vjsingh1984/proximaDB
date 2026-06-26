@@ -106,7 +106,7 @@ pub struct StorageQueryMetadata {
     pub dimension: usize,
 
     /// Distance metric for the collection
-    pub distance_metric: crate::compute::distance_computation::DistanceMetric,
+    pub distance_metric: proximadb_distance_kernel::DistanceMetric,
 
     /// Storage engine strategy for this collection
     pub storage_strategy: StorageFormatStrategy,
@@ -314,47 +314,47 @@ impl StorageQueryContext {
                     crate::proto::proximadb_v1::DistanceMetric::try_from(metric).ok()
                 })
                 .map_or(
-                    crate::compute::distance_computation::DistanceMetric::Cosine,
+                    proximadb_distance_kernel::DistanceMetric::Cosine,
                     |metric| match metric {
                         crate::proto::proximadb_v1::DistanceMetric::Unspecified
                         | crate::proto::proximadb_v1::DistanceMetric::Cosine => {
-                            crate::compute::distance_computation::DistanceMetric::Cosine
+                            proximadb_distance_kernel::DistanceMetric::Cosine
                         }
                         crate::proto::proximadb_v1::DistanceMetric::Euclidean => {
-                            crate::compute::distance_computation::DistanceMetric::Euclidean
+                            proximadb_distance_kernel::DistanceMetric::Euclidean
                         }
                         crate::proto::proximadb_v1::DistanceMetric::DotProduct => {
-                            crate::compute::distance_computation::DistanceMetric::DotProduct
+                            proximadb_distance_kernel::DistanceMetric::DotProduct
                         }
                         crate::proto::proximadb_v1::DistanceMetric::Hamming => {
-                            crate::compute::distance_computation::DistanceMetric::Hamming
+                            proximadb_distance_kernel::DistanceMetric::Hamming
                         }
                         crate::proto::proximadb_v1::DistanceMetric::Manhattan => {
-                            crate::compute::distance_computation::DistanceMetric::Manhattan
+                            proximadb_distance_kernel::DistanceMetric::Manhattan
                         }
                         crate::proto::proximadb_v1::DistanceMetric::Jaccard => {
-                            crate::compute::distance_computation::DistanceMetric::Jaccard
+                            proximadb_distance_kernel::DistanceMetric::Jaccard
                         }
                         crate::proto::proximadb_v1::DistanceMetric::Angular => {
-                            crate::compute::distance_computation::DistanceMetric::Angular
+                            proximadb_distance_kernel::DistanceMetric::Angular
                         }
                         crate::proto::proximadb_v1::DistanceMetric::Chebyshev => {
-                            crate::compute::distance_computation::DistanceMetric::Chebyshev
+                            proximadb_distance_kernel::DistanceMetric::Chebyshev
                         }
                         crate::proto::proximadb_v1::DistanceMetric::Canberra => {
-                            crate::compute::distance_computation::DistanceMetric::Canberra
+                            proximadb_distance_kernel::DistanceMetric::Canberra
                         }
                         crate::proto::proximadb_v1::DistanceMetric::Minkowski => {
-                            crate::compute::distance_computation::DistanceMetric::Minkowski
+                            proximadb_distance_kernel::DistanceMetric::Minkowski
                         }
                         crate::proto::proximadb_v1::DistanceMetric::BrayCurtis => {
-                            crate::compute::distance_computation::DistanceMetric::BrayCurtis
+                            proximadb_distance_kernel::DistanceMetric::BrayCurtis
                         }
                         crate::proto::proximadb_v1::DistanceMetric::Hellinger => {
-                            crate::compute::distance_computation::DistanceMetric::Hellinger
+                            proximadb_distance_kernel::DistanceMetric::Hellinger
                         }
                         crate::proto::proximadb_v1::DistanceMetric::Custom => {
-                            crate::compute::distance_computation::DistanceMetric::Custom
+                            proximadb_distance_kernel::DistanceMetric::Custom
                         }
                     },
                 ),
@@ -405,7 +405,7 @@ impl StorageQueryContext {
     }
 
     /// Get distance metric (pre-computed from collection config).
-    pub fn distance_metric(&self) -> crate::compute::distance_computation::DistanceMetric {
+    pub fn distance_metric(&self) -> proximadb_distance_kernel::DistanceMetric {
         self.search_params
             .distance_metric
             .unwrap_or(self.metadata.distance_metric)

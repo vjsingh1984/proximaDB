@@ -23,7 +23,6 @@ mod tests {
     use std::time::Instant;
     use tempfile::TempDir;
 
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::core::SstConfig;
     use crate::core::search::SearchParams;
     use crate::proto::proximadb_v1::{
@@ -34,6 +33,7 @@ mod tests {
     use crate::storage::traits::{
         FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageFormat,
     };
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
     // Separator line constants for output formatting
     const SEPARATOR_DOUBLE: &str =

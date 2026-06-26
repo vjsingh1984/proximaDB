@@ -45,7 +45,6 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::core::SstConfig;
     use crate::core::search::SearchParams;
     use crate::core::search::results::OptimizedSearchRecord;
@@ -60,6 +59,7 @@ mod tests {
     use crate::storage::traits::{
         FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageFormat,
     };
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
     use tracing::info;
 
     /// Create test vectors with predictable patterns for verification

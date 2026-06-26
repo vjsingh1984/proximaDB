@@ -20,14 +20,14 @@ use tracing::{debug, info, warn};
 // StorageTier already imported from crate::core::search
 use crate::core::hardware_capabilities::HardwareCapabilities;
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
     FlushResult, StorageFormatStrategy, UnifiedStorageFormat,
 };
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 use proximadb_index_traits::{
     IndexFilterOperator, IndexHybridQuery, IndexMetadataFilter, IndexVectorQuery,
 };
@@ -323,7 +323,7 @@ pub struct SwiftEngine {
     /// - Batch processing for throughput
     ///
     /// Shared singleton across all distance operations
-    distance_engine: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+    distance_engine: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
 
     /// **PCA Model Cache** (Per-Collection)
     ///
@@ -367,15 +367,14 @@ impl SwiftEngine {
              See /docs/storage/EXPERIMENTAL_ENGINES_STATUS.md for details."
         );
 
-        let distance_engine = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-        );
+        let distance_engine =
+            Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
         Self::new_with_config(distance_engine, None).await
     }
 
     /// Create SWIFT engine with specific config (internal use)
     pub async fn new_with_config(
-        distance_engine: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+        distance_engine: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
         axis_manager: Option<Arc<dyn proximadb_index_traits::IndexEngine>>,
     ) -> Result<Self> {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
@@ -417,7 +416,7 @@ impl SwiftEngine {
                     crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
                 ),
                 distance_metric:
-                    crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+                    proximadb_distance_kernel::engine::DistanceMetric::Cosine,
                 enable_progressive: true,
                 filter_threshold: 100.0,
                 candidate_multiplier: 10,
@@ -1973,8 +1972,8 @@ impl SwiftEngine {
         storage_path: &str,
         query_vector: &[f32],
         top_k: usize,
-        distance_metric: crate::compute::distance_computation::DistanceMetric,
-        _filter_expression: Option<&crate::core::search::FilterExpression>,
+        distance_metric: proximadb_distance_kernel::DistanceMetric,
+        _filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         // Debug level since this is expected behavior until orchestration is fully integrated
         tracing::debug!("🔍 SWIFT: Using direct search (orchestration pending integration)");
@@ -2065,8 +2064,8 @@ mod tests {
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         // Need to create distance engine and axis manager for new()
         let _distance_engine = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(
+                proximadb_distance_kernel::DistanceMetric::Euclidean,
             ),
         );
         let engine = SwiftEngine::new().await.unwrap();
@@ -2079,8 +2078,8 @@ mod tests {
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         // Need to create distance engine and axis manager for new()
         let _distance_engine = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(
+                proximadb_distance_kernel::DistanceMetric::Euclidean,
             ),
         );
         let engine = SwiftEngine::new().await.unwrap();
@@ -2113,8 +2112,8 @@ mod tests {
     #[cfg(feature = "experimental-engines")]
     #[test]
     fn test_swift_filter_evaluation() {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
         use proximadb_data_model::ProximaValue;
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
         use proximadb_records::{ProximaTree, ProximaTreeNode};
 
         // Create test records with metadata

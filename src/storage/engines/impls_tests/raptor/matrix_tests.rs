@@ -24,7 +24,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
+use proximadb_distance_kernel::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 use crate::storage::engines::raptor::common::VectorCentroidStorageStrategy;
@@ -120,7 +120,7 @@ async fn test_build_p2_matrix() -> Result<()> {
 
     // Compute upper triangle distances manually
     let distance_compute = UnifiedDistanceCompute::new(
-        crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+        proximadb_distance_kernel::engine::DistanceMetric::Cosine,
     );
     let mut distances = Vec::new();
 
@@ -166,7 +166,7 @@ async fn test_p2_matrix_proximaencoder() -> Result<()> {
 
     // Compute distances and quantize
     let distance_compute = UnifiedDistanceCompute::new(
-        crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+        proximadb_distance_kernel::engine::DistanceMetric::Cosine,
     );
     let mut distances = Vec::new();
 

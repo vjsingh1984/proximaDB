@@ -13,7 +13,7 @@
 //! Total: 11 tests
 
 use std::sync::Arc;
-use crate::compute::distance_computation::DistanceMetric;
+use proximadb_distance_kernel::DistanceMetric;
 use crate::storage::engines::nova::*;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::UnifiedStorageFormat;
@@ -30,10 +30,10 @@ async fn test_optimized_viper_operations() {
     // Test compute mode selection
     let small_vectors = vec![vec![0.0; 128]; 10];
     let mode = ops.select_compute_mode(&small_vectors);
-    assert_eq!(mode, crate::compute::distance_computation::DistanceMode::Normalized);
+    assert_eq!(mode, proximadb_distance_kernel::DistanceMode::Normalized);
     let large_vectors = vec![vec![0.0; 768]; 1000];
     let mode = ops.select_compute_mode(&large_vectors);
-    assert_eq!(mode, crate::compute::distance_computation::DistanceMode::Normalized);
+    assert_eq!(mode, proximadb_distance_kernel::DistanceMode::Normalized);
 }
 
 #[test]

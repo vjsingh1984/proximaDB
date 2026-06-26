@@ -114,7 +114,7 @@ impl UnifiedSWIFTReader {
     pub fn for_filtered_query(
         filesystem_factory: Arc<FilesystemFactory>,
         collection_id: String,
-        filter: Option<crate::core::search::FilterExpression>,
+        filter: Option<proximadb_filter_expression::FilterExpression>,
     ) -> Result<Self> {
         let config = SwiftReaderConfig {
             enable_prefetch: false,
@@ -267,10 +267,14 @@ impl UnifiedSWIFTReader {
     fn check_bloom_filter(
         &self,
         bloom: &crate::core::bloom::SstableBloomFilter,
-        filter: &Option<crate::core::search::FilterExpression>,
+        filter: &Option<proximadb_filter_expression::FilterExpression>,
     ) -> bool {
         // Extract field name from filter for bloom filter check
-        if let Some(crate::core::search::FilterExpression::Comparison { field, value, .. }) = filter
+        if let Some(proximadb_filter_expression::FilterExpression::Comparison {
+            field,
+            value,
+            ..
+        }) = filter
         {
             // Build a MetadataItem from the filter value for bloom lookup
             let item = crate::proto::proximadb_v1::MetadataItem {
@@ -296,7 +300,7 @@ impl UnifiedSWIFTReader {
     fn apply_filter_to_block(
         &self,
         records: &[VectorRecord],
-        filter: &Option<crate::core::search::FilterExpression>,
+        filter: &Option<proximadb_filter_expression::FilterExpression>,
     ) -> Result<Vec<VectorRecord>> {
         let filter_expr = match filter {
             Some(expr) => expr,

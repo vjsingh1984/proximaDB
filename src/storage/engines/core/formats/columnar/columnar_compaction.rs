@@ -252,13 +252,13 @@ impl UnifiedColumnarCompaction {
         batch: &RecordBatch,
         collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<RecordBatch> {
-        use crate::compute::distance_computation::DistanceMetric;
         use crate::compute::quantization::storage_engine::{
             StorageQuantizationConfig, StorageQuantizationEngine,
         };
         use crate::storage::engines::core::formats::columnar::constants;
         use arrow::array::ArrayRef;
         use arrow_array::{FixedSizeListArray, Float32Array, builder::BinaryBuilder};
+        use proximadb_distance_kernel::DistanceMetric;
         use proximadb_runtime_common::pool::VectorMemoryPool;
         use std::sync::Arc;
 

@@ -6,7 +6,6 @@
 //! - Progressive search with quantization
 //! - Cost-based query optimization
 
-use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::storage::engines::core::formats::columnar::{
     ColumnarConfig, MetadataFilter, RowGroupStats, SearchCandidate,
 };
@@ -16,6 +15,7 @@ use arrow_array::RecordBatch;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::bloom_filter::Sbbf as BloomFilter;
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
+use proximadb_distance_kernel::{DistanceMetric, engine::UnifiedDistanceCompute};
 use proximadb_records::{EmbeddingCell, ProximaRecord};
 use std::collections::HashMap;
 use std::sync::Arc;

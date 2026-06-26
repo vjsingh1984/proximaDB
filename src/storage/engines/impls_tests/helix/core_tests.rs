@@ -18,7 +18,7 @@
 //! **Total Tests**: 22
 
 use super::helpers::*;
-use crate::compute::distance_computation::DistanceMetric;
+use proximadb_distance_kernel::DistanceMetric;
 use crate::core::bloom::{BloomFilterConfig, factory::BloomFilterFactory};
 use crate::core::search::SearchParams;
 use crate::core::search::results::OptimizedSearchRecord;

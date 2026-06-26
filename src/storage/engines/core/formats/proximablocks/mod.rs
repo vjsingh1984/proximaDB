@@ -294,8 +294,8 @@ pub use sst_metadata::{SstBlockHeader, SstGlobalHeader, SstMetadata, SstMetadata
 // NEW: Export Arrow reader for .sst files
 pub use arrow_reader::ProximaBlocksArrowReader;
 
-use crate::compute::distance_computation::DistanceMetric;
 use proximadb_compression::CompressionAlgorithm;
+use proximadb_distance_kernel::DistanceMetric;
 
 /// Common configuration for row-based storage engines
 #[derive(Debug, Clone)]

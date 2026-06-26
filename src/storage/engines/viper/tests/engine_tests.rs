@@ -13,7 +13,6 @@ mod tests {
     use tempfile::TempDir;
     use tracing::debug;
 
-    use crate::compute::distance_computation::DistanceMetric;
     use crate::core::search::search_interface::{CollectionConfig, SearchPlan, StorageInfo};
     use crate::storage::engines::core::formats::columnar::FIELD_ID;
     use crate::storage::engines::core::formats::columnar::FIELD_TIMESTAMP;
@@ -23,6 +22,7 @@ mod tests {
     use arrow_array::{Int32Array, RecordBatch, StringArray};
     use arrow_schema::{DataType, Field, Schema};
     use proximadb_data_model::ProximaValue;
+    use proximadb_distance_kernel::DistanceMetric;
     use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
     use proximadb_storage_common::storage_path::StoragePath;
     use std::fs::File;
@@ -211,7 +211,7 @@ mod tests {
         query_vector: &[f32],
         top_k: usize,
         distance_metric: DistanceMetric,
-        filter_expression: Option<crate::core::search::FilterExpression>,
+        filter_expression: Option<proximadb_filter_expression::FilterExpression>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>, anyhow::Error> {
         use crate::core::search::SearchParams;
         use crate::storage::traits::{StorageQueryContext, StorageQueryMetadata};
@@ -370,7 +370,7 @@ mod tests {
                     .unwrap_or_default(),
             ),
             top_k: Some(1),
-            distance_metric: Some(crate::compute::distance_computation::DistanceMetric::Cosine),
+            distance_metric: Some(proximadb_distance_kernel::DistanceMetric::Cosine),
             ..Default::default()
         };
         let collection = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
@@ -1179,9 +1179,9 @@ mod tests {
         assert_eq!(results[0].id, "vec1"); // Should be the exact match
 
         // Test that we can search with filters (even if filtering is not applied without config)
-        let filter_expr = crate::core::search::FilterExpression::Comparison {
+        let filter_expr = proximadb_filter_expression::FilterExpression::Comparison {
             field: "category".to_string(),
-            operator: crate::core::search::ComparisonOperator::Equals,
+            operator: proximadb_filter_expression::ComparisonOperator::Equals,
             value: serde_json::Value::String("A".to_string()),
         };
 

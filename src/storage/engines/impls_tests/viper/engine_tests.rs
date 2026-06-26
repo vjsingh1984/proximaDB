@@ -136,7 +136,7 @@ async fn test_single_vector_operations() {
     let search_params = crate::core::search::SearchParams {
         vector: Some(vector.vector.clone()),
         top_k: Some(1),
-        distance_metric: Some(crate::compute::distance_computation::DistanceMetric::Cosine),
+        distance_metric: Some(proximadb_distance_kernel::DistanceMetric::Cosine),
         ..Default::default()
     };
     let collection = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());

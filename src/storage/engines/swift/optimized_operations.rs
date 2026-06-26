@@ -5,7 +5,6 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::compute::distance_computation::{DistanceMetric, DistanceMode, UnifiedDistanceCompute};
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::{
     hardware_capabilities::{HardwareBackend, HardwareCapabilities},
@@ -15,6 +14,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::search::search_modes::{
     CandidateRecord, CandidateState, SearchCandidate,
 };
+use proximadb_distance_kernel::{DistanceMetric, DistanceMode, UnifiedDistanceCompute};
 // Memory-mapped file operations would be imported here
 // For now, we'll use placeholder types
 struct MmapFile;

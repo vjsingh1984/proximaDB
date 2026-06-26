@@ -11,11 +11,12 @@ use rayon::prelude::*;
 use std::{collections::HashMap, sync::Arc};
 use tracing::debug;
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::core::search::{FilterExpression, OptimizedSearchRecord};
+use crate::core::search::OptimizedSearchRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
+use proximadb_filter_expression::FilterExpression;
 use proximadb_records::{ProximaRecord, ProximaTreeNode};
 
 /// Parallel WAL search coordinator

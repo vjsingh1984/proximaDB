@@ -4,8 +4,8 @@ use anyhow::Result;
 use proximadb_kernel::uuid::Uuid;
 use std::collections::HashMap;
 
-use crate::compute::distance_computation::DistanceMetric;
 use proximadb_compression::CompressionAlgorithm;
+use proximadb_distance_kernel::DistanceMetric;
 
 /// Row-based file header structure
 #[derive(Debug, Clone)]

@@ -247,17 +247,34 @@ _pkg_args() { local a=""; for p in $1; do a="$a -p $p"; done; printf '%s' "$a"; 
 cmd_check() {
   local pkgs; pkgs="$(_affected)"
   [ -n "$pkgs" ] || { printf 'worktree: no crate source changed vs %s — nothing to check\n' "$BASE_DEFAULT" >&2; return 0; }
-  printf 'worktree: cargo check%s\n' "$(_pkg_args "$pkgs")" >&2
+  # Match CI's compile+clippy gate AND compile #[cfg(test)] code. `--all-targets`
+  # is the fix for a real "green local, red CI" trap: a plain `cargo check`
+  # (or `clippy --lib --bins`) never compiles the test cfg, so a broken/changed
+  # import inside a `#[cfg(test)]` module sails through locally and only fails in
+  # the CI "Rust Tests" job. `-D warnings` matches the CI clippy gate.
+  printf 'worktree: cargo clippy --all-targets -D warnings%s (matches CI clippy + compiles tests)\n' "$(_pkg_args "$pkgs")" >&2
   # shellcheck disable=SC2046
-  cargo check $(_pkg_args "$pkgs")
+  cargo clippy $(_pkg_args "$pkgs") --all-targets -- -D warnings
 }
 
 cmd_test() {
   local pkgs; pkgs="$(_affected)"
   [ -n "$pkgs" ] || { printf 'worktree: no crate source changed vs %s — nothing to test\n' "$BASE_DEFAULT" >&2; return 0; }
-  printf 'worktree: cargo nextest run%s (affected crates)\n' "$(_pkg_args "$pkgs")" >&2
+  # Mirror CI's "Rust Tests" job EXACTLY so green-local == green-CI:
+  #   unit: cargo nextest run --lib --profile unit --test-threads=2
+  #   doc : cargo test --doc -- --test-threads=4
+  # `--test-threads` bounds the global-statics races the root suite is known to
+  # have (WAL registry / metadata provider / request-id counter) — running
+  # unbounded locally drifts from CI and hides (or invents) flakes. `--profile
+  # unit` applies the nextest retry/config CI uses. `--lib` scopes to unit tests
+  # like CI. (CARGO_BUILD_JOBS stays at the local default — JOBS=1 is a 16GB-CI
+  # OOM workaround, not needed on a dev box.)
+  printf 'worktree: cargo nextest run --lib --profile unit --test-threads=2%s (matches CI)\n' "$(_pkg_args "$pkgs")" >&2
   # shellcheck disable=SC2046
-  cargo nextest run $(_pkg_args "$pkgs") || cargo test $(_pkg_args "$pkgs")
+  cargo nextest run --lib --profile unit --test-threads=2 $(_pkg_args "$pkgs")
+  printf 'worktree: cargo test --doc --test-threads=4%s (matches CI doc tests)\n' "$(_pkg_args "$pkgs")" >&2
+  # shellcheck disable=SC2046
+  cargo test --doc $(_pkg_args "$pkgs") -- --test-threads=4
 }
 
 case "${1:-}" in

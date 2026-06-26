@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use crate::core::search::{ComparisonOperator, FilterExpression};
     use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::engines::sst::row_filter::{
         SSTBatchFilterEvaluator, SSTRowFilterEvaluator,
     };
+    use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
     use proximadb_records::ProximaRecord;
 
     #[tokio::test]

@@ -112,7 +112,7 @@ pub mod columnar_compaction; // Unified Parquet compaction using StreamingParque
 pub mod common;
 pub mod schema;
 pub mod serialization;
-// NOTE: Distance computation has been moved to crate::compute::distance_computation::quantized
+// NOTE: Distance computation has been moved to proximadb_distance_kernel::quantized
 
 // TEXT column storage, filtering, and full-text search (Phase 3)
 pub mod fulltext_index;
@@ -228,9 +228,9 @@ pub use schema::{
 pub use serialization::{
     ColumnarSerializationConfig, ColumnarSerializer, FormatPreference, SerializationResult,
 };
-// NOTE: SelectedFormat and QuantizedVectorData have been moved to crate::compute::distance_computation::quantized
-// NOTE: Distance computation has been moved to crate::compute::distance_computation::quantized
-// Use: crate::compute::distance_computation::{QuantizedDistanceCalculator, QuantizedDistanceConfig, ...}
+// NOTE: SelectedFormat and QuantizedVectorData have been moved to proximadb_distance_kernel::quantized
+// NOTE: Distance computation has been moved to proximadb_distance_kernel::quantized
+// Use: proximadb_distance_kernel::{QuantizedDistanceCalculator, QuantizedDistanceConfig, ...}
 pub use common::{
     CommonColumnarConfig, CommonColumnarOperations, DistanceComputationConfig, OptimalBatchSizes,
     PerformanceMonitor, RowGroupSizeOptimization, SchemaGenerationConfig,
@@ -300,7 +300,7 @@ use parquet::file::metadata::RowGroupMetaData;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::compute::distance_computation::DistanceMetric;
+use proximadb_distance_kernel::DistanceMetric;
 use proximadb_records::ProximaRecord;
 
 /// Common configuration for columnar operations
@@ -468,8 +468,10 @@ impl FilterCondition {
 impl ColumnarMetadataFilter {
     /// Convert from core::search::FilterExpression to columnar::ColumnarMetadataFilter
     /// This enables row group pruning using FilterExpression
-    pub fn from_filter_expression(expr: &crate::core::search::FilterExpression) -> Option<Self> {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
+    pub fn from_filter_expression(
+        expr: &proximadb_filter_expression::FilterExpression,
+    ) -> Option<Self> {
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 
         fn convert_condition(expr: &FilterExpression) -> Option<FilterCondition> {
             match expr {
@@ -853,8 +855,8 @@ impl ColumnarFactory {
         _config: ColumnarConfig,
     ) -> ColumnarOptimizer {
         let _distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+            proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(
+                proximadb_distance_kernel::engine::DistanceMetric::Cosine,
             ),
         );
         // Deferred: Fix this to be async and provide proper arguments

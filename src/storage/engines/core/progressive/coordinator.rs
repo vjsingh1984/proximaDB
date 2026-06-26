@@ -8,7 +8,7 @@ use anyhow::Result;
 use std::time::Instant;
 use tracing::{debug, info, trace};
 
-use crate::compute::distance_computation::DistanceMetric;
+use proximadb_distance_kernel::DistanceMetric;
 
 use super::stage::{ProgressiveSearchStage, ScoredCandidate};
 

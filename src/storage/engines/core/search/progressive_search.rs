@@ -27,8 +27,6 @@ use std::sync::Arc;
 use tracing::{debug, trace};
 
 // Note: SearchResult is proto type, not in core::search anymore
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::quantization_engine::{
     QuantizedVector, UnifiedQuantizationEngine,
 };
@@ -36,6 +34,8 @@ use crate::compute::quantization::storage_engine::StorageQuantizedData;
 use crate::core::search::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::{QuantizationLevel, QuantizationType, StorageQueryContext};
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
 /// Progressive search executor that can be used by any storage engine
 pub struct ProgressiveSearchExecutor {

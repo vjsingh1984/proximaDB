@@ -4,16 +4,12 @@
 //! while maintaining NOVA-specific optimizations like hierarchical statistics,
 //! zone maps, and streaming processing.
 
-use crate::compute::distance_computation::DistanceMetric;
 use anyhow::Result;
+use proximadb_distance_kernel::DistanceMetric;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::compute::distance_computation::{
-    Int8VectorData, QuantizedDistanceCalculator, QuantizedDistanceConfig, QuantizedVectorData,
-    SelectedFormat,
-};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::common::{
     NovaOptimizations, StreamingProcessingConfig, ZoneMapOptimization,
@@ -22,6 +18,10 @@ use crate::storage::engines::core::formats::columnar::{
     ColumnarFilterableSpec, CommonColumnarConfig, CommonColumnarOperations, QuantizationConfig,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_distance_kernel::{
+    Int8VectorData, QuantizedDistanceCalculator, QuantizedDistanceConfig, QuantizedVectorData,
+    SelectedFormat,
+};
 
 /// NOVA engine wrapper using unified columnar infrastructure
 pub struct NovaUnifiedEngine {
@@ -44,7 +44,7 @@ pub struct NovaUnifiedEngine {
     collection_cache: Arc<tokio::sync::RwLock<HashMap<String, NovaCollectionMetadata>>>,
 
     /// Distance computation engine
-    distance_compute: Arc<crate::compute::distance_computation::UnifiedDistanceCompute>,
+    distance_compute: Arc<proximadb_distance_kernel::UnifiedDistanceCompute>,
 }
 
 /// NOVA-specific configuration
@@ -405,7 +405,7 @@ impl NovaUnifiedEngine {
 
         // Initialize distance compute engine
         let distance_compute =
-            Arc::new(crate::compute::distance_computation::UnifiedDistanceCompute::default());
+            Arc::new(proximadb_distance_kernel::UnifiedDistanceCompute::default());
 
         info!("NOVA engine initialized with unified infrastructure and hierarchical optimizations");
 
@@ -892,10 +892,10 @@ impl NovaUnifiedEngine {
     async fn compute_progressive_distances(
         &self,
         query_vector: &[f32],
-        quantized_vectors: &[crate::compute::distance_computation::QuantizedVectorData],
+        quantized_vectors: &[proximadb_distance_kernel::QuantizedVectorData],
         target_quality: f32,
         _top_k: usize,
-    ) -> Result<Vec<crate::compute::distance_computation::QuantizedDistanceResult>> {
+    ) -> Result<Vec<proximadb_distance_kernel::QuantizedDistanceResult>> {
         // Progressive distance computation using best available representation
         let mut results = Vec::new();
         let distance_metric = DistanceMetric::Cosine; // Get from collection config in production
@@ -924,14 +924,14 @@ impl NovaUnifiedEngine {
                 // Approximate: use binary hamming distance
                 let hamming_distance = compute_hamming_distance(query_vector, binary_vec);
                 let _normalized = 1.0 - (hamming_distance as f32 / (binary_vec.len() * 8) as f32);
-                let sim = crate::compute::distance_computation::engine::SimilarityResult::new(
+                let sim = proximadb_distance_kernel::engine::SimilarityResult::new(
                     hamming_distance as f32,
                     DistanceMetric::Hamming,
                 );
                 (sim, 0.60) // ~60% quality for binary
             } else {
                 // No data available
-                let sim = crate::compute::distance_computation::engine::SimilarityResult::new(
+                let sim = proximadb_distance_kernel::engine::SimilarityResult::new(
                     f32::MAX,
                     DistanceMetric::Cosine,
                 );
@@ -939,13 +939,11 @@ impl NovaUnifiedEngine {
             };
 
             // Create QuantizedDistanceResult
-            let result = crate::compute::distance_computation::quantized::QuantizedDistanceResult {
+            let result = proximadb_distance_kernel::quantized::QuantizedDistanceResult {
                 similarity: similarity.normalized_score,
                 quality_estimate,
-                method:
-                    crate::compute::distance_computation::quantized::ComputationMethod::ExactFP32,
-                metrics: crate::compute::distance_computation::quantized::DistanceMetrics::default(
-                ),
+                method: proximadb_distance_kernel::quantized::ComputationMethod::ExactFP32,
+                metrics: proximadb_distance_kernel::quantized::DistanceMetrics::default(),
             };
 
             results.push(result);
@@ -961,7 +959,7 @@ impl NovaUnifiedEngine {
 
     async fn rank_and_filter_results(
         &self,
-        mut distance_results: Vec<crate::compute::distance_computation::QuantizedDistanceResult>,
+        mut distance_results: Vec<proximadb_distance_kernel::QuantizedDistanceResult>,
         top_k: usize,
         _search_options: &AdvancedSearchOptions,
     ) -> Result<Vec<NovaSearchResult>> {
@@ -1035,7 +1033,7 @@ pub struct AdvancedSearchOptions {
     pub target_quality: f32,
     pub enable_progressive: bool,
     pub max_vectors_to_evaluate: Option<usize>,
-    pub format_preference: Option<crate::compute::distance_computation::SelectedFormat>,
+    pub format_preference: Option<proximadb_distance_kernel::SelectedFormat>,
     pub enable_hierarchical_pruning: bool,
     pub enable_zone_map_pruning: bool,
 }

@@ -22,8 +22,8 @@ use std::path::Path;
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::quantization_engine::{InMemoryCodebookStore, UnifiedQuantizationEngine};
 use crate::core::SstConfig;
 use crate::core::search::results::OptimizedSearchRecord;

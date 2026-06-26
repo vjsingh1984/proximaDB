@@ -119,7 +119,6 @@ pub mod unified_metadata_serializer {
 pub mod proximablocks_strategy_reader;
 pub mod zone_maps;
 
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::search::SearchMode;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::proto::proximadb_v1::VectorRecord;
@@ -131,6 +130,7 @@ use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageFormatStrategy,
     StorageQueryContext, UnifiedStorageFormat,
 };
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 use proximadb_records::conversions::proxima_record_to_vector;
 use proximadb_storage_common::storage_path::StoragePath;
 
@@ -314,7 +314,7 @@ pub struct HelixEngine {
     /// - Batch processing for throughput
     ///
     /// Shared singleton across all distance operations
-    distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+    distance_compute: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
 
     /// **Storage Quantization Engine** (Optional, Collection-Aware)
     ///
@@ -528,9 +528,9 @@ impl HelixEngine {
     /// This helper converts our internal FilterExpression type to the
     /// IndexMetadataFilter DTO format for hybrid vector + metadata queries.
     fn convert_filter_to_index(
-        filter_expression: Option<&crate::core::search::FilterExpression>,
+        filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
     ) -> Vec<proximadb_index_traits::IndexMetadataFilter> {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
         use proximadb_index_traits::{IndexFilterOperator, IndexMetadataFilter};
 
         let Some(filter) = filter_expression else {
@@ -687,9 +687,7 @@ impl HelixEngine {
         let distance_compute = if let Some(compute) = distance_compute_override {
             compute
         } else {
-            Arc::new(
-                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-            )
+            Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default())
         };
 
         // Initialize dual quantization architecture

@@ -107,7 +107,7 @@ impl UnifiedNOVAReader {
     pub fn for_hierarchical_query(
         filesystem_factory: Arc<FilesystemFactory>,
         collection_id: String,
-        filter: Option<crate::core::search::FilterExpression>,
+        filter: Option<proximadb_filter_expression::FilterExpression>,
         dimension: u32,
     ) -> Result<Self> {
         Self::new(
@@ -201,7 +201,7 @@ impl UnifiedNOVAReader {
     /// Convert FilterExpression to MetadataFilter for columnar module
     fn convert_to_metadata_filter(
         &self,
-        _filter: &crate::core::search::FilterExpression,
+        _filter: &proximadb_filter_expression::FilterExpression,
     ) -> crate::storage::engines::core::formats::columnar::MetadataFilter {
         // Filter conversion: NOVA uses Parquet's built-in statistics and bloom filters.
         // Full FilterExpression → FilterConditions mapping requires expression visitor pattern.
@@ -220,7 +220,7 @@ impl UnifiedNOVAReader {
         &self,
         _metadata: &parquet::file::metadata::ParquetMetaData,
         _rg_idx: usize,
-        filter: &Option<crate::core::search::FilterExpression>,
+        filter: &Option<proximadb_filter_expression::FilterExpression>,
     ) -> Result<bool> {
         // If no filter, read all row groups
         if filter.is_none() {
@@ -237,7 +237,7 @@ impl UnifiedNOVAReader {
     #[allow(dead_code)]
     fn evaluate_filter(
         &self,
-        _filter: &crate::core::search::FilterExpression,
+        _filter: &proximadb_filter_expression::FilterExpression,
         _metadata: &std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<bool> {
         // Filter evaluation: accepts all records (conservative).

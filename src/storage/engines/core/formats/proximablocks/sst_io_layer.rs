@@ -152,7 +152,7 @@ pub struct SharedSstFormatReader {
 
     /// ✅ Reusable distance compute engine - created once and passed to all search operations
     #[allow(dead_code)]
-    distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+    distance_compute: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
 }
 
 /// Shared SST format writer with compression and Proxima encoding
@@ -232,7 +232,7 @@ impl SharedSstFormatReader {
         caching_filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
     ) -> Self {
-        use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+        use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
         Self {
             filesystem,
@@ -249,7 +249,7 @@ impl SharedSstFormatReader {
         &'a self,
         file_path: &'a str,
         strategy: &'a crate::storage::engines::sst::readers::sst_query_engine::SstableReadingStrategy,
-        _filter_expression: Option<&'a crate::core::search::FilterExpression>,
+        _filter_expression: Option<&'a proximadb_filter_expression::FilterExpression>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>> + Send + 'a>>{
         Box::pin(async move {
             use crate::storage::engines::sst::readers::sst_query_engine::SstableReadingStrategy;
@@ -404,7 +404,7 @@ impl SharedSstFormatReader {
         enable_bloom_filters: bool,
         enable_cache_lookup: bool,
         _enable_metadata_cache: bool,
-        _filter_expression: Option<&crate::core::search::FilterExpression>,
+        _filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
     ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
         // Use mmap-first reading for zero-copy performance
         let data = self
@@ -499,7 +499,7 @@ impl SharedSstFormatReader {
         file_path: &str,
         selected_blocks: &[u32],
         _skip_bloom_check: bool,
-        _filter_expression: Option<&crate::core::search::FilterExpression>,
+        _filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
     ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
         // Use mmap-first reading for zero-copy performance
         let data = self.read_with_mmap_fallback(file_path, true).await?;
@@ -554,10 +554,10 @@ impl SharedSstFormatReader {
         &self,
         blocks: &[crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock],
         query_vector: &[f32],
-        filter_expression: Option<&crate::core::search::FilterExpression>,
+        filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
         k: usize,
-        distance_metric: crate::compute::distance_computation::DistanceMetric,
-        distance_compute: &crate::compute::distance_computation::engine::UnifiedDistanceCompute, // ✅ Pass from caller for reuse
+        distance_metric: proximadb_distance_kernel::DistanceMetric,
+        distance_compute: &proximadb_distance_kernel::engine::UnifiedDistanceCompute, // ✅ Pass from caller for reuse
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>, ProximaDBError> {
         let mut all_results = Vec::new();
 

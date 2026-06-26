@@ -4,7 +4,6 @@
 //! the CompositeBloomFilter implementation which supports both key
 //! and metadata bloom filters.
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::SearchParams;
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::engines::sst::SstConfig;
@@ -12,6 +11,7 @@ use crate::storage::engines::sst::SstableWriter;
 use crate::storage::engines::sst::readers::{CollectionContext, UnifiedSstableReader};
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use proximadb_distance_kernel::DistanceMetric;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tempfile::TempDir;

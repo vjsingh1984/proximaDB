@@ -9,8 +9,9 @@ mod tests {
         CollectionContext, UnifiedSstableReader,
     };
     // use crate::core::config::{BloomFilterConfig, SstConfig};
-    use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
+    use crate::core::search::SearchParams;
+    use proximadb_distance_kernel::DistanceMetric;
+    use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 
     fn create_test_config() -> SstConfig {
         SstConfig {
