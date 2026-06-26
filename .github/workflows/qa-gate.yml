@@ -49,20 +49,23 @@ jobs:
           fi
           echo "ok: main PR originates from qa"
 
-  # Compile the test binaries the downstream jobs run, ONCE, so tpch/tpcds/pax
-  # (`needs: [build]`) restore this target/ via Swatinem/rust-cache (shared-key)
-  # and skip recompiling. Modeled on ci.yml's rust-build -> rust-test idiom.
-  # IMPORTANT: build ONLY the targets the consumers run — NOT `--workspace --tests`,
-  # which compiles every workspace test target and both fails (some targets don't
-  # compile in CI) and OOMs (no job cap). `cargo test ... --no-run` matches each
-  # consumer's compile step exactly, so its `cargo test --test X` is a cache hit.
-  # CARGO_BUILD_JOBS=4 keeps the shared build well under the 45m timeout (JOBS=2 was too slow). The e2e
-  # tests embed the server (tokio::spawn), so they link the lib — a shared
-  # compiled target/ is the lever, not a pre-built server binary.
-  build:
-    name: Rust Build (pgwire + recall tests)
+  # SINGLE combined job: compile all pgwire + recall test binaries ONCE on this
+  # runner, then run them. Same runner => the compiled target/ is reused across
+  # the runs (cargo sees its own artifacts as up-to-date, no recompile between
+  # suites). The previous separate-jobs design (a `build` job + per-suite
+  # `needs:[build]` jobs) wasted a ~40m build job because Swatinem/rust-cache
+  # cannot reliably ferry target/ ACROSS runners — cargo recompiled each suite
+  # from scratch on its own runner. Building once here and running sequentially
+  # eliminates both the redundant compiles and the cross-runner cache misses.
+  # The e2e tests embed the server (tokio::spawn), so they link the lib; a shared
+  # compiled target/ is the lever, not a pre-built server binary. The PAX recall
+  # step is the storage-format mandate (#8/#10) recall@k ratchet (≥0.90 vs f32).
+  # Sequential runs (not parallel) for reliability: clear per-suite pass/fail and
+  # no cross-suite memory contention on the materialize-heavy pgwire suites.
+  pgwire-recall-tests:
+    name: Integration tests (TPC-H/DS pgwire + PAX recall)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -72,74 +75,17 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-qa-build"
-          shared-key: "qa-tests"
-      - name: Build the pgwire + recall test binaries
+          prefix-key: "v1-qa-integration"
+      - name: Build all integration test binaries (once)
         env:
           CARGO_BUILD_JOBS: "4"
         run: |
           cargo test --test tpch_pgwire_e2e --test tpcds_pgwire_e2e --no-run
           cargo test -p proximadb-block-format --lib --no-run
-
-  tpch-pgwire:
-    name: TPC-H pgwire integration
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    needs: [build]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.95.0
-      - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "v1-qa-build"
-          shared-key: "qa-tests"
       - name: Run TPC-H over pgwire
-        run: CARGO_BUILD_JOBS=4 cargo test --test tpch_pgwire_e2e -- --nocapture
-
-  tpcds-pgwire:
-    name: TPC-DS pgwire integration
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    needs: [build]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.95.0
-      - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "v1-qa-build"
-          shared-key: "qa-tests"
+        run: cargo test --test tpch_pgwire_e2e -- --nocapture
       - name: Run TPC-DS over pgwire
-        run: CARGO_BUILD_JOBS=4 cargo test --test tpcds_pgwire_e2e -- --nocapture
-
-  # PAX stacked-quantization recall gate. Storage-format mandate (#8): any
-  # quantization / block / segment change is gated on recall@k vs the exact-f32
-  # baseline, and the ratchet only ever goes UP (#10). These run the RaBitQ→SQ8
-  # cold-scan recall harnesses in `proximadb-block-format` — a recall regression
-  # fails the develop→qa→main promotion. Green at HEAD: recall@10 ≥ 0.90.
-  pax-recall-ratchet:
-    name: ANN Recall Ratchet (PAX RaBitQ→SQ8)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: [build]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.95.0
-      - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "v1-qa-build"
-          shared-key: "qa-tests"
+        run: cargo test --test tpcds_pgwire_e2e -- --nocapture
       - name: Run PAX recall ratchets
         run: cargo test -p proximadb-block-format --lib recall -- --nocapture
 
