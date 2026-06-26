@@ -631,7 +631,7 @@ where
         .await
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "io-trace"))]
 mod tests {
     use super::*;
 
