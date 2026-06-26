@@ -53,7 +53,7 @@ impl ColumnarUtilities {
     /// Create new columnar utilities
     pub fn new(
         filesystem: Arc<FilesystemFactory>,
-        _hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
+        _hardware: Arc<proximadb_hardware_caps::HardwareCapabilities>,
         config: ColumnarConfig,
     ) -> Self {
         Self {
@@ -606,7 +606,7 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hardware = proximadb_hardware_caps::get_hardware_capabilities();
         let config = ColumnarConfig::default();
 
         let utilities = ColumnarUtilities::new(filesystem, hardware, config);
@@ -642,7 +642,7 @@ mod tests {
                 .await
                 .unwrap()
         }));
-        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hardware = proximadb_hardware_caps::get_hardware_capabilities();
         let config = ColumnarConfig::default();
 
         let utilities = ColumnarUtilities::new(filesystem, hardware, config);

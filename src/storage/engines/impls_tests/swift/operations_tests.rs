@@ -7,7 +7,7 @@
 //! - src/storage/engines/impls/swift/mod.rs
 
 use super::super::super::swift::*;
-use crate::core::hardware_capabilities;
+use proximadb_hardware_caps;
 use proximadb_runtime_common::pool::VectorMemoryPool;
 // TESTS FROM batch_operations.rs
 // =====================================================

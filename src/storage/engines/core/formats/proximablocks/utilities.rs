@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::{ProximaDataBlock, RowBasedConfig};
-use crate::core::hardware_capabilities::HardwareCapabilities;
+use proximadb_hardware_caps::HardwareCapabilities;
 use proximadb_records::ProximaRecord;
 
 /// Row-based utilities collection

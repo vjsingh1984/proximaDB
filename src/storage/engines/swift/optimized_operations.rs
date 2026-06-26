@@ -5,16 +5,14 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
+use crate::core::memory::pool::VectorMemoryPool;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
-use crate::core::{
-    hardware_capabilities::{HardwareBackend, HardwareCapabilities},
-    memory::pool::VectorMemoryPool,
-};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::search::search_modes::{
     CandidateRecord, CandidateState, SearchCandidate,
 };
 use proximadb_distance_kernel::{DistanceMetric, DistanceMode, UnifiedDistanceCompute};
+use proximadb_hardware_caps::{HardwareBackend, HardwareCapabilities};
 // Memory-mapped file operations would be imported here
 // For now, we'll use placeholder types
 struct MmapFile;
@@ -72,7 +70,7 @@ impl OptimizedSwiftOperations {
     /// Create new optimized operations instance
     pub fn new() -> Result<Self> {
         // Get global hardware capabilities
-        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hardware = proximadb_hardware_caps::get_hardware_capabilities();
 
         // Create unified distance compute with hardware acceleration
         let distance_compute = UnifiedDistanceCompute::default();

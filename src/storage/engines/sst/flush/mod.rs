@@ -711,12 +711,12 @@ mod tests {
     #[tokio::test]
     async fn td112_live_flush_indexes_vectors_into_axis() {
         use crate::index::axis::management::manager::AxisManager;
-        use crate::index::axis::types::AxisConfig;
         use crate::proto::proximadb_v1::{
             Collection, CollectionConfig, StorageAssignment, StorageEngine,
         };
         use crate::storage::traits::UnifiedStorageEngine;
         use proximadb_distance_kernel::DistanceMetric;
+        use proximadb_index_types::AxisConfig;
 
         // Attach an AXIS manager (process-global OnceLock; a no-op if a prior test
         // already set one). We read the effective manager back from the engine so

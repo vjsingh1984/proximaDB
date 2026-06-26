@@ -242,7 +242,7 @@ impl CompactionAxisUpdater {
             let algorithm = index.algorithm();
             if matches!(
                 algorithm,
-                crate::index::axis::types::IndexAlgorithm::Annoy { .. }
+                proximadb_index_types::IndexAlgorithm::Annoy { .. }
             ) {
                 info!(
                     "🔨 AXIS Compaction: Rebuilding static index {} for collection {}",
@@ -294,14 +294,10 @@ impl CompactionAxisUpdater {
 
             // Count index types
             match index.algorithm() {
-                crate::index::axis::types::IndexAlgorithm::HNSW { .. } => {
-                    stats.dynamic_indexes += 1
-                }
-                crate::index::axis::types::IndexAlgorithm::IVF { .. } => stats.dynamic_indexes += 1,
-                crate::index::axis::types::IndexAlgorithm::LSH { .. } => stats.dynamic_indexes += 1,
-                crate::index::axis::types::IndexAlgorithm::Annoy { .. } => {
-                    stats.static_indexes += 1
-                }
+                proximadb_index_types::IndexAlgorithm::HNSW { .. } => stats.dynamic_indexes += 1,
+                proximadb_index_types::IndexAlgorithm::IVF { .. } => stats.dynamic_indexes += 1,
+                proximadb_index_types::IndexAlgorithm::LSH { .. } => stats.dynamic_indexes += 1,
+                proximadb_index_types::IndexAlgorithm::Annoy { .. } => stats.static_indexes += 1,
                 _ => {}
             }
         }

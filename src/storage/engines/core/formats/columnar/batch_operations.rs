@@ -32,7 +32,7 @@ impl ColumnarBatchOperations {
     /// Create new batch operations handler
     pub fn new(
         parquet_reader: Arc<UnifiedParquetReader>,
-        _hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
+        _hardware: Arc<proximadb_hardware_caps::HardwareCapabilities>,
         memory_pool: Arc<VectorMemoryPool>,
         config: ColumnarConfig,
     ) -> Self {
@@ -502,7 +502,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hardware = proximadb_hardware_caps::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new());
         let config = ColumnarConfig::default();
 
@@ -580,7 +580,7 @@ mod tests {
                 )
                 .unwrap(),
             );
-            let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+            let hardware = proximadb_hardware_caps::get_hardware_capabilities();
             let memory_pool = Arc::new(VectorMemoryPool::new());
             let config = ColumnarConfig::default();
 

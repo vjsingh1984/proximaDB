@@ -5,9 +5,10 @@ use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;
 // Arrow compute not available, would need full arrow crate
 // use arrow::compute::kernels::aggregate;
-use crate::core::{hardware_capabilities::HardwareCapabilities, memory::pool::VectorMemoryPool};
+use crate::core::memory::pool::VectorMemoryPool;
 use crate::proto::proximadb_v1::VectorRecord;
 use proximadb_distance_kernel::{DistanceMetric, DistanceMode, UnifiedDistanceCompute};
+use proximadb_hardware_caps::HardwareCapabilities;
 use std::sync::Arc;
 use tracing::info;
 // Memory-mapped Parquet operations would be imported here
@@ -73,7 +74,7 @@ pub struct OptimizedNovaOperations {
 impl OptimizedNovaOperations {
     /// Create new optimized operations
     pub fn new() -> Result<Self> {
-        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hardware = proximadb_hardware_caps::get_hardware_capabilities();
         let distance_compute = UnifiedDistanceCompute::default();
         let vector_pool = Arc::new(VectorMemoryPool::new());
         let mmap_pool = Arc::new(MmapPool::new(50));
