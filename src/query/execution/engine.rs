@@ -387,6 +387,7 @@ mod tests {
     use proximadb_relational_planner::PhysicalPlan;
     use proximadb_relational_reader::RelationalReader;
     use proximadb_relational_types::{ColumnInfo, Expr};
+    use std::time::Duration;
 
     struct EmptyReaderFactory;
 
@@ -551,14 +552,25 @@ mod tests {
         );
     }
 
+    // The `native_volcano_stream_*` tests have an intermittent hang in
+    // `execute_physical_stream` (the `.await` never resolves under certain CI
+    // scheduling conditions). Wrapping the call in a `tokio::time::timeout`
+    // turns the indeterminate hang into a fast, deterministic failure (10s) —
+    // preserving coverage when the flake doesn't trigger. Root cause TBD (the
+    // code path is sequential: `stream::try_unfold` + `next_row`, no
+    // spawn/channel/task — needs a deterministic repro).
     #[tokio::test]
     async fn native_volcano_stream_yields_rows_incrementally() {
-        let result = NativeVolcanoEngine::execute_physical_stream(
-            values_plan(),
-            &EmptyReaderFactory,
-            ExecutionControls::default(),
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            NativeVolcanoEngine::execute_physical_stream(
+                values_plan(),
+                &EmptyReaderFactory,
+                ExecutionControls::default(),
+            ),
         )
         .await
+        .expect("streaming test timed out — investigate execute_physical_stream")
         .expect("values plan should open for streaming");
 
         // Schema is available before draining any row.
@@ -579,12 +591,16 @@ mod tests {
             cancellation_flag: Some(flag.clone()),
             ..Default::default()
         };
-        let result = NativeVolcanoEngine::execute_physical_stream(
-            values_plan(),
-            &EmptyReaderFactory,
-            controls,
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            NativeVolcanoEngine::execute_physical_stream(
+                values_plan(),
+                &EmptyReaderFactory,
+                controls,
+            ),
         )
         .await
+        .expect("streaming test timed out — investigate execute_physical_stream")
         .expect("values plan should open for streaming");
 
         let mut rows = result.rows;
@@ -608,12 +624,16 @@ mod tests {
             max_rows: Some(1),
             ..Default::default()
         };
-        let result = NativeVolcanoEngine::execute_physical_stream(
-            values_plan(),
-            &EmptyReaderFactory,
-            controls,
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            NativeVolcanoEngine::execute_physical_stream(
+                values_plan(),
+                &EmptyReaderFactory,
+                controls,
+            ),
         )
         .await
+        .expect("streaming test timed out — investigate execute_physical_stream")
         .expect("values plan should open for streaming");
 
         let mut rows = result.rows;
@@ -640,12 +660,16 @@ mod tests {
             row_limit_mode: RowLimitMode::Truncate,
             ..Default::default()
         };
-        let result = NativeVolcanoEngine::execute_physical_stream(
-            values_plan(),
-            &EmptyReaderFactory,
-            controls,
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            NativeVolcanoEngine::execute_physical_stream(
+                values_plan(),
+                &EmptyReaderFactory,
+                controls,
+            ),
         )
         .await
+        .expect("streaming test timed out — investigate execute_physical_stream")
         .expect("values plan should open for streaming");
 
         let mut rows = result.rows;
