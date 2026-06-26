@@ -3285,6 +3285,7 @@ mod minimal_compaction_tests {
                 canonical_embedding_precision: None,
                 permitted_principals: vec![],
                 index_policy: None,
+                pax_vector_quant: None,
             }),
             stats: Some(crate::proto::proximadb_v1::CollectionStats {
                 vector_count: 0,

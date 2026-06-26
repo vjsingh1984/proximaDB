@@ -2723,6 +2723,7 @@ mod tests {
             canonical_embedding_precision: None,
             permitted_principals: vec![],
             index_policy: None,
+            pax_vector_quant: None,
         };
 
         // Test create with valid config
@@ -2846,6 +2847,7 @@ mod tests {
                 canonical_embedding_precision: None,
                 permitted_principals: vec![],
                 index_policy: None,
+                pax_vector_quant: None,
             };
 
             let result = service
@@ -2924,6 +2926,7 @@ mod tests {
             canonical_embedding_precision: None,
             permitted_principals: vec![],
             index_policy: None,
+            pax_vector_quant: None,
         };
         let created = service.create_collection(&config).await.context("create")?;
         assert!(
@@ -2991,6 +2994,7 @@ mod tests {
             canonical_embedding_precision: None,
             permitted_principals: vec![],
             index_policy: None,
+            pax_vector_quant: None,
         };
 
         let result = service.create_collection(&config).await?;
