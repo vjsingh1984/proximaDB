@@ -1626,6 +1626,7 @@ impl FlightService for ProximaFlightService {
                     // Arrow Flight create does not expose the routing policy (REST
                     // is the typed surface); default to auto (None).
                     index_policy: None,
+                    pax_vector_quant: None,
                 };
 
                 // Create collection via service

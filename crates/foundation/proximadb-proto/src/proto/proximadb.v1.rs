@@ -6177,6 +6177,14 @@ pub struct CollectionConfig {
     #[prost(message, optional, tag = "28")]
     #[serde(default)]
     pub index_policy: ::core::option::Option<IndexPolicy>,
+    /// TD-155: per-collection PAX vector quantization strategy ("rabitq", "sq8",
+    /// "auto", or absent = default-off). When set, the SST flush uses this instead
+    /// of the deployment env PROXIMADB_PAX_VECTOR_QUANT — the staged-adoption
+    /// mechanism (ADR-026/027). `serde(default)` keeps old persisted records
+    /// readable (mixed-read-safe).
+    #[prost(string, optional, tag = "29")]
+    #[serde(default)]
+    pub pax_vector_quant: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Canonical scalar type for a collection's embedding column. Mirrors
 /// `proximadb_records::EmbeddingScalarType`.

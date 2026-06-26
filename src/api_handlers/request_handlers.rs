@@ -3371,6 +3371,7 @@ mod tests {
             canonical_embedding_precision: None,
             permitted_principals: vec![],
             index_policy: None,
+            pax_vector_quant: None,
         };
 
         assert_eq!(config.dimension, 768);

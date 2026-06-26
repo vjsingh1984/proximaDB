@@ -1300,6 +1300,7 @@ impl SharedServices {
                     // Coarse recovery reconstruction (quantization etc. hardcoded);
                     // routing policy defaults to auto (None).
                     index_policy: None,
+                    pax_vector_quant: None,
                 };
 
                 let proto_collection = crate::proto::proximadb_v1::Collection {

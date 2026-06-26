@@ -135,6 +135,7 @@ mod tests {
                 canonical_embedding_precision: None,
                 permitted_principals: vec![],
                 index_policy: None,
+                pax_vector_quant: None,
             }),
             stats: None,
             created_at: chrono::Utc::now().timestamp(),
