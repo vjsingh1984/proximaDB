@@ -1,0 +1,102 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= ADR-027: Unified Storage + Metering Substrate (PAX-as-one-internal-format, two-class trace, coalesced write-path, dual-sink metering)
+
+[cols="1,3"]
+|===
+|Status|Proposed
+|Date|2026-06-26
+|Deciders|Vijaykumar Singh
+|Relates to|ADR-024 (single canonical type/schema), ADR-026 (PAX canonical vector path), ADR-020 (canonical WAL authority), `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` (vertical-inside/standard-outside), `DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc`, `NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.adoc`, `OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21.adoc`
+|Supersedes|—
+|Tracked under|TD-158, TD-160, TD-161, TD-162
+|===
+
+== Context
+
+Three design threads converged and forced one answer:
+
+. **A storage fork.** Today: *PAX* for the vector path (SST writes PAX when gated on), *Parquet* for the warehouse/relational path (DataFusion), *ProximaBlocks* legacy. Three formats, two readers, two SQL lowerings — a fork.
+. **Trace + metering cost/fidelity.** `io_trace` must be cheap when off, yet some traces **drive billing** (KEU/KOU/KRU/KIU) and so can never be off and need full fidelity. And its write path is *write-heavy, small-record* (per-query meters) — exactly the small-files problem on object storage.
+. **Where metering lands.** Every peer (Aurora, Neon, Turso, Supabase, CockroachDB Serverless) meters **externally** (platform/OTLP), not in DB system tables. ProximaDB's object-store-native + per-tenant-path model could do better (durable, tenant-owned metering) but must also speak the standard sink.
+
+== Decision 1 — PAX is the single internal format
+
+The SST/LSM **writes PAX for every modality** — vectors *and* relational *and* OLAP *and* the metering/trace segments — not only vectors. PAX becomes the one internal format the LSM produces and every engine consumes:
+
+* **One record reader** — `read_segment_records` → `PaxSegmentScanner` for all data (magic-detect router already exists).
+* **One SQL lowering** — relational SQL lowers to a PAX scan; the native OLAP engine's natural input is PAX columnar (DataFusion is interim, per the native-OLAP blueprint).
+* **One I/O-trace path** — TD-158's emission, one place, all data.
+* **One quant/zone-map/prune stack** — PAX column stripes + zone maps + RaBitQ/SQ8 tiers serve ANN *and* relational projection/pruning uniformly.
+* **Completes ADR-024** — the type unified to `ProximaRecord`; unifying the *format* to PAX closes the loop.
+
+**Parquet stays at the interop seam, not the hot path**: external tools (Spark/DuckDB/Trino/Iceberg), federated/external tables, warehouse *export*. Read/written at the boundary via the format-agnostic router; never scanned in the internal query path. This is "vertical inside (PAX), standard outside (Parquet)" made concrete.
+
+**If a second internal format is ever needed, the router makes it safe** — `SegmentFormat::detect` is O(1) magic-byte (`PBLK` / `PAR1` / legacy `0x01`); a `RecordReader` trait (PAX/Parquet/legacy each implement) decouples SQL lowering from on-disk layout; Arrow Flight serves *decoded records* (Arrow batches), so on-disk format is invisible to clients. No fork in the hot path; the fork (if any) is at the boundary where it is cheap and standard. Mixed-read-safe (mandate #8).
+
+== Decision 2 — two trace/metering classes
+
+[cols="2,4,4", options="header"]
+|===
+| | Billing meters (KEU/KOU/KRU/KIU) | Perf / geometry trace (GET-count, bytes/block, route)
+| Can it be off? | **No** — the metering authority (SaaS billing) | **Yes** — zero-cost compile-time gate (feature/macro); off in normal mode
+| Fidelity | **Full** — never sampled/dropped; per-tenant | Aggregated/sampled OK (drives the adaptive engine, TD-157/159)
+| Encoding | u64 counters + int enums (compact) | u64 counters + int enums; route/engine = int enum, not `String`
+|===
+
+The compile-time gate (TD-160) applies to the **perf/geometry class only**. Billing is always-on but still cheap (compact ints). The existing `IoTrace` counters are already `AtomicU64`; the per-query `route`/`compute_ms` `String` fields become int enums (compact).
+
+== Decision 3 — coalesced write-path (reuse the SST/LSM; avoid small-files)
+
+Both classes are write-heavy, small-record workloads (per-query meters/traces), the same shape as OLTP writes. Writing each to object storage = the small-files problem (per-PUT fee + read amplification + list cost). Aurora, Neon, and Turso all solve it the same way, and it is the primitive ProximaDB already runs:
+
+* **Aurora** ("log is database") — redo-log stream to a storage fleet; **continuous log stream to S3**; never per-page writes.
+* **Neon** (pageserver) — WAL → ~1 GiB **L0 layer file** → background **compaction merges L0 → larger L1** on S3.
+* **Turso** (libSQL) — **WAL frames → S3** as the durable write path.
+
+**Pattern:** append small records to an in-memory buffer → **threshold-flush a large immutable segment** → **background compaction merges small→large.** ProximaDB's SST/LSM (memtable → flush → PAX segment → compaction) IS this primitive, so the metering/trace writer (TD-161) and OLTP writes reuse it — no per-query object writes, no new machinery.
+
+* **Billing = full fidelity, but batched** (N query-meters coalesced into one segment — batching preserves fidelity, not sampling).
+* **Perf = may aggregate/sample** (a signal, not an invoice).
+
+== Decision 4 — dual-sink metering (durable per-tenant + standard OTLP)
+
+Peers meter **externally** (platform/OTLP); ProximaDB's object-store-native + per-tenant-path model is a **differentiator**: durable, **tenant-owned** metering in the tenant's own object-store path (auditable, no platform lock-in for the meter). Do **both**:
+
+* **Durable per-tenant in object store** under `DrPathBuilder` — `data/{tenant}/_metering/billing/` (always-on, full-fidelity, PAX segments via the coalesced writer) + `data/{tenant}/_trace/perf/` (gateable). *The differentiator.*
+* **External OTLP/Prometheus** → AnvaiOps billing pipeline + dashboards — *the industry-standard sink* (what peers do; what the existing 30s Prometheus emitter already provides).
+
+== Storage layout (under DrPathBuilder — structural tenant isolation)
+
+----
+data/{tenant}/{namespace}/{collection}/...        # records (PAX, per ADR-026)
+data/{tenant}/_metering/billing/                  # billing meters (PAX, always-on, full-fidelity)
+data/{tenant}/_trace/perf/                        # perf/geometry trace (PAX, gateable, sampled ok)
+----
+
+All writes are `TenantContext`-stamped (isolation + billing attribution); all metering is a TAM surface priced downstream in AnvaiOps (OSS = mechanism).
+
+== Rollout
+
+. **TD-160** — compile-time gate for the **perf/geometry trace class only** (feature `io-trace`, default off → `record_*` no-op; billing class stays always-on). Prerequisite to wiring per-read trace at scale.
+. **TD-158** — emit the perf/geometry trace on the live AXIS/SST read path (gateable; builds against this two-class spec).
+. **TD-161** — coalesced SST/LSM-backed metering/trace writer (threshold-flush PAX segments → compaction; dual-sink: durable per-tenant + OTLP). Billing full-fidelity-batched; perf sampled.
+. **TD-162** — PAX as the single internal format: SST writes PAX for all modalities; unify the reader + SQL lowering onto PAX; Parquet demoted to the interop seam. Phased with the native-OLAP engine.
+
+== Non-goals
+
+* **Not** removing Parquet from the codebase — it stays as the interop seam (federated/external/export) and the interim warehouse format until the native OLAP engine scans PAX.
+* **Not** building the learned/RL tuning layer here — that is the future layer-3 ADR (needs TD-158 trace substrate + TD-159 geometry-aware adaptive engine + the recall ratchet as floor), per ADR-026.
+* **Not** billing *pricing* — the per-tenant meters are the OSS mechanism; the $ rate card is AnvaiOps policy (open-core boundary).
+
+== Consequences
+
+* One internal format, one reader, one SQL lowering, one I/O-trace path — the storage fork collapses.
+* Metering is durable, tenant-owned, auditable (differentiator) AND speaks the standard OTLP sink.
+* The coalesced write-path means no per-query object writes anywhere (data or metering) — the small-files problem is solved once, for both.
+* The recall ratchet (ADR-026) remains the safety floor under every quant/format change; no metering or format work may regress it.
+
+== References
+
+* ADR-024 (canonical type) · ADR-026 (PAX canonical vector path) · ADR-020 (canonical WAL) · `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` · `NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.adoc` · `OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21.adoc`
+* Peer grounding: link:https://d1.awsstatic.com/events/reinvent/2020/Amazon_Aurora_storage_demystified_DAT401.pdf[Aurora DAT401]^ · link:https://neon.com/blog/get-page-at-lsn[Neon storage deep-dive]^ · link:https://github.com/tursodatabase/libsql/blob/main/libsql-server/README.md[Turso/libSQL S3-backed WAL]^ · link:https://aws.amazon.com/blogs/storage/building-an-open-warehouse-architecture-supabases-integration-with-amazon-s3-tables/[Supabase S3 Tables WAL-ETL]^ · link:https://www.cockroachlabs.com/blog/how-we-built-cockroachdb-serverless/[CockroachDB Serverless]^
