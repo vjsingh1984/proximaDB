@@ -96,6 +96,15 @@ code-chunking = [
     "tree-sitter-language-pack>=1.0",
 ]
 
+# Shared code->CPG chunker (TD-CG2 / ADR-029). When installed, the deprecated
+# in-SDK `chunking_strategies/code.py` delegates to `victor_codegraph` so the
+# tree-sitter symbol+relation chunker lives in ONE place (Victor owns it). Until
+# `victor-codegraph` is published to PyPI, install it editable for now:
+#   pip install -e ../../victor/victor-codegraph && pip install 'proximadb[codegraph]'
+codegraph = [
+    "victor-codegraph>=0.1.0",
+]
+
 langchain = [
     "langchain-core>=0.3.0",
 ]
