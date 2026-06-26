@@ -218,7 +218,7 @@ pub async fn viper_optimization_example() -> Result<()> {
                 &[file_path.to_str().unwrap().to_string()],
                 &query_vector,
                 10, // top-10
-                &crate::compute::distance_computation::DistanceMetric::Cosine,
+                &proximadb_distance_kernel::DistanceMetric::Cosine,
             )
             .await?;
         */

@@ -172,7 +172,7 @@ impl UnifiedScanImpl {
         &self,
         engine: &dyn UnifiedStorageFormat,
         collection_id: &str,
-        predicates: Option<crate::core::search::FilterExpression>,
+        predicates: Option<proximadb_filter_expression::FilterExpression>,
         enable_pushdown: bool,
         collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Box<dyn ScanIterator>> {
@@ -499,7 +499,7 @@ impl ArrowIpcFullScanIterator {
 /// Engine-specific filtered scan implementations
 async fn create_sst_filtered_scan(
     collection_id: &str,
-    predicates: Option<crate::core::search::FilterExpression>,
+    predicates: Option<proximadb_filter_expression::FilterExpression>,
 ) -> Result<Box<dyn ScanIterator>> {
     // SST uses bloom filters and block scanning
     Err(anyhow::anyhow!("SST filtered scan not implemented"))
@@ -507,7 +507,7 @@ async fn create_sst_filtered_scan(
 
 async fn create_viper_filtered_scan(
     collection_id: &str,
-    predicates: Option<crate::core::search::FilterExpression>,
+    predicates: Option<proximadb_filter_expression::FilterExpression>,
     enable_pushdown: bool,
 ) -> Result<Box<dyn ScanIterator>> {
     // VIPER uses columnar predicate pushdown
@@ -516,7 +516,7 @@ async fn create_viper_filtered_scan(
 
 async fn create_nova_filtered_scan(
     collection_id: &str,
-    predicates: Option<crate::core::search::FilterExpression>,
+    predicates: Option<proximadb_filter_expression::FilterExpression>,
     enable_pushdown: bool,
 ) -> Result<Box<dyn ScanIterator>> {
     // NOVA uses zone maps and statistics
@@ -525,7 +525,7 @@ async fn create_nova_filtered_scan(
 
 async fn create_raptor_filtered_scan(
     collection_id: &str,
-    predicates: Option<crate::core::search::FilterExpression>,
+    predicates: Option<proximadb_filter_expression::FilterExpression>,
 ) -> Result<Box<dyn ScanIterator>> {
     // RAPTOR uses tier-aware filtering
     Err(anyhow::anyhow!("RAPTOR filtered scan not implemented"))

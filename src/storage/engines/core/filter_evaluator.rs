@@ -15,8 +15,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::core::search::FilterExpression;
 use crate::core::search::sql_value_filter::evaluate_filter_resolved;
+use proximadb_filter_expression::FilterExpression;
 
 /// Thread-safe filter evaluator that can be shared across async tasks.
 ///
@@ -85,7 +85,7 @@ fn strings_to_json_map(metadata: &HashMap<String, String>) -> HashMap<String, Va
 /// string into a JSON array (e.g. `"a, b"` → `["a","b"]`), preserving the prior
 /// `CompiledFilter` convenience. All other expressions pass through unchanged.
 fn normalize_in_values(expr: &FilterExpression) -> FilterExpression {
-    use crate::core::search::ComparisonOperator;
+    use proximadb_filter_expression::ComparisonOperator;
     match expr {
         FilterExpression::And(exprs) => {
             FilterExpression::And(exprs.iter().map(normalize_in_values).collect())
@@ -200,7 +200,7 @@ pub fn evaluate_filter_with_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::search::ComparisonOperator;
+    use proximadb_filter_expression::ComparisonOperator;
     use serde_json::json;
 
     #[test]

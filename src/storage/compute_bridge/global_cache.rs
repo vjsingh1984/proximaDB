@@ -830,9 +830,7 @@ impl GlobalQuantizationCache {
         // This provides the unified interface expected by the engines
         Arc::new(
             crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
-                Arc::new(
-                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-                ),
+                Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default()),
                 Self::global()
                     as Arc<dyn crate::compute::quantization::quantization_engine::CodebookStore>,
             ),

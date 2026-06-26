@@ -866,8 +866,8 @@ fn condition_matches_record(
     }
 }
 
-fn parse_distance_metric(name: &str) -> crate::compute::distance_computation::DistanceMetric {
-    use crate::compute::distance_computation::DistanceMetric;
+fn parse_distance_metric(name: &str) -> proximadb_distance_kernel::DistanceMetric {
+    use proximadb_distance_kernel::DistanceMetric;
     match name.to_lowercase().as_str() {
         "cosine" => DistanceMetric::Cosine,
         "dot" | "dotproduct" => DistanceMetric::DotProduct,
@@ -881,9 +881,9 @@ fn parse_distance_metric(name: &str) -> crate::compute::distance_computation::Di
 fn compute_distance(
     a: &[f32],
     b: &[f32],
-    metric: &crate::compute::distance_computation::DistanceMetric,
+    metric: &proximadb_distance_kernel::DistanceMetric,
 ) -> f32 {
-    use crate::compute::distance_computation::DistanceMetric;
+    use proximadb_distance_kernel::DistanceMetric;
 
     match metric {
         DistanceMetric::Euclidean => a
@@ -1089,7 +1089,7 @@ fn filter_superblocks_by_adacurve(
 fn select_blocks_by_centroid(
     superblock: &super::SuperBlock,
     query: &[f32],
-    _metric: &crate::compute::distance_computation::DistanceMetric,
+    _metric: &proximadb_distance_kernel::DistanceMetric,
     prune: &crate::core::search::BlockPruneConfig,
 ) -> Vec<usize> {
     use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
@@ -1723,7 +1723,7 @@ mod tests {
 
     #[test]
     fn test_parse_distance_metric() {
-        use crate::compute::distance_computation::DistanceMetric as DM;
+        use proximadb_distance_kernel::DistanceMetric as DM;
         assert!(matches!(parse_distance_metric("cosine"), DM::Cosine));
         assert!(matches!(parse_distance_metric("dot"), DM::DotProduct));
         assert!(matches!(
@@ -1740,7 +1740,7 @@ mod tests {
 
     #[test]
     fn test_compute_distance_euclidean() {
-        use crate::compute::distance_computation::DistanceMetric;
+        use proximadb_distance_kernel::DistanceMetric;
         let a = vec![0.0, 0.0, 0.0];
         let b = vec![3.0, 4.0, 0.0];
         let dist = compute_distance(&a, &b, &DistanceMetric::Euclidean);
@@ -1749,7 +1749,7 @@ mod tests {
 
     #[test]
     fn test_compute_distance_cosine_parallel() {
-        use crate::compute::distance_computation::DistanceMetric;
+        use proximadb_distance_kernel::DistanceMetric;
         let a = vec![1.0, 0.0];
         let b = vec![1.0, 0.0];
         let dist = compute_distance(&a, &b, &DistanceMetric::Cosine);
@@ -1758,7 +1758,7 @@ mod tests {
 
     #[test]
     fn test_compute_distance_dot_product() {
-        use crate::compute::distance_computation::DistanceMetric;
+        use proximadb_distance_kernel::DistanceMetric;
         let a = vec![1.0, 2.0, 3.0];
         let b = vec![4.0, 5.0, 6.0];
         let dist = compute_distance(&a, &b, &DistanceMetric::DotProduct);

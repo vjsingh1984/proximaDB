@@ -17,8 +17,8 @@ use super::zone_maps::{
     AdvancedZoneMap, CostBasedOptimizer, OptimizationStrategy, PerformanceHistory, WorkloadStats,
     ZoneMapConfig,
 };
-use crate::compute::distance_computation::DistanceMetric;
 use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_distance_kernel::DistanceMetric;
 
 /// Unified streaming search engine for NOVA
 pub struct StreamingSearchEngine {
@@ -192,9 +192,8 @@ impl StreamingSearchEngine {
     /// Create new streaming search engine
     pub fn new(config: NovaStreamingSearchConfig) -> Self {
         // Create dependencies for progressive search
-        let distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-        );
+        let distance_compute =
+            Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
         let quant_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
         let unified_quantization_engine = Arc::new(

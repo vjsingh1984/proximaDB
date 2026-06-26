@@ -27,7 +27,6 @@ mod tests {
     use std::time::Instant;
     use tempfile::TempDir;
 
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::core::SstConfig;
     use crate::core::search::SearchParams;
     use crate::proto::proximadb_v1::{
@@ -40,6 +39,7 @@ mod tests {
     use crate::storage::traits::{
         FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageFormat,
     };
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
     // Separator line constants for output formatting
     const SEPARATOR_DOUBLE: &str =
@@ -245,9 +245,9 @@ mod tests {
         let full_scan_time_ms = scan_start.elapsed().as_secs_f64() * 1000.0;
 
         // Benchmark filtered read (with predicate)
-        let filter_expr = crate::core::search::FilterExpression::Comparison {
+        let filter_expr = proximadb_filter_expression::FilterExpression::Comparison {
             field: "category".to_string(),
-            operator: crate::core::search::ComparisonOperator::Equals,
+            operator: proximadb_filter_expression::ComparisonOperator::Equals,
             value: serde_json::Value::String("cat_5".to_string()),
         };
 
@@ -354,9 +354,9 @@ mod tests {
         let full_scan_time_ms = scan_start.elapsed().as_secs_f64() * 1000.0;
 
         // Benchmark filtered read
-        let filter_expr = crate::core::search::FilterExpression::Comparison {
+        let filter_expr = proximadb_filter_expression::FilterExpression::Comparison {
             field: "category".to_string(),
-            operator: crate::core::search::ComparisonOperator::Equals,
+            operator: proximadb_filter_expression::ComparisonOperator::Equals,
             value: serde_json::Value::String("cat_5".to_string()),
         };
 
@@ -460,9 +460,9 @@ mod tests {
         let full_scan_time_ms = scan_start.elapsed().as_secs_f64() * 1000.0;
 
         // Benchmark filtered read
-        let filter_expr = crate::core::search::FilterExpression::Comparison {
+        let filter_expr = proximadb_filter_expression::FilterExpression::Comparison {
             field: "category".to_string(),
-            operator: crate::core::search::ComparisonOperator::Equals,
+            operator: proximadb_filter_expression::ComparisonOperator::Equals,
             value: serde_json::Value::String("cat_5".to_string()),
         };
 

@@ -55,8 +55,13 @@ Critically, the foundation tier **already contains** the canonical type/kernel c
   proximadb-hardware-caps · proximadb-config · proximadb-data-model
 
 So `crate::compute::distance_computation::DistanceMetric` (×207) is storage referencing the
-*root re-export/parallel path* of a type that already lives in `proximadb-distance-types`.
-That edge dissolves by **redirecting the path**, not by inverting a dependency.
+*root alias path* of a type that already lives in `proximadb-distance-kernel` — the root
+module is literally `pub use proximadb_distance_kernel as distance_computation`
+(`src/compute/mod.rs:168`), so the *entire* `distance_computation` namespace is the kernel
+crate. That edge dissolves by **redirecting the path**, not by inverting a dependency.
+*(Caution: `proximadb-distance-types` is a **separate, divergent** 4-variant migration enum
+(L2/Cosine/InnerProduct/L1) — NOT the storage path, which is the 14-variant proto enum
+re-exported by the kernel. Do not target `-distance-types`.)*
 
 === Mechanism A — Redirect-down to existing/new type crates (≈80% of edges)
 
@@ -67,8 +72,7 @@ count dramatically before any inversion is attempted.
 [cols="3,3",options="header"]
 |===
 | Storage references… | …should reference (crate, mostly already exists)
-| `crate::compute::distance_computation::DistanceMetric` | `proximadb_distance_types::DistanceMetric`
-| `crate::compute::distance_computation::{engine, Quantized*}` (kernel math) | `proximadb_distance_kernel::*`
+| `crate::compute::distance_computation::*` (whole namespace: `DistanceMetric`, `engine`, `UnifiedDistanceCompute`, `quantized`, …) | `proximadb_distance_kernel::*` (the root path *is* `pub use proximadb_distance_kernel as distance_computation`) — done in D0
 | `crate::compute::quantization::types::*` | `proximadb_quantization_types::*`
 | `crate::core::search::FilterExpression` | `proximadb_filter_expression::*`
 | `crate::core::{config, hardware_capabilities}` | `proximadb_config` / `proximadb_hardware_caps`
@@ -179,10 +183,14 @@ orchestrator, and the composition root, so they need the **announced coordinatio
 
 == Next action
 
-Execute **D0** as the first step: redirect storage's `DistanceMetric` / `FilterExpression`
-references to `proximadb-distance-types` / `proximadb-filter-expression` (the two largest,
-unambiguously-existing type crates), after confirming the root paths are re-exports. This is
-a low-risk mechanical PR that immediately drops the storage→compute/core edge count and
-proves the redirect-down mechanism before the coordinated D3/D4 inversion.
+**D0 is implemented in this PR:** storage's `crate::compute::distance_computation::*`
+references are redirected to `proximadb-distance-kernel` (whole-namespace path rewrite, 403
+refs / 129 files) and `crate::core::search::{FilterExpression, ComparisonOperator}` to
+`proximadb-filter-expression` (61 refs / 31 files, grouped imports split so non-filter
+`core::search` symbols stay put). Both root paths were confirmed re-exports; both target
+crates were already root deps. Behaviour-neutral; the storage→`compute::distance_computation`
+and storage→`core::search::{FilterExpression,ComparisonOperator}` edge counts are now **0**
+(ratchet). The remaining redirects (quantization/config/hardware-caps/index-types), the
+`search-types`/`bloom` leaf extractions (D1), and the port inversions (D2–D5) follow.
 
 Ref: `ROOT_CRATE_DECOMPOSITION_PLAN_2026_06_21.adoc` (Slice D row), TD-104.

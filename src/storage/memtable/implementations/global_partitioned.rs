@@ -78,8 +78,8 @@ use tokio::sync::RwLock;
 use tracing::debug;
 
 use super::super::core::MemtableMetrics;
-use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
-use crate::compute::distance_computation::engine::{
+use proximadb_distance_kernel::DistanceMetric as CoreDistanceMetric;
+use proximadb_distance_kernel::engine::{
     DistanceComputeProvider, SimilarityResult, UnifiedDistanceCompute,
 };
 use proximadb_records::ProximaRecord;
@@ -1601,9 +1601,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_global_partitioned_batch_operations() {
-        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
         use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
         use crate::storage::persistence::write_ahead_log::BatchId;
+        use proximadb_distance_kernel::DistanceMetric as CoreDistanceMetric;
         use std::sync::Arc;
 
         let memtable = GlobalPartitionedMemtable::new();
@@ -1642,9 +1642,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_global_partitioned_multi_collection() {
-        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
         use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
         use crate::storage::persistence::write_ahead_log::BatchId;
+        use proximadb_distance_kernel::DistanceMetric as CoreDistanceMetric;
         use std::sync::Arc;
 
         let memtable = GlobalPartitionedMemtable::new();
@@ -1705,9 +1705,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_mvcc_and_logical_deletes() {
-        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
         use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
         use crate::storage::persistence::write_ahead_log::BatchId;
+        use proximadb_distance_kernel::DistanceMetric as CoreDistanceMetric;
         use std::sync::Arc;
 
         let memtable = GlobalPartitionedMemtable::new();
@@ -1790,9 +1790,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_global_partitioned_deletion_via_expiry() {
-        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
         use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
         use crate::storage::persistence::write_ahead_log::BatchId;
+        use proximadb_distance_kernel::DistanceMetric as CoreDistanceMetric;
         use std::sync::Arc;
 
         let memtable = GlobalPartitionedMemtable::new();
@@ -2348,7 +2348,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_three_layer_search_consistency_basic() {
-        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+        use proximadb_distance_kernel::DistanceMetric as CoreDistanceMetric;
 
         let memtable = GlobalPartitionedMemtable::new();
         let collection_id = "1uctd3f";
@@ -2541,7 +2541,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_version_ordering_across_layers() {
-        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+        use proximadb_distance_kernel::DistanceMetric as CoreDistanceMetric;
 
         let memtable = GlobalPartitionedMemtable::new();
         let collection_id = "1uctd3h";
@@ -2586,7 +2586,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_expired_records_vs_active_records() {
-        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+        use proximadb_distance_kernel::DistanceMetric as CoreDistanceMetric;
 
         let memtable = GlobalPartitionedMemtable::new();
         let collection_id = "1uctd3i";
@@ -2641,7 +2641,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_same_id_different_vector_values() {
-        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+        use proximadb_distance_kernel::DistanceMetric as CoreDistanceMetric;
 
         let memtable = GlobalPartitionedMemtable::new();
         let collection_id = "1uctd3j";
@@ -2742,7 +2742,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_flush_compaction_atomic_consistency() {
-        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+        use proximadb_distance_kernel::DistanceMetric as CoreDistanceMetric;
 
         let memtable = GlobalPartitionedMemtable::new();
         let collection_id = "1uctd3k";

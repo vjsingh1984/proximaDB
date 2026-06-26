@@ -6,7 +6,7 @@
 
 #[tokio::test]
 async fn test_viper_predicate_pushdown() {
-    use crate::core::search::{ComparisonOperator, FilterExpression};
+    use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
     use crate::storage::engines::viper::column_filter::VIPERColumnFilterEvaluator;
     use tracing::debug;
 
@@ -27,7 +27,7 @@ async fn test_viper_predicate_pushdown() {
 
 #[tokio::test]
 async fn test_parallel_column_evaluation() {
-    use crate::core::search::{ComparisonOperator, FilterExpression};
+    use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
     use crate::storage::engines::viper::column_filter::VIPERColumnFilterEvaluator;
     use tracing::debug;
 

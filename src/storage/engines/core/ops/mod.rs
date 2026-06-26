@@ -35,7 +35,7 @@ pub mod compression_common;
 pub mod performance_optimization;
 
 // Import common types used across the module
-use crate::core::search::FilterExpression;
+use proximadb_filter_expression::FilterExpression;
 
 /// Backwards-compat alias for [`CoreOpsFilterableColumn`].
 pub type FilterableColumn = CoreOpsFilterableColumn;
@@ -205,9 +205,9 @@ pub use crate::storage::engines::core::search::search_common::{
 use anyhow::Result;
 use std::collections::HashMap;
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_distance_kernel::DistanceMetric;
 
 // Temporary placeholder types until modules are created
 #[derive(Debug, Clone)]

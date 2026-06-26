@@ -31,7 +31,7 @@ pub struct StorageEngine {
     filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
 
     /// Shared distance computation engine for all storage operations
-    distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+    distance_compute: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
 
     /// A6 storage-write fence (default-OFF). Injected post-construction from the
     /// bootstrap (`database.rs`) once `SharedServices` — and thus the durable
@@ -162,7 +162,7 @@ impl StorageEngine {
             compaction_manager,
             filesystem,
             distance_compute: Arc::new(
-                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+                proximadb_distance_kernel::engine::UnifiedDistanceCompute::default(),
             ),
             storage_write_fence: None,
         })
@@ -929,7 +929,7 @@ impl StorageEngine {
     /// Get the shared distance computation engine
     pub fn distance_compute(
         &self,
-    ) -> &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute> {
+    ) -> &Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute> {
         &self.distance_compute
     }
 
@@ -939,7 +939,7 @@ impl StorageEngine {
         &self,
         query: &[f32],
         vector: &[f32],
-        distance_metric: &crate::compute::distance_computation::DistanceMetric,
+        distance_metric: &proximadb_distance_kernel::DistanceMetric,
     ) -> crate::storage::Result<f32> {
         // Use shared unified distance computation engine
         let result = self

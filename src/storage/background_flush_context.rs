@@ -12,9 +12,9 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::proto::proximadb_v1::FilterableColumnSpec;
 use crate::services::collection::manager::CollectionService;
+use proximadb_distance_kernel::DistanceMetric;
 
 /// Storage engine types supported by ProximaDB
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

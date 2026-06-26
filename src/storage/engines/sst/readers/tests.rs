@@ -94,7 +94,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &crate::core::search::BlockPruneConfig::for_testing(),
         );
         // sqrt(4) = 2 => expect the two closest blocks by centroid: block_ids 0 and 2.
@@ -162,7 +162,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &prune_config,
         );
 
@@ -252,7 +252,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &prune_config,
         );
 
@@ -363,7 +363,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &prune_config,
         );
 
@@ -454,7 +454,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &prune_config,
         );
 
@@ -507,7 +507,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &prune_config,
         );
 
@@ -1083,7 +1083,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &prune_config,
         );
         assert_eq!(selected.len(), 4, "None mode should return all 4 blocks");
@@ -1114,7 +1114,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &prune_config,
         );
         assert_eq!(
@@ -1146,7 +1146,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &prune_config,
         );
         assert_eq!(
@@ -1178,7 +1178,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &prune_config,
         );
         assert_eq!(
@@ -1208,7 +1208,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &prune_config,
         );
         assert_eq!(
@@ -1240,7 +1240,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &prune_config,
         );
         assert_eq!(
@@ -1272,7 +1272,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &prune_config,
         );
         // Order: Fixed(1) -> max(1,5)=5 -> min(5,3)=3 -> clamp(3,1,5)=3
@@ -1299,7 +1299,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &prune_config,
         );
         assert_eq!(
@@ -1324,7 +1324,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &prune_config,
         );
         assert_eq!(selected.len(), 1, "Single block should always be selected");
@@ -1350,7 +1350,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
             &prune_config,
         );
         assert_eq!(
@@ -1379,7 +1379,7 @@
         let selected = select_blocks_by_centroid(
             &query,
             &entries,
-            crate::compute::distance_computation::DistanceMetric::Cosine,
+            proximadb_distance_kernel::DistanceMetric::Cosine,
             &prune_config,
         );
         assert_eq!(selected.len(), 1, "Fixed(1) should return 1 block");

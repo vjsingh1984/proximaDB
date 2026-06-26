@@ -306,11 +306,11 @@ pub struct SearchStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::proto::proximadb_v1::DistanceMetric;
     use crate::query::query_optimizer::SearchParams;
     use crate::storage::engines::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
     #[tokio::test]
     async fn test_search_strategy_selection() {

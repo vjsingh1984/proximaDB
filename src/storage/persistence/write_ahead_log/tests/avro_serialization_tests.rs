@@ -7,7 +7,7 @@
 //! - Recovery operations
 //! - Stats tracking
 
-use crate::compute::distance_computation::DistanceMetric;
+use proximadb_distance_kernel::DistanceMetric;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{

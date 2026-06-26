@@ -418,7 +418,7 @@ pub fn convert_search_params_to_plan(
     params: &crate::core::search::SearchParams,
     collection_id: &str,
 ) -> crate::core::search::search_interface::SearchPlan {
-    use crate::compute::distance_computation::DistanceMetric;
+    use proximadb_distance_kernel::DistanceMetric;
     use crate::core::search::search_interface::{CollectionConfig, SearchPlan, StorageInfo};
 
     SearchPlan {

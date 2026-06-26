@@ -6,10 +6,10 @@
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::core::Config;
 use crate::storage::engine::StorageEngine;
 use proximadb_data_model::ProximaValue;
+use proximadb_distance_kernel::DistanceMetric;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
 fn create_test_vector(id: &str, vector: Vec<f32>) -> ProximaRecord {

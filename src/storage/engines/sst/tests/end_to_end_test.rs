@@ -14,7 +14,6 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::core::search::SearchParams;
     use crate::proto::proximadb_v1::{
         Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType, SqlValue,
@@ -25,6 +24,7 @@ mod tests {
     use crate::storage::traits::{
         FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageFormat,
     };
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
     use tracing::info;
 
     #[tokio::test]

@@ -10,7 +10,7 @@
 //! - Full scans: Use direct reads to avoid cache pollution
 //! - Writes: Always use direct filesystem (no caching benefit)
 
-use crate::core::search::FilterExpression;
+use proximadb_filter_expression::FilterExpression;
 
 /// Unified read access strategy used across all storage engines
 ///

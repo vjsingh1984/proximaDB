@@ -641,9 +641,9 @@ pub type SortStats = SortingStats;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
     #[tokio::test]
     async fn test_sort_vectors_for_sstable_encoding() {
@@ -710,13 +710,13 @@ mod tests {
     /// real path exercised here.)
     #[tokio::test]
     async fn td112_live_flush_indexes_vectors_into_axis() {
-        use crate::compute::distance_computation::DistanceMetric;
         use crate::index::axis::management::manager::AxisManager;
         use crate::index::axis::types::AxisConfig;
         use crate::proto::proximadb_v1::{
             Collection, CollectionConfig, StorageAssignment, StorageEngine,
         };
         use crate::storage::traits::UnifiedStorageEngine;
+        use proximadb_distance_kernel::DistanceMetric;
 
         // Attach an AXIS manager (process-global OnceLock; a no-op if a prior test
         // already set one). We read the effective manager back from the engine so

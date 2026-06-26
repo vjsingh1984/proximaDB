@@ -38,7 +38,7 @@ use crate::storage::engines::sst::{
 };
 use crate::core::SstConfig;
 use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use crate::compute::distance_computation::{
+use proximadb_distance_kernel::{
     engine::UnifiedDistanceCompute,
     DistanceMetric,
 };

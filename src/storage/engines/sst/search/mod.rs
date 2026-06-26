@@ -36,13 +36,13 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info, trace, warn};
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::storage::engines::core::formats::arrow_block::ArrowBlockReader;
 use crate::storage::engines::sst::{SstEngine, SstError};
 use crate::storage::traits::StorageQueryContext;
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 use proximadb_index_traits::{
     IndexFilterOperator, IndexHybridQuery, IndexMetadataFilter, IndexSearchEffort, IndexVectorQuery,
 };
@@ -799,7 +799,7 @@ impl SstEngine {
         &self,
         storage_url: &str,
         query_vector: &[f32],
-        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        distance_metric: proximadb_distance_kernel::DistanceMetric,
         search_mode: &crate::core::search::SearchMode,
         prune_config: &crate::core::search::BlockPruneConfig, // [AGENT_FIX] New parameter
     ) -> Result<Vec<String>> {
@@ -963,9 +963,9 @@ impl SstEngine {
         &self,
         query: &[f32],
         centroid: &[f32],
-        metric: crate::compute::distance_computation::DistanceMetric,
+        metric: proximadb_distance_kernel::DistanceMetric,
     ) -> f32 {
-        use crate::compute::distance_computation::DistanceMetric;
+        use proximadb_distance_kernel::DistanceMetric;
 
         match metric {
             DistanceMetric::Euclidean => {
@@ -1142,9 +1142,7 @@ impl SstEngine {
         limit: usize,
         distance_metric: DistanceMetric,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        use crate::compute::distance_computation::engine::{
-            SimilarityResult, UnifiedDistanceCompute,
-        };
+        use proximadb_distance_kernel::engine::{SimilarityResult, UnifiedDistanceCompute};
         use std::sync::Arc;
 
         debug!("🏹 Searching Arrow file: {}", arrow_path);
@@ -1217,10 +1215,10 @@ impl SstEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use proximadb_data_model::ProximaValue;
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
     use std::sync::Arc;
 
     #[tokio::test]

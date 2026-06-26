@@ -7,10 +7,10 @@ use super::common::{
     VectorCentroidCompressionMetadata, VectorCentroidMatrix, VectorCentroidStorageStrategy,
 };
 use super::config::{CompressionStrategy, PxKStrategy};
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::proto::proximadb_v1::DistanceMetric;
 use anyhow::Result;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 use std::collections::HashSet;
 
 /// Selection reason for sparse storage

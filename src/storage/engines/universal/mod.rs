@@ -118,7 +118,7 @@ pub use progressive_refinement::{
 };
 
 // Quantized calculator exports removed - use compute module directly:
-// - crate::compute::distance_computation::engine::UnifiedDistanceCompute
+// - proximadb_distance_kernel::engine::UnifiedDistanceCompute
 // - crate::compute::quantization::storage_engine::StorageQuantizationEngine
 
 pub use storage_integration::{

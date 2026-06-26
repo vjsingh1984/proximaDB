@@ -18,9 +18,9 @@ use std::sync::Arc;
 use tracing::warn;
 use tracing::{debug, info};
 
-use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
+use proximadb_distance_kernel::engine::{DistanceMetric, UnifiedDistanceCompute};
 
 #[cfg(feature = "gpu")]
 use crate::compute::gpu::distance::GpuDistanceCompute;

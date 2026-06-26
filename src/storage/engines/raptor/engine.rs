@@ -16,7 +16,6 @@ use super::{
     RaptorConfig, RaptorWriter, RowGroups,
     consolidated_reader::{RaptorReader, ScanStrategy},
 };
-use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::core::hardware_capabilities::get_hardware_capabilities;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
@@ -26,6 +25,7 @@ use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageQueryContext,
     UnifiedStorageFormat,
 };
+use proximadb_distance_kernel::{DistanceMetric, engine::UnifiedDistanceCompute};
 use proximadb_records::conversions::proxima_record_to_vector;
 // IvfManager removed - Matrix Trinity handles clustering
 use super::smart_rowgroup_sizing::SmartRowGroupSizer;
@@ -441,9 +441,7 @@ impl RaptorEngine {
         );
         let fallback_quantization_engine = Arc::new(
             crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
-                Arc::new(
-                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-                ),
+                Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default()),
                 Arc::new(
                     crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
                 ),
@@ -643,7 +641,7 @@ impl RaptorEngine {
             }),
             min_vectors_for_clustering: 100,
             max_clusters: 256,
-            distance_metric: crate::compute::distance_computation::DistanceMetric::Cosine,
+            distance_metric: proximadb_distance_kernel::DistanceMetric::Cosine,
             adaptive_cluster_count: true,
             recompute_threshold: config.rowgroup_size / 2,
             enable_incremental: true,
@@ -895,7 +893,7 @@ impl RaptorEngine {
         query: &[f32],
         k: usize,
         filter: Option<HashMap<String, String>>,
-        distance_metric: &crate::compute::distance_computation::DistanceMetric,
+        distance_metric: &proximadb_distance_kernel::DistanceMetric,
         storage_path: &str,
         collection_id: &str,
     ) -> Result<Vec<OptimizedSearchRecord>> {
@@ -990,7 +988,7 @@ impl RaptorEngine {
         query: &[f32],
         k: usize,
         filter: Option<HashMap<String, String>>,
-        distance_metric: &crate::compute::distance_computation::DistanceMetric,
+        distance_metric: &proximadb_distance_kernel::DistanceMetric,
         storage_path: &str,
         collection_id: &str,
     ) -> Result<Vec<OptimizedSearchRecord>> {
@@ -1304,7 +1302,7 @@ impl RaptorEngine {
         query: &[f32],
         k: usize,
         selected_rowgroups: Vec<u32>,
-        distance_metric: &crate::compute::distance_computation::DistanceMetric,
+        distance_metric: &proximadb_distance_kernel::DistanceMetric,
         storage_path: &str,
         collection_id: &str,
     ) -> Result<Vec<OptimizedSearchRecord>> {
@@ -1353,7 +1351,7 @@ impl RaptorEngine {
                 distances
                     .into_iter()
                     .map(|d| {
-                        crate::compute::distance_computation::engine::SimilarityResult::new(
+                        proximadb_distance_kernel::engine::SimilarityResult::new(
                             d,
                             *distance_metric,
                         )
@@ -1879,7 +1877,7 @@ impl RaptorEngine {
         &self,
         query: &[f32],
         k: usize,
-        distance_metric: &crate::compute::distance_computation::DistanceMetric,
+        distance_metric: &proximadb_distance_kernel::DistanceMetric,
     ) -> Result<Vec<VectorSearchResult>> {
         let rowgroup_manager = self.rowgroup_manager.read().await;
         // For full scan, get all rowgroups
@@ -1917,7 +1915,7 @@ impl RaptorEngine {
                 distances
                     .into_iter()
                     .map(|d| {
-                        crate::compute::distance_computation::engine::SimilarityResult::new(
+                        proximadb_distance_kernel::engine::SimilarityResult::new(
                             d,
                             *distance_metric,
                         )
@@ -2885,9 +2883,9 @@ impl RaptorEngine {
     /// This helper converts our internal FilterExpression type to the
     /// IndexMetadataFilter DTO format for hybrid vector + metadata queries.
     fn convert_filter_to_index(
-        filter_expression: Option<&crate::core::search::FilterExpression>,
+        filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
     ) -> Vec<proximadb_index_traits::IndexMetadataFilter> {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
         use proximadb_index_traits::{IndexFilterOperator, IndexMetadataFilter};
 
         let Some(filter) = filter_expression else {
@@ -3115,7 +3113,7 @@ impl UniversallyOptimized for RaptorEngine {
 #[cfg(test)]
 #[cfg(feature = "experimental-engines")]
 mod tests {
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
     #[test]
     fn test_raptor_distance_computation_non_zero() {

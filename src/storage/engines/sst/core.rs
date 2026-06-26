@@ -27,7 +27,6 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::info;
 
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::{
     quantization_engine::{CodebookStore, InMemoryCodebookStore, UnifiedQuantizationEngine},
     storage_engine::StorageQuantizationEngine,
@@ -41,6 +40,7 @@ use crate::storage::engines::sst::{
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::transaction_coordinator::TransactionCoordinator;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 use proximadb_records::ProximaRecord;
 
 // AXIS manager for HNSW/IVF index integration
