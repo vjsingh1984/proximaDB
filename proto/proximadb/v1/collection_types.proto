@@ -77,6 +77,14 @@ message CollectionConfig {
   // scripts/regenerate-proto.sh — the generated Rust is hand-
   // committed). Promoting to a typed field is a clean follow-up
   // once the regen pipeline is auto-wired into build.rs.
+
+  // TD-155: per-collection PAX vector quantization strategy. Values: "rabitq",
+  // "sq8", "auto", or absent (default-off). When set, the SST flush uses this
+  // instead of the deployment-level env PROXIMADB_PAX_VECTOR_QUANT. This is
+  // the staged-adoption mechanism — operators opt individual collections into
+  // PAX quant without a global flip (ADR-026/027). Precedence at flush:
+  // per-collection pax_vector_quant > env > default-off.
+  optional string pax_vector_quant = 29;
 }
 
 // Canonical scalar type for a collection's embedding column. Mirrors

@@ -513,6 +513,7 @@ impl MetadataStoreInterface for MetadataStore {
                     canonical_embedding_precision: None,
                     permitted_principals: vec![],
                     index_policy: super::catalog_config::read_index_policy(&versioned.config),
+                    pax_vector_quant: None,
                 };
 
                 let stats = CollectionStats {
@@ -633,6 +634,7 @@ impl MetadataStoreInterface for MetadataStore {
                         // List view is lightweight (quantization/index_configs also
                         // unset here); the get path reconstructs the full policy.
                         index_policy: None,
+                        pax_vector_quant: None,
                     };
 
                     let stats = CollectionStats {

@@ -591,6 +591,7 @@ pub fn build_collection_config(
         // Generic JSON builder carries no routing policy (REST v2 build is the
         // typed surface); default to auto (None).
         index_policy: None,
+        pax_vector_quant: None,
     };
 
     // Apply smart defaults from proto comments

@@ -434,19 +434,33 @@ impl SstEngine {
                     .unwrap_or(1);
                 let records: Vec<_> = sorted_vectors.into_iter().map(|(_, rec)| rec).collect();
                 let collection_id = params.collection_id.as_deref().unwrap_or("default");
-                // P3 Phase D: vector quantization strategy. Deployment selector for now
-                // (`PROXIMADB_PAX_VECTOR_QUANT` = rabitq|sq8|auto); per-collection proto
-                // config is the productionization follow-up. `Auto` keeps the env default.
-                // STAGED ROLLOUT: only takes effect once PAX segments are enabled above
-                // (default OFF v0.2); the recall ratchet gates the v0.3 default-on flip.
-                let quant = match std::env::var("PROXIMADB_PAX_VECTOR_QUANT")
-                    .unwrap_or_default()
-                    .to_ascii_lowercase()
-                    .as_str()
+                // P3 Phase D / TD-155: vector quantization strategy. Precedence:
+                // per-collection pax_vector_quant (catalog config) > deployment env
+                // PROXIMADB_PAX_VECTOR_QUANT > default (Auto). This is the staged-
+                // adoption mechanism — operators opt individual collections into PAX
+                // quant without a global flip (ADR-026/027).
+                let quant = match params
+                    .collection_config
+                    .as_ref()
+                    .and_then(|c| c.config.as_ref())
+                    .and_then(|cfg| cfg.pax_vector_quant.as_deref())
+                    .map(|s| s.to_ascii_lowercase())
                 {
-                    "rabitq" => VectorQuant::RaBitQ,
-                    "sq8" => VectorQuant::Sq8,
-                    _ => VectorQuant::Auto,
+                    Some(s) => match s.as_str() {
+                        "rabitq" => VectorQuant::RaBitQ,
+                        "sq8" => VectorQuant::Sq8,
+                        _ => VectorQuant::Auto,
+                    },
+                    // Fall back to the deployment env.
+                    None => match std::env::var("PROXIMADB_PAX_VECTOR_QUANT")
+                        .unwrap_or_default()
+                        .to_ascii_lowercase()
+                        .as_str()
+                    {
+                        "rabitq" => VectorQuant::RaBitQ,
+                        "sq8" => VectorQuant::Sq8,
+                        _ => VectorQuant::Auto,
+                    },
                 };
                 // TD-156 / ADR-026: configurable PAX block geometry. `None` keeps
                 // the writer default; a larger value (e.g. 8-16 MiB for object
