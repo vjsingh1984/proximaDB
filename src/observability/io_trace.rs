@@ -522,6 +522,38 @@ fn notify_cache_observer(snap: &IoTraceSnapshot) {
     }
 }
 
+/// Observer invoked at trace flush with `snapshot` + `tenant_id` for **billing**
+/// (ADR-030). The metering layer registers a sink that emits the always-on
+/// per-tenant consumption meters (KRU read-compute, from `compute_ms`) from the
+/// same measured snapshot the perf observers read — so cost-model bytes and
+/// billed bytes cannot diverge. Dependency-inversion seam: io_trace feeds billing
+/// *without depending on it*.
+///
+/// Unlike the route/cache observers this is the **billing class** — always-on,
+/// never wrapped in the perf `io-trace` feature gate (ADR-027 non-entanglement;
+/// CI-guarded).
+type BillingObserver = dyn Fn(&IoTraceSnapshot, Option<&str>) + Send + Sync;
+
+static BILLING_OBSERVER: Mutex<Option<Box<BillingObserver>>> = Mutex::new(None);
+
+/// Install (or clear with `None`) the billing-trace observer. Called once at
+/// startup by the metering layer; replaceable in tests.
+pub fn set_billing_observer(observer: Option<Box<BillingObserver>>) {
+    *BILLING_OBSERVER.lock().unwrap_or_else(|p| p.into_inner()) = observer;
+}
+
+/// Feed the registered billing observer, if any, with a completed query's trace
+/// and the owning tenant. Called after the route + cache observers at scope close.
+fn notify_billing_observer(snap: &IoTraceSnapshot, tenant_id: Option<&str>) {
+    if let Some(obs) = BILLING_OBSERVER
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+    {
+        obs(snap, tenant_id);
+    }
+}
+
 /// Bind a fresh [`IoTrace`] to `future` and await it. Lower-level than
 /// [`instrument`]; use when the caller wants to read the snapshot itself before
 /// the scope ends.
@@ -560,6 +592,12 @@ where
                 if !snap.is_empty() {
                     notify_cache_observer(&snap);
                 }
+                // ADR-030 billing fan-out (always-on): emit the per-tenant
+                // consumption meters (KRU) from the same snapshot. Tenant + the
+                // per-engine compute_ms are both in hand here.
+                if !snap.is_empty() {
+                    notify_billing_observer(&snap, tenant_id.as_deref());
+                }
             }
             out
         })
@@ -569,6 +607,40 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR-030: the always-on billing observer fires at scope close with the
+    /// owning tenant and the same accumulated snapshot the perf observers see —
+    /// so KRU is emitted from `compute_ms` and cannot diverge from the cost
+    /// model's view. Drives the real `instrument` drain path end to end.
+    #[tokio::test]
+    async fn billing_observer_receives_tenant_and_accumulated_compute_ms() {
+        use std::sync::{Arc, Mutex};
+        let captured: Arc<Mutex<Option<(Option<String>, u64, u64)>>> = Arc::new(Mutex::new(None));
+        let sink = captured.clone();
+        set_billing_observer(Some(Box::new(move |snap, tenant| {
+            *sink.lock().unwrap_or_else(|p| p.into_inner()) = Some((
+                tenant.map(String::from),
+                snap.total_compute_ms(),
+                snap.bytes_read,
+            ));
+        })));
+
+        instrument(Some("acme".to_string()), "test-route", async {
+            record_compute_ms("native", 4);
+            record_compute_ms("native", 3);
+            record_bytes_read(100);
+        })
+        .await;
+
+        set_billing_observer(None); // restore global state for other tests
+
+        let got = captured.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        assert_eq!(
+            got,
+            Some((Some("acme".to_string()), 7, 100)),
+            "billing observer must receive the tenant + summed compute_ms (4+3) + bytes_read from the same snapshot"
+        );
+    }
 
     #[test]
     fn classify_maps_known_verbs() {

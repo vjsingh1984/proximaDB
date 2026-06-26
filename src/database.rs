@@ -128,6 +128,11 @@ impl ProximaDB {
         // measured cost of each (shape-class, backend). Observe-mode today —
         // routing is unchanged until a later flag-gated slice.
         crate::query::route_cost_model::install_route_cost_observer();
+        // ADR-030: wire the io_trace flush to the always-on per-tenant billing
+        // meters (KRU read-compute from the snapshot's per-engine compute_ms).
+        // Same snapshot as the route observer above — billed bytes/ms cannot
+        // diverge from the cost model's. Always-on (billing is never gated).
+        crate::metrics::consumption_metrics::install_billing_observer();
         // Co-design C5 (integration): register the tenant→tier Port to read the
         // header-fed tier registry (`X-Tenant-Tier` → `record_store::TENANT_TIERS`),
         // so the per-tenant tier the cache LimitsResolver already sees also drives
