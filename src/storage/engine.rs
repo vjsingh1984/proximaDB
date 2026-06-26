@@ -342,16 +342,20 @@ impl StorageEngine {
 
             // A6 fence is applied inside `materialize_collection` (default-OFF), so a
             // pod displaced by a lease takeover is rejected before the storage write.
-            // `free_wal=false`: keep the WAL so recovery's replay serves exact recall
-            // after restart (the cold SST read path's recall fix is a dependent TD).
-            // Safe here because shutdown is terminal — the still-unflushed batches are
-            // not re-flushed.
+            // `free_wal=true`: once the SST segment is written, free the WAL so the
+            // materialized segment — not a WAL replay — is the durable restart-recall
+            // source (the whole point of materializing to SST; keeping the WAL made
+            // recovery replay it and ignore the segment we just wrote). Safe now that
+            // TD-165 fixed cold-read recall (IVF posting lists populated at flush + the
+            // SST route honors SearchMode); gated by the insert→SIGINT→restart→search
+            // round-trip in runtime-evidence/TD163_SERVER_FLUSH_MATERIALIZATION_2026_06_26.md.
+            // Shutdown is terminal, so the freed batches are never re-flushed.
             match materialize_collection(
                 &write_buffer,
                 &plan,
                 self.storage_write_fence.as_ref(),
                 None,
-                false,
+                true,
             )
             .await
             {
