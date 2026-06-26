@@ -434,6 +434,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
     ) -> Result<Response<pv2::SearchEntitiesResponse>, Status> {
         let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
         let tenant_id = grpc_auth::tenant_id(&request).unwrap_or_default();
+        let principal = grpc_auth::user_id(&request);
         let req = request.into_inner();
 
         debug!(
@@ -496,11 +497,10 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
                 vector_weight: 1.0,
                 graph_weight: 0.3, // modest graph boost; vector similarity leads (tunable)
                 grain: GraphGrain::Nodes,
-                // Within-tenant `permitted_principals` RBAC is not threaded here: gRPC auth
-                // exposes only `tenant_id` (no per-user principal yet — TD-134 RBAC is
-                // REST-only). `None` ⇒ structural isolation. Threading the caller principal
-                // is blocked on gRPC per-user auth (separate task).
-                principal: None,
+                // Within-tenant `permitted_principals` RBAC (TD-134): thread the caller's
+                // principal so the seam's RBAC gate filters records by `permitted_principals`.
+                // `None` (unauthenticated request) ⇒ structural isolation only.
+                principal,
                 policy: FusionPolicy::default(),
                 oid_key: FusionOidKey::EntityNode,
             };
