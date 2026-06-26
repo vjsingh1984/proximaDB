@@ -156,11 +156,6 @@ dimensional architecture* (five physical dimensions co-optimized against the mea
 | SOC 2 compliance plan complete (25 controls, 7-month roadmap). Policy templates and implementation checklist available.
 | Beta = roadmap + scaffolding. Control implementation rolls out across v0.3+ minor releases.
 
-| Go-to-Market
-| **Production Ready**
-| Pricing strategy (4 tiers), conference presence, DevRel team chartered, documentation complete.
-| Marketing/operations surface — not a code claim.
-
 | Lakehouse-native pgwire (Phase 7)
 | **Experimental**
 | Storage-authority catalog + EXPLAIN (TD-060), L0→base compaction core (TD-114), Iceberg snapshots Phase 1 (TD-119), pg_catalog views (TD-120), HTAP constraints incl. ON DELETE FK actions (TD-110), gRPC SQL writes (TD-135).

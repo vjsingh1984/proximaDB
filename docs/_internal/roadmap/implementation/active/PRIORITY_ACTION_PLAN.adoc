@@ -226,13 +226,6 @@ pub async fn search(&self, _query: &[f32], _k: usize) -> Result<Vec<SearchResult
 
 == 🎯 **STRATEGIC POSITIONING**
 
-=== **Current Competitive Advantages**
-1. **6 Specialized Storage Engines** - Unique in market
-2. **Native Graph Database** - Operational with 3 engines
-3. **Enterprise Security** - Production-ready RBAC/MFA/audit
-4. **AI Integration Platform** - Advanced LLM capabilities
-5. **Advanced Quantization** - Hardware-accelerated with multiple levels
-
 === **Post-Index Implementation Position**
 - **Complete vector database platform** with optimal performance
 - **Multi-modal capabilities** exceeding pure vector databases
