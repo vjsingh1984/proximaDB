@@ -86,6 +86,11 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Unified Storage + Metering Substrate (PAX-as-one-internal-format, two-class trace, coalesced write-path, dual-sink metering)
 | Proposed
 | PAX is the single internal format (LSM writes it for all modalities; one reader/one SQL lowering/one I/O-trace; Parquet at the seam). Trace = two classes: billing (always-on, full-fidelity) vs perf/geometry (compile-time gateable). Write-path reuses SST/LSM (threshold-flush + compaction; Aurora/Neon/Turso-grounded; no per-query object writes). Metering dual-sunk: durable per-tenant in object store + external OTLP. Tracked: TD-158, TD-160..162
+
+| link:ADR-028-index-policy-routing.adoc[ADR-028]
+| Per-Collection Index-Policy Routing + Cost-Derived Exact-vs-ANN Auto-Default
+| Proposed
+| Paved road + escape hatch for cold/warm search routing: precedence per-query `SearchMode` > collection `IndexPolicy` (typed proto knob: mode/rehydrate/byte_budget/nprobe, fail-closed validity matrix) > cost-derived auto-default (byte budget = `f(storage_class)`, not a vector count). Cold HNSW is dominated by exact up to the byte budget; quantization-only collections auto-route to HELIX (env-gated default-OFF); fixes IVF Defect B (persist-after-insert) so the cheap cold-load path returns vectors. Tracked: TD-165; cost-model trace consumption TD-158/TD-159
 |===
 
 NOTE: ADR-010 through ADR-013 exist in this directory but are not yet

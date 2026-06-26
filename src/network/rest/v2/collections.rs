@@ -171,6 +171,93 @@ pub struct CreateCollectionV2Request {
     /// Quantization config (gRPC-v2 parity). When omitted, quantization is
     /// left unset (engine default).
     pub quantization: Option<QuantizationConfigInput>,
+    /// Per-collection cold/warm search routing policy (ADR-028). When omitted,
+    /// the system decides cost-derived (`mode = "auto"`). Owners with hard SLAs
+    /// override here; query-time precedence is per-query `search_mode` > this
+    /// policy > cost-model auto-default.
+    pub index_policy: Option<IndexPolicyInput>,
+}
+
+/// REST input for the per-collection index routing policy (mirrors proto
+/// `IndexPolicy`; ADR-028).
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct IndexPolicyInput {
+    /// Routing mode: "auto" (default) | "exact" | "ivf" | "hnsw" | "helix".
+    /// "auto"/omitted ⇒ cost-derived. "exact" ⇒ always brute-force (no index).
+    /// The engine modes force the collection onto that engine/route.
+    pub mode: Option<String>,
+    /// Cold-start index warming: "auto" (default) | "eager" | "lazy" | "never".
+    /// Index/auto modes only — rejected when `mode = "exact"`.
+    pub rehydrate: Option<String>,
+    /// Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
+    /// for the storage class.
+    pub byte_budget: Option<u64>,
+    /// nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when
+    /// `mode = "exact"`.
+    pub nprobe: Option<u32>,
+}
+
+/// ADR-028: validate a REST `IndexPolicyInput` and map it onto the proto
+/// `IndexPolicy`, fail-closed. Modes and rehydrate strings are checked against
+/// allowlists, and the validity matrix is enforced: `rehydrate`/`nprobe` are
+/// index/auto concepts and are rejected when `mode = "exact"` (exact builds no
+/// index). Strings are normalized to lowercase so downstream consumers match
+/// case-insensitively.
+fn build_index_policy(
+    input: IndexPolicyInput,
+) -> Result<crate::proto::proximadb_v1::IndexPolicy, ApiError> {
+    let mode = input
+        .mode
+        .as_deref()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "auto".to_string());
+    let valid_modes = ["auto", "exact", "ivf", "hnsw", "helix"];
+    if !valid_modes.contains(&mode.as_str()) {
+        return Err(ApiError::InvalidArgument(format!(
+            "Invalid index_policy.mode '{}'. Valid modes: {:?}",
+            mode, valid_modes
+        )));
+    }
+
+    let rehydrate = input
+        .rehydrate
+        .as_deref()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "auto".to_string());
+    let valid_rehydrate = ["auto", "eager", "lazy", "never"];
+    if !valid_rehydrate.contains(&rehydrate.as_str()) {
+        return Err(ApiError::InvalidArgument(format!(
+            "Invalid index_policy.rehydrate '{}'. Valid values: {:?}",
+            rehydrate, valid_rehydrate
+        )));
+    }
+
+    let nprobe = input.nprobe.unwrap_or(0);
+
+    // Validity matrix (fail-closed): exact builds no index, so index-only knobs
+    // are contradictory with it.
+    if mode == "exact" {
+        if rehydrate != "auto" {
+            return Err(ApiError::InvalidArgument(
+                "index_policy.rehydrate is invalid with mode='exact' (exact builds no index to rehydrate)".to_string(),
+            ));
+        }
+        if nprobe != 0 {
+            return Err(ApiError::InvalidArgument(
+                "index_policy.nprobe is invalid with mode='exact' (exact builds no index)"
+                    .to_string(),
+            ));
+        }
+    }
+
+    Ok(crate::proto::proximadb_v1::IndexPolicy {
+        mode,
+        rehydrate,
+        byte_budget: input.byte_budget.unwrap_or(0),
+        nprobe,
+    })
 }
 
 /// REST input for a single index config (mirrors proto `IndexConfig`).
@@ -614,6 +701,14 @@ pub async fn create_collection_v2(
         }
     });
 
+    // ADR-028: validate + map the optional index routing policy. Fail-closed on
+    // nonsensical combinations (the mode×rehydrate/nprobe validity matrix) so a
+    // bad policy is rejected at create rather than silently ignored at query time.
+    let index_policy = match request.index_policy.take() {
+        None => None,
+        Some(p) => Some(build_index_policy(p)?),
+    };
+
     let mut collection_config = CollectionConfig {
         name: request.name.clone(),
         dimension: request.dimension,
@@ -622,6 +717,7 @@ pub async fn create_collection_v2(
         canonical_embedding_precision,
         index_configs,
         quantization,
+        index_policy,
         tags: request.tags.take().unwrap_or_default(),
         enable_proxima_record: Some(proxima_record_enabled),
         ..Default::default()
@@ -4672,5 +4768,101 @@ mod tests {
         assert_eq!(v["index_specs"][0]["is_primary"], true);
         assert_eq!(v["quantization"]["enabled"], true);
         assert_eq!(v["quantization"]["strategy"], "aggressive");
+    }
+
+    // ---- ADR-028 index_policy validation ----
+
+    fn policy_input(mode: &str) -> IndexPolicyInput {
+        IndexPolicyInput {
+            mode: Some(mode.to_string()),
+            rehydrate: None,
+            byte_budget: None,
+            nprobe: None,
+        }
+    }
+
+    #[test]
+    fn index_policy_defaults_to_auto() {
+        let p = build_index_policy(IndexPolicyInput {
+            mode: None,
+            rehydrate: None,
+            byte_budget: None,
+            nprobe: None,
+        })
+        .expect("auto policy is valid");
+        assert_eq!(p.mode, "auto");
+        assert_eq!(p.rehydrate, "auto");
+        assert_eq!(p.byte_budget, 0);
+        assert_eq!(p.nprobe, 0);
+    }
+
+    #[test]
+    fn index_policy_normalizes_and_accepts_valid_modes() {
+        for (raw, expect) in [
+            ("Exact", "exact"),
+            (" HELIX ", "helix"),
+            ("ivf", "ivf"),
+            ("HNSW", "hnsw"),
+        ] {
+            let p = build_index_policy(policy_input(raw)).expect("valid mode");
+            assert_eq!(p.mode, expect);
+        }
+    }
+
+    #[test]
+    fn index_policy_rejects_unknown_mode() {
+        let err = build_index_policy(policy_input("magic")).unwrap_err();
+        assert!(matches!(err, ApiError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn index_policy_rejects_rehydrate_with_exact() {
+        let err = build_index_policy(IndexPolicyInput {
+            mode: Some("exact".into()),
+            rehydrate: Some("eager".into()),
+            byte_budget: None,
+            nprobe: None,
+        })
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn index_policy_rejects_nprobe_with_exact() {
+        let err = build_index_policy(IndexPolicyInput {
+            mode: Some("exact".into()),
+            rehydrate: None,
+            byte_budget: None,
+            nprobe: Some(16),
+        })
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn index_policy_exact_with_byte_budget_is_allowed() {
+        // byte_budget is meaningful for exact (it caps the auto brute-force gate),
+        // so it must NOT be rejected.
+        let p = build_index_policy(IndexPolicyInput {
+            mode: Some("exact".into()),
+            rehydrate: None,
+            byte_budget: Some(8 * 1024 * 1024),
+            nprobe: None,
+        })
+        .expect("exact + byte_budget is valid");
+        assert_eq!(p.mode, "exact");
+        assert_eq!(p.byte_budget, 8 * 1024 * 1024);
+    }
+
+    #[test]
+    fn index_policy_rejects_unknown_rehydrate() {
+        let err = build_index_policy(IndexPolicyInput {
+            mode: Some("ivf".into()),
+            rehydrate: Some("whenever".into()),
+            byte_budget: None,
+            nprobe: None,
+        })
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidArgument(_)));
     }
 }
