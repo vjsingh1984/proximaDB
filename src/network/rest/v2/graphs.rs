@@ -243,7 +243,6 @@ pub async fn impact_analysis_v2(
     );
 
     let response = state
-        .request_handlers
         .graph_operations_service
         .impact_analysis(
             &graph_id,
