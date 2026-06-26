@@ -90,6 +90,34 @@ fn try_begin_axis_rebuild(collection_id: &str) -> Option<AxisRebuildPermit> {
     })
 }
 
+/// ADR-030 / TD-158: attribute an SST vector-search query's compute time to KRU
+/// on **any** exit path (the search has several early returns — exact-scan,
+/// orchestrated, direct). On drop it records the elapsed millis to the active
+/// per-query I/O trace under the given engine label; `record_compute_ms` no-ops
+/// outside an `io_trace` scope, so internal/test callers are unaffected.
+struct ComputeMsGuard {
+    engine: &'static str,
+    started: std::time::Instant,
+}
+
+impl ComputeMsGuard {
+    fn new(engine: &'static str) -> Self {
+        Self {
+            engine,
+            started: std::time::Instant::now(),
+        }
+    }
+}
+
+impl Drop for ComputeMsGuard {
+    fn drop(&mut self) {
+        crate::observability::io_trace::record_compute_ms(
+            self.engine,
+            self.started.elapsed().as_millis() as u64,
+        );
+    }
+}
+
 /// TD-165: the exact-vs-approximate route is a *cost* decision, and for a cloud DB
 /// the dominant term is bytes read from object storage, not vectors or CPU. An
 /// `Adaptive` search takes the exact brute-force segment scan when the whole scan
@@ -209,6 +237,9 @@ impl SstEngine {
         ctx: &StorageQueryContext,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let _search_start = std::time::Instant::now();
+        // ADR-030 / TD-158: attribute this query's SST compute to KRU on any exit
+        // path (records the elapsed time to the active io_trace on drop).
+        let _compute_guard = ComputeMsGuard::new("sst");
 
         // Track metadata access for cache optimization
         if let Some(orch) = self.orchestrator() {
@@ -1388,6 +1419,33 @@ mod tests {
     use proximadb_data_model::ProximaValue;
     use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
     use std::sync::Arc;
+
+    /// ADR-030 / TD-158: the SST `ComputeMsGuard` records elapsed compute to the
+    /// active per-query I/O trace on drop, under the engine label — so the
+    /// billing observer can attribute KRU to "sst". No-op outside a scope.
+    #[tokio::test]
+    async fn compute_ms_guard_records_to_active_io_trace() {
+        use crate::observability::io_trace;
+        let snap = io_trace::scope(async {
+            {
+                let _g = ComputeMsGuard::new("sst");
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            } // guard drops here → records elapsed into the active trace
+            io_trace::snapshot()
+        })
+        .await
+        .expect("snapshot inside an active io_trace scope");
+        assert!(
+            snap.compute_ms.contains_key("sst"),
+            "guard must record compute under the 'sst' engine label, got {:?}",
+            snap.compute_ms
+        );
+        assert!(
+            snap.total_compute_ms() >= 1,
+            "elapsed compute must be >= 1ms after a 2ms sleep, got {}",
+            snap.total_compute_ms()
+        );
+    }
 
     #[tokio::test]
     async fn test_parse_storage_url() {

@@ -293,11 +293,16 @@ pub async fn try_run_select(
             allow_engine_sql_fallback: true,
             controls: controls.clone(),
         };
-        return Some(
-            execute_sql_with_backend(decision.backend.clone(), sql, context)
-                .await
-                .map_err(|e| e.to_string()),
+        // ADR-030 / TD-158: time the DataFusion (engine-SQL fallback) execution so
+        // the always-on billing observer can attribute KRU to this engine at scope
+        // close. `record_compute_ms` no-ops outside an `io_trace` scope.
+        let started = std::time::Instant::now();
+        let engine_result = execute_sql_with_backend(decision.backend.clone(), sql, context).await;
+        crate::observability::io_trace::record_compute_ms(
+            &crate::query::compute_scheduler::backend_label(&decision.backend),
+            started.elapsed().as_millis() as u64,
         );
+        return Some(engine_result.map_err(|e| e.to_string()));
     }
 
     let snapshot = SnapshotCatalog {
