@@ -194,6 +194,7 @@ mod api_consistency_tests {
                 canonical_embedding_precision: None,
                 permitted_principals: vec![],
                 index_policy: None,
+                pax_vector_quant: None,
             }),
             query_params: Default::default(),
             options: Default::default(),
