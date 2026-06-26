@@ -553,107 +553,139 @@ mod tests {
 
     #[tokio::test]
     async fn native_volcano_stream_yields_rows_incrementally() {
-        let result = NativeVolcanoEngine::execute_physical_stream(
-            values_plan(),
-            &EmptyReaderFactory,
-            ExecutionControls::default(),
-        )
+        // Wrap in a timeout — see native_volcano_stream_truncates_without_error
+        // (CLAUDE.md #11): the streaming path intermittently hangs, so bound it.
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let result = NativeVolcanoEngine::execute_physical_stream(
+                values_plan(),
+                &EmptyReaderFactory,
+                ExecutionControls::default(),
+            )
+            .await
+            .expect("values plan should open for streaming");
+
+            // Schema is available before draining any row.
+            assert_eq!(result.schema.columns[0].name, "id");
+
+            let mut rows = result.rows;
+            let first = rows.next().await.expect("first row").expect("row ok");
+            assert_eq!(first, vec![ProximaValue::Int64(1)]);
+            let second = rows.next().await.expect("second row").expect("row ok");
+            assert_eq!(second, vec![ProximaValue::Int64(2)]);
+            assert!(rows.next().await.is_none());
+        })
         .await
-        .expect("values plan should open for streaming");
-
-        // Schema is available before draining any row.
-        assert_eq!(result.schema.columns[0].name, "id");
-
-        let mut rows = result.rows;
-        let first = rows.next().await.expect("first row").expect("row ok");
-        assert_eq!(first, vec![ProximaValue::Int64(1)]);
-        let second = rows.next().await.expect("second row").expect("row ok");
-        assert_eq!(second, vec![ProximaValue::Int64(2)]);
-        assert!(rows.next().await.is_none());
+        .expect(
+            "volcano stream timed out >10s — investigate execute_physical_stream (CLAUDE.md #11)",
+        );
     }
 
     #[tokio::test]
     async fn native_volcano_stream_honors_mid_stream_cancellation() {
-        let flag = Arc::new(AtomicBool::new(false));
-        let controls = ExecutionControls {
-            cancellation_flag: Some(flag.clone()),
-            ..Default::default()
-        };
-        let result = NativeVolcanoEngine::execute_physical_stream(
-            values_plan(),
-            &EmptyReaderFactory,
-            controls,
-        )
-        .await
-        .expect("values plan should open for streaming");
-
-        let mut rows = result.rows;
-        let first = rows.next().await.expect("first row").expect("row ok");
-        assert_eq!(first, vec![ProximaValue::Int64(1)]);
-
-        // Cancel after the first row; the next pull must surface Cancelled rather
-        // than continuing to drain the plan.
-        flag.store(true, Ordering::Relaxed);
-        let err = rows
-            .next()
+        // Wrap in a timeout — see native_volcano_stream_truncates_without_error
+        // (CLAUDE.md #11): the streaming path intermittently hangs, so bound it.
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let flag = Arc::new(AtomicBool::new(false));
+            let controls = ExecutionControls {
+                cancellation_flag: Some(flag.clone()),
+                ..Default::default()
+            };
+            let result = NativeVolcanoEngine::execute_physical_stream(
+                values_plan(),
+                &EmptyReaderFactory,
+                controls,
+            )
             .await
-            .expect("a stream item")
-            .expect_err("cancelled mid-stream");
-        assert!(matches!(err, ExecutionError::Cancelled));
+            .expect("values plan should open for streaming");
+
+            let mut rows = result.rows;
+            let first = rows.next().await.expect("first row").expect("row ok");
+            assert_eq!(first, vec![ProximaValue::Int64(1)]);
+
+            // Cancel after the first row; the next pull must surface Cancelled rather
+            // than continuing to drain the plan.
+            flag.store(true, Ordering::Relaxed);
+            let err = rows
+                .next()
+                .await
+                .expect("a stream item")
+                .expect_err("cancelled mid-stream");
+            assert!(matches!(err, ExecutionError::Cancelled));
+        })
+        .await
+        .expect(
+            "volcano stream timed out >10s — investigate execute_physical_stream (CLAUDE.md #11)",
+        );
     }
 
     #[tokio::test]
     async fn native_volcano_stream_enforces_row_limit() {
-        let controls = ExecutionControls {
-            max_rows: Some(1),
-            ..Default::default()
-        };
-        let result = NativeVolcanoEngine::execute_physical_stream(
-            values_plan(),
-            &EmptyReaderFactory,
-            controls,
-        )
-        .await
-        .expect("values plan should open for streaming");
-
-        let mut rows = result.rows;
-        let first = rows.next().await.expect("first row").expect("row ok");
-        assert_eq!(first, vec![ProximaValue::Int64(1)]);
-        let err = rows
-            .next()
+        // Wrap in a timeout — see native_volcano_stream_truncates_without_error
+        // (CLAUDE.md #11): the streaming path intermittently hangs, so bound it.
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let controls = ExecutionControls {
+                max_rows: Some(1),
+                ..Default::default()
+            };
+            let result = NativeVolcanoEngine::execute_physical_stream(
+                values_plan(),
+                &EmptyReaderFactory,
+                controls,
+            )
             .await
-            .expect("a stream item")
-            .expect_err("row limit should reject the overflow row");
-        assert!(matches!(
-            err,
-            ExecutionError::RowLimitExceeded {
-                limit: 1,
-                actual: 2
-            }
-        ));
+            .expect("values plan should open for streaming");
+
+            let mut rows = result.rows;
+            let first = rows.next().await.expect("first row").expect("row ok");
+            assert_eq!(first, vec![ProximaValue::Int64(1)]);
+            let err = rows
+                .next()
+                .await
+                .expect("a stream item")
+                .expect_err("row limit should reject the overflow row");
+            assert!(matches!(
+                err,
+                ExecutionError::RowLimitExceeded {
+                    limit: 1,
+                    actual: 2
+                }
+            ));
+        })
+        .await
+        .expect(
+            "volcano stream timed out >10s — investigate execute_physical_stream (CLAUDE.md #11)",
+        );
     }
 
     #[tokio::test]
     async fn native_volcano_stream_truncates_without_error() {
-        let controls = ExecutionControls {
-            max_rows: Some(1),
-            row_limit_mode: RowLimitMode::Truncate,
-            ..Default::default()
-        };
-        let result = NativeVolcanoEngine::execute_physical_stream(
-            values_plan(),
-            &EmptyReaderFactory,
-            controls,
-        )
-        .await
-        .expect("values plan should open for streaming");
+        // Wrap in a timeout to convert the known streaming hang (CLAUDE.md #11:
+        // Limit executor race) into a deterministic, bounded failure instead of
+        // an indefinite CI runner block. If this times out, the root cause is
+        // the Limit executor's stream-termination race — not the test logic.
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let controls = ExecutionControls {
+                max_rows: Some(1),
+                row_limit_mode: RowLimitMode::Truncate,
+                ..Default::default()
+            };
+            let result = NativeVolcanoEngine::execute_physical_stream(
+                values_plan(),
+                &EmptyReaderFactory,
+                controls,
+            )
+            .await
+            .expect("values plan should open for streaming");
 
-        let mut rows = result.rows;
-        let first = rows.next().await.expect("first row").expect("row ok");
-        assert_eq!(first, vec![ProximaValue::Int64(1)]);
-        // Truncate mode stops at the cap with no overflow error: the second row
-        // of the values plan is never produced.
-        assert!(rows.next().await.is_none());
+            let mut rows = result.rows;
+            let first = rows.next().await.expect("first row").expect("row ok");
+            assert_eq!(first, vec![ProximaValue::Int64(1)]);
+            // Truncate mode stops at the cap with no overflow error: the second row
+            // of the values plan is never produced.
+            assert!(rows.next().await.is_none());
+        })
+        .await
+        .expect("stream truncated within 10s — if timed out, the Limit executor race is the root cause (CLAUDE.md #11)");
     }
 
     #[tokio::test]
