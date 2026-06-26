@@ -889,7 +889,7 @@ mod tests {
             .duration_since(parsed.not_before)
             .expect("Failed to calculate duration");
         let days = duration.as_secs() / (24 * 60 * 60);
-        assert!(days >= 29 && days <= 31);
+        assert!((29..=31).contains(&days));
     }
 
     #[test]

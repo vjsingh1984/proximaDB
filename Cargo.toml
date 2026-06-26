@@ -53,6 +53,7 @@ members = [
     "crates/horizontal/proximadb-runtime-common",
     "crates/horizontal/proximadb-serialization",
     "crates/horizontal/proximadb-security",
+    "crates/horizontal/proximadb-tls",
     "crates/horizontal/proximadb-telemetry",
     "crates/platform/proximadb-api",
     "crates/platform/proximadb-runtime",
@@ -212,6 +213,7 @@ proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
+proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
@@ -304,6 +306,7 @@ proximadb-embedded-common = { path = "crates/horizontal/proximadb-embedded-commo
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
 proximadb-security = { path = "crates/horizontal/proximadb-security" }
+proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-object-store = { path = "crates/storage/proximadb-object-store" }
@@ -618,7 +621,7 @@ gcp = ["dep:google-cloud-storage"]
 # ============================================================================
 
 # Network REST endpoints (HTTP/HTTPS server components)
-network-rest = []
+network-rest = ["proximadb-tls/network-rest"]
 
 # CDC Kafka integration (change data capture to Kafka)
 # Note: rdkafka dependency would be added when enabling this feature
