@@ -729,6 +729,12 @@ mod tests {
 
         let temp_dir = TempDir::new().unwrap();
         let storage_url = format!("file://{}", temp_dir.path().display());
+        // The catalog is file-backed (NativeCatalog persists table metadata JSON under
+        // storage_url), so the tempdir MUST outlive this fn. Without this, Drop deletes
+        // the catalog's storage the moment setup returns, and every later `get_collection`
+        // / `table_exists` misses — manifesting as "Table not found" across the whole
+        // analyzer suite. Mirrors the embedded parity test's `std::mem::forget(dir)`.
+        std::mem::forget(temp_dir);
 
         let catalog_manager = Arc::new(CatalogManager::new());
         catalog_manager

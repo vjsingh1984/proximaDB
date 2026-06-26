@@ -1911,6 +1911,9 @@ impl CollectionService {
             {
                 existing
                     .properties
+                    .insert("asset.kind".to_string(), "collection".to_string());
+                existing
+                    .properties
                     .insert("asset.capability.vector".to_string(), "true".to_string());
                 existing
                     .properties
