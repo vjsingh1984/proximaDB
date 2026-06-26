@@ -2039,11 +2039,23 @@ impl CollectionService {
         table_id: &TableIdentifier,
         schema: &CatalogTableSchema,
     ) -> Result<Option<Collection>> {
-        if schema
+        // A catalog asset is readable as a collection when it is either a pure
+        // collection asset (`asset.kind == "collection"`) OR a table that gained
+        // vector capability via `upsert_collection_catalog_asset`'s adopt branch
+        // (`asset.capability.vector == "true"`). That branch deliberately
+        // preserves the existing `asset.kind` (e.g. an agentic_mixed DDL table)
+        // and signals vector usability through the capability flag, so gating on
+        // `asset.kind` alone hides such tables from `get_collection`, breaking
+        // DML INSERT into agentic-DDL tables. `collection.id` below still gates.
+        let is_collection_asset = schema
             .properties
             .get("asset.kind")
-            .is_none_or(|kind| kind != "collection")
-        {
+            .is_some_and(|kind| kind == "collection");
+        let is_vector_capable = schema
+            .properties
+            .get("asset.capability.vector")
+            .is_some_and(|flag| flag == "true");
+        if !is_collection_asset && !is_vector_capable {
             return Ok(None);
         }
 

@@ -71,6 +71,16 @@ mod tests {
                 params.vector_records.len()
             );
 
+            // Simulate measurable flush work. The trait `flush()` wrapper
+            // (trait_components/writer.rs) is authoritative for timing — it
+            // overwrites `duration_ms` with the real elapsed wall clock of
+            // `do_flush`. Without spending real time here, an instant mock
+            // intermittently yields `duration_ms == 0`, flaking the metrics
+            // assertion `last_flush_duration_ms > 0`. The `Some(100)` below is
+            // discarded by that wrapper; the sleep is what makes the recorded
+            // duration reliably non-zero.
+            sleep(Duration::from_millis(2)).await;
+
             Ok(FlushResult {
                 success: true,
                 collections_affected: vec![collection_id],
