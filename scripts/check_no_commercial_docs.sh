@@ -1,33 +1,36 @@
 #!/usr/bin/env bash
-# OSS docs decontamination lint.
+# OSS docs decontamination lint (BLOCKING).
 #
 # ProximaDB OSS ships MECHANISM + NEUTRAL meters only. Commercial POLICY
-# ($ rates, ARR/revenue targets, tier authority, GTM) lives in anvaiops — see
-# docs/12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc. This lint blocks
+# ($-pricing rates, $-ARR/revenue targets, $-budgets/salaries) lives in anvaiops
+# — see docs/12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc. This lint BLOCKS
 # accidental re-introduction of commercial $-content into the public docs.
 #
-# Phase 1 (this script): $-per-unit pricing + $-denominated ARR/TAM/revenue
-# targets. Phase 2 (once the MEDIUM commercial-flavored docs are cleaned):
-# broaden to GTM/competitive-positioning phrases. Archived docs
-# (docs/_archive/, docs/_internal/archive/) are excluded here — their
-# commercial content is relocated separately (tracked follow-up).
+# Catches: $-per-unit pricing ($0.50/hour, $100/DBU) + $-denominated amounts
+# ($50M, $400K — covers ARR targets, budgets, salaries). Bare demo prices
+# ($500 in a use-case example) are NOT matched (no K/M/B suffix, no /unit).
+#
+# ALLOWLISTED (legitimately use $ as DESIGN rationale — market-size context,
+# cloud cost model, the boundary definition itself): the co-design mechanism
+# docs. New policy $ there is caught by review, not this lint.
 set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
-# $-per-unit pricing ($0.50/hour, $10,000/node, $0.02/TB, …) and
-# $-denominated targets ($50M ARR, $4.3B TAM, $10K, …).
 PATTERN='\$[0-9]+(\.[0-9]+)?[[:space:]]*(per[[:space:]]*)?(TB|GB|MB|hour|hr|node|month|mo|credit|DBU|query|index|replica)|\$[0-9]+(\.[0-9]+)?[[:space:]]*[KMB]\b'
 
-# Scope: docs/ (AsciiDoc + Markdown). Exclude BOTH archive roots (deferred).
+# Exclude: archives (deferred) + the mechanism/boundary docs that use $ as design rationale.
+ALLOWLIST='/docs/(_archive|_internal/archive)/|/docs/12-design/CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19\.adoc|/docs/12-design/OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21\.adoc|/docs/12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17\.adoc|/docs/CO_DESIGN_HANDOFF\.md|/scripts/check_no_commercial_docs\.sh'
+
 mapfile -t HITS < <(grep -rniE "$PATTERN" --include='*.adoc' --include='*.md' "$ROOT/docs" 2>/dev/null \
-  | grep -vE '/docs/(_archive|_internal/archive)/' || true)
+  | grep -vE "$ALLOWLIST" || true)
 
 if [ "${#HITS[@]}" -gt 0 ]; then
-  echo "::error::Commercial \$-content (pricing / ARR / TAM targets) found in OSS docs." >&2
-  echo "ProximaDB OSS ships mechanism + neutral meters only; \$ rates/revenue targets belong in anvaiops." >&2
-  echo "See docs/12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc (the boundary definition)." >&2
+  echo "::error::Commercial \$-content (pricing / ARR / budgets / salaries) found in OSS docs." >&2
+  echo "ProximaDB OSS ships mechanism + neutral meters only; \$ rates/revenue/budgets belong in anvaiops." >&2
+  echo "See docs/12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc. If this is design-context \$ (market-size," >&2
+  echo "cloud cost model), add the file to the ALLOWLIST in scripts/check_no_commercial_docs.sh with a reason." >&2
   echo "--- hits ---" >&2
   printf '%s\n' "${HITS[@]}" >&2
   exit 1
 fi
-echo "ok: no commercial \$-content (pricing / ARR / TAM) in OSS docs"
+echo "ok: no commercial \$-content in OSS docs (allowlisted mechanism docs aside)"

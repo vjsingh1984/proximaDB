@@ -284,6 +284,17 @@ jobs:
       - name: Validate deterministic guard wiring
         run: python3 scripts/check_deterministic_commit_contract.py
 
+  oss-docs-decontamination:
+    name: OSS Docs Decontamination
+    runs-on: ubuntu-latest
+    needs: changes
+    steps:
+      - uses: actions/checkout@v4
+      - name: Block commercial $-content in OSS docs
+        # ProximaDB OSS ships mechanism + neutral meters; $-policy lives in anvaiops.
+        # See docs/12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc + scripts/check_no_commercial_docs.sh.
+        run: bash scripts/check_no_commercial_docs.sh
+
   rust-format:
     name: Rust Format
     runs-on: ubuntu-latest
