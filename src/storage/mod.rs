@@ -205,7 +205,14 @@ pub mod engines;
 pub mod persistence;
 
 // Encryption at rest for data security
-pub mod encryption;
+// Extracted to the `proximadb-storage-encryption` crate; re-exported here for source
+// compatibility (root-crate decomposition).
+pub use proximadb_storage_encryption as encryption;
+
+// EncryptedFilesystem decorator tests stayed in root because they drive the real
+// root-resident LocalFileSystem backend (see the module's header for rationale).
+#[cfg(test)]
+mod encryption_filesystem_tests;
 
 // Unified atomic operations
 pub mod transaction_coordinator;

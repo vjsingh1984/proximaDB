@@ -171,7 +171,7 @@ impl WALEncryptionLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::encryption::key_manager::KeyManager;
+    use crate::key_manager::KeyManager;
 
     #[test]
     fn test_wal_encryption_round_trip() {

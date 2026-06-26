@@ -12,6 +12,12 @@
 // - Per-file key derivation via HKDF
 // - Key rotation support
 // - <5% performance overhead
+//
+// Extracted from the root crate's `src/storage/encryption` as a slice of the root-crate
+// decomposition (see `docs/12-design/ROOT_CRATE_DECOMPOSITION_PLAN_2026_06_21.adoc`). The
+// transparent `EncryptedFilesystem` decorator wraps the `FileSystem` trait from
+// `proximadb-storage-filesystem-types`. The root crate re-exports this crate as
+// `crate::storage::encryption` for source compatibility.
 
 pub mod file_encryption;
 pub mod filesystem;
