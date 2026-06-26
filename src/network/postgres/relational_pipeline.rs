@@ -337,9 +337,18 @@ async fn execute_physical<F: ReaderFactory>(
     factory: &F,
     controls: ExecutionControls,
 ) -> Result<ExecutionPipelineResult, String> {
-    NativeVolcanoEngine::execute_physical(physical, factory, controls)
+    // ADR-030 / TD-158: feed the per-query I/O trace the native engine's compute
+    // time so the always-on billing observer can emit KRU(tenant, "native") at
+    // scope close. `record_compute_ms` no-ops outside an `io_trace` scope.
+    let started = std::time::Instant::now();
+    let result = NativeVolcanoEngine::execute_physical(physical, factory, controls)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+    crate::observability::io_trace::record_compute_ms(
+        "native",
+        started.elapsed().as_millis() as u64,
+    );
+    result
 }
 
 /// Like [`execute_physical`] but meters every operator (EXPLAIN ANALYZE): returns the

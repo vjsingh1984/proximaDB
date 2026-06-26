@@ -569,6 +569,26 @@ pub fn record_task_execution_time(tenant_id: Option<&str>, engine: &str, duratio
         .inc_by(duration_ms);
 }
 
+/// ADR-030: install the always-on **billing** observer on the per-query I/O trace.
+///
+/// At each query's trace flush this reads the *same* `IoTraceSnapshot` the perf
+/// observers read and emits the per-tenant **KRU** read-compute meter from the
+/// snapshot's per-engine `compute_ms` map — closing the verified-unwired
+/// `record_task_execution_time` gap. Always-on (never behind the perf `io-trace`
+/// feature gate; ADR-027 non-entanglement). Called once at startup, after the
+/// route-cost observer. Idempotent / replaceable in tests.
+pub fn install_billing_observer() {
+    crate::observability::io_trace::set_billing_observer(Some(Box::new(|snap, tenant_id| {
+        // KRU (read-compute): per-(tenant, engine), straight from the engine-keyed
+        // compute_ms map — no extra attribution needed.
+        for (engine, ms) in &snap.compute_ms {
+            if *ms > 0 {
+                record_task_execution_time(tenant_id, engine, *ms as f64);
+            }
+        }
+    })));
+}
+
 /// Record outgress bytes for one tenant — the single convergent **KOU** meter
 /// (Dimension 2). `direction` is `"read"` (object store → compute) or `"result"`
 /// (compute → client). It does two things at once so every boundary records
