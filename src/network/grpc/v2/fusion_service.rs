@@ -64,6 +64,7 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
         // Tenant isolation is structural: the backing vector/graph collections are
         // tenant-namespaced via `x-tenant-id`. We read it here only for logging.
         let tenant_id = grpc_auth::tenant_id(&request);
+        let principal = grpc_auth::user_id(&request);
         let req = request.into_inner();
 
         if req.query_vector.is_empty() {
@@ -122,10 +123,10 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
             vector_weight: req.vector_weight.unwrap_or(1.0),
             graph_weight: req.graph_weight.unwrap_or(1.0),
             grain,
-            // gRPC fusion relies on structural tenant isolation today; the within-tenant
-            // `permitted_principals` RBAC principal is not yet threaded over gRPC (REST-only in
-            // this TD-131 cut). `None` ⇒ the gate fails open (structural isolation preserved).
-            principal: None,
+            // Within-tenant `permitted_principals` RBAC (TD-134): thread the caller's principal
+            // so the seam's RBAC gate filters records. `None` (unauthenticated) ⇒ fails open
+            // (structural isolation preserved).
+            principal,
             policy,
             oid_key: FusionOidKey::Canonical,
         };
