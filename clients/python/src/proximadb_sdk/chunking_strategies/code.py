@@ -1,6 +1,15 @@
 """
 Code-aware chunking strategy using Tree-sitter for AST parsing.
 
+.. deprecated:: TD-CG2 (ADR-028)
+    This in-SDK code chunker duplicates the tree-sitter symbol+relation chunker that
+    now lives in the shared, neutral ``victor-codegraph`` package (Victor owns it; the
+    ProximaDB SDK, Victor, and AnvaiOps all consume it). When ``victor_codegraph`` is
+    installed (``pip install 'proximadb[codegraph]'``), ``CodeChunkingStrategy``
+    **delegates** to it; otherwise it falls back to the legacy in-file implementation
+    below. The legacy implementation is slated for deletion one minor release after
+    ``victor-codegraph`` is published — prefer ``from victor_codegraph import chunk``.
+
 This module provides AST-based code chunking that produces semantic code units
 (functions, classes, methods) with full structural awareness and relationship extraction.
 
@@ -14,12 +23,33 @@ Unlike text-based chunking, this:
 import hashlib
 import os
 import re
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any
 
 from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
+
+# Optional delegation target (TD-CG2). Imported softly so the SDK keeps working without
+# the `codegraph` extra; when present, it is the single source of truth for code chunking.
+try:  # pragma: no cover - availability depends on the optional extra
+    import victor_codegraph as _victor_codegraph
+except Exception:  # ImportError, or a partial/native load failure
+    _victor_codegraph = None
+
+
+def _warn_code_chunker_deprecated() -> None:
+    """Steer callers toward the shared ``victor-codegraph`` package (ADR-028 / TD-CG2)."""
+
+    warnings.warn(
+        "proximadb_sdk.chunking_strategies.code is deprecated (TD-CG2): the tree-sitter "
+        "code chunker now lives in the shared 'victor-codegraph' package. Install "
+        "`proximadb[codegraph]` and prefer `from victor_codegraph import chunk`. The "
+        "legacy in-SDK implementation will be removed in a future minor release.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
 
 
 class CodeSymbolType(IntEnum):
@@ -4192,6 +4222,7 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
     """
 
     def __init__(self, config: CodeChunkingConfig | None = None):
+        _warn_code_chunker_deprecated()
         self.config = config or CodeChunkingConfig()
         # Lazily-instantiated parsers, keyed by language. We do NOT eagerly
         # build all ~23 tree-sitter parsers here: loading every grammar to chunk
@@ -4252,6 +4283,10 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
         metadata = metadata or {}
         language = metadata.get("language") or self._detect_language(source_id)
 
+        # TD-CG2: when the shared package is installed, it is the source of truth.
+        if _victor_codegraph is not None:
+            return self._chunk_via_victor_codegraph(text, source_id, language, metadata)
+
         parser = self._get_parser(language)
         if parser is None:
             # Fall back to semantic text chunking
@@ -4308,6 +4343,46 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
             )
 
         return chunks
+
+    def _chunk_via_victor_codegraph(
+        self,
+        text: str,
+        source_id: str,
+        language: str | None,
+        metadata: dict[str, Any],
+    ) -> list[TextChunk]:
+        """Delegate to the shared ``victor-codegraph`` package and adapt to TextChunk.
+
+        TD-CG2: this is the single source of truth when the ``codegraph`` extra is
+        installed. ``victor_codegraph`` already applies size-capping and a real JS/TS
+        parser (gaps this legacy module had), so its ``CodeChunk`` output is adapted
+        one-to-one into the SDK's ``TextChunk`` shape.
+        """
+        cfg = _victor_codegraph.ChunkConfig(
+            max_chunk_tokens=max(1, int(self.config.chunk_size / 3.5)),
+            chunk_overlap_tokens=max(0, int(self.config.chunk_overlap / 3.5)),
+            languages=self.config.languages,
+            include_private=self.config.include_private,
+            extract_relations=self.config.extract_relations,
+        )
+        out: list[TextChunk] = []
+        for c in _victor_codegraph.chunk(
+            text, language=language, file_path=source_id, config=cfg
+        ):
+            meta = {**metadata, **c.metadata}
+            meta.setdefault("chunking_strategy", "code")
+            meta.setdefault("chunk_type", "code")
+            meta["source"] = "victor_codegraph"
+            out.append(
+                TextChunk(
+                    text=c.text,
+                    start_pos=c.start_pos,
+                    end_pos=c.end_pos,
+                    chunk_id=c.chunk_id,
+                    metadata=meta,
+                )
+            )
+        return out
 
     def _detect_language(self, file_path: str) -> str | None:
         """Detect language from file extension using global registry"""
