@@ -216,6 +216,8 @@ async fn setup_analyzer_with_mock() -> Analyzer {
 
     let temp_dir = TempDir::new().unwrap();
     let storage_url = format!("file://{}", temp_dir.path().display());
+    // File-backed catalog: the tempdir MUST outlive this fn (see analyzer.rs setup).
+    std::mem::forget(temp_dir);
 
     let catalog_manager = Arc::new(CatalogManager::new());
     catalog_manager
