@@ -96,6 +96,11 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Shared Code→CPG Chunker Package (`victor-codegraph`) — one chunker, three consumers, zero duplication
 | Proposed
 | The tree-sitter code→symbol+relation chunker is duplicated across ProximaDB SDK (`code.py`) and Victor (`victor-coding`); extract it into one neutral Apache-2.0 PyPI package (`victor-codegraph`, deps = `victor-contracts` + tree-sitter) consumed by Victor (owner), ProximaDB SDK (optional extra, retires `code.py` to stay generic), and anvaiops (SaaS code-graph vertical, ADR-0017 F3). Adopts LlamaIndex `CodeSplitter` size-discipline + Victor fallback chain + ProximaDB taxonomy; emits the substrate-keystone `ProximaRecord` shape. Boundary-safe (policy-free). Tracked: TD-CG1..CG3
+
+| link:ADR-030-unified-hotpath-trace-meter-seam.adoc[ADR-030]
+| Unified Hot-Path Trace+Meter Emission Seam (one I/O boundary, two structurally-separate sinks)
+| Proposed
+| Implements ADR-027's two-class trace via the per-query `tokio::task_local!` `IO_TRACE` accumulator: it is fed at the `read_range` GET boundary (no tenant needed), drained ONCE at scope-close (where tenant+engine are known), and fans the same snapshot to THREE observers — route-cost + cache (gateable perf, → `avg_get_size` for the cost model + adaptive engine, TD-158) and a NEW billing observer (always-on) that closes the verified **KRU** read-meter (`record_task_execution_time`) gap. **KSU** (storage accrual) is explicitly scoped out as the sibling write-path/periodic gap. Same measured snapshot ⇒ cost-model bytes == billing bytes (no divergence). Honors ADR-027 non-entanglement (separate sinks; billing never gated; CI guard) and the open-core boundary (OSS emits neutral units; AnvaiOps prices them). Closes the cost model's INPUT side only — routing-loop closure is a separate ADR. Tracked: TD-158 + KRU; prereq TD-160
 |===
 
 NOTE: ADR-010 through ADR-013 exist in this directory but are not yet
