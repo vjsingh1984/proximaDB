@@ -1,0 +1,190 @@
+# Release workflow for the ProximaDB Python packages — independent of the binary/crates
+# `release.yml` (which owns `v*` tags). Follows the per-package tag convention used across
+# the workspace (`sdk-v*`, `victor-codegraph-v*`).
+#
+# Publishes TWO separate PyPI projects from ONE release event (the right shape: the pure
+# SDK is a universal wheel, the embedded engine is native PyO3 wheels — they cannot be one
+# distribution):
+#   - proximadb           pure-Python client SDK (clients/python)      universal wheel + sdist
+#   - proximadb_embedded  native in-process engine (root maturin pkg)  platform wheels + sdist
+#
+# Triggers:
+#   - Push tag: python-v*  (e.g. python-v0.2.0)
+#   - Manual dispatch (dry_run to build without publishing; publish_testpypi for a TestPyPI run)
+#
+# Publishing uses PyPI Trusted Publishing (OIDC) — NO API token secret. Configure one
+# trusted publisher PER PyPI project (one-time):
+#   https://pypi.org/manage/account/publishing/ -> add a GitHub publisher with
+#     owner=vjsingh1984  repo=proximaDB  workflow=release-python.yml  environment=pypi
+#   Repeat for projects `proximadb` and `proximadb_embedded` (and environment `testpypi`).
+# TestPyPI is advisory/optional (continue-on-error) — PyPI never waits on it.
+
+name: Release Python
+
+on:
+  push:
+    tags:
+      - 'python-v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build only, do not publish'
+        required: false
+        default: false
+        type: boolean
+      publish_testpypi:
+        description: 'Publish to TestPyPI (advisory)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  # ---- Pure-Python SDK: proximadb (universal wheel + sdist) --------------------------
+  build-sdk:
+    name: Build SDK (proximadb)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Build wheel + sdist
+        working-directory: clients/python
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build --outdir dist
+          twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-dist
+          path: clients/python/dist/*
+
+  # ---- Native engine: proximadb_embedded (platform wheels via maturin) ---------------
+  build-embedded-wheels:
+    name: Build embedded wheels (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: auto
+          - os: ubuntu-latest
+            target: aarch64
+            manylinux: auto
+          - os: macos-13
+            target: x86_64
+          - os: macos-14
+            target: aarch64
+          - os: windows-latest
+            target: x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      # Build the native `proximadb_embedded` wheel from the ROOT maturin package.
+      # (The crate's abi3 setting governs how many Python versions one wheel covers.)
+      - name: Build wheels (maturin)
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || '' }}
+          args: --release --out dist --features python
+      - uses: actions/upload-artifact@v4
+        with:
+          name: embedded-wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: dist/*.whl
+
+  build-embedded-sdist:
+    name: Build embedded sdist (proximadb_embedded)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist (maturin, root package)
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: embedded-sdist
+          path: dist/*.tar.gz
+
+  # ---- TestPyPI (advisory/optional) --------------------------------------------------
+  publish-testpypi:
+    name: Publish to TestPyPI (advisory)
+    needs: [build-sdk, build-embedded-wheels, build-embedded-sdist]
+    if: ${{ github.event.inputs.dry_run != 'true' && (github.event.inputs.publish_testpypi == 'true' || startsWith(github.ref, 'refs/tags/python-v')) }}
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+      - name: Stage all distributions
+        run: |
+          mkdir -p dist
+          find staging -name '*.whl' -exec cp {} dist/ \;
+          find staging -name '*.tar.gz' -exec cp {} dist/ \;
+          ls -la dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        continue-on-error: true
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  # ---- PyPI (authoritative): proximadb SDK ------------------------------------------
+  publish-sdk-pypi:
+    name: Publish proximadb (SDK) to PyPI
+    needs: [build-sdk]
+    if: ${{ github.event.inputs.dry_run != 'true' && startsWith(github.ref, 'refs/tags/python-v') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/proximadb/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdk-dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+          verbose: true
+
+  # ---- PyPI (authoritative): proximadb_embedded native package ----------------------
+  publish-embedded-pypi:
+    name: Publish proximadb_embedded to PyPI
+    needs: [build-embedded-wheels, build-embedded-sdist]
+    if: ${{ github.event.inputs.dry_run != 'true' && startsWith(github.ref, 'refs/tags/python-v') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/proximadb-embedded/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+      - name: Stage embedded wheels + sdist
+        run: |
+          mkdir -p dist
+          find staging -path '*embedded-wheels*' -name '*.whl' -exec cp {} dist/ \;
+          find staging -path '*embedded-sdist*' -name '*.tar.gz' -exec cp {} dist/ \;
+          ls -la dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+          verbose: true

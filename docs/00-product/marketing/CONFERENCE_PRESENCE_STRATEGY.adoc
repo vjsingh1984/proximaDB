@@ -452,7 +452,7 @@ git clone https://github.com/proximadb/demo-data
 # Python environment
 python3 -m venv demo_env
 source demo_env/bin/activate
-pip install proximadb-python jupyter
+pip install proximadb jupyter
 
 # Demo notebooks
 jupyter notebook demo-notebooks/
