@@ -9,7 +9,7 @@
 |Deciders|Vijaykumar Singh
 |Relates to|ADR-010 (PAX Block Format), ADR-021 (TurboQuant), ADR-020 (Canonical WAL Authority), `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`, `PAX_V2_SQ8_PUSHDOWN_2026_06_17.adoc`, `QUANTIZATION_KERNEL_SPLIT_2026_06_22.adoc`
 |Supersedes|—
-|Tracked under|TD-150, TD-151, TD-152, TD-153, TD-154, TD-155, TD-156, TD-157
+|Tracked under|TD-150, TD-151, TD-152, TD-153, TD-154, TD-155, TD-156, TD-157, TD-158, TD-159
 |===
 
 == Context
@@ -127,19 +127,37 @@ heuristics"* (co-design mandate):
    picks geometry / quant from observed workload + storage class — quant tier <-
    recall target + collection size + dim; block size <- storage class; nprobe /
    ef <- search-effort. The co-design `Cost(q)` loop is the substrate; the
-   per-query I/O trace (`SegmentReadStats`, `io_trace`) is the input. This is the
-   "intelligent routing" the ComputeScheduler / strategy layer already aims at
-   (TD-157).
+   per-query I/O trace (`SegmentReadStats`, `io_trace`) is the input (TD-157).
 . **Learned (RL / ML cost model — future).** A learned policy over the trace
    distribution that tunes geometry, quant tier, prefetch depth, and routing to
-   minimize the measured dominant cost (I/O round-trips + egress). Long-horizon:
-   it needs the trace substrate + a stable objective + safety rails (recall
-   ratchet as the floor). Flagged as a future ADR / TD once (1) and (2) are in;
-   **not** built now.
+   minimize the measured dominant cost (I/O round-trips). Long-horizon: it needs
+   the trace substrate + a stable objective + safety rails (recall ratchet as the
+   floor). Flagged as a future ADR once (1) and (2) are in; **not** built now.
 
-*Recommendation:* ship layer (1) now, build (2) on the `Cost(q)` loop as the
-rollout matures, defer (3) behind its own ADR. The recall ratchet is the safety
-floor under all three: no tuning layer may regress measured recall.
+*Current state (audited 2026-06-26) — the gap to "enough" for geometry tuning:*
+* **Trace: partial.** `io_trace` + `SegmentReadStats` exist and the protocol/
+  scheduler layer emits route + bytes; block-level `record_range_gets` fires in
+  the RaBitQ cascade (`segment_format`) and `record_store`. **But it is NOT
+  emitted on the live AXIS/SST read path** (which reads whole-byte local-FS), so
+  the per-query GET-count / bytes-per-block signal geometry tuning needs is not
+  collected in production. The C0 cloud-I/O-trace gap is open for the live read.
+* **Adaptive/ML: narrow, not geometry-aware.** `src/automl/` + the AXIS
+  `adaptive_engine` ARE wired and running, but they (a) tune **only HNSW/IVF
+  index params** (`ef_search`/`nprobe`/`M`/`nlist`) from **latency heuristics
+  (p50/p99)**, (b) do **not** consume `io_trace`, and (c) do **not** tune
+  storage geometry or quant. So no model can refine geometry/quant today.
+
+*Sequencing (measure before you tune — co-design mandate):*
+. **TD-158** — wire block-level `range_gets`/bytes into the live AXIS/SST read
+   path (+ the object-store ranged reader when TD-151 lands). Prerequisite
+   observability; without it there is no signal to tune against.
+. **TD-159** — extend the adaptive engine to consume `io_trace` (not just
+   latency) and add storage geometry + quant to its tunable set (today it only
+   tunes ef/nprobe/M).
+. Then **TD-157** (full adaptive geometry/quant) and the future RL ADR (layer 3).
+
+The recall ratchet is the safety floor under all of it: no tuning layer may
+regress measured recall.
 
 == Non-goals
 * **Do NOT retire NOVA/VIPER/HELIX** — they are *live* production engines (no
