@@ -161,8 +161,7 @@ impl CompressedBloom {
     /// Decompresses on-demand during lookup
     pub fn might_contain(&self, key: &[u8]) -> Result<bool> {
         let decompressed = self.decompress()?;
-        let positions =
-            crate::core::bloom::hash::double_hash(key, self.hash_count as u32, self.original_size);
+        let positions = crate::hash::double_hash(key, self.hash_count as u32, self.original_size);
 
         // Check if all positions are set
         Ok(positions.iter().all(|&pos| {
@@ -206,8 +205,7 @@ impl CompressedBloomBuilder {
 
     /// Add a key to the bloom filter
     pub fn add(&mut self, key: &[u8]) {
-        let positions =
-            crate::core::bloom::hash::double_hash(key, self.num_hashes as u32, self.num_bits);
+        let positions = crate::hash::double_hash(key, self.num_hashes as u32, self.num_bits);
 
         for pos in positions {
             let byte_index = pos / 8;

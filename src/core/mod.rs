@@ -84,7 +84,9 @@ pub mod memory;
 pub mod proto_metadata_helper;
 
 /// Bloom filter implementations for fast lookups
-pub mod bloom;
+/// Extracted to the `proximadb-bloom` crate; re-exported here for source
+/// compatibility (root-crate decomposition, Slice D / D1).
+pub use proximadb_bloom as bloom;
 
 /// Unified error types with thiserror
 pub mod errors;

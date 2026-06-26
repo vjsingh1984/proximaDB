@@ -9,7 +9,7 @@
 
 use anyhow::Result;
 
-use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, hash};
+use crate::{BloomFilterConfig, BloomFilterStrategy, hash};
 
 /// Simple bloom filter using boolean array - fast for small datasets
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

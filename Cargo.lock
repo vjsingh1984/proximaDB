@@ -6502,6 +6502,7 @@ dependencies = [
  "proximadb-admin-ui",
  "proximadb-api",
  "proximadb-block-format",
+ "proximadb-bloom",
  "proximadb-cache",
  "proximadb-catalog",
  "proximadb-codec",
@@ -6701,6 +6702,19 @@ dependencies = [
  "proximadb-filter-expression",
  "proximadb-records",
  "rmp-serde",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "proximadb-bloom"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "rand 0.8.6",
  "serde",
  "serde_json",
 ]

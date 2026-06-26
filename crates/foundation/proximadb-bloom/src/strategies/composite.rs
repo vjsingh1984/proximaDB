@@ -11,7 +11,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 use super::ByteAlignedBloomFilter;
-use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, MetadataBloomFilter};
+use crate::{BloomFilterConfig, BloomFilterStrategy, MetadataBloomFilter};
 
 /// Composite bloom filter combining key and metadata filters
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -122,20 +122,24 @@ impl BloomFilterStrategy for CompositeBloomFilter {
 }
 
 impl MetadataBloomFilter for CompositeBloomFilter {
-    fn insert_metadata(&mut self, column: &str, item: &crate::proto::proximadb_v1::MetadataItem) {
+    fn insert_metadata(
+        &mut self,
+        column: &str,
+        item: &proximadb_proto::proximadb_v1::MetadataItem,
+    ) {
         let filter = self.get_or_create_metadata_filter(column);
         // Serialize the metadata item for consistent hashing
-        let serialized = crate::core::bloom::serialize_metadata_value(item);
+        let serialized = crate::serialize_metadata_value(item);
         filter.insert(serialized.as_bytes());
     }
 
     fn might_match_metadata(
         &self,
         column: &str,
-        item: &crate::proto::proximadb_v1::MetadataItem,
+        item: &proximadb_proto::proximadb_v1::MetadataItem,
     ) -> bool {
         self.metadata_filters.get(column).is_some_and(|filter| {
-            let serialized = crate::core::bloom::serialize_metadata_value(item);
+            let serialized = crate::serialize_metadata_value(item);
             filter.might_contain(serialized.as_bytes())
         })
     }
@@ -149,7 +153,7 @@ impl MetadataBloomFilter for CompositeBloomFilter {
 pub struct CompositeBloomFilterBuilder {
     config: BloomFilterConfig,
     key_filter: ByteAlignedBloomFilter,
-    metadata_values: HashMap<String, Vec<crate::proto::proximadb_v1::MetadataItem>>,
+    metadata_values: HashMap<String, Vec<proximadb_proto::proximadb_v1::MetadataItem>>,
 }
 
 impl CompositeBloomFilterBuilder {
@@ -173,7 +177,7 @@ impl CompositeBloomFilterBuilder {
     pub fn add_metadata_item(
         &mut self,
         column: String,
-        item: crate::proto::proximadb_v1::MetadataItem,
+        item: proximadb_proto::proximadb_v1::MetadataItem,
     ) {
         self.metadata_values.entry(column).or_default().push(item);
     }
@@ -219,40 +223,44 @@ mod tests {
         assert!(!filter.might_contain(b"key2"));
 
         // Test metadata operations - create MetadataItem instances for testing
-        let electronics_item = crate::proto::proximadb_v1::MetadataItem {
+        let electronics_item = proximadb_proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
             value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                proximadb_proto::proximadb_v1::metadata_item::Value::StringValue(
                     "electronics".to_string(),
                 ),
             ),
         };
-        let books_item = crate::proto::proximadb_v1::MetadataItem {
+        let books_item = proximadb_proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
             value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue("books".to_string()),
+                proximadb_proto::proximadb_v1::metadata_item::Value::StringValue(
+                    "books".to_string(),
+                ),
             ),
         };
-        let clothing_item = crate::proto::proximadb_v1::MetadataItem {
+        let clothing_item = proximadb_proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
             value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                proximadb_proto::proximadb_v1::metadata_item::Value::StringValue(
                     "clothing".to_string(),
                 ),
             ),
         };
-        let premium_item = crate::proto::proximadb_v1::MetadataItem {
+        let premium_item = proximadb_proto::proximadb_v1::MetadataItem {
             key: "type".to_string(),
             value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                proximadb_proto::proximadb_v1::metadata_item::Value::StringValue(
                     "premium".to_string(),
                 ),
             ),
         };
-        let basic_item = crate::proto::proximadb_v1::MetadataItem {
+        let basic_item = proximadb_proto::proximadb_v1::MetadataItem {
             key: "type".to_string(),
             value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue("basic".to_string()),
+                proximadb_proto::proximadb_v1::metadata_item::Value::StringValue(
+                    "basic".to_string(),
+                ),
             ),
         };
 
@@ -278,18 +286,20 @@ mod tests {
         builder.add_key("product_2");
 
         // Create MetadataItems for testing
-        let electronics_item = crate::proto::proximadb_v1::MetadataItem {
+        let electronics_item = proximadb_proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
             value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                proximadb_proto::proximadb_v1::metadata_item::Value::StringValue(
                     "electronics".to_string(),
                 ),
             ),
         };
-        let books_item = crate::proto::proximadb_v1::MetadataItem {
+        let books_item = proximadb_proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
             value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue("books".to_string()),
+                proximadb_proto::proximadb_v1::metadata_item::Value::StringValue(
+                    "books".to_string(),
+                ),
             ),
         };
 
