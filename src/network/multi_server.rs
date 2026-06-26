@@ -1640,6 +1640,10 @@ impl MultiServer {
             // `ArrowFlightServer::new` signature.
             let arrow_bind_target =
                 BindTarget::Tcp(self.config.arrow_ipc_config.active_bind_address());
+            // Capture the debug form before `arrow_bind_target` is moved into the
+            // `tokio::spawn` below — mirrors the single-node start path's
+            // `arrow_target_log` (the value has no `Display` impl).
+            let arrow_target_log = format!("{arrow_bind_target:?}");
             let request_handlers = services.request_handlers.clone();
             let catalog_manager = services.catalog_manager.clone();
             let security_coordinator = if self.rest_auth_enabled {
@@ -1676,7 +1680,7 @@ impl MultiServer {
             });
 
             handles.push(arrow_handle);
-            info!("Arrow IPC Server started on {}", arrow_bind_addr);
+            info!("Arrow IPC Server started on {}", arrow_target_log);
         }
 
         // Start REST server on port 5678 if configured
