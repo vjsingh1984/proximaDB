@@ -86,6 +86,11 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Unified Storage + Metering Substrate (PAX-as-one-internal-format, two-class trace, coalesced write-path, dual-sink metering)
 | Proposed
 | PAX is the single internal format (LSM writes it for all modalities; one reader/one SQL lowering/one I/O-trace; Parquet at the seam). Trace = two classes: billing (always-on, full-fidelity) vs perf/geometry (compile-time gateable). Write-path reuses SST/LSM (threshold-flush + compaction; Aurora/Neon/Turso-grounded; no per-query object writes). Metering dual-sunk: durable per-tenant in object store + external OTLP. Tracked: TD-158, TD-160..162
+
+| link:ADR-028-shared-codegraph-chunker-package.adoc[ADR-028]
+| Shared Code→CPG Chunker Package (`victor-codegraph`) — one chunker, three consumers, zero duplication
+| Proposed
+| The tree-sitter code→symbol+relation chunker is duplicated across ProximaDB SDK (`code.py`) and Victor (`victor-coding`); extract it into one neutral Apache-2.0 PyPI package (`victor-codegraph`, deps = `victor-contracts` + tree-sitter) consumed by Victor (owner), ProximaDB SDK (optional extra, retires `code.py` to stay generic), and anvaiops (SaaS code-graph vertical, ADR-0017 F3). Adopts LlamaIndex `CodeSplitter` size-discipline + Victor fallback chain + ProximaDB taxonomy; emits the substrate-keystone `ProximaRecord` shape. Boundary-safe (policy-free). Tracked: TD-CG1..CG3
 |===
 
 NOTE: ADR-010 through ADR-013 exist in this directory but are not yet
