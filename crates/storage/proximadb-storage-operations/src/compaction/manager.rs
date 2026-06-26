@@ -10,8 +10,8 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 // Import from parent operations module
-use crate::storage::operations::CompactionResult;
-use crate::storage::types::StorageEngineType;
+use crate::CompactionResult;
+use proximadb_proto::proximadb_v1::StorageEngine as StorageEngineType;
 
 // Import from our flattened strategy modules (unused but kept for future integration)
 #[allow(unused_imports)]
@@ -224,7 +224,7 @@ impl CompactionManager {
         // choice may shift because the storage layout changed. The
         // compaction manager only knows the collection_id, not the
         // tenant, so we use the registry's all-tenants variant.
-        let bumped = crate::catalog::CorpusVersionRegistry::global()
+        let bumped = proximadb_catalog::CorpusVersionRegistry::global()
             .bump_collection_all_tenants(collection_id)
             .await;
         if bumped > 0 {
@@ -310,7 +310,7 @@ impl CompactionManager {
         // Bump corpus_version across all tenants — major compaction
         // rewrites the storage layout more invasively than minor;
         // any cached plan should be reconsidered against the new state.
-        let bumped = crate::catalog::CorpusVersionRegistry::global()
+        let bumped = proximadb_catalog::CorpusVersionRegistry::global()
             .bump_collection_all_tenants(collection_id)
             .await;
         if bumped > 0 {
@@ -495,7 +495,7 @@ pub struct CompactionStatus {
 mod tests {
     use super::*;
     #[allow(unused_imports)]
-    use crate::storage::types::StorageEngineType;
+    use proximadb_proto::proximadb_v1::StorageEngine as StorageEngineType;
 
     #[tokio::test]
     async fn test_compaction_manager_creation() {

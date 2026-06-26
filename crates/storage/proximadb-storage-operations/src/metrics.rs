@@ -3,7 +3,7 @@
 //! This module provides comprehensive metrics for flush, compaction, and re-quantization
 //! operations across all storage engines, enabling performance optimization and monitoring.
 
-use crate::storage::operations::{OperationStatistics, OperationType};
+use crate::{OperationStatistics, OperationType};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

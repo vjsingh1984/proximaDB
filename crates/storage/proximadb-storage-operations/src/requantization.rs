@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use super::RequantizationResult;
-use crate::storage::types::StorageEngineType;
+use proximadb_proto::proximadb_v1::StorageEngine as StorageEngineType;
 
 /// Re-quantization manager coordinates codebook updates across storage engines
 pub struct RequantizationManager {
