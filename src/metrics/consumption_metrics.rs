@@ -561,6 +561,32 @@ pub fn record_storage_bytes(tenant_id: Option<&str>, storage_type: &str, bytes: 
         .set(bytes);
 }
 
+/// ADR-030 **KSU**: snapshot per-tenant *resident* storage bytes from the live
+/// collection set and `.set()` the `STORAGE_BYTES_SECONDS` **level** gauge
+/// (Prometheus integrates the level to byte-seconds downstream — KSU is an
+/// accrual, not a per-flush byte count, so this is a periodic snapshot rather
+/// than a write-path event). Groups collections by owner (tenant) and sums
+/// `stats.data_size_bytes`; an absent/empty owner is attributed to `"default"`
+/// (fail-closed, never dropped). Pure aggregation + the gauge set — the caller
+/// drives it on an interval (the storage-snapshot daemon in `database.rs`).
+pub fn record_storage_snapshot(collections: &[crate::proto::proximadb_v1::Collection]) {
+    use std::collections::HashMap;
+    let mut by_tenant: HashMap<&str, u64> = HashMap::new();
+    for c in collections {
+        let tenant = c
+            .config
+            .as_ref()
+            .and_then(|cfg| cfg.owner.as_deref())
+            .filter(|o| !o.is_empty())
+            .unwrap_or("default");
+        let bytes = c.stats.as_ref().map_or(0i64, |s| s.data_size_bytes).max(0) as u64;
+        *by_tenant.entry(tenant).or_insert(0) += bytes;
+    }
+    for (tenant, bytes) in by_tenant {
+        record_storage_bytes(Some(tenant), "sst", bytes as f64);
+    }
+}
+
 /// Helper to record compute execution time.
 pub fn record_task_execution_time(tenant_id: Option<&str>, engine: &str, duration_ms: f64) {
     let t_id = tenant_id.unwrap_or("default");
@@ -660,6 +686,52 @@ pub fn record_cache_tenant_stats(cache: &str, stats: &[proximadb_cache::TenantCa
 mod tests {
     use super::*;
     use crate::observability::io_trace;
+
+    /// ADR-030 KSU: the storage snapshot groups collections by owner (tenant) and
+    /// sets the per-tenant resident-bytes level gauge; absent owner → "default".
+    #[test]
+    fn storage_snapshot_groups_by_tenant_and_sets_gauge() {
+        use crate::proto::proximadb_v1::{Collection, CollectionConfig, CollectionStats};
+        let mk = |owner: Option<&str>, bytes: i64| Collection {
+            config: Some(CollectionConfig {
+                owner: owner.map(str::to_string),
+                ..Default::default()
+            }),
+            stats: Some(CollectionStats {
+                data_size_bytes: bytes,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        // Unique tenant labels so the global gauge assertion is isolated.
+        let cols = vec![
+            mk(Some("ksu_acme"), 100),
+            mk(Some("ksu_acme"), 200),
+            mk(Some("ksu_globex"), 50),
+            mk(None, 7), // unowned → "ksu_default" bucket is "default"
+        ];
+        record_storage_snapshot(&cols);
+        assert_eq!(
+            STORAGE_BYTES_SECONDS
+                .with_label_values(&["ksu_acme", "sst"])
+                .get(),
+            300.0,
+            "acme's two collections must sum"
+        );
+        assert_eq!(
+            STORAGE_BYTES_SECONDS
+                .with_label_values(&["ksu_globex", "sst"])
+                .get(),
+            50.0
+        );
+        assert_eq!(
+            STORAGE_BYTES_SECONDS
+                .with_label_values(&["default", "sst"])
+                .get(),
+            7.0,
+            "unowned bytes attributed to default (fail-closed)"
+        );
+    }
 
     #[test]
     fn provider_inferred_from_url_scheme() {
