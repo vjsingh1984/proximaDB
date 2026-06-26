@@ -59,7 +59,12 @@ PAX tier-1, gated behind its own validation.
   bytes/egress) but naive per-block ranged reads fragment into thousands of
   small GETs (+29,900% GETs vs whole-byte) — fee-dominated. Naively wiring the
   ranged reader would *raise* cloud cost. The real read-path win is **range
-  coalescing + block pruning**, not naive ranged reads.
+  coalescing + block pruning**, not naive ranged reads. Validated across clouds
+  in `PAX_RANGED_READ_MULTICLOUD_COST_2026_06_25.adoc`: same-region (the default,
+  free egress) naive ranged loses **300× on every cloud**; on charged egress it's
+  fee-dominated on S3/GCS but ranged-*favorable* on Azure (reads ~10× cheaper);
+  latency (300 round-trips) is the killer everywhere. Larger blocks (TD-156) +
+  coalescing (TD-151) universalize the ranged-read win.
 
 == Rollout (staged; storage-format mandate #8 — mixed-read-safe, default-off until the ratchet is green)
 . **Recall gate** — develop->qa ratchet + N=100k harness (done, PR #331).
