@@ -4,13 +4,13 @@
 //! containing both FP32 and quantized vector data for testing the two-stage
 //! search functionality.
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use anyhow::Result;
 use arrow_array::builder::Float32Builder;
 use arrow_array::types::UInt8Type;
 use arrow_array::{ArrayRef, Float64Array, Int64Array, ListArray, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 // TODO: Refactor test code to use columnar module's exports
 // Currently using direct ArrowWriter for test data generation
 use parquet::arrow::ArrowWriter;

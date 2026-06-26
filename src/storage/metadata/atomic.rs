@@ -470,6 +470,9 @@ impl AtomicMetadataStore {
                         quantization: super::catalog_config::read_quantization(
                             &versioned_metadata.config,
                         ),
+                        index_policy: super::catalog_config::read_index_policy(
+                            &versioned_metadata.config,
+                        ),
                         ..Default::default()
                     }),
                     stats: Some(crate::proto::proximadb_v1::CollectionStats {
@@ -702,6 +705,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
         if let Some(versioned) = self.write_buffer_manager.collection(collection_id).await? {
             let index_configs = super::catalog_config::read_index_configs(&versioned.config);
             let quantization = super::catalog_config::read_quantization(&versioned.config);
+            let index_policy = super::catalog_config::read_index_policy(&versioned.config);
             let collection = crate::proto::proximadb_v1::Collection {
                 id: versioned.id,
                 config: Some(crate::proto::proximadb_v1::CollectionConfig {
@@ -712,6 +716,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                     ), // Default for now
                     index_configs,
                     quantization,
+                    index_policy,
                     ..Default::default()
                 }),
                 stats: Some(crate::proto::proximadb_v1::CollectionStats {
@@ -814,6 +819,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                         ), // Default for now
                         index_configs: super::catalog_config::read_index_configs(&versioned.config),
                         quantization: super::catalog_config::read_quantization(&versioned.config),
+                        index_policy: super::catalog_config::read_index_policy(&versioned.config),
                         ..Default::default()
                     }),
                     stats: Some(crate::proto::proximadb_v1::CollectionStats {

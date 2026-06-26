@@ -32,8 +32,8 @@ use crate::storage::engines::sst::search::{SearchCoordinator, SearchOperations, 
 use crate::storage::engines::sst::search::coordinator::SearchStrategy;
 use crate::storage::engines::sst::search::optimizer::{OptimizationStrategy, OptimizationConfig};
 
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::compute::distance_computation::DistanceMetric;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
+use proximadb_distance_kernel::DistanceMetric;
 use crate::compute::quantization::quantization_engine::{UnifiedQuantizationEngine, InMemoryCodebookStore};
 
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, MetadataBloomFilter};
@@ -41,7 +41,8 @@ use crate::core::bloom::factory::BloomFilterFactory;
 use crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder;
 use crate::core::bloom::{BloomFilterStats, SstableBloomFilter};
 
-use crate::core::search::{SearchParams, SearchPlan, FilterExpression, ComparisonOperator};
+use crate::core::search::{SearchParams, SearchPlan};
+use proximadb_filter_expression::{FilterExpression, ComparisonOperator};
 use crate::storage::engines::core::search::SearchResult;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::traits::StorageQueryContext;

@@ -15,8 +15,9 @@ use std::sync::Arc;
 use tracing::{debug, info, trace};
 
 use proximadb_records::{EmbeddingCell, ProximaRecord};
-use crate::core::search::{SearchResult, FilterExpression};
-use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
+use crate::core::search::SearchResult;
+use proximadb_filter_expression::FilterExpression;
+use proximadb_distance_kernel::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::storage::engines::core::ops::crate::storage::engines::core::search::search_common::{SearchableFile, SearchableBlock, FileSearcher};
 
 /// Columnar search configuration

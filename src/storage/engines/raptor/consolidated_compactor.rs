@@ -12,12 +12,12 @@ use super::common::{RaptorFileMetadata, RowGroup, RowGroupMetadata, SchemaDescri
 use super::config::RaptorConfig;
 use super::consolidated_reader::RaptorReader;
 use super::smart_rowgroup_sizing::BalancedMatrixTrinitySizing;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::index::axis::clustering::{
     AxisClusteringEngine as AxisClustering, ClusteringConfig as AxisClusteringConfig,
     ReusableClusteringEngine,
 };
 use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 // ProximaCodec is now used in writer.rs for encoding
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
@@ -310,7 +310,7 @@ impl RaptorCompactor {
         // This provides fast convergence for high-dimensional data
         // Deferred: Use AXIS clustering when available
         // use crate::index::axis::clustering::AxisClustering;
-        use crate::compute::distance_computation::engine::DistanceMetric;
+        use proximadb_distance_kernel::engine::DistanceMetric;
 
         // Convert VectorRecord to Vec<Vec<f32>> for AXIS clustering
         let vector_data: Vec<Vec<f32>> = vectors.iter().map(|v| v.vector.clone()).collect();

@@ -66,11 +66,11 @@ use super::common::{
     RowGroupBloomFilter, RowGroupNeighbor,
 };
 use super::matrix_builder::MatrixBuilder;
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 use proximadb_runtime_common::pool::VectorMemoryPool;
 // ProximaCodec system for encoding/decoding
 use crate::storage::engines::core::ops::proximacodec::{
@@ -2597,7 +2597,7 @@ impl RaptorWriter {
 
         // Initialize unified distance compute first
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(
-            crate::compute::distance_computation::DistanceMetric::Cosine,
+            proximadb_distance_kernel::DistanceMetric::Cosine,
         ));
 
         // Initialize codebook store for quantization
@@ -2621,7 +2621,7 @@ impl RaptorWriter {
         let quant_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig {
                 enable_hardware_acceleration: config.enable_simd,
-                distance_metric: crate::compute::distance_computation::DistanceMetric::Cosine,
+                distance_metric: proximadb_distance_kernel::DistanceMetric::Cosine,
                 ..Default::default() // INT8 by default, PQ requires explicit config
             };
 

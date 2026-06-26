@@ -366,9 +366,8 @@ impl ViperEngine {
         let filesystem_config =
             crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await?);
-        let distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-        );
+        let distance_compute =
+            Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
 
         Self::new_with_config(core_config, filesystem, distance_compute).await
     }
@@ -377,9 +376,7 @@ impl ViperEngine {
     pub async fn new_with_config(
         core_config: crate::core::config::ViperConfig,
         filesystem: Arc<FilesystemFactory>,
-        _distance_compute: Arc<
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute,
-        >, // VIPER creates its own internally
+        _distance_compute: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>, // VIPER creates its own internally
     ) -> Result<Self> {
         info!("🔧 Creating stateless VIPER engine");
 
@@ -411,7 +408,7 @@ impl ViperEngine {
         collection_id: String,
         core_config: crate::core::config::ViperConfig,
         filesystem: Arc<FilesystemFactory>,
-        distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+        distance_compute: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
         _base_location: String, // Ignored
     ) -> Result<Self> {
         // Just call the stateless new() method
@@ -446,9 +443,8 @@ impl ViperEngine {
         // Initialize unified quantization engine from compute module
         // This provides the core quantization algorithms (Binary, INT8, PQ)
         // that VIPER uses for its multi-stage compression pipeline
-        let distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-        );
+        let distance_compute =
+            Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
 
         // In-memory codebook store for PQ quantization
         // Codebooks are trained on sample data and cached for fast access
@@ -482,7 +478,7 @@ impl ViperEngine {
                 ),
                 // Cosine is default, but can be overridden per collection
                 distance_metric:
-                    crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+                    proximadb_distance_kernel::engine::DistanceMetric::Cosine,
                 // Enable Binary→INT8→PQ→FP32 progressive refinement
                 enable_progressive: true,
                 // Initial filter returns 100x final k for refinement
@@ -627,9 +623,9 @@ impl ViperEngine {
     /// This helper converts our internal FilterExpression type to the
     /// IndexMetadataFilter DTO format for hybrid vector + metadata queries.
     fn convert_filter_to_index(
-        filter_expression: Option<&crate::core::search::FilterExpression>,
+        filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
     ) -> Vec<proximadb_index_traits::IndexMetadataFilter> {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
         use proximadb_index_traits::{IndexFilterOperator, IndexMetadataFilter};
 
         let Some(filter) = filter_expression else {
@@ -860,7 +856,7 @@ impl ViperEngine {
         &self,
         query: &[f32],
         candidates: &[Vec<f32>],
-        metric: crate::compute::distance_computation::DistanceMetric,
+        metric: proximadb_distance_kernel::DistanceMetric,
     ) -> Result<Vec<f32>> {
         // Use universal optimizer's hardware-accelerated distance computation
         self.universal_optimizer
@@ -2707,9 +2703,7 @@ impl UnifiedStorageFormat for ViperEngine {
 
         // Get distance compute engine
         let distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                distance_metric,
-            ),
+            proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(distance_metric),
         );
 
         for record in read_results.results {
@@ -3290,6 +3284,7 @@ mod minimal_compaction_tests {
                 enable_dual_use_embeddings: None,
                 canonical_embedding_precision: None,
                 permitted_principals: vec![],
+                index_policy: None,
             }),
             stats: Some(crate::proto::proximadb_v1::CollectionStats {
                 vector_count: 0,

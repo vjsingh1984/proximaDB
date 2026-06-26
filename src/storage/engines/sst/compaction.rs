@@ -358,9 +358,8 @@ impl Compaction {
         // using the unified quantization engine
         if let Some(ref mut _compactor) = self.sst_compactor {
             // Create unified quantization engine for PQ-based sorting
-            let distance_compute = Arc::new(
-                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-            );
+            let distance_compute =
+                Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
             let codebook_store = Arc::new(
                 crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
             );
@@ -372,8 +371,8 @@ impl Compaction {
             );
             // Create distance compute engine
             let distance_compute = Arc::new(
-                crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                    crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+                proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(
+                    proximadb_distance_kernel::engine::DistanceMetric::Cosine,
                 ),
             );
             // Create quantization config

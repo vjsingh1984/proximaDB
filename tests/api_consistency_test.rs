@@ -193,6 +193,7 @@ mod api_consistency_tests {
                 enable_dual_use_embeddings: None,
                 canonical_embedding_precision: None,
                 permitted_principals: vec![],
+                index_policy: None,
             }),
             query_params: Default::default(),
             options: Default::default(),

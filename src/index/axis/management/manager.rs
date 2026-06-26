@@ -3086,6 +3086,7 @@ impl AxisManager {
         for vector in vectors {
             self.insert(collection_id, &vector).await?;
         }
+
         let duration = start_time.elapsed();
 
         tracing::info!(
@@ -3287,10 +3288,34 @@ impl AxisManager {
 
         index.train(training_vectors).await?;
 
+        // TD-165 Defect B: populate the trained index's posting lists with the
+        // batch vectors. `train` only fits centroids — posting lists are created
+        // empty — and the incremental `insert` path routes vectors to the HNSW
+        // index, never this batch-trained IVF. Without this the persisted `ivf.bin`
+        // (written below) would hold 0 vectors and every cold reload would serve an
+        // empty index (the cheap cold-load path the cost model wants returns
+        // nothing). Add ALL vectors (not just the training sample).
+        let mut added = 0usize;
+        for record in vectors {
+            if record.oid.is_empty() {
+                continue;
+            }
+            let Some(emb) = record.embeddings.first() else {
+                continue;
+            };
+            let fp32 = emb.values.to_fp32_owned();
+            if fp32.is_empty() {
+                continue;
+            }
+            index.add_vector(record.oid.clone(), fp32, None).await?;
+            added += 1;
+        }
+
         tracing::info!(
-            "✅ AXIS: Batch IVF training complete for collection {} with {} clusters",
+            "✅ AXIS: Batch IVF training complete for collection {} with {} clusters, {} vectors populated",
             collection_id,
-            n_clusters
+            n_clusters,
+            added
         );
 
         // Store the trained index
@@ -5679,6 +5704,85 @@ mod recluster_apply_tests {
         assert_eq!(
             got_top, want_top,
             "warm-loaded index must serve identical top-k"
+        );
+    }
+
+    #[tokio::test]
+    async fn ivf_batch_path_persists_populated_index_td165_defect_b() {
+        // TD-165 Defect B regression: the batch-index path
+        // (`index_vectors_synchronously` ≥ 500 vectors) trains + persists the IVF
+        // index BEFORE the insert loop populates its posting lists. Without the
+        // post-insert re-persist, the on-disk `ivf.bin` would hold 0 vectors and a
+        // cold reload would serve an empty index. Drive the real batch path, then
+        // cold-load the persisted index and assert it actually contains the vectors.
+        let dir = tempfile::TempDir::new().unwrap();
+        let dim = 8;
+        // 600 ≥ 500 (batch-train threshold) and ≤ 1000 (sync, fully awaited →
+        // deterministic). batch() yields valid dense ProximaRecords.
+        let recs = batch("v", 600, dim, 1);
+
+        let mut m1 = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m1.set_index_persist_dir(dir.path().to_path_buf());
+        m1.index_vectors_hybrid(
+            "colb",
+            recs,
+            Vec::new(),
+            &crate::index::config::RuntimeIndexConfig::default(),
+        )
+        .await
+        .unwrap();
+
+        let path = dir.path().join("colb").join("ivf.bin");
+        assert!(
+            path.exists(),
+            "batch indexing must persist the IVF index to disk"
+        );
+
+        let mut qv = vec![0.0f32; dim];
+        qv[3] = 1.0;
+        let mk_query = || AxisHybridQuery {
+            collection_id: "colb".to_string(),
+            vector_query: Some(VectorQuery::Dense {
+                vector: qv.clone(),
+                similarity_threshold: 0.0,
+            }),
+            top_k: 5,
+            ..AxisHybridQuery::default()
+        };
+        let want: Vec<String> = m1
+            .query(mk_query())
+            .await
+            .unwrap()
+            .results
+            .iter()
+            .map(|r| r.vector_id.clone())
+            .collect();
+        assert!(
+            !want.is_empty(),
+            "warm batch-trained index must return results"
+        );
+
+        // Cold manager: the first query warm-loads the persisted ivf.bin and serves
+        // from it. Pre-fix, ivf.bin was persisted with 0 vectors (posting lists were
+        // never populated — `train` only fits centroids and `insert` feeds HNSW), so
+        // the cold IVF query returned EMPTY. Populating the posting lists before the
+        // persist is what makes the cold-loaded index serve real vectors. (We assert
+        // non-empty rather than top-k equality because the warm path serves from
+        // HNSW while the cold path serves from the IVF.)
+        let mut m2 = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m2.set_index_persist_dir(dir.path().to_path_buf());
+        assert!(!m2.has_ivf_index("colb").await, "fresh manager starts cold");
+        let got: Vec<String> = m2
+            .query(mk_query())
+            .await
+            .unwrap()
+            .results
+            .iter()
+            .map(|r| r.vector_id.clone())
+            .collect();
+        assert!(
+            !got.is_empty(),
+            "TD-165 Defect B: cold-loaded IVF must serve real vectors (an empty persisted index returns nothing)"
         );
     }
 

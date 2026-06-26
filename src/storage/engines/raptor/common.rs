@@ -1192,10 +1192,10 @@ impl InterCentroidMatrix {
         let hw = get_hardware_capabilities();
 
         // Create required components for StorageQuantizationEngine
-        use crate::compute::distance_computation::DistanceMetric;
-        use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
         use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
         use crate::compute::quantization::storage_engine::StorageQuantizationConfig;
+        use proximadb_distance_kernel::DistanceMetric;
+        use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
         use crate::compute::quantization::quantization_engine::InMemoryCodebookStore;
         let unified_engine = Arc::new(UnifiedQuantizationEngine::new(

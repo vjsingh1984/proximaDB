@@ -9,11 +9,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FileSystem;
+use proximadb_distance_kernel::DistanceMetric;
 
 use super::SStableMetadata;
 // Filter evaluator now uses unified module from core
@@ -68,8 +68,8 @@ pub async fn search_sstable(
     _query_hilbert_key: Option<u64>,
     k: usize,
     distance_metric: &DistanceMetric,
-    distance_compute: &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
-    filter_expression: Option<&crate::core::search::FilterExpression>,
+    distance_compute: &Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
+    filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
     candidate_ids: Option<&[String]>, // Optional IDs to check via bloom filter
     collection: Option<&crate::proto::proximadb_v1::Collection>,
     prune: &crate::core::search::BlockPruneConfig,
@@ -208,8 +208,8 @@ pub async fn parallel_search(
     query_hilbert_key: Option<u64>,
     k: usize,
     distance_metric: DistanceMetric,
-    distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
-    filter_expression: Option<crate::core::search::FilterExpression>,
+    distance_compute: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
+    filter_expression: Option<proximadb_filter_expression::FilterExpression>,
     collection: Option<std::sync::Arc<crate::proto::proximadb_v1::Collection>>,
     block_prune: crate::core::search::BlockPruneConfig,
 ) -> Result<Vec<OptimizedSearchRecord>> {
@@ -328,7 +328,7 @@ pub async fn search_with_stats(
     query_hilbert_key: Option<u64>,
     k: usize,
     distance_metric: &DistanceMetric,
-    distance_compute: &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+    distance_compute: &Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
 ) -> Result<(Vec<OptimizedSearchRecord>, HelixReaderQueryStats)> {
     let mut stats = HelixReaderQueryStats::default();
     let mut priority_queue = BoundedPriorityQueue::new(k);

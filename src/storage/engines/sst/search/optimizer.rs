@@ -23,8 +23,8 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::core::search::FilterExpression;
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_filter_expression::FilterExpression;
 
 /// Search optimization strategies
 #[derive(Debug, Clone)]

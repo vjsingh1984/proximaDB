@@ -34,7 +34,7 @@ use crate::storage::engines::nova::{
     zone_maps::*,
     streaming_search::*,
 };
-use crate::compute::distance_computation::DistanceMetric;
+use proximadb_distance_kernel::DistanceMetric;
 
 // ============================================================================
 // Hierarchical Statistics Tests (4 tests)

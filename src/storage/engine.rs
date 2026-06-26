@@ -31,7 +31,7 @@ pub struct StorageEngine {
     filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
 
     /// Shared distance computation engine for all storage operations
-    distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+    distance_compute: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
 
     /// A6 storage-write fence (default-OFF). Injected post-construction from the
     /// bootstrap (`database.rs`) once `SharedServices` — and thus the durable
@@ -162,7 +162,7 @@ impl StorageEngine {
             compaction_manager,
             filesystem,
             distance_compute: Arc::new(
-                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+                proximadb_distance_kernel::engine::UnifiedDistanceCompute::default(),
             ),
             storage_write_fence: None,
         })
@@ -259,41 +259,148 @@ impl StorageEngine {
     ) -> crate::storage::Result<
         crate::storage::persistence::write_ahead_log::flush_coordinator::FlushAllResult,
     > {
-        use crate::storage::persistence::write_ahead_log::flush_coordinator::WALFlushCoordinator;
+        use crate::storage::flush_materializer::{CollectionFlushPlan, materialize_collection};
+        use crate::storage::persistence::write_ahead_log::flush_coordinator::FlushAllResult;
+        use crate::storage::persistence::write_ahead_log::{
+            get_global_write_buffer_behavior, list_collections_from_catalog,
+        };
 
-        // Create a temporary flush coordinator for shutdown
-        let mut flush_coordinator = WALFlushCoordinator::new();
+        let empty_result = FlushAllResult {
+            collections_flushed: 0,
+            total_vectors_flushed: 0,
+            total_bytes_written: 0,
+            failed_collections: vec![],
+        };
 
-        // A6: give the shutdown flush path the SAME storage-write fence (and thus
-        // the same durable PartitionLeaseManager) the network write-gates use, so a
-        // pod displaced by a lease takeover cannot publish stale buffered data on
-        // its way out. Default-OFF; absent ⇒ fail-open. (Tenant resolution on this
-        // path lands with the dependent materialization TD; until then the fence is
-        // correctly positioned but dark on shutdown — see the A6 TD doc.)
-        if let Some(fence) = &self.storage_write_fence {
-            flush_coordinator.set_storage_write_fence(fence.clone());
+        // The global write buffer is the source of unflushed batches (the SAME
+        // singleton the embedded path drains). Absent ⇒ nothing to flush.
+        let write_buffer = match get_global_write_buffer_behavior() {
+            Some(wb) => wb,
+            None => {
+                tracing::info!(
+                    "📋 STORAGE_ENGINE: No global write buffer initialized, nothing to flush"
+                );
+                return Ok(empty_result);
+            }
+        };
+
+        let collections_to_flush = write_buffer.list_collections_with_unflushed_data().await;
+        if collections_to_flush.is_empty() {
+            tracing::info!("📋 STORAGE_ENGINE: No collections have unflushed data");
+            return Ok(empty_result);
         }
 
-        // Register all SST engines from our storage map
-        // Each SST engine implements UnifiedStorageFormat
-        for entry in self.sst_storages.iter() {
-            let engine_key = entry.key();
-            let engine = entry.value();
-            // SST engines use "sst" as engine type
-            flush_coordinator
-                .register_storage_engine("sst", engine.clone())
-                .await;
-            tracing::debug!("Registered SST engine '{}' for shutdown flush", engine_key);
+        tracing::info!(
+            "🛑 STORAGE_ENGINE: Found {} collections with unflushed data: {:?}",
+            collections_to_flush.len(),
+            collections_to_flush
+        );
+
+        // Catalog is the metadata authority: resolve each collection's engine /
+        // dimension / on-disk path / owning tenant. This is what the old throwaway
+        // coordinator lacked (TD-163) — without it the engine could not be resolved
+        // and the shutdown flush silently materialized nothing.
+        let catalog = list_collections_from_catalog().await;
+
+        let mut collections_flushed = 0usize;
+        let mut total_vectors_flushed = 0u64;
+        let mut total_bytes_written = 0u64;
+        let mut failed_collections: Vec<(String, String)> = Vec::new();
+
+        for collection_id in &collections_to_flush {
+            // The server keys the write buffer by canonical UUID, so resolve by id.
+            let Some(meta) = catalog.iter().find(|c| &c.id == collection_id) else {
+                tracing::warn!(
+                    "⚠️ STORAGE_ENGINE: No catalog metadata for collection '{}'; cannot resolve engine, skipping",
+                    collection_id
+                );
+                failed_collections.push((collection_id.clone(), "no catalog metadata".to_string()));
+                continue;
+            };
+
+            let config = meta.config.as_ref();
+            let assignment = meta.storage_assignment.as_ref();
+            let engine_type = assignment
+                .map(|a| a.engine)
+                .or_else(|| config.and_then(|c| c.storage_engine))
+                .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32);
+            let dimension = config.map(|c| c.dimension).unwrap_or(0);
+            let base_location = assignment
+                .map(|a| a.base_location.clone())
+                .unwrap_or_default();
+            let tenant_id =
+                crate::services::collection::manager::CollectionService::collection_tenant_id(meta);
+
+            let plan = CollectionFlushPlan {
+                wal_key: collection_id.clone(),
+                canonical_id: collection_id.clone(),
+                base_location,
+                engine_type,
+                dimension,
+                tenant_id,
+            };
+
+            // A6 fence is applied inside `materialize_collection` (default-OFF), so a
+            // pod displaced by a lease takeover is rejected before the storage write.
+            // `free_wal=false`: keep the WAL so recovery's replay serves exact recall
+            // after restart (the cold SST read path's recall fix is a dependent TD).
+            // Safe here because shutdown is terminal — the still-unflushed batches are
+            // not re-flushed.
+            match materialize_collection(
+                &write_buffer,
+                &plan,
+                self.storage_write_fence.as_ref(),
+                None,
+                false,
+            )
+            .await
+            {
+                Ok(Some(outcome)) => {
+                    collections_flushed += 1;
+                    total_vectors_flushed += outcome.entries_flushed;
+                    total_bytes_written += outcome.bytes;
+                    tracing::info!(
+                        "✅ STORAGE_ENGINE: Flushed collection '{}': {} vectors, {} bytes",
+                        collection_id,
+                        outcome.entries_flushed,
+                        outcome.bytes
+                    );
+                }
+                Ok(None) => {
+                    tracing::debug!(
+                        "📋 STORAGE_ENGINE: Collection '{}' had no unflushed batches",
+                        collection_id
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "❌ STORAGE_ENGINE: Failed to flush collection '{}': {}",
+                        collection_id,
+                        e
+                    );
+                    failed_collections.push((collection_id.clone(), e.to_string()));
+                }
+            }
         }
 
-        // Execute flush for all collections with unflushed data
-        match flush_coordinator.flush_all_collections().await {
-            Ok(result) => Ok(result),
-            Err(e) => Err(crate::storage::StorageError::WalError(format!(
-                "Failed to flush memtable to storage: {}",
-                e
-            ))),
-        }
+        tracing::info!(
+            "🛑 STORAGE_ENGINE: Flush complete — {} collections, {} vectors, {} bytes{}",
+            collections_flushed,
+            total_vectors_flushed,
+            total_bytes_written,
+            if failed_collections.is_empty() {
+                String::new()
+            } else {
+                format!(", {} failures", failed_collections.len())
+            }
+        );
+
+        Ok(FlushAllResult {
+            collections_flushed,
+            total_vectors_flushed,
+            total_bytes_written,
+            failed_collections,
+        })
     }
 
     /// Recover all vectors from WAL files for all collections
@@ -929,7 +1036,7 @@ impl StorageEngine {
     /// Get the shared distance computation engine
     pub fn distance_compute(
         &self,
-    ) -> &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute> {
+    ) -> &Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute> {
         &self.distance_compute
     }
 
@@ -939,7 +1046,7 @@ impl StorageEngine {
         &self,
         query: &[f32],
         vector: &[f32],
-        distance_metric: &crate::compute::distance_computation::DistanceMetric,
+        distance_metric: &proximadb_distance_kernel::DistanceMetric,
     ) -> crate::storage::Result<f32> {
         // Use shared unified distance computation engine
         let result = self

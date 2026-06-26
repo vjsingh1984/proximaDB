@@ -397,9 +397,9 @@ impl SstTextFilterEvaluator {
 
     /// Convert a FilterExpression to TextComparisonOp if applicable
     pub fn convert_filter_expression(
-        expr: &crate::core::search::FilterExpression,
+        expr: &proximadb_filter_expression::FilterExpression,
     ) -> Option<(String, TextComparisonOp, String)> {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 
         match expr {
             FilterExpression::Comparison {
@@ -725,7 +725,7 @@ mod tests {
 
     #[test]
     fn test_convert_filter_expression() {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 
         let expr = FilterExpression::Comparison {
             field: "title".to_string(),

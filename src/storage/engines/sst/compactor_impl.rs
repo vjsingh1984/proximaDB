@@ -1241,13 +1241,13 @@ struct WriterStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::compute::quantization::quantization_engine::{
         InMemoryCodebookStore, UnifiedQuantizationEngine,
     };
     use crate::compute::quantization::storage_engine::{
         StorageQuantizationConfig, StorageQuantizationEngine,
     };
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
     // Note: Using StorageQuantizationConfig instead of removed SstQuantizationConfig
 
     #[tokio::test]
@@ -1299,9 +1299,8 @@ mod tests {
 
         // Note: Using StorageQuantizationConfig instead of undefined SstQuantizationConfig
         // Create storage quantization engine
-        let distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-        );
+        let distance_compute =
+            Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
         let codebook_store = Arc::new(
             crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
         );
@@ -1324,7 +1323,7 @@ mod tests {
                     crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
                 ),
                 distance_metric:
-                    crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+                    proximadb_distance_kernel::engine::DistanceMetric::Cosine,
                 enable_progressive: true,
                 filter_threshold: 100.0,
                 candidate_multiplier: 4,
@@ -1334,8 +1333,8 @@ mod tests {
             };
 
         let distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+            proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(
+                proximadb_distance_kernel::engine::DistanceMetric::Cosine,
             ),
         );
 

@@ -44,10 +44,9 @@ use tracing::{debug, error, info, trace, warn};
 // use std::hint::likely; // Unstable feature - removed for compilation
 
 use super::block_filter::{BlockFilter, IntelligentBlockFilter};
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::bloom::BloomFilterConfig;
 use crate::core::bloom::SstableBloomFilter;
-use crate::core::search::{FilterExpression, SearchParams};
+use crate::core::search::SearchParams;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::engines::core::formats::proximablocks::sst_io_layer::{
     SharedSstFormatReader, SstMmapStrategy, SstRegion,
@@ -55,6 +54,8 @@ use crate::storage::engines::core::formats::proximablocks::sst_io_layer::{
 use crate::storage::engines::sst::{IndexEntry, SstableHeader}; // OPTIMIZED: Removed SstRecord import
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use proximadb_compression::CompressionAlgorithm;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
+use proximadb_filter_expression::FilterExpression;
 
 // Using UnifiedCachingFilesystem instead of ZeroCopyIOSystem
 use crate::storage::persistence::filesystem::FileSystem;
@@ -420,7 +421,7 @@ fn vector_bounds_prune_query(params: &SearchParams) -> Option<&[f32]> {
     }
     if !matches!(
         params.distance_metric,
-        Some(crate::compute::distance_computation::DistanceMetric::Euclidean)
+        Some(proximadb_distance_kernel::DistanceMetric::Euclidean)
     ) {
         return None;
     }
@@ -465,11 +466,9 @@ fn vector_bounds_provisional_threshold(
     if k == 0 {
         return None;
     }
-    use crate::compute::distance_computation::DistanceMetric;
+    use proximadb_distance_kernel::DistanceMetric;
     let distance_compute =
-        crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-            DistanceMetric::Euclidean,
-        );
+        proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
     let mut queue = BoundedPriorityQueue::new(k);
     for block in seed_blocks {
         for record in &block.records {
@@ -914,7 +913,7 @@ impl ModularBlockReader {
         query_vector: &[f32],
         k: usize,
         filter: Option<&FilterExpression>,
-        distance_metric: &crate::compute::distance_computation::engine::DistanceMetric,
+        distance_metric: &proximadb_distance_kernel::engine::DistanceMetric,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         // Always use traditional search (quantization handled at a higher level)
         self.traditional_search(query_vector, k, filter, distance_metric)
@@ -930,7 +929,7 @@ impl ModularBlockReader {
         query_vector: &[f32],
         k: usize,
         _filter: Option<&FilterExpression>,
-        distance_metric: &crate::compute::distance_computation::engine::DistanceMetric,
+        distance_metric: &proximadb_distance_kernel::engine::DistanceMetric,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         info!("📝 Fallback: Using traditional search (no quantization)");
 
@@ -945,11 +944,9 @@ impl ModularBlockReader {
         // Hoisted out of the per-record loop: instantiating UnifiedDistanceCompute
         // and dispatching SIMD once per vector was per-record overhead. With the
         // batch entry point we get one SIMD dispatch per block.
-        let distance_compute =
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::default();
-        let mut distance_results: Vec<
-            crate::compute::distance_computation::engine::SimilarityResult,
-        > = Vec::new();
+        let distance_compute = proximadb_distance_kernel::engine::UnifiedDistanceCompute::default();
+        let mut distance_results: Vec<proximadb_distance_kernel::engine::SimilarityResult> =
+            Vec::new();
 
         // Scan all blocks and compute distances
         for (block_idx, _index_entry) in index_entries.iter().enumerate() {
@@ -1395,8 +1392,9 @@ impl ModularBlockReader {
 #[cfg(test)]
 mod vector_bounds_prune_tests {
     use super::*;
-    use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::search::{BlockPruneConfig, FilterExpression};
+    use crate::core::search::BlockPruneConfig;
+    use proximadb_distance_kernel::DistanceMetric;
+    use proximadb_filter_expression::FilterExpression;
 
     fn euclidean_params(query: Vec<f32>) -> SearchParams {
         SearchParams {
@@ -2234,7 +2232,7 @@ impl UnifiedSstableReader {
         query_vector: &[f32],
         filter: Option<FilterExpression>,
         k: usize,
-        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        distance_metric: proximadb_distance_kernel::DistanceMetric,
         collection: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         // Delegate to the new version with default (sqrt) block pruning
@@ -2260,7 +2258,7 @@ impl UnifiedSstableReader {
         query_vector: &[f32],
         filter: Option<FilterExpression>,
         k: usize,
-        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        distance_metric: proximadb_distance_kernel::DistanceMetric,
         collection: Option<&crate::proto::proximadb_v1::Collection>,
         block_prune: &crate::core::search::BlockPruneConfig,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
@@ -2323,9 +2321,7 @@ impl UnifiedSstableReader {
         // dropping from ~62 ms to ~10–20 ms range on aarch64/NEON.
         let mut priority_queue = BoundedPriorityQueue::new(k);
         let distance_compute =
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                distance_metric,
-            );
+            proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(distance_metric);
 
         for block in blocks {
             for record in block.records {
@@ -2398,7 +2394,7 @@ impl UnifiedSstableReader {
         query_vector: &[f32],
         filter: Option<FilterExpression>,
         k: usize,
-        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        distance_metric: proximadb_distance_kernel::DistanceMetric,
         collection: Option<&crate::proto::proximadb_v1::Collection>,
         block_prune: &crate::core::search::BlockPruneConfig,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
@@ -2437,9 +2433,7 @@ impl UnifiedSstableReader {
 
         // Create distance compute engine
         let distance_compute =
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                distance_metric,
-            );
+            proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(distance_metric);
 
         // Process blocks with vectorized filtering + deferred
         // materialization (same optimization as the scalar path —
@@ -2524,7 +2518,7 @@ impl UnifiedSstableReader {
         query_vector: &[f32],
         filter: Option<FilterExpression>,
         k: usize,
-        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        distance_metric: proximadb_distance_kernel::DistanceMetric,
         collection: Option<&crate::proto::proximadb_v1::Collection>,
         block_prune: &crate::core::search::BlockPruneConfig,
         max_workers: Option<usize>,
@@ -2619,9 +2613,7 @@ impl UnifiedSstableReader {
                 async move {
                     // Create distance compute for this morsel
                     let distance_compute =
-                        crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                            metric,
-                        );
+                        proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(metric);
 
                     // Process each record in the morsel
                     let mut results = Vec::new();
@@ -2694,7 +2686,7 @@ impl UnifiedSstableReader {
         query_vector: &[f32],
         filter: Option<FilterExpression>,
         k: usize,
-        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        distance_metric: proximadb_distance_kernel::DistanceMetric,
         collection: Option<&crate::proto::proximadb_v1::Collection>,
         block_prune: &crate::core::search::BlockPruneConfig,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
@@ -2743,9 +2735,7 @@ impl UnifiedSstableReader {
         );
 
         let distance_compute =
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                distance_metric,
-            );
+            proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(distance_metric);
         let mut queue = BoundedPriorityQueue::new(k);
 
         for record in &all_records {
@@ -2839,8 +2829,8 @@ impl UnifiedSstableReader {
         &self,
         filter: &FilterExpression,
     ) -> Result<crate::storage::engines::core::formats::columnar::FilterCondition> {
-        use crate::core::search::ComparisonOperator;
         use crate::storage::engines::core::formats::columnar::FilterCondition;
+        use proximadb_filter_expression::ComparisonOperator;
 
         // Convert FilterExpression to FilterCondition for vectorized executor
         match filter {
@@ -3673,9 +3663,8 @@ impl UnifiedSstableReader {
                 }
 
                 // Calculate similarity using unified distance computation for semantic correctness
-                let metric = distance_metric.unwrap_or(
-                    crate::compute::distance_computation::engine::DistanceMetric::Cosine,
-                );
+                let metric = distance_metric
+                    .unwrap_or(proximadb_distance_kernel::engine::DistanceMetric::Cosine);
                 let similarity = distance_compute.calculate_distance(query_vector, vector, &metric);
 
                 // Use normalized_score for consistency across all engines
@@ -6129,7 +6118,7 @@ impl UnifiedSstableReader {
         survivors: &[usize],
         query: &[f32],
     ) -> Vec<usize> {
-        use crate::compute::distance_computation::DistanceMetric;
+        use proximadb_distance_kernel::DistanceMetric;
         let mut scored: Vec<(f32, usize)> = survivors
             .iter()
             .map(|&block_idx| {
@@ -6348,7 +6337,7 @@ impl UnifiedSstableReader {
         filter: &FilterExpression,
         conditions: &mut Vec<(String, serde_json::Value)>,
     ) {
-        use crate::core::search::ComparisonOperator;
+        use proximadb_filter_expression::ComparisonOperator;
 
         match filter {
             FilterExpression::Comparison {
@@ -6499,7 +6488,7 @@ impl UnifiedSstableReader {
         // Fallback: No spatial codes, use centroid-based pruning only
         let metric = _params
             .distance_metric
-            .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
+            .unwrap_or(proximadb_distance_kernel::DistanceMetric::Cosine);
 
         select_blocks_by_centroid(query, _index_blocks, metric, &_params.block_prune)
     }

@@ -5,9 +5,9 @@ use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;
 // Arrow compute not available, would need full arrow crate
 // use arrow::compute::kernels::aggregate;
-use crate::compute::distance_computation::{DistanceMetric, DistanceMode, UnifiedDistanceCompute};
 use crate::core::{hardware_capabilities::HardwareCapabilities, memory::pool::VectorMemoryPool};
 use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_distance_kernel::{DistanceMetric, DistanceMode, UnifiedDistanceCompute};
 use std::sync::Arc;
 use tracing::info;
 // Memory-mapped Parquet operations would be imported here

@@ -22,8 +22,8 @@ use std::sync::Arc;
 use tempfile::{TempDir, tempdir};
 use tokio::sync::RwLock;
 
-use crate::compute::distance_computation::DistanceMetric as ComputeDistanceMetric;
-use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
+use proximadb_distance_kernel::DistanceMetric as ComputeDistanceMetric;
+use proximadb_distance_kernel::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::core::search::SearchParams;
 use crate::proto::proximadb_v1::Collection;
@@ -775,7 +775,7 @@ async fn test_flush_operation() {
             .unwrap(),
     );
     let distance_compute =
-        Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+        Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
 
     let config = HelixConfig::default();
     let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)
@@ -848,7 +848,7 @@ async fn test_vector_search() {
             .unwrap(),
     );
     let distance_compute =
-        Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+        Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
 
     let config = HelixConfig::default();
     let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)
@@ -949,7 +949,7 @@ async fn test_vector_by_id() {
             .unwrap(),
     );
     let distance_compute =
-        Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+        Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
 
     let config = HelixConfig::default();
     let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)
@@ -1024,7 +1024,7 @@ async fn test_compaction() {
             .unwrap(),
     );
     let distance_compute =
-        Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+        Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
 
     let mut config = HelixConfig::default();
     config.level0_file_num_compaction_trigger = 2;
@@ -1215,7 +1215,7 @@ async fn test_proxima_integration() {
     // Search SSTable
     let query = vec![0.5; 128];
     let distance_compute = Arc::new(
-        crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+        proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(
             ComputeDistanceMetric::Euclidean,
         ),
     );
@@ -1254,7 +1254,7 @@ async fn test_metrics_collection() {
             .unwrap(),
     );
     let distance_compute =
-        Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+        Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
 
     let config = HelixConfig::default();
     let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)

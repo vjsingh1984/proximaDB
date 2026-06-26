@@ -13,7 +13,7 @@ use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfi
 use crate::storage::engines::core::read_strategy::ReadAccessStrategy;
 use std::sync::Arc;
 use std::collections::BinaryHeap;
-use crate::compute::distance_computation::{UnifiedDistanceCompute, DistanceMetric};
+use proximadb_distance_kernel::{UnifiedDistanceCompute, DistanceMetric};
 
 // =====================================================
 // TESTS FROM unified_reader.rs

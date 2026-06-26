@@ -1,7 +1,7 @@
-use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::core::search::BlockPruneConfig;
 use crate::storage::engines::core::constants::pruning as pruning_constants;
 use crate::storage::engines::sst::IndexEntry;
+use proximadb_distance_kernel::{DistanceMetric, engine::UnifiedDistanceCompute};
 use tracing::debug;
 
 /// Compute Z-Order code for a query vector using PCA transform.

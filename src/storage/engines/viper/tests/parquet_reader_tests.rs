@@ -4,9 +4,10 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::compute::distance_computation::DistanceMetric;
+    use proximadb_distance_kernel::DistanceMetric;
     use crate::core::search::search_interface::{CollectionConfig, SearchPlan, StorageInfo};
-    use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
+    use crate::core::search::SearchParams;
+    use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
     use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
     use crate::storage::engines::core::formats::columnar::CollectionContext;
     use crate::storage::engines::core::formats::columnar::columnar_query_engine::columnar_query_reader::UnifiedParquetReader;

@@ -23,10 +23,10 @@ use tracing::{debug, info};
 // Health status handled internally
 use super::operations::{NovaCompactionOperations, NovaFlushOperations, NovaSearchOperations};
 use super::optimized_operations::OptimizedNovaOperations;
-use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
+use proximadb_distance_kernel::DistanceMetric;
 // Arrow schema handled by parquet reader
 
 // Performance optimization handled internally
@@ -209,7 +209,7 @@ pub struct NovaEngine {
     /// - Progressive refinement (coarse → fine distances)
     ///
     /// Shared singleton across all distance operations
-    _distance_engine: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+    _distance_engine: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
 
     /// **Universal Performance Optimizer**
     ///
@@ -251,9 +251,8 @@ impl NovaEngine {
         // Initialize compression provider directly
         let compression_provider = StandardCompression;
         // Initialize unified quantization engine from compute module
-        let distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-        );
+        let distance_compute =
+            Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
         let codebook_store = Arc::new(
             crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
         );
@@ -443,8 +442,7 @@ impl NovaEngine {
                             collection_id: collection_id.to_string(),
                             num_vectors: vectors.len() as u64,
                             dimension,
-                            distance_metric:
-                                crate::compute::distance_computation::DistanceMetric::Euclidean,
+                            distance_metric: proximadb_distance_kernel::DistanceMetric::Euclidean,
                             quantization: Default::default(),
                             column_stats: Default::default(),
                             version: 1,
@@ -1902,9 +1900,9 @@ impl NovaEngine {
     /// This helper converts our internal FilterExpression type to the
     /// IndexMetadataFilter DTO format for hybrid vector + metadata queries.
     fn convert_filter_to_index(
-        filter_expression: Option<&crate::core::search::FilterExpression>,
+        filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
     ) -> Vec<proximadb_index_traits::IndexMetadataFilter> {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
         use proximadb_index_traits::{IndexFilterOperator, IndexMetadataFilter};
 
         let Some(filter) = filter_expression else {
@@ -1976,8 +1974,8 @@ impl NovaEngine {
         storage_path: &str,
         _query_vector: &[f32],
         top_k: usize,
-        distance_metric: crate::compute::distance_computation::DistanceMetric,
-        _filter_expression: Option<&crate::core::search::FilterExpression>,
+        distance_metric: proximadb_distance_kernel::DistanceMetric,
+        _filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         tracing::warn!("🔄 NOVA: Falling back to direct search implementation");
 
@@ -2005,10 +2003,8 @@ impl NovaEngine {
         // Insert all results into bounded queue
         for (record, distance) in all_results {
             // Use SimilarityResult for proper normalization
-            let similarity_result = crate::compute::distance_computation::SimilarityResult::new(
-                distance,
-                distance_metric,
-            );
+            let similarity_result =
+                proximadb_distance_kernel::SimilarityResult::new(distance, distance_metric);
 
             let search_record = OptimizedSearchRecord {
                 id: record.id.clone(),

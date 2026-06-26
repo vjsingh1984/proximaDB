@@ -138,7 +138,7 @@ the compute kernels by the distance/quant/bridge seam — not per file.
 | — | `proximadb-storage-formats` ← `src/storage/formats/` | ~5K | ~~Low~~ → High | 🚫 *Blocked.* Engine-bound: `adapters.rs` → all six engines (12 refs). Defer behind E. (Disproves the original "formats-first"; see #145.)
 | — | `proximadb-storage-cache` ← `src/storage/cache/` (wraps `proximadb-cache`) | ~11K | ~~Low~~ → High | 🚫 *Blocked.* 11/27 files depend on root-resident `storage::traits::UnifiedStorageFormat` (90 consumers) + root `metrics`/`observability`. Requires D.
 | C | Persistence: WAL + disk-manager port crates | ~? | Med | Pending (filesystem trait/types already extracted via #332)
-| D | *Enabler:* `IndexManager` (+ distance, metadata) **port crate(s)**; refactor engine/compaction to inject ports | n/a | Med-High | Linchpin (also unblocks cache's `storage::traits` dep)
+| D | *Enabler:* `IndexManager` (+ distance, metadata) **port crate(s)**; refactor engine/compaction to inject ports — **detailed plan: `ROOT_CRATE_DECOMPOSITION_SLICE_D_PORT_INVERSION_2026_06_26.adoc`** | n/a | Med-High | Linchpin (also unblocks cache's `storage::traits` dep)
 | E | Engines: `proximadb-{sst,nova,viper}-engine` (depend on ports from D) | large | High | Coordinated window
 | F | Multimodel / document / entity / transaction stores | large | High | Coordinated window
 |===

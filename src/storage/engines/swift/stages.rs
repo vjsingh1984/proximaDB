@@ -50,12 +50,12 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::debug;
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 use crate::storage::engines::core::progressive::{
     ProgressiveSearchStage, QuantizationLevel, ScoredCandidate,
 };
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
 // ============================================================================
 // SWIFT Binary Stage

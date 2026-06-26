@@ -27,8 +27,8 @@ async fn test_swift_engine_creation() {
     let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
     // Need to create distance engine and axis manager for new()
     let _distance_engine = Arc::new(
-        crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+        proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
         ),
     );
     let engine = crate::storage::engines::swift::SwiftEngine::new()
@@ -43,8 +43,8 @@ async fn test_swift_feature_support() {
     let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
     // Need to create distance engine and axis manager for new()
     let _distance_engine = Arc::new(
-        crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+        proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
         ),
     );
     let engine = crate::storage::engines::swift::SwiftEngine::new()

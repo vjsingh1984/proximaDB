@@ -186,7 +186,7 @@ mod tests {
         let distances = optimizer.compute_distances_accelerated(
             &query,
             &candidates,
-            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::Euclidean,
         ).await.unwrap();
         
         assert_eq!(distances.len(), 3);
@@ -198,7 +198,7 @@ mod tests {
         let cosine_distances = optimizer.compute_distances_accelerated(
             &query,
             &candidates,
-            crate::compute::distance_computation::DistanceMetric::Cosine,
+            proximadb_distance_kernel::DistanceMetric::Cosine,
         ).await.unwrap();
         
         assert_eq!(cosine_distances.len(), 3);

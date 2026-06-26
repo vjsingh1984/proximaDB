@@ -11,9 +11,6 @@ use tracing::{debug, info, warn};
 
 use super::batch_strategy::WALBatchStrategy;
 use super::{BatchId, FlushResult, WALConfig, WALStats};
-use crate::compute::distance_computation::engine::{
-    DistanceComputeProvider, UnifiedDistanceCompute,
-};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
@@ -21,6 +18,7 @@ use crate::storage::persistence::write_ahead_log::{
     serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer},
 };
 use crate::storage::traits::UnifiedStorageFormat;
+use proximadb_distance_kernel::engine::{DistanceComputeProvider, UnifiedDistanceCompute};
 
 /// Proto WAL batch strategy using serialization-first architecture
 pub struct ProtoSerializationStrategy {
@@ -268,7 +266,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         _collection_id: &str,
         _query_vector: &[f32],
         _k: usize,
-        _distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
+        _distance_metric: Option<proximadb_distance_kernel::DistanceMetric>,
     ) -> Result<Vec<(String, f32, proximadb_records::ProximaRecord)>> {
         // For now, similarity search is delegated to storage engine
         let engine = self.storage_engine.read().await;

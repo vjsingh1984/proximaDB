@@ -129,6 +129,7 @@ fn create_test_collection(
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
             permitted_principals: vec![],
+            index_policy: None,
         }),
         stats: None,
         created_at: chrono::Utc::now().timestamp(),

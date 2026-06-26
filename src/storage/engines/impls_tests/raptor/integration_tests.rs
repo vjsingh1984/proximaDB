@@ -420,7 +420,7 @@ async fn test_clustering_integration() -> Result<()> {
         }),
         min_vectors_for_clustering: 3,
         max_clusters: 10,
-        distance_metric: crate::compute::distance_computation::DistanceMetric::Cosine,
+        distance_metric: proximadb_distance_kernel::DistanceMetric::Cosine,
         adaptive_cluster_count: false,
         recompute_threshold: 100,
         enable_incremental: false,
@@ -749,7 +749,7 @@ async fn test_raptor_large_scale_search_benchmark() -> Result<()> {
     let search_params = Arc::new(crate::core::search::SearchParams {
         query_vectors: Some(vec![query_vector]),
         top_k: Some(10),
-        distance_metric: Some(crate::compute::distance_computation::DistanceMetric::Euclidean),
+        distance_metric: Some(proximadb_distance_kernel::DistanceMetric::Euclidean),
         ..Default::default()
     });
 
@@ -769,7 +769,7 @@ async fn test_raptor_large_scale_search_benchmark() -> Result<()> {
         use_axis_indexes: false,
         has_quantization: false,
         dimension,
-        distance_metric: crate::compute::distance_computation::DistanceMetric::Euclidean,
+        distance_metric: proximadb_distance_kernel::DistanceMetric::Euclidean,
         storage_strategy: crate::storage::traits::StorageFormatStrategy::Raptor,
         storage_path: storage_path.clone(), // CRITICAL: This tells RAPTOR where to find files
         quantization_config: None,

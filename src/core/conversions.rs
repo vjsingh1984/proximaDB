@@ -588,6 +588,9 @@ pub fn build_collection_config(
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
         permitted_principals: vec![],
+        // Generic JSON builder carries no routing policy (REST v2 build is the
+        // typed surface); default to auto (None).
+        index_policy: None,
     };
 
     // Apply smart defaults from proto comments

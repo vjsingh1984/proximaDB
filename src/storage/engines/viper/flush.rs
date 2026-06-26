@@ -92,7 +92,7 @@ impl Flush {
             crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
         );
         let distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+            proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(
                 crate::proto::proximadb_v1::DistanceMetric::Cosine,
             ),
         );

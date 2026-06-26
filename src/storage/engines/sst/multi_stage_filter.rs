@@ -16,11 +16,11 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::core::bloom::SstableBloomFilter;
-use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::engines::sst::IndexEntry;
 use crate::storage::engines::sst::readers::sst_query_engine::ReadStrategy;
 use crate::storage::engines::sst::row_filter::{SSTBatchFilterEvaluator, SSTRowFilterEvaluator};
+use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 
 /// Complete SST filtering pipeline with all three stages
 /// Uses immutable Arc types for optimal read performance
@@ -542,7 +542,7 @@ impl FilterStageStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::search::{ComparisonOperator, FilterExpression};
+    use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
     use std::collections::HashMap;
 
     #[tokio::test]

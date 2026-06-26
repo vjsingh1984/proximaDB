@@ -1,6 +1,6 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
-= ADR-028: Shared Code→CPG Chunker Package (`victor-codegraph`) — one chunker, three consumers, zero duplication
+= ADR-029: Shared Code→CPG Chunker Package (`victor-codegraph`) — one chunker, three consumers, zero duplication
 
 [cols="1,3"]
 |===

@@ -58,6 +58,12 @@ message CollectionConfig {
   // not subject to this check — they use separate admin permissions.
   repeated string permitted_principals = 27;
 
+  // Per-collection cold/warm search routing policy (ADR-028). Absent (or
+  // mode="auto"/"") => the system decides cost-derived. Owners with hard SLAs
+  // override per collection. Query-time precedence: per-query SearchMode >
+  // this index_policy > cost-model auto-default.
+  optional IndexPolicy index_policy = 28;
+
   // NOTE on recall_target: stored as a tag on this collection via
   // `tags`, with the convention "recall_target:<float in [0,1]>".
   // The create-collection flow parses that tag and runs
@@ -148,6 +154,30 @@ message CollectionStats {
   int64 vector_count = 1;
   int64 index_size_bytes = 2;
   int64 data_size_bytes = 3;
+}
+
+// Per-collection cold/warm search routing policy (ADR-028).
+//
+// Paved road + escape hatch: an absent message (or mode="auto"/"") means the
+// system decides cost-derived (exact when N*dim*4 <= storage-class byte budget,
+// else approximate). Owners with hard SLAs can override per collection.
+//
+// Validity matrix (fail-closed at create): rehydrate/nprobe are index/auto
+// concepts and are rejected when mode="exact" (exact builds no index).
+message IndexPolicy {
+  // "auto"(default) | "exact" | "ivf" | "hnsw" | "helix".
+  // "auto"/"" => cost-derived. "exact" => always brute-force (no index). The
+  // engine modes force the collection onto that engine/route.
+  string mode = 1;
+  // "auto"(default) | "eager" | "lazy" | "never". Index/auto modes only.
+  // Controls when a persisted index is warmed on cold start.
+  string rehydrate = 2;
+  // Exact-scan byte budget override. 0 => cost-model default for the storage
+  // class; otherwise the max bytes (N*dim*4) the auto gate will brute-force
+  // before routing to the index.
+  uint64 byte_budget = 3;
+  // nprobe override for index modes. 0 => cost-derived.
+  uint32 nprobe = 4;
 }
 
 message Collection {

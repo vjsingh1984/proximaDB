@@ -3,7 +3,7 @@
 //! This file demonstrates how all storage engines can leverage the unified
 //! filter evaluator for consistent filtering behavior.
 
-use crate::core::search::{ComparisonOperator, FilterExpression};
+use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 use crate::storage::engines::core::filter_evaluator::*;
 use serde_json::{json, Value};
 use std::collections::HashMap;
