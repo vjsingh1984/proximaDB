@@ -15,7 +15,13 @@ on:
 
 concurrency:
   group: qa-gate-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  # false (not true): a develop→qa promotion PR has head=develop, so every push
+  # to develop fires a `synchronize` event landing in the SAME per-PR group —
+  # with cancel-in-progress:true that killed the in-flight run before TPC-H/DS
+  # could finish (the promotion never completed during develop churn). false lets
+  # the in-flight run finish; GitHub still keeps only the newest *pending* run per
+  # group (older pendings are auto-dropped), so there is no runaway stacking.
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -43,10 +49,21 @@ jobs:
           fi
           echo "ok: main PR originates from qa"
 
-  tpch-pgwire:
-    name: TPC-H pgwire integration
+  # Build the workspace test artifacts ONCE. The pgwire + recall jobs below take
+  # `needs: [build]` and restore this same target/ via Swatinem/rust-cache
+  # (shared-key), so they skip recompiling the workspace — modeled on ci.yml's
+  # rust-build -> rust-test cache-sharing idiom (prefix v1-rust-nightly-dev +
+  # shared-key "build"). `--workspace --tests` compiles every member crate's lib
+  # (incl. proximadb-block-format), the root crate's [[test]] integration target,
+  # and all auto-discovered tests/*.rs integration bins (tpch_pgwire_e2e,
+  # tpcds_pgwire_e2e). It does NOT build benches/examples. (`--tests` is a
+  # superset of `--lib`, so pax-recall's `-p proximadb-block-format --lib` is
+  # covered.) The e2e tests embed the server via tokio::spawn, so they link the
+  # lib — a pre-built server binary cannot replace this; a shared target/ can.
+  build:
+    name: Rust Build (workspace tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -56,14 +73,35 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-qa-tpch"
+          prefix-key: "v1-qa-build"
+          shared-key: "qa-tests"
+      - name: Build workspace test artifacts
+        run: cargo build --workspace --tests
+
+  tpch-pgwire:
+    name: TPC-H pgwire integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-qa-build"
+          shared-key: "qa-tests"
       - name: Run TPC-H over pgwire
         run: CARGO_BUILD_JOBS=2 cargo test --test tpch_pgwire_e2e -- --nocapture
 
   tpcds-pgwire:
     name: TPC-DS pgwire integration
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
+    needs: [build]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -73,7 +111,8 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-qa-tpcds"
+          prefix-key: "v1-qa-build"
+          shared-key: "qa-tests"
       - name: Run TPC-DS over pgwire
         run: CARGO_BUILD_JOBS=2 cargo test --test tpcds_pgwire_e2e -- --nocapture
 
@@ -86,6 +125,7 @@ jobs:
     name: ANN Recall Ratchet (PAX RaBitQ→SQ8)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs: [build]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -95,7 +135,8 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-qa-pax-recall"
+          prefix-key: "v1-qa-build"
+          shared-key: "qa-tests"
       - name: Run PAX recall ratchets
         run: cargo test -p proximadb-block-format --lib recall -- --nocapture
 
