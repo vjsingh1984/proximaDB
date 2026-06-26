@@ -70,6 +70,13 @@ jobs:
     - name: Run OSS/enterprise boundary guard
       run: python3 scripts/check_oss_boundary.py
 
+    # Billing-never-gated: the perf io-trace emission is gateable (TD-160) but the
+    # per-tenant billing meters + observer must stay always-on (ADR-027/ADR-030
+    # non-entanglement). Fails if any consumption_metrics symbol or the billing
+    # observer is wrapped in cfg(feature = "io-trace").
+    - name: Run billing-never-gated guard
+      run: python3 scripts/check_billing_never_gated.py
+
     - name: Report violations
       if: failure()
       run: |

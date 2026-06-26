@@ -360,10 +360,18 @@ impl IoTraceSnapshot {
     /// Emit this snapshot as a structured `tracing` event under [`TARGET`].
     /// No-op when empty. `tenant_id` and `route` label the query; all physical
     /// quantities become event fields the OTLP layer (§4.4) maps to a span.
+    /// Emit the per-query I/O trace as a structured `tracing` event.
+    ///
+    /// TD-160: this is the **perf-class emission** — gated behind the `io-trace`
+    /// cargo feature (default OFF) so it costs nothing in normal operation. When
+    /// the feature is off this is a near-no-op; the cheap core counters and the
+    /// route/cache/**billing** observers in [`instrument`] are unaffected and stay
+    /// always-on (billing is never gated — ADR-027 non-entanglement).
     pub fn emit(&self, tenant_id: Option<&str>, route: &str) {
         if self.is_empty() {
             return;
         }
+        #[cfg(feature = "io-trace")]
         tracing::info!(
             target: TARGET,
             tenant_id = tenant_id.unwrap_or("default"),
@@ -388,6 +396,10 @@ impl IoTraceSnapshot {
             compute_ms_by_engine = ?self.compute_ms,
             "per-query I/O trace"
         );
+        // Perf emission compiled out (default): consume the args so the signature
+        // is stable and no unused-var warning fires in the feature-off build.
+        #[cfg(not(feature = "io-trace"))]
+        let _ = (tenant_id, route);
     }
 }
 
