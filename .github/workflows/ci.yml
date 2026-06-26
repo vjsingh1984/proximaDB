@@ -57,17 +57,21 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       # Three-tier CI (feat -> develop -> qa -> main):
-      #   * feat -> develop = LIGHT: compile + fmt/clippy + layering + proto +
-      #     panic-policy + capability + security-audit + lints + docs. Fast inner
-      #     loop so development merges quickly and stays unblocked.
-      #   * develop -> qa = MEDIUM (`test_tier`): LIGHT + the core correctness
-      #     suites — rust-test, the 4 rust-integration-test-* engines, feature-matrix.
+      #   * feat -> develop runs the LIGHT jobs (compile + fmt/clippy + layering
+      #     + proto + panic-policy + capability + security-audit + lints + docs)
+      #     AND, via `test_tier`, the core Rust-correctness suites — rust-test,
+      #     the 4 rust-integration-test-* engines, feature-matrix. Surfacing
+      #     correctness at the feat→dev boundary catches latent breakage (broken
+      #     doctests, feature-gating gaps, test-isolation bugs) on the
+      #     introducing PR instead of at develop→qa.
+      #   * develop -> qa = MEDIUM: the above plus the qa-gate conformance
+      #     suites (TPC-H/TPC-DS over pgwire, ANN recall ratchets).
       #   * qa -> main = FULL (`extensive`): MEDIUM + docker-build, coverage,
-      #     python multi-version, cross integration-test, benchmarks. The heaviest,
-      #     pre-promotion gate.
-      # `test_tier` is true for base qa or main (and pushes to those); `extensive`
-      # is true only for base main (and pushes to main).
-      test_tier: ${{ github.base_ref == 'qa' || github.base_ref == 'main' || github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/main' }}
+      #     python multi-version, cross integration-test, benchmarks, CodeQL.
+      #     The heaviest, pre-promotion gate.
+      # `test_tier` is true for base develop, qa, or main (and pushes to qa/main);
+      # `extensive` is true only for base main (and pushes to main).
+      test_tier: ${{ github.base_ref == 'develop' || github.base_ref == 'qa' || github.base_ref == 'main' || github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/main' }}
       extensive: ${{ github.base_ref == 'main' || github.ref == 'refs/heads/main' }}
       rust: ${{ steps.filter.outputs.rust }}
       # Comprehensive code-path superset gating the always-required rust-compile
