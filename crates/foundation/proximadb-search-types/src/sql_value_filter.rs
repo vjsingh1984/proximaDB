@@ -32,10 +32,10 @@
 
 use std::collections::HashMap;
 
-use crate::core::search::{ComparisonOperator, FilterExpression};
-use crate::proto::proximadb_v1::SqlValue;
-use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
 use proximadb_data_model::ProximaValue;
+use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
+use proximadb_proto::proximadb_v1::SqlValue;
+use proximadb_proto::proximadb_v1::sql_value::Value as SqlVal;
 use proximadb_records::{ProximaTree, ProximaTreeNode};
 
 /// Evaluate a filter expression against proto `SqlValue` (wire-format) metadata.
@@ -295,7 +295,7 @@ pub fn compare_json_op(
                 .as_str()
                 .zip(value.as_str())
                 .is_some_and(|(haystack, pattern)| {
-                    crate::core::search::json_comparison::like_pattern_match(haystack, pattern)
+                    crate::json_comparison::like_pattern_match(haystack, pattern)
                 })
         }
     }
@@ -364,7 +364,7 @@ pub fn evaluate_filter_proxima(expr: &FilterExpression, props: &ProximaTree) -> 
 /// for floats, `NaN == NaN`); all other JSON values fall back to structural
 /// equality (correct for strings, bools, arrays, objects, null).
 fn json_eq(a: &serde_json::Value, b: &serde_json::Value) -> bool {
-    use crate::core::search::json_comparison::compare_json_numbers;
+    use crate::json_comparison::compare_json_numbers;
     match (a, b) {
         (serde_json::Value::Number(n1), serde_json::Value::Number(n2)) => {
             compare_json_numbers(n1, n2)
@@ -379,23 +379,23 @@ fn json_eq(a: &serde_json::Value, b: &serde_json::Value) -> bool {
 /// type precedence (`Null < Bool < Number < String < Array < Object`).
 fn compare_json_lt(a: &serde_json::Value, b: &serde_json::Value) -> bool {
     use std::cmp::Ordering;
-    crate::core::search::json_comparison::compare_json_values(a, b) == Ordering::Less
+    crate::json_comparison::compare_json_values(a, b) == Ordering::Less
 }
 fn compare_json_lte(a: &serde_json::Value, b: &serde_json::Value) -> bool {
     use std::cmp::Ordering;
     matches!(
-        crate::core::search::json_comparison::compare_json_values(a, b),
+        crate::json_comparison::compare_json_values(a, b),
         Ordering::Less | Ordering::Equal
     )
 }
 fn compare_json_gt(a: &serde_json::Value, b: &serde_json::Value) -> bool {
     use std::cmp::Ordering;
-    crate::core::search::json_comparison::compare_json_values(a, b) == Ordering::Greater
+    crate::json_comparison::compare_json_values(a, b) == Ordering::Greater
 }
 fn compare_json_gte(a: &serde_json::Value, b: &serde_json::Value) -> bool {
     use std::cmp::Ordering;
     matches!(
-        crate::core::search::json_comparison::compare_json_values(a, b),
+        crate::json_comparison::compare_json_values(a, b),
         Ordering::Greater | Ordering::Equal
     )
 }

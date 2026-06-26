@@ -1,8 +1,8 @@
 //! Search result types
 
-use crate::compute::distance_computation::engine::SimilarityResult;
-use crate::proto::proximadb_v1::SourceContent;
 use proximadb_data_model::ProximaValue;
+use proximadb_distance_kernel::engine::SimilarityResult;
+use proximadb_proto::proximadb_v1::{SearchVectorRecord, SourceContent};
 pub use proximadb_records::is_record_dead;
 // Canonical ranking score types — see roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md (R-0).
 pub use proximadb_kernel::{PhaseId, ScoreComponent, ScoreVector};
@@ -16,8 +16,8 @@ const JSONB_MAGIC: &[u8] = b"\xff\xfeJSNB";
 
 /// Used at WAL/gRPC boundary deserialization so the rest of the system
 /// works entirely with ProximaValue.
-pub fn sql_value_to_proxima_value(v: crate::proto::proximadb_v1::SqlValue) -> ProximaValue {
-    use crate::proto::proximadb_v1::sql_value::Value;
+pub fn sql_value_to_proxima_value(v: proximadb_proto::proximadb_v1::SqlValue) -> ProximaValue {
+    use proximadb_proto::proximadb_v1::sql_value::Value;
     match v.value {
         Some(Value::StringValue(s)) => ProximaValue::String(s),
         Some(Value::NumberValue(f)) => ProximaValue::Float64(f),
@@ -52,8 +52,8 @@ pub fn sql_value_to_proxima_value(v: crate::proto::proximadb_v1::SqlValue) -> Pr
 }
 
 /// Convert a canonical ProximaValue back to v1 SqlValue for WAL/gRPC writes.
-pub fn proxima_value_to_sql_value(v: ProximaValue) -> crate::proto::proximadb_v1::SqlValue {
-    use crate::proto::proximadb_v1::{SqlArray, SqlObject, SqlValue, sql_value::Value};
+pub fn proxima_value_to_sql_value(v: ProximaValue) -> proximadb_proto::proximadb_v1::SqlValue {
+    use proximadb_proto::proximadb_v1::{SqlArray, SqlObject, SqlValue, sql_value::Value};
     let inner = match v {
         ProximaValue::String(s) | ProximaValue::Symbol(s) => Value::StringValue(s),
         ProximaValue::Float32(f) => Value::NumberValue(f as f64),
@@ -104,7 +104,7 @@ pub fn proxima_value_to_sql_value(v: ProximaValue) -> crate::proto::proximadb_v1
 
 /// Convert a SqlValue metadata map to a ProximaValue metadata map.
 pub fn sql_map_to_proxima(
-    map: HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    map: HashMap<String, proximadb_proto::proximadb_v1::SqlValue>,
 ) -> HashMap<String, ProximaValue> {
     map.into_iter()
         .map(|(k, v)| (k, sql_value_to_proxima_value(v)))
@@ -114,7 +114,7 @@ pub fn sql_map_to_proxima(
 /// Convert a ProximaValue metadata map back to SqlValue for protocol edges.
 pub fn proxima_map_to_sql(
     map: HashMap<String, ProximaValue>,
-) -> HashMap<String, crate::proto::proximadb_v1::SqlValue> {
+) -> HashMap<String, proximadb_proto::proximadb_v1::SqlValue> {
     map.into_iter()
         .map(|(k, v)| (k, proxima_value_to_sql_value(v)))
         .collect()
@@ -335,9 +335,9 @@ impl OptimizedSearchRecord {
     /// This is a static method that can be used without an instance
     pub fn standardized_distance_to_similarity(
         distance: f32,
-        metric: &crate::compute::distance_computation::DistanceMetric,
+        metric: &proximadb_distance_kernel::DistanceMetric,
     ) -> f32 {
-        use crate::compute::distance_computation::DistanceMetric;
+        use proximadb_distance_kernel::DistanceMetric;
         match metric {
             DistanceMetric::Cosine => {
                 // Cosine distance is in [0, 2], similarity = 1 - distance/2 for normalized range
@@ -397,7 +397,7 @@ impl OptimizedSearchRecord {
     /// All existing call sites pass `HashMap<String, SqlValue>` — conversion happens here.
     pub fn with_metadata(
         mut self,
-        metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+        metadata: std::collections::HashMap<String, proximadb_proto::proximadb_v1::SqlValue>,
     ) -> Self {
         self.metadata = sql_map_to_proxima(metadata);
         self
@@ -519,6 +519,148 @@ mod arc_slice_serde {
 }
 
 // Manual trait implementations for ordering (HashMap doesn't implement Ord)
+
+// Native-to-proto conversion: lives here (not in the root `core::conversions`)
+// because `OptimizedSearchRecord` is local to this crate — the orphan rule
+// forbids `impl From<OptimizedSearchRecord> for SearchVectorRecord` in any crate
+// where both types are foreign. Moved during the search-types extraction.
+impl From<OptimizedSearchRecord> for SearchVectorRecord {
+    fn from(native: OptimizedSearchRecord) -> Self {
+        SearchVectorRecord {
+            id: native.id,
+            score: native.score as f64,
+            vector: native
+                .vector
+                .as_ref()
+                .map(|v| (**v).clone())
+                .unwrap_or_default(),
+            metadata: proxima_map_to_sql(native.metadata),
+            version: native.version,
+            similarity: native.similarity,
+            timestamp: native.timestamp,
+            source: native.source.as_ref().map(|sc| match &sc.data {
+                Some(proximadb_proto::proximadb_v1::source_content::Data::TextContent(text)) => {
+                    text.clone()
+                }
+                Some(proximadb_proto::proximadb_v1::source_content::Data::ExternalReference(
+                    url,
+                )) => url.clone(),
+                Some(proximadb_proto::proximadb_v1::source_content::Data::BinaryContent(_)) => {
+                    "[Binary Content]".to_string()
+                }
+                None => "[Empty Content]".to_string(),
+            }),
+            expanded_context: native
+                .expanded_context
+                .iter()
+                .map(|sc| match &sc.data {
+                    Some(proximadb_proto::proximadb_v1::source_content::Data::TextContent(
+                        text,
+                    )) => text.clone(),
+                    Some(
+                        proximadb_proto::proximadb_v1::source_content::Data::ExternalReference(url),
+                    ) => url.clone(),
+                    Some(proximadb_proto::proximadb_v1::source_content::Data::BinaryContent(_)) => {
+                        "[Binary Content]".to_string()
+                    }
+                    None => "[Empty Content]".to_string(),
+                })
+                .collect(),
+            semantic_similarity: native
+                .semantic_similarity
+                .as_ref()
+                .map(|s| s.similarity_score),
+            quantization_info: native
+                .quantization_info
+                .as_ref()
+                .map(|q| format!("{:?}", q)),
+            engine_stats: native
+                .engine_stats
+                .as_ref()
+                .map(|stats| {
+                    std::collections::HashMap::from_iter([
+                        (
+                            "vectors_scanned".to_string(),
+                            stats.vectors_scanned.to_string(),
+                        ),
+                        ("io_operations".to_string(), stats.io_operations.to_string()),
+                        ("cache_hits".to_string(), stats.cache_hits.to_string()),
+                    ])
+                })
+                .unwrap_or_default(),
+            index_path: None,
+        }
+    }
+}
+
+impl From<&OptimizedSearchRecord> for SearchVectorRecord {
+    fn from(native: &OptimizedSearchRecord) -> Self {
+        SearchVectorRecord {
+            id: native.id.clone(),
+            score: native.score as f64,
+            vector: native
+                .vector
+                .as_ref()
+                .map(|v| (**v).clone())
+                .unwrap_or_default(),
+            metadata: proxima_map_to_sql(native.metadata.clone()),
+            version: native.version,
+            similarity: native.similarity,
+            timestamp: native.timestamp,
+            source: native.source.as_ref().map(|sc| match &sc.data {
+                Some(proximadb_proto::proximadb_v1::source_content::Data::TextContent(text)) => {
+                    text.clone()
+                }
+                Some(proximadb_proto::proximadb_v1::source_content::Data::ExternalReference(
+                    url,
+                )) => url.clone(),
+                Some(proximadb_proto::proximadb_v1::source_content::Data::BinaryContent(_)) => {
+                    "[Binary Content]".to_string()
+                }
+                None => "[Empty Content]".to_string(),
+            }),
+            expanded_context: native
+                .expanded_context
+                .iter()
+                .map(|sc| match &sc.data {
+                    Some(proximadb_proto::proximadb_v1::source_content::Data::TextContent(
+                        text,
+                    )) => text.clone(),
+                    Some(
+                        proximadb_proto::proximadb_v1::source_content::Data::ExternalReference(url),
+                    ) => url.clone(),
+                    Some(proximadb_proto::proximadb_v1::source_content::Data::BinaryContent(_)) => {
+                        "[Binary Content]".to_string()
+                    }
+                    None => "[Empty Content]".to_string(),
+                })
+                .collect(),
+            semantic_similarity: native
+                .semantic_similarity
+                .as_ref()
+                .map(|s| s.similarity_score),
+            quantization_info: native
+                .quantization_info
+                .as_ref()
+                .map(|q| format!("{:?}", q)),
+            engine_stats: native
+                .engine_stats
+                .as_ref()
+                .map(|stats| {
+                    std::collections::HashMap::from_iter([
+                        (
+                            "vectors_scanned".to_string(),
+                            stats.vectors_scanned.to_string(),
+                        ),
+                        ("io_operations".to_string(), stats.io_operations.to_string()),
+                        ("cache_hits".to_string(), stats.cache_hits.to_string()),
+                    ])
+                })
+                .unwrap_or_default(),
+            index_path: None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod score_vector_tests {

@@ -6559,6 +6559,7 @@ dependencies = [
  "proximadb-runtime",
  "proximadb-runtime-common",
  "proximadb-sdk",
+ "proximadb-search-types",
  "proximadb-security",
  "proximadb-serialization",
  "proximadb-storage-common",
@@ -7533,6 +7534,21 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "proximadb-search-types"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "proximadb-data-model",
+ "proximadb-distance-kernel",
+ "proximadb-filter-expression",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "proximadb-records",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

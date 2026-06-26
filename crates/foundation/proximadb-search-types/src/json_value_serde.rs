@@ -118,7 +118,7 @@ mod tests {
             Value::Bool(false),
             Value::Number(serde_json::Number::from(42i64)),
             Value::Number(serde_json::Number::from(42u64)),
-            Value::Number(serde_json::Number::from_f64(3.14).unwrap()),
+            Value::Number(serde_json::Number::from_f64(3.5).unwrap()),
             Value::String("hello world".to_string()),
         ];
 

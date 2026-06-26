@@ -4,7 +4,7 @@
 //! only the top-k results during vector search, enabling efficient
 //! memory usage and early termination.
 
-use crate::core::search::results::OptimizedSearchRecord;
+use crate::results::OptimizedSearchRecord;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
