@@ -1,113 +1,138 @@
-= PAX Ranged-Read Economics Across Clouds (S3 / ADLS-ABFS / GCS) — Validation 2026-06-25
+= PAX Ranged-Read Economics + Per-Modality Geometry (S3 / ADLS-ABFS / GCS)
 :toc: macro
 
-Validates the footer-cache fragmentation finding (ADR-026; artifact
-`docs/_internal/status/PAX_FOOTER_CACHE_ECONOMICS_2026_06_25.adoc`, PR #341) against
-AWS S3, Azure ADLS Gen2 / Blob (ABFS), and Google Cloud Storage pricing + performance.
-The #341 measurement was S3-priced; this re-projects it per cloud and confirms the
-storage-engineering conclusion is cloud-robust.
+[NOTE]
+====
+*Correction (2026-06-26).* The first cut conflated the **storage-read** path
+(object store -> compute) with **result-egress** (KOU, compute -> user) and
+priced the storage path at *internet* egress. Both were wrong for the real
+deployment:
+. **Compute (k8s) is co-located in the same region as the store**, so the
+  storage-read data transfer is **free** on S3/Azure/GCS — only the per-request
+  (GET) fee applies, and it is **locality-independent**.
+. **Result-egress (KOU) is out of scope** — only filtered top-k / aggregates /
+  single rows leave the cluster; small, modeled by
+  `OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21.adoc`.
+. The access pattern is **selective, not full-scan**, so *whole-byte read* is
+  the wrong baseline (no query reads an entire segment to look up k ids).
+This revision re-grounds the analysis and adds a per-modality geometry
+recommendation (§6).
+====
 
 toc::[]
 
-== 1. The measured workload (from #341)
+== 1. Deployment model (what actually costs)
 
-One 4000×128 PAX segment (~1.17 MiB), Q steady-state vector-column reads, footer cache warm:
+* **Compute = k8s pods, same region as the object store.** Storage read
+  (S3/ADLS/GCS -> pod) is *same-region*: **data transfer is free** on all three
+  clouds. The billable remainder is the **per-request (GET) fee, which is
+  locality-independent** — S3 charges `$0.0004/1k` for a GET whether the caller
+  is next-door or across an ocean.
+* **KOU (result-egress) is not modeled here** — users get *filtered results*
+  (a top-k, an aggregate, a row): a small payload.
+* **Therefore: storage-read cost = GET-count × per-request rate** (locality-
+  independent). Bytes are *free to transfer* same-region but still cost
+  **latency** (transfer time) and **memory** — so "fetch fewer bytes" still
+  matters for perf, just not the egress-$ line.
 
-[cols="1,2,2", options="header"]
+== 2. Per-cloud per-request (GET) rate — the only locality-independent storage-read $
+
+[cols="1,3,1", options="header"]
 |===
-| | whole-byte read (live path) | footer-cached ranged read
-| bytes / query | 1.228 MB (1.000×) | 0.527 MB (0.43×)
-| GET requests / query | 1 | 300 (one per block; ~16 KiB blocks)
-| round-trips / query | 1 | 300
+| | read-op rate (per 1,000 GET) | note
+| AWS S3 Standard | $0.0004 | same fee in-region or out
+| GCS Standard (Class B) | $0.0004 | same fee in-region or out
+| Azure Blob Hot / ADLS Gen2 (ABFS) | $0.00004 (~10× cheaper) | ADLS Gen2 counts per 4 MiB chunk; our stripes < 4 MiB => 1 cheap txn each
 |===
 
-The lever introduced by TD-156 (configurable block geometry): at a 256 KiB
-`target_block` the same scan is **2 blocks → 2 GETs/query** instead of 300.
+All three waive same-region data transfer; none waive the request fee. So
+**Azure's fragmentation penalty is ~10× lower** than S3/GCS for the same
+GET-count, in every locality.
 
-== 2. Per-cloud pricing (mid-2026 US list, multi-sourced)
+== 3. The access pattern is selective, not full-scan
+
+No production query reads an entire segment. Per modality:
+
+[cols="2,4", options="header"]
+|===
+| Modality | storage-read pattern (selective)
+| Vectors | **AXIS (HNSW/IVF) is the warm in-memory index** — graph traversal does NOT hit the store. S3 reads: (a) cold index/segment load (rare, cached); (b) fetching the ~REFINE candidate vectors for rerank (a *subset* of blocks); (c) top-k **ID lookup** into metadata/docs tables (k rows).
+| OLTP | per-row / small-range lookups (a few rows by id).
+| OLAP | columnar aggregate over a filtered set (surviving row-groups, not whole objects).
+| Documents | fetch a doc by id / a filtered doc set.
+| Graph | a traversal's touched nodes/edges (a subgraph), by id.
+|===
+
+**Implication:** the relevant comparison is *selective ranged reads: coalesced vs
+fragmented* — **not** ranged-vs-whole-byte. Whole-byte is the wrong baseline; a
+selective query never reads a whole object. The #341 full-column scan (300 GETs)
+was a worst-case *proxy* for the fragmentation mechanic; real selective touches
+land on fewer blocks, but the "1 GET/block, no coalescing" problem is identical.
+
+== 4. Cost / latency for a selective, same-region read (B candidate blocks)
+
+* **Cost** = `B × per-request-rate` (locality-independent; egress free).
+* **Latency** ≈ `B × RT` when GETs are **serial at depth 1** (today). Same-region
+  RT is single-digit ms (not ~50 ms internet), so 300 serial GETs ≈ hundreds of
+  ms; **2** coalesced GETs ≈ single-digit ms.
+* **Bytes** free to transfer but consume transfer-time + memory, so pruning
+  excluded blocks helps latency/footprint even at $0 egress.
+
+== 5. The cost ↔ latency tension in geometry (block / row-group / stripe)
+
+Geometry trades request-count against over-read, and the *direction* of the
+latency effect flips with the access pattern:
 
 [cols="1,2,2,2", options="header"]
 |===
-| | AWS S3 Standard | Azure Blob Hot / ADLS Gen2 (ABFS) | GCS Standard
-| read op (GET) | $0.0004 / 1,000 | $0.0004 / 10,000 (=$0.00004/1k) | $0.0004 / 1,000 (Class B)
-| same-region read | free | free | free
-| internet egress | $0.09 / GiB | $0.087 / GiB (Zone 1) | $0.12 / GiB (Premium)
+| Lever | Cost (GET-count) | Latency — scan/aggregate | Latency — point/lookup
+| Larger block / row-group | **↓** fewer GETs | **↓** fewer round-trips; ↑ throughput toward 8-16 MiB | **↑** over-reads (fetch a large block for 1 row)
+| Smaller block / row-group + fine zone maps | **↑** more GETs for scans | **↑** many round-trips | **↓** minimal over-read
+| Column-stripe projection (read only needed columns) | (neutral) | **↓** fewer bytes (latency + memory) | **↓** fewer bytes
+| Zone-map / hierarchical pruning (skip excluded blocks) | **↓** fewer GETs | **↓** | **↓**
+|====
+
+**A single global block size cannot resolve this** — point-lookup wants small,
+scan wants large. The resolution is **per-modality (per-collection) geometry**
+chosen by the dominant access pattern (TD-155 per-collection config + TD-157
+adaptive). Plus **concurrent GETs** (deferred) to collapse scan latency from
+`B×RT` toward `1×RT`.
+
+== 6. Recommended geometry per modality
+
+[cols="1,2,3,3", options="header"]
+|===
+| Modality | Dominant access | Recommended geometry | Cost↔latency rationale
+| **Vectors (ANN)** | AXIS warm (no S3); selective candidate rerank + top-k ID-lookup | Vector blocks ~**4-8 MiB** + **Hilbert ordering (TD-153)** to co-locate neighbors; metadata/docs ID-lookup in **small row-groups** w/ zone maps | Candidate fetch: Hilbert co-locates the ~REFINE candidates into a few large blocks → few GETs (cost ↓) + few RTs (latency ↓). ID-lookup: small row-group avoids over-reading a vector block to fetch one row's metadata (latency ↓).
+| **OLTP (point)** | per-row / small-range by id | **Small row-groups ~128 KiB-1 MiB** + row-group index + zone maps | One lookup = 1 small GET (cost ok); fetches only the row-group holding the id → no over-read (latency + memory ↓).
+| **OLAP (aggregate)** | columnar scan over a filtered set | **Large row-groups ~8-16 MiB** + **column-stripe projection** + zone-map/hierarchical pruning (TD-154) | Few large GETs for surviving row-groups (cost ↓, RT ↓); projection reads only the aggregated columns (bytes/latency ↓); pruning skips excluded row-groups (cost + latency ↓). Toward the S3 8-16 MiB throughput optimum.
+| **Documents** | doc-by-id / filtered set | **Doc-sized blocks ~256 KiB-1 MiB** | One doc = one small block (no over-read, latency ↓); a filtered doc set = a few blocks.
+| **Graph** | subgraph traversal (nodes/edges by id) | **Adjacency-clustered (CSR/edge-list locality) blocks ~1-4 MiB** | A traversal touches neighboring nodes; co-located adjacency → few GETs (cost ↓, RT ↓); avoids scanning the whole graph.
 |===
 
-Two nuances the design must encode:
+Defaults by storage class: small geometry for **local/embedded** (cheap random
+read, no per-request fee); the table above for **object storage** (per-request
+fee applies → right-size per access pattern).
 
-. **Azure reads are ~10× cheaper per GET** than S3/GCS ($0.00004/1k vs $0.0004/1k) —
-  this *flips* the fragmentation cost conclusion for Azure (see §3).
-. **ADLS Gen2 (hierarchical namespace) charges reads per 4 MiB chunk**; our ranged
-  stripes (~0.5 MiB) each count as one cheap transaction, so the Blob-Hot conclusion
-  holds. ADLS *list* operations are pricier (avoid listing in hot paths — we don't).
+== 7. Conclusion
 
-== 3. Per-query cost projection
+. Storage-read cost = **GET-count × locality-independent per-request fee** (Azure
+  ~10× cheaper than S3/GCS). Egress $ is moot (same-region free); KOU is out of
+  scope (small filtered results).
+. Access is **selective**, so the work is *coalescing + pruning the ranged reads
+  a query actually issues* — not ranged-vs-whole-byte.
+. **Geometry must be per-modality** (TD-155/TD-157): point-lookup modalities
+  (OLTP, doc-by-id, graph-node, vector ID-lookup) want small row-groups to avoid
+  over-read; scan/aggregate modalities (OLAP, vector candidate fetch) want large
+  row-groups + projection + pruning toward the 8-16 MiB optimum.
+. **Meter `SegmentReadStats.range_gets` + bytes-read per tenant**, with the
+  per-cloud rate from §2. Same-region egress $ is $0, so GET-count is the
+  storage-read cost signal; bytes are the latency/footprint signal.
 
-=== 3.1 Same-region object-store read (free egress — the production default)
-Cost is **GET-count only** (egress free, all three clouds):
-
-[cols="1,3,3,1", options="header"]
-|===
-| | whole (1 GET) | ranged (300 GET) | verdict
-| S3 | $0.0000004 | $0.00012 | whole wins **300×**
-| GCS | $0.0000004 | $0.00012 | whole wins **300×**
-| Azure | $0.00000004 | $0.000012 | whole wins **300×**
-|===
-
-In the default deployment (compute co-located with the store), naive ranged reads
-are **300× more expensive on every cloud** — the #341 conclusion holds universally
-*and is strongest here*. Egress never enters it.
-
-=== 3.2 Internet / cross-region egress (charged)
-Per query = GET fee + egress on bytes:
-
-[cols="1,3,3,1", options="header"]
-|===
-| | whole (1 GET + 1.228 MB) | ranged (300 GET + 0.527 MB) | verdict
-| S3 ($0.09/GiB) | $0.0001033 | $0.0001641 | ranged **+59%** (fee-dominated)
-| GCS ($0.12/GiB) | $0.0001376 | $0.0001788 | ranged **+30%** (closer — higher egress helps ranged's byte saving)
-| Azure ($0.087/GiB) | $0.0000994 | $0.0000546 | ranged **−45%** (cheap reads → ranged WINS)
-|===
-
-Only on the egress-charged path does the picture split: **S3/GCS are fee-dominated
-(naive ranged loses $), Azure is ranged-favorable (cheap reads flip it).**
-
-== 4. Performance (round-trips — the co-design dominant cost)
-Cost aside, the co-design cost spine says a cloud DB's dominant term is **I/O
-round-trips, not bytes or CPU**. Naive ranged reads issue **300 sequential round-trips
-per query** vs whole-byte's **1** — ~300× the tail latency on *every* cloud, in *every*
-locality. This alone makes naive ranged reads unacceptable regardless of pricing.
-
-== 5. Conclusion — TD-156 + TD-151 universalize the ranged-read win
-
-. **Same-region (the default): naive ranged loses 300× on all clouds** (GET-count) +
-   300× latency. Whole-byte wins; ranged must coalesce.
-. **Internet: S3/GCS fee-dominated (ranged +30–59%); Azure ranged-favorable (−45%).**
-. **Everywhere: 300 round-trips/query is the killer** (latency).
-
-The fix is the same for all three clouds and is already the plan:
-* **TD-156 (configurable geometry)**: a 256 KiB+ `target_block` collapses 300 → 2
-  GETs/query. Re-projected at 2 GETs/query:
-** S3 internet ranged = $0.0000449 vs whole $0.0001033 → ranged **−56%** (now WINS).
-** GCS internet ranged = $0.0000596 vs whole $0.0001376 → ranged **−57%** (WINS).
-** Azure stays ranged-favorable. Same-region ranged ≈ whole (2 vs 1 GET). Latency ≈ parity (2 vs 1 RT).
-* **TD-151 (range coalescing + block pruning)**: drives GETs toward the ~8–16 MiB
-  cost-throughput optimum and skips excluded blocks (cuts both bytes and GETs).
-
-So: naive ranged reads are fee-dominated on S3/GCS (not Azure) and latency-broken
-everywhere; **larger blocks (TD-156) + coalescing/pruning (TD-151) make ranged reads
-win on all three clouds and all localities.** The #341 harness's GET-count metric is
-the cloud-neutral ratchet.
-
-== 6. What the store must encode (ties to the existing KOU model)
-`OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21.adoc` already models *byte-egress*
-locality (same-region free on all three). This validation adds the missing
-**per-operation (GET-count)** axis: `SegmentReadStats.range_gets` must be metered per
-tenant alongside KOU bytes, and the cost layer must apply the per-cloud read-op rate
-(S3/GCS $0.0004/1k; Azure $0.00004/1k; same-region egress free). TD-157 (adaptive
-tuning) consumes both to pick geometry/quant.
+The #341 finding holds — the correction is *why*: the locality-independent
+GET-count (not egress) is what bites, and the fix is coalescing/pruning of the
+selective reads a query issues.
 
 == References
-* ADR-026 (PAX canonical vector path) · `PAX_FOOTER_CACHE_ECONOMICS_2026_06_25.adoc` (#341) · `OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21.adoc` · `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` §2.1–2.2
+* ADR-026 (PAX canonical vector path) · `PAX_FOOTER_CACHE_ECONOMICS_2026_06_25.adoc` (#341) · `OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21.adoc` (KOU = result-egress, separate) · `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` §2.1–2.2
 * Pricing (mid-2026): link:https://aws.amazon.com/s3/pricing/[AWS S3]^, link:https://azure.microsoft.com/en-us/pricing/details/storage/blobs/[Azure Blob]^, link:https://cloud.google.com/storage/pricing[GCS]^ — re-pin to primary pages before quoting customers.

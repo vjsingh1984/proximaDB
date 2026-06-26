@@ -55,16 +55,16 @@ PAX tier-1, gated behind its own validation.
 * **Mixed-read-safe.** Legacy `ProximaBlocks` and new PAX segments coexist and
   both read back through the single `read_segment_records` router (magic-byte
   detected) — the property that makes a staged default-on flip safe.
-* **Footer-cache fragmentation finding.** Footer caching works (95% hit, -57%
-  bytes/egress) but naive per-block ranged reads fragment into thousands of
-  small GETs (+29,900% GETs vs whole-byte) — fee-dominated. Naively wiring the
-  ranged reader would *raise* cloud cost. The real read-path win is **range
-  coalescing + block pruning**, not naive ranged reads. Validated across clouds
-  in `PAX_RANGED_READ_MULTICLOUD_COST_2026_06_25.adoc`: same-region (the default,
-  free egress) naive ranged loses **300× on every cloud**; on charged egress it's
-  fee-dominated on S3/GCS but ranged-*favorable* on Azure (reads ~10× cheaper);
-  latency (300 round-trips) is the killer everywhere. Larger blocks (TD-156) +
-  coalescing (TD-151) universalize the ranged-read win.
+* **Footer-cache fragmentation finding.** Footer caching works (95% hit) but
+  naive per-block ranged reads fragment into one GET per block. Validated across
+  clouds in `PAX_RANGED_READ_MULTICLOUD_COST_2026_06_25.adoc`: in the real
+  deployment (k8s colocated in-region with the store, so storage-read egress is
+  *free*), cost is **GET-count × the locality-independent per-request fee**
+  (Azure ~10× cheaper than S3/GCS); access is **selective, not full-scan**, so
+  the fix is **range coalescing + block pruning (TD-151)** of the reads a query
+  issues, with **per-modality geometry (TD-155/TD-157)** — point-lookup modalities
+  want small row-groups (avoid over-read), scan/aggregate modalities want large
+  row-groups + projection + pruning toward the 8-16 MiB optimum.
 
 == Rollout (staged; storage-format mandate #8 — mixed-read-safe, default-off until the ratchet is green)
 . **Recall gate** — develop->qa ratchet + N=100k harness (done, PR #331).
