@@ -2170,8 +2170,6 @@ impl EmbeddedProximaDB {
         // Explicitly typed as Result<u64, E> to capture bytes written for metrics
         let result: Result<u64, Box<dyn std::error::Error + Send + Sync>> = self.runtime.block_on(async {
             use crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
-            use crate::storage::traits::FlushParameters;
-            use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageAssignment};
 
             tracing::info!("🛑 EMBEDDED: Flushing all unflushed data to storage engines...");
 
@@ -2247,171 +2245,86 @@ impl EmbeddedProximaDB {
                     }
                 }
 
-                // Create the correct storage engine for this collection
-                let proto_engine = crate::proto::proximadb_v1::StorageEngine::try_from(storage_engine_type)
-                    .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst);
-
-                let engine_name = format!("{:?}", proto_engine);
-                tracing::info!(
-                    "🔧 EMBEDDED: Collection '{}' uses {} engine",
-                    collection_id, engine_name
-                );
-
-                let storage_engine = match crate::storage::engines::factory::StorageFormatFactory::create_from_proto_async(proto_engine).await {
-                    Ok(engine) => engine,
-                    Err(e) => {
-                        tracing::warn!(
-                            "❌ EMBEDDED: Failed to create {} engine for '{}': {}, falling back to SST",
-                            engine_name, collection_id, e
-                        );
-                        // Fallback to unified SST engine
-                        self.shared_services.vector_operations_service.unified_engine()
+                // Resolve the owning tenant for the A6 fence (embedded is single-pod;
+                // no fence is wired, so this is parity/forward-looking only).
+                let tenant_id = match &collection_metadata {
+                    Ok(Some(c)) => {
+                        crate::services::collection::manager::CollectionService::collection_tenant_id(c)
                     }
+                    _ => None,
                 };
 
-                // Get unflushed batches for this collection
-                match write_buffer.get_unflushed_batches(collection_id).await {
-                    Ok(batches) => {
-                        if batches.is_empty() {
-                            tracing::debug!("📋 EMBEDDED: Collection '{}' has no unflushed batches", collection_id);
-                            continue;
+                // Materialize this collection's unflushed batches via the shared
+                // helper (engine factory + flush() funnel + WAL cleanup + A6 fence).
+                // Embedded is single-pod: it passes no fence and reuses the running
+                // unified SST engine as the create-failure fallback.
+                let plan = crate::storage::flush_materializer::CollectionFlushPlan {
+                    wal_key: collection_id.clone(),
+                    canonical_id: canonical_collection_id.clone(),
+                    base_location: base_location_for_flush.clone(),
+                    engine_type: storage_engine_type,
+                    dimension: collection_dimension,
+                    tenant_id,
+                };
+                let fallback_engine = self
+                    .shared_services
+                    .vector_operations_service
+                    .unified_engine();
+                // free_wal=true preserves embedded's existing behavior (delete the
+                // WAL after flush — no 2× overhead). Its cold-read recall gap is the
+                // same dependent TD as the server's.
+                match crate::storage::flush_materializer::materialize_collection(
+                    &write_buffer,
+                    &plan,
+                    None,
+                    Some(fallback_engine),
+                    true,
+                )
+                .await
+                {
+                    Ok(Some(outcome)) => {
+                        total_vectors_flushed += outcome.entries_flushed;
+                        total_bytes_written += outcome.bytes;
+                        collections_flushed += 1;
+
+                        // Update collection stats (the optimizer skips index lookup if
+                        // it sees 0 vectors) + invalidate the cache so the next search
+                        // loads fresh stats. Stats use the submitted count (parity with
+                        // the prior embedded behavior).
+                        if let Err(e) = self
+                            .shared_services
+                            .collection_service
+                            .update_stats(
+                                &collection_name,
+                                outcome.vectors_submitted as i64,
+                                outcome.bytes as i64,
+                            )
+                            .await
+                        {
+                            tracing::warn!(
+                                "⚠️ EMBEDDED: Failed to update stats for '{}': {}",
+                                collection_id, e
+                            );
+                        } else {
+                            self.shared_services
+                                .vector_operations_service
+                                .invalidate_collection_cache(&collection_name);
                         }
 
-                        // Combine all canonical records from unflushed batches.
-                        // Tombstone records have no embeddings; the SST writer cannot handle empty vectors in its
-                        // centroid/spatial-clustering pipeline.  Filter them out here — the deleted
-                        // IDs will simply be absent from the resulting SST, which is correct for the
-                        // single-level embedded flush path (no older SST file holds a stale copy).
-                        let vector_records: Vec<proximadb_records::ProximaRecord> = batches
-                            .iter()
-                            .flat_map(|batch| batch.vector_records.iter().cloned())
-                            .filter(|r| r.embeddings.first().is_some_and(|e| !e.values.is_empty()))
-                            .collect();
-
-                        let vector_count = vector_records.len();
                         tracing::info!(
-                            "📋 EMBEDDED: Collection '{}' has {} vectors to flush from {} batches using {} engine",
-                            collection_id, vector_count, batches.len(), engine_name
+                            "✅ EMBEDDED: Flushed collection '{}': {} vectors, {} bytes",
+                            collection_id, outcome.entries_flushed, outcome.bytes
                         );
-
-                        // Create a collection config with the correct storage assignment, engine type, and dimension
-                        // This ensures the flush writes to our embedded data directory with correct format
-                        // IMPORTANT: dimension is required for VIPER/NOVA flush to work properly
-                        let collection_config = Collection {
-                            id: canonical_collection_id.clone(),
-                            storage_assignment: Some(StorageAssignment {
-                                base_location: base_location_for_flush.clone(),
-                                engine: storage_engine_type, // Pass the correct engine type
-                                ..Default::default()
-                            }),
-                            config: Some(CollectionConfig {
-                                name: collection_name.clone(),
-                                storage_engine: Some(storage_engine_type), // Set engine in config too
-                                dimension: collection_dimension, // CRITICAL: VIPER/NOVA require dimension for flush
-                                ..Default::default()
-                            }),
-                            ..Default::default()
-                        };
-
-                        // Create flush parameters with the correct storage path
-                        let flush_params = FlushParameters {
-                            // Use the canonical UUID for on-disk layout while keeping WAL cleanup keyed by name
-                            collection_id: Some(canonical_collection_id.clone()),
-                            force: true,
-                            synchronous: true,
-                            vector_records,
-                            // Propagate batch IDs so the engine can report/trace flushed batches
-                            batch_ids: batches.iter().map(|b| b.batch_id).collect(),
-                            collection_config: Some(collection_config),
-                            ..Default::default()
-                        };
-
-                        // Execute flush via the public flush() method which includes validation
-                        // and post-processing (do_flush is internal implementation)
-                        match storage_engine.flush(flush_params).await {
-                            Ok(result) => {
-                                let entries = result.entries_flushed.unwrap_or(0);
-                                let bytes = result.bytes_written.unwrap_or(0);
-
-                                total_vectors_flushed += entries;
-                                total_bytes_written += bytes;
-                                collections_flushed += 1;
-
-                                tracing::debug!(
-                                    "🔄 EMBEDDED: Flush for '{}' completed; EventLog consumer will build AXIS indexes in the background",
-                                    collection_name
-                                );
-
-                                // Clear flushed batches from memtable (synchronous - eager cleanup)
-                                if let Err(e) = write_buffer.clear_flushed(collection_id).await {
-                                    tracing::warn!(
-                                        "⚠️ EMBEDDED: Failed to clear flushed batches for '{}': {}",
-                                        collection_id, e
-                                    );
-                                }
-
-                                // Delete WAL files from disk after successful flush
-                                // This prevents 2x storage overhead from keeping WAL + SST files
-                                let batch_id_strings: Vec<String> = batches.iter()
-                                    .map(|b| b.batch_id.to_base62())
-                                    .collect();
-
-                                if !batch_id_strings.is_empty() {
-                                    match crate::storage::persistence::write_ahead_log::manifest::mark_flushed_and_delete_files(&batch_id_strings).await {
-                                        Ok(deleted) => {
-                                            tracing::info!(
-                                                "🗑️ EMBEDDED: Deleted {} WAL files for collection '{}'",
-                                                deleted, collection_id
-                                            );
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                "⚠️ EMBEDDED: Failed to delete WAL files for '{}': {}",
-                                                collection_id, e
-                                            );
-                                        }
-                                    }
-                                }
-
-                                // Update collection stats after successful flush
-                                // This is CRITICAL for query optimizer to know dataset size
-                                // Without this, optimizer skips index lookup due to "0 vectors"
-                                if let Err(e) = self.shared_services.collection_service
-                                    .update_stats(&collection_name, vector_count as i64, bytes as i64)
-                                    .await
-                                {
-                                    tracing::warn!(
-                                        "⚠️ EMBEDDED: Failed to update stats for '{}': {}",
-                                        collection_id, e
-                                    );
-                                } else {
-                                    tracing::debug!(
-                                        "📊 EMBEDDED: Updated stats for '{}': +{} vectors, +{} bytes",
-                                        collection_id, vector_count, bytes
-                                    );
-                                    // Invalidate the collection cache so the next search loads fresh stats
-                                    // This ensures query optimizer sees the updated vector_count
-                                    self.shared_services.vector_operations_service
-                                        .invalidate_collection_cache(&collection_name);
-                                }
-
-                                tracing::info!(
-                                    "✅ EMBEDDED: Flushed collection '{}': {} vectors, {} bytes",
-                                    collection_id, entries, bytes
-                                );
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "❌ EMBEDDED: Failed to flush collection '{}': {}",
-                                    collection_id, e
-                                );
-                                failed_collections.push((collection_id.clone(), e.to_string()));
-                            }
-                        }
+                    }
+                    Ok(None) => {
+                        tracing::debug!(
+                            "📋 EMBEDDED: Collection '{}' has no unflushed batches",
+                            collection_id
+                        );
                     }
                     Err(e) => {
                         tracing::warn!(
-                            "❌ EMBEDDED: Failed to get unflushed batches for '{}': {}",
+                            "❌ EMBEDDED: Failed to flush collection '{}': {}",
                             collection_id, e
                         );
                         failed_collections.push((collection_id.clone(), e.to_string()));
@@ -3775,7 +3688,9 @@ impl EmbeddedProximaDB {
     > {
         self.runtime.block_on(async {
             use crate::core::search::cross_modal_fusion::FusionPolicy;
-            use crate::services::fusion_service::{FusionService, GraphFusionParams, GraphGrain};
+            use crate::services::fusion_service::{
+                FusionOidKey, FusionService, GraphFusionParams, GraphGrain,
+            };
 
             let service = FusionService::new(
                 self.shared_services.vector_operations_service.clone(),
@@ -3804,6 +3719,7 @@ impl EmbeddedProximaDB {
                 } else {
                     FusionPolicy::default()
                 },
+                oid_key: FusionOidKey::Canonical,
             };
             service.graph_fusion_search(params).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {

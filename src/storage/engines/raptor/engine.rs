@@ -16,7 +16,6 @@ use super::{
     RaptorConfig, RaptorWriter, RowGroups,
     consolidated_reader::{RaptorReader, ScanStrategy},
 };
-use crate::core::hardware_capabilities::get_hardware_capabilities;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
@@ -26,6 +25,7 @@ use crate::storage::traits::{
     UnifiedStorageFormat,
 };
 use proximadb_distance_kernel::{DistanceMetric, engine::UnifiedDistanceCompute};
+use proximadb_hardware_caps::get_hardware_capabilities;
 use proximadb_records::conversions::proxima_record_to_vector;
 // IvfManager removed - Matrix Trinity handles clustering
 use super::smart_rowgroup_sizing::SmartRowGroupSizer;
@@ -34,7 +34,7 @@ use super::smart_rowgroup_sizing::SmartRowGroupSizer;
 use crate::index::axis::clustering::{
     ClusterManager, ClusteringAlgorithm, ClusteringConfig, KMeansConfig,
 };
-use crate::index::axis::types::ClusterAssignment;
+use proximadb_index_types::ClusterAssignment;
 
 // Deep integration with filesystem API for cloud-aware I/O
 use crate::storage::persistence::filesystem::TierConfig;
@@ -43,10 +43,10 @@ use crate::storage::persistence::filesystem::{
 };
 
 // Universal performance optimization imports
-use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::engines::core::ops::performance_optimization::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
 };
+use proximadb_hardware_caps::HardwareCapabilities;
 // VectorMemoryPool now managed by universal optimizer
 
 // Unified metrics framework for AutoML integration

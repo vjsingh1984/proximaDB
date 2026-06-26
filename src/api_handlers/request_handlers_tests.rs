@@ -39,6 +39,7 @@ mod tests {
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
             permitted_principals: vec![],
+            index_policy: None,
         }
     }
 
@@ -328,6 +329,7 @@ mod tests {
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
             permitted_principals: vec![],
+            index_policy: None,
         };
 
         assert_eq!(config.dimension, 256);
@@ -429,6 +431,7 @@ mod tests {
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
             permitted_principals: vec![],
+            index_policy: None,
         };
 
         assert_eq!(config.tags.len(), 2);

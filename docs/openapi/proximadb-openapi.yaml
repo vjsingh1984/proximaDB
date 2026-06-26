@@ -331,6 +331,15 @@ components:
           type:
           - array
           - 'null'
+        index_policy:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/IndexPolicyInput'
+            description: |-
+              Per-collection cold/warm search routing policy (ADR-028). When omitted,
+              the system decides cost-derived (`mode = "auto"`). Owners with hard SLAs
+              override here; query-time precedence is per-query `search_mode` > this
+              policy > cost-model auto-default.
         initial_capacity:
           description: Initial capacity hint for pre-allocation
           format: int64
@@ -965,6 +974,45 @@ components:
           type: object
       required:
       - algorithm
+      type: object
+    IndexPolicyInput:
+      description: |-
+        REST input for the per-collection index routing policy (mirrors proto
+        `IndexPolicy`; ADR-028).
+      properties:
+        byte_budget:
+          description: |-
+            Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
+            for the storage class.
+          format: int64
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        mode:
+          description: |-
+            Routing mode: "auto" (default) | "exact" | "ivf" | "hnsw" | "helix".
+            "auto"/omitted ⇒ cost-derived. "exact" ⇒ always brute-force (no index).
+            The engine modes force the collection onto that engine/route.
+          type:
+          - string
+          - 'null'
+        nprobe:
+          description: |-
+            nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when
+            `mode = "exact"`.
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        rehydrate:
+          description: |-
+            Cold-start index warming: "auto" (default) | "eager" | "lazy" | "never".
+            Index/auto modes only — rejected when `mode = "exact"`.
+          type:
+          - string
+          - 'null'
       type: object
     IndexSpecOutput:
       description: REST output for a single index config (mirrors gRPC `V2IndexSpec`).

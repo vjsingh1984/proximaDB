@@ -75,8 +75,10 @@ count dramatically before any inversion is attempted.
 | `crate::compute::distance_computation::*` (whole namespace: `DistanceMetric`, `engine`, `UnifiedDistanceCompute`, `quantized`, …) | `proximadb_distance_kernel::*` (the root path *is* `pub use proximadb_distance_kernel as distance_computation`) — done in D0
 | `crate::compute::quantization::types::*` | `proximadb_quantization_types::*`
 | `crate::core::search::FilterExpression` | `proximadb_filter_expression::*`
-| `crate::core::{config, hardware_capabilities}` | `proximadb_config` / `proximadb_hardware_caps`
-| `crate::index::axis::types` | `proximadb_index_types` / `proximadb_index_traits`
+| `crate::core::hardware_capabilities` | `proximadb_hardware_caps` (pure re-export, `hardware_capabilities.rs` = `pub use proximadb_hardware_caps::*`) — **done in D0b** (56 refs)
+| `crate::index::axis::types` | `proximadb_index_types` (pure re-export, `axis/types.rs` = `pub use proximadb_index_types::*`) — **done in D0b** (7 refs)
+| `crate::core::config` | ⚠️ **NOT a clean redirect** — `core::config` is a *real root module* (`pub mod config`), not a re-export of `proximadb-config` (divergent, like the `-distance-types` trap). Reconcile before redirecting.
+| `crate::compute::quantization::types` | `proximadb_quantization_types` — *unverified*; confirm it's a re-export before redirecting (the root `compute::quantization` is mostly orchestration, a Mechanism-B port).
 |===
 
 A few shared-type leaves are **not** yet crates and must be extracted down first (small,

@@ -86,6 +86,37 @@ pub mod reasons {
     pub const RECALL_TARGET_SET: &str = "recall_target_route_sst";
     pub const VECTOR_NO_INDEX: &str = "vector_no_index_route_helix";
     pub const NON_VECTOR_DEFAULT_SST: &str = "non_vector_default_sst";
+    /// `index_policy.mode == "helix"` — owner forced the HELIX engine (ADR-028).
+    pub const POLICY_FORCE_HELIX: &str = "index_policy_mode_helix";
+    /// `index_policy.mode == "ivf"|"hnsw"` — owner forced an AXIS index, which
+    /// lives on SST (ADR-028).
+    pub const POLICY_FORCE_SST_INDEX: &str = "index_policy_mode_index_route_sst";
+    /// `index_policy.mode == "auto"` + quantization, and the
+    /// `PROXIMADB_AUTOROUTE_QUANT_HELIX` bake flag is on — route the quantized
+    /// vector collection to HELIX (quantization-native, rebuild-free cold)
+    /// instead of the SST cold path (ADR-028 auto-router improvement).
+    pub const AUTOROUTE_QUANT_HELIX: &str = "autoroute_quant_route_helix";
+}
+
+/// Env flag gating the ADR-028 auto-router improvement: under `mode=auto`, route
+/// quantized vector collections to HELIX rather than the SST cold path. Default-OFF
+/// (bake-in discipline; the SST `SearchMode` exact gate already corrects SST cold
+/// recall, so this is an optimization, not a correctness fix). Owners can always
+/// force HELIX explicitly via `index_policy.mode = "helix"`.
+fn autoroute_quant_to_helix_enabled() -> bool {
+    std::env::var_os("PROXIMADB_AUTOROUTE_QUANT_HELIX").is_some()
+}
+
+/// Map an `index_policy.mode` string to a forced engine, if the mode names one.
+/// `"auto"`/`""`/`"exact"` return `None` (exact is a *search route*, honored at the
+/// search layer on whatever engine the heuristic picks — it does not force an engine).
+fn policy_forced_engine(mode: &str) -> Option<(StorageEngine, &'static str)> {
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "helix" => Some((StorageEngine::Helix, reasons::POLICY_FORCE_HELIX)),
+        // IVF / HNSW are AXIS indexes that live on the SST engine.
+        "ivf" | "hnsw" => Some((StorageEngine::Sst, reasons::POLICY_FORCE_SST_INDEX)),
+        _ => None,
+    }
 }
 
 /// Decide which storage engine to use for a newly-created collection.
@@ -103,6 +134,17 @@ pub fn infer_storage_engine(config: &CollectionConfig) -> (StorageEngine, &'stat
         .filter(|e| !matches!(e, StorageEngine::Unspecified));
     if let Some(engine) = explicit {
         return (engine, reasons::EXPLICIT_OVERRIDE);
+    }
+
+    // (1b) Per-collection index_policy (ADR-028). When the owner forced an
+    // engine-bearing mode (`helix` / `ivf` / `hnsw`), honor it — it is a more
+    // specific routing directive than the auto_index_selection opt-out below.
+    // `auto`/`exact`/unset fall through; `exact` is a search route honored at the
+    // search layer, not an engine choice.
+    if let Some(policy) = config.index_policy.as_ref()
+        && let Some((engine, reason)) = policy_forced_engine(&policy.mode)
+    {
+        return (engine, reason);
     }
 
     // (2) Operator opted out of auto-selection — keep SST as the
@@ -136,7 +178,21 @@ pub fn infer_storage_engine(config: &CollectionConfig) -> (StorageEngine, &'stat
     match (has_index, has_quant) {
         (true, true) => return (StorageEngine::Sst, reasons::HAS_BOTH),
         (true, false) => return (StorageEngine::Sst, reasons::HAS_INDEX),
-        (false, true) => return (StorageEngine::Sst, reasons::HAS_QUANTIZATION),
+        (false, true) => {
+            // ADR-028 auto-router improvement: a quantization-only vector
+            // collection (the OpenAI-embedding shape) was historically pinned to
+            // the SST cold path, whose AXIS HNSW is rebuilt every cold start and
+            // can exclude the true NN (TD-165). HELIX is quantization-native
+            // (persisted PCA, Hilbert-sorted, rebuild-free cold), so under
+            // mode=auto we prefer it once the bake flag is on. Default-OFF: the
+            // SST SearchMode exact gate already corrects SST cold recall, so this
+            // is an optimization. dimension>0 guards against a non-vector
+            // collection that merely tagged quantization.
+            if autoroute_quant_to_helix_enabled() && config.dimension > 0 {
+                return (StorageEngine::Helix, reasons::AUTOROUTE_QUANT_HELIX);
+            }
+            return (StorageEngine::Sst, reasons::HAS_QUANTIZATION);
+        }
         (false, false) => {}
     }
 
@@ -281,5 +337,92 @@ mod tests {
         let (engine, reason) = infer_storage_engine(&cfg);
         assert_eq!(engine, StorageEngine::Sst);
         assert_eq!(reason, reasons::NON_VECTOR_DEFAULT_SST);
+    }
+
+    // ---- ADR-028 index_policy routing ----
+
+    use crate::proto::proximadb_v1::IndexPolicy;
+
+    fn policy(mode: &str) -> Option<IndexPolicy> {
+        Some(IndexPolicy {
+            mode: mode.to_string(),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn policy_forced_engine_mapping_is_pure() {
+        assert_eq!(
+            policy_forced_engine("helix").map(|(e, _)| e),
+            Some(StorageEngine::Helix)
+        );
+        assert_eq!(
+            policy_forced_engine("HNSW").map(|(e, _)| e),
+            Some(StorageEngine::Sst)
+        );
+        assert_eq!(
+            policy_forced_engine(" ivf ").map(|(e, _)| e),
+            Some(StorageEngine::Sst)
+        );
+        // auto / exact / unset name no engine — exact is a search route.
+        assert!(policy_forced_engine("auto").is_none());
+        assert!(policy_forced_engine("exact").is_none());
+        assert!(policy_forced_engine("").is_none());
+    }
+
+    #[test]
+    fn policy_mode_helix_forces_helix() {
+        let mut cfg = vec_config("p1");
+        cfg.index_policy = policy("helix");
+        let (engine, reason) = infer_storage_engine(&cfg);
+        assert_eq!(engine, StorageEngine::Helix);
+        assert_eq!(reason, reasons::POLICY_FORCE_HELIX);
+    }
+
+    #[test]
+    fn policy_mode_ivf_forces_sst_even_without_index() {
+        // No index_configs, no quantization — the heuristic alone would pick
+        // HELIX, but the explicit ivf policy forces the SST/AXIS route.
+        let mut cfg = vec_config("p2");
+        cfg.index_policy = policy("ivf");
+        let (engine, reason) = infer_storage_engine(&cfg);
+        assert_eq!(engine, StorageEngine::Sst);
+        assert_eq!(reason, reasons::POLICY_FORCE_SST_INDEX);
+    }
+
+    #[test]
+    fn policy_mode_ivf_beats_auto_select_disabled() {
+        // The explicit ivf policy is more specific than the auto_index_selection
+        // opt-out (which would otherwise force the SST *default* with a
+        // different reason). Both land on SST here, but via the policy branch.
+        let mut cfg = vec_config("p3");
+        cfg.auto_index_selection = Some(false);
+        cfg.index_policy = policy("ivf");
+        let (engine, reason) = infer_storage_engine(&cfg);
+        assert_eq!(engine, StorageEngine::Sst);
+        assert_eq!(reason, reasons::POLICY_FORCE_SST_INDEX);
+    }
+
+    #[test]
+    fn policy_mode_exact_falls_through_to_heuristic() {
+        // exact does not force an engine; a no-index vector collection still
+        // routes to HELIX, and the search layer honors exact there.
+        let mut cfg = vec_config("p4");
+        cfg.index_policy = policy("exact");
+        let (engine, reason) = infer_storage_engine(&cfg);
+        assert_eq!(engine, StorageEngine::Helix);
+        assert_eq!(reason, reasons::VECTOR_NO_INDEX);
+    }
+
+    #[test]
+    fn explicit_storage_engine_still_beats_policy() {
+        // A pinned storage_engine is the ultimate override (step 1), ahead of
+        // the index_policy routing layer.
+        let mut cfg = vec_config("p5");
+        cfg.storage_engine = Some(StorageEngine::Viper as i32);
+        cfg.index_policy = policy("helix");
+        let (engine, reason) = infer_storage_engine(&cfg);
+        assert_eq!(engine, StorageEngine::Viper);
+        assert_eq!(reason, reasons::EXPLICIT_OVERRIDE);
     }
 }

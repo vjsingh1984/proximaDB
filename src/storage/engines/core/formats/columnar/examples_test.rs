@@ -12,9 +12,9 @@ use std::sync::Arc;
 use tempfile::tempdir;
 
 use super::*;
-use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb_data_model::ProximaValue;
+use proximadb_hardware_caps::HardwareCapabilities;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
 /// Example: VIPER engine using optimized columnar infrastructure

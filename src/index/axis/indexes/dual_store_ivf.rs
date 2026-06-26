@@ -4844,6 +4844,7 @@ mod tests {
             let config = UnifiedIvfConfig {
                 n_clusters: 2,
                 n_probe: 2,
+                dimension: 3, // required (default is 0, "Must be set") — matches the 3-dim vectors below
                 ..Default::default()
             };
             let mut index =

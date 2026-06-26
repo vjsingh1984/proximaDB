@@ -11,12 +11,12 @@ use rayon::prelude::*;
 use std::{collections::HashMap, sync::Arc};
 use tracing::debug;
 
-use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::search::OptimizedSearchRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use proximadb_distance_kernel::DistanceMetric;
 use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 use proximadb_filter_expression::FilterExpression;
+use proximadb_hardware_caps::HardwareCapabilities;
 use proximadb_records::{ProximaRecord, ProximaTreeNode};
 
 /// Parallel WAL search coordinator
@@ -40,7 +40,7 @@ impl ParallelWALSearch {
     /// Create a new parallel WAL search coordinator
     pub fn new(distance_metric: DistanceMetric) -> Self {
         Self {
-            hardware: crate::core::hardware_capabilities::get_hardware_capabilities(),
+            hardware: proximadb_hardware_caps::get_hardware_capabilities(),
             distance_compute: Arc::new(UnifiedDistanceCompute::new(distance_metric)),
             parallel_batch_size: 4,            // Process 4 batches in parallel
             early_termination_multiplier: 3.0, // Stop when we have 3x candidates

@@ -5,7 +5,7 @@ mod minimal_hnsw_tests {
     #[test]
     fn test_distance_aware_clustering() {
         // Create a minimal HNSW builder
-        let hw_caps = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hw_caps = proximadb_hardware_caps::get_hardware_capabilities();
         let mut builder = IvfClusteringBuilder::new(3, hw_caps); // Small row groups for testing
 
         // Add nodes with predefined edges and distances
@@ -124,7 +124,7 @@ mod clustering_tests {
 
     #[test]
     fn test_uniqueness_guarantee() {
-        let hw_caps = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hw_caps = proximadb_hardware_caps::get_hardware_capabilities();
         let mut builder = IvfClusteringBuilder::new(5, hw_caps);
 
         // Add 10 nodes

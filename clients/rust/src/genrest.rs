@@ -826,6 +826,9 @@ pub mod types {
     ///        "$ref": "#/components/schemas/IndexConfigInput"
     ///      }
     ///    },
+    ///    "index_policy": {
+    ///      "$ref": "#/components/schemas/IndexPolicyInput"
+    ///    },
     ///    "initial_capacity": {
     ///      "description": "Initial capacity hint for pre-allocation",
     ///      "type": [
@@ -902,6 +905,8 @@ pub mod types {
         /// to the IVF arm). When omitted, the engine selects a default (HNSW).
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub index_configs: ::std::option::Option<::std::vec::Vec<IndexConfigInput>>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub index_policy: ::std::option::Option<IndexPolicyInput>,
         ///Initial capacity hint for pre-allocation
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub initial_capacity: ::std::option::Option<i64>,
@@ -3472,6 +3477,87 @@ pub mod types {
     }
     impl IndexConfigInput {
         pub fn builder() -> builder::IndexConfigInput {
+            Default::default()
+        }
+    }
+    /// REST input for the per-collection index routing policy (mirrors proto
+    /// `IndexPolicy`; ADR-028).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "REST input for the per-collection index routing policy (mirrors proto\n`IndexPolicy`; ADR-028).",
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "byte_budget": {
+    ///      "description": "Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default\nfor the storage class.",
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "mode": {
+    ///      "description": "Routing mode: \"auto\" (default) | \"exact\" | \"ivf\" | \"hnsw\" | \"helix\".\n\"auto\"/omitted ⇒ cost-derived. \"exact\" ⇒ always brute-force (no index).\nThe engine modes force the collection onto that engine/route.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "nprobe": {
+    ///      "description": "nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when\n`mode = \"exact\"`.",
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "rehydrate": {
+    ///      "description": "Cold-start index warming: \"auto\" (default) | \"eager\" | \"lazy\" | \"never\".\nIndex/auto modes only — rejected when `mode = \"exact\"`.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct IndexPolicyInput {
+        /// Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
+        /// for the storage class.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub byte_budget: ::std::option::Option<i64>,
+        /// Routing mode: "auto" (default) | "exact" | "ivf" | "hnsw" | "helix".
+        /// "auto"/omitted ⇒ cost-derived. "exact" ⇒ always brute-force (no index).
+        /// The engine modes force the collection onto that engine/route.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub mode: ::std::option::Option<::std::string::String>,
+        /// nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when
+        /// `mode = "exact"`.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub nprobe: ::std::option::Option<i32>,
+        /// Cold-start index warming: "auto" (default) | "eager" | "lazy" | "never".
+        /// Index/auto modes only — rejected when `mode = "exact"`.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub rehydrate: ::std::option::Option<::std::string::String>,
+    }
+    impl ::std::default::Default for IndexPolicyInput {
+        fn default() -> Self {
+            Self {
+                byte_budget: Default::default(),
+                mode: Default::default(),
+                nprobe: Default::default(),
+                rehydrate: Default::default(),
+            }
+        }
+    }
+    impl IndexPolicyInput {
+        pub fn builder() -> builder::IndexPolicyInput {
             Default::default()
         }
     }
@@ -6919,6 +7005,10 @@ pub mod types {
                 ::std::option::Option<::std::vec::Vec<super::IndexConfigInput>>,
                 ::std::string::String,
             >,
+            index_policy: ::std::result::Result<
+                ::std::option::Option<super::IndexPolicyInput>,
+                ::std::string::String,
+            >,
             initial_capacity:
                 ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
             name:
@@ -6945,6 +7035,7 @@ pub mod types {
                     enable_proxima_record: Ok(Default::default()),
                     engine: Ok(Default::default()),
                     index_configs: Ok(Default::default()),
+                    index_policy: Ok(Default::default()),
                     initial_capacity: Ok(Default::default()),
                     name: Err("no value supplied for name".to_string()),
                     quantization: Ok(Default::default()),
@@ -7018,6 +7109,16 @@ pub mod types {
                     .map_err(|e| format!("error converting supplied value for index_configs: {e}"));
                 self
             }
+            pub fn index_policy<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::IndexPolicyInput>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.index_policy = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for index_policy: {e}"));
+                self
+            }
             pub fn initial_capacity<T>(mut self, value: T) -> Self
             where
                 T: ::std::convert::TryInto<::std::option::Option<i64>>,
@@ -7083,6 +7184,7 @@ pub mod types {
                     enable_proxima_record: value.enable_proxima_record?,
                     engine: value.engine?,
                     index_configs: value.index_configs?,
+                    index_policy: value.index_policy?,
                     initial_capacity: value.initial_capacity?,
                     name: value.name?,
                     quantization: value.quantization?,
@@ -7100,6 +7202,7 @@ pub mod types {
                     enable_proxima_record: Ok(value.enable_proxima_record),
                     engine: Ok(value.engine),
                     index_configs: Ok(value.index_configs),
+                    index_policy: Ok(value.index_policy),
                     initial_capacity: Ok(value.initial_capacity),
                     name: Ok(value.name),
                     quantization: Ok(value.quantization),
@@ -9795,6 +9898,94 @@ pub mod types {
                     is_primary: Ok(value.is_primary),
                     ivf_config: Ok(value.ivf_config),
                     parameters: Ok(value.parameters),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct IndexPolicyInput {
+            byte_budget: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+            mode: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            nprobe: ::std::result::Result<::std::option::Option<i32>, ::std::string::String>,
+            rehydrate: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for IndexPolicyInput {
+            fn default() -> Self {
+                Self {
+                    byte_budget: Ok(Default::default()),
+                    mode: Ok(Default::default()),
+                    nprobe: Ok(Default::default()),
+                    rehydrate: Ok(Default::default()),
+                }
+            }
+        }
+        impl IndexPolicyInput {
+            pub fn byte_budget<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.byte_budget = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for byte_budget: {e}"));
+                self
+            }
+            pub fn mode<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.mode = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for mode: {e}"));
+                self
+            }
+            pub fn nprobe<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.nprobe = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for nprobe: {e}"));
+                self
+            }
+            pub fn rehydrate<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rehydrate = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for rehydrate: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<IndexPolicyInput> for super::IndexPolicyInput {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: IndexPolicyInput,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    byte_budget: value.byte_budget?,
+                    mode: value.mode?,
+                    nprobe: value.nprobe?,
+                    rehydrate: value.rehydrate?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::IndexPolicyInput> for IndexPolicyInput {
+            fn from(value: super::IndexPolicyInput) -> Self {
+                Self {
+                    byte_budget: Ok(value.byte_budget),
+                    mode: Ok(value.mode),
+                    nprobe: Ok(value.nprobe),
+                    rehydrate: Ok(value.rehydrate),
                 }
             }
         }

@@ -6170,6 +6170,13 @@ pub struct CollectionConfig {
     #[prost(message, repeated, tag = "27")]
     #[serde(default)]
     pub permitted_principals: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Per-collection cold/warm search routing policy (ADR-028). Absent =>
+    /// mode="auto" (cost-derived). Query-time precedence: per-query SearchMode,
+    /// then index_policy, then cost-model auto-default. `serde(default)` keeps old
+    /// persisted collection records (no field) readable (mixed-read-safe).
+    #[prost(message, optional, tag = "28")]
+    #[serde(default)]
+    pub index_policy: ::core::option::Option<IndexPolicy>,
 }
 /// Canonical scalar type for a collection's embedding column. Mirrors
 /// `proximadb_records::EmbeddingScalarType`.
@@ -6216,6 +6223,27 @@ pub struct CollectionStats {
     pub index_size_bytes: i64,
     #[prost(int64, tag = "3")]
     pub data_size_bytes: i64,
+}
+/// Per-collection cold/warm search routing policy (ADR-028).
+///
+/// Paved road + escape hatch: an absent message (or `mode="auto"`/`""`) means the
+/// system decides cost-derived (exact when `N*dim*4 <= storage-class byte budget`,
+/// else approximate). Owners with hard SLAs can override per collection. Precedence
+/// at query time: per-query `SearchMode` > this `index_policy` > cost-model auto-default.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
+pub struct IndexPolicy {
+    /// "auto"(default) | "exact" | "ivf" | "hnsw" | "helix".
+    #[prost(string, tag = "1")]
+    pub mode: ::prost::alloc::string::String,
+    /// "auto"(default) | "eager" | "lazy" | "never". Index/auto modes only.
+    #[prost(string, tag = "2")]
+    pub rehydrate: ::prost::alloc::string::String,
+    /// Exact-scan byte budget override. 0 => cost-model default for the storage class.
+    #[prost(uint64, tag = "3")]
+    pub byte_budget: u64,
+    /// nprobe override for index modes. 0 => cost-derived.
+    #[prost(uint32, tag = "4")]
+    pub nprobe: u32,
 }
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
 pub struct Collection {

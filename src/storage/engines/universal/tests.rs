@@ -101,7 +101,7 @@ mod tests {
     async fn test_quantized_calculator() {
         use crate::storage::engines::universal::config::UniversalAdapterConfig;
         let config = UniversalAdapterConfig::default();
-        let capabilities = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let capabilities = proximadb_hardware_caps::get_hardware_capabilities();
 
         let calculator = UniversalQuantizedCalculator::new(&config, &capabilities).await;
         assert!(
@@ -113,7 +113,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hardware_acceleration_manager() {
-        let capabilities = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let capabilities = proximadb_hardware_caps::get_hardware_capabilities();
 
         let manager = HardwareAccelerationManager::new((*capabilities).clone());
         // Test the manager was created successfully

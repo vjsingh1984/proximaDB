@@ -247,14 +247,24 @@ _pkg_args() { local a=""; for p in $1; do a="$a -p $p"; done; printf '%s' "$a"; 
 cmd_check() {
   local pkgs; pkgs="$(_affected)"
   [ -n "$pkgs" ] || { printf 'worktree: no crate source changed vs %s — nothing to check\n' "$BASE_DEFAULT" >&2; return 0; }
-  # Match CI's compile+clippy gate AND compile #[cfg(test)] code. `--all-targets`
-  # is the fix for a real "green local, red CI" trap: a plain `cargo check`
-  # (or `clippy --lib --bins`) never compiles the test cfg, so a broken/changed
-  # import inside a `#[cfg(test)]` module sails through locally and only fails in
-  # the CI "Rust Tests" job. `-D warnings` matches the CI clippy gate.
-  printf 'worktree: cargo clippy --all-targets -D warnings%s (matches CI clippy + compiles tests)\n' "$(_pkg_args "$pkgs")" >&2
+  # Two complementary checks that together match CI without false reds:
+  #  1. `cargo check --tests` COMPILES the lib/bin `#[cfg(test)]` code + integration
+  #     tests — the "green local, red CI" trap fix: a plain `cargo check` or
+  #     `clippy --lib --bins` never compiles the test cfg, so a broken/changed
+  #     import inside a test module sails through locally and only fails in CI's
+  #     "Rust Tests" job. Scoped to `--tests` (NOT `--all-targets`): CI's Rust
+  #     Tests job runs `--lib` + doctests and never builds benches/examples, which
+  #     have bit-rotted on the root crate; `--all-targets` would flag that
+  #     pre-existing rot as a false red. (No `-D warnings` on test code — the root
+  #     crate's tests carry many pre-existing clippy warnings CI does not gate.)
+  #  2. `clippy --lib --bins -- -D warnings` lints exactly what CI's clippy gate
+  #     lints (lib+bins only), so the lint posture matches CI precisely.
+  printf 'worktree: cargo check --tests%s (compiles #[cfg(test)] — CI Rust Tests gap)\n' "$(_pkg_args "$pkgs")" >&2
   # shellcheck disable=SC2046
-  cargo clippy $(_pkg_args "$pkgs") --all-targets -- -D warnings
+  cargo check $(_pkg_args "$pkgs") --tests
+  printf 'worktree: cargo clippy --lib --bins -D warnings%s (matches CI clippy gate)\n' "$(_pkg_args "$pkgs")" >&2
+  # shellcheck disable=SC2046
+  cargo clippy $(_pkg_args "$pkgs") --lib --bins -- -D warnings
 }
 
 cmd_test() {

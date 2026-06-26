@@ -9,7 +9,7 @@
 
 use anyhow::Result;
 
-use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, hash};
+use crate::{BloomFilterConfig, BloomFilterStrategy, hash};
 
 /// Memory-efficient bit-packed bloom filter using u64 array
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -190,7 +190,7 @@ mod tests {
         // Verify memory usage is reasonable
         let memory = filter.memory_usage();
         let expected_bits = 1000 * config.bits_per_key as usize;
-        let expected_u64s = (expected_bits + 63) / 64;
+        let expected_u64s = expected_bits.div_ceil(64);
         let expected_memory = expected_u64s * 8 + std::mem::size_of::<BitPackedBloomFilter>();
 
         assert!(memory <= expected_memory + 100); // Allow some overhead

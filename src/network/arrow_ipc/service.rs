@@ -1623,6 +1623,9 @@ impl FlightService for ProximaFlightService {
                     enable_dual_use_embeddings: None,
                     canonical_embedding_precision,
                     permitted_principals: vec![],
+                    // Arrow Flight create does not expose the routing policy (REST
+                    // is the typed surface); default to auto (None).
+                    index_policy: None,
                 };
 
                 // Create collection via service

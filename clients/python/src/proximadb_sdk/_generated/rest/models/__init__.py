@@ -62,6 +62,7 @@ from .impact_analysis_request import ImpactAnalysisRequest
 from .impact_analysis_response import ImpactAnalysisResponse
 from .index_config_input import IndexConfigInput
 from .index_config_input_parameters import IndexConfigInputParameters
+from .index_policy_input import IndexPolicyInput
 from .index_spec_output import IndexSpecOutput
 from .ingest_log_body import IngestLogBody
 from .ingest_log_response_200 import IngestLogResponse200
@@ -175,6 +176,7 @@ __all__ = (
     "ImpactAnalysisResponse",
     "IndexConfigInput",
     "IndexConfigInputParameters",
+    "IndexPolicyInput",
     "IndexSpecOutput",
     "IngestLogBody",
     "IngestLogResponse200",

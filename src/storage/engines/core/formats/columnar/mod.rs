@@ -851,7 +851,7 @@ impl ColumnarFactory {
     /// Create columnar optimizer with hardware-specific settings
     #[allow(clippy::todo)] // Deferred: Refactor to async and provide proper arguments (5 args required)
     pub fn create_optimizer(
-        _hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
+        _hardware: Arc<proximadb_hardware_caps::HardwareCapabilities>,
         _config: ColumnarConfig,
     ) -> ColumnarOptimizer {
         let _distance_compute = Arc::new(

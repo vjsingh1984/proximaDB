@@ -86,6 +86,21 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Unified Storage + Metering Substrate (PAX-as-one-internal-format, two-class trace, coalesced write-path, dual-sink metering)
 | Proposed
 | PAX is the single internal format (LSM writes it for all modalities; one reader/one SQL lowering/one I/O-trace; Parquet at the seam). Trace = two classes: billing (always-on, full-fidelity) vs perf/geometry (compile-time gateable). Write-path reuses SST/LSM (threshold-flush + compaction; Aurora/Neon/Turso-grounded; no per-query object writes). Metering dual-sunk: durable per-tenant in object store + external OTLP. Tracked: TD-158, TD-160..162
+
+| link:ADR-028-index-policy-routing.adoc[ADR-028]
+| Per-Collection Index-Policy Routing + Cost-Derived Exact-vs-ANN Auto-Default
+| Proposed
+| Paved road + escape hatch for cold/warm search routing: precedence per-query `SearchMode` > collection `IndexPolicy` (typed proto knob: mode/rehydrate/byte_budget/nprobe, fail-closed validity matrix) > cost-derived auto-default (byte budget = `f(storage_class)`, not a vector count). Cold HNSW is dominated by exact up to the byte budget; quantization-only collections auto-route to HELIX (env-gated default-OFF); fixes IVF Defect B (persist-after-insert) so the cheap cold-load path returns vectors. Tracked: TD-165; cost-model trace consumption TD-158/TD-159
+
+| link:ADR-029-shared-codegraph-chunker-package.adoc[ADR-029]
+| Shared Code→CPG Chunker Package (`victor-codegraph`) — one chunker, three consumers, zero duplication
+| Proposed
+| The tree-sitter code→symbol+relation chunker is duplicated across ProximaDB SDK (`code.py`) and Victor (`victor-coding`); extract it into one neutral Apache-2.0 PyPI package (`victor-codegraph`, deps = `victor-contracts` + tree-sitter) consumed by Victor (owner), ProximaDB SDK (optional extra, retires `code.py` to stay generic), and anvaiops (SaaS code-graph vertical, ADR-0017 F3). Adopts LlamaIndex `CodeSplitter` size-discipline + Victor fallback chain + ProximaDB taxonomy; emits the substrate-keystone `ProximaRecord` shape. Boundary-safe (policy-free). Tracked: TD-CG1..CG3
+
+| link:ADR-030-unified-hotpath-trace-meter-seam.adoc[ADR-030]
+| Unified Hot-Path Trace+Meter Emission Seam (one I/O boundary, two structurally-separate sinks)
+| Proposed
+| Implements ADR-027's two-class trace via the per-query `tokio::task_local!` `IO_TRACE` accumulator: it is fed at the `read_range` GET boundary (no tenant needed), drained ONCE at scope-close (where tenant+engine are known), and fans the same snapshot to THREE observers — route-cost + cache (gateable perf, → `avg_get_size` for the cost model + adaptive engine, TD-158) and a NEW billing observer (always-on) that closes the verified **KRU** read-meter (`record_task_execution_time`) gap. **KSU** (storage accrual) is explicitly scoped out as the sibling write-path/periodic gap. Same measured snapshot ⇒ cost-model bytes == billing bytes (no divergence). Honors ADR-027 non-entanglement (separate sinks; billing never gated; CI guard) and the open-core boundary (OSS emits neutral units; AnvaiOps prices them). Closes the cost model's INPUT side only — routing-loop closure is a separate ADR. Tracked: TD-158 + KRU; prereq TD-160
 |===
 
 NOTE: ADR-010 through ADR-013 exist in this directory but are not yet

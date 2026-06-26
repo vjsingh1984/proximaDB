@@ -28,7 +28,7 @@ use crate::graph::{
     Edge, GraphOperationsService, Node, NodeId, NodeQuery, PropertyFilter, PropertyValue,
     property_value::Value as GraphValue,
 };
-use crate::services::fusion_service::{FusionService, GraphFusionParams, GraphGrain};
+use crate::services::fusion_service::{FusionOidKey, FusionService, GraphFusionParams, GraphGrain};
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::document::{DocumentRecord, DocumentService};
 use proximadb_records::{
@@ -314,8 +314,9 @@ impl EntityOrchestrator {
             .is_some())
     }
 
-    /// Search entities. With a `query_vector`: vector similarity via the fusion
-    /// seam (graph expansion no-ops for entities — TD-146 scope B). Otherwise:
+    /// Search entities. With a `query_vector`: graph-augmented vector fusion via the
+    /// fusion seam (TD-146 scope B — the seam normalizes the auxiliary vector oid and
+    /// the canonical graph oid to the entity `node_id`, TD-142). Otherwise:
     /// metadata-filtered / unfiltered node scan. Returns hits with scores.
     pub async fn search(
         &self,
@@ -331,15 +332,19 @@ impl EntityOrchestrator {
                 graph_id: collection.to_string(),
                 vector_collection: collection.to_string(),
                 query_vector,
-                max_depth: 0, // pure vector entity search; graph expand no-ops
+                // TD-146 scope B: graph-augmented entity fusion. `EntityNode` keying normalizes
+                // the auxiliary vector oid + canonical graph oid to the entity `node_id` so the
+                // sources co-rank (TD-142).
+                max_depth: 1, // expand direct entity neighbours
                 edge_types: Vec::new(),
                 max_seeds: limit,
                 limit,
                 vector_weight: 1.0,
-                graph_weight: 0.0,
+                graph_weight: 0.3, // modest graph boost; vector similarity leads (tunable)
                 grain: GraphGrain::Nodes,
                 principal: None,
                 policy: FusionPolicy::default(),
+                oid_key: FusionOidKey::EntityNode,
             };
             let (items, _stats) = self
                 .fusion

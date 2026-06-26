@@ -18,7 +18,7 @@ use tracing::{debug, info, warn};
 // Universal performance optimization imports - UniversalIOConfig removed as unused
 // VectorMemoryPool now managed by universal optimizer
 // StorageTier already imported from crate::core::search
-use crate::core::hardware_capabilities::HardwareCapabilities;
+use proximadb_hardware_caps::HardwareCapabilities;
 
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
@@ -377,7 +377,7 @@ impl SwiftEngine {
         distance_engine: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
         axis_manager: Option<Arc<dyn proximadb_index_traits::IndexEngine>>,
     ) -> Result<Self> {
-        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hardware = proximadb_hardware_caps::get_hardware_capabilities();
         let optimized_ops = Arc::new(OptimizedSwiftOperations::new()?);
 
         // Initialize filesystem factory
