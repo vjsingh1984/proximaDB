@@ -75,12 +75,13 @@ pub use tier_recommendation::{
     recommend as recommend_tier,
 };
 
+pub use corpus_version::CorpusVersionRegistry;
 /// Corpus version registry — process-wide monotonic counter per
 /// (tenant, collection) for plan-cache invalidation. Catalog write
 /// paths call into this when they make a schema/segment/stats
 /// change visible to the planner.
-pub mod corpus_version;
-pub use corpus_version::CorpusVersionRegistry;
+// Relocated to the proximadb-catalog crate; re-exported here for source compatibility.
+pub use proximadb_catalog::corpus_version;
 
 /// File-backed CorpusVersionStore — first concrete durable backend
 /// for single-node deployments. Other backends (catalog row, KV)

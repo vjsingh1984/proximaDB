@@ -3,7 +3,7 @@
 //! This module implements the critical flush operations that move data from memory
 //! to persistent storage, ensuring durability while maintaining optimal performance.
 
-use crate::storage::operations::FlushResult;
+use crate::FlushResult;
 use anyhow::Result;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};

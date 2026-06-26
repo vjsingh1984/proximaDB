@@ -8,6 +8,16 @@
 //! - Maximize concurrent throughput where operations don't conflict
 //! - Coordinate flush → compaction → re-quantization workflows
 //! - Provide observability and metrics for operation monitoring
+//!
+//! Extracted from the root crate's `src/storage/operations` as a slice of the root-crate
+//! decomposition (see `docs/12-design/ROOT_CRATE_DECOMPOSITION_PLAN_2026_06_21.adoc`). The
+//! root crate re-exports it as `crate::storage::operations` for source compatibility.
+
+// Lint posture inherited from the root crate, under which this code was written
+// (src/lib.rs carried the same crate-level allows). Behaviour-neutral move.
+#![allow(clippy::type_complexity)] // Needs type-alias extraction
+#![allow(clippy::too_many_arguments)] // Needs config-struct refactor
+#![allow(clippy::result_large_err)] // Needs error-type refactor
 
 pub mod auto_scheduler;
 pub mod compaction;
@@ -23,7 +33,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use crate::storage::types::StorageEngineType;
+use proximadb_proto::proximadb_v1::StorageEngine as StorageEngineType;
 
 // Import compaction scheduler (strategies are registered automatically)
 use compaction::scheduler::CompactionScheduler;

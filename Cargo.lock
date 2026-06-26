@@ -6560,6 +6560,7 @@ dependencies = [
  "proximadb-storage-common",
  "proximadb-storage-filesystem-types",
  "proximadb-storage-kv",
+ "proximadb-storage-operations",
  "proximadb-storage-optimization",
  "proximadb-storage-strategy",
  "proximadb-storage-tenant",
@@ -7606,6 +7607,23 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "proximadb-storage-operations"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "proximadb-catalog",
+ "proximadb-proto",
+ "proximadb-records",
+ "proximadb-storage-common",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]

@@ -73,6 +73,7 @@ members = [
     "crates/storage/proximadb-object-store",
     "crates/storage/proximadb-iceberg-engine",
     "crates/storage/proximadb-storage-kv",
+    "crates/storage/proximadb-storage-operations",
     "crates/storage/proximadb-storage-optimization",
     "crates/storage/proximadb-storage-filesystem-types",
     "crates/storage/proximadb-storage-strategy",
@@ -212,6 +213,7 @@ proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common"
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
+proximadb-storage-operations = { path = "crates/storage/proximadb-storage-operations" }
 proximadb-storage-optimization = { path = "crates/storage/proximadb-storage-optimization" }
 proximadb-storage-filesystem-types = { path = "crates/storage/proximadb-storage-filesystem-types" }
 proximadb-storage-strategy = { path = "crates/storage/proximadb-storage-strategy" }
@@ -304,6 +306,7 @@ proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-object-store = { path = "crates/storage/proximadb-object-store" }
 proximadb-iceberg-engine = { path = "crates/storage/proximadb-iceberg-engine" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
+proximadb-storage-operations = { path = "crates/storage/proximadb-storage-operations" }
 proximadb-storage-optimization = { path = "crates/storage/proximadb-storage-optimization" }
 proximadb-storage-filesystem-types = { path = "crates/storage/proximadb-storage-filesystem-types" }
 proximadb-storage-strategy = { path = "crates/storage/proximadb-storage-strategy" }

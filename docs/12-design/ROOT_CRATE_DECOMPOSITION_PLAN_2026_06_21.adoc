@@ -75,7 +75,7 @@ Existing seams that help:
 * `src/storage/formats/` — `StorageFormat` trait + `FormatRegistry` (looks leaf-ish, but
   `adapters.rs` binds all six engines — *engine-bound*, deferred behind E; see Sequencing).
 * Extracted: `proximadb-{records,codec,block-format,storage-common,object-store,iceberg-engine,
-  storage-kv,storage-transaction}`.
+  storage-filesystem-types,storage-kv,storage-transaction,storage-encryption,storage-operations}`.
 
 == Strategy
 
@@ -131,24 +131,27 @@ the compute kernels by the distance/quant/bridge seam — not per file.
 [cols="1,3,1,1,2",options="header"]
 |===
 | Slice | Scope | ~LOC | Risk | Status (2026-06-25)
-| A0 | `proximadb-storage-kv` ← `src/storage/kv/` (re-export) | ~0.1K | Low | ✅ Done
-| A1 | `proximadb-storage-transaction` ← `src/storage/transaction/` (re-export) | ~2.7K | Low | ✅ Done (PR #329)
-| A2 | `proximadb-storage-encryption` ← `src/storage/encryption/` | ~1.7K | Low | **Next clean leaf** — only 2 refs to `crate::storage::persistence` to resolve
-| — | `proximadb-storage-formats` ← `src/storage/formats/` | ~5K | ~~Low~~ → High | 🚫 *Blocked, not a quick win.* `formats/adapters.rs` binds all six engines (`crate::storage::engines::*`, 12 refs) — engine-bound. Defer behind E. (Disproves the original "formats-first"; see #145.)
-| — | `proximadb-storage-cache` ← `src/storage/cache/` (wraps `proximadb-cache`) | ~11K | ~~Low~~ → High | 🚫 *Blocked, not a quick win.* 11/27 files depend on the root-resident, 90-consumer `storage::traits::UnifiedStorageFormat` (+ root `metrics`/`observability`). Requires D (trait port-inversion) first.
-| C | Persistence: WAL + disk-manager port crates | ~? | Med | Pending
+| A0 | `proximadb-storage-kv` ← `src/storage/kv/` | ~0.1K | Low | ✅ Done
+| A1 | `proximadb-storage-transaction` ← `src/storage/transaction/` | ~2.7K | Low | ✅ Done (PR #329)
+| A2 | `proximadb-storage-encryption` ← `src/storage/encryption/` | ~1.7K | Low | ✅ Done (PR #339) — unblocked by #332 (`FileSystem` trait → `proximadb-storage-filesystem-types`); 4 decorator tests kept in root to reuse the real `LocalFileSystem`
+| A3 | `proximadb-storage-operations` ← `src/storage/operations/` (compaction/flush/locks/requant) | ~5.4K | Low | ✅ Done (PR #348) — required relocating `corpus_version` (registry) → `proximadb-catalog` crate so storage→control is a downward dep
+| — | `proximadb-storage-formats` ← `src/storage/formats/` | ~5K | ~~Low~~ → High | 🚫 *Blocked.* Engine-bound: `adapters.rs` → all six engines (12 refs). Defer behind E. (Disproves the original "formats-first"; see #145.)
+| — | `proximadb-storage-cache` ← `src/storage/cache/` (wraps `proximadb-cache`) | ~11K | ~~Low~~ → High | 🚫 *Blocked.* 11/27 files depend on root-resident `storage::traits::UnifiedStorageFormat` (90 consumers) + root `metrics`/`observability`. Requires D.
+| C | Persistence: WAL + disk-manager port crates | ~? | Med | Pending (filesystem trait/types already extracted via #332)
 | D | *Enabler:* `IndexManager` (+ distance, metadata) **port crate(s)**; refactor engine/compaction to inject ports | n/a | Med-High | Linchpin (also unblocks cache's `storage::traits` dep)
 | E | Engines: `proximadb-{sst,nova,viper}-engine` (depend on ports from D) | large | High | Coordinated window
 | F | Multimodel / document / entity / transaction stores | large | High | Coordinated window
 |===
 
-The clean storage leaves (kv, transaction, encryption) are the independent quick wins that
-prove the re-export pattern and start shrinking the binary. *Note:* the originally-named
-"quick wins" (formats, cache) were disproved on closer inspection — both have hard upward
-edges into root-resident subsystems and are blocked behind D/E, not Low-risk. D is the
-linchpin: the ~403 up-edges mean engines cannot move until the index/compute/metadata
-boundaries are ports — and the same `storage::traits::UnifiedStorageFormat` port-inversion
-unblocks cache. E/F are large and must be coordinated.
+The clean storage leaves (kv, transaction, encryption, operations) are the independent quick
+wins that prove the re-export pattern and start shrinking the binary. *Note:* the
+originally-named quick wins (formats, cache) were disproved on inspection — both have hard
+upward edges into root-resident subsystems and are blocked behind D/E, not Low-risk. Two
+extractions needed a tiny *enabler* move first — encryption waited on the `FileSystem` trait
+(#332), and operations relocated the standalone `corpus_version` registry into the catalog
+crate — the pattern for unblocking a leaf without the full Slice-D port inversion. D remains
+the linchpin: the ~403 up-edges mean engines cannot move until the index/compute/metadata
+boundaries are ports. E/F are large and must be coordinated.
 
 == Multi-session coordination protocol (mandatory)
 
@@ -183,17 +186,16 @@ and several edit `src/storage`. Large file-moves conflict violently with in-flig
 
 == Status & next action (2026-06-25)
 
-The proof-of-pattern slices have landed: `proximadb-storage-kv` (done) and
-`proximadb-storage-transaction` (PR #329) are both pure `git mv` + re-export extractions of
-verified clean leaves, layering-green with no call-site churn.
+Four clean storage leaves have landed as pure `git mv` + re-export extractions, all
+layering-green with no call-site churn: `proximadb-storage-kv`, `-transaction` (#329),
+`-encryption` (#339), and `-operations` (#348). A cold-subtree check disproved the
+originally-named first two slices: *formats* is engine-bound and *cache* depends on the
+root-resident 90-consumer `storage::traits::UnifiedStorageFormat` (+ root
+`metrics`/`observability`); both are deferred behind D/E.
 
-A cold-subtree check disproved the originally-named first two slices: *formats* is
-engine-bound (`adapters.rs` → all six engines) and *cache* depends on the root-resident
-90-consumer `storage::traits::UnifiedStorageFormat` plus root `metrics`/`observability`.
-Neither is a mechanical quick win; both are deferred behind the *D* port-inversion / *E*
-engine extractions.
-
-*Next clean leaf:* `proximadb-storage-encryption` ← `src/storage/encryption/` (~1.7K LOC) —
-resolve its 2 references to `crate::storage::persistence`, then a pure `git mv` + re-export PR.
-After the leaf inventory is exhausted, *D* (the trait/index/compute port-inversion enabler)
-is the linchpin that unblocks both cache and the large engine slices.
+The remaining root-resident storage subtrees (`memtable`, `metadata`, `tiering`,
+`trait_components`, `compute_bridge`, `entity_store`, `schema`, `knowledge_graph`) all have
+upward edges into root subsystems (`compute`, `persistence`, `engines`, `core`, `graph`,
+`storage::traits`) and are not clean leaves. The leaf inventory is effectively exhausted, so
+*D* (the trait/index/compute port-inversion enabler) is the next linchpin — it unblocks both
+cache and the large engine slices.

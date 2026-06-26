@@ -243,7 +243,9 @@ pub mod relations;
 pub use proximadb_storage_kv as kv;
 
 // Unified operations coordination (flush, compaction, re-quantization)
-pub mod operations;
+// Extracted to the `proximadb-storage-operations` crate; re-exported here for source
+// compatibility (root-crate decomposition).
+pub use proximadb_storage_operations as operations;
 
 // Document storage for MongoDB-like JSON document capabilities
 pub mod document;
