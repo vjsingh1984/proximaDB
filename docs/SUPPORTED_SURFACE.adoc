@@ -139,6 +139,51 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
   independent of query language — never as a per-language interface.
 ====
 
+=== Endpoint And Composition Ownership
+
+The same domain objects appear through record, document, graph, hybrid, and
+entity-shaped APIs. Treat this table as the guardrail against adding another
+storage path when the requirement is really orchestration over existing
+primitives.
+
+[cols="1,2,2,2", options="header"]
+|===
+| Shape | Existing reachable surface | Owns today | Proposal / rule
+
+| Record / vector
+| REST `/api/v2/collections/{id}/records/*`, REST `/api/v2/collections/{id}/search`, gRPC `proximadb.v2.ProximaRecordService`
+| Canonical vector-bearing records, typed props, collection/schema lifecycle, ANN/vector search, SQL-over-gRPC
+| Keep as the durable authority for embeddings and typed metadata. Multi-version embeddings are modeled as records/embedding cells or derived history, not as a separate entity store.
+
+| Document
+| REST `/api/v2/document-collections/*`, REST `/api/v2/collections/{id}/documents` text ingest, gRPC `proximadb.v2.ProximaDocumentService` CRUD
+| JSON/document body, evidence chunks, document query/aggregate compatibility path
+| Keep as beta document convenience and provenance/evidence lane. Durable convergence remains `ProximaRecord` + `props`; do not duplicate entity metadata here and in an entity store.
+
+| Graph
+| REST `/api/v2/graphs/*`, gRPC `proximadb.v2.ProximaGraphService`
+| Nodes, edges, labels, properties, traversal, graph stats, Cypher subset
+| Keep topology and relationship traversal here. ORION/CSR is a rebuildable projection over canonical records; graph node embeddings are a convenience for single-vector nodes, not the place to own multi-version semantic embeddings.
+
+| Hybrid / fusion
+| REST `/api/v2/collections/{id}/search` for dense+BM25 hybrid; REST `/api/v2/graphs/{graph_id}/fusion-search` for the TD-137 vector-seed -> graph-expand fusion instance
+| Candidate-set fusion and calibrated ranking across existing modalities
+| Converge every cross-modal blend on the `oid`-keyed fusion seam (`seed -> expand -> calibrate -> fuse-by-oid -> rank`). Do not add one-off entity/vector/document/graph join handlers.
+
+| Entity / SKS
+| Deprecated gRPC v1 `proximadb.v1.EntityService` when `enable_grpc_v1_compat=true`; legacy REST v1 entity routes and split `ProximaEntityStore` exist as compatibility/transition code
+| Semantic convenience shape: entity id, metadata, embeddings, provenance, relations, temporal fields
+| Do not create v2 entity storage. A future v2 entity surface, if exposed, must be an orchestration facade over record/vector + graph + document/provenance + event/temporal history, with `TenantContext` and structural tenant paths at every I/O boundary.
+|===
+
+[NOTE]
+====
+An entity is a projection/composition of existing primitives: a graph node for
+topology, one or more vector-bearing records for embeddings, document records
+for evidence/provenance, and event/history records for temporal state. The v1
+`EntityService` proto shape is not authority to add a fourth durable substrate.
+====
+
 == Status Tiers
 
 |===
@@ -198,8 +243,8 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 
 | Hybrid retrieval
 | Beta
-| tantivy BM25 integration, RRF/weighted fusion, and canonical REST `/api/v2/collections/{id}/search` hybrid path (TD-008 resolved). The former `/api/v1/hybrid/search` facade is a deprecated compat alias only. Request `filters` are enforced on both fusion legs: the vector candidates are filtered server-side, and the text (BM25) candidates are gated to that filtered id set so a scoped filter cannot leak through the text leg.
-| Backend integration improved; REST v1 hybrid alias is a deprecated compatibility surface (see Canonical API Surface above) and gRPC path parity is still in progress. A BM25-only match that passes the filter but falls outside the vector leg's `top_k` (or a hybrid request with no query vector) is dropped rather than risk a leak — safe, but it can under-return; keeping that tail needs a resolving metadata fetch (follow-up). Projection Fusion is a shared planner contract only until runtime implementation, explain output, and benchmarks are complete.
+| tantivy BM25 integration, RRF/weighted fusion, and canonical REST `/api/v2/collections/{id}/search` hybrid path (TD-008 resolved). REST `/api/v2/graphs/{graph_id}/fusion-search` is the first vector+graph instance of the shared cross-modal fusion seam (TD-137). The former `/api/v1/hybrid/search` facade is a deprecated compat alias only. Request `filters` are enforced on both dense/BM25 legs: the vector candidates are filtered server-side, and the text candidates are gated to that filtered id set so a scoped filter cannot leak through the text leg.
+| Backend integration improved; REST v1 hybrid alias is a deprecated compatibility surface (see Canonical API Surface above) and gRPC path parity is still in progress. v1 `GraphService.ExecuteHybridQuery` remains deferred; use the v2 REST fusion route for vector-seed -> graph-expand experiments. A BM25-only match that passes the filter but falls outside the vector leg's `top_k` (or a hybrid request with no query vector) is dropped rather than risk a leak — safe, but it can under-return; keeping that tail needs a resolving metadata fetch (follow-up). Wider Projection Fusion remains a shared planner contract until runtime implementation, explain output, and benchmarks are complete.
 
 | PULSAR and QUASAR graph engine names
 | Retired / Not supported

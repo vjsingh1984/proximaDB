@@ -48,6 +48,9 @@ ProximaDB's multi-model query engine enables cross-model joins that are impossib
 | Record fetch | GET | `/api/v2/collections/:collection/records/:record` | Canonical ProximaRecord fetch
 | Record delete | DELETE | `/api/v2/collections/:collection/records/:record` | Canonical ProximaRecord delete
 | Record/vector search | POST | `/api/v2/collections/:collection/search` | Canonical record search
+| Document collections | Various | `/api/v2/document-collections/*` | Beta document convenience surface
+| Graphs | Various | `/api/v2/graphs/*` | Beta graph topology surface
+| Graph fusion | POST | `/api/v2/graphs/:graph/fusion-search` | Beta vector-seed -> graph-expand fusion seam
 | Query facade | POST | `/api/v2/query` | Shared query facade
 | REST v1 compatibility | Various | `/api/v1/*` | Deprecated compatibility facades; new clients should avoid these
 |===
@@ -213,20 +216,23 @@ curl -X POST http://localhost:5678/api/v1/search \
 
 == Documents (Beta)
 
-=== POST /api/v1/documents/collections
+Document routes are mounted under `/api/v2/document-collections`. The older
+`/api/v1/documents/*` paths are compatibility facades only.
+
+=== POST /api/v2/document-collections
 
 [source,bash]
 ----
-curl -X POST http://localhost:5678/api/v1/documents/collections \
+curl -X POST http://localhost:5678/api/v2/document-collections \
   -H "Content-Type: application/json" \
   -d '{"name": "events"}'
 ----
 
-=== POST /api/v1/documents/collections/:collection/documents
+=== POST /api/v2/document-collections/:collection/documents
 
 [source,bash]
 ----
-curl -X POST http://localhost:5678/api/v1/documents/collections/events/documents \
+curl -X POST http://localhost:5678/api/v2/document-collections/events/documents \
   -H "Content-Type: application/json" \
   -d '{"document": {"service": "api", "status": "warn"}}'
 ----
@@ -235,22 +241,43 @@ curl -X POST http://localhost:5678/api/v1/documents/collections/events/documents
 
 == Graphs (Beta)
 
-=== POST /api/v1/graph/graphs
+Graph routes are mounted under `/api/v2/graphs`. Legacy `/api/v1/graph/*`
+routes redirect or carry deprecation metadata.
+
+=== POST /api/v2/graphs
 
 [source,bash]
 ----
-curl -X POST http://localhost:5678/api/v1/graph/graphs \
+curl -X POST http://localhost:5678/api/v2/graphs \
   -H "Content-Type: application/json" \
   -d '{"graph_id": "topology"}'
 ----
 
-=== POST /api/v1/graph/graphs/:graph_id/traverse
+=== POST /api/v2/graphs/:graph_id/traverse
 
 [source,bash]
 ----
-curl -X POST http://localhost:5678/api/v1/graph/graphs/topology/traverse \
+curl -X POST http://localhost:5678/api/v2/graphs/topology/traverse \
   -H "Content-Type: application/json" \
   -d '{"start_node_id": "service-api", "max_depth": 2}'
+----
+
+=== POST /api/v2/graphs/:graph_id/fusion-search
+
+Vector-seed -> bounded graph-expand -> calibrated fuse-by-`oid`. This is the
+v2 REST instance of the shared cross-modal fusion seam; it is not the deprecated
+v1 `GraphService.ExecuteHybridQuery` RPC.
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v2/graphs/topology/fusion-search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vector_collection": "services",
+    "query_vector": [0.1, 0.2],
+    "limit": 10,
+    "max_depth": 1
+  }'
 ----
 
 ---
@@ -290,13 +317,15 @@ curl -X POST http://localhost:5678/api/v1/observability/namespaces/prod/metrics/
 
 ProximaDB's multi-model query engine is the key differentiator vs single-model databases (Pinecone, Weaviate, Milvus). It enables cross-model joins in a single SQL query.
 
-=== POST /api/v1/unified/federated
+=== POST /api/v2/query
 
-**Federated SQL query with multi-model extensions.** This is the primary endpoint for cross-model queries.
+**Shared query facade.** Use this for UQL/AQL/federated non-pgwire flows. For
+plain SQL, prefer pgwire; for token-authenticated SQL over gRPC, use
+`proximadb.v2.ProximaRecordService.ExecuteQuery`.
 
 [source,bash]
 ----
-curl -X POST http://localhost:5678/api/v1/unified/federated \
+curl -X POST http://localhost:5678/api/v2/query \
   -H "Content-Type: application/json" \
   -d '{"query": "SELECT * FROM VECTOR_SEARCH('products', '[0.1, 0.2, 0.3]', 10)"}'
 ----
@@ -373,13 +402,18 @@ WHERE l.timestamp > now() - interval '5m';
 }
 ----
 
-=== POST /api/v1/unified/execute
+=== Deprecated REST v1 Unified Routes
 
-**Auto-routing unified query.** Automatically detects multi-model extensions and routes to federated engine.
+`/api/v1/unified/federated`, `/api/v1/unified/execute`,
+`/api/v1/unified/multi-model`, and `/api/v1/unified/explain` are deprecated
+compatibility facades. New work should target `/api/v2/query`, pgwire,
+`ProximaRecordService.ExecuteQuery`, or a dedicated v2 modality/fusion endpoint.
+
+The old `multi-model` route accepted explicit components like:
 
 [source,bash]
 ----
-curl -X POST http://localhost:5678/api/v1/unified/execute \
+curl -X POST http://localhost:5678/api/v1/unified/multi-model \
   -H "Content-Type: application/json" \
   -d '{
     "query": "SELECT * FROM products WHERE $.category = 'electronics' AND VECTOR_SIMILAR(embedding, ?, 0.8)",
@@ -400,54 +434,13 @@ curl -X POST http://localhost:5678/api/v1/unified/execute \
 | `ranked` | Custom weights per model
 |===
 
-=== POST /api/v1/unified/multi-model
-
-**Programmatic multi-model query.** Use when you need explicit control over each model's parameters.
-
-[source,bash]
-----
-curl -X POST http://localhost:5678/api/v1/unified/multi-model \
-  -H "Content-Type: application/json" \
-  -d '{
-    "components": [
-      {
-        "component_type": "vector",
-        "config": {
-          "collection": "products",
-          "query_vector": [0.1, 0.2, 0.3],
-          "top_k": 10,
-          "threshold": 0.8
-        }
-      },
-      {
-        "component_type": "document",
-        "config": {
-          "collection": "products",
-          "filter": "$.category = 'electronics'"
-        }
-      },
-      {
-        "component_type": "graph",
-        "config": {
-          "graph": "product_categories",
-          "start_node": "electronics",
-          "edge_type": "CONTAINS",
-          "max_depth": 2
-        }
-      }
-    ],
-    "fusion_strategy": "rrf",
-    "limit": 100
-  }'
-----
-
-=== POST /api/v1/unified/explain
+=== POST /api/v2/query/explain
 
 **Explain query execution plan.** Shows how a query will be decomposed and executed.
 
 [source,bash]
 ----
-curl -X POST http://localhost:5678/api/v1/unified/explain \
+curl -X POST http://localhost:5678/api/v2/query/explain \
   -H "Content-Type: application/json" \
   -d '{"query": "SELECT * FROM VECTOR_SEARCH('products', '[0.1,0.2]', 10) v JOIN GRAPH_QUERY('...') g ON v.id = g.id"}'
 ----
