@@ -1,0 +1,188 @@
+= Root-Crate Decomposition — Slice D: Storage Port-Inversion Plan (2026-06-26)
+:toc: macro
+:icons: font
+
+[abstract]
+Slice D is the linchpin of the root-crate decomposition: it inverts the storage→up
+dependency edges so the large storage *engines* (Slices E/F — `sst`/`nova`/`viper`/… plus
+the multimodel/document/entity stores, ~245K LOC) can extract into crates. Engines cannot
+move while `src/storage` reaches *up* into `crate::index` / `crate::compute` /
+`crate::services` / `crate::core`. This plan is grounded in the **measured** coupling on
+`develop` (2026-06-26) and splits the work into two mechanisms — most edges *redirect down*
+to crates that already exist; only a thin orchestration surface needs true port inversion.
+
+toc::[]
+
+== Why Slice D, and why now
+
+The clean-leaf phase is complete (kv, transaction, encryption, operations, serialization,
+tls extracted; ~14.6K LOC). Every remaining *valuable* extraction — the storage engines and
+the modality stores — is blocked because `src/storage` is simultaneously a deep dependency
+(~51 root files `use crate::storage`) **and** deeply entangled *upward*. A crate may never
+depend on the root; so until storage depends *down* on traits/types instead of *up* on
+`crate::index`/`crate::compute`/`crate::services`, no engine can become a crate.
+
+== Measured coupling (develop, 2026-06-26)
+
+`grep` of `crate::{index,compute,services,query,core}::*` references under `src/storage`:
+
+[cols="2,1,3",options="header"]
+|===
+| Up-edge target | Refs | Nature
+| `crate::compute::distance_computation` | 403 | mostly the `DistanceMetric` **type** (207) + the distance `engine` (151)
+| `crate::core::search` | 450 | shared search **types**: results, `FilterExpression` (61), `SearchParams`, `BlockPruneConfig`, comparison ops, `bounded_queue`, `json_comparison`
+| `crate::compute::quantization` | 250 | the quantization `engine`/`storage_engine` (201) + `types` (19)
+| `crate::core::bloom` | 105 | bloom-filter utility
+| `crate::core::config` / `hardware_capabilities` | 114 | config + SIMD/GPU capability **types**
+| `crate::index::axis` | 41 | the ANN index: `AxisManager` (storage **constructs** + `.query()`s it), `eventlog`, `clustering`
+| `crate::services::collection` | 12 | `CollectionService` — metadata `.read`/`.collection`/`.write`
+| `crate::query::*`, misc | ~25 | optimizer/planner hints
+|===
+
+Heaviest injection points: `src/storage/engine.rs` (constructs `AxisManager::new(...)`,
+holds `Arc<AxisManager>`), `common/compaction_orchestrator.rs`, `background_flush_context.rs`,
+`engines/core/formats/columnar/*`, `memtable/*`.
+
+== The key insight: two mechanisms, not "three ports"
+
+The earlier plan framed Slice D as three port crates (IndexManager / distance / metadata).
+The measured data shows that is only *part* of it — **the majority of the edges are
+references to shared *types* and stable utilities, not calls into orchestration policy.**
+Critically, the foundation tier **already contains** the canonical type/kernel crates:
+
+  proximadb-distance-types · proximadb-distance-kernel · proximadb-filter-expression
+  proximadb-quantization-types · proximadb-index-types · proximadb-index-traits
+  proximadb-hardware-caps · proximadb-config · proximadb-data-model
+
+So `crate::compute::distance_computation::DistanceMetric` (×207) is storage referencing the
+*root re-export/parallel path* of a type that already lives in `proximadb-distance-types`.
+That edge dissolves by **redirecting the path**, not by inverting a dependency.
+
+=== Mechanism A — Redirect-down to existing/new type crates (≈80% of edges)
+
+Point storage at the leaf crate that owns the type, instead of the root module. This is a
+*pure path rewrite* — behavior-neutral, mechanically verifiable, and it collapses the edge
+count dramatically before any inversion is attempted.
+
+[cols="3,3",options="header"]
+|===
+| Storage references… | …should reference (crate, mostly already exists)
+| `crate::compute::distance_computation::DistanceMetric` | `proximadb_distance_types::DistanceMetric`
+| `crate::compute::distance_computation::{engine, Quantized*}` (kernel math) | `proximadb_distance_kernel::*`
+| `crate::compute::quantization::types::*` | `proximadb_quantization_types::*`
+| `crate::core::search::FilterExpression` | `proximadb_filter_expression::*`
+| `crate::core::{config, hardware_capabilities}` | `proximadb_config` / `proximadb_hardware_caps`
+| `crate::index::axis::types` | `proximadb_index_types` / `proximadb_index_traits`
+|===
+
+A few shared-type leaves are **not** yet crates and must be extracted down first (small,
+clean, foundation/contract tier — same recipe as the leaves already landed):
+
+* `proximadb-search-types` ← the non-`FilterExpression` half of `core::search`
+  (`SearchParams`, `SearchResult`/`results`, `BlockPruneConfig`/`Mode`, `ComparisonOperator`,
+  `SearchMode`, `bounded_queue`, `json_comparison`, `sql_value_filter`). ~450 edges collapse
+  to one crate dep.
+* `proximadb-bloom` ← `core::bloom` (105 edges; self-contained probabilistic structure).
+
+Precondition check per redirect: confirm the root path is a re-export/duplicate of the leaf
+type (identical definition), not a divergent root-only type. Where it diverges, treat it as
+Mechanism B (a port) or reconcile the duplication first (cf. the `StorageEngineType`
+shim/`core::types` finding).
+
+=== Mechanism B — Port-invert the genuine orchestration (the thin, real DIP work)
+
+What remains after Mechanism A is a *small* surface where storage **drives** a higher-level
+collaborator. Apply the Dependency-Inversion Principle: **storage (the high-level policy in
+engines/compaction) defines a narrow trait for what it needs; the concrete collaborator (up
+in index/compute/services) implements it; the composition root injects the impl.** Storage
+then depends *down* on the trait crate, never *up* on the implementor.
+
+[cols="1,2,3",options="header"]
+|===
+| Port (trait crate) | Inverts | Narrow surface storage actually uses
+| `IndexPort` | `crate::index::axis::AxisManager` | storage **constructs** `AxisManager::new` and `.query()`s it (7), drives `eventlog`/`clustering` during compaction. Trait: `query(...)`, index-maintenance hooks (insert/compact/eventlog-append). `AxisManager` (index tier) `impl IndexPort`.
+| `CollectionMetadataPort` | `crate::services::collection::CollectionService` | `.read` (4) / `.collection` (2) / `.write` (1). Trait: collection metadata read (+ the one write site). `CollectionService` (services) `impl`s it. (This is the `InternalCollectionProvider` the prior plan named — it does not yet exist as a trait; define it.)
+| `DistanceDispatchPort` *(conditional)* | `compute::distance_computation::engine` (151) | **Decision rule:** if the `engine` is pure kernel math → redirect to `proximadb-distance-kernel` (Mechanism A). If it performs *runtime policy* (format/quantized-vs-f32 selection, codebook registry lookup) above the kernel → invert as a port. Measure before deciding.
+| `QuantizationEnginePort` *(conditional)* | `compute::quantization::{quantization_engine, storage_engine}` (201) | Same decision rule: pure codec → use `proximadb-quantization-*` crates; orchestration/registry/global-cache → port. The `turboquant_store_registry`/`global_cache` references suggest a registry that should be injected, not reached up to.
+|===
+
+== Target architecture
+
+[source,text]
+----
+        ┌───────────────────────────────────────────────┐
+        │  composition root (apps/ + crates/platform)   │  ← wires concrete impls
+        │  AxisManager → IndexPort                       │     into storage at startup
+        │  CollectionService → CollectionMetadataPort    │
+        └───────────────┬───────────────────────────────┘
+                        │ injects Arc<dyn Port>
+        ┌───────────────▼───────────────┐   implements   ┌────────────────────────┐
+        │  storage engines (Slice E)    │◄───────────────│ index / compute / svc  │
+        │  depend DOWN on:              │                │ depend DOWN on the     │
+        │   • proximadb-*-types/kernel  │                │ same port trait crates │
+        │   • proximadb-storage-ports   │                └────────────────────────┘
+        └───────────────────────────────┘
+----
+
+* **Port trait crates** are trait-only, no behavior, `serde`-free where possible — placed in
+  a low tier so both storage *and* the implementors can depend down on them. Options:
+  one cohesive `proximadb-storage-ports` crate (foundation/contract tier) vs one crate per
+  port. Recommendation: **one `proximadb-storage-ports` crate** (the ports co-change as the
+  storage↔engine seam evolves; crate-per-trait is premature fragmentation here).
+* The concrete implementors (`AxisManager`, `CollectionService`) gain an `impl Port for …`
+  in their own crate/module — a downward dep on the port crate. No upward edge anywhere.
+* Injection happens at the **composition root** (the bootstrap in `apps/proximadb-server` /
+  `crates/platform/proximadb-runtime`), which already owns wiring.
+
+== Phasing (each phase behavior-neutral + layering-gated)
+
+[cols="1,4,1",options="header"]
+|===
+| Phase | Work | Risk
+| D0 | **Redirect-down (Mechanism A, existing crates).** Rewrite storage's `crate::compute::…DistanceMetric` / `crate::core::search::FilterExpression` / quant-types / config / hardware-caps / index-types references to the existing foundation crates. Pure path rewrites; verify each root path == leaf type. Several small mechanical PRs; collapses the edge count first. | Low
+| D1 | **Extract remaining shared-type leaves down.** `proximadb-search-types` (← `core::search` minus FilterExpression) and `proximadb-bloom` (← `core::bloom`). Same leaf recipe already proven. | Low
+| D2 | **Define `proximadb-storage-ports`** — the `IndexPort` + `CollectionMetadataPort` traits (and the conditional distance/quant dispatch ports if the decision rule says invert). Trait-only crate, no impls. | Low
+| D3 | **Refactor storage to consume injected ports.** `engine.rs`/compaction stop constructing `AxisManager` / calling `CollectionService` directly; take `Arc<dyn IndexPort>` / `Arc<dyn CollectionMetadataPort>` via constructor injection. Same concrete behavior, now behind the trait. **This is the hot, coordination-window phase.** | Med-High
+| D4 | **Implement ports + wire injection.** `impl IndexPort for AxisManager`, `impl CollectionMetadataPort for CollectionService`; the composition root injects them. | Med
+| D5 | **Gate to zero.** `scripts/check_workspace_boundaries.py` + a storage-up-edge ratchet asserting `crate::{index,compute,services,query}` references under `src/storage` == 0 (core type refs already redirected in D0/D1). Engines (Slice E) now unblocked. | Low
+|===
+
+D0 and D1 are opportunistic (mechanical, independent, no coordination needed) and should be
+done first — they shrink the surface and de-risk D3. D3/D4 touch `engine.rs`, the compaction
+orchestrator, and the composition root, so they need the **announced coordination window**
+(the storage hot-path is edited by multiple sessions) — not an opportunistic PR.
+
+== Verification & invariants
+
+* **Behavior-neutral:** D0–D2 are path/trait plumbing; D3/D4 are DIP wrapping around the
+  *same* concrete impls (`AxisManager`, `CollectionService`) — no algorithm changes. Gate on
+  the existing storage unit/integration suites + ANN recall ratchet (unchanged numbers).
+* **Layering:** every phase keeps `scripts/check-layering.sh` green; D5 adds the
+  storage-up-edge ratchet (count only goes down, terminal 0).
+* **No new upward edges:** the port crate sits below both storage and the implementors; the
+  layering validator already forbids storage→{modality,query,platform,app} — extend it to
+  forbid storage→{index,compute,services} once D3/D4 land.
+* **Mixed-read-safe / default-OFF** is N/A (no on-disk format change); this is a pure
+  in-process dependency-graph refactor.
+
+== Risks & coordination
+
+* **Hot files.** `engine.rs` + `compaction_orchestrator.rs` are edited concurrently; D3 must
+  land within its window to avoid divergence. Sequence D0/D1 first to minimize D3's diff.
+* **Type duplication.** Some root paths may be *divergent* parallel types rather than
+  re-exports (cf. `core::types` re-exporting `storage_common::StorageEngineType`, and
+  `storage::types` re-exporting the proto enum). Each redirect in D0 must verify identity
+  first; reconcile duplicates before redirecting.
+* **Distance/quant decision.** The conditional ports (B) hinge on whether the compute
+  `engine` submodules are kernel math or runtime policy — measure (call-site analysis) in D2
+  before committing to invert-vs-redirect.
+
+== Next action
+
+Execute **D0** as the first step: redirect storage's `DistanceMetric` / `FilterExpression`
+references to `proximadb-distance-types` / `proximadb-filter-expression` (the two largest,
+unambiguously-existing type crates), after confirming the root paths are re-exports. This is
+a low-risk mechanical PR that immediately drops the storage→compute/core edge count and
+proves the redirect-down mechanism before the coordinated D3/D4 inversion.
+
+Ref: `ROOT_CRATE_DECOMPOSITION_PLAN_2026_06_21.adoc` (Slice D row), TD-104.
