@@ -6568,6 +6568,7 @@ dependencies = [
  "proximadb-storage-kv",
  "proximadb-storage-operations",
  "proximadb-storage-optimization",
+ "proximadb-storage-ports",
  "proximadb-storage-strategy",
  "proximadb-storage-tenant",
  "proximadb-storage-transaction",
@@ -7715,6 +7716,15 @@ dependencies = [
  "proximadb-proto",
  "proximadb-records",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-storage-ports"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "proximadb-proto",
 ]
 
 [[package]]

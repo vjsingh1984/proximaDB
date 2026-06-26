@@ -2691,6 +2691,17 @@ impl Default for CollectionServiceBuilder {
     }
 }
 
+/// Dependency-inversion seam (Slice D): storage holds an
+/// `Arc<dyn CollectionMetadataPort>` and never references this service crate.
+/// `CollectionService` is the concrete implementor; the composition root
+/// injects it. Delegates to the inherent metadata-fetch path.
+#[async_trait::async_trait]
+impl proximadb_storage_ports::CollectionMetadataPort for CollectionService {
+    async fn collection(&self, identifier: &str) -> Result<Option<Collection>> {
+        self.get_native_proto(identifier).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
