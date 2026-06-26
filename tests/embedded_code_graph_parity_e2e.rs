@@ -14,6 +14,13 @@
 //! same core correctly and is deterministic — together they clear the "parity-tested embedded path"
 //! gate. (A cross-process embedded-vs-networked-server comparison is deferred: the data-loading
 //! asymmetry makes it flaky-prone, and structural parity + dual correctness is the robust proof.)
+//!
+//! ## Test isolation
+//! `GraphCollectionService` persists graph metadata to a process-shared path, so multiple
+//! `EmbeddedProximaDB` instances in one test process share graph state. Each test therefore builds
+//! its DB under a UNIQUE graph id (threaded through `build_db`/`fixture`/`canonical_oid`) so the
+//! three `#[test]`s — which share one process under `--test-threads=1` — never collide on a graph
+//! that "already exists".
 
 use std::collections::HashSet;
 
@@ -21,11 +28,10 @@ use proximadb::embedded::{
     EmbeddedConfig, EmbeddedGraphEdge, EmbeddedGraphNode, EmbeddedProximaDB,
 };
 
-const GRAPH_ID: &str = "codegraph";
 const VEC_COLLECTION: &str = "code_vecs";
 
-fn canonical_oid(node_id: &str) -> String {
-    format!("graph/{GRAPH_ID}/node/{node_id}")
+fn canonical_oid(graph_id: &str, node_id: &str) -> String {
+    format!("graph/{graph_id}/node/{node_id}")
 }
 
 /// main --CALLS--> parse --CALLS--> validate
@@ -39,8 +45,8 @@ struct Fixture {
     embeddings: Vec<(String, Vec<f32>)>,
 }
 
-fn fixture() -> Fixture {
-    let emb = |id: &str, v: Vec<f32>| (canonical_oid(id), v);
+fn fixture(graph_id: &str) -> Fixture {
+    let emb = |id: &str, v: Vec<f32>| (canonical_oid(graph_id, id), v);
     Fixture {
         node_ids: &["main", "parse", "validate", "io", "util"],
         edges: &[
@@ -59,7 +65,11 @@ fn fixture() -> Fixture {
     }
 }
 
-fn build_db() -> EmbeddedProximaDB {
+/// Build an embedded DB seeded with the code-graph fixture under `graph_id`.
+///
+/// `graph_id` MUST be unique per test (see the module-level isolation note) —
+/// `GraphCollectionService` shares graph metadata across in-process instances.
+fn build_db(graph_id: &str) -> EmbeddedProximaDB {
     let dir = tempfile::tempdir().expect("tempdir");
     let data_path = dir.path().join("data");
     std::fs::create_dir_all(&data_path).expect("create data dir");
@@ -70,7 +80,7 @@ fn build_db() -> EmbeddedProximaDB {
     config.enable_wal = true;
     let db = EmbeddedProximaDB::new(config).expect("create embedded db");
 
-    let fx = fixture();
+    let fx = fixture(graph_id);
 
     // Co-indexed vector collection: record id == canonical graph node oid.
     db.create_collection(VEC_COLLECTION, 4, Some("sst"))
@@ -81,20 +91,20 @@ fn build_db() -> EmbeddedProximaDB {
         .expect("insert co-indexed vectors");
 
     // Graph: nodes + edges.
-    db.create_graph(GRAPH_ID, None).expect("create graph");
+    db.create_graph(graph_id, None).expect("create graph");
     let nodes: Vec<EmbeddedGraphNode> = fx
         .node_ids
         .iter()
         .map(|id| EmbeddedGraphNode::new(*id).with_label("Symbol"))
         .collect();
-    db.create_nodes(GRAPH_ID, nodes).expect("create nodes");
+    db.create_nodes(graph_id, nodes).expect("create nodes");
     let edges: Vec<EmbeddedGraphEdge> = fx
         .edges
         .iter()
         .enumerate()
         .map(|(i, (from, to, et))| EmbeddedGraphEdge::new(*from, *to, *et).with_id(format!("e{i}")))
         .collect();
-    db.create_edges(GRAPH_ID, edges).expect("create edges");
+    db.create_edges(graph_id, edges).expect("create edges");
 
     db
 }
@@ -103,11 +113,12 @@ fn build_db() -> EmbeddedProximaDB {
 /// parse + io. Fused oids = {main, parse, io}.
 #[test]
 fn embedded_fusion_search_seeds_and_expands() {
-    let db = build_db();
+    let graph_id = "codegraph_fusion";
+    let db = build_db(graph_id);
 
     let (items, stats) = db
         .fusion_search(
-            GRAPH_ID,
+            graph_id,
             VEC_COLLECTION,
             vec![1.0, 0.0, 0.0, 0.0], // == main's embedding → top seed
             1,                        // max_depth
@@ -124,11 +135,12 @@ fn embedded_fusion_search_seeds_and_expands() {
     let oids: HashSet<String> = items.into_iter().map(|i| i.oid).collect();
     assert!(stats.items_out > 0, "fusion must return candidates");
     assert!(
-        oids.contains(&canonical_oid("main")),
+        oids.contains(&canonical_oid(graph_id, "main")),
         "seed oid present: {oids:?}"
     );
     assert!(
-        oids.contains(&canonical_oid("parse")) && oids.contains(&canonical_oid("io")),
+        oids.contains(&canonical_oid(graph_id, "parse"))
+            && oids.contains(&canonical_oid(graph_id, "io")),
         "1-hop expand reaches parse + io: {oids:?}"
     );
 }
@@ -136,10 +148,11 @@ fn embedded_fusion_search_seeds_and_expands() {
 /// Forward blast radius from main (CALLS, depth 2): parse + io (d1), validate (d2).
 #[test]
 fn embedded_impact_analysis_forward() {
-    let db = build_db();
+    let graph_id = "codegraph_fwd";
+    let db = build_db(graph_id);
     let result = db
         .impact_analysis(
-            GRAPH_ID,
+            graph_id,
             "main",
             "forward",
             Some(vec!["CALLS".to_string()]),
@@ -160,10 +173,11 @@ fn embedded_impact_analysis_forward() {
 /// Backward blast radius to validate (CALLS, depth 2): parse (d1), main (d2). util/io must NOT appear.
 #[test]
 fn embedded_impact_analysis_backward() {
-    let db = build_db();
+    let graph_id = "codegraph_bwd";
+    let db = build_db(graph_id);
     let result = db
         .impact_analysis(
-            GRAPH_ID,
+            graph_id,
             "validate",
             "backward",
             Some(vec!["CALLS".to_string()]),

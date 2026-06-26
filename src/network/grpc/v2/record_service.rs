@@ -24,7 +24,8 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::api_handlers::{
     RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordDeleteBatchRequest,
-    RichRecordGetRequest, RichSearchRequest, RichSearchResponse, UnifiedHandlers,
+    RichRecordGetRequest, RichSearchRequest, RichSearchResponse,
+    record_ops_service::RecordOpsService,
 };
 use crate::network::grpc::auth as grpc_auth;
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
@@ -54,7 +55,11 @@ use proximadb_records::proto_v2::{
 /// - Schema enforcement modes (STRICT, FLEXIBLE, HYBRID)
 /// - Typed filtering with range, equality, and CONTAINS operators
 pub struct ProximaRecordServiceImpl {
-    request_handlers: Arc<UnifiedHandlers>,
+    /// Port-backed handler for collection lifecycle ops + tenant-scoped SQL.
+    api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort>,
+    /// Single record authority (reads + writes) — TD-104. Replaces the ROOT
+    /// `UnifiedHandlers` the service previously reached through.
+    record_ops: Arc<RecordOpsService>,
     /// Shared segment registry — after each successful batch write, records are
     /// flushed to a `.pax` file and the resulting `SegmentMeta` is registered here
     /// so the Iceberg REST server can serve accurate snapshot stats.
@@ -433,9 +438,13 @@ impl FlowControlState {
 
 impl ProximaRecordServiceImpl {
     /// Create a new ProximaRecordServiceImpl
-    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
+    pub fn new(
+        api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort>,
+        record_ops: Arc<RecordOpsService>,
+    ) -> Self {
         Self {
-            request_handlers,
+            api_handlers,
+            record_ops,
             segment_registry: None,
             primary_pod_gate: None,
         }
@@ -814,7 +823,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         match self
-            .request_handlers
+            .record_ops
             .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
@@ -858,6 +867,16 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             batch.records.len()
         );
 
+        // Primary-pod write-router gate (symmetric with `insert_records`). Every
+        // mutation must gate — not just insert — or a displaced pod silently
+        // accepts upserts that the new primary's reader never sees. Runs after
+        // auth/validation, before the lane router / storage path.
+        check_primary_pod_gate(
+            &self.primary_pod_gate,
+            tenant_id.as_deref().unwrap_or(""),
+            &batch.collection_id,
+        )?;
+
         let record_ids: Vec<String> = batch
             .records
             .iter()
@@ -885,7 +904,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         match self
-            .request_handlers
+            .record_ops
             .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
@@ -929,6 +948,13 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             batch.records.len()
         );
 
+        // Primary-pod write-router gate (symmetric with `insert_records`).
+        check_primary_pod_gate(
+            &self.primary_pod_gate,
+            tenant_id.as_deref().unwrap_or(""),
+            &batch.collection_id,
+        )?;
+
         let record_ids: Vec<String> = batch
             .records
             .iter()
@@ -951,7 +977,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         match self
-            .request_handlers
+            .record_ops
             .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
@@ -988,6 +1014,13 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             batch.records.len()
         );
 
+        // Primary-pod write-router gate (symmetric with `insert_records`).
+        check_primary_pod_gate(
+            &self.primary_pod_gate,
+            tenant_id.as_deref().unwrap_or(""),
+            &batch.collection_id,
+        )?;
+
         let record_ids: Vec<String> = batch
             .records
             .iter()
@@ -1017,7 +1050,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         match self
-            .request_handlers
+            .record_ops
             .handle_record_delete_batch_for_tenant(
                 RichRecordDeleteBatchRequest {
                     collection_id: batch.collection_id.clone(),
@@ -1084,7 +1117,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let (search_outcome, _turboquant_hints) =
             crate::observability::predicate_diagnostics::scope(async {
                 let outcome = self
-                    .request_handlers
+                    .record_ops
                     .handle_record_search_for_tenant(search_request, tenant_id.as_deref())
                     .await;
                 let tq = crate::observability::predicate_diagnostics::take_turboquant_hints();
@@ -1182,7 +1215,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
 
         // Execute search
         let response = self
-            .request_handlers
+            .record_ops
             .handle_record_search_for_tenant(search_request, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("Search stream failed: {}", e)))?;
@@ -1259,8 +1292,9 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         // Pipeline metrics for observability
         let metrics = Arc::new(StreamingPipelineMetrics::new());
 
-        // Clone handlers for the processing task
-        let request_handlers = Arc::clone(&self.request_handlers);
+        // Clone record-ops for the processing task (the streaming write path
+        // drives batch insert/delete through RecordOpsService — TD-104).
+        let record_ops = Arc::clone(&self.record_ops);
         let tenant_id = tenant_id.clone();
         let data_plane_capability = data_plane_capability.clone();
 
@@ -1390,12 +1424,12 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                         | Ok(BatchWriteMode::Unspecified)
                         | Ok(BatchWriteMode::Upsert)
                         | Ok(BatchWriteMode::Update) => {
-                            request_handlers
+                            record_ops
                                 .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
                                 .await
                         }
                         Ok(BatchWriteMode::Delete) => {
-                            request_handlers
+                            record_ops
                                 .handle_record_delete_batch_for_tenant(
                                     RichRecordDeleteBatchRequest {
                                         collection_id: batch.collection_id.clone(),
@@ -1551,7 +1585,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
 
         let collection_response = self
-            .request_handlers
+            .api_handlers
             .handle_collection_operation_for_tenant(collection_request, tenant_id.as_deref())
             .await
             .map_err(|e| {
@@ -1610,7 +1644,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
 
         let collection_response = self
-            .request_handlers
+            .api_handlers
             .handle_collection_operation_for_tenant(collection_request, tenant_id.as_deref())
             .await
             .map_err(|e| {
@@ -1805,7 +1839,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             migration_config: Default::default(),
         };
         let resp = self
-            .request_handlers
+            .api_handlers
             .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("CreateCollection failed: {e}")))?;
@@ -1830,7 +1864,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             migration_config: Default::default(),
         };
         let resp = self
-            .request_handlers
+            .api_handlers
             .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("GetCollection failed: {e}")))?;
@@ -1855,7 +1889,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             migration_config: Default::default(),
         };
         let resp = self
-            .request_handlers
+            .api_handlers
             .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("ListCollections failed: {e}")))?;
@@ -1878,7 +1912,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             options: Default::default(),
             migration_config: Default::default(),
         };
-        self.request_handlers
+        self.api_handlers
             .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("DeleteCollection failed: {e}")))?;
@@ -1899,7 +1933,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             Some(q.collection_id.clone())
         };
         let resp = self
-            .request_handlers
+            .api_handlers
             .execute_sql_v1(q.query, None, collection, tenant_id.as_deref())
             .await
             .map_err(|e| {
@@ -1943,7 +1977,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let tenant_id = Self::extract_tenant_id(&request);
         let req = request.into_inner();
         let result = self
-            .request_handlers
+            .record_ops
             .handle_record_get_for_tenant(
                 RichRecordGetRequest {
                     collection_id: req.collection_id,

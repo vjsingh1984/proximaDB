@@ -486,6 +486,21 @@ impl VectorOperationsService {
     pub fn invalidate_collection_cache(&self, collection_id: &str) {
         self.collection_resolver()
             .invalidate_collection_cache(collection_id);
+        // Read-after-write coherence: drop cached query results for this
+        // collection so the next search reflects the write. Fire-and-forget
+        // (async) — callers that need the invalidation guaranteed before a
+        // subsequent read call `invalidate_query_cache` and await it.
+        let query_cache = self.query_cache.clone();
+        let coll = collection_id.to_string();
+        tokio::spawn(async move {
+            query_cache.invalidate_collection(&coll).await;
+        });
+    }
+
+    /// Invalidate cached query results for a collection, awaited. Use this on
+    /// the write paths (insert/delete) where the next read must see the write.
+    pub async fn invalidate_query_cache(&self, collection_id: &str) {
+        self.query_cache.invalidate_collection(collection_id).await;
     }
 
     async fn validate_tenant_collection_access(
@@ -603,7 +618,17 @@ impl VectorOperationsService {
             request.include_props,
         )
         .await
-        .map(|record| record.map(vector_record_to_rich_result))
+        .map(|record| {
+            // Defense-in-depth: never return a dead (tombstone / TTL-expired)
+            // record from get-by-id, regardless of which backing store (WAL
+            // or SST point-lookup) produced it. The WAL memtable filters on
+            // its own, but the SST point-lookup path does not. Use the
+            // canonical is_visible_at(now_ns) on valid_to_ns.
+            let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+            record
+                .filter(|r| r.is_visible_at(now_ns))
+                .map(vector_record_to_rich_result)
+        })
     }
 
     /// Scan current visible canonical records from the VectorOps-backed WAL/memtable path.
@@ -630,6 +655,15 @@ impl VectorOperationsService {
                 record.tenant_id.is_empty() || record.tenant_id == tenant_context.tenant_id
             });
         }
+        // Defense-in-depth: drop dead records (tombstone / TTL-expired) using
+        // the canonical ProximaRecord::is_dead on valid_to_ns (ns). The WAL
+        // memtable already filters these, but this guarantees no scan ever
+        // leaks a deleted/expired row regardless of the upstream path.
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+        records.retain(|record| !record.is_dead(now_ns));
         if !include_vector {
             for record in &mut records {
                 record.embeddings.clear();
@@ -836,6 +870,9 @@ impl VectorOperationsService {
         if !result.success {
             return Ok(result);
         }
+        // Read-after-write coherence: a deleted record must not resurface
+        // from a stale cached query result. Await so the next search sees it.
+        self.invalidate_query_cache(collection_id).await;
         let total_processed = result.metrics.total_processed.max(0);
         let processing_time_us = start.elapsed().as_micros() as i64;
 
@@ -1762,9 +1799,16 @@ impl VectorOperationsService {
             return Err(anyhow::anyhow!(e));
         }
 
-        self.write_coordinator()
+        let result = self
+            .write_coordinator()
             .insert_batch_internal(collection_id, records)
-            .await
+            .await?;
+        // Read-after-write coherence: a freshly inserted record must be
+        // visible to the next search, not hidden behind a stale cached result.
+        if result.success {
+            self.invalidate_query_cache(collection_id).await;
+        }
+        Ok(result)
     }
 
     /// Alias kept for callers already using ProximaRecord envelopes.
@@ -2157,7 +2201,20 @@ impl VectorOperationsService {
             k as u32,
             filter_str.as_deref(),
         );
-        if let Some(cached_v1) = self.query_cache.get_if_fresh_v1(&cache_key, 300).await {
+        // Strong-freshness reads must NEVER be served from the query cache —
+        // a cached result could predate a concurrent write and violate
+        // read-after-write. Only non-Strong (StaleOk / BoundedStale) reads
+        // may use the cache. Extract freshness here (before the cache check)
+        // so the gate is correct.
+        let freshness_mode = config
+            .as_ref()
+            .and_then(|c| c.freshness_mode.clone())
+            .unwrap_or_default();
+        if !matches!(
+            freshness_mode,
+            crate::core::search::VectorFreshnessMode::Strong
+        ) && let Some(cached_v1) = self.query_cache.get_if_fresh_v1(&cache_key, 300).await
+        {
             // Phase 7.2: a process-local cache hit is the strongest
             // possible signal that this node owns the warm path for
             // the collection — record affinity here too.
@@ -2191,14 +2248,9 @@ impl VectorOperationsService {
             .map(|c| c.search_mode.clone())
             .unwrap_or_default();
 
-        // Phase 5: pull the request's freshness mode (default = Strong)
-        // so the v1 path applies the same delta-merge semantics as the
-        // legacy path. Keep clones of query_vector + filter for the
-        // delta scan since execute_unified_plan takes ownership.
-        let freshness_mode = config
-            .as_ref()
-            .and_then(|c| c.freshness_mode.clone())
-            .unwrap_or_default();
+        // freshness_mode was extracted above (before the cache check) so the
+        // Strong-bypass gate is correct. Keep clones of query_vector + filter
+        // for the delta scan since execute_unified_plan takes ownership.
         let delta_query_vector = query_vector.clone();
         let delta_filter = filter.clone();
 
@@ -3214,19 +3266,32 @@ impl VectorOperationsService {
         // This is critical for delete/update operations where WAL contains tombstones
         use std::collections::HashMap;
 
-        // Get current time for tombstone detection
-        let current_time_secs = std::time::SystemTime::now()
+        // Current time in nanoseconds for canonical dead-record detection
+        // (see OptimizedSearchRecord::is_dead / proximadb_records::is_record_dead).
+        let now_ns = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
+            .map(|d| d.as_nanos() as i64)
             .unwrap_or(0);
 
         // Build map from results with priority: WAL > AXIS > Storage
         let mut id_to_result: HashMap<String, crate::core::search::results::OptimizedSearchRecord> =
             HashMap::new();
 
-        // WAL results have highest priority (fresher data)
+        // WAL results have highest priority (fresher data). A dead record
+        // (tombstone/expired) wins over a live one for the same OID: in the
+        // insert-then-delete-before-flush case both copies are unflushed in
+        // the same WAL delta, and the tombstone must survive so the dead-record
+        // filter below removes the OID. Never let a live copy overwrite a dead
+        // record. Uses the canonical is_dead(valid_to_ns) — not expires_at.
         for result in wal_optimized_results {
-            id_to_result.insert(result.id.clone(), result);
+            id_to_result
+                .entry(result.id.clone())
+                .and_modify(|existing| {
+                    if !existing.is_dead(now_ns) && result.is_dead(now_ns) {
+                        *existing = result.clone();
+                    }
+                })
+                .or_insert(result);
         }
 
         // AXIS HNSW results second priority (fast indexed search)
@@ -3239,25 +3304,18 @@ impl VectorOperationsService {
             id_to_result.entry(result.id.clone()).or_insert(result);
         }
 
-        // Filter out tombstones and collect final results
-        // Tombstone design: empty vector (Some(vec![])) + expires_at in past (including 0)
-        // NOTE: A record with vector=None is NOT a tombstone - it just means the vector wasn't
-        // returned in the optimized search (common for storage engines that return only IDs/scores)
+        // Filter out dead records (tombstone valid_to_ns==Some(0) OR TTL-expired)
+        // using the canonical predicate on valid_to_ns (ns) — immune to the
+        // expires_at unit confusion and to vector==None (engines returning only
+        // id/score). Defense-in-depth alongside the WAL delta merge.
         let mut all_results: Vec<crate::core::search::results::OptimizedSearchRecord> =
             id_to_result
                 .into_values()
                 .filter(|r| {
-                    // Check if this is a tombstone
-                    // Tombstone: vector is explicitly empty (Some(vec![])) AND expired
-                    // A record with vector=None is NOT a tombstone - it's just missing vector data
-                    let is_explicit_empty_vector = r.vector.as_ref().is_some_and(|v| v.is_empty());
-                    let is_expired = r.expires_at.is_some_and(|e| e <= current_time_secs);
-                    let is_tombstone = is_explicit_empty_vector && is_expired;
-
-                    if is_tombstone {
+                    if r.is_dead(now_ns) {
                         debug!(
-                            "🗑️ Filtering tombstone from two-stage search results: {}",
-                            r.id
+                            "🗑️ Filtering dead record from two-stage search results: {} (valid_to_ns={:?})",
+                            r.id, r.valid_to_ns
                         );
                         false
                     } else {

@@ -15,7 +15,13 @@ on:
 
 concurrency:
   group: qa-gate-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  # false (not true): a develop→qa promotion PR has head=develop, so every push
+  # to develop fires a `synchronize` event landing in the SAME per-PR group —
+  # with cancel-in-progress:true that killed the in-flight run before TPC-H/DS
+  # could finish (the promotion never completed during develop churn). false lets
+  # the in-flight run finish; GitHub still keeps only the newest *pending* run per
+  # group (older pendings are auto-dropped), so there is no runaway stacking.
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -43,10 +49,23 @@ jobs:
           fi
           echo "ok: main PR originates from qa"
 
-  tpch-pgwire:
-    name: TPC-H pgwire integration
+  # SINGLE combined job: compile all pgwire + recall test binaries ONCE on this
+  # runner, then run them. Same runner => the compiled target/ is reused across
+  # the runs (cargo sees its own artifacts as up-to-date, no recompile between
+  # suites). The previous separate-jobs design (a `build` job + per-suite
+  # `needs:[build]` jobs) wasted a ~40m build job because Swatinem/rust-cache
+  # cannot reliably ferry target/ ACROSS runners — cargo recompiled each suite
+  # from scratch on its own runner. Building once here and running sequentially
+  # eliminates both the redundant compiles and the cross-runner cache misses.
+  # The e2e tests embed the server (tokio::spawn), so they link the lib; a shared
+  # compiled target/ is the lever, not a pre-built server binary. The PAX recall
+  # step is the storage-format mandate (#8/#10) recall@k ratchet (≥0.90 vs f32).
+  # Sequential runs (not parallel) for reliability: clear per-suite pass/fail and
+  # no cross-suite memory contention on the materialize-heavy pgwire suites.
+  pgwire-recall-tests:
+    name: Integration tests (TPC-H/DS pgwire + PAX recall)
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -56,26 +75,19 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-qa-tpch"
+          prefix-key: "v1-qa-integration"
+      - name: Build all integration test binaries (once)
+        env:
+          CARGO_BUILD_JOBS: "4"
+        run: |
+          cargo test --test tpch_pgwire_e2e --test tpcds_pgwire_e2e --no-run
+          cargo test -p proximadb-block-format --lib --no-run
       - name: Run TPC-H over pgwire
-        run: CARGO_BUILD_JOBS=2 cargo test --test tpch_pgwire_e2e -- --nocapture
-
-  tpcds-pgwire:
-    name: TPC-DS pgwire integration
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.95.0
-      - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "v1-qa-tpcds"
+        run: cargo test --test tpch_pgwire_e2e -- --nocapture
       - name: Run TPC-DS over pgwire
-        run: CARGO_BUILD_JOBS=2 cargo test --test tpcds_pgwire_e2e -- --nocapture
+        run: cargo test --test tpcds_pgwire_e2e -- --nocapture
+      - name: Run PAX recall ratchets
+        run: cargo test -p proximadb-block-format --lib recall -- --nocapture
 
   sdk-coverage-ratchet:
     name: SDK Coverage Ratchet
@@ -101,9 +113,12 @@ jobs:
           # Coverage needs a single aggregating process; tolerate the known
           # _cov sys.modules-leak failures (the ratchet measures coverage, not
           # pass/fail — the per-file isolation gate in ci.yml owns correctness).
+          # Run OFFLINE unit tests only: filter out `integration` (needs a running
+          # server) and `live` (needs an external dependency / network, e.g. the
+          # `victor` package). The victor test self-skips via importorskip + `live`.
           pytest tests/unit/ -q -p no:cacheprovider --timeout=120 \
             --cov=proximadb_sdk --cov-report=json:/tmp/sdk-cov.json \
-            --ignore=tests/unit/test_integrations_victor_cov.py \
+            -m "not integration and not live" \
             --ignore=tests/unit/test_chunking_code_cov.py \
             --continue-on-collection-errors || true
           test -f /tmp/sdk-cov.json

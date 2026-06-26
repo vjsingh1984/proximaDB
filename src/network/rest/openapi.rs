@@ -49,7 +49,7 @@
 use serde_json::Value;
 use utoipa::OpenApi;
 
-use crate::network::rest::v2::{collections, graphs, query, records, schema};
+use crate::network::rest::v2::{collections, entities, graphs, query, records, schema};
 
 /// Canonical ProximaDB error envelope (`{ error: { type, message, code } }`).
 ///
@@ -120,12 +120,22 @@ part of this publishable SDK surface.",
         query::explain_query,
         graphs::fusion_search_v2,
         graphs::impact_analysis_v2,
+        entities::upsert_entity_v2,
+        entities::get_entity_v2,
+        entities::delete_entity_v2,
+        entities::search_entities_v2,
     ),
     components(
         schemas(
             ErrorResponse,
             ErrorBody,
             QueryResponse,
+            entities::UpsertEntityRequest,
+            entities::UpsertEntityResponse,
+            entities::EntityDto,
+            entities::SearchEntitiesRequest,
+            entities::SearchEntitiesResponse,
+            entities::EntitySearchResult,
         ),
     ),
     tags(
@@ -134,6 +144,7 @@ part of this publishable SDK surface.",
         (name = "Records", description = "ProximaRecord write / read / scan."),
         (name = "Search", description = "Vector similarity + typed-filter search."),
         (name = "Query", description = "AQL / UQL query facade."),
+        (name = "Entities", description = "Entity orchestration (graph node + embeddings + provenance)."),
     ),
 )]
 pub struct ApiDoc;

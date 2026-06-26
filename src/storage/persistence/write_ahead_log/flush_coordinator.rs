@@ -88,6 +88,11 @@ pub struct WALFlushCoordinator {
     metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater>>,
     /// Memtable manager for cleanup after flush
     memtable_manager: Option<Arc<super::memtable_manager::MemtableManager>>,
+    /// A6 storage-write fence (default-OFF). When wired (from `shared_services`
+    /// via the same `PartitionLeaseManager` the network write-gates use), a flush
+    /// from a pod that has been fenced out of `(tenant, collection)` is rejected
+    /// before any storage write. `None` ⇒ no fence wired ⇒ fail-open.
+    storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>>,
 }
 
 impl WALFlushCoordinator {
@@ -102,7 +107,53 @@ impl WALFlushCoordinator {
             collection_service: None,
             metrics_updater: None,
             memtable_manager: None,
+            storage_write_fence: None,
         }
+    }
+
+    /// Wire the A6 storage-write fence (default-OFF; enforced only when
+    /// `PROXIMADB_WRITE_FENCING=1`). Injected from `shared_services` so the flush
+    /// path shares the **same** `PartitionLeaseManager` instance as the network
+    /// write-gates — a consistent, durable view of `(tenant, collection)`
+    /// ownership across the pod. Absent ⇒ the boundary check fails open.
+    pub fn set_storage_write_fence(
+        &mut self,
+        fence: Arc<dyn crate::storage::write_fence::StorageWriteFence>,
+    ) {
+        self.storage_write_fence = Some(fence);
+        info!(
+            "🔒 FlushCoordinator: A6 storage-write fence wired (default-OFF; set PROXIMADB_WRITE_FENCING=1 to enforce)"
+        );
+    }
+
+    /// Resolve the owning tenant for a flush of `collection_id` (A6 fence input).
+    ///
+    /// Precedence (each is at most one amortized lookup per flush, never per row —
+    /// D3 co-design): (1) the precomputed `BackgroundFlushContext.tenant_id`;
+    /// (2) the collection service, reusing the canonical tag/owner resolver the
+    /// network gates use. `None` ⇒ tenant unknown ⇒ the fence fails open. The
+    /// shutdown coordinator has no collection service today (see the A6 TD /
+    /// dependent materialization TD), so this returns `None` on that path and the
+    /// fence stays dark there until that wiring lands.
+    async fn resolve_flush_tenant(
+        &self,
+        collection_id: &str,
+        flush_context: Option<&BackgroundFlushContext>,
+    ) -> Option<String> {
+        if let Some(ctx) = flush_context
+            && let Some(tenant) = ctx.tenant_id.as_ref()
+            && !tenant.is_empty()
+        {
+            return Some(tenant.clone());
+        }
+        if let Some(service) = &self.collection_service
+            && let Ok(Some(collection)) = service.collection(collection_id).await
+        {
+            return crate::services::collection::manager::CollectionService::collection_tenant_id(
+                &collection,
+            );
+        }
+        None
     }
 
     /// Set memtable manager for cleanup after flush
@@ -196,6 +247,54 @@ impl WALFlushCoordinator {
         );
 
         let _flush_id = proximadb_kernel::uuid::Uuid::new_v4().to_string();
+
+        // Step 0: A6 storage-write fence (default-OFF; `PROXIMADB_WRITE_FENCING=1`).
+        //
+        // Checked *before* any record extraction, metadata resolution, or storage
+        // write: a pod displaced by a lease takeover must not publish its buffered
+        // (stale) data to shared storage, or it would durably resurrect
+        // deleted/tombstoned records (CLAUDE.md #16; ADR-025 deletion vectors are a
+        // dependent of A6). This is the boundary backstop behind the routing-layer
+        // lease-on-write gate (#337); the decision delegates to the same durable
+        // `PartitionLeaseManager` (#346 `is_fenced_out`) the gates consult.
+        //
+        // Co-design (Dim-1): at most one durable lease read per flush (amortized
+        // over the whole batch), never per row. Fail-open on unknown tenant / no
+        // fence wired — the gate is the first line of defense.
+        {
+            use crate::storage::write_fence::{
+                FenceDecision, evaluate_fence, write_fencing_enabled,
+            };
+            let enabled = write_fencing_enabled();
+            if enabled {
+                let tenant = self
+                    .resolve_flush_tenant(collection_id, flush_context)
+                    .await;
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                if evaluate_fence(
+                    enabled,
+                    self.storage_write_fence.as_ref(),
+                    tenant.as_deref(),
+                    collection_id,
+                    now_ms,
+                )
+                .await
+                    == FenceDecision::Fenced
+                {
+                    warn!(
+                        target: "proximadb.fence",
+                        tenant_id = tenant.as_deref().unwrap_or("<unknown>"),
+                        collection_id = %collection_id,
+                        "🛡️ A6 fence: this pod is fenced out of (tenant, collection); rejecting stale-pod flush before storage write"
+                    );
+                    return Err(anyhow::anyhow!(
+                        "A6 storage-write fence: pod is fenced out of collection '{}' (tenant '{}') — a live lease is held by another pod; refusing to publish stale data",
+                        collection_id,
+                        tenant.as_deref().unwrap_or("<unknown>")
+                    ));
+                }
+            }
+        }
 
         // Step 1: Extract vector records from FlushDataSource + Mark for cleanup
         let vector_records = match &flush_data {
@@ -390,8 +489,15 @@ impl WALFlushCoordinator {
                 ..Default::default()
             };
 
-            // Step 4: Execute polymorphic flush via storage engine (calls do_flush internally)
-            engine.do_flush(&flush_params).await?
+            // Step 4: Execute polymorphic flush via the single trait `flush()`
+            // funnel (D1 convergence). `flush()` wraps the engine-specific
+            // `do_flush` with the common pre/post processing (validation, timing,
+            // optional post-flush compaction), so the coordinator path and the
+            // embedded path (`storage_engine.flush()`) now go through ONE funnel
+            // rather than the coordinator reaching past it to `do_flush`. The bytes
+            // written are identical (`flush()` delegates to the same `do_flush`);
+            // `trigger_compaction` is unset here, so no extra compaction is run.
+            engine.flush(flush_params).await?
         };
 
         info!(
@@ -1023,4 +1129,59 @@ pub trait FlushCoordinatorCallbacks {
         wal_file: &str,
         flushed_sequences: &[u64],
     ) -> Result<bool>;
+}
+
+#[cfg(test)]
+mod fence_wiring_tests {
+    use super::*;
+    use crate::storage::background_flush_context::{BackgroundFlushContext, StorageEngineType};
+
+    /// `resolve_flush_tenant` prefers the tenant carried on the precomputed
+    /// `BackgroundFlushContext` (D3: amortized, no extra lookup).
+    #[tokio::test]
+    async fn resolve_flush_tenant_prefers_context_tenant() {
+        let coordinator = WALFlushCoordinator::new();
+        let mut ctx = BackgroundFlushContext::for_testing("c", StorageEngineType::Sst);
+        ctx.tenant_id = Some("acme".to_string());
+        assert_eq!(
+            coordinator
+                .resolve_flush_tenant("c", Some(&ctx))
+                .await
+                .as_deref(),
+            Some("acme")
+        );
+    }
+
+    /// Fail-open: with no context tenant and no collection service wired (the
+    /// shutdown-coordinator shape today), tenant resolution yields `None`, so the
+    /// A6 fence stays dark on that path.
+    #[tokio::test]
+    async fn resolve_flush_tenant_is_none_without_context_or_service() {
+        let coordinator = WALFlushCoordinator::new();
+        assert_eq!(coordinator.resolve_flush_tenant("c", None).await, None);
+
+        let ctx = BackgroundFlushContext::for_testing("c", StorageEngineType::Sst);
+        assert_eq!(
+            coordinator.resolve_flush_tenant("c", Some(&ctx)).await,
+            None
+        );
+    }
+
+    /// The fence setter wires an `Arc<dyn StorageWriteFence>` without consuming the
+    /// coordinator (so the shutdown path can inject the shared lease-backed fence).
+    #[tokio::test]
+    async fn set_storage_write_fence_wires_a_fence() {
+        use crate::storage::write_fence::StorageWriteFence;
+        struct Never;
+        #[async_trait::async_trait]
+        impl StorageWriteFence for Never {
+            async fn is_fenced_out(&self, _t: &str, _c: &str, _n: i64) -> bool {
+                false
+            }
+        }
+        let mut coordinator = WALFlushCoordinator::new();
+        assert!(coordinator.storage_write_fence.is_none());
+        coordinator.set_storage_write_fence(Arc::new(Never));
+        assert!(coordinator.storage_write_fence.is_some());
+    }
 }

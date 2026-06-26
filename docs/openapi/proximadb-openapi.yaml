@@ -552,6 +552,95 @@ components:
       required:
       - vector
       type: object
+    EntityDto:
+      properties:
+        collection_id:
+          type: string
+        flexible_metadata:
+          additionalProperties: {}
+          propertyNames:
+            type: string
+          type: object
+        id:
+          type: string
+      required:
+      - id
+      - collection_id
+      - flexible_metadata
+      type: object
+    EntityEmbeddingInput:
+      properties:
+        dimension:
+          format: int32
+          minimum: 0
+          type: integer
+        modality:
+          type:
+          - string
+          - 'null'
+        model_id:
+          type: string
+        vector:
+          items:
+            format: float
+            type: number
+          type: array
+      required:
+      - model_id
+      - vector
+      type: object
+    EntityProvenanceInput:
+      properties:
+        chunk_id:
+          type: string
+        chunk_position:
+          format: int32
+          minimum: 0
+          type: integer
+        extraction_method:
+          type: string
+        metadata:
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
+          type: object
+        source_id:
+          type: string
+      type: object
+    EntityRelationInput:
+      properties:
+        properties:
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
+          type: object
+        relation_type:
+          type: string
+        source_entity_id:
+          type: string
+        target_entity_id:
+          type: string
+        weight:
+          format: float
+          type: number
+      required:
+      - source_entity_id
+      - target_entity_id
+      - relation_type
+      type: object
+    EntitySearchResult:
+      properties:
+        entity:
+          $ref: '#/components/schemas/EntityDto'
+        score:
+          format: float
+          type: number
+      required:
+      - entity
+      - score
+      type: object
     ErrorBody:
       description: Inner body of [`ErrorResponse`].
       properties:
@@ -1508,6 +1597,39 @@ components:
       - schema
       - created_at
       type: object
+    SearchEntitiesRequest:
+      properties:
+        filters:
+          additionalProperties: {}
+          description: 'Equality metadata filters as a `{field: value}` JSON object.'
+          propertyNames:
+            type: string
+          type: object
+        query_vector:
+          description: Query embedding for vector similarity search. Omit for metadata-only search.
+          items:
+            format: float
+            type: number
+          type: array
+        top_k:
+          format: int32
+          minimum: 0
+          type: integer
+      type: object
+    SearchEntitiesResponse:
+      properties:
+        results:
+          items:
+            $ref: '#/components/schemas/EntitySearchResult'
+          type: array
+        total:
+          format: int32
+          minimum: 0
+          type: integer
+      required:
+      - results
+      - total
+      type: object
     TextFieldInput:
       description: |-
         Input format for TEXT fields
@@ -1857,6 +1979,42 @@ components:
       - warnings
       - updated_at
       type: object
+    UpsertEntityRequest:
+      properties:
+        embeddings:
+          items:
+            $ref: '#/components/schemas/EntityEmbeddingInput'
+          type: array
+        flexible_metadata:
+          additionalProperties: {}
+          propertyNames:
+            type: string
+          type: object
+        id:
+          description: Empty ⇒ the server generates a UUID.
+          type: string
+        provenance:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/EntityProvenanceInput'
+        relations:
+          items:
+            $ref: '#/components/schemas/EntityRelationInput'
+          type: array
+      type: object
+    UpsertEntityResponse:
+      properties:
+        entity_id:
+          type: string
+        message:
+          type: string
+        success:
+          type: boolean
+      required:
+      - success
+      - entity_id
+      - message
+      type: object
   securitySchemes:
     bearerAuth:
       bearerFormat: JWT
@@ -2052,6 +2210,153 @@ paths:
       summary: Get collection details.
       tags:
       - Collections
+  /api/v2/collections/{collection_id}/entities:
+    post:
+      operationId: upsert_entity_v2
+      parameters:
+      - description: Collection backing the entities
+        in: path
+        name: collection_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertEntityRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpsertEntityResponse'
+          description: Entity upserted
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid request
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Upsert failed
+      tags:
+      - Entities
+  /api/v2/collections/{collection_id}/entities/search:
+    post:
+      operationId: search_entities_v2
+      parameters:
+      - description: Collection backing the entities
+        in: path
+        name: collection_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchEntitiesRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchEntitiesResponse'
+          description: Search results
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid request
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Search failed
+      tags:
+      - Entities
+  /api/v2/collections/{collection_id}/entities/{entity_id}:
+    delete:
+      operationId: delete_entity_v2
+      parameters:
+      - description: Collection backing the entities
+        in: path
+        name: collection_id
+        required: true
+        schema:
+          type: string
+      - description: Entity ID
+        in: path
+        name: entity_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpsertEntityResponse'
+          description: Entity deleted
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Entity not found
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Delete failed
+      tags:
+      - Entities
+    get:
+      operationId: get_entity_v2
+      parameters:
+      - description: Collection backing the entities
+        in: path
+        name: collection_id
+        required: true
+        schema:
+          type: string
+      - description: Entity ID
+        in: path
+        name: entity_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityDto'
+          description: Entity found
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Entity not found
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Fetch failed
+      tags:
+      - Entities
   /api/v2/collections/{collection_id}/records/batch:
     post:
       description: |-
@@ -3006,3 +3311,5 @@ tags:
   name: Search
 - description: AQL / UQL query facade.
   name: Query
+- description: Entity orchestration (graph node + embeddings + provenance).
+  name: Entities

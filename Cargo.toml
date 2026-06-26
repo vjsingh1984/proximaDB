@@ -51,7 +51,9 @@ members = [
     "crates/horizontal/proximadb-embedded-common",
     "crates/horizontal/proximadb-recall-bench",
     "crates/horizontal/proximadb-runtime-common",
+    "crates/horizontal/proximadb-serialization",
     "crates/horizontal/proximadb-security",
+    "crates/horizontal/proximadb-tls",
     "crates/horizontal/proximadb-telemetry",
     "crates/platform/proximadb-api",
     "crates/platform/proximadb-runtime",
@@ -69,13 +71,17 @@ members = [
     "crates/modalities/proximadb-rank-profile",
     "crates/modalities/proximadb-rank-onnx",
     "crates/storage/proximadb-storage-common",
+    "crates/storage/proximadb-storage-encryption",
     "crates/storage/proximadb-block-format",
     "crates/storage/proximadb-object-store",
     "crates/storage/proximadb-iceberg-engine",
     "crates/storage/proximadb-storage-kv",
+    "crates/storage/proximadb-storage-operations",
     "crates/storage/proximadb-storage-optimization",
+    "crates/storage/proximadb-storage-filesystem-types",
     "crates/storage/proximadb-storage-strategy",
     "crates/storage/proximadb-storage-tenant",
+    "crates/storage/proximadb-storage-transaction",
     "crates/query/proximadb-document-query",
     "crates/query/proximadb-graph-arrow",
     "crates/query/proximadb-graph-query",
@@ -207,12 +213,18 @@ proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
 proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
+proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
+proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
+proximadb-storage-operations = { path = "crates/storage/proximadb-storage-operations" }
 proximadb-storage-optimization = { path = "crates/storage/proximadb-storage-optimization" }
+proximadb-storage-filesystem-types = { path = "crates/storage/proximadb-storage-filesystem-types" }
 proximadb-storage-strategy = { path = "crates/storage/proximadb-storage-strategy" }
 proximadb-storage-tenant = { path = "crates/storage/proximadb-storage-tenant" }
+proximadb-storage-transaction = { path = "crates/storage/proximadb-storage-transaction" }
 crc32fast = "1.4"
 rmp-serde = "1.1"
 tonic-prost = "0.14"
@@ -294,15 +306,21 @@ proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-embedded-common = { path = "crates/horizontal/proximadb-embedded-common" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
+proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
 proximadb-security = { path = "crates/horizontal/proximadb-security" }
+proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-object-store = { path = "crates/storage/proximadb-object-store" }
 proximadb-iceberg-engine = { path = "crates/storage/proximadb-iceberg-engine" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
+proximadb-storage-operations = { path = "crates/storage/proximadb-storage-operations" }
 proximadb-storage-optimization = { path = "crates/storage/proximadb-storage-optimization" }
+proximadb-storage-filesystem-types = { path = "crates/storage/proximadb-storage-filesystem-types" }
 proximadb-storage-strategy = { path = "crates/storage/proximadb-storage-strategy" }
 proximadb-storage-tenant = { path = "crates/storage/proximadb-storage-tenant" }
+proximadb-storage-transaction = { path = "crates/storage/proximadb-storage-transaction" }
 proximadb-telemetry = { path = "crates/horizontal/proximadb-telemetry" }
 proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
 proximadb-cache = { path = "crates/foundation/proximadb-cache" }
@@ -606,7 +624,7 @@ gcp = ["dep:google-cloud-storage"]
 # ============================================================================
 
 # Network REST endpoints (HTTP/HTTPS server components)
-network-rest = []
+network-rest = ["proximadb-tls/network-rest"]
 
 # CDC Kafka integration (change data capture to Kafka)
 # Note: rdkafka dependency would be added when enabling this feature

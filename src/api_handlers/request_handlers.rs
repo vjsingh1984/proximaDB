@@ -61,7 +61,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tracing::{debug, error, info, info_span};
+use tracing::{debug, error, info, info_span, warn};
 
 /// Global request counter for generating unique request IDs
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -421,10 +421,7 @@ impl UnifiedHandlers {
         table: &str,
         since_lsn: u64,
     ) -> anyhow::Result<Vec<crate::services::record_store::ChangeRow>> {
-        match self.get_dml_service() {
-            Some(dml) => dml.changes_since(table, since_lsn).await,
-            None => Ok(Vec::new()),
-        }
+        self.record_ops.table_changes(table, since_lsn).await
     }
 
     /// Post-construction setter for the canonical-precision resolver.
@@ -851,47 +848,20 @@ impl UnifiedHandlers {
         request: RichSearchRequest,
         tenant_id: Option<&str>,
     ) -> Result<RichSearchResponse> {
-        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
-        let request = RichSearchRequest {
-            collection_id: match self
-                .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
-                .await?
-            {
-                Some(id) => id,
-                None => {
-                    return Err(anyhow!("Collection '{}' not found", request.collection_id));
-                }
-            },
-            ..request
-        };
-
-        self.vector_operations_service
-            .search_records_with_tenant_context(request, tenant_context.as_ref())
+        self.record_ops
+            .handle_record_search_for_tenant(request, tenant_id)
             .await
     }
 
     /// Canonical rich-record get handler used by v2 REST/gRPC/internal callers.
+    /// Delegates to the shared `RecordOpsService` (TD-104 REST phase 2).
     pub async fn handle_record_get_for_tenant(
         &self,
         request: RichRecordGetRequest,
         tenant_id: Option<&str>,
     ) -> Result<RichRecordGetResponse> {
-        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
-        let request = RichRecordGetRequest {
-            collection_id: match self
-                .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
-                .await?
-            {
-                Some(id) => id,
-                None => {
-                    return Err(anyhow!("Collection '{}' not found", request.collection_id));
-                }
-            },
-            ..request
-        };
-
-        self.vector_operations_service
-            .get_record_with_tenant_context(request, tenant_context.as_ref())
+        self.record_ops
+            .handle_record_get_for_tenant(request, tenant_id)
             .await
     }
 
@@ -941,7 +911,6 @@ impl UnifiedHandlers {
     /// from the deduped, time-ordered scan index and returns `(page,
     /// next_cursor)`.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub async fn handle_record_scan_paginated_for_tenant(
         &self,
         collection_id: &str,
@@ -956,25 +925,14 @@ impl UnifiedHandlers {
         Vec<proximadb_records::ProximaRecord>,
         Option<crate::services::scan_cursor::ScanCursor>,
     )> {
-        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
-        let resolved_id = match self
-            .resolve_collection_id_internal(collection_id, tenant_context.as_ref())
-            .await?
-        {
-            Some(id) => id,
-            None => {
-                return Err(anyhow!("Collection '{}' not found", collection_id));
-            }
-        };
-
-        self.vector_operations_service
-            .scan_records_paginated(
-                &resolved_id,
+        self.record_ops
+            .handle_record_scan_paginated_for_tenant(
+                collection_id,
                 cursor,
                 limit,
                 include_vector,
                 include_props,
-                tenant_context.as_ref(),
+                tenant_id,
                 filter,
                 now_ns,
             )
@@ -1455,12 +1413,41 @@ impl UnifiedHandlers {
         }
     }
 
-    /// Execute a hybrid vector-graph query
+    /// Execute a hybrid vector-graph query.
+    ///
+    /// # DEPRECATED (TD-143)
+    ///
+    /// This v1 `ExecuteHybridQuery` path is **dormant**: it is only reachable when
+    /// `enable_grpc_v1_compat` is enabled (default OFF; `PROXIMADB_GRPC_V1_COMPAT`),
+    /// and the REST v1 surface for it is a mock. It violates the one-fusion-engine
+    /// contract (#280) — it owns its own ranking via `combination_strategy`, which is a
+    /// sequential vector→graph / graph→vector *pipeline*, not the PIT-calibrated
+    /// score-fusion of v2 `graph_fusion_search`. It is also **not tenant-scoped**, and
+    /// its response shape (`nodes`/`edges`/`paths`/`vector_results`) has no 1:1 mapping
+    /// to v2 fused results (`FusedItem` + `FusionStats`).
+    ///
+    /// Use v2 **FusionSearch** instead — REST `POST /api/v2/graphs/{graph_id}/fusion-search`
+    /// (`GraphFusionParams`) or gRPC `ProximaFusionService.FusionSearch`. Hard removal is
+    /// deferred until the v1 compat surface itself sunsets; do not extend this path.
+    #[deprecated(
+        note = "v1 ExecuteHybridQuery is a dormant legacy path behind enable_grpc_v1_compat \
+                (default OFF). It owns its own combination_strategy ranking (sequential \
+                pipeline, not score-fusion) and is not tenant-scoped. Use v2 FusionSearch \
+                (POST /api/v2/graphs/{graph_id}/fusion-search, GraphFusionParams). See TD-143."
+    )]
     pub async fn execute_hybrid_query(
         &self,
         request: crate::proto::proximadb_v1::HybridSearchRequest,
     ) -> Result<crate::proto::proximadb_v1::HybridSearchResponse> {
         let start_time = std::time::Instant::now();
+        warn!(
+            target: "proximadb::deprecation",
+            "execute_hybrid_query (v1 ExecuteHybridQuery) is DEPRECATED — dormant behind \
+             enable_grpc_v1_compat (default OFF). It does its own combination_strategy ranking \
+             (sequential pipeline, not score-fusion) and is not tenant-scoped. Use v2 \
+             FusionSearch (POST /api/v2/graphs/{{graph_id}}/fusion-search, GraphFusionParams) \
+             or gRPC ProximaFusionService.FusionSearch. See TD-143."
+        );
         info!(
             "Executing hybrid query with strategy: {:?}",
             request.combination_strategy
@@ -3900,6 +3887,8 @@ impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
         .await
     }
 
+    /// DEPRECATED (TD-143): forwards to the deprecated v1 inherent impl.
+    #[allow(deprecated)]
     async fn execute_hybrid_query(
         &self,
         request: crate::proto::proximadb_v1::HybridSearchRequest,
@@ -3912,6 +3901,7 @@ impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
         query: String,
         parameters: Option<Vec<proximadb_data_model::ProximaValue>>,
         collection: Option<String>,
+        tenant_id: Option<&str>,
     ) -> anyhow::Result<crate::proto::proximadb_v1::ExecuteQueryResponse> {
         let legacy_parameters = parameters.map(|values| {
             values
@@ -3919,10 +3909,10 @@ impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
                 .map(proximadb_records::conversions::proxima_to_sql_value)
                 .collect()
         });
-        // ApiHandlersPort::execute_sql_v1 carries no tenant; relational SQL stays
-        // unscoped on this trait path (callers that need TD-064 scoping use the
-        // inherent method with a tenant — e.g. the gRPC ExecuteQuery handler).
-        UnifiedHandlers::execute_sql_v1(self, query, legacy_parameters, collection, None).await
+        // TD-064: thread the caller's tenant into the inherent tenant-scoped SQL
+        // path. `None` preserves the legacy unscoped behavior (callers that
+        // haven't been wired yet).
+        UnifiedHandlers::execute_sql_v1(self, query, legacy_parameters, collection, tenant_id).await
     }
 }
 

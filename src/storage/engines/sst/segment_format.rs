@@ -103,12 +103,20 @@ pub fn read_segment_records(
 /// `embedding_count` is the collection's embedding-modality count (≥1). `quant` selects
 /// the vector quantization strategy (P3 Phase D): `VectorQuant::Auto` keeps the env
 /// default (SQ8 unless `PROXIMADB_VECTOR_RABITQ`), `RaBitQ` writes ~30× binary codes.
+///
+/// `target_block` is the optional target block size in bytes (TD-156 / ADR-026
+/// configurable geometry). `None` keeps the writer default; a larger value (e.g.
+/// 8-16 MiB for object storage) coalesces rows into fewer blocks, cutting the
+/// per-block ranged-GET count — the fragmentation lever measured by the
+/// footer-cache economics harness. Mixed-read-safe: block size is a per-segment
+/// write choice and is irrelevant to the magic-detected read router.
 pub fn write_pax_segment(
     path: &Path,
     records: &[ProximaRecord],
     collection_id: &str,
     embedding_count: usize,
     quant: VectorQuant,
+    target_block: Option<usize>,
 ) -> Result<SegmentMeta> {
     let mut writer = PaxSegmentWriter::new(
         path,
@@ -117,7 +125,7 @@ pub fn write_pax_segment(
         collection_id,
         0, // schema_fingerprint — derived from the catalog schema in a later phase
         embedding_count.max(1),
-        None,
+        target_block,
     )
     .with_quant(quant);
     for record in records {
@@ -397,7 +405,7 @@ mod tests {
             rec("w1", 1_700_000_000_000_000_000, vec![1.0, 2.0, 3.0]),
             rec("w2", 1_700_000_000_000_000_001, vec![4.0, 5.0, 6.0]),
         ];
-        let meta = write_pax_segment(&path, &records, "col", 1, VectorQuant::Auto).unwrap();
+        let meta = write_pax_segment(&path, &records, "col", 1, VectorQuant::Auto, None).unwrap();
         assert!(
             meta.block_count >= 1,
             "segment should have at least one block"
@@ -428,7 +436,7 @@ mod tests {
                 )
             })
             .collect();
-        write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ).unwrap();
+        write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, None).unwrap();
 
         // The written segment's vector column must be RaBitQ-quantized.
         let bytes = std::fs::read(&path).unwrap();
@@ -443,6 +451,105 @@ mod tests {
         let bytes2 = std::fs::read(&path).unwrap();
         let back = read_segment_records(&bytes2, &[], &[], None).unwrap();
         assert_eq!(back.len(), records.len());
+    }
+
+    /// Mixed-read-safe coexistence (storage-format mandate #8). A store rolling
+    /// PAX quantization on will have BOTH legacy `ProximaBlocks` segments (written
+    /// before the flip) and new PAX segments side by side. The magic-byte router
+    /// must read BOTH back through the single `read_segment_records` entry —
+    /// disjoint oids, no mis-route. This is the property that makes the staged
+    /// default-on flip safe (default OFF in v0.2, flip gated by the recall ratchet).
+    #[test]
+    fn mixed_format_legacy_and_pax_segments_coexist_and_read_back() {
+        let legacy_records = vec![
+            rec(
+                "legacy_a",
+                1_700_000_000_000_000_000,
+                vec![1.0, 2.0, 3.0, 4.0],
+            ),
+            rec(
+                "legacy_b",
+                1_700_000_000_000_000_001,
+                vec![5.0, 6.0, 7.0, 8.0],
+            ),
+        ];
+        let legacy_bytes = ProximaDataBlock::new(legacy_records, BlockCompressionConfig::default())
+            .serialize()
+            .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let pax_path = dir.path().join("coexist.pax");
+        let pax_records = vec![
+            rec(
+                "pax_c",
+                1_700_000_000_000_000_002,
+                vec![9.0, 10.0, 11.0, 12.0],
+            ),
+            rec(
+                "pax_d",
+                1_700_000_000_000_000_003,
+                vec![13.0, 14.0, 15.0, 16.0],
+            ),
+        ];
+        write_pax_segment(&pax_path, &pax_records, "col", 1, VectorQuant::RaBitQ, None).unwrap();
+        let pax_bytes = std::fs::read(&pax_path).unwrap();
+
+        // The two segments are detected as DIFFERENT formats (never mis-routed).
+        assert_eq!(
+            SegmentFormat::detect(&legacy_bytes),
+            SegmentFormat::ProximaBlocks
+        );
+        assert_eq!(SegmentFormat::detect(&pax_bytes), SegmentFormat::Pax);
+
+        // ...and BOTH read back through the single mixed-format router.
+        let legacy_back = read_segment_records(&legacy_bytes, &[], &[], None).unwrap();
+        let pax_back = read_segment_records(&pax_bytes, &[], &[], None).unwrap();
+
+        let mut legacy_oids: Vec<&str> = legacy_back.iter().map(|r| r.oid.as_str()).collect();
+        legacy_oids.sort_unstable();
+        let mut pax_oids: Vec<&str> = pax_back.iter().map(|r| r.oid.as_str()).collect();
+        pax_oids.sort_unstable();
+
+        assert_eq!(
+            legacy_oids,
+            vec!["legacy_a", "legacy_b"],
+            "legacy segment oids"
+        );
+        assert_eq!(
+            pax_oids,
+            vec!["pax_c", "pax_d"],
+            "PAX segment oids (disjoint from legacy)"
+        );
+    }
+
+    /// TD-156 / ADR-026: block geometry is the fragmentation lever. A larger
+    /// `target_block` packs rows into fewer blocks — so the per-block ranged-GET
+    /// count on the object-store read path drops (the +29,900% GET fragmentation
+    /// measured by the footer-cache economics harness shrinks as block count
+    /// falls). Mixed-read-safe: block size is a per-segment write choice, opaque
+    /// to the magic-detected read router.
+    #[test]
+    fn larger_target_block_yields_fewer_blocks() {
+        let records: Vec<ProximaRecord> = (0..512)
+            .map(|i| rec(&format!("r{i}"), 1000 + i as i64, vec![i as f32 * 0.1; 64]))
+            .collect();
+        let blocks_for = |target: Option<usize>| -> usize {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("geo.pax");
+            write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, target)
+                .unwrap()
+                .block_count as usize
+        };
+        let small = blocks_for(Some(8 * 1024));
+        let large = blocks_for(Some(256 * 1024));
+        eprintln!(
+            "[geometry] 512x64 vectors: 8KiB target -> {small} blocks, 256KiB target -> {large} blocks"
+        );
+        assert!(
+            large < small,
+            "larger target_block must yield fewer blocks: {large} >= {small}"
+        );
+        assert!(large >= 1, "at least one block");
     }
 
     /// P3 C.2 cascade primitive — recall + trace gate. A real PAX+RaBitQ segment
@@ -486,7 +593,7 @@ mod tests {
                 )
             })
             .collect();
-        write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ).unwrap();
+        write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, None).unwrap();
         let bytes = std::fs::read(&path).unwrap();
 
         let l2 =

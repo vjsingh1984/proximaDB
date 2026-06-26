@@ -57,17 +57,21 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       # Three-tier CI (feat -> develop -> qa -> main):
-      #   * feat -> develop = LIGHT: compile + fmt/clippy + layering + proto +
-      #     panic-policy + capability + security-audit + lints + docs. Fast inner
-      #     loop so development merges quickly and stays unblocked.
-      #   * develop -> qa = MEDIUM (`test_tier`): LIGHT + the core correctness
-      #     suites — rust-test, the 4 rust-integration-test-* engines, feature-matrix.
+      #   * feat -> develop runs the LIGHT jobs (compile + fmt/clippy + layering
+      #     + proto + panic-policy + capability + security-audit + lints + docs)
+      #     AND, via `test_tier`, the core Rust-correctness suites — rust-test,
+      #     the 4 rust-integration-test-* engines, feature-matrix. Surfacing
+      #     correctness at the feat→dev boundary catches latent breakage (broken
+      #     doctests, feature-gating gaps, test-isolation bugs) on the
+      #     introducing PR instead of at develop→qa.
+      #   * develop -> qa = MEDIUM: the above plus the qa-gate conformance
+      #     suites (TPC-H/TPC-DS over pgwire, ANN recall ratchets).
       #   * qa -> main = FULL (`extensive`): MEDIUM + docker-build, coverage,
-      #     python multi-version, cross integration-test, benchmarks. The heaviest,
-      #     pre-promotion gate.
-      # `test_tier` is true for base qa or main (and pushes to those); `extensive`
-      # is true only for base main (and pushes to main).
-      test_tier: ${{ github.base_ref == 'qa' || github.base_ref == 'main' || github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/main' }}
+      #     python multi-version, cross integration-test, benchmarks, CodeQL.
+      #     The heaviest, pre-promotion gate.
+      # `test_tier` is true for base develop, qa, or main (and pushes to qa/main);
+      # `extensive` is true only for base main (and pushes to main).
+      test_tier: ${{ github.base_ref == 'develop' || github.base_ref == 'qa' || github.base_ref == 'main' || github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/main' }}
       extensive: ${{ github.base_ref == 'main' || github.ref == 'refs/heads/main' }}
       rust: ${{ steps.filter.outputs.rust }}
       # Comprehensive code-path superset gating the always-required rust-compile
@@ -94,6 +98,15 @@ jobs:
       openapi_spec: ${{ steps.filter.outputs.openapi_spec }}
       src_connectors: ${{ steps.filter.outputs.src_connectors }}
       spark_jni: ${{ steps.filter.outputs.spark_jni }}
+      # TD-149: on a push to a protected branch (the only branches this workflow's
+      # `push:` trigger covers — main/development/develop/qa), run the drift-detecting
+      # jobs unconditionally. PRs keep the path-filter so the feat→develop tier stays
+      # LIGHT/fast; this catches drift/flakes the instant a merge lands them on the
+      # branch, so they can't accumulate invisibly and block the next triggering PR.
+      # The drift jobs (rust-format, rust-clippy, proto-compat, openapi-spec-drift,
+      # python-lint, the 4 sdk-codegen-drifts, go/nodejs/rust-sdk-lint) OR this `sweep`
+      # into their `if:`.
+      sweep: ${{ github.event_name == 'push' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -275,7 +288,7 @@ jobs:
     name: Rust Format
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -317,7 +330,7 @@ jobs:
     name: Proto Compatibility (T4.2)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.proto == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.python == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.proto == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.python == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -365,7 +378,7 @@ jobs:
     name: OpenAPI Spec From Code (TD-126)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.openapi_spec == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.openapi_spec == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -393,7 +406,7 @@ jobs:
     name: Go SDK Codegen Drift (TD-126)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.go_sdk == 'true' || needs.changes.outputs.openapi_spec == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.go_sdk == 'true' || needs.changes.outputs.openapi_spec == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -425,7 +438,7 @@ jobs:
     name: TS SDK Codegen Drift (TD-126)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.nodejs_sdk == 'true' || needs.changes.outputs.openapi_spec == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.nodejs_sdk == 'true' || needs.changes.outputs.openapi_spec == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -452,7 +465,7 @@ jobs:
     name: Rust SDK Codegen Drift (TD-126)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.rust_sdk == 'true' || needs.changes.outputs.openapi_spec == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust_sdk == 'true' || needs.changes.outputs.openapi_spec == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -493,7 +506,7 @@ jobs:
     name: Python SDK Codegen Drift (TD-126)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.openapi_spec == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.openapi_spec == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -573,7 +586,7 @@ jobs:
     name: Rust Clippy
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -655,7 +668,7 @@ jobs:
     name: Python Lint
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.proto == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.proto == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -692,7 +705,7 @@ jobs:
     name: Go SDK Lint
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.go_sdk == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.go_sdk == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -714,7 +727,7 @@ jobs:
     name: Node.js SDK Lint
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.nodejs_sdk == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.nodejs_sdk == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -731,7 +744,7 @@ jobs:
     name: Rust SDK Lint
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.rust_sdk == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust_sdk == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0

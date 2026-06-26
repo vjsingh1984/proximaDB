@@ -157,6 +157,31 @@ where
         }
     }
 
+    /// Remove every L1 entry whose key matches `predicate`; returns the
+    /// count removed. Backs per-collection cache invalidation on writes.
+    pub async fn remove_where<F>(&self, predicate: F) -> usize
+    where
+        F: Fn(&K) -> bool,
+    {
+        let removed = self.l1_backend.remove_where(predicate).await;
+        if removed > 0 {
+            let metrics = self.metrics.clone();
+            tokio::spawn(async move {
+                for _ in 0..removed {
+                    metrics
+                        .record_operation(
+                            MetricsOperationType::Delete,
+                            true,
+                            0,
+                            std::time::Duration::from_secs(0),
+                        )
+                        .await;
+                }
+            });
+        }
+        removed
+    }
+
     /// Get current L1 memory usage in bytes
     pub async fn memory_usage(&self) -> usize {
         self.l1_backend.memory_usage().await

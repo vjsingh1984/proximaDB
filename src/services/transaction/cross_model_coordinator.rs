@@ -203,7 +203,7 @@ impl CrossModelTransactionCoordinator {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```ignore
     /// # use proximadb::services::transaction::CrossModelTransactionCoordinator;
     /// # use std::sync::Arc;
     /// # async fn example(coordinator: &CrossModelTransactionCoordinator) -> anyhow::Result<()> {

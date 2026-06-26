@@ -155,13 +155,16 @@ impl MultiServer {
     ) -> crate::proto::proximadb_v2::proxima_record_service_server::ProximaRecordServiceServer<
         crate::network::grpc::v2::ProximaRecordServiceImpl,
     > {
-        crate::network::grpc::v2::ProximaRecordServiceImpl::new(services.request_handlers.clone())
-            .with_segment_registry(services.segment_registry.clone())
-            .with_primary_pod_gate(
-                services.primary_pod_registry.clone(),
-                services.self_pod_id.clone(),
-            )
-            .into_server()
+        crate::network::grpc::v2::ProximaRecordServiceImpl::new(
+            services.api_handlers.clone(),
+            services.request_handlers.record_ops(),
+        )
+        .with_segment_registry(services.segment_registry.clone())
+        .with_primary_pod_gate(
+            services.primary_pod_registry.clone(),
+            services.self_pod_id.clone(),
+        )
+        .into_server()
     }
 
     /// Construct the always-on canonical v2 **graph** gRPC service
@@ -198,8 +201,11 @@ impl MultiServer {
     ) -> crate::proto::proximadb_v2::proxima_fusion_service_server::ProximaFusionServiceServer<
         crate::network::grpc::v2::ProximaFusionServiceImpl,
     > {
-        crate::network::grpc::v2::ProximaFusionServiceImpl::new(services.request_handlers.clone())
-            .into_server()
+        crate::network::grpc::v2::ProximaFusionServiceImpl::new(
+            services.vector_operations_service.clone(),
+            services.request_handlers.graph_operations_service.clone(),
+        )
+        .into_server()
     }
 
     /// Build the canonical v2 entity gRPC service.
@@ -211,8 +217,12 @@ impl MultiServer {
     ) -> crate::proto::proximadb_v2::proxima_entity_service_server::ProximaEntityServiceServer<
         crate::network::grpc::v2::ProximaEntityServiceImpl,
     > {
-        crate::network::grpc::v2::ProximaEntityServiceImpl::new(services.request_handlers.clone())
-            .into_server()
+        crate::network::grpc::v2::ProximaEntityServiceImpl::new(
+            services.request_handlers.graph_operations_service.clone(),
+            services.vector_operations_service.clone(),
+            services.document_service.clone(),
+        )
+        .into_server()
     }
 
     /// Create new multi-server instance (orchestrator only)
@@ -1630,6 +1640,10 @@ impl MultiServer {
             // `ArrowFlightServer::new` signature.
             let arrow_bind_target =
                 BindTarget::Tcp(self.config.arrow_ipc_config.active_bind_address());
+            // Capture the debug form before `arrow_bind_target` is moved into the
+            // `tokio::spawn` below — mirrors the single-node start path's
+            // `arrow_target_log` (the value has no `Display` impl).
+            let arrow_target_log = format!("{arrow_bind_target:?}");
             let request_handlers = services.request_handlers.clone();
             let catalog_manager = services.catalog_manager.clone();
             let security_coordinator = if self.rest_auth_enabled {
@@ -1666,7 +1680,7 @@ impl MultiServer {
             });
 
             handles.push(arrow_handle);
-            info!("Arrow IPC Server started on {}", arrow_bind_addr);
+            info!("Arrow IPC Server started on {}", arrow_target_log);
         }
 
         // Start REST server on port 5678 if configured

@@ -192,6 +192,9 @@ pub mod common;
 // Background operation context (optimization)
 pub mod background_flush_context;
 
+// A6 storage-write fence seam (default-OFF; `PROXIMADB_WRITE_FENCING=1`)
+pub mod write_fence;
+
 // Engine capabilities and supportability checks
 pub mod engine_capabilities;
 
@@ -202,7 +205,14 @@ pub mod engines;
 pub mod persistence;
 
 // Encryption at rest for data security
-pub mod encryption;
+// Extracted to the `proximadb-storage-encryption` crate; re-exported here for source
+// compatibility (root-crate decomposition).
+pub use proximadb_storage_encryption as encryption;
+
+// EncryptedFilesystem decorator tests stayed in root because they drive the real
+// root-resident LocalFileSystem backend (see the module's header for rationale).
+#[cfg(test)]
+mod encryption_filesystem_tests;
 
 // Unified atomic operations
 pub mod transaction_coordinator;
@@ -229,7 +239,9 @@ pub use proximadb_storage_tenant as tenant;
 pub mod tiering;
 
 // Multi-model transaction coordinator for ACID transactions across stores
-pub mod transaction;
+// Extracted to the `proximadb-storage-transaction` crate; re-exported here for
+// source compatibility (root-crate decomposition).
+pub use proximadb_storage_transaction as transaction;
 
 // Semantic Knowledge Store (SKS) modules
 pub mod entity_store;
@@ -241,7 +253,9 @@ pub mod relations;
 pub use proximadb_storage_kv as kv;
 
 // Unified operations coordination (flush, compaction, re-quantization)
-pub mod operations;
+// Extracted to the `proximadb-storage-operations` crate; re-exported here for source
+// compatibility (root-crate decomposition).
+pub use proximadb_storage_operations as operations;
 
 // Document storage for MongoDB-like JSON document capabilities
 pub mod document;

@@ -251,7 +251,7 @@ impl CollectionService {
         }
     }
 
-    fn collection_tenant_id(collection: &Collection) -> Option<String> {
+    pub(crate) fn collection_tenant_id(collection: &Collection) -> Option<String> {
         let config = collection.config.as_ref()?;
 
         if let Some(tag_tenant) = config

@@ -62,6 +62,9 @@ pub trait ApiHandlersPort: Send + Sync {
 
     // ── Hybrid ────────────────────────────────────────────────────────────────
 
+    /// DEPRECATED (TD-143): v1 hybrid query — dormant (behind `enable_grpc_v1_compat`),
+    /// not tenant-scoped, owns its own ranking. Use v2 FusionSearch instead.
+    #[deprecated(note = "v1 ExecuteHybridQuery is deprecated; use v2 FusionSearch. See TD-143.")]
     async fn execute_hybrid_query(
         &self,
         request: HybridSearchRequest,
@@ -74,5 +77,10 @@ pub trait ApiHandlersPort: Send + Sync {
         query: String,
         parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
+        // TD-064: the authenticated tenant scopes relational SQL to the tenant's
+        // partition. `None` keeps the legacy unscoped behavior (callers that
+        // haven't been wired pass `None`); production gRPC/REST threads the real
+        // tenant from the request.
+        tenant_id: Option<&str>,
     ) -> Result<ExecuteQueryResponse>;
 }

@@ -282,7 +282,7 @@ notes = "Transparent AES-256-GCM file + WAL encryption with HKDF per-file keys +
 controlling_td = ["TD-016"]
 evidence = [
   "src/storage/persistence/filesystem/local.rs:1",
-  "src/storage/encryption/key_manager.rs:1",
+  "crates/storage/proximadb-storage-encryption/src/key_manager.rs:1",
 ]
 
 [[capabilities]]
@@ -291,7 +291,7 @@ status = "partial"
 notes = "mTLS infrastructure code-complete (TD-006 resolved Mar 2026, support tier Beta): rustls server config + client-cert extraction (TlsAcceptor), CN validation + CN-to-user mapping middleware, ClientCertificate auth method. Residual: security admin/status APIs and stronger online revocation (CRL/OCSP framework only)."
 controlling_td = ["TD-006"]
 evidence = [
-  "src/network/tls/acceptor.rs:1",
+  "crates/horizontal/proximadb-tls/src/acceptor.rs:1",
   "src/network/middleware/tls.rs:26",
   "src/network/rest/server.rs:636",
 ]

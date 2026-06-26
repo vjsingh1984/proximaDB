@@ -1913,25 +1913,49 @@ impl PartitionLeaseStore {
     ////////////////////////////////////////////////////////////////////////////////
 
     /// The fenced manifest committer for a resource identified by ResourceKey.
-    fn committer_for_key(&self, key: &ResourceKey) -> ManifestCommitter {
-        if key.resource_type == ResourceType::Collection
-            && key.namespace_id.is_none()
-            && let ResourceIdentifier::Single(collection_id) = &key.resource_id
-        {
-            // Mixed-read-safe migration: the legacy `(tenant, collection)` API
-            // and the new `ResourceKey::legacy_collection` API must address the
-            // same manifest log until a separate path migration is finalized.
-            return self.committer(&key.tenant_id, collection_id);
+    ///
+    /// Collection routing is **total, never silently divergent** (CLAUDE.md
+    /// mandate #8, mixed-read-safe migration). A collection's lease lives on the
+    /// legacy `{tenant}/{collection}/_manifests` log so the old
+    /// `acquire(tenant, collection)` API and the new `ResourceKey` API address
+    /// the SAME log — two independent fences for one collection is split brain.
+    /// The legacy log is keyed by `(tenant, collection)` only, so the canonical
+    /// collection shape is namespace-less + single-component. Any other
+    /// collection-domain key (namespaced, or composite/multi-part) would land on
+    /// a *different* `to_path()` log and fork the fence; reject it **loudly**
+    /// rather than diverge silently. No current caller produces such a key — this
+    /// guards against one being introduced. Non-collection resource types
+    /// (table/schema/graph/…) are genuinely distinct resources and keep their own
+    /// `to_path()` log.
+    fn committer_for_key(&self, key: &ResourceKey) -> Result<ManifestCommitter> {
+        if key.resource_type == ResourceType::Collection {
+            let single = match &key.resource_id {
+                ResourceIdentifier::Single(id) => Some(id.as_str()),
+                ResourceIdentifier::Composite(parts) if parts.len() == 1 => Some(parts[0].as_str()),
+                _ => None,
+            };
+            return match (key.namespace_id.as_deref(), single) {
+                (None, Some(collection_id)) => Ok(self.committer(&key.tenant_id, collection_id)),
+                _ => anyhow::bail!(
+                    "ambiguous collection lease key (tenant={}, namespace={:?}, id={:?}): a \
+                     collection lease must address the legacy \
+                     `{{tenant}}/{{collection}}/_manifests` log; a namespaced or composite \
+                     collection key would fork the generation fence",
+                    key.tenant_id,
+                    key.namespace_id,
+                    key.resource_id
+                ),
+            };
         }
 
         let path = format!("{}/{}", self.prefix, key.to_path());
-        ManifestCommitter::new(self.store.clone(), path)
+        Ok(ManifestCommitter::new(self.store.clone(), path))
     }
 
     /// Read the current lease for a resource by its ResourceKey.
     /// Handles both legacy and new-format leases (mixed-read-safe).
     pub async fn read_key(&self, key: &ResourceKey) -> Result<Option<(u64, PartitionLease)>> {
-        let committer = self.committer_for_key(key);
+        let committer = self.committer_for_key(key)?;
         let key_desc = format!("{}:{}", key.tenant_id, key.resource_type.name());
         match committer
             .latest_version()
@@ -1967,7 +1991,7 @@ impl PartitionLeaseStore {
         now_ms: i64,
         lease_ms: i64,
     ) -> Result<LeaseOutcome> {
-        let committer = self.committer_for_key(key);
+        let committer = self.committer_for_key(key)?;
         let key_desc = format!("{}:{}", key.tenant_id, key.resource_type.name());
 
         // Decide the parent version + the generation to claim, from the current
@@ -1982,13 +2006,16 @@ impl PartitionLeaseStore {
                 // occupies `lease.generation`; an object-store delete would have
                 // reset it to 1 and collapsed the fence).
                 if lease.released {
-                    (Some(version), lease.generation + 1)
+                    // `saturating_add` rather than `+` to honor the no-panic
+                    // policy (matches the manifest version counter's `checked_add`);
+                    // u64 generation overflow is unreachable in practice.
+                    (Some(version), lease.generation.saturating_add(1))
                 } else if lease.holder_pod.as_str() == holder_pod {
                     // We already own it → renew at the SAME generation
                     (Some(version), lease.generation)
                 } else if lease.is_expired(now_ms) {
                     // Take over a dead owner → strictly-higher generation
-                    (Some(version), lease.generation + 1)
+                    (Some(version), lease.generation.saturating_add(1))
                 } else {
                     // A live lease belongs to someone else — we are not the owner.
                     return Ok(LeaseOutcome::Held { by: lease });
@@ -2087,7 +2114,8 @@ impl PartitionLeaseStore {
 
         // Publish the tombstone at generation+1 so the holder's own in-flight
         // writes at `lease.generation` are fenced (strict less-than).
-        let new_generation = lease.generation + 1;
+        // `saturating_add` honors the no-panic policy (u64 overflow unreachable).
+        let new_generation = lease.generation.saturating_add(1);
         let tombstone = PartitionLease {
             released: true,
             generation: new_generation,
@@ -2098,7 +2126,7 @@ impl PartitionLeaseStore {
         let payload = serde_json::to_vec(&tombstone).context("encoding release tombstone")?;
 
         match self
-            .committer_for_key(key)
+            .committer_for_key(key)?
             .commit_fenced(Some(version), new_generation, bytes::Bytes::from(payload))
             .await
         {
@@ -2204,6 +2232,80 @@ impl PartitionLeaseManager {
         Ok(self.reconcile(tenant_id, collection_id, outcome))
     }
 
+    /// Ensure this pod owns `(tenant, collection)` with at most one object-store
+    /// round-trip per pod per collection (lease = latency optimization).
+    ///
+    /// Fast path: if the shared registry already binds the partition to this pod,
+    /// the renew loop keeps the durable lease warm, so return `true` without I/O.
+    /// Slow path (no binding, or a foreign owner): [`acquire`] (CAS) + reconcile,
+    /// which repoints the shared registry at the true owner so `consult_for_write`
+    /// is durably backed rather than empty-after-restart. Returns whether this pod
+    /// owns the partition. Callers fail-open on `Err` (transient object-store
+    /// blip), matching the lease stack's bootstrap posture; the storage-write
+    /// fence (A6) is the boundary backstop for the residual handoff race.
+    pub async fn ensure_owned(
+        &self,
+        tenant_id: &str,
+        collection_id: &str,
+        now_ms: i64,
+    ) -> Result<bool> {
+        if self
+            .registry
+            .lookup(tenant_id, collection_id)
+            .map(|binding| binding.pod == self.self_pod_id)
+            .unwrap_or(false)
+        {
+            return Ok(true);
+        }
+        self.acquire(tenant_id, collection_id, now_ms).await
+    }
+
+    /// Read the current durable leaseholder for `(tenant, collection)` — the
+    /// storage-write fence's authority. Returns the lease record (manifest
+    /// version + generation + holder) or `None` if the partition has never been
+    /// leased. This is the read half of the A6 boundary fence (the write half is
+    /// [`validate_fencing`]); it delegates to the durable lease log, not the
+    /// in-memory registry, so it reflects ground truth across pods.
+    pub async fn current_holder(
+        &self,
+        tenant_id: &str,
+        collection_id: &str,
+    ) -> Result<Option<(u64, PartitionLease)>> {
+        self.store.read(tenant_id, collection_id).await
+    }
+
+    /// A6 storage-write fence decision: is THIS pod fenced out of writing
+    /// `(tenant, collection)` to shared storage at `now_ms`?
+    ///
+    /// Returns `true` iff a *live* lease (not released, not expired) is held by a
+    /// **different** pod — i.e. a takeover has displaced this pod, so a flush from
+    /// it would publish stale data and must be rejected. Fail-open (`false`) when
+    /// no lease exists, the lease is released/expired, or the durable read errors:
+    /// the lease stack's bootstrap posture is fail-open, and the registry/admission
+    /// layer (lease-on-write) is the first line — this is the boundary backstop.
+    ///
+    /// NOTE: this is the fence *primitive*. Wiring it at the live storage-write
+    /// boundary is gated on the flush-path convergence (the server vector-flush
+    /// path is currently stubbed; see the A6 TD / LEASE_FENCE_REREVIEW doc).
+    pub async fn is_fenced_out(&self, tenant_id: &str, collection_id: &str, now_ms: i64) -> bool {
+        match self.current_holder(tenant_id, collection_id).await {
+            Ok(Some((_version, lease))) => {
+                !lease.released && !lease.is_expired(now_ms) && lease.holder_pod != self.self_pod_id
+            }
+            Ok(None) => false,
+            Err(e) => {
+                tracing::warn!(
+                    target: "proximadb.fence",
+                    tenant_id = %tenant_id,
+                    collection_id = %collection_id,
+                    error = %e,
+                    "A6 fence: durable lease read failed; failing open"
+                );
+                false
+            }
+        }
+    }
+
     /// Acquire a lease for a resource identified by its ResourceKey.
     ///
     /// This is the multi-modality entry point that uses the registered strategy
@@ -2217,10 +2319,13 @@ impl PartitionLeaseManager {
             .acquire_with_key(key, &self.self_pod_id, now_ms, ttl_ms)
             .await?;
 
-        if Self::is_legacy_collection_key(key) {
-            let ResourceIdentifier::Single(collection_id) = &key.resource_id else {
-                unreachable!("legacy collection key checked above");
-            };
+        // A legacy collection key reconciles into the (tenant, collection)
+        // registry; everything else is tracked by full ResourceKey. Match the
+        // single-component id directly (no-panic policy — fall through to the
+        // generalized path rather than `unreachable!` if the shape ever differs).
+        if Self::is_legacy_collection_key(key)
+            && let ResourceIdentifier::Single(collection_id) = &key.resource_id
+        {
             return Ok(self.reconcile(&key.tenant_id, collection_id, outcome));
         }
 
@@ -2235,6 +2340,20 @@ impl PartitionLeaseManager {
                 Ok(false)
             }
         }
+    }
+
+    /// Track a resource lease this pod holds so [`renew_held`] keeps it warm.
+    ///
+    /// `DmlLockService` acquires the durable lease via the store directly (it
+    /// needs the `LeaseOutcome`/generation to build its guard), bypassing
+    /// [`acquire_with_key`] — the only other path that populates the renewal set.
+    /// Without this registration a DML lock's durable lease silently lapses at
+    /// its TTL while still held, opening a takeover-eligible split-brain window.
+    /// The matching un-track happens in [`release_with_key`], which removes the
+    /// same identity.
+    pub fn track_held_key(&self, key: &ResourceKey) {
+        self.held_resource_keys
+            .insert(Self::resource_key_identity(key), key.clone());
     }
 
     /// Explicitly relinquish a generalized resource lease (F7): drop the
@@ -2715,6 +2834,11 @@ impl DmlLockService {
                     },
                 );
                 crate::metrics::dml_lock_metrics::inc_held(resource_type);
+                // Register the durable lease in the manager's renewal set so the
+                // renew loop keeps it warm — we acquired via the store directly
+                // (above) to get the generation, bypassing the manager's
+                // `acquire_with_key`, which is the only other path that tracks it.
+                self.lease_manager.track_held_key(&resource_key);
                 LockOutcome::Acquired { lease }
             }
             LeaseOutcome::Held { by } => LockOutcome::Held {
@@ -2952,6 +3076,95 @@ mod tests {
     fn validate_fencing_fresh_resource_allows_all() {
         assert!(validate_fencing(Some(0), 0).is_ok());
         assert!(validate_fencing(Some(1), 0).is_ok());
+    }
+
+    /// A6 storage-write fence primitive (#346): `is_fenced_out` reflects durable
+    /// cross-pod ownership and flips on a lease takeover. Two managers over one
+    /// shared backing = two pods; the holder is never fenced, a non-holder always
+    /// is, and after the lease lapses + the other pod takes over the verdict
+    /// inverts — the exact signal the flush boundary uses to reject a displaced
+    /// pod's stale write.
+    #[tokio::test]
+    async fn is_fenced_out_reflects_cross_pod_takeover() -> Result<()> {
+        let backing = shared_backing();
+        let mgr_a = test_manager(&backing, "A");
+        let mgr_b = test_manager(&backing, "B");
+
+        // No lease yet → fail-open: nobody is fenced.
+        assert!(!mgr_a.is_fenced_out("t", "c", 0).await);
+        assert!(!mgr_b.is_fenced_out("t", "c", 0).await);
+
+        // A acquires (t,c): A (holder) is not fenced; B (different pod) IS fenced
+        // out while A's lease is live.
+        assert!(mgr_a.acquire("t", "c", 0).await?);
+        assert!(
+            !mgr_a.is_fenced_out("t", "c", 1).await,
+            "the leaseholder is never fenced out of its own partition"
+        );
+        assert!(
+            mgr_b.is_fenced_out("t", "c", 1).await,
+            "a non-holder is fenced while another pod holds a live lease"
+        );
+
+        // A's lease lapses; B takes over. The fence inverts: displaced A is now
+        // fenced, new holder B is not.
+        let after = LEASE_MS + 1;
+        assert!(mgr_b.acquire("t", "c", after).await?);
+        assert!(
+            mgr_a.is_fenced_out("t", "c", after + 1).await,
+            "displaced A is fenced out after B's takeover (would resurrect stale data)"
+        );
+        assert!(
+            !mgr_b.is_fenced_out("t", "c", after + 1).await,
+            "new holder B is not fenced"
+        );
+        Ok(())
+    }
+
+    /// A6 cross-pod integration: the storage-write fence ADAPTER over a real lease
+    /// manager, driven through the exact decision the flush coordinator uses
+    /// (`evaluate_fence`), rejects a displaced pod's flush when enforcement is ON
+    /// and is byte-identical (Proceed) when OFF. This is the boundary the convergence
+    /// wires: pod A holds, B takes over, A's flush at the boundary is REJECTED (ON)
+    /// / allowed (OFF).
+    #[tokio::test]
+    async fn a6_fence_rejects_displaced_pod_flush_when_on_byte_identical_when_off() -> Result<()> {
+        use crate::network::storage_write_fence::LeaseStorageWriteFence;
+        use crate::storage::write_fence::{FenceDecision, StorageWriteFence, evaluate_fence};
+
+        let backing = shared_backing();
+        let mgr_a = Arc::new(test_manager(&backing, "A"));
+        let mgr_b = Arc::new(test_manager(&backing, "B"));
+
+        // Pod A's flush boundary consults a fence backed by A's lease manager.
+        let fence_a: Arc<dyn StorageWriteFence> =
+            Arc::new(LeaseStorageWriteFence::new(mgr_a.clone()));
+
+        // A holds the lease → A's flush proceeds whether enforcement is on or off.
+        assert!(mgr_a.acquire("t", "c", 0).await?);
+        assert_eq!(
+            evaluate_fence(true, Some(&fence_a), Some("t"), "c", 1).await,
+            FenceDecision::Proceed,
+            "holder A flushes freely while it owns the lease"
+        );
+
+        // B takes over after A's lease lapses → A is now the stale, displaced pod.
+        let after = LEASE_MS + 1;
+        assert!(mgr_b.acquire("t", "c", after).await?);
+
+        // ON ⇒ reject A's flush (would resurrect stale/tombstoned data);
+        // OFF ⇒ proceed (byte-identical to the pre-fence path).
+        assert_eq!(
+            evaluate_fence(true, Some(&fence_a), Some("t"), "c", after + 1).await,
+            FenceDecision::Fenced,
+            "displaced A's flush is rejected when fencing is ON"
+        );
+        assert_eq!(
+            evaluate_fence(false, Some(&fence_a), Some("t"), "c", after + 1).await,
+            FenceDecision::Proceed,
+            "displaced A's flush proceeds (byte-identical) when fencing is OFF"
+        );
+        Ok(())
     }
 
     /// F7: explicit release publishes a released tombstone at generation+1,
@@ -3196,6 +3409,66 @@ mod tests {
         Ok(())
     }
 
+    /// Collection routing is TOTAL: a namespaced collection key would land on a
+    /// different `to_path()` log than the legacy `(tenant, collection)` writer —
+    /// a forked generation fence = cross-version split brain. It must be rejected
+    /// LOUDLY, never silently routed to a divergent log. (No current caller
+    /// builds such a key; this guards against one being introduced.)
+    #[tokio::test]
+    async fn namespaced_collection_key_is_rejected_not_forked() -> Result<()> {
+        let backing = shared_backing();
+        let store = store(&backing);
+        let ns_key = ResourceKey::new(
+            "tenant-a",
+            Some("ns-x".to_string()),
+            ResourceType::Collection,
+            ResourceIdentifier::single("collection-a".to_string()),
+        );
+
+        // Every routing path (read + acquire) must error rather than diverge.
+        assert!(
+            store.read_key(&ns_key).await.is_err(),
+            "namespaced collection key must be rejected, not routed to a forked log"
+        );
+        assert!(
+            store
+                .acquire_with_key(&ns_key, "pod-a", 0, LEASE_MS)
+                .await
+                .is_err(),
+            "acquire on a namespaced collection key must error, not fork the fence"
+        );
+        Ok(())
+    }
+
+    /// A composite-of-one collection key reduces to the canonical legacy shape
+    /// and MUST contend on the SAME log as the legacy `(tenant, collection)`
+    /// writer — totality, not a separate `to_path()` log.
+    #[tokio::test]
+    async fn composite_one_collection_key_uses_legacy_log() -> Result<()> {
+        let backing = shared_backing();
+        let store = store(&backing);
+
+        let legacy = store
+            .acquire("tenant-a", "collection-a", "pod-a", 0, LEASE_MS)
+            .await?;
+        assert!(matches!(legacy, LeaseOutcome::Acquired(_)));
+
+        let composite_key = ResourceKey::new(
+            "tenant-a",
+            None,
+            ResourceType::Collection,
+            ResourceIdentifier::composite(vec!["collection-a".to_string()]),
+        );
+        match store
+            .acquire_with_key(&composite_key, "pod-b", 1_000, LEASE_MS)
+            .await?
+        {
+            LeaseOutcome::Held { by } => assert_eq!(by.holder_pod, "pod-a"),
+            other => panic!("composite-of-one must contend with legacy log, got {other:?}"),
+        }
+        Ok(())
+    }
+
     /// Generalized resource keys must be path-safe: separators inside tenant,
     /// namespace, or resource components are encoded, not treated as hierarchy.
     #[test]
@@ -3262,6 +3535,69 @@ mod tests {
                 target_pod: "B".to_string()
             }
         );
+        Ok(())
+    }
+
+    /// `ensure_owned` is the lease-on-write entry point: it acquires on a miss
+    /// (making the shared registry truthful), is idempotent on the fast-path when
+    /// already held, and steps a non-owner down to the true owner so the gate
+    /// Misroutes instead of admitting a split-brain write.
+    #[tokio::test]
+    async fn ensure_owned_idempotent_and_steps_down() -> Result<()> {
+        let backing = shared_backing();
+        let reg_a = Arc::new(PrimaryPodRegistry::new());
+        let reg_b = Arc::new(PrimaryPodRegistry::new());
+        let mgr_a =
+            PartitionLeaseManager::new(Arc::new(store(&backing)), reg_a.clone(), "A", LEASE_MS);
+        let mgr_b =
+            PartitionLeaseManager::new(Arc::new(store(&backing)), reg_b.clone(), "B", LEASE_MS);
+
+        // A's first write: ensure_owned acquires (registry miss) → A owns → Allow.
+        assert!(mgr_a.ensure_owned("t", "c", 0).await?);
+        assert_eq!(
+            consult_for_write(&reg_a, "A", "t", "c"),
+            WriteRoutingDecision::Allow
+        );
+        // A's subsequent write: fast-path (already bound to self) → still owns.
+        assert!(mgr_a.ensure_owned("t", "c", 1_000).await?);
+
+        // B's first write to the same collection: ensure_owned acquires → A holds
+        // the live lease → B does NOT own it, and B's shared registry is repointed
+        // to A so its gate Misroutes (no split brain).
+        assert!(!mgr_b.ensure_owned("t", "c", 2_000).await?);
+        assert_eq!(
+            consult_for_write(&reg_b, "B", "t", "c"),
+            WriteRoutingDecision::Misrouted {
+                target_pod: "A".to_string()
+            }
+        );
+        Ok(())
+    }
+
+    /// A6 fence primitive: `is_fenced_out` (via `current_holder`) detects that a
+    /// live lease held by another pod fences this pod out of writing to shared
+    /// storage, and fails open when there is no live lease.
+    #[tokio::test]
+    async fn is_fenced_out_detects_takeover() -> Result<()> {
+        let backing = shared_backing();
+        let reg_a = Arc::new(PrimaryPodRegistry::new());
+        let reg_b = Arc::new(PrimaryPodRegistry::new());
+        let mgr_a = PartitionLeaseManager::new(Arc::new(store(&backing)), reg_a, "A", LEASE_MS);
+        let mgr_b = PartitionLeaseManager::new(Arc::new(store(&backing)), reg_b, "B", LEASE_MS);
+
+        assert!(mgr_a.acquire("t", "c", 0).await?);
+        // A holds the live lease → A is not fenced; B (a different pod) IS fenced
+        // out and must not flush.
+        assert!(!mgr_a.is_fenced_out("t", "c", 1).await);
+        assert!(mgr_b.is_fenced_out("t", "c", 1).await);
+        // No lease for an unrelated collection → fail-open (not fenced).
+        assert!(!mgr_b.is_fenced_out("t", "other", 1).await);
+        // Once A's lease expires with no renewal it is no longer live → B is no
+        // longer fenced (it could legitimately take over).
+        assert!(!mgr_b.is_fenced_out("t", "c", LEASE_MS + 1).await);
+        // current_holder still surfaces the (now-stale) record for inspection.
+        let held = mgr_b.current_holder("t", "c").await?;
+        assert_eq!(held.map(|(_, l)| l.holder_pod), Some("A".to_string()));
         Ok(())
     }
 
@@ -3387,6 +3723,51 @@ mod tests {
         let lease = stored.1;
         assert_eq!(lease.holder_pod, "solo");
         assert_eq!(lease.expires_at_ms, 130_000);
+        Ok(())
+    }
+
+    /// A DML lock's durable lease is registered in the manager's renewal set
+    /// (via `track_held_key`), so the renew loop keeps it warm. Before this fix
+    /// `DmlLockService` acquired via the store directly — bypassing the manager's
+    /// `held_resource_keys` — so `renew_held` returned 0 and the lease silently
+    /// lapsed at the 10s TTL while still held (a takeover-eligible split-brain
+    /// window for any DML lock held longer than the TTL).
+    #[tokio::test]
+    async fn dml_lock_durable_lease_is_tracked_and_renewed() -> Result<()> {
+        let backing = shared_backing();
+        let manager = Arc::new(test_manager(&backing, "pod-1"));
+        let lock_service = DmlLockService::new(manager.clone(), "pod-1".to_string());
+
+        let scope = DmlLockScope::Table {
+            schema_name: "public".to_string(),
+            table_name: "users".to_string(),
+        };
+        let acquired = lock_service
+            .acquire_dml_lock("tenant1", None, &scope, LockIntent::Write, 0)
+            .await?;
+        assert!(matches!(acquired, LockOutcome::Acquired { .. }));
+
+        // The renew loop must now see the DML lease as held-by-us and renew it.
+        let renewed = manager.renew_held(1_000).await?;
+        assert_eq!(renewed, 1, "DML lease must be in the manager's renewal set");
+
+        // Renewal pushed the durable expiry past the original 10s TTL window.
+        let key = ResourceKey::table("tenant1", "public", "users");
+        let stored = manager.store.read_key(&key).await?.expect("lease present");
+        assert_eq!(stored.1.holder_pod, "pod-1");
+        assert!(
+            stored.1.expires_at_ms > 10_000,
+            "renewal at t=1000 must push expiry beyond the initial TTL (got {})",
+            stored.1.expires_at_ms
+        );
+
+        // After full release the key leaves the renewal set (no renew leak).
+        lock_service.release_full("tenant1", None, &scope).await;
+        assert_eq!(
+            manager.renew_held(2_000).await?,
+            0,
+            "released DML lease must no longer be renewed"
+        );
         Ok(())
     }
 

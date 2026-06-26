@@ -36,7 +36,11 @@ use serde::{Deserialize, Serialize};
 /// Shared application state
 #[derive(Clone)]
 pub struct AppState {
-    /// Shared unified handlers for business logic delegation
+    /// Shared unified handlers — retained ONLY for the (deprecating) v1 REST
+    /// graph surface (`rest/v1/graph.rs`, ~27 sites). All v2/canonical reads
+    /// — record, collection, vector, graph-ops — are off this field (TD-104
+    /// S5 / REST phases 1–2 + graph-field extraction); it goes away when v1
+    /// graph is deleted.
     pub request_handlers: Arc<UnifiedHandlers>,
     /// Extracted graph execution capability for query planning/execution helpers
     pub graph_execution_service: Arc<dyn GraphExecutionService>,
@@ -51,6 +55,11 @@ pub struct AppState {
     /// Collection service, extracted at boot (TD-104 S5). Feeds the health
     /// endpoint's collection-count probe; same `Arc` as the root handler.
     pub collection_service: Arc<crate::services::CollectionService>,
+    /// Graph operations service, extracted at boot (TD-104 S5). Feeds the v2
+    /// graph fusion-search + impact-analysis handlers and the entity
+    /// orchestrator; same `Arc` as the root handler. Replaces per-request
+    /// `state.request_handlers.graph_operations_service` reads.
+    pub graph_operations_service: Arc<crate::graph::GraphOperationsService>,
     /// Record write-path service (TD-104 S5). Owns record-batch insert/delete
     /// orchestration; same `Arc` the root handler's `record_ops()` returns.
     pub record_ops: Arc<crate::api_handlers::record_ops_service::RecordOpsService>,
@@ -193,6 +202,7 @@ impl AppState {
         let vector_operations_service = request_handlers.vector_operations_service.clone();
         let document_service = request_handlers.document_service.clone();
         let collection_service = request_handlers.collection_service.clone();
+        let graph_operations_service = request_handlers.graph_operations_service.clone();
         let record_ops = request_handlers.record_ops();
         let observability_service = request_handlers.observability_service.clone();
         let event_log = request_handlers.event_log.clone();
@@ -200,8 +210,8 @@ impl AppState {
         // services (search-surface contract: one retrieval engine, shared port).
         let fusion_service =
             std::sync::Arc::new(crate::services::fusion_service::FusionService::new(
-                request_handlers.vector_operations_service.clone(),
-                request_handlers.graph_operations_service.clone(),
+                vector_operations_service.clone(),
+                graph_operations_service.clone(),
             ));
         // TD-104 2(b): default `api_handlers` to the root handler cast to its
         // `ApiHandlersPort` impl. Production overrides via `with_api_handlers`
@@ -216,6 +226,7 @@ impl AppState {
             vector_operations_service,
             document_service,
             collection_service,
+            graph_operations_service,
             record_ops,
             fusion_service,
             observability_service,
@@ -806,6 +817,7 @@ pub async fn execute_sql(
             query_with_hint,
             sql_params_to_proxima_values(request.parameters.clone()),
             request.collection,
+            None,
         )
         .await
     {
@@ -842,6 +854,17 @@ pub async fn execute_sql(
         }
         Err(e) => {
             error!("SQL query {} failed: {}", request_id, e);
+            // A DML lock/fence conflict must surface as a retryable 409
+            // lock_conflict, not a generic 500. The typed `DmlLockConflict` can
+            // sit several `.context(...)` layers deep, so walk the chain — same
+            // as the pgwire 55P03 and gRPC ABORTED mappings. (421 Misdirected =
+            // wrong pod stays distinct from 409 = conflict on the right pod.)
+            if let Some((resource, holder)) = crate::errors::extract_dml_lock_conflict(&e) {
+                return Err(ApiError::LockConflict(match holder {
+                    Some(h) => format!("{resource} held by {h}"),
+                    None => resource,
+                }));
+            }
             Err(ApiError::Internal(e.to_string()))
         }
     }

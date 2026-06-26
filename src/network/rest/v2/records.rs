@@ -1620,7 +1620,7 @@ pub async fn search_with_typed_filters(
         "rest.v2.records.search",
         crate::observability::predicate_diagnostics::scope(async {
             let outcome = state
-                .request_handlers
+                .record_ops
                 .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
                 .await;
             let downgraded =
@@ -2008,7 +2008,7 @@ pub async fn get_record_v2(
     });
 
     match state
-        .request_handlers
+        .record_ops
         .handle_record_get_for_tenant(
             RichRecordGetRequest {
                 collection_id: collection_id.clone(),
@@ -2100,6 +2100,44 @@ pub async fn delete_record_v2(
         return Err(ApiError::InvalidArgument(
             "Record ID is required".to_string(),
         ));
+    }
+
+    // Primary-pod write-router gate (symmetric with `insert_records`). Deletes
+    // are mutations too: a delete accepted on a displaced pod would never reach
+    // the primary's memtable, leaving the record live on the primary. Gate
+    // BEFORE any storage work.
+    match crate::cluster::primary_pod_registry::consult_for_write(
+        &state.primary_pod_registry,
+        &state.self_pod_id,
+        &tenant.tenant_id,
+        &collection_id,
+    ) {
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Allow => {
+            if state
+                .primary_pod_registry
+                .is_assigned(&tenant.tenant_id, &collection_id)
+            {
+                crate::metrics::primary_pod_metrics::record_allowed_bound(&tenant.tenant_id);
+            } else {
+                crate::metrics::primary_pod_metrics::record_allowed_unbounded(&tenant.tenant_id);
+            }
+        }
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Misrouted { target_pod } => {
+            crate::metrics::primary_pod_metrics::record_misrouted(&tenant.tenant_id);
+            tracing::warn!(
+                target = "proximadb.primary_pod.misroute",
+                self_pod = %state.self_pod_id,
+                target_pod = %target_pod,
+                tenant_id = %tenant.tenant_id,
+                collection_id = %collection_id,
+                "v2 delete misrouted — client SDK should retry against the primary pod"
+            );
+            return Err(ApiError::Misdirected {
+                target_pod,
+                tenant_id: tenant.tenant_id.clone(),
+                collection_id: collection_id.clone(),
+            });
+        }
     }
 
     let intent = WriteIntent::new(&collection_id, WriteOperationKind::Delete)
@@ -2306,7 +2344,7 @@ pub async fn scan_records(
     // streaming layer; the handler returns a single ordered page plus the next
     // cursor (O(log d + limit) per page once the scan index is warm).
     let (page, next_cursor) = state
-        .request_handlers
+        .record_ops
         .handle_record_scan_paginated_for_tenant(
             &collection_id,
             inbound_cursor.as_ref(),
@@ -2433,7 +2471,7 @@ pub async fn get_changes(
     Query(q): Query<ChangesQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let changes = state
-        .request_handlers
+        .record_ops
         .table_changes(&collection_id, q.since_lsn)
         .await
         .map_err(|e| ApiError::Internal(format!("change-feed read failed: {e}")))?;

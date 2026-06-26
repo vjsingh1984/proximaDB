@@ -235,6 +235,13 @@ pub struct SharedServices {
     /// different fallback.
     pub self_pod_id: String,
 
+    /// A6 storage-write fence adapter over the durable `PartitionLeaseManager`
+    /// (the SAME instance wired into RecordOpsService for lease-on-write). Handed
+    /// to the storage engine's shutdown flush path by the bootstrap so a fenced-out
+    /// pod cannot publish stale data. `None` when the lease store is unavailable
+    /// (fail-open). Default-OFF until `PROXIMADB_WRITE_FENCING=1`.
+    pub storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>>,
+
     /// Shared canonical WAL appender at `<data_dir>/pgwire/canonical-records.wal`.
     ///
     /// Opened once in `SharedServices::new` (when `opt_config` is provided so
@@ -1817,19 +1824,27 @@ impl SharedServices {
         // table-level DML contention is real across pods (only one pod's
         // `DmlLockService` can hold the CAS-backed lease). Fail-open — no locks
         // — if the store can't be opened (test/embedded paths); never block
-        // bootstrap. The pod id is process-unique; a stable deployment-level
-        // pod id is a follow-up (matters only for multi-pod restart affinity).
-        let dml_lock_service = {
+        // bootstrap.
+        //
+        // Registry/pod-id unification (lease ↔ write-gate): the lease manager
+        // MUST reconcile into the SAME `primary_pod_registry` the write gates
+        // consult (built above, wired into AppState/gRPC/Flight gates below) and
+        // use the SAME `self_pod_id` those gates compare against
+        // (`resolve_self_pod_id(None)`). Previously the manager owned a throwaway
+        // `PrimaryPodRegistry::new()` and a `pod-{pid}` id, so the renew loop's
+        // `reconcile`→`assign` (step-down on lease loss) updated a registry
+        // nobody read, and the assigned owner id never matched the gate's id —
+        // a displaced pod kept seeing `Allow` and kept writing (split brain).
+        let (dml_lock_service, lease_manager_for_writes) = {
             use crate::cluster::partition_lease::{
                 DmlLockService, PartitionLeaseManager, PartitionLeaseStore,
             };
-            use crate::cluster::primary_pod_registry::PrimaryPodRegistry;
             match PartitionLeaseStore::from_url(&storage_config.metadata_url, "_operator/leases") {
                 Ok(store) => {
-                    let pod_id = format!("pod-{}", std::process::id());
+                    let pod_id = crate::cluster::primary_pod_registry::resolve_self_pod_id(None);
                     let manager = Arc::new(PartitionLeaseManager::new(
                         Arc::new(store),
-                        Arc::new(PrimaryPodRegistry::new()),
+                        primary_pod_registry.clone(),
                         pod_id.clone(),
                         10_000,
                     ));
@@ -1847,9 +1862,13 @@ impl SharedServices {
                     manager
                         .clone()
                         .spawn_renew_loop(std::time::Duration::from_millis(5_000));
-                    let lock_service = Arc::new(DmlLockService::new(manager, pod_id));
+                    let lock_service = Arc::new(DmlLockService::new(manager.clone(), pod_id));
                     let _ = lock_service.spawn_reconciliation_loop(5_000);
-                    Some(lock_service)
+                    // Surface the manager so RecordOpsService can lease-on-write:
+                    // acquire/confirm the collection lease before each vector-record
+                    // write so the shared primary-pod registry the gates consult is
+                    // durably backed (not empty-after-restart → wrong-pod write).
+                    (Some(lock_service), Some(manager))
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -1858,10 +1877,24 @@ impl SharedServices {
                         "DML lock service disabled (lease store unavailable); \
                          DML writes run lock-free (fail-open)"
                     );
-                    None
+                    (None, None)
                 }
             }
         };
+
+        // A6: build the storage-write fence adapter over the SAME lease manager
+        // before it is moved into RecordOpsService below, so the shutdown flush
+        // path and the network write-gates share one ownership view. `None` ⇒ lease
+        // store unavailable ⇒ fence fails open. Default-OFF until enforced.
+        let storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>> =
+            lease_manager_for_writes.as_ref().map(|manager| {
+                Arc::new(
+                    crate::network::storage_write_fence::LeaseStorageWriteFence::new(
+                        manager.clone(),
+                    ),
+                ) as Arc<dyn crate::storage::write_fence::StorageWriteFence>
+            });
+
         let base_dml = match canonical_record_store.clone() {
             Some(store) => DmlService::with_direct_record_storage(
                 catalog_manager.clone(),
@@ -1889,6 +1922,19 @@ impl SharedServices {
 
         request_handlers.set_dml_service(dml_service_for_grpc);
         debug!("✅ SharedServices::new - DmlService wired to UnifiedHandlers for EXPLAIN routing");
+
+        // Lease-on-write: give RecordOpsService the durable lease manager so the
+        // vector-record write path acquires/confirms the collection lease and the
+        // shared registry the network gates consult reflects ground truth after
+        // restart/partition (Scenario-1 routing truth). Absent → fail-open.
+        if let Some(lease_manager) = lease_manager_for_writes {
+            request_handlers
+                .record_ops()
+                .set_lease_manager(lease_manager);
+            debug!(
+                "✅ SharedServices::new - PartitionLeaseManager wired to RecordOpsService (lease-on-write)"
+            );
+        }
 
         // TD-135: wire a DdlService built from the SAME catalog_manager pgwire uses
         // (DdlService is a thin wrapper over the shared catalog), so relational
@@ -2214,6 +2260,7 @@ impl SharedServices {
                 // (create-time wire, boot-time hydration, downstream
                 // search dispatch) share one map — see Phase P design
                 // rationale §"Why hoist the registry construction".
+                storage_write_fence,
                 #[cfg(feature = "experimental-turboquant")]
                 turboquant_registry: Some(turboquant_registry),
             },

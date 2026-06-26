@@ -88,9 +88,12 @@ pub use metadata_service::{ClusterMetadata, MetadataService, MetadataServiceConf
 pub use node_registry::{
     NodeHealth, NodeInfo, NodeRegistry, NodeRegistryConfig, NodeRole, NodeStatus,
 };
+pub use partition_lease::{
+    LeaseOutcome, PartitionLease, PartitionLeaseManager, PartitionLeaseStore,
+};
 pub use primary_pod_registry::{
     AssignmentReason, PrimaryPod, PrimaryPodRegistry, WriteRoutingDecision, consult_for_write,
-    resolve_self_pod_id,
+    consult_for_write_leased, resolve_self_pod_id,
 };
 pub use replication::{
     EngineReplication, ReplicaState, ReplicationAck, ReplicationConfig, ReplicationEntry,

@@ -151,8 +151,12 @@ impl SstEngine {
         let codec = FilenameCodec::new();
         let mut block_format = BlockFormat::parse_block_format(&self.config().block_format);
         // P3 Phase B: flag-gated PAX vector segments (default OFF). Reads stay
-        // mixed-format-safe (see `segment_format`), so flipping this on only changes
-        // newly written segments; existing ProximaBlocks segments still read back.
+        // mixed-format-safe — see
+        // `segment_format::mixed_format_legacy_and_pax_segments_coexist_and_read_back`
+        // — so flipping this on only changes newly written segments; existing
+        // ProximaBlocks segments still read back. STAGED ROLLOUT: default OFF in
+        // v0.2; the develop→qa recall ratchet (qa-gate `pax-recall-ratchet`,
+        // recall@10 >= 0.90 at N=100k) gates the v0.3 flip to default ON.
         if std::env::var("PROXIMADB_PAX_VECTOR_SEGMENTS")
             .map(|v| matches!(v.as_str(), "1" | "true" | "on" | "yes"))
             .unwrap_or(false)
@@ -433,6 +437,8 @@ impl SstEngine {
                 // P3 Phase D: vector quantization strategy. Deployment selector for now
                 // (`PROXIMADB_PAX_VECTOR_QUANT` = rabitq|sq8|auto); per-collection proto
                 // config is the productionization follow-up. `Auto` keeps the env default.
+                // STAGED ROLLOUT: only takes effect once PAX segments are enabled above
+                // (default OFF v0.2); the recall ratchet gates the v0.3 default-on flip.
                 let quant = match std::env::var("PROXIMADB_PAX_VECTOR_QUANT")
                     .unwrap_or_default()
                     .to_ascii_lowercase()
@@ -442,12 +448,21 @@ impl SstEngine {
                     "sq8" => VectorQuant::Sq8,
                     _ => VectorQuant::Auto,
                 };
+                // TD-156 / ADR-026: configurable PAX block geometry. `None` keeps
+                // the writer default; a larger value (e.g. 8-16 MiB for object
+                // storage) coalesces rows into fewer blocks, cutting the per-block
+                // ranged-GET fragmentation measured by the footer-cache economics
+                // harness. Per-collection config is the productionization follow-up.
+                let target_block = std::env::var("PROXIMADB_PAX_BLOCK_SIZE")
+                    .ok()
+                    .and_then(|v| v.parse::<usize>().ok());
                 let meta = write_pax_segment(
                     std::path::Path::new(staging_path),
                     &records,
                     collection_id,
                     embedding_count,
                     quant,
+                    target_block,
                 )
                 .context("Failed to write PAX vector segment")?;
                 tracing::debug!(blocks = meta.block_count, "PAX segment write completed");

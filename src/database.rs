@@ -195,7 +195,7 @@ impl ProximaDB {
 
         // Step 5: Initialize the storage engine (SST/VIPER/etc)
         tracing::info!("🌐 ProximaDB::new - Creating StorageEngine...");
-        let storage_engine =
+        let mut storage_engine =
             storage::StorageEngine::new_without_collection_service(config.storage.clone())
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create storage engine: {}", e))?;
@@ -243,6 +243,19 @@ impl ProximaDB {
                      regardless of collection canonical precision"
                 );
             }
+        }
+
+        // A6: inject the storage-write fence (over the SAME PartitionLeaseManager
+        // the network write-gates use) into the storage engine's shutdown flush
+        // path. Post-construction, mirroring set_precision_resolver: the engine is
+        // built before SharedServices/the lease stack exist. Default-OFF; absent
+        // lease store ⇒ None ⇒ fail-open. Enforced only with PROXIMADB_WRITE_FENCING=1.
+        if let Some(fence) = shared_services.storage_write_fence.clone() {
+            storage_engine.set_storage_write_fence(fence);
+            tracing::info!(
+                "✅ ProximaDB::new - A6 storage-write fence wired to StorageEngine \
+                 (default-OFF; set PROXIMADB_WRITE_FENCING=1 to enforce)"
+            );
         }
 
         let storage = Arc::new(RwLock::new(storage_engine));

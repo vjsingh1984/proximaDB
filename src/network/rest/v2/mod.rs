@@ -44,6 +44,7 @@
 
 pub mod collections;
 pub mod discovery;
+pub mod entities;
 pub mod external_collection;
 pub mod graphs;
 pub mod query;
@@ -93,6 +94,19 @@ pub fn create_v2_router() -> Router<AppState> {
         .route(
             "/collections/{collection_id}",
             get(collections::get_collection_v2).delete(collections::delete_collection_v2),
+        )
+        // Entity operations (orchestration facade over graph+vector+document)
+        .route(
+            "/collections/{collection_id}/entities",
+            post(entities::upsert_entity_v2),
+        )
+        .route(
+            "/collections/{collection_id}/entities/search",
+            post(entities::search_entities_v2),
+        )
+        .route(
+            "/collections/{collection_id}/entities/{entity_id}",
+            get(entities::get_entity_v2).delete(entities::delete_entity_v2),
         )
         // Schema management - separate routes for GET and PUT
         .route(
