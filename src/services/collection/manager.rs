@@ -2173,6 +2173,13 @@ impl CollectionService {
             config.quantization =
                 crate::storage::metadata::catalog_config::quantization_from_json(json);
         }
+        // ADR-028: restore the per-collection index routing policy (the lossless
+        // config_json below is authoritative when present; this per-field property
+        // also feeds pg_catalog introspection).
+        if let Some(json) = schema.properties.get("collection.index_policy") {
+            config.index_policy =
+                crate::storage::metadata::catalog_config::index_policy_from_json(json);
+        }
         // TD-122: restore the ProximaRecord schema config (enable flag, enforcement,
         // text columns) so the v2 get surface can reconstruct the schema/flags.
         if let Some(json) = schema.properties.get("collection.record_schema") {
@@ -2447,6 +2454,15 @@ impl CollectionService {
                 .properties
                 .insert("collection.quantization".to_string(), json);
         }
+        // ADR-028: persist the per-collection index routing policy neutrally (also
+        // captured in collection.config_json below; this typed property feeds
+        // pg_catalog introspection).
+        if let Some(json) = crate::storage::metadata::catalog_config::index_policy_to_json(config)?
+        {
+            schema
+                .properties
+                .insert("collection.index_policy".to_string(), json);
+        }
         // TD-122: persist the ProximaRecord schema config (enable flag, enforcement,
         // text columns) neutrally so get_collection_v2 echoes the schema/flags set
         // at create time.
@@ -2706,6 +2722,7 @@ mod tests {
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
             permitted_principals: vec![],
+            index_policy: None,
         };
 
         // Test create with valid config
@@ -2828,6 +2845,7 @@ mod tests {
                 enable_dual_use_embeddings: None,
                 canonical_embedding_precision: None,
                 permitted_principals: vec![],
+                index_policy: None,
             };
 
             let result = service
@@ -2905,6 +2923,7 @@ mod tests {
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
             permitted_principals: vec![],
+            index_policy: None,
         };
         let created = service.create_collection(&config).await.context("create")?;
         assert!(
@@ -2971,6 +2990,7 @@ mod tests {
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
             permitted_principals: vec![],
+            index_policy: None,
         };
 
         let result = service.create_collection(&config).await?;

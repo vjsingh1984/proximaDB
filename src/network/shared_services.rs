@@ -1297,6 +1297,9 @@ impl SharedServices {
                     enable_dual_use_embeddings: None,
                     canonical_embedding_precision: None,
                     permitted_principals: vec![],
+                    // Coarse recovery reconstruction (quantization etc. hardcoded);
+                    // routing policy defaults to auto (None).
+                    index_policy: None,
                 };
 
                 let proto_collection = crate::proto::proximadb_v1::Collection {

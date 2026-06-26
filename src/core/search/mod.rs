@@ -49,7 +49,7 @@ pub struct ProgressiveRecalls {
 ///
 /// This enum allows users to choose between exact search (100% recall) and
 /// approximate search (faster but potentially lower recall).
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SearchMode {
     /// Exact search with 100% recall — searches all partitions and
     /// **disables block-level centroid pruning** at request time
@@ -60,7 +60,6 @@ pub enum SearchMode {
     ///
     /// Use this for accuracy-critical applications where the
     /// performance cost of a full block scan is acceptable.
-    #[default]
     Exact,
 
     /// Approximate search using IVF-style partition pruning.
@@ -79,6 +78,28 @@ pub enum SearchMode {
         /// Vector count threshold above which approximate search is used
         threshold: usize,
     },
+}
+
+/// Default per-query vector-count cap for the default `Adaptive` mode. The
+/// *primary* exact-vs-approximate gate is a dim-aware byte budget at the SST
+/// search route (`EXACT_SCAN_MAX_BYTES`, see
+/// `docs/12-design/EXACT_VS_ANN_ROUTING_COST_MODEL_2026_06_26.adoc`); this count
+/// cap bounds very-low-dimension collections where bytes stay small. A caller can
+/// request a tighter cap (or `Exact`/`Approximate`) explicitly.
+pub const DEFAULT_ADAPTIVE_VECTOR_THRESHOLD: usize = 100_000;
+
+impl Default for SearchMode {
+    /// TD-165: the default search is **cost-adaptive** — exact when a full segment
+    /// scan is cheap (one ranged GET; bytes = `N·dim·4`), approximate otherwise.
+    /// `Exact` (strict 100% recall) and `Approximate` remain explicit opt-ins. This
+    /// replaced the former strict-`Exact` default so the orchestrated index path no
+    /// longer has to be paid on small collections (and, conversely, large
+    /// collections are not forced through a full brute-force scan by default).
+    fn default() -> Self {
+        SearchMode::Adaptive {
+            threshold: DEFAULT_ADAPTIVE_VECTOR_THRESHOLD,
+        }
+    }
 }
 
 /// Vector search freshness mode controlling the consistency/cost trade-off
@@ -585,7 +606,7 @@ impl Default for UnifiedSearchParams {
             progressive_scenario: None,
             progressive_recalls: None,
             optimization_hint: None,
-            search_mode: SearchMode::default(), // Exact mode by default for 100% recall
+            search_mode: SearchMode::default(), // cost-adaptive by default (TD-165); exact when cheap
             block_prune: BlockPruneConfig::default(),
             text_query: None,
             hybrid_mode: HybridSearchMode::default(),
@@ -1577,8 +1598,14 @@ mod tests {
         assert_eq!(params.enable_clustering_hint, Some(true));
         assert_eq!(params.enable_metadata_filtering_hint, Some(true));
 
-        // Search mode defaults to Exact
-        assert_eq!(params.search_mode, SearchMode::Exact);
+        // Search mode defaults to cost-adaptive (TD-165) — exact when a full segment
+        // scan is cheap, approximate otherwise. `Exact` is now an explicit opt-in.
+        assert_eq!(
+            params.search_mode,
+            SearchMode::Adaptive {
+                threshold: DEFAULT_ADAPTIVE_VECTOR_THRESHOLD
+            }
+        );
         // Hybrid mode defaults to VectorOnly
         assert_eq!(params.hybrid_mode, HybridSearchMode::VectorOnly);
     }
@@ -1618,10 +1645,15 @@ mod tests {
 
     #[test]
     fn test_search_mode_variants() {
-        // Default is Exact
+        // Default is cost-adaptive (TD-165), not strict Exact.
         let default = SearchMode::default();
-        assert_eq!(default, SearchMode::Exact);
-        assert!(default.is_exact());
+        assert_eq!(
+            default,
+            SearchMode::Adaptive {
+                threshold: DEFAULT_ADAPTIVE_VECTOR_THRESHOLD
+            }
+        );
+        assert!(!default.is_exact());
 
         // Approximate with auto nprobe
         let approx = SearchMode::approximate();
