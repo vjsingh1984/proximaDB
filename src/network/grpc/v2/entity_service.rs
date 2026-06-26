@@ -34,7 +34,7 @@ use crate::proto::proximadb_v2 as pv2;
 use crate::proto::proximadb_v2::proxima_entity_service_server::{
     ProximaEntityService, ProximaEntityServiceServer,
 };
-use crate::services::fusion_service::{FusionService, GraphFusionParams, GraphGrain};
+use crate::services::fusion_service::{FusionOidKey, FusionService, GraphFusionParams, GraphGrain};
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::document::{DocumentRecord, DocumentService};
 use proximadb_records::{
@@ -409,11 +409,11 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
         );
 
         // Case 1: vector (`similar`) search — delegate to the fusion seam
-        // (`SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`, TD-146). The seam runs the
-        // vector seed and (gracefully) no-ops graph expansion here — entity node
-        // ids are not yet in the canonical graph-oid space, so graph-augmented
-        // fusion is deferred (TD-146 scope B). Only `similar.vector` is supported;
-        // text/raw_data need a server-side embedding hop (not yet wired).
+        // (`SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`, TD-146). Graph-augmented fusion
+        // is now enabled (TD-146 scope B): the seam normalizes the auxiliary vector oid
+        // and the canonical graph oid to the entity `node_id` (TD-142) so the vector and
+        // graph sources co-rank. Only `similar.vector` is supported; text/raw_data need
+        // a server-side embedding hop (not yet wired).
         if let Some(similar) = req.similar.as_ref() {
             let query_vector = match similar.query.as_ref() {
                 Some(pv2::similar_query::Query::Vector(v)) => v.values.clone(),
@@ -439,18 +439,21 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
                 graph_id: collection.clone(),
                 vector_collection: collection.clone(),
                 query_vector,
-                max_depth: 0, // pure vector entity search; graph expand is a no-op
+                // TD-146 scope B: graph-augmented entity fusion. Entity vectors live under the
+                // auxiliary `{node_id}/{model_id}` oid; `EntityNode` keying normalizes both the
+                // vector and graph sources to the entity `node_id` so they co-rank (TD-142).
+                max_depth: 1, // expand direct entity neighbours
                 edge_types: Vec::new(),
                 max_seeds: limit,
                 limit,
                 vector_weight: 1.0,
-                graph_weight: 0.0,
+                graph_weight: 0.3, // modest graph boost; vector similarity leads (tunable)
                 grain: GraphGrain::Nodes,
-                // Entity search is metadata-only today (graph expand is a no-op); within-tenant
-                // `permitted_principals` RBAC is not threaded here. `None` ⇒ structural isolation.
-                // Threading the caller principal is a follow-up for entity RBAC.
+                // Within-tenant `permitted_principals` RBAC is not threaded here. `None` ⇒
+                // structural isolation. Threading the caller principal is a follow-up.
                 principal: None,
                 policy: FusionPolicy::default(),
+                oid_key: FusionOidKey::EntityNode,
             };
 
             let (items, _stats) = self

@@ -136,8 +136,8 @@ Phase 1+ of `CROSS_MODAL_FUSION_SEAM_2026_06_22.adoc` — one calibrated fuse-by
 | TD-141 | `ComputeScheduler` cost-routed fusion | MED | Open | D4 | PERF
 | Route fused query from a measured per-query trace: invoke fusion only when multi-modal; cardinality-driven filter strategy; per-modality weight+selectivity candidate budget + cheap pre-probe. Measured threshold router, not learned. Keep plan construction cheap.
 
-| TD-142 | `oid` / entity alias resolution | MED | Open | D4 | REL
-| Cross-source consensus needs `oid`/entity alias resolution (synonym linking); else fusion silently loses the consensus boost. Precondition for true cross-collection fusion; within one collection `oid` is canonical.
+| TD-142 | `oid` / entity alias resolution | MED | Partial | D4 | REL
+| Partial: the within-entity oid bridge landed (graph-augmented entity fusion, TD-146 scope B) — `FusionOidKey::EntityNode` normalizes the auxiliary vector oid (`{node_id}/{model_id}`) and the canonical graph oid (`graph/{g}/node/{node_id}`) to the entity `node_id`, so the vector and graph sources co-rank. Residual: true *cross-collection / cross-source* synonym linking (the consensus boost across collections) is still open; within one collection `oid` remains canonical.
 
 | TD-140 | Edge-grain fusion | LOW | Open | D4 | PERF
 | Optional edge/relationship-grain fusion unit (edge-level carries 6–12% more signal than node-level). Differentiator; gate behind query class.
@@ -154,8 +154,8 @@ Phase 1+ of `CROSS_MODAL_FUSION_SEAM_2026_06_22.adoc` — one calibrated fuse-by
 | TD-044 | Projection Fusion B5 — vector-space variant | MED | Partial | D4 | PERF
 | Score-level analog shipped (`fusion.rs`, REST, SDK, bench: RRF 248µs vs Projection 255µs). Residual: the paper's *vector-space* B5 (BGE-dense + Achlioptas-projected SPLADE → single 768d ANN) needs a sparse encoder + projection matrix + combined-vector index — a TD-051-class dependency. Plus a labeled-IR quality bench (nDCG/ILD).
 
-| TD-146 | `EntityService.SearchEntities` delegates to the seam (no standalone retrieval) | MED | Open | D4 | OE
-| `EntityService.SearchEntities` (PR #278) must be a *typed facade* over the fusion seam, not a fourth retrieval engine: `similar`→seam seed, `filters`→`oid`-membership predicate mask, result→entity projection of `FusedItem`s. Resolves the `UNIMPLEMENTED` vector mode by delegation (forbids any bespoke vector-ANN/fusion path on the entity surface). Depends on TD-136/137; gRPC `FusionSearch` parity folds into TD-143. `SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`.
+| TD-146 | `EntityService.SearchEntities` delegates to the seam (no standalone retrieval) | MED | Resolved | D4 | OE
+| Resolved: `EntityService.SearchEntities` is a typed facade over the fusion seam — `similar.vector` delegates to `graph_fusion_search` (no bespoke ANN/fusion), and graph-augmented fusion is now **enabled** (scope B) via a pluggable `FusionOidKey` normalization seam (`EntityNode` reduces the auxiliary vector oid + canonical graph oid to the entity `node_id`, closing the TD-142 within-entity gap) so vector + graph sources co-rank. `entity_service.rs` / `entity_orchestrator.rs` run `max_depth: 1`, `graph_weight: 0.3` (tunable). Residual follow-ups (separate items): server-side embedding hop for `similar.text`/`raw_data`; threading the caller principal for entity RBAC. gRPC `FusionSearch` parity folded into TD-143 (deprecated). `SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`.
 |===
 
 === C. Storage Spine / Lakehouse / Object Economy

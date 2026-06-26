@@ -252,25 +252,93 @@ impl DocumentExpander {
     }
 }
 
-/// Recover the graph `node_id` to seed traversal from each vector hit. When the vector collection is
-/// co-indexed with the graph the record `id` is the canonical `oid` (`graph/{graph_id}/node/{node_id}`),
-/// so strip the prefix; otherwise fall back to the raw `id`. Bounded by `max_seeds` (D8 — conservative
-/// expansion).
+/// How source record `oid`s map to the fusion key (what the [`Fuser`] merges by).
+///
+/// Co-indexed collections (graph fusion) share one canonical oid space, so keying is identity.
+/// Entities keep their vectors under an *auxiliary* oid and their graph nodes under the canonical
+/// oid; [`FusionOidKey::EntityNode`] reduces both to the entity `node_id` so the vector and graph
+/// sources co-rank (TD-142 / TD-146 scope B — graph-augmented entity fusion).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FusionOidKey {
+    /// Vector + graph share the canonical oid `graph/{graph_id}/node/{node_id}`. Identity keying.
+    #[default]
+    Canonical,
+    /// Entity keying: vector oids are `{node_id}/{model_id}`, graph oids are
+    /// `graph/{graph_id}/node/{node_id}`. Both normalize to the entity `node_id`.
+    EntityNode,
+}
+
+impl FusionOidKey {
+    /// Fusion key for a source oid (the value the Fuser merges by).
+    pub(crate) fn fusion_key(&self, oid: &str) -> String {
+        match self {
+            Self::Canonical => oid.to_string(),
+            Self::EntityNode => entity_node_id_from_oid(oid).to_string(),
+        }
+    }
+
+    /// Graph `node_id` to seed traversal, recovered from a vector-hit oid.
+    pub(crate) fn seed_node_id(&self, graph_id: &str, hit_id: &str) -> String {
+        match self {
+            // Co-indexed: the hit id is the canonical oid; strip the prefix.
+            Self::Canonical => {
+                let prefix = format!("graph/{graph_id}/node/");
+                hit_id
+                    .strip_prefix(&prefix)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| hit_id.to_string())
+            }
+            // Entity: the hit id is the auxiliary `{node_id}/{model_id}`; drop the model suffix.
+            Self::EntityNode => entity_node_id_from_oid(hit_id).to_string(),
+        }
+    }
+}
+
+/// Recover the entity `node_id` from either oid form: the canonical graph oid
+/// `graph/{graph_id}/node/{node_id}` or the auxiliary vector oid `{node_id}/{model_id}`.
+/// (`entity_node_id` itself contains no `/`, so stripping the last path segment of the auxiliary
+/// form or the `graph/…/node/` prefix of the canonical form both yield the bare `node_id`.)
+fn entity_node_id_from_oid(oid: &str) -> &str {
+    if let Some(rest) = oid.strip_prefix("graph/")
+        && let Some((_gid, node_id)) = rest.split_once("/node/")
+    {
+        return node_id;
+    }
+    oid.rsplit_once('/')
+        .map(|(node_id, _)| node_id)
+        .unwrap_or(oid)
+}
+
+/// Recover the graph `node_id`(s) to seed traversal from the vector hits, bounded by `max_seeds`
+/// (D8 — conservative expansion). Keying follows [`FusionOidKey`].
 pub(crate) fn seed_node_ids(
     graph_id: &str,
     hits: &[OptimizedSearchRecord],
     max_seeds: usize,
+    oid_key: FusionOidKey,
 ) -> Vec<String> {
-    let prefix = format!("graph/{graph_id}/node/");
     hits.iter()
         .take(max_seeds)
-        .map(|hit| {
-            hit.id
-                .strip_prefix(&prefix)
-                .map(str::to_string)
-                .unwrap_or_else(|| hit.id.clone())
-        })
+        .map(|hit| oid_key.seed_node_id(graph_id, &hit.id))
         .collect()
+}
+
+/// Re-key a source's oids to the fusion key. Identity (no allocation) for
+/// [`FusionOidKey::Canonical`]; remaps every oid for [`FusionOidKey::EntityNode`].
+pub(crate) fn normalize_source_keys(
+    mut src: SourceCandidates,
+    oid_key: FusionOidKey,
+) -> SourceCandidates {
+    if oid_key == FusionOidKey::Canonical {
+        return src;
+    }
+    let remapped = src
+        .scores
+        .into_iter()
+        .map(|(oid, score)| (oid_key.fusion_key(&oid), score))
+        .collect();
+    src.scores = remapped;
+    src
 }
 
 /// Whether graph expansion contributes node candidates, edge (relationship) candidates, or both.
@@ -307,6 +375,11 @@ pub struct GraphFusionParams {
     /// on records carrying explicit `permitted_principals`); the tenant boundary stays structural.
     pub principal: Option<String>,
     pub policy: FusionPolicy,
+    /// How source oids map to the fusion key (TD-142 / TD-146 scope B). Defaults to
+    /// [`FusionOidKey::Canonical`] (co-indexed graph fusion). Entity search uses
+    /// [`FusionOidKey::EntityNode`] so its auxiliary vector oids and canonical graph oids
+    /// co-rank under the entity `node_id`.
+    pub oid_key: FusionOidKey,
 }
 
 /// Orchestrates the graph instance of the fusion seam over the live vector + graph engines.
@@ -372,12 +445,15 @@ impl FusionService {
             hits = accessible;
         }
 
-        let vector_source = vector_hits_to_source(&hits, params.vector_weight);
+        let vector_source = normalize_source_keys(
+            vector_hits_to_source(&hits, params.vector_weight),
+            params.oid_key,
+        );
 
         // 2. Graph expand from the top seeds (bounded). A seed that is not a node in this graph simply
         //    contributes nothing (its traverse errors are skipped) rather than failing the query.
         // T1.2: Graceful degradation — individual seed failures are logged but don't abort fusion.
-        let seeds = seed_node_ids(&params.graph_id, &hits, params.max_seeds);
+        let seeds = seed_node_ids(&params.graph_id, &hits, params.max_seeds, params.oid_key);
         let mut nodes: Vec<Node> = Vec::new();
         let mut edges: Vec<Edge> = Vec::new();
         let mut failed_seeds = 0;
@@ -453,17 +529,15 @@ impl FusionService {
         //    `Both` simply adds two graph sources.
         let mut sources = vec![vector_source];
         if matches!(params.grain, GraphGrain::Nodes | GraphGrain::Both) {
-            sources.push(traversal_nodes_to_source(
-                &params.graph_id,
-                &nodes,
-                params.graph_weight,
+            sources.push(normalize_source_keys(
+                traversal_nodes_to_source(&params.graph_id, &nodes, params.graph_weight),
+                params.oid_key,
             ));
         }
         if matches!(params.grain, GraphGrain::Edges | GraphGrain::Both) {
-            sources.push(traversal_edges_to_source(
-                &params.graph_id,
-                &edges,
-                params.graph_weight,
+            sources.push(normalize_source_keys(
+                traversal_edges_to_source(&params.graph_id, &edges, params.graph_weight),
+                params.oid_key,
             ));
         }
 
@@ -557,13 +631,13 @@ mod tests {
             hit("graph/g1/node/n2", 0.8),
             hit("raw_id", 0.7), // not in canonical form → used as-is
         ];
-        let seeds = seed_node_ids("g1", &hits, 2);
+        let seeds = seed_node_ids("g1", &hits, 2, FusionOidKey::Canonical);
         assert_eq!(
             seeds,
             vec!["n1".to_string(), "n2".to_string()],
             "prefix stripped, bounded to 2"
         );
-        let all = seed_node_ids("g1", &hits, 10);
+        let all = seed_node_ids("g1", &hits, 10, FusionOidKey::Canonical);
         assert_eq!(all[2], "raw_id", "non-canonical id falls through");
     }
 
@@ -583,6 +657,47 @@ mod tests {
         assert_eq!(
             fused.source_count, 2,
             "vector + graph hit on the same oid merge"
+        );
+    }
+
+    /// TD-146 scope B / TD-142: entity vectors are keyed by an auxiliary oid (`{node_id}/{model_id}`)
+    /// while the entity graph uses the canonical oid (`graph/{g}/node/{node_id}`). `EntityNode` keying
+    /// normalizes both to the entity `node_id` so a vector hit and a graph-expanded node for the SAME
+    /// entity fuse into one item (source_count == 2) — without re-keying the vectors.
+    #[test]
+    fn entity_vector_and_graph_sources_fuse_under_entity_node_key() {
+        let entity_node = "entity:coll:e1";
+        let auxiliary = format!("{entity_node}/bge-small"); // vector oid (multi-model suffix)
+        let canonical = format!("graph/coll/node/{entity_node}"); // graph oid
+
+        // Both oid forms recover the same entity node id, and seed recovery drops the model suffix.
+        assert_eq!(FusionOidKey::EntityNode.fusion_key(&auxiliary), entity_node);
+        assert_eq!(FusionOidKey::EntityNode.fusion_key(&canonical), entity_node);
+        assert_eq!(
+            FusionOidKey::EntityNode.seed_node_id("coll", &auxiliary),
+            entity_node,
+        );
+
+        let vector = normalize_source_keys(
+            vector_hits_to_source(&[hit(&auxiliary, 0.9)], 1.0),
+            FusionOidKey::EntityNode,
+        );
+        let graph = normalize_source_keys(
+            traversal_nodes_to_source("coll", &[node(entity_node)], 1.0),
+            FusionOidKey::EntityNode,
+        );
+        let (items, stats) = Fuser::new(FusionPolicy::default()).fuse(vec![vector, graph], 10);
+        assert_eq!(stats.sources_fused, 2);
+        // The entity should fuse once (vector leg + graph leg) with source_count == 2.
+        // Assert via filter+collect so a missing fuse fails the assert cleanly — no
+        // panic-prone `.expect`/`.unwrap` (keeps this test off the panic-policy count).
+        let fused = items
+            .iter()
+            .find(|i| i.oid == entity_node)
+            .expect("entity node id fused across auxiliary + canonical oids");
+        assert_eq!(
+            fused.source_count, 2,
+            "vector (auxiliary) + graph (canonical) for the same entity merge under EntityNode keying"
         );
     }
 

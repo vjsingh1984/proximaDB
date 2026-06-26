@@ -149,7 +149,6 @@ impl ArrowFlightServer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::net::SocketAddr;
 
     /// Test ArrowFlightServer configuration without requiring UnifiedHandlers

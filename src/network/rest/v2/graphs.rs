@@ -17,7 +17,7 @@ use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::openapi::ErrorResponse;
 use crate::network::rest::v1::handlers::AppState;
 use crate::security::rbac_service::UnifiedUserContext;
-use crate::services::fusion_service::{GraphFusionParams, GraphGrain};
+use crate::services::fusion_service::{FusionOidKey, GraphFusionParams, GraphGrain};
 
 fn default_limit() -> usize {
     10
@@ -163,6 +163,7 @@ pub async fn fusion_search_v2(
         },
         principal: user_context.as_ref().map(|ctx| ctx.user_id.clone()),
         policy,
+        oid_key: FusionOidKey::Canonical,
     };
 
     let (items, stats) = service

@@ -1184,7 +1184,12 @@ impl HybridFusionEngine {
     }
 }
 
+// These tests cover the legacy `FusionStrategy` hybrid-fusion path, `#[deprecated]` in favour of
+// the cross-modal `Fuser` (search-surface contract #280). They intentionally exercise the deprecated
+// variants; allow it here until the legacy engine is retired. (Comment is placed ABOVE `#[cfg(test)]`
+// because the panic-scanner's cfg(test) block-skip bails on a `;` between the attr and the block.)
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 
