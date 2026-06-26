@@ -251,28 +251,14 @@ impl CollectionService {
         }
     }
 
+    /// Resolve the owning tenant for a collection.
+    ///
+    /// Thin alias over the canonical [`proximadb_tenant::tenant_id_of`] resolver
+    /// (foundation tier) so service-internal callers keep a local name while the
+    /// tag/owner precedence stays identical to the storage paths and network
+    /// gates that share that one primitive.
     pub(crate) fn collection_tenant_id(collection: &Collection) -> Option<String> {
-        let config = collection.config.as_ref()?;
-
-        if let Some(tag_tenant) = config
-            .tags
-            .iter()
-            .find_map(|tag| tag.strip_prefix("tenant:"))
-            .filter(|tenant_id| !tenant_id.is_empty())
-        {
-            return Some(tag_tenant.to_string());
-        }
-
-        let tenant_isolated = config.tags.iter().any(|tag| tag == "tenant_isolated:true");
-        if tenant_isolated {
-            return config
-                .owner
-                .as_ref()
-                .filter(|owner| !owner.is_empty())
-                .cloned();
-        }
-
-        None
+        proximadb_tenant::tenant_id_of(collection)
     }
 
     async fn count_tenant_collections(&self, tenant_id: &str) -> Result<usize> {

@@ -6573,6 +6573,7 @@ dependencies = [
  "proximadb-storage-tenant",
  "proximadb-storage-transaction",
  "proximadb-telemetry",
+ "proximadb-tenant",
  "proximadb-tls",
  "proximadb-uql",
  "proximadb-vector",
@@ -7770,6 +7771,13 @@ version = "0.2.0"
 dependencies = [
  "proximadb-kernel",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-tenant"
+version = "0.2.0"
+dependencies = [
+ "proximadb-proto",
 ]
 
 [[package]]

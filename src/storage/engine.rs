@@ -328,8 +328,7 @@ impl StorageEngine {
             let base_location = assignment
                 .map(|a| a.base_location.clone())
                 .unwrap_or_default();
-            let tenant_id =
-                crate::services::collection::manager::CollectionService::collection_tenant_id(meta);
+            let tenant_id = proximadb_tenant::tenant_id_of(meta);
 
             let plan = CollectionFlushPlan {
                 wal_key: collection_id.clone(),

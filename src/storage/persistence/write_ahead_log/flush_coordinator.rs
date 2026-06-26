@@ -150,9 +150,7 @@ impl WALFlushCoordinator {
         if let Some(service) = &self.collection_service
             && let Ok(Some(collection)) = service.collection(collection_id).await
         {
-            return crate::services::collection::manager::CollectionService::collection_tenant_id(
-                &collection,
-            );
+            return proximadb_tenant::tenant_id_of(&collection);
         }
         None
     }
