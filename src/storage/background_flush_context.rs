@@ -134,6 +134,14 @@ pub struct BackgroundFlushContext {
     pub timeout_ms: Option<u64>,
     /// Additional metadata for future extensions
     pub extra_metadata: HashMap<String, String>,
+
+    // === Isolation ===
+    /// Owning tenant for the collection, resolved once when the context is built
+    /// (D3: amortized, not per row). Consumed by the flush coordinator's
+    /// `resolve_flush_tenant` so the A6 storage-write fence can check
+    /// `(tenant, collection)` ownership. `None` when the collection is not
+    /// tenant-scoped ⇒ the fence fails open.
+    pub tenant_id: Option<String>,
 }
 
 impl BackgroundFlushContext {
@@ -305,6 +313,14 @@ impl BackgroundFlushContext {
             StorageEngineType::Tst => Some(2000.min(20000 / (config.dimension / 100).max(1))),
         };
 
+        // Resolve the owning tenant once, here, from the same collection proto we
+        // already fetched (D3: one amortized lookup, never per row). Reuses the
+        // canonical resolver so tag/owner precedence matches the network gates.
+        let tenant_id =
+            crate::services::collection::manager::CollectionService::collection_tenant_id(
+                &collection,
+            );
+
         Ok(Self {
             collection_id: collection_id.to_string(),
             storage_engine,
@@ -318,6 +334,7 @@ impl BackgroundFlushContext {
             priority: OperationPriority::Normal,
             timeout_ms: Some(300_000), // 5 minutes default
             extra_metadata: HashMap::new(),
+            tenant_id,
         })
     }
 
@@ -336,6 +353,7 @@ impl BackgroundFlushContext {
             priority: OperationPriority::Normal,
             timeout_ms: Some(60_000),
             extra_metadata: HashMap::new(),
+            tenant_id: None,
         }
     }
 

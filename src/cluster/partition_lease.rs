@@ -3078,6 +3078,95 @@ mod tests {
         assert!(validate_fencing(Some(1), 0).is_ok());
     }
 
+    /// A6 storage-write fence primitive (#346): `is_fenced_out` reflects durable
+    /// cross-pod ownership and flips on a lease takeover. Two managers over one
+    /// shared backing = two pods; the holder is never fenced, a non-holder always
+    /// is, and after the lease lapses + the other pod takes over the verdict
+    /// inverts — the exact signal the flush boundary uses to reject a displaced
+    /// pod's stale write.
+    #[tokio::test]
+    async fn is_fenced_out_reflects_cross_pod_takeover() -> Result<()> {
+        let backing = shared_backing();
+        let mgr_a = test_manager(&backing, "A");
+        let mgr_b = test_manager(&backing, "B");
+
+        // No lease yet → fail-open: nobody is fenced.
+        assert!(!mgr_a.is_fenced_out("t", "c", 0).await);
+        assert!(!mgr_b.is_fenced_out("t", "c", 0).await);
+
+        // A acquires (t,c): A (holder) is not fenced; B (different pod) IS fenced
+        // out while A's lease is live.
+        assert!(mgr_a.acquire("t", "c", 0).await?);
+        assert!(
+            !mgr_a.is_fenced_out("t", "c", 1).await,
+            "the leaseholder is never fenced out of its own partition"
+        );
+        assert!(
+            mgr_b.is_fenced_out("t", "c", 1).await,
+            "a non-holder is fenced while another pod holds a live lease"
+        );
+
+        // A's lease lapses; B takes over. The fence inverts: displaced A is now
+        // fenced, new holder B is not.
+        let after = LEASE_MS + 1;
+        assert!(mgr_b.acquire("t", "c", after).await?);
+        assert!(
+            mgr_a.is_fenced_out("t", "c", after + 1).await,
+            "displaced A is fenced out after B's takeover (would resurrect stale data)"
+        );
+        assert!(
+            !mgr_b.is_fenced_out("t", "c", after + 1).await,
+            "new holder B is not fenced"
+        );
+        Ok(())
+    }
+
+    /// A6 cross-pod integration: the storage-write fence ADAPTER over a real lease
+    /// manager, driven through the exact decision the flush coordinator uses
+    /// (`evaluate_fence`), rejects a displaced pod's flush when enforcement is ON
+    /// and is byte-identical (Proceed) when OFF. This is the boundary the convergence
+    /// wires: pod A holds, B takes over, A's flush at the boundary is REJECTED (ON)
+    /// / allowed (OFF).
+    #[tokio::test]
+    async fn a6_fence_rejects_displaced_pod_flush_when_on_byte_identical_when_off() -> Result<()> {
+        use crate::network::storage_write_fence::LeaseStorageWriteFence;
+        use crate::storage::write_fence::{FenceDecision, StorageWriteFence, evaluate_fence};
+
+        let backing = shared_backing();
+        let mgr_a = Arc::new(test_manager(&backing, "A"));
+        let mgr_b = Arc::new(test_manager(&backing, "B"));
+
+        // Pod A's flush boundary consults a fence backed by A's lease manager.
+        let fence_a: Arc<dyn StorageWriteFence> =
+            Arc::new(LeaseStorageWriteFence::new(mgr_a.clone()));
+
+        // A holds the lease → A's flush proceeds whether enforcement is on or off.
+        assert!(mgr_a.acquire("t", "c", 0).await?);
+        assert_eq!(
+            evaluate_fence(true, Some(&fence_a), Some("t"), "c", 1).await,
+            FenceDecision::Proceed,
+            "holder A flushes freely while it owns the lease"
+        );
+
+        // B takes over after A's lease lapses → A is now the stale, displaced pod.
+        let after = LEASE_MS + 1;
+        assert!(mgr_b.acquire("t", "c", after).await?);
+
+        // ON ⇒ reject A's flush (would resurrect stale/tombstoned data);
+        // OFF ⇒ proceed (byte-identical to the pre-fence path).
+        assert_eq!(
+            evaluate_fence(true, Some(&fence_a), Some("t"), "c", after + 1).await,
+            FenceDecision::Fenced,
+            "displaced A's flush is rejected when fencing is ON"
+        );
+        assert_eq!(
+            evaluate_fence(false, Some(&fence_a), Some("t"), "c", after + 1).await,
+            FenceDecision::Proceed,
+            "displaced A's flush proceeds (byte-identical) when fencing is OFF"
+        );
+        Ok(())
+    }
+
     /// F7: explicit release publishes a released tombstone at generation+1,
     /// not an object-store delete (which would reset the fence to 1).
     #[tokio::test]

@@ -16,8 +16,10 @@ toc::[]
 |===
 | Work | State | Notes
 | Foundation fixes (registry/pod-id unification, `committer_for_key` totality, renew-loop wiring, REST v1 409, no-panic) | ✅ Merged | PR #328 ("PR1 of 2")
-| Lease-on-write + Arrow `DoExchange` gate (Scenario-1 routing truth) | ⏳ PR #337 (automerge) | branch `fix/vector-record-fence`
-| A6 storage-write fence (the boundary backstop) | 🔴 TD (this doc) | deep change — *not* a bounded follow-up; see §4
+| Lease-on-write + Arrow `DoExchange` gate (Scenario-1 routing truth) | ✅ Merged | PR #337
+| A6 fence *primitive* (`current_holder` + `is_fenced_out`) | ✅ Merged | PR #346
+| A6 fence *enforcement* — wired at the consolidated flush boundary, default-OFF | ✅ Landed | this PR; runtime-pinned boundary + D1–D5 → see §"A6 enforcement — LANDED"
+| Server vector-flush *materialization* (coordinator engine/metadata + tenant on the live path) | 🔴 TD-163 | dependent of A6; the fence is positioned for it but dark on shutdown until it lands
 |===
 
 == Invariant re-verdicts on current develop (Δ vs the original pre-PR1 review)
@@ -38,7 +40,7 @@ toc::[]
 == Scenario 1 (vector-record split-brain) — status
 
 * *Routing-layer half: CLOSED by PR #337.* Lease-on-write (`RecordOpsService::ensure_collection_lease` → `PartitionLeaseManager::ensure_owned`) makes the shared primary-pod registry the gates consult durably lease-backed, so a restarted/partitioned pod CAS-discovers the true owner instead of seeing an empty registry → `Allow`. The Arrow `DoExchange` bulk path (previously the one ungated vector-write path) now gates symmetrically with `do_put`.
-* *Boundary half: OPEN.* A pod that passes admission, then stalls and loses the lease, can still flush stale data later — only a storage-write fence (A6) catches that. That fence is dormant (`validate_fencing` has zero production callers).
+* *Boundary half: WIRED (default-OFF).* A pod that passes admission, then stalls and loses the lease, can still flush stale data later — only a storage-write fence (A6) catches that. As of this PR the fence is wired at the consolidated flush boundary via `is_fenced_out` (#346), gated `PROXIMADB_WRITE_FENCING=1`; see §"A6 enforcement — LANDED". It is fully exercised end-to-end once the live shutdown path is made tenant-aware + materializing (TD-163).
 
 == Directive-16 + ADR-025 implications (priority elevation)
 
@@ -69,9 +71,75 @@ design, *tenant-agnostic and lease-unaware*:
 * *Admission-only fence* (at `RecordOpsService`) — advisory; does not catch stall-after-admission (Kleppmann/CockroachDB: validate at write/commit time, not admission). PR #337's lease-on-write is the routing layer, not the boundary fence.
 * *Fence at the iceberg `ManifestCommitter`* — vector engines persist via `SstManifest`, not the fenced committer; no call site.
 
+== A6 enforcement — LANDED (2026-06-25)
+
+The §4 TD predicted the live flush issued `engine.do_flush` *directly from the
+serialization strategies*. A **runtime trace of the actual server binary**
+(insert→flush→shutdown; see `runtime-evidence/A6_FLUSH_BOUNDARY_RUNTIME_TRACE_2026_06_25.md`)
+overturned that and pinned the real boundary:
+
+* *The strategy `do_flush` sites are DEAD.* The WAL manager has no strategy field
+  (`_strategy` is dropped at `write_ahead_log/mod.rs:1431`); the avro/bincode/proto
+  `flush_collection` sites are never on the live path.
+* *Live insert never reaches `do_flush`.* A 500-vector insert persists only to a
+  WAL segment (`.bcwal`) + manifest. Zero SST/data files on disk during normal
+  operation — server durability is WAL-backed; materialization does not happen on
+  the live path.
+* *The one live `do_flush` boundary is the SIGINT graceful-shutdown coordinator —
+  and it currently FAILS* ("No storage engine specified … no metadata available",
+  0 collections flushed): the throwaway coordinator at `engine.rs` has no
+  `collection_service` and passes `None, None`. (The server traps SIGINT only, not
+  SIGTERM.)
+
+So the fence is wired at the **single consolidated coordinator boundary**
+(`execute_coordinated_flush`), checked **before** record extraction / metadata
+resolution — exercised regardless of the downstream materialization gap and correctly
+positioned for when it is fixed. The §"Explicitly rejected shortcuts" note that
+fencing at `execute_coordinated_flush` is "inert / misleading as the fence" is
+**superseded by the runtime evidence**: it is the only live boundary, so it is the
+correct seam; the residual caveat (dark on shutdown until tenant + `collection_service`
+are wired) is tracked as TD-163, not a reason to fence the dead strategy sites.
+
+=== Decisions (D1–D5)
+
+[cols="1,3",options="header"]
+|===
+| # | Decision
+| D1 Canonical path | *One funnel.* The coordinator's storage write now goes through the trait `flush()` funnel (`engine.flush(params)`, was `engine.do_flush(&params)`), the same funnel the embedded path uses. Bytes written are identical (`flush()` delegates to the same `do_flush`).
+| D2 Fence mechanism | *Ownership check* (`PartitionLeaseManager::is_fenced_out`, #346) at the boundary — *no* WAL/format change, so no mandate-#8 migration. Coarser than token-carry (a re-acquire after takeover could let earlier-buffered data through) but adequate as the boundary backstop behind lease-on-write (#337) routing. Token-carry (`validate_fencing` + a `FlushParameters` generation) is left to TD-163 if the coarseness ever bites.
+| D3 Tenant carriage | *Field on `BackgroundFlushContext`* (`tenant_id`, resolved once via `CollectionService::collection_tenant_id`, now `pub(crate)`), plus a coordinator `resolve_flush_tenant` fallback through `collection_service`. *Not* on `FlushParameters` — that struct is `Serialize` and has ~120 literal constructors without `..Default`; a required field there is a needless wide blast radius. Co-design: one amortized lookup per flush, never per row.
+| D4 Coordinator fate | *Converge, do not retire.* It is the only shutdown flush path; retiring it would drop graceful-shutdown materialization entirely. It becomes the single fenced boundary.
+| D5 Rollout | *Default-OFF env gate first* (`PROXIMADB_WRITE_FENCING=1`); flag-off ⇒ the fence is never consulted ⇒ byte-identical ingest (recall-safe). Per-collection opt-in is a later step.
+|===
+
+=== What landed (this PR)
+
+* `storage::write_fence` — `StorageWriteFence` trait + `write_fencing_enabled()`
+  gate + a pure, unit-tested `evaluate_fence` decision (keeps `storage` decoupled
+  from `cluster`; `FlushParameters` cannot carry the lease manager as it is
+  `Serialize`).
+* `network::storage_write_fence::LeaseStorageWriteFence` — adapter over the **same**
+  `PartitionLeaseManager` the write-gates use, injected from `shared_services` →
+  `StorageEngine::set_storage_write_fence` (post-construction, mirroring
+  `set_precision_resolver`) → the shutdown `WALFlushCoordinator`.
+* Fence check at the top of `execute_coordinated_flush`; tenant via
+  `BackgroundFlushContext.tenant_id` + `resolve_flush_tenant`.
+* Tests: cross-pod `is_fenced_out` takeover, the adapter-through-`evaluate_fence`
+  integration (reject-when-ON / byte-identical-when-OFF), `evaluate_fence` matrix,
+  and the coordinator tenant/fence wiring — all deterministic.
+
+=== Deferred to TD-163 (server vector-flush materialization)
+
+The fence is correctly positioned but **dark on the live shutdown path** until the
+coordinator there gets a `collection_service` (for tenant) and engine/metadata
+resolution (so the flush actually materializes to SST). That is a correctness-critical,
+not-offline-verifiable change (needs real SST round-trip/recall testing) and is its
+own TD. When it lands, the A6 fence becomes load-bearing end-to-end with no further
+fence changes. ADR-025 N1 (deletion vectors) remains a dependent of A6.
+
 == Deferred gaps (re-adjudicated)
 
-* *A6 fence*: URGENT (elevated by Directive 16 + ADR-025), but a deliberate multi-layer TD per §4 — not to be rushed.
+* *A6 fence*: ✅ enforcement landed (default-OFF) at the consolidated boundary per §"A6 enforcement — LANDED". Residual: TD-163 (make the live shutdown path tenant-aware + materializing) to light it up end-to-end.
 * *P1b reads-ignore-lease*: ACCEPTABLE-AS-IS (MVCC/WAL snapshot, not a per-SELECT read lease).
 * *C0 cloud-cold unmeasured*: ACCEPTABLE-AS-IS, honestly tracked (`BENCHMARK_EVIDENCE.toml` = `unverified`).
 * *Serverless elasticity*: ACCEPTABLE-AS-IS (substrate-only; lease is the prerequisite primitive).

@@ -212,6 +212,7 @@ mod tests {
             priority: OperationPriority::Normal,
             timeout_ms: Some(60_000),
             extra_metadata: HashMap::new(),
+            tenant_id: None,
         }
     }
 

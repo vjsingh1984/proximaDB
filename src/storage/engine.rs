@@ -32,6 +32,14 @@ pub struct StorageEngine {
 
     /// Shared distance computation engine for all storage operations
     distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+
+    /// A6 storage-write fence (default-OFF). Injected post-construction from the
+    /// bootstrap (`database.rs`) once `SharedServices` — and thus the durable
+    /// `PartitionLeaseManager` — exists, mirroring the `set_precision_resolver`
+    /// pattern (the storage engine is built before the lease stack). Threaded into
+    /// the shutdown flush coordinator so a fenced-out pod cannot publish stale data
+    /// to shared storage. `None` ⇒ no fence ⇒ flush proceeds (fail-open).
+    storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>>,
 }
 
 impl StorageEngine {
@@ -156,7 +164,23 @@ impl StorageEngine {
             distance_compute: Arc::new(
                 crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
             ),
+            storage_write_fence: None,
         })
+    }
+
+    /// Inject the A6 storage-write fence (default-OFF). Called from the bootstrap
+    /// after `SharedServices` builds the durable `PartitionLeaseManager`, so the
+    /// shutdown flush path enforces the **same** ownership view as the network
+    /// write-gates. Mirrors `Compaction::set_precision_resolver` (post-construction
+    /// wiring of a dependency the storage engine is built before).
+    pub fn set_storage_write_fence(
+        &mut self,
+        fence: Arc<dyn crate::storage::write_fence::StorageWriteFence>,
+    ) {
+        self.storage_write_fence = Some(fence);
+        tracing::info!(
+            "🔒 STORAGE_ENGINE: A6 storage-write fence wired (default-OFF; set PROXIMADB_WRITE_FENCING=1 to enforce)"
+        );
     }
 
     pub async fn start(&mut self) -> crate::storage::Result<()> {
@@ -238,7 +262,17 @@ impl StorageEngine {
         use crate::storage::persistence::write_ahead_log::flush_coordinator::WALFlushCoordinator;
 
         // Create a temporary flush coordinator for shutdown
-        let flush_coordinator = WALFlushCoordinator::new();
+        let mut flush_coordinator = WALFlushCoordinator::new();
+
+        // A6: give the shutdown flush path the SAME storage-write fence (and thus
+        // the same durable PartitionLeaseManager) the network write-gates use, so a
+        // pod displaced by a lease takeover cannot publish stale buffered data on
+        // its way out. Default-OFF; absent ⇒ fail-open. (Tenant resolution on this
+        // path lands with the dependent materialization TD; until then the fence is
+        // correctly positioned but dark on shutdown — see the A6 TD doc.)
+        if let Some(fence) = &self.storage_write_fence {
+            flush_coordinator.set_storage_write_fence(fence.clone());
+        }
 
         // Register all SST engines from our storage map
         // Each SST engine implements UnifiedStorageFormat

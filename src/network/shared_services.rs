@@ -235,6 +235,13 @@ pub struct SharedServices {
     /// different fallback.
     pub self_pod_id: String,
 
+    /// A6 storage-write fence adapter over the durable `PartitionLeaseManager`
+    /// (the SAME instance wired into RecordOpsService for lease-on-write). Handed
+    /// to the storage engine's shutdown flush path by the bootstrap so a fenced-out
+    /// pod cannot publish stale data. `None` when the lease store is unavailable
+    /// (fail-open). Default-OFF until `PROXIMADB_WRITE_FENCING=1`.
+    pub storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>>,
+
     /// Shared canonical WAL appender at `<data_dir>/pgwire/canonical-records.wal`.
     ///
     /// Opened once in `SharedServices::new` (when `opt_config` is provided so
@@ -1874,6 +1881,20 @@ impl SharedServices {
                 }
             }
         };
+
+        // A6: build the storage-write fence adapter over the SAME lease manager
+        // before it is moved into RecordOpsService below, so the shutdown flush
+        // path and the network write-gates share one ownership view. `None` ⇒ lease
+        // store unavailable ⇒ fence fails open. Default-OFF until enforced.
+        let storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>> =
+            lease_manager_for_writes.as_ref().map(|manager| {
+                Arc::new(
+                    crate::network::storage_write_fence::LeaseStorageWriteFence::new(
+                        manager.clone(),
+                    ),
+                ) as Arc<dyn crate::storage::write_fence::StorageWriteFence>
+            });
+
         let base_dml = match canonical_record_store.clone() {
             Some(store) => DmlService::with_direct_record_storage(
                 catalog_manager.clone(),
@@ -2239,6 +2260,7 @@ impl SharedServices {
                 // (create-time wire, boot-time hydration, downstream
                 // search dispatch) share one map — see Phase P design
                 // rationale §"Why hoist the registry construction".
+                storage_write_fence,
                 #[cfg(feature = "experimental-turboquant")]
                 turboquant_registry: Some(turboquant_registry),
             },
