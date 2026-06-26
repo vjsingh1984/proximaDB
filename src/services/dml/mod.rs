@@ -660,6 +660,53 @@ pub struct DmlService {
     dml_lock_service: Option<Arc<DmlLockService>>,
 }
 
+/// ADR-025: `DmlService` is the authoritative post-snapshot delta source for the
+/// OLAP read-merge — it owns both the canonical-WAL change-feed and the live
+/// point-read path, so the merge reconciles the cold Parquet base against exactly
+/// the state any pgwire write produced.
+#[async_trait::async_trait]
+impl crate::query::execution::olap_delta_merge::OlapDeltaSource for DmlService {
+    async fn changed_oids_since(
+        &self,
+        table: &str,
+        snapshot_lsn: u64,
+        _tenant: Option<&str>,
+    ) -> anyhow::Result<Vec<String>> {
+        // Canonical-WAL change-feed for this table after the snapshot LSN; the key
+        // is the canonical oid (= PK text). Tenant scoping rides the record store's
+        // collection partitioning; per-tenant isolation of the merge feed is a
+        // documented follow-up (default-OFF, opt-in foundation).
+        let changes = self
+            .record_store
+            .read_changes_since(table, snapshot_lsn)
+            .await?;
+        Ok(changes.into_iter().map(|c| c.key).collect())
+    }
+
+    async fn current_records(
+        &self,
+        table: &str,
+        oids: &[String],
+        tenant: Option<&str>,
+    ) -> anyhow::Result<(CatalogTableSchema, Vec<ProximaRecord>)> {
+        let tenant_ctx = tenant.map(TenantContext::for_tenant_id);
+        let (schema, _table_id) = self.resolve_select_table(table, tenant).await?;
+        let col_names: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
+        let mut records = Vec::with_capacity(oids.len());
+        for oid in oids {
+            // get_by_key applies the canonical dead-record predicate, so a deleted
+            // or TTL-expired oid yields None and contributes no append.
+            if let Some(row) = self
+                .point_lookup_relational(table, oid, tenant_ctx.as_ref())
+                .await?
+            {
+                records.push(Self::value_row_to_relational_record(oid, &col_names, row));
+            }
+        }
+        Ok((schema, records))
+    }
+}
+
 impl DmlService {
     /// Create a new DML service
     pub fn new(catalog_manager: Arc<CatalogManager>, vector_ops: Arc<VectorOps>) -> Self {
@@ -1200,6 +1247,29 @@ impl DmlService {
     /// snapshot), schema inferred from the rows. Incremental/atomic manifest
     /// publication (`IcebergObjectStoreBridge::publish_snapshot`) and the
     /// catalog-authoritative write schema are follow-ups.
+    /// Build a relational `ProximaRecord` from a full column-ordered value row:
+    /// every non-NULL column lands in `props` keyed by name (the warehouse
+    /// materializer's record shape). Shared by `MATERIALIZE` (cold base) and the
+    /// ADR-025 OLAP read-merge (live appends) so both encode identically through
+    /// `proxima_records_to_record_batch`.
+    pub(crate) fn value_row_to_relational_record(
+        oid: &str,
+        col_names: &[String],
+        row: Vec<ProximaValue>,
+    ) -> ProximaRecord {
+        let mut rec = ProximaRecord {
+            oid: oid.to_string(),
+            ..Default::default()
+        };
+        for (name, value) in col_names.iter().zip(row) {
+            if !matches!(value, ProximaValue::Null) {
+                rec.props
+                    .insert(name.clone(), ProximaTreeNode::Value(value));
+            }
+        }
+        rec
+    }
+
     pub async fn materialize_table_to_parquet(
         &self,
         bridge: &dyn ObjectStoreBridge,
@@ -1207,6 +1277,18 @@ impl DmlService {
         table_name: &str,
         tenant_context: Option<&TenantContext>,
     ) -> Result<String> {
+        // ADR-025: capture this table's WAL high-water LSN BEFORE snapshotting, so any
+        // write landing during/after the scan has a strictly greater LSN and is caught
+        // by the OLAP read-merge delta (`read_changes_since(.., snapshot_lsn)`). Sequence
+        // numbers are globally monotonic, so the table's own latest change LSN is a safe
+        // floor; a table with no changes yet snapshots at 0.
+        let snapshot_lsn = self
+            .record_store
+            .read_changes_since(table_name, 0)
+            .await
+            .map(|changes| changes.iter().map(|c| c.lsn).max().unwrap_or(0))
+            .unwrap_or(0);
+
         // 1. Snapshot the table's current rows (all columns, no predicate/limit).
         let (schema, rows) = self
             .scan_table_relational(table_name, None, None, None, tenant_context)
@@ -1214,24 +1296,14 @@ impl DmlService {
 
         // 2. Column-order ProximaValue rows → ProximaRecord envelopes (props keyed by
         //    column name; relational tables carry no vectors). NULLs are omitted —
-        //    the schema-driven Arrow mapping null-fills any absent column.
+        //    the schema-driven Arrow mapping null-fills any absent column. Reuses the
+        //    SAME builder as the OLAP read-merge appends so the cold base and the live
+        //    append rows encode identically (ADR-025).
         let col_names: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
         let records: Vec<ProximaRecord> = rows
             .into_iter()
             .enumerate()
-            .map(|(i, row)| {
-                let mut rec = ProximaRecord {
-                    oid: i.to_string(),
-                    ..Default::default()
-                };
-                for (name, value) in col_names.iter().zip(row) {
-                    if !matches!(value, ProximaValue::Null) {
-                        rec.props
-                            .insert(name.clone(), ProximaTreeNode::Value(value));
-                    }
-                }
-                rec
-            })
+            .map(|(i, row)| Self::value_row_to_relational_record(&i.to_string(), &col_names, row))
             .collect();
 
         // 3. Tenant-isolated object prefix (DrPathBuilder mandate: data/{tenant}/{ns}/{table}).
@@ -1291,6 +1363,12 @@ impl DmlService {
             authority: proximadb_catalog::CatalogAuthorityMode::ProjectionPublication,
             physical_format: proximadb_catalog::CatalogPhysicalFormat::Parquet,
             location: Some(location.clone()),
+            // ADR-025: record the snapshot LSN so the OLAP read-merge can reconcile
+            // this cold base against post-snapshot writes (`read_changes_since`).
+            properties: std::collections::HashMap::from([(
+                "snapshot_lsn".to_string(),
+                snapshot_lsn.to_string(),
+            )]),
             ..Default::default()
         };
         catalog.set_storage_layouts(&table_id, vec![layout]).await?;

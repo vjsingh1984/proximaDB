@@ -198,6 +198,13 @@ pub async fn try_run_select(
     // (nor advertised) when the build can't honor it.
     #[cfg(feature = "datafusion-integration")]
     let mut parquet_loc_by_key: HashMap<String, String> = HashMap::new();
+    // ADR-025: per-table OLAP read-merge params (snapshot_lsn + PK column) for the
+    // opted-in parquet-backed tables; empty ⇒ all reads stay on the bare Parquet path.
+    #[cfg(feature = "datafusion-integration")]
+    let mut olap_delta_tables: HashMap<
+        String,
+        crate::query::execution::olap_delta_merge::OlapDeltaTable,
+    > = HashMap::new();
     for raw in &names {
         let key = normalize_table_key(raw);
         if tables.contains_key(&key) {
@@ -208,6 +215,9 @@ pub async fn try_run_select(
                 #[cfg(feature = "datafusion-integration")]
                 if let Some(location) = catalog_table_is_parquet_backed(&catalog_schema) {
                     parquet_loc_by_key.insert(key.clone(), location);
+                    if let Some(params) = olap_delta_table_params(&catalog_schema) {
+                        olap_delta_tables.insert(key.clone(), params);
+                    }
                 }
                 tables.insert(key, PreparedTable::from_catalog(raw, &catalog_schema));
             }
@@ -284,6 +294,17 @@ pub async fn try_run_select(
             parquet_tables,
             vector_ops,
             tenant_id: tenant.map(str::to_string),
+            // ADR-025: reconcile opted-in parquet-backed tables with their
+            // post-snapshot WAL delta at scan time. `None` (no opted-in table)
+            // keeps the legacy bare-Parquet read (default-OFF).
+            olap_delta: if olap_delta_tables.is_empty() {
+                None
+            } else {
+                Some(crate::query::execution::olap_delta_merge::OlapDeltaConfig {
+                    source: dml.clone(),
+                    tables: olap_delta_tables,
+                })
+            },
             // Full ANSI SQL over pgwire: when the shared relational frontend can't
             // yet lower a query (e.g. typed DATE literals, certain subquery/window
             // shapes), execute it through DataFusion's own ANSI SQL planner over the
@@ -429,6 +450,59 @@ fn catalog_table_is_parquet_backed(
         } else {
             None
         }
+    })
+}
+
+/// Global master switch for the ADR-025 OLAP read-merge (default-OFF). A table is
+/// merged only when this is on OR the table carries an `olap_delta_merge` opt-in
+/// property — honoring the staged, per-collection-opt-in rollout mandate.
+#[cfg(feature = "datafusion-integration")]
+fn olap_delta_merge_enabled() -> bool {
+    std::env::var("PROXIMADB_OLAP_DELTA_MERGE")
+        .ok()
+        .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "on" | "yes"))
+}
+
+/// Resolve the ADR-025 read-merge parameters for a parquet-backed table, or `None`
+/// when it is ineligible (no single-column PK, no recorded `snapshot_lsn`, or not
+/// opted in). Ineligible tables fall back to the bare Parquet read.
+#[cfg(feature = "datafusion-integration")]
+fn olap_delta_table_params(
+    schema: &proximadb_catalog::CatalogTableSchema,
+) -> Option<crate::query::execution::olap_delta_merge::OlapDeltaTable> {
+    use proximadb_catalog::{CatalogAuthorityMode, CatalogPhysicalFormat};
+    // Single-column PK required: the merge recomputes each base row's canonical oid
+    // from its PK column. Keyless heaps fall back to the bare Parquet read.
+    let pk_column = match schema.primary_key.as_slice() {
+        [pk] => pk.clone(),
+        _ => return None,
+    };
+    let layout = schema.storage_layouts.iter().find(|l| {
+        matches!(l.physical_format, CatalogPhysicalFormat::Parquet)
+            && matches!(
+                l.authority,
+                CatalogAuthorityMode::FederatedRead
+                    | CatalogAuthorityMode::ExternalAuthoritative
+                    | CatalogAuthorityMode::ImportedSnapshot
+                    | CatalogAuthorityMode::ExportedPublication
+                    | CatalogAuthorityMode::ProjectionPublication
+            )
+    })?;
+    let opted_in = olap_delta_merge_enabled()
+        || matches!(
+            layout
+                .properties
+                .get("olap_delta_merge")
+                .map(String::as_str),
+            Some("1" | "true" | "on" | "yes")
+        );
+    if !opted_in {
+        return None;
+    }
+    let snapshot_lsn: u64 = layout.properties.get("snapshot_lsn")?.parse().ok()?;
+    Some(crate::query::execution::olap_delta_merge::OlapDeltaTable {
+        snapshot_lsn,
+        pk_column,
     })
 }
 

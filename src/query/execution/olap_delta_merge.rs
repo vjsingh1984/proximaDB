@@ -31,9 +31,13 @@
 //! base rows, suppress-set, and append rows lives in
 //! [`crate::query::execution::datafusion_engine`].
 
+use std::collections::HashMap;
 use std::collections::HashSet;
+use std::sync::Arc;
 
-use proximadb_records::is_record_dead;
+use async_trait::async_trait;
+use proximadb_catalog::CatalogTableSchema;
+use proximadb_records::{ProximaRecord, is_record_dead};
 
 /// One row of the cold Parquet base snapshot, tagged with the identity and
 /// liveness metadata the merge needs. `payload` is the opaque per-row value the
@@ -106,6 +110,62 @@ pub fn merge_base_with_delta<R>(
     out
 }
 
+/// Authoritative post-snapshot delta source for the OLAP read-merge.
+///
+/// Implemented by `DmlService` over the canonical WAL + record store. Kept as a
+/// narrow, Arrow-free trait so the query-execution layer carries it on
+/// [`QueryExecutionContext`](super::engine::QueryExecutionContext) without
+/// depending on the services layer or on `datafusion-integration`.
+#[async_trait]
+pub trait OlapDeltaSource: Send + Sync {
+    /// Canonical oids that changed (upsert OR delete) for `table` strictly after
+    /// `snapshot_lsn`, from the canonical-WAL change-feed. Order is irrelevant;
+    /// the merge dedups into a set.
+    async fn changed_oids_since(
+        &self,
+        table: &str,
+        snapshot_lsn: u64,
+        tenant: Option<&str>,
+    ) -> anyhow::Result<Vec<String>>;
+
+    /// The table's catalog schema plus the **current live** records for `oids`,
+    /// each built with every column materialized in `props` (the exact shape the
+    /// warehouse materializer writes), so the caller can feed them straight to
+    /// `proxima_records_to_record_batch`. Deleted/expired/absent oids contribute
+    /// no record (the record store applies the canonical dead-record predicate).
+    async fn current_records(
+        &self,
+        table: &str,
+        oids: &[String],
+        tenant: Option<&str>,
+    ) -> anyhow::Result<(CatalogTableSchema, Vec<ProximaRecord>)>;
+}
+
+/// Per-table OLAP delta-merge parameters resolved from the catalog at query time.
+#[derive(Clone, Debug)]
+pub struct OlapDeltaTable {
+    /// WAL high-water LSN the cold Parquet base was snapshotted at (recorded in
+    /// the storage layout `properties` by `MATERIALIZE`).
+    pub snapshot_lsn: u64,
+    /// Primary-key column whose value canonicalizes to the record `oid`; used to
+    /// recompute each base row's oid for suppress-set membership. Tables without
+    /// a single-column PK are not eligible (keyless heaps fall back to the bare
+    /// Parquet read — a documented first-cut limitation).
+    pub pk_column: String,
+}
+
+/// Per-query wiring for the OLAP read-merge: the authoritative delta source plus
+/// the per-table parameters for every parquet-backed table that opted in. Absent
+/// (`QueryExecutionContext::olap_delta == None`) ⇒ legacy bare-Parquet reads.
+#[derive(Clone)]
+pub struct OlapDeltaConfig {
+    /// Authoritative post-snapshot delta source (the `DmlService`).
+    pub source: Arc<dyn OlapDeltaSource>,
+    /// Eligible tables keyed by normalized table key (see
+    /// [`normalize_table_key`](super::engine::normalize_table_key)).
+    pub tables: HashMap<String, OlapDeltaTable>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,12 +184,8 @@ mod tests {
             BaseRow::new("2", None, "2"),
             BaseRow::new("3", None, "3"),
         ];
-        let merged = merge_base_with_delta(
-            base,
-            &suppress(&["2", "3", "4"]),
-            vec!["3'", "4"],
-            1_000,
-        );
+        let merged =
+            merge_base_with_delta(base, &suppress(&["2", "3", "4"]), vec!["3'", "4"], 1_000);
         assert_eq!(merged, vec!["1", "3'", "4"]);
     }
 
@@ -172,10 +228,10 @@ mod tests {
     #[test]
     fn ttl_expired_base_row_dropped_when_valid_to_ns_known() {
         let base = vec![
-            BaseRow::new("live", Some(0), "x"), // tombstone marker → dead
+            BaseRow::new("live", Some(0), "x"),      // tombstone marker → dead
             BaseRow::new("expired", Some(500), "y"), // valid_to < now → dead
-            BaseRow::new("ok", Some(5_000), "z"), // valid_to > now → live
-            BaseRow::new("unknown", None, "w"), // unknown → treated live
+            BaseRow::new("ok", Some(5_000), "z"),    // valid_to > now → live
+            BaseRow::new("unknown", None, "w"),      // unknown → treated live
         ];
         let merged = merge_base_with_delta(base, &HashSet::new(), vec![], 1_000);
         assert_eq!(merged, vec!["z", "w"]);
