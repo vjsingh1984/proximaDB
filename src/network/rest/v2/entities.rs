@@ -156,7 +156,7 @@ fn property_value_to_json(pv: &PropertyValue) -> Value {
 /// Build an orchestrator from the app state's backing services (cheap Arc clones).
 fn orchestrator(state: &AppState) -> EntityOrchestrator {
     EntityOrchestrator::new(
-        state.request_handlers.graph_operations_service.clone(),
+        state.graph_operations_service.clone(),
         state.vector_operations_service.clone(),
         state.fusion_service.clone(),
         state.document_service.clone(),
