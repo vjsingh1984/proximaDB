@@ -178,6 +178,26 @@ impl ProximaDB {
         .await?;
         tracing::info!("✅ ProximaDB::new - SharedServices created with unified CollectionService");
 
+        // ADR-030 KSU: periodic per-tenant resident-storage snapshot. KSU is an
+        // accrual (bytes·seconds), so a level gauge is set on an interval from the
+        // live collection set (grouped by owner); Prometheus integrates it
+        // downstream. Server-lifetime daemon (tokio task, dropped on shutdown) —
+        // mirrors the other long-lived spawns here. First tick is delayed one
+        // interval; failures are skipped (best-effort, never fatal).
+        {
+            let cs = collection_service.clone();
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+                ticker.tick().await; // consume the immediate first tick
+                loop {
+                    ticker.tick().await;
+                    if let Ok(collections) = cs.list_collections().await {
+                        crate::metrics::consumption_metrics::record_storage_snapshot(&collections);
+                    }
+                }
+            });
+        }
+
         // Step 3: Initialize global WAL manifest
         tracing::info!("🌐 ProximaDB::new - Initializing global WAL manifest...");
         let mut wal_config = config.storage.wal_config.to_engine_config();
