@@ -282,7 +282,7 @@ notes = "Transparent AES-256-GCM file + WAL encryption with HKDF per-file keys +
 controlling_td = ["TD-016"]
 evidence = [
   "src/storage/persistence/filesystem/local.rs:1",
-  "src/storage/encryption/key_manager.rs:1",
+  "crates/storage/proximadb-storage-encryption/src/key_manager.rs:1",
 ]
 
 [[capabilities]]
