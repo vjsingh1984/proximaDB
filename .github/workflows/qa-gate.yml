@@ -82,12 +82,20 @@ jobs:
         run: |
           cargo test --test tpch_pgwire_e2e --test tpcds_pgwire_e2e --no-run
           cargo test -p proximadb-block-format --lib --no-run
+          cargo test --test embedded_flush_recovery --no-run
       - name: Run TPC-H over pgwire
         run: cargo test --test tpch_pgwire_e2e -- --nocapture
       - name: Run TPC-DS over pgwire
         run: cargo test --test tpcds_pgwire_e2e -- --nocapture
       - name: Run PAX recall ratchets
         run: cargo test -p proximadb-block-format --lib recall -- --nocapture
+      - name: Run cold-read recall ratchet (TD-163/TD-165)
+        # Guards the SST cold-read path TD-163 now relies on (free_wal=true): after a
+        # flush+reopen, recall@k must not regress the hot memtable path. Catches the
+        # cold-read ranking regression the vec_0-only assertion in
+        # sst_block_serialization_roundtrip missed (why TD-165 was marked Resolved
+        # prematurely). Well-separated seeded vectors → recall@10 = 1.0 on both paths.
+        run: cargo test --test embedded_flush_recovery recall -- --nocapture
 
   sdk-coverage-ratchet:
     name: SDK Coverage Ratchet

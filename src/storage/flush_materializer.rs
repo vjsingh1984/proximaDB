@@ -71,14 +71,13 @@ pub struct CollectionFlushOutcome {
 /// unknown.
 ///
 /// `free_wal` controls whether the source WAL is reclaimed after the segment is
-/// written:
-/// - `true` (embedded): clear the flushed batches and delete the WAL files (no 2×
-///   WAL+segment overhead). The cold-read path then serves restart recall.
-/// - `false` (server, today): write the segment but **keep** the WAL — recovery
-///   replays it into the FP32 memtable, so restart recall is exact. This avoids a
-///   regression while the cold SST read path (empty persisted IVF + missing f32
-///   rerank) is fixed under the dependent recall TD. Safe on the shutdown path
-///   because it is terminal (no subsequent re-flush of the still-unflushed batches).
+/// written. Post-TD-165 (cold-read recall fixed) **both callers pass `true`**: clear
+/// the flushed batches and delete the WAL files (no 2× WAL+segment overhead), so the
+/// materialized segment — not a WAL replay — is the durable restart-recall source.
+/// The flag is retained (rather than inlined) as an explicit safety valve: passing
+/// `false` keeps the WAL so recovery replays it into the FP32 memtable (exact recall
+/// that bypasses the cold SST path) — the escape hatch if a cold-read regression
+/// ever resurfaces. No caller uses `false` today.
 pub async fn materialize_collection(
     write_buffer: &Arc<WALBehaviorWrapper>,
     plan: &CollectionFlushPlan,
