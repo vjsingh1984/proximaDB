@@ -140,14 +140,89 @@ then depends *down* on the trait crate, never *up* on the implementor.
 * Injection happens at the **composition root** (the bootstrap in `apps/proximadb-server` /
   `crates/platform/proximadb-runtime`), which already owns wiring.
 
+== D2 detailed spec — the measured port surface (2026-06-26)
+
+The mechanical phase (D0/D1) is **complete** (PRs #370, #377, #379, #386). The remaining
+D0 tail items are **not** clean Mechanism-A redirects and fold into Mechanism B:
+
+* **`quantization::types` — Mechanism B, not a redirect.** `src/compute/quantization/mod.rs`
+  is `pub use proximadb_quantization_kernel::*`, and that kernel (modality tier) re-exports
+  `proximadb_vector::quantization::*` (also modality). So
+  `crate::compute::quantization::types::{UnifiedQuantizationLevel, QuantizationLevel,
+  ProductQuantization}` (8 storage refs: `engines/viper/pipeline.rs`, `engines/raptor/*`,
+  `engines/core/search/progressive_search.rs`) resolve to **modality-tier** definitions in
+  `crates/modalities/proximadb-vector`. The foundation `proximadb-quantization-types` crate has
+  a *different, divergent* `QuantizationLevel` (the `-distance-types` trap again). Storage cannot
+  depend down on modality → this edge must be **port-inverted**, never sed-redirected.
+* **`core::config`** is a real root module (`pub mod config`), not a re-export of
+  `proximadb-config` (divergent) → reconcile the duplication before any redirect.
+
+=== Measured surface (read-only mapping, develop @ #386)
+
+`IndexPort` inverts `crate::index::axis::AxisManager` (constructed at `src/storage/engine.rs:137`;
+methods defined under `src/index/axis/management/manager.rs`). Storage-driven surface:
+
+[cols="2,1,2",options="header"]
+|===
+| Method (all `async` unless noted) | Returns | Type friction
+| `query(AxisHybridQuery)` | `Result<AxisManagerQueryResult>` | **both root/index-tier** (`manager.rs:4114`/`4247`)
+| `get_collection_indexes(&str)` | `Result<Vec<(String, Arc<dyn AxisVectorIndex>)>>` | `AxisVectorIndex` trait (root, `index_factory.rs:46`)
+| `rebuild_index(&str, &str)` | `Result<()>` | none
+| `insert_record(&str, &ProximaRecord)` | `Result<()>` | `ProximaRecord` (foundation ✓)
+| `delete(&str, VectorId)` | `Result<()>` | `VectorId` = `String` alias (trivial)
+| `drop_collection(&str)` | `Result<()>` | none
+| `suspend_collection`/`resume_collection`/`is_suspended`/`has_ivf_index`/`has_hnsw_index(&str)` | `Result<()>`/`Result<bool>`/`bool` | none
+| (8 `set_*` config setters — `AxisConfig`, persist dirs, `FilesystemFactory`, resolvers) | — | config types (root)
+|===
+
+`CollectionMetadataPort` inverts `crate::services::collection::CollectionService`
+(`services/collection/manager.rs`). Call sites: `background_flush_context.rs:242,320`,
+`flush_coordinator.rs:150`, `engine.rs`, `write_ahead_log/mod.rs`.
+
+[cols="2,1,2",options="header"]
+|===
+| Method | Returns | Type friction
+| `collection(&str)` (async) | `Result<Option<Collection>>` | `Collection` (foundation/proto ✓)
+| `collection_tenant_id(&Collection)` (sync, static) | `Option<String>` | `Collection` (foundation ✓)
+| `collection_from_catalog_schema(&TableIdentifier, &CatalogTableSchema)` (sync, static) | `Result<Option<Collection>>` | catalog types (root)
+| `native_index_config(&str)` (async) | `Result<Option<RuntimeIndexConfig>>` | `RuntimeIndexConfig` (root, `index/config.rs:172`)
+| `get_collection_stats(&str)` (async) | `Result<CollectionStats>` | `CollectionStats` (foundation ✓)
+|===
+
+=== Viability verdict
+
+* **`CollectionMetadataPort` is the cleaner port.** Its only root-resident types are
+  `RuntimeIndexConfig` + the two catalog types (`TableIdentifier`, `CatalogTableSchema`).
+  Candidate first port (smaller D3 blast radius).
+* **`IndexPort` is the hard one.** Its signatures name `AxisHybridQuery`,
+  `AxisManagerQueryResult`, `AxisConfig`, and the `AxisVectorIndex` trait — all root/index-tier.
+* **Both traits are object-safe** (`&self`, concrete returns, no generics/`Self`) and need
+  `#[async_trait]` (precedent: `AxisVectorIndex` already uses it). Storage holds
+  `Arc<dyn IndexPort>` / `Arc<dyn CollectionMetadataPort>`.
+* **Correction — a port crate cannot import root types.** "Re-export `AxisConfig`/`AxisHybridQuery`
+  from root into the port crate" is **impossible**: root depends on the port crate, so the port
+  importing root is a dependency *cycle*. The only viable choices for the leaked index types are
+  **(A) define slim facade types in the port crate + translation adapters in root** (behavior/perf
+  seam to review), or **(C) pre-extract `AxisHybridQuery`/`Result`/`Config`/`AxisVectorIndex`
+  down to foundation/index crates first**, then reference them. Pick per-type; `CollectionMetadataPort`
+  can likely ship before `IndexPort` is resolved.
+
+=== Coordination note
+
+D3 (wiring storage to the injected ports) edits the hot files `engine.rs`,
+`compaction_orchestrator.rs`, `background_flush_context.rs`, `flush_coordinator.rs`. At time of
+writing these are under active concurrent work (the unit-test-rot fixes, #383). **Announce a
+coordination window before starting D3**, and land D2 (trait crate) + the chosen type strategy
+first so the hot edits are mechanical.
+
 == Phasing (each phase behavior-neutral + layering-gated)
 
 [cols="1,4,1",options="header"]
 |===
 | Phase | Work | Risk
-| D0 | **Redirect-down (Mechanism A, existing crates).** Rewrite storage's `crate::compute::…DistanceMetric` / `crate::core::search::FilterExpression` / quant-types / config / hardware-caps / index-types references to the existing foundation crates. Pure path rewrites; verify each root path == leaf type. Several small mechanical PRs; collapses the edge count first. **DONE:** distance-kernel + FilterExpression (PR #370), hardware-caps + index-types (D0b, PR #377). Remaining: quant-types (unverified), config (divergent root module — not a clean redirect). | Low
+| D0 | **Redirect-down (Mechanism A, existing crates).** Rewrite storage's `crate::compute::…DistanceMetric` / `crate::core::search::FilterExpression` / quant-types / config / hardware-caps / index-types references to the existing foundation crates. Pure path rewrites; verify each root path == leaf type. Several small mechanical PRs; collapses the edge count first. **DONE:** distance-kernel + FilterExpression (PR #370), hardware-caps + index-types (D0b, PR #377). **Mechanical phase complete** — the two remaining items are NOT clean redirects: quant-types resolves to *modality-tier* defs (Mechanism B, see D2 spec above) and config is a divergent root module. | Low
 | D1 | **Extract remaining shared-type leaves down.** `proximadb-search-types` (← `core::search` minus FilterExpression) and `proximadb-bloom` (← `core::bloom`). Same leaf recipe already proven. **DONE:** `proximadb-bloom` (PR #379); `proximadb-search-types` — the whole-file leaves `results`/`bounded_queue`/`sql_value_filter`/`json_value_serde` + the carved-out `json_comparison` module (this PR). `UnifiedSearchParams` stays in root (3 upward edges: compute `DistanceMetric`, modality `UnifiedQuantizationLevel`, query `FilterOptimizationHints`); the inline simple enums (`SearchMode`/`BlockPruneConfig`/…) remain interleaved with it and are deferred. | Low
-| D2 | **Define `proximadb-storage-ports`** — the `IndexPort` + `CollectionMetadataPort` traits (and the conditional distance/quant dispatch ports if the decision rule says invert). Trait-only crate, no impls. | Low
+| D2 | **Define `proximadb-storage-ports`** — the `IndexPort` + `CollectionMetadataPort` traits (and the conditional distance/quant dispatch ports if the decision rule says invert). Trait-only crate, no impls. **Surface mapped (see "D2 detailed spec" above).** `CollectionMetadataPort` is cleaner and can ship first; `IndexPort` leaks `AxisHybridQuery`/`AxisManagerQueryResult`/`AxisConfig`/`AxisVectorIndex` and needs a per-type facade-vs-pre-extract decision (re-exporting root types into the port crate is a *cycle*, impossible). | Low–Med
 | D3 | **Refactor storage to consume injected ports.** `engine.rs`/compaction stop constructing `AxisManager` / calling `CollectionService` directly; take `Arc<dyn IndexPort>` / `Arc<dyn CollectionMetadataPort>` via constructor injection. Same concrete behavior, now behind the trait. **This is the hot, coordination-window phase.** | Med-High
 | D4 | **Implement ports + wire injection.** `impl IndexPort for AxisManager`, `impl CollectionMetadataPort for CollectionService`; the composition root injects them. | Med
 | D5 | **Gate to zero.** `scripts/check_workspace_boundaries.py` + a storage-up-edge ratchet asserting `crate::{index,compute,services,query}` references under `src/storage` == 0 (core type refs already redirected in D0/D1). Engines (Slice E) now unblocked. | Low
