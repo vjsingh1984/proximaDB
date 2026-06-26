@@ -81,6 +81,11 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | PAX Stacked Quantization as the Canonical Vector Path (Retire Legacy Progressive Search)
 | Proposed
 | AXIS graph + PAX stacked quant (RaBitQ->SQ8->f32) is the one vector path; retire legacy progressive engines, fold their designs into PAX; PAX is the cross-modality internal columnar substrate (Parquet at the interop seam); configurable geometry + user/adaptive/learned tuning hierarchy. Tracked: TD-150..157
+
+| link:ADR-027-unified-storage-and-metering-substrate.adoc[ADR-027]
+| Unified Storage + Metering Substrate (PAX-as-one-internal-format, two-class trace, coalesced write-path, dual-sink metering)
+| Proposed
+| PAX is the single internal format (LSM writes it for all modalities; one reader/one SQL lowering/one I/O-trace; Parquet at the seam). Trace = two classes: billing (always-on, full-fidelity) vs perf/geometry (compile-time gateable). Write-path reuses SST/LSM (threshold-flush + compaction; Aurora/Neon/Turso-grounded; no per-query object writes). Metering dual-sunk: durable per-tenant in object store + external OTLP. Tracked: TD-158, TD-160..162
 |===
 
 NOTE: ADR-010 through ADR-013 exist in this directory but are not yet
