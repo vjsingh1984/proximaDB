@@ -3775,7 +3775,9 @@ impl EmbeddedProximaDB {
     > {
         self.runtime.block_on(async {
             use crate::core::search::cross_modal_fusion::FusionPolicy;
-            use crate::services::fusion_service::{FusionService, GraphFusionParams, GraphGrain};
+            use crate::services::fusion_service::{
+                FusionOidKey, FusionService, GraphFusionParams, GraphGrain,
+            };
 
             let service = FusionService::new(
                 self.shared_services.vector_operations_service.clone(),
@@ -3804,6 +3806,7 @@ impl EmbeddedProximaDB {
                 } else {
                     FusionPolicy::default()
                 },
+                oid_key: FusionOidKey::Canonical,
             };
             service.graph_fusion_search(params).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {

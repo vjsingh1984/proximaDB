@@ -24,7 +24,7 @@ use crate::proto::proximadb_v2 as pv2;
 use crate::proto::proximadb_v2::proxima_fusion_service_server::{
     ProximaFusionService, ProximaFusionServiceServer,
 };
-use crate::services::fusion_service::{FusionService, GraphFusionParams, GraphGrain};
+use crate::services::fusion_service::{FusionOidKey, FusionService, GraphFusionParams, GraphGrain};
 
 /// Defaults shared with the REST handler (`src/network/rest/v2/graphs.rs`).
 const DEFAULT_LIMIT: usize = 10;
@@ -127,6 +127,7 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
             // this TD-131 cut). `None` ⇒ the gate fails open (structural isolation preserved).
             principal: None,
             policy,
+            oid_key: FusionOidKey::Canonical,
         };
 
         let (items, stats) = self
