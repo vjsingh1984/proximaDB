@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, trace, warn};
 
-use crate::core::serialization::VectorSerializationConfig;
+use crate::VectorSerializationConfig;
 use proximadb_runtime_common::pool::VectorMemoryPool;
 
 /// Backwards-compat alias for [`SerializationStreamingConfig`].
@@ -569,7 +569,7 @@ impl StreamingDecompressor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::serialization::CompressionAlgorithm;
+    use crate::CompressionAlgorithm;
     use anyhow::Context;
 
     fn create_test_vectors(count: usize, dimension: usize) -> Vec<Vec<f32>> {

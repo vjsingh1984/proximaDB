@@ -6557,6 +6557,7 @@ dependencies = [
  "proximadb-runtime-common",
  "proximadb-sdk",
  "proximadb-security",
+ "proximadb-serialization",
  "proximadb-storage-common",
  "proximadb-storage-filesystem-types",
  "proximadb-storage-kv",
@@ -7526,6 +7527,30 @@ dependencies = [
  "proximadb-kernel",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "proximadb-serialization"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "brotli 6.0.0",
+ "bytemuck",
+ "bzip2",
+ "flate2",
+ "lz4_flex 0.11.6",
+ "num_cpus",
+ "parking_lot",
+ "proximadb-compression-types",
+ "proximadb-kernel",
+ "proximadb-runtime-common",
+ "serde",
+ "snap",
+ "tokio",
+ "tracing",
+ "xz2",
+ "zstd",
 ]
 
 [[package]]
