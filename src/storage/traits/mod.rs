@@ -1201,8 +1201,15 @@ pub trait UnifiedStorageFormat: Send + Sync {
         // Delegate to engine-specific implementation
         let mut result = self.do_flush(&params).await?;
 
-        // Common post-flush processing
-        result.duration_ms = Some(start_time.elapsed().as_millis() as u64);
+        // Common post-flush processing.
+        // Prefer the engine's self-reported duration (do_flush knows its own work);
+        // only fall back to the funnel's wall-clock measurement when the engine
+        // didn't report one. Previously this unconditionally overwrote the engine's
+        // value, so a fast engine (e.g. the test mock, or any sub-millisecond
+        // flush) recorded duration_ms=0 even when do_flush reported a real value.
+        result.duration_ms = result
+            .duration_ms
+            .or_else(|| Some(start_time.elapsed().as_millis() as u64));
         result.completed_at = Utc::now();
 
         // Log operation completion
