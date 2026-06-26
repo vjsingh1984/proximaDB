@@ -155,7 +155,7 @@ impl V2SegmentHeader {
     /// or UTF-8 policy id are invalid. v1 segments must be routed to the
     /// legacy reader via [`peek_segment_version`] before calling this.
     ///
-    /// The `try_into().unwrap()` calls below are infallible: each preceded
+    /// The `try_into()` conversions below are infallible: each preceded
     /// by the `data.len() >= V2_HEADER_FIXED_LEN` / `data.len() >= header_len`
     /// bounds checks at lines 165 + 181, every slice taken is exactly the
     /// size of the target `[u8; N]` array, and `<[u8; N]>::try_from(&[u8])`
