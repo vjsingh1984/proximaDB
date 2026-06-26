@@ -514,48 +514,6 @@ Experimental. Recommends Debezium -> Kafka -> ProximaDB webhook sink pattern.
 * Optimization algorithms: Heuristic-based, not ML-driven
 * Performance prediction: Framework ready, accuracy untested
 
-== 10. Competitive Positioning
-
-=== 10.1 Vector Database Comparison
-
-[cols="2,1,1,1,1"]
-|===
-| Feature | ProximaDB | Pinecone | Milvus | Weaviate
-
-| Storage Engines | 6 (3 production) | 1 | 1 | 1
-| Quantization Levels | 5 (progressive) | 1-2 | 2-3 | 1-2
-| Graph Integration | Native | None | None | Ref-based
-| SQL Support | Full federated | None | Basic | GraphQL
-| Multi-Model Queries | Cross-model joins | No | No | No
-| Embedded Mode | Python/Java/C | No | No | No
-| RL Query Planner | Thompson Sampling | No | No | No
-| CDC | Exactly-once | No | Basic | No
-|===
-
-=== 10.2 Graph Database Comparison
-
-[cols="2,1,1,1"]
-|===
-| Feature | ProximaDB (ORION) | Neo4j | ArangoDB
-
-| Storage | In-memory CSR | Disk-based | RocksDB
-| Max Nodes (single) | 1M+ | 34B | Billions
-| Query Language | Partial Cypher | Full Cypher | AQL
-| Vector Integration | Native hybrid | Plugin | Basic
-| Algorithms | PageRank, Louvain, Dijkstra | 60+ | 10+
-| ACID | Yes (Unit of Work) | Yes | Yes
-| Distributed | PULSAR (experimental) | Enterprise | Built-in
-|===
-
-=== 10.3 Unique Differentiators
-
-1. **Multi-Model Federated Queries**: Cross-model joins in a single SQL query (vector + graph + document + observability)
-2. **SemanticBFS/DFS**: Vector-guided graph traversal with SIMD acceleration
-3. **Progressive Quantization**: Binary -> INT8 -> PQ4 -> PQ8 -> FP32 with hardware acceleration
-4. **RL Query Planner**: Thompson Sampling with collection-size-aware rewards
-5. **6 Storage Engines**: Choose the right engine for your workload pattern
-6. **Zero-Copy Embedded Mode**: In-process database with PyO3 NumPy bindings
-
 == 11. Critical Gaps (Ordered by Severity)
 
 === CRITICAL (Runtime Safety)
