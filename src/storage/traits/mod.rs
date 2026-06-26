@@ -412,7 +412,15 @@ pub struct StorageTraitCacheStats {
 /// and select optimal join/fusion strategies.
 #[derive(Debug, Clone, Default)]
 pub struct CollectionStats {
-    /// Number of rows/vectors in the collection
+    /// Approximate number of rows/vectors in the collection.
+    ///
+    /// This is **not** an exact live count (TD-148). Engines derive it two ways, both
+    /// approximate: VIPER/HELIX use an insert-only atomic counter that is never
+    /// decremented on delete/tombstone (so it includes dead/expired records), and
+    /// SST/NOVA estimate it from bytes-on-disk. Treat it as a cost-planning hint,
+    /// never as a source of truth — the record-returning read paths (#305/#313)
+    /// are the authoritative live view. The accurate live count (= total positions
+    /// − deletion-vector bits) arrives with ADR-025 deletion vectors (N2/N3).
     pub row_count: u64,
     /// Average vector size in bytes
     pub avg_vector_bytes: u64,
@@ -780,6 +788,11 @@ pub trait UnifiedStorageFormat: Send + Sync {
     /// `CostModel` to estimate operation costs and select optimal join/fusion
     /// strategies. Default implementation returns basic stats; engines should
     /// override for accurate cardinality data.
+    ///
+    /// **Caveat (TD-148):** [`CollectionStats::row_count`] is approximate — an
+    /// insert-only counter (includes dead records) or a byte-based estimate, never a
+    /// precise live count. Use it only for cost estimation, not as an authoritative
+    /// record count. The accurate count arrives with ADR-025 deletion vectors.
     async fn collection_stats(&self, _collection_id: &str) -> Result<CollectionStats> {
         Ok(CollectionStats {
             engine_strategy: self.strategy(),
