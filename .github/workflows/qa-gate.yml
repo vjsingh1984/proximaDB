@@ -49,19 +49,18 @@ jobs:
           fi
           echo "ok: main PR originates from qa"
 
-  # Build the workspace test artifacts ONCE. The pgwire + recall jobs below take
-  # `needs: [build]` and restore this same target/ via Swatinem/rust-cache
-  # (shared-key), so they skip recompiling the workspace — modeled on ci.yml's
-  # rust-build -> rust-test cache-sharing idiom (prefix v1-rust-nightly-dev +
-  # shared-key "build"). `--workspace --tests` compiles every member crate's lib
-  # (incl. proximadb-block-format), the root crate's [[test]] integration target,
-  # and all auto-discovered tests/*.rs integration bins (tpch_pgwire_e2e,
-  # tpcds_pgwire_e2e). It does NOT build benches/examples. (`--tests` is a
-  # superset of `--lib`, so pax-recall's `-p proximadb-block-format --lib` is
-  # covered.) The e2e tests embed the server via tokio::spawn, so they link the
-  # lib — a pre-built server binary cannot replace this; a shared target/ can.
+  # Compile the test binaries the downstream jobs run, ONCE, so tpch/tpcds/pax
+  # (`needs: [build]`) restore this target/ via Swatinem/rust-cache (shared-key)
+  # and skip recompiling. Modeled on ci.yml's rust-build -> rust-test idiom.
+  # IMPORTANT: build ONLY the targets the consumers run — NOT `--workspace --tests`,
+  # which compiles every workspace test target and both fails (some targets don't
+  # compile in CI) and OOMs (no job cap). `cargo test ... --no-run` matches each
+  # consumer's compile step exactly, so its `cargo test --test X` is a cache hit.
+  # CARGO_BUILD_JOBS=2 bounds link-phase memory like the TPC jobs do. The e2e
+  # tests embed the server (tokio::spawn), so they link the lib — a shared
+  # compiled target/ is the lever, not a pre-built server binary.
   build:
-    name: Rust Build (workspace tests)
+    name: Rust Build (pgwire + recall tests)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -75,8 +74,12 @@ jobs:
         with:
           prefix-key: "v1-qa-build"
           shared-key: "qa-tests"
-      - name: Build workspace test artifacts
-        run: cargo build --workspace --tests
+      - name: Build the pgwire + recall test binaries
+        env:
+          CARGO_BUILD_JOBS: "2"
+        run: |
+          cargo test --test tpch_pgwire_e2e --test tpcds_pgwire_e2e --no-run
+          cargo test -p proximadb-block-format --lib --no-run
 
   tpch-pgwire:
     name: TPC-H pgwire integration
