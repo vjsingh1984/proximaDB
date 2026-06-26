@@ -199,7 +199,9 @@ pub mod server_builder;
 pub mod shared_services;
 /// A6 storage-write fence adapter (cluster lease manager → storage fence trait).
 pub mod storage_write_fence;
-pub mod tls;
+// Extracted to the `proximadb-tls` crate; re-exported here for source compatibility
+// (root-crate decomposition).
+pub use proximadb_tls as tls;
 /// Unix-domain socket binding helpers for portless ("embedded") transport mode.
 pub mod uds;
 

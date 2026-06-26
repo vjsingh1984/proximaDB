@@ -6568,6 +6568,7 @@ dependencies = [
  "proximadb-storage-tenant",
  "proximadb-storage-transaction",
  "proximadb-telemetry",
+ "proximadb-tls",
  "proximadb-uql",
  "proximadb-vector",
  "proximadb-vector-query",
@@ -7727,6 +7728,27 @@ version = "0.2.0"
 dependencies = [
  "proximadb-kernel",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-tls"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "hex",
+ "rcgen",
+ "rustls 0.23.41",
+ "rustls-pemfile 2.2.0",
+ "serde",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 1.0.69",
+ "time",
+ "tokio",
+ "tokio-rustls 0.26.4",
+ "tracing",
+ "x509-parser",
 ]
 
 [[package]]
