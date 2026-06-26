@@ -96,7 +96,7 @@ code-chunking = [
     "tree-sitter-language-pack>=1.0",
 ]
 
-# Shared code->CPG chunker (TD-CG2 / ADR-028). When installed, the deprecated
+# Shared code->CPG chunker (TD-CG2 / ADR-029). When installed, the deprecated
 # in-SDK `chunking_strategies/code.py` delegates to `victor_codegraph` so the
 # tree-sitter symbol+relation chunker lives in ONE place (Victor owns it). Until
 # `victor-codegraph` is published to PyPI, install it editable for now:

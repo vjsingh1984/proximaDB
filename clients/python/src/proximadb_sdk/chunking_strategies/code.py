@@ -1,7 +1,7 @@
 """
 Code-aware chunking strategy using Tree-sitter for AST parsing.
 
-.. deprecated:: TD-CG2 (ADR-028)
+.. deprecated:: TD-CG2 (ADR-029)
     This in-SDK code chunker duplicates the tree-sitter symbol+relation chunker that
     now lives in the shared, neutral ``victor-codegraph`` package (Victor owns it; the
     ProximaDB SDK, Victor, and AnvaiOps all consume it). When ``victor_codegraph`` is
@@ -40,7 +40,7 @@ except Exception:  # ImportError, or a partial/native load failure
 
 
 def _warn_code_chunker_deprecated() -> None:
-    """Steer callers toward the shared ``victor-codegraph`` package (ADR-028 / TD-CG2)."""
+    """Steer callers toward the shared ``victor-codegraph`` package (ADR-029 / TD-CG2)."""
 
     warnings.warn(
         "proximadb_sdk.chunking_strategies.code is deprecated (TD-CG2): the tree-sitter "

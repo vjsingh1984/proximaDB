@@ -1,4 +1,4 @@
-"""TD-CG2 (ADR-028): the in-SDK code chunker is deprecated and delegates to the shared
+"""TD-CG2 (ADR-029): the in-SDK code chunker is deprecated and delegates to the shared
 ``victor-codegraph`` package when the ``codegraph`` extra is installed.
 
 The deprecation-warning test runs always. The delegation tests are guarded with
