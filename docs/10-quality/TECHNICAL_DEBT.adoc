@@ -142,8 +142,8 @@ Phase 1+ of `CROSS_MODAL_FUSION_SEAM_2026_06_22.adoc` — one calibrated fuse-by
 | TD-140 | Edge-grain fusion | LOW | Open | D4 | PERF
 | Optional edge/relationship-grain fusion unit (edge-level carries 6–12% more signal than node-level). Differentiator; gate behind query class.
 
-| TD-143 | Retire weak proto fusion path | LOW | Open | D4 | OE
-| Retire `request_handlers.rs::execute_hybrid_query` (hardcoded graph, no tenant) once the seam covers gRPC; collapse the 12-strategy engine to D4. Cleanup after TD-136..138 land.
+| TD-143 | Retire weak proto fusion path | LOW | Deprecated | D4 | OE
+| Deprecated 2026-06-25: `#[deprecated]` + runtime `warn!` on the inherent `execute_hybrid_query` and both port traits (`ApiHandlersPort`/`GraphPort`); `#[allow(deprecated)]` at the three internal v1-compat forwarders (gRPC `GraphService`, the `ApiHandlersPort` impl, the platform `GraphPort` shim). Hard removal deferred — a faithful v2 *redirect* is impossible: (1) the path is dormant (only reachable via `enable_grpc_v1_compat`, default OFF; REST v1 surface is a mock); (2) semantically distinct from v2 — its `combination_strategy` is a sequential vector→graph pipeline, not the PIT-calibrated score-fusion of `graph_fusion_search`; (3) type-mismatched — v1 returns graph `nodes`/`edges`/`paths`, v2 returns fused `FusedItem`s, no 1:1 mapping; (4) not tenant-scoped. Redirect target: v2 `POST /api/v2/graphs/\{graph_id}/fusion-search` or gRPC `ProximaFusionService.FusionSearch`. Remove when the v1 compat surface sunsets; do not extend or add strategies.
 
 | TD-062 | Hybrid retrieval + reranking planner surface | HIGH | Open | D4 | PERF
 | Planner-level representation for lexical + dense + sparse + graph + doc-path + time + rerank stages; `EXPLAIN` shows fusion/rerank strategy + post-filter fallback. Move durable direction into shared algebra/catalog/projection metadata. Overhaul spec.
