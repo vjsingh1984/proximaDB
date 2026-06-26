@@ -9,7 +9,7 @@
 
 use anyhow::Result;
 
-use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, hash};
+use crate::{BloomFilterConfig, BloomFilterStrategy, hash};
 
 /// Byte-aligned bloom filter optimized for SSTable storage
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

@@ -4,6 +4,12 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  */
+//! Bloom-filter implementations for ProximaDB.
+//!
+//! Extracted from the root crate's `src/core/bloom` as a slice of the root-crate
+//! decomposition (see `docs/12-design/ROOT_CRATE_DECOMPOSITION_PLAN_2026_06_21.adoc`,
+//! Slice D / D1). The root crate re-exports it as `crate::core::bloom` for source
+//! compatibility.
 
 //! # Bloom Filter Module - Probabilistic Data Structure for Fast Lookups
 //!
@@ -257,13 +263,13 @@ pub trait BloomFilterStrategy: Send + Sync + std::fmt::Debug {
 /// Trait for metadata-aware bloom filters with type-safe operations
 pub trait MetadataBloomFilter: BloomFilterStrategy {
     /// Insert a metadata item with proper type handling
-    fn insert_metadata(&mut self, column: &str, item: &crate::proto::proximadb_v1::MetadataItem);
+    fn insert_metadata(&mut self, column: &str, item: &proximadb_proto::proximadb_v1::MetadataItem);
 
     /// Check if metadata might match with proper type handling
     fn might_match_metadata(
         &self,
         column: &str,
-        item: &crate::proto::proximadb_v1::MetadataItem,
+        item: &proximadb_proto::proximadb_v1::MetadataItem,
     ) -> bool;
 
     /// Get the number of metadata columns tracked
@@ -272,8 +278,8 @@ pub trait MetadataBloomFilter: BloomFilterStrategy {
 
 /// Serialize metadata value for bloom filter hashing
 /// This ensures consistent serialization across all types
-pub fn serialize_metadata_value(item: &crate::proto::proximadb_v1::MetadataItem) -> String {
-    use crate::proto::proximadb_v1::metadata_item::Value;
+pub fn serialize_metadata_value(item: &proximadb_proto::proximadb_v1::MetadataItem) -> String {
+    use proximadb_proto::proximadb_v1::metadata_item::Value;
 
     match &item.value {
         Some(Value::StringValue(s)) => s.clone(),
@@ -296,8 +302,8 @@ pub fn serialize_metadata_value(item: &crate::proto::proximadb_v1::MetadataItem)
 pub fn json_to_metadata_item(
     key: &str,
     value: &serde_json::Value,
-) -> crate::proto::proximadb_v1::MetadataItem {
-    use crate::proto::proximadb_v1::metadata_item::Value as ProtoValue;
+) -> proximadb_proto::proximadb_v1::MetadataItem {
+    use proximadb_proto::proximadb_v1::metadata_item::Value as ProtoValue;
 
     let proto_value = match value {
         serde_json::Value::String(s) => Some(ProtoValue::StringValue(s.clone())),
@@ -306,7 +312,7 @@ pub fn json_to_metadata_item(
         _ => None, // Null, Array, Object not supported in MetadataItem
     };
 
-    crate::proto::proximadb_v1::MetadataItem {
+    proximadb_proto::proximadb_v1::MetadataItem {
         key: key.to_string(),
         value: proto_value,
     }
@@ -538,12 +544,7 @@ pub mod hash {
     /// Double hashing to generate multiple hash values
     pub fn double_hash(key: &[u8], num_hashes: u32, bit_count: usize) -> Vec<usize> {
         // Default to XXHash for speed
-        double_hash_with_algorithm(
-            key,
-            num_hashes,
-            bit_count,
-            crate::core::bloom::HashAlgorithm::XXHash,
-        )
+        double_hash_with_algorithm(key, num_hashes, bit_count, crate::HashAlgorithm::XXHash)
     }
 
     /// Double hashing with configurable algorithm
@@ -551,26 +552,26 @@ pub mod hash {
         key: &[u8],
         num_hashes: u32,
         bit_count: usize,
-        algorithm: crate::core::bloom::HashAlgorithm,
+        algorithm: crate::HashAlgorithm,
     ) -> Vec<usize> {
         if bit_count == 0 {
             return vec![0; num_hashes as usize];
         }
 
         let (h1, h2) = match algorithm {
-            crate::core::bloom::HashAlgorithm::XXHash => {
+            crate::HashAlgorithm::XXHash => {
                 use proximadb_kernel::hash::{FastHash, XxHasher};
                 // Two independent hashes using XXHash
                 let h1 = XxHasher::hash_bytes(key) as u32;
                 let h2 = XxHasher::hash_bytes(&[key, b"_salt"].concat()) as u32;
                 (h1, h2)
             }
-            crate::core::bloom::HashAlgorithm::Murmur3 => {
+            crate::HashAlgorithm::Murmur3 => {
                 let h1 = murmur3_32(key, 0);
                 let h2 = murmur3_32(key, h1);
                 (h1, h2)
             }
-            crate::core::bloom::HashAlgorithm::Fnv1a => {
+            crate::HashAlgorithm::Fnv1a => {
                 // Use FNV-1a from our internal utils module
                 use proximadb_kernel::hash::{FastHash, FnvHasher};
 
@@ -707,7 +708,7 @@ impl SstableBloomFilter {
     pub fn might_match_metadata(
         &self,
         _column: &str,
-        _item: &crate::proto::proximadb_v1::MetadataItem,
+        _item: &proximadb_proto::proximadb_v1::MetadataItem,
     ) -> Result<bool> {
         if self.metadata_filter_data.is_empty() {
             // No metadata bloom filter built - cannot reject, might match

@@ -141,16 +141,16 @@ impl AdaptiveBloomConfig {
     }
 
     /// Convert to base BloomFilterConfig with calculated size
-    pub fn to_bloom_config(&self, num_keys: usize) -> crate::core::bloom::BloomFilterConfig {
+    pub fn to_bloom_config(&self, num_keys: usize) -> crate::BloomFilterConfig {
         let bits_per_key = (self.optimal_size(num_keys) / num_keys.max(1)) as u32;
 
-        crate::core::bloom::BloomFilterConfig {
-            strategy: crate::core::bloom::BloomStrategy::ByteAligned,
+        crate::BloomFilterConfig {
+            strategy: crate::BloomStrategy::ByteAligned,
             bits_per_key: bits_per_key.clamp(4, 32),
             false_positive_rate: Some(self.target_fp_rate),
             expected_items: num_keys,
             enabled: true,
-            hash_algorithm: crate::core::bloom::HashAlgorithm::default(),
+            hash_algorithm: crate::HashAlgorithm::default(),
         }
     }
 }
@@ -186,10 +186,10 @@ mod tests {
         let hash_count = config.optimal_hash_count(num_bits, num_keys);
 
         // Should be between 1 and 16
-        assert!(hash_count >= 1 && hash_count <= 16);
+        assert!((1..=16).contains(&hash_count));
 
         // For typical configs, should be around 6-8
-        assert!(hash_count >= 5 && hash_count <= 10);
+        assert!((5..=10).contains(&hash_count));
     }
 
     #[test]
