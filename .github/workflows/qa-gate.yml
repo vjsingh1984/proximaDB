@@ -132,10 +132,14 @@ jobs:
   rust-coverage-ratchet:
     name: Rust Coverage Ratchet
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    # FIRST CUT: cargo-llvm-cov over the full workspace is heavy and has OOM'd
-    # CI before; kept non-blocking until the baseline is seeded from a clean run
-    # and memory is tamed. Flip to required (remove this line) once stable.
+    timeout-minutes: 90
+    # FIRST CUT: cargo-llvm-cov over the full workspace is heavy. 60m was too
+    # tight — it timed out mid-lib-test-run (deep into the graph/index tests),
+    # so the seed artifact was never produced. 90m lets it complete + emit the
+    # seed (rust-coverage-seed.json), the prerequisite to baseline rust:* in
+    # COVERAGE_BASELINE.json. Still non-blocking (continue-on-error); flip to
+    # required (remove continue-on-error) only AFTER a clean run seeds the
+    # baseline AND it stays green.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
