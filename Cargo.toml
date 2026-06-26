@@ -594,6 +594,13 @@ licensing_surface = []
 experimental-engines = []
 # Experimental SIMD path; not enabled by default
 simd-experimental = []
+# TD-160 / ADR-027 / ADR-030: gate the PERF-CLASS I/O-trace *emission* (the
+# per-query structured `tracing` event in `io_trace::IoTrace::emit`). Default OFF
+# → zero perf-emission cost in normal operation. The cheap core counters
+# (range_gets/bytes_read/compute_ms) and ALL observers (route-cost, cache, and
+# the always-on BILLING observer) stay live regardless — billing is never gated
+# (ADR-027 non-entanglement; enforced by scripts/check_billing_never_gated.py).
+io-trace = []
 # TurboQuant data-oblivious quantizer + in-kernel allowlist (ADR-021).
 # Gates the QuantizationLevel::TurboQuant variant in proximadb-vector + the
 # TurboQuantVectorData struct in src/compute/distance_computation/quantized.rs.
