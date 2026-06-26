@@ -58,7 +58,9 @@ pub mod metadata_query;
 pub mod search;
 
 /// Serialization utilities for various formats
-pub mod serialization;
+/// Extracted to the `proximadb-serialization` crate; re-exported here for source
+/// compatibility (root-crate decomposition).
+pub use proximadb_serialization as serialization;
 
 /// Unified compression module with 13 algorithm support
 pub mod compression;

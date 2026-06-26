@@ -2,6 +2,10 @@
 //!
 //! This module provides high-performance zero-copy serialization for Vec<f32> data
 //! using bytemuck for direct memory mapping and ZSTD for compression.
+//!
+//! Extracted from the root crate's `src/core/serialization` as a slice of the root-crate
+//! decomposition (see `docs/12-design/ROOT_CRATE_DECOMPOSITION_PLAN_2026_06_21.adoc`). The
+//! root crate re-exports it as `crate::core::serialization` for source compatibility.
 
 pub mod fixed_length;
 pub mod streaming;
