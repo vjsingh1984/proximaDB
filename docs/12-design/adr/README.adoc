@@ -91,6 +91,11 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Per-Collection Index-Policy Routing + Cost-Derived Exact-vs-ANN Auto-Default
 | Proposed
 | Paved road + escape hatch for cold/warm search routing: precedence per-query `SearchMode` > collection `IndexPolicy` (typed proto knob: mode/rehydrate/byte_budget/nprobe, fail-closed validity matrix) > cost-derived auto-default (byte budget = `f(storage_class)`, not a vector count). Cold HNSW is dominated by exact up to the byte budget; quantization-only collections auto-route to HELIX (env-gated default-OFF); fixes IVF Defect B (persist-after-insert) so the cheap cold-load path returns vectors. Tracked: TD-165; cost-model trace consumption TD-158/TD-159
+
+| link:ADR-029-shared-codegraph-chunker-package.adoc[ADR-029]
+| Shared Code→CPG Chunker Package (`victor-codegraph`) — one chunker, three consumers, zero duplication
+| Proposed
+| The tree-sitter code→symbol+relation chunker is duplicated across ProximaDB SDK (`code.py`) and Victor (`victor-coding`); extract it into one neutral Apache-2.0 PyPI package (`victor-codegraph`, deps = `victor-contracts` + tree-sitter) consumed by Victor (owner), ProximaDB SDK (optional extra, retires `code.py` to stay generic), and anvaiops (SaaS code-graph vertical, ADR-0017 F3). Adopts LlamaIndex `CodeSplitter` size-discipline + Victor fallback chain + ProximaDB taxonomy; emits the substrate-keystone `ProximaRecord` shape. Boundary-safe (policy-free). Tracked: TD-CG1..CG3
 |===
 
 NOTE: ADR-010 through ADR-013 exist in this directory but are not yet
