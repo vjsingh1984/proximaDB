@@ -192,6 +192,9 @@ pub mod common;
 // Background operation context (optimization)
 pub mod background_flush_context;
 
+// A6 storage-write fence seam (default-OFF; `PROXIMADB_WRITE_FENCING=1`)
+pub mod write_fence;
+
 // Engine capabilities and supportability checks
 pub mod engine_capabilities;
 

@@ -197,6 +197,8 @@ pub mod server_builder;
 // etc via re-exports in `multi_server.rs`.
 /// Shared business-logic service composition layer (SharedServices)
 pub mod shared_services;
+/// A6 storage-write fence adapter (cluster lease manager → storage fence trait).
+pub mod storage_write_fence;
 pub mod tls;
 /// Unix-domain socket binding helpers for portless ("embedded") transport mode.
 pub mod uds;

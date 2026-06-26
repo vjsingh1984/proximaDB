@@ -3159,6 +3159,8 @@ mod simple_context_tests {
             priority: OperationPriority::Normal,
             timeout_ms: Some(60_000),
             extra_metadata: HashMap::new(),
+
+            tenant_id: None,
         };
 
         // Validate context fields
@@ -3182,6 +3184,8 @@ mod simple_context_tests {
             priority: OperationPriority::Normal,
             timeout_ms: Some(60_000),
             extra_metadata: HashMap::new(),
+
+            tenant_id: None,
         };
         assert_eq!(sst_context.engine_name(), "sst");
 
@@ -3207,6 +3211,8 @@ mod simple_context_tests {
             priority: OperationPriority::Normal,
             timeout_ms: Some(60_000),
             extra_metadata: HashMap::new(),
+
+            tenant_id: None,
         };
 
         // Test dimension-based optimizations
@@ -3432,6 +3438,8 @@ mod optimization_validation_tests {
             priority: OperationPriority::Normal,
             timeout_ms: Some(60_000),
             extra_metadata: HashMap::new(),
+
+            tenant_id: None,
         };
 
         debug!("   BackgroundManager → Uses pre-computed context (NO service call)");
@@ -3499,6 +3507,8 @@ mod optimization_validation_tests {
                 meta.insert("test_key".to_string(), "test_value".to_string());
                 meta
             },
+
+            tenant_id: None,
         };
 
         assert_eq!(context.collection_id, "completeness_test");
