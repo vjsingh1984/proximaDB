@@ -628,6 +628,22 @@ impl CatalogManager {
         fqn: &str,
         tenant: Option<&str>,
     ) -> Result<(Arc<dyn Catalog>, TableIdentifier)> {
+        // Structural system-catalog isolation (validate input first): the tenant
+        // id becomes `namespace[0]`, so a tenant must never shadow a reserved
+        // control-plane / per-tenant system subtree. Those are the
+        // underscore-prefixed segments (`_operator`, `_metering`, `_trace`,
+        // `_branches`, `_manifests` — see `DrPathBuilder::RESERVED_SYSTEM_SEGMENTS`).
+        // The physical path resolver already rejects them via `validate_id`;
+        // mirror that at the logical catalog-resolution boundary so DDL/DML cannot
+        // address the system catalog by passing a `_`-prefixed tenant.
+        if let Some(tenant) = tenant.filter(|tenant| !tenant.is_empty())
+            && tenant.starts_with('_')
+        {
+            anyhow::bail!(
+                "tenant '{tenant}' is invalid: tenant identifiers must not begin with '_' \
+                 (reserved for system/control-plane catalog subtrees)"
+            );
+        }
         let (catalog, id) = self.resolve_table(fqn).await?;
         match tenant {
             Some(tenant) if !tenant.is_empty() => {
@@ -802,6 +818,36 @@ mod tests {
         assert!(result.is_err());
         let err = result.err().expect("Expected error result");
         assert!(err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn resolve_table_scoped_rejects_reserved_underscore_tenant() {
+        // A tenant id becomes namespace[0]; a `_`-prefixed tenant would shadow a
+        // reserved control-plane/system subtree. The guard validates the tenant
+        // BEFORE catalog lookup, so the reserved-tenant error fires regardless of
+        // whether the table exists (here: no catalog registered).
+        let manager = CatalogManager::new();
+        for tenant in [
+            "_operator",
+            "_metering",
+            "_trace",
+            "_branches",
+            "_manifests",
+        ] {
+            // `(Arc<dyn Catalog>, TableIdentifier)` isn't `Debug`, so match rather
+            // than `expect_err`.
+            let err = match manager
+                .resolve_table_scoped("some_table", Some(tenant))
+                .await
+            {
+                Ok(_) => panic!("reserved underscore tenant {tenant} must be rejected"),
+                Err(e) => e,
+            };
+            assert!(
+                err.to_string().contains("must not begin with '_'"),
+                "unexpected error for tenant {tenant}: {err}"
+            );
+        }
     }
 
     #[tokio::test]

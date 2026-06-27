@@ -162,18 +162,28 @@ impl NativeCatalog {
         Ok(catalog)
     }
 
-    /// Parse storage URL to get local path
+    /// Parse storage URL to get local path.
+    ///
+    /// Only `file://` (and bare local paths) are durable today. Object-store
+    /// catalog persistence is a separate, gated change (inject `FilesystemFactory`
+    /// and route I/O through it). Until that lands we **fail closed** for
+    /// `s3://`/`gs://`/`az://`: the previous behaviour silently redirected cloud
+    /// catalog URLs to a process-local `std::env::temp_dir()` cache, so catalog
+    /// metadata was non-durable, non-isolated, and unshared across pods — a
+    /// silent data-loss footgun in any serverless/cloud deployment. Refusing to
+    /// start is strictly safer than persisting the control-plane catalog to /tmp.
     fn parse_storage_url(url: &str) -> Result<PathBuf> {
-        // Support file:// URLs and plain paths
         if let Some(path) = url.strip_prefix("file://") {
             Ok(PathBuf::from(path))
         } else if url.starts_with("s3://") || url.starts_with("gs://") || url.starts_with("az://") {
-            // Cloud storage - use local cache path
-            // In a real implementation, we'd use an object store client
-            let cache_dir = std::env::temp_dir().join("proximadb_catalog_cache");
-            Ok(cache_dir)
+            anyhow::bail!(
+                "object-store catalog URL '{url}' is not yet supported: the native catalog \
+                 only persists durably to file:// today. Configure a file:// metadata_url, \
+                 or wait for object-store catalog persistence (FilesystemFactory wiring). \
+                 Refusing to silently cache the control-plane catalog under a local temp dir."
+            )
         } else {
-            // Assume plain path
+            // Assume plain local path.
             Ok(PathBuf::from(url))
         }
     }
@@ -966,6 +976,24 @@ mod tests {
     fn test_parse_storage_url_plain_path() {
         let path = NativeCatalog::parse_storage_url("/tmp/catalog").unwrap();
         assert_eq!(path, PathBuf::from("/tmp/catalog"));
+    }
+
+    #[test]
+    fn test_parse_storage_url_object_store_fails_closed() {
+        // Object-store catalog URLs must fail closed (not silently redirect to a
+        // process-local temp dir) until durable object-store persistence is wired.
+        for url in [
+            "s3://bucket/catalog",
+            "gs://bucket/catalog",
+            "az://acct/catalog",
+        ] {
+            let err = NativeCatalog::parse_storage_url(url)
+                .expect_err("object-store catalog URL must be rejected, not temp-cached");
+            assert!(
+                err.to_string().contains("not yet supported"),
+                "unexpected error for {url}: {err}"
+            );
+        }
     }
 
     // ── Slice 5b.1: set_primary_pod (NativeCatalog override) ─────────
