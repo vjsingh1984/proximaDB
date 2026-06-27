@@ -6813,6 +6813,7 @@ dependencies = [
  "proximadb-distance-types",
  "proximadb-quantization-types",
  "proximadb-records",
+ "proximadb-storage-filesystem-types",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

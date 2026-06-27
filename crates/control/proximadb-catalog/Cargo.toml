@@ -39,6 +39,10 @@ proximadb-data-model = { workspace = true }
 proximadb-distance-types = { workspace = true }
 proximadb-quantization-types = { workspace = true }
 proximadb-records = { workspace = true }
+# FileSystem trait only (no concrete backends) — lets NativeCatalog persist
+# through an injected object-store/local backend (dependency inversion; the
+# concrete FilesystemFactory lives in the root crate and injects the impl).
+proximadb-storage-filesystem-types = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 sqlx = { workspace = true, optional = true }
