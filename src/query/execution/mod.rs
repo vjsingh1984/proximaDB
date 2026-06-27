@@ -8,11 +8,14 @@
 pub mod datafusion_bridge;
 pub mod datafusion_engine;
 pub mod engine;
+
 pub mod executor;
 pub mod low_latency_executor;
 pub mod plan_cache;
 pub mod planner;
 pub mod set_operations;
+#[cfg(test)]
+pub(crate) mod test_runtime;
 pub mod window_executor;
 
 // Re-export execution engine types

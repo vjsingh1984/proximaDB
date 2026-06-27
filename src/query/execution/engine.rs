@@ -532,30 +532,32 @@ mod tests {
         assert_eq!(metrics[0].rows, 1);
     }
 
-    #[tokio::test]
-    async fn execution_engine_stream_default_preserves_schema_and_rows() {
-        let stream_result = StaticEngine
-            .execute_sql_stream("SELECT id FROM t", QueryExecutionContext::default())
-            .await
-            .expect("default stream wrapper should execute");
+    #[test]
+    fn execution_engine_stream_default_preserves_schema_and_rows() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let stream_result = StaticEngine
+                .execute_sql_stream("SELECT id FROM t", QueryExecutionContext::default())
+                .await
+                .expect("default stream wrapper should execute");
 
-        assert_eq!(stream_result.schema.columns[0].name, "id");
-        let rows = stream_result
-            .rows
-            .try_collect::<Vec<RelationalRow>>()
-            .await
-            .expect("stream rows should be ok");
-        assert_eq!(
-            rows,
-            vec![vec![ProximaValue::Int64(7)], vec![ProximaValue::Int64(8)]]
-        );
+            assert_eq!(stream_result.schema.columns[0].name, "id");
+            let rows = stream_result
+                .rows
+                .try_collect::<Vec<RelationalRow>>()
+                .await
+                .expect("stream rows should be ok");
+            assert_eq!(
+                rows,
+                vec![vec![ProximaValue::Int64(7)], vec![ProximaValue::Int64(8)]]
+            );
+        });
     }
 
-    #[tokio::test]
-    async fn native_volcano_stream_yields_rows_incrementally() {
-        // Wrap in a timeout — see native_volcano_stream_truncates_without_error
-        // (CLAUDE.md #11): the streaming path intermittently hangs, so bound it.
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    // Root-cause fix for CLAUDE.md #11: use `test_runtime::run_sync` (block_on)
+    // instead of `#[tokio::test]` — see `test_runtime.rs` for the SOLID design.
+    #[test]
+    fn native_volcano_stream_yields_rows_incrementally() {
+        crate::query::execution::test_runtime::run_sync(async {
             let result = NativeVolcanoEngine::execute_physical_stream(
                 values_plan(),
                 &EmptyReaderFactory,
@@ -573,18 +575,12 @@ mod tests {
             let second = rows.next().await.expect("second row").expect("row ok");
             assert_eq!(second, vec![ProximaValue::Int64(2)]);
             assert!(rows.next().await.is_none());
-        })
-        .await
-        .expect(
-            "volcano stream timed out >10s — investigate execute_physical_stream (CLAUDE.md #11)",
-        );
+        });
     }
 
-    #[tokio::test]
-    async fn native_volcano_stream_honors_mid_stream_cancellation() {
-        // Wrap in a timeout — see native_volcano_stream_truncates_without_error
-        // (CLAUDE.md #11): the streaming path intermittently hangs, so bound it.
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    #[test]
+    fn native_volcano_stream_honors_mid_stream_cancellation() {
+        crate::query::execution::test_runtime::run_sync(async {
             let flag = Arc::new(AtomicBool::new(false));
             let controls = ExecutionControls {
                 cancellation_flag: Some(flag.clone()),
@@ -611,18 +607,12 @@ mod tests {
                 .expect("a stream item")
                 .expect_err("cancelled mid-stream");
             assert!(matches!(err, ExecutionError::Cancelled));
-        })
-        .await
-        .expect(
-            "volcano stream timed out >10s — investigate execute_physical_stream (CLAUDE.md #11)",
-        );
+        });
     }
 
-    #[tokio::test]
-    async fn native_volcano_stream_enforces_row_limit() {
-        // Wrap in a timeout — see native_volcano_stream_truncates_without_error
-        // (CLAUDE.md #11): the streaming path intermittently hangs, so bound it.
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    #[test]
+    fn native_volcano_stream_enforces_row_limit() {
+        crate::query::execution::test_runtime::run_sync(async {
             let controls = ExecutionControls {
                 max_rows: Some(1),
                 ..Default::default()
@@ -650,20 +640,12 @@ mod tests {
                     actual: 2
                 }
             ));
-        })
-        .await
-        .expect(
-            "volcano stream timed out >10s — investigate execute_physical_stream (CLAUDE.md #11)",
-        );
+        });
     }
 
-    #[tokio::test]
-    async fn native_volcano_stream_truncates_without_error() {
-        // Wrap in a timeout to convert the known streaming hang (CLAUDE.md #11:
-        // Limit executor race) into a deterministic, bounded failure instead of
-        // an indefinite CI runner block. If this times out, the root cause is
-        // the Limit executor's stream-termination race — not the test logic.
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    #[test]
+    fn native_volcano_stream_truncates_without_error() {
+        crate::query::execution::test_runtime::run_sync(async {
             let controls = ExecutionControls {
                 max_rows: Some(1),
                 row_limit_mode: RowLimitMode::Truncate,
@@ -683,9 +665,7 @@ mod tests {
             // Truncate mode stops at the cap with no overflow error: the second row
             // of the values plan is never produced.
             assert!(rows.next().await.is_none());
-        })
-        .await
-        .expect("stream truncated within 10s — if timed out, the Limit executor race is the root cause (CLAUDE.md #11)");
+        });
     }
 
     #[tokio::test]

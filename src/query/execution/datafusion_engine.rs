@@ -471,98 +471,104 @@ mod tests {
         assert_eq!(result.rows[0][0], ProximaValue::String("a".to_string()));
     }
 
-    #[tokio::test]
-    async fn datafusion_engine_streams_sql_over_parquet() {
-        use futures::TryStreamExt;
-        let (_tmp, location) = write_grouped_parquet();
-        let engine = DataFusionLocalEngine;
-        let stream_result = engine
-            .execute_sql_stream(
-                "SELECT k, SUM(x) as total FROM t GROUP BY k ORDER BY k",
-                QueryExecutionContext {
-                    parquet_tables: vec![("t".to_string(), location)],
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("stream should execute");
-
-        // Schema is available before draining any row.
-        assert_eq!(stream_result.schema.columns[0].name, "k");
-        let rows = stream_result
-            .rows
-            .try_collect::<Vec<_>>()
-            .await
-            .expect("stream rows should be ok");
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0][0], ProximaValue::String("a".to_string()));
-        assert_eq!(rows[0][1], ProximaValue::Float64(4.0));
-        assert_eq!(rows[1][0], ProximaValue::String("b".to_string()));
-    }
-
-    #[tokio::test]
-    async fn datafusion_engine_stream_truncates_without_error() {
-        use futures::TryStreamExt;
-        let (_tmp, location) = write_grouped_parquet();
-        let engine = DataFusionLocalEngine;
-        let stream_result = engine
-            .execute_sql_stream(
-                "SELECT k, SUM(x) as total FROM t GROUP BY k ORDER BY k",
-                QueryExecutionContext {
-                    parquet_tables: vec![("t".to_string(), location)],
-                    controls: ExecutionControls {
-                        max_rows: Some(1),
-                        row_limit_mode: RowLimitMode::Truncate,
+    #[test]
+    fn datafusion_engine_streams_sql_over_parquet() {
+        crate::query::execution::test_runtime::run_with_timeout(30, async {
+            use futures::TryStreamExt;
+            let (_tmp, location) = write_grouped_parquet();
+            let engine = DataFusionLocalEngine;
+            let stream_result = engine
+                .execute_sql_stream(
+                    "SELECT k, SUM(x) as total FROM t GROUP BY k ORDER BY k",
+                    QueryExecutionContext {
+                        parquet_tables: vec![("t".to_string(), location)],
                         ..Default::default()
                     },
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("stream should execute");
+                )
+                .await
+                .expect("stream should execute");
 
-        let rows = stream_result
-            .rows
-            .try_collect::<Vec<_>>()
-            .await
-            .expect("truncate mode streams the capped rows without error");
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0][0], ProximaValue::String("a".to_string()));
+            // Schema is available before draining any row.
+            assert_eq!(stream_result.schema.columns[0].name, "k");
+            let rows = stream_result
+                .rows
+                .try_collect::<Vec<_>>()
+                .await
+                .expect("stream rows should be ok");
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0][0], ProximaValue::String("a".to_string()));
+            assert_eq!(rows[0][1], ProximaValue::Float64(4.0));
+            assert_eq!(rows[1][0], ProximaValue::String("b".to_string()));
+        });
     }
 
-    #[tokio::test]
-    async fn datafusion_engine_stream_errors_on_overflow() {
-        use futures::TryStreamExt;
-        let (_tmp, location) = write_grouped_parquet();
-        let engine = DataFusionLocalEngine;
-        let stream_result = engine
-            .execute_sql_stream(
-                "SELECT k, SUM(x) as total FROM t GROUP BY k ORDER BY k",
-                QueryExecutionContext {
-                    parquet_tables: vec![("t".to_string(), location)],
-                    controls: ExecutionControls {
-                        max_rows: Some(1),
-                        row_limit_mode: RowLimitMode::Error,
+    #[test]
+    fn datafusion_engine_stream_truncates_without_error() {
+        crate::query::execution::test_runtime::run_with_timeout(30, async {
+            use futures::TryStreamExt;
+            let (_tmp, location) = write_grouped_parquet();
+            let engine = DataFusionLocalEngine;
+            let stream_result = engine
+                .execute_sql_stream(
+                    "SELECT k, SUM(x) as total FROM t GROUP BY k ORDER BY k",
+                    QueryExecutionContext {
+                        parquet_tables: vec![("t".to_string(), location)],
+                        controls: ExecutionControls {
+                            max_rows: Some(1),
+                            row_limit_mode: RowLimitMode::Truncate,
+                            ..Default::default()
+                        },
                         ..Default::default()
                     },
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("stream opens; the overflow surfaces while draining");
+                )
+                .await
+                .expect("stream should execute");
 
-        let err = stream_result
-            .rows
-            .try_collect::<Vec<_>>()
-            .await
-            .expect_err("draining should hit the row-limit overflow");
-        assert!(matches!(
-            err,
-            ExecutionError::RowLimitExceeded {
-                limit: 1,
-                actual: 2
-            }
-        ));
+            let rows = stream_result
+                .rows
+                .try_collect::<Vec<_>>()
+                .await
+                .expect("truncate mode streams the capped rows without error");
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0][0], ProximaValue::String("a".to_string()));
+        });
+    }
+
+    #[test]
+    fn datafusion_engine_stream_errors_on_overflow() {
+        crate::query::execution::test_runtime::run_with_timeout(30, async {
+            use futures::TryStreamExt;
+            let (_tmp, location) = write_grouped_parquet();
+            let engine = DataFusionLocalEngine;
+            let stream_result = engine
+                .execute_sql_stream(
+                    "SELECT k, SUM(x) as total FROM t GROUP BY k ORDER BY k",
+                    QueryExecutionContext {
+                        parquet_tables: vec![("t".to_string(), location)],
+                        controls: ExecutionControls {
+                            max_rows: Some(1),
+                            row_limit_mode: RowLimitMode::Error,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("stream opens; the overflow surfaces while draining");
+
+            let err = stream_result
+                .rows
+                .try_collect::<Vec<_>>()
+                .await
+                .expect_err("draining should hit the row-limit overflow");
+            assert!(matches!(
+                err,
+                ExecutionError::RowLimitExceeded {
+                    limit: 1,
+                    actual: 2
+                }
+            ));
+        });
     }
 }
 
