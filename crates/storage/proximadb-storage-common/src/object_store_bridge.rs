@@ -117,6 +117,31 @@ pub trait ObjectStoreBridge: Send + Sync {
         Ok(whole[start..end].to_vec())
     }
 
+    /// Read **multiple** byte ranges of a PAX segment in one batched operation —
+    /// the depth-collapsing primitive for object storage (TD-167 / ADR-034 P1). A
+    /// pruned read fetches all surviving block bodies through this call instead of
+    /// issuing one *dependent* ranged GET per block, turning `O(K)` serial
+    /// round-trips into a single batched op (latency = depth × RTT, so batching K
+    /// independent reads is one RTT, not K). Returns one buffer per input range, in
+    /// order. The default loops [`fetch_vector_segment_range`] (correct, no I/O
+    /// saving); object-store-backed implementations SHOULD override with
+    /// `FileSystem::read_ranges` so the ranges coalesce/parallelize on the wire.
+    async fn fetch_vector_segment_ranges(
+        &self,
+        path: &Path,
+        ranges: &[std::ops::Range<u64>],
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<Vec<u8>>, StorageError> {
+        let mut out = Vec::with_capacity(ranges.len());
+        for r in ranges {
+            out.push(
+                self.fetch_vector_segment_range(path, r.start, r.end - r.start, tenant_id)
+                    .await?,
+            );
+        }
+        Ok(out)
+    }
+
     /// Persists a specialized PAX block or Segment to decoupled object storage.
     /// Implementers MUST emit `proximadb_object_store_ops_total` and `proximadb_storage_bytes_seconds` for billing.
     async fn persist_vector_segment(

@@ -162,6 +162,21 @@ impl ProximaObjectStore {
             .map_err(|e| os_err("get_range", e))
     }
 
+    /// Read **multiple** byte ranges of the object at `path` in one batched call.
+    /// `object_store::get_ranges` coalesces adjacent ranges and issues them
+    /// concurrently, so K block-body reads cost ~one round-trip instead of K
+    /// serial GETs — the depth-collapse primitive for TD-167 / ADR-034 P1.
+    pub async fn get_ranges(
+        &self,
+        path: &Path,
+        ranges: &[Range<u64>],
+    ) -> Result<Vec<Bytes>, StorageError> {
+        self.store
+            .get_ranges(&self.full_path(path), ranges)
+            .await
+            .map_err(|e| os_err("get_ranges", e))
+    }
+
     /// Fetch object metadata (size, last-modified, e-tag) for `path` WITHOUT
     /// reading the body.
     ///
