@@ -21,9 +21,9 @@ use tracing::{debug, info, warn};
 
 // Temporarily disabled due to arrow-arith compilation conflicts - DEFERRED: Re-enable when resolved
 // use crate::storage::engines::viper::ViperEngine;
-use crate::index::axis::AxisManager;
 use crate::storage::engines::sst::SstEngine;
 use crate::storage::traits::FlushResult;
+use proximadb_index_traits::IndexMaintenance;
 
 use super::compaction_axis_integration::CompactionAxisUpdater;
 
@@ -210,7 +210,7 @@ impl CompactionCoordinator {
         viper_engine: Arc<crate::storage::engines::viper::engine::ViperEngine>,
         sst_engine: Arc<SstEngine>,
         config: Option<WalCompactionConfig>,
-        axis_manager: Option<Arc<AxisManager>>,
+        axis_manager: Option<Arc<dyn IndexMaintenance>>,
     ) -> Self {
         let config_ref = config.as_ref();
 

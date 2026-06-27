@@ -13,7 +13,90 @@ mod tests {
 
     use crate::storage::traits::CompactionResult;
     use chrono::Utc;
+    use proximadb_index_traits::IndexReaderSnapshot;
+    use proximadb_index_types::IndexAlgorithm;
     use std::collections::HashMap;
+
+    fn hnsw() -> IndexAlgorithm {
+        IndexAlgorithm::HNSW {
+            m: 16,
+            ef_construction: 200,
+            ef_search: 50,
+            max_elements: 1000,
+        }
+    }
+
+    fn ivf() -> IndexAlgorithm {
+        IndexAlgorithm::IVF {
+            nlist: 100,
+            nprobe: 8,
+            quantizer: None,
+        }
+    }
+
+    fn annoy() -> IndexAlgorithm {
+        IndexAlgorithm::Annoy {
+            n_trees: 10,
+            search_k: -1,
+            max_leaf_size: 64,
+        }
+    }
+
+    fn snap(name: &str, vc: usize, mem: usize, algorithm: IndexAlgorithm) -> IndexReaderSnapshot {
+        IndexReaderSnapshot {
+            name: name.to_string(),
+            vector_count: vc,
+            memory_usage_bytes: mem,
+            algorithm,
+        }
+    }
+
+    #[test]
+    fn aggregate_empty_is_default() {
+        assert_eq!(aggregate_index_stats(&[]), CompactionIndexStats::default());
+    }
+
+    #[test]
+    fn aggregate_single_hnsw_counts_as_dynamic() {
+        let stats = aggregate_index_stats(&[snap("primary", 10, 100, hnsw())]);
+        assert_eq!(
+            stats,
+            CompactionIndexStats {
+                total_indexes: 1,
+                dynamic_indexes: 1,
+                static_indexes: 0,
+                total_vectors_indexed: 10,
+                total_memory_usage_bytes: 100,
+            }
+        );
+    }
+
+    #[test]
+    fn aggregate_single_annoy_counts_as_static() {
+        let stats = aggregate_index_stats(&[snap("ann", 5, 50, annoy())]);
+        assert_eq!(stats.total_indexes, 1);
+        assert_eq!(stats.dynamic_indexes, 0);
+        assert_eq!(stats.static_indexes, 1);
+    }
+
+    #[test]
+    fn aggregate_mixed_classifies_and_sums() {
+        let stats = aggregate_index_stats(&[
+            snap("a", 10, 100, hnsw()),
+            snap("b", 20, 200, ivf()),
+            snap("c", 7, 70, annoy()),
+        ]);
+        assert_eq!(
+            stats,
+            CompactionIndexStats {
+                total_indexes: 3,
+                dynamic_indexes: 2, // HNSW + IVF
+                static_indexes: 1,  // Annoy
+                total_vectors_indexed: 37,
+                total_memory_usage_bytes: 370,
+            }
+        );
+    }
 
     // Note: These tests focus on the CompactionAxisUpdater behavior without a real AxisManager.
     // Testing with a real AxisManager would require a more complex setup and is covered

@@ -167,6 +167,26 @@ pub struct IndexScoredResult {
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+/// A slim, read-only snapshot of one index for a collection — the foundation-only
+/// stand-in for a live `Arc<dyn AxisVectorIndex>` reader handle.
+///
+/// Compaction only *aggregates* per-index stats; it never holds the reader. So the
+/// boundary exposes exactly those three quantities (and the algorithm, to classify
+/// dynamic vs static indexes) rather than the concrete index trait — keeping
+/// `src/storage` free of any `crate::index` type. The concrete `AxisVectorIndex`
+/// → snapshot conversion lives in the AXIS adapter (`src/index/axis/contract.rs`).
+#[derive(Debug, Clone)]
+pub struct IndexReaderSnapshot {
+    /// Index name (e.g. the primary/global-id/metadata/vector index identifier).
+    pub name: String,
+    /// Number of vectors currently held by this index.
+    pub vector_count: usize,
+    /// Approximate memory consumption of this index in bytes.
+    pub memory_usage_bytes: usize,
+    /// The index algorithm (used to classify dynamic vs static indexes).
+    pub algorithm: proximadb_index_types::IndexAlgorithm,
+}
+
 // ---------------------------------------------------------------------------
 // Segregated role traits (ISP) — engines depend only on the role they use
 // ---------------------------------------------------------------------------
@@ -214,16 +234,38 @@ pub trait IndexMetrics: Send + Sync {
 }
 
 /// Maintenance hooks invoked by compaction / background optimization.
-///
-/// `get_collection_indexes` (returning per-index reader handles) is intentionally
-/// *not* part of this contract yet: on `develop` it is a stub returning an empty
-/// vec, and its return type (`Arc<dyn AxisVectorIndex>`) would force a shared
-/// reader trait + supertrait wiring across the concrete index impls. It lands
-/// with the compaction-reader follow-up, once compaction actually consumes it.
 #[async_trait]
 pub trait IndexMaintenance: Send + Sync {
     /// Rebuild a single named index for `collection_id`.
     async fn rebuild_index(&self, collection_id: &str, index_name: &str) -> anyhow::Result<()>;
+
+    /// Reconcile the collection's indexes after a storage compaction:
+    /// apply `deleted_vector_ids` removals, re-index `merged_vectors`, and rebuild
+    /// any static indexes that can't mutate in place.
+    ///
+    /// This is the **intent**, not the mechanism: the index side owns *how* it
+    /// updates its readers, so the concrete `Arc<dyn AxisVectorIndex>` handles
+    /// never cross into storage. Storage just announces "compaction happened,
+    /// here is what changed."
+    async fn update_indexes_after_compaction(
+        &self,
+        collection_id: &str,
+        deleted_vector_ids: &[String],
+        merged_vectors: &[ProximaRecord],
+    ) -> anyhow::Result<()>;
+
+    /// Slim per-index stat snapshots for `collection_id` (empty when the collection
+    /// has no active indexes), for compaction stats aggregation.
+    ///
+    /// Returns [`IndexReaderSnapshot`]s rather than live `Arc<dyn AxisVectorIndex>`
+    /// reader handles: storage only sums per-index stats, so the boundary need not
+    /// expose the concrete reader trait (which would force shared-reader supertrait
+    /// wiring and re-leak a `crate::index` type into storage). The concrete-reader
+    /// → snapshot conversion is the adapter's job (`src/index/axis/contract.rs`).
+    async fn collection_index_stats(
+        &self,
+        collection_id: &str,
+    ) -> anyhow::Result<Vec<IndexReaderSnapshot>>;
 
     /// Analyze the collection and apply adaptive index optimizations.
     async fn analyze_and_optimize(&self, collection_id: &str) -> anyhow::Result<()>;

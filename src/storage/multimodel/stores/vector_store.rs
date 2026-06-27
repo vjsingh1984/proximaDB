@@ -12,9 +12,9 @@
 use std::sync::Arc;
 
 use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
-use crate::index::axis::AxisManager;
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 use crate::storage::traits::UnifiedStorageFormat;
+use proximadb_index_traits::IndexEngine;
 // Re-export foundation quantization types
 pub use proximadb_quantization_types::{QuantizationLevel, QuantizationType};
 
@@ -128,8 +128,8 @@ pub struct VectorStore {
     dimension_threshold: usize,
     /// Shared quantization engine
     quantizer: Option<Arc<UnifiedQuantizationEngine>>,
-    /// Index manager for HNSW/IVF indexes
-    index_manager: Option<Arc<AxisManager>>,
+    /// Index manager for HNSW/IVF indexes (the AXIS index-engine port).
+    index_manager: Option<Arc<dyn IndexEngine>>,
     /// Cache orchestrator
     cache_orchestrator: Option<Arc<CrossCacheOrchestrator>>,
     /// Configuration
@@ -177,7 +177,7 @@ impl VectorStore {
     }
 
     /// Set the index manager
-    pub fn with_index_manager(mut self, manager: Arc<AxisManager>) -> Self {
+    pub fn with_index_manager(mut self, manager: Arc<dyn IndexEngine>) -> Self {
         self.index_manager = Some(manager);
         self
     }
@@ -231,11 +231,6 @@ impl VectorStore {
     /// Get the quantizer
     pub fn quantizer(&self) -> Option<&Arc<UnifiedQuantizationEngine>> {
         self.quantizer.as_ref()
-    }
-
-    /// Get the index manager
-    pub fn index_manager(&self) -> Option<&Arc<AxisManager>> {
-        self.index_manager.as_ref()
     }
 
     /// Get the cache orchestrator

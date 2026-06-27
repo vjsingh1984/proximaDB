@@ -17,8 +17,8 @@ use async_trait::async_trait;
 
 use proximadb_index_traits::{
     IndexFilterOperator, IndexHybridQuery, IndexIngest, IndexLifecycle, IndexMaintenance,
-    IndexMetadataFilter, IndexMetrics, IndexQuery, IndexQueryResult, IndexScoredResult,
-    IndexSearchEffort, IndexVectorQuery,
+    IndexMetadataFilter, IndexMetrics, IndexQuery, IndexQueryResult, IndexReaderSnapshot,
+    IndexScoredResult, IndexSearchEffort, IndexVectorQuery,
 };
 use proximadb_records::ProximaRecord;
 
@@ -190,6 +190,46 @@ impl IndexMetrics for AxisManager {
 impl IndexMaintenance for AxisManager {
     async fn rebuild_index(&self, collection_id: &str, index_name: &str) -> anyhow::Result<()> {
         AxisManager::rebuild_index(self, collection_id, index_name).await
+    }
+
+    async fn update_indexes_after_compaction(
+        &self,
+        collection_id: &str,
+        deleted_vector_ids: &[String],
+        merged_vectors: &[ProximaRecord],
+    ) -> anyhow::Result<()> {
+        // The index side owns the mechanism: AxisManager reconciles its own live
+        // readers (remove/add/rebuild). Storage never sees `AxisVectorIndex`.
+        AxisManager::update_indexes_after_compaction(
+            self,
+            collection_id,
+            deleted_vector_ids,
+            merged_vectors,
+        )
+        .await
+    }
+
+    async fn collection_index_stats(
+        &self,
+        collection_id: &str,
+    ) -> anyhow::Result<Vec<IndexReaderSnapshot>> {
+        // Anti-corruption boundary: the concrete `Arc<dyn AxisVectorIndex>` readers
+        // never escape `src/index` — we project each one to a slim foundation
+        // snapshot here. (`get_collection_indexes` is a stub returning empty today,
+        // so this maps empty→empty; the conversion is ready for when it is filled.)
+        let readers = AxisManager::get_collection_indexes(self, collection_id).await?;
+        Ok(readers
+            .into_iter()
+            .map(|(name, index)| {
+                let stats = index.stats();
+                IndexReaderSnapshot {
+                    name,
+                    vector_count: stats.vector_count,
+                    memory_usage_bytes: stats.memory_usage_bytes,
+                    algorithm: index.algorithm().clone(),
+                }
+            })
+            .collect())
     }
 
     async fn analyze_and_optimize(&self, collection_id: &str) -> anyhow::Result<()> {
