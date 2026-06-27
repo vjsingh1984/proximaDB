@@ -4367,6 +4367,20 @@ pub trait Catalog: Send + Sync {
     async fn list_tables(&self, namespace: &[String]) -> anyhow::Result<Vec<TableIdentifier>>;
     async fn table_exists(&self, identifier: &TableIdentifier) -> anyhow::Result<bool>;
     async fn get_table(&self, identifier: &TableIdentifier) -> anyhow::Result<CatalogTableSchema>;
+
+    /// ADR-031 O1 (dual-read): resolve a table by its stable `object_id` — the
+    /// inverse of `get_table(...).object_id`. Returns `None` when no table carries
+    /// that id, or when the backend does not allocate object_ids (external
+    /// catalogs). Lets `dyn Catalog` consumers (change-feed, recovery, planner)
+    /// key on the global id rather than the mutable name. Default: `None`.
+    async fn get_table_by_object_id(
+        &self,
+        object_id: u64,
+    ) -> anyhow::Result<Option<TableIdentifier>> {
+        let _ = object_id;
+        Ok(None)
+    }
+
     async fn rename_table(
         &self,
         from: &TableIdentifier,
