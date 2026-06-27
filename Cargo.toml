@@ -185,6 +185,7 @@ proximadb-relational-executor = { path = "crates/query/proximadb-relational-exec
 proximadb-relational-frontend = { path = "crates/query/proximadb-relational-frontend" }
 proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+arc-swap = "1.7"
 dashmap = "6.1.0"
 moka = { version = "0.12", features = ["future"] }
 parking_lot = "0.12"
@@ -527,6 +528,7 @@ ring = "0.17"  # Cryptographic operations for field-level encryption
 crossbeam = "0.8"  # Lock-free ring buffers for observability ingestion
 
 parking_lot = "0.12"
+arc-swap = { workspace = true }
 async-trait = "0.1"
 futures = "0.3"
 regex = "1.10"

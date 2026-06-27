@@ -212,6 +212,8 @@ pub mod query_service;
 /// gauge + observation / hot-swap counters for /route-health +
 /// /recall-tune.
 pub mod recall_drift_metrics;
+/// Read-route decision observability (co-design C4 operator surface).
+pub mod route_metrics;
 pub mod schema;
 pub mod store;
 /// TD-064 predicate-aware vector search shortfall counters.

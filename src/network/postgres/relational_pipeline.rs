@@ -259,6 +259,17 @@ pub async fn try_run_select(
     #[cfg(not(feature = "datafusion-integration"))]
     let (partition_fanout, cardinality) = (Default::default(), Default::default());
 
+    // AST cardinality fallback: when the footer-warmed stat is `Unknown` (native
+    // storage, or a cold Parquet table never yet scanned), derive a cheap
+    // syntax-only hint (LIMIT / scalar aggregate) so the cost-model shape-class
+    // still discriminates instead of collapsing to the coarse class. Pure AST
+    // walk — zero route-time I/O (co-design P5).
+    let cardinality = if cardinality == crate::query::compute_scheduler::CardinalityClass::Unknown {
+        query_cardinality_hint(query)
+    } else {
+        cardinality
+    };
+
     let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: true,
@@ -274,6 +285,7 @@ pub async fn try_run_select(
         target: "proximadb::compute_route",
         backend = ?decision.backend,
         workload = ?decision.workload_profile,
+        source = decision.source.as_str(),
         reason = %decision.reason,
         "{}",
         decision.explain_line()
@@ -1000,6 +1012,7 @@ pub fn classify_select_route(
             crate::query::compute_scheduler::QueryShape {
                 engages_relational: engages,
                 parquet_backed: false,
+                cardinality: query_cardinality_hint(query),
                 ..Default::default()
             },
             Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
@@ -1295,6 +1308,7 @@ async fn route_and_plan_select(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: engages,
             parquet_backed,
+            cardinality: query_cardinality_hint(query),
             ..Default::default()
         },
         Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
@@ -1510,6 +1524,9 @@ mod route_explain_tests {
         for _ in 0..3 {
             GLOBAL_ROUTE_COST_MODEL.observe_by_label("olap/native", "Native(Volcano)", &snap);
         }
+        // Publish the frozen consult table so the advisory is visible this query
+        // (production recomputes debounced every N observations; tests force it).
+        GLOBAL_ROUTE_COST_MODEL.recompute();
         let expl = explain_select_route("SELECT service, count(*) FROM events GROUP BY service")
             .expect("routable");
         // Observe-mode: the chosen engine is unchanged ...
@@ -1533,6 +1550,73 @@ mod route_explain_tests {
 /// return false and stay on the legacy path.
 fn query_engages_relational_engine(query: &SqlQuery) -> bool {
     set_expr_engages(&query.body)
+}
+
+/// A cheap, syntax-only cardinality hint from the parsed AST — the fallback
+/// when the footer-warmed [`crate::query::route_cost_model::classify_table_shapes`]
+/// stat is `Unknown` (native storage, or a cold Parquet table never yet scanned),
+/// so the cost-model shape-class still discriminates instead of collapsing to
+/// the coarse class. Returns [`CardinalityClass::Small`] only when the query
+/// shape GUARANTEES a tiny result, else `Unknown` (never over-claims). Pure AST
+/// walk — zero route-time I/O (co-design P5: I/O round-trips, not CPU, dominate;
+/// the route path must not probe storage).
+fn query_cardinality_hint(query: &SqlQuery) -> crate::query::compute_scheduler::CardinalityClass {
+    use crate::query::compute_scheduler::CardinalityClass;
+    // sqlparser 0.59 carries LIMIT on the Query as a `LimitClause` enum (standard
+    // `LIMIT N [OFFSET]` vs MySQL `LIMIT offset, N`). A literal renders to a bare
+    // number string; a placeholder / expression doesn't parse → stay Unknown
+    // (never over-claim). Version-agnostic (no `Value::Number` probe).
+    if let Some(rows) = query
+        .limit_clause
+        .as_ref()
+        .and_then(limit_expr)
+        .and_then(|e| e.to_string().parse::<u64>().ok())
+    {
+        return CardinalityClass::from_estimate(Some(rows));
+    }
+    cardinality_hint_body(&query.body)
+}
+
+/// The limit `Expr` from either `LimitClause` variant (`None` for `LIMIT ALL`).
+fn limit_expr(clause: &sqlparser::ast::LimitClause) -> Option<&SqlExpr> {
+    use sqlparser::ast::LimitClause;
+    match clause {
+        LimitClause::LimitOffset { limit, .. } => limit.as_ref(),
+        LimitClause::OffsetCommaLimit { limit, .. } => Some(limit),
+    }
+}
+
+fn cardinality_hint_body(body: &SetExpr) -> crate::query::compute_scheduler::CardinalityClass {
+    use crate::query::compute_scheduler::CardinalityClass;
+    match body {
+        SetExpr::Select(select) => {
+            // A scalar aggregate (aggregate projection, no GROUP BY / HAVING)
+            // yields exactly one row.
+            let has_agg = select.projection.iter().any(select_item_has_aggregate);
+            let has_group_by = match &select.group_by {
+                GroupByExpr::All(_) => true,
+                GroupByExpr::Expressions(exprs, _) => !exprs.is_empty(),
+            };
+            if has_agg && !has_group_by && select.having.is_none() {
+                return CardinalityClass::Small;
+            }
+            CardinalityClass::Unknown
+        }
+        // A parenthesized subquery may carry its own LIMIT; a set-op branch's
+        // LIMIT does not bound the whole result, so be conservative elsewhere.
+        SetExpr::Query(q) => {
+            if let Some(rows) = q
+                .limit_clause
+                .as_ref()
+                .and_then(limit_expr)
+                .and_then(|e| e.to_string().parse::<u64>().ok())
+            {
+                return CardinalityClass::from_estimate(Some(rows));
+            }
+            cardinality_hint_body(&q.body)
+        }
+        _ => CardinalityClass::Unknown,
+    }
 }
 
 fn set_expr_engages(body: &SetExpr) -> bool {
@@ -1763,6 +1847,50 @@ mod tests {
         ));
         assert!(!gate("SELECT id FROM inv ORDER BY qty LIMIT 5"));
         assert!(!gate("SELECT id, status FROM inv WHERE id = 'i1'"));
+    }
+
+    fn card_hint(sql: &str) -> crate::query::compute_scheduler::CardinalityClass {
+        let statements = Parser::parse_sql(&GenericDialect {}, sql).expect("parse");
+        match statements.as_slice() {
+            [Statement::Query(query)] => query_cardinality_hint(query),
+            _ => panic!("expected a single SELECT statement"),
+        }
+    }
+
+    #[test]
+    fn cardinality_hint_small_for_limit_and_scalar_aggregate() {
+        use crate::query::compute_scheduler::CardinalityClass;
+        // LIMIT n bounds the result (a literal renders to a bare number string).
+        assert_eq!(
+            card_hint("SELECT * FROM inv LIMIT 10"),
+            CardinalityClass::Small
+        );
+        // A large LIMIT still buckets via from_estimate (≤1M → Medium).
+        assert_eq!(
+            card_hint("SELECT * FROM inv LIMIT 100000"),
+            CardinalityClass::Medium
+        );
+        // A scalar aggregate (no GROUP BY / HAVING) → exactly one row → Small.
+        assert_eq!(
+            card_hint("SELECT COUNT(*) FROM inv"),
+            CardinalityClass::Small
+        );
+        assert_eq!(
+            card_hint("SELECT SUM(qty), AVG(qty) FROM inv"),
+            CardinalityClass::Small
+        );
+        // GROUP BY defeats the scalar-aggregate signal (could be many groups).
+        assert_eq!(
+            card_hint("SELECT status, COUNT(*) FROM inv GROUP BY status"),
+            CardinalityClass::Unknown
+        );
+        // A plain unbounded scan → Unknown (never over-claim).
+        assert_eq!(card_hint("SELECT * FROM inv"), CardinalityClass::Unknown);
+        // A non-literal LIMIT expression doesn't parse to a count → Unknown.
+        assert_eq!(
+            card_hint("SELECT * FROM inv LIMIT 1 + 1"),
+            CardinalityClass::Unknown
+        );
     }
 
     #[test]

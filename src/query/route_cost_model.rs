@@ -38,7 +38,9 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
+
+use arc_swap::ArcSwap;
 
 use crate::observability::io_trace::IoTraceSnapshot;
 use crate::query::compute_scheduler::{QueryShape, backend_label};
@@ -391,6 +393,124 @@ impl RouteRecommendation {
     }
 }
 
+// ── Frozen recommendation table: the lock-free consult path (co-design C4) ──
+//
+// The consult half of the cost model. `RouteCostModel::consult` does a single
+// `ArcSwap::load` + `HashMap` get — never the learn-path `cells` mutex — so the
+// route decision stays O(1) and lock-free even when live override is enabled.
+// The EWMA learner is the SOLE writer, recomputing this table debounced on the
+// observe path; readers always see a consistent immutable snapshot.
+
+/// One freshness-safe candidate's baked cost summary in the frozen table.
+#[derive(Debug, Clone)]
+pub struct BackendChoice {
+    /// The candidate engine.
+    pub backend: ComputeBackend,
+    /// Weighted neutral score (lower = cheaper) — the soft byte-cost term.
+    pub score: f64,
+    /// EWMA sample count at bake time.
+    pub samples: u64,
+    /// Predicted ranged-GET count — the TD-170 hard round-trip-budget term.
+    pub range_gets: f64,
+}
+
+/// Per-shape-class pre-baked recommendation: everything the lock-free consult
+/// needs to reproduce the explore / override / advisory decision without a
+/// lock. Immutable once published via [`ArcSwap`].
+#[derive(Debug, Clone)]
+pub struct ClassRecommendation {
+    /// Every freshness-safe candidate with ANY history, cheapest-first. Carries
+    /// score/samples/range_gets so the consult can apply BOTH the soft
+    /// `min_advantage` gate and the hard `rtt_budget` gate from frozen data.
+    ranked: Vec<BackendChoice>,
+    /// The least-sampled freshness-safe candidate still under `min_samples` (the
+    /// exploration warm-up target), or `None` once all are warm. May target a
+    /// never-observed safe candidate (0 samples). Resolved against the live
+    /// `explore_tick` at consult time.
+    explore_target: Option<ComputeBackend>,
+}
+
+impl ClassRecommendation {
+    /// Ranked freshness-safe candidates with history, cheapest-first.
+    pub fn ranked(&self) -> &[BackendChoice] {
+        &self.ranked
+    }
+    /// The baked exploration warm-up target, if any candidate is still cold.
+    pub fn explore_target(&self) -> Option<&ComputeBackend> {
+        self.explore_target.as_ref()
+    }
+    /// Find the candidate matching `backend` (by canonical label). Used to
+    /// resolve the static route's baked cost at consult time.
+    pub fn find(&self, backend: &ComputeBackend) -> Option<&BackendChoice> {
+        let want = backend_label(backend);
+        self.ranked
+            .iter()
+            .find(|c| backend_label(&c.backend) == want)
+    }
+}
+
+/// Immutable snapshot of all per-class recommendations, held in an [`ArcSwap`]
+/// inside [`RouteCostModel`]. The consult path loads it once and does a
+/// `HashMap` get — fully lock-free.
+#[derive(Debug, Clone, Default)]
+struct RouteRecommendationTable {
+    by_class: HashMap<String, ClassRecommendation>,
+}
+
+/// Lock-free consult over the frozen recommendation table (DIP seam). The
+/// scheduler depends on this abstraction, not the concrete [`RouteCostModel`];
+/// the concrete model implements it backed by its [`ArcSwap`] table, and a test
+/// double can satisfy it with canned data. Production consult stays
+/// monomorphized over the concrete model (no `&dyn` on the hot path) — the
+/// trait exists for testability and a future persisted/remote cost model.
+pub trait RouteConsult {
+    /// Lock-free consult for one shape-class. `None` when the class has no baked
+    /// entry (cold start — the caller keeps the static route).
+    fn consult(&self, shape_class: &str) -> Option<ClassRecommendation>;
+    /// Whether live override is currently enabled (reads the live `AtomicBool`).
+    fn override_active(&self) -> bool;
+    /// Advance and return the exploration rate-limit tick (pre-increment value).
+    fn next_exploration_tick(&self) -> u64;
+    /// Config surfaced for the consult's gate logic.
+    fn min_samples(&self) -> u64;
+    fn min_advantage(&self) -> f64;
+    fn exploration_interval(&self) -> u64;
+    /// TD-170 hard round-trip budget (`None` = disabled).
+    fn rtt_budget(&self) -> Option<f64>;
+}
+
+/// Inverse of [`backend_label`] — recover a [`ComputeBackend`] from its frozen
+/// label. Returns `None` for an unrecognized label so the recomputer skips it
+/// instead of panicking (a stale/mistyped label never corrupts the frozen table).
+fn parse_backend_label(label: &str) -> Option<ComputeBackend> {
+    match label {
+        "Native(Volcano)" => Some(ComputeBackend::Native),
+        "DataFusionLocal" => Some(ComputeBackend::DataFusionLocal),
+        "DataFusionDistributed" => Some(ComputeBackend::DataFusionDistributed),
+        "PolarsLocal" => Some(ComputeBackend::PolarsLocal),
+        "DuckDbCompat" => Some(ComputeBackend::DuckDbCompat),
+        _ => label
+            .strip_prefix("ExternalDelegated(")
+            .and_then(|s| s.strip_suffix(')'))
+            .map(|s| ComputeBackend::ExternalDelegated(s.to_string())),
+    }
+}
+
+/// The freshness-safe backend SET for a shape-class, derived from its prefix —
+/// reproduces `compute_scheduler::override_candidates` without a [`QueryShape`].
+/// Only `olap/parquet` has two freshness-compatible engines (Native's
+/// strong-freshness scan and DataFusion's base-snapshot scan both correctly
+/// answer an analytic query); every other class keeps its single static
+/// backend, so a baked override can never flip a query onto an engine that
+/// would serve it incorrectly.
+fn freshness_safe_backends_from_class(shape_class: &str) -> Vec<ComputeBackend> {
+    if shape_class.starts_with("olap/parquet") {
+        vec![ComputeBackend::Native, ComputeBackend::DataFusionLocal]
+    } else {
+        vec![ComputeBackend::Native]
+    }
+}
+
 /// Trace-driven, thread-safe route cost model. One instance is consulted at the
 /// route decision and fed by completed-query traces.
 #[derive(Debug)]
@@ -418,6 +538,16 @@ pub struct RouteCostModel {
     /// latency = depth × RTT, so a backend over the round-trip budget loses even
     /// when it moves fewer bytes.
     rtt_budget: Option<f64>,
+    /// Frozen recommendation table — the LOCK-FREE consult surface. Read via
+    /// [`ArcSwap`] (`load` + `HashMap` get) on the route hot path; written only
+    /// by [`Self::recompute_locked`] (debounced on the observe path). Empty at
+    /// construction → consult returns `None` → callers keep the static route.
+    table: ArcSwap<RouteRecommendationTable>,
+    /// Observation counter driving the debounced frozen-table recompute.
+    observation_count: AtomicU64,
+    /// Recompute the frozen table every Nth observation (debounce). Lower warms
+    /// the consult view faster at more recompute cost; min 1 (recompute always).
+    recompute_every: u64,
 }
 
 /// Parse `PROXIMADB_ROUTE_RTT_BUDGET` (a positive round-trip count) — the
@@ -449,6 +579,9 @@ impl RouteCostModel {
             explore_tick: AtomicU64::new(0),
             exploration_interval: 16,
             rtt_budget: rtt_budget_from_env(),
+            table: ArcSwap::from_pointee(RouteRecommendationTable::default()),
+            observation_count: AtomicU64::new(0),
+            recompute_every: 64,
         }
     }
 
@@ -479,9 +612,22 @@ impl RouteCostModel {
         self
     }
 
-    /// Enable/disable live route override (flag-gated; default OFF).
+    /// Tune how often the frozen consult table is recomputed (every Nth
+    /// observation). `1` rebuilds on every observe (deterministic for tests);
+    /// production defaults to `64`. Min 1.
+    pub fn with_recompute_every(mut self, n: u64) -> Self {
+        self.recompute_every = n.max(1);
+        self
+    }
+
+    /// Enable/disable live route override (flag-gated; default OFF). Enabling
+    /// forces a frozen-table recompute so the very first override consult reads
+    /// current history, not a possibly-stale debounced snapshot.
     pub fn set_override_enabled(&self, on: bool) {
         self.override_enabled.store(on, Ordering::Relaxed);
+        if on {
+            self.recompute_locked();
+        }
     }
 
     /// Whether live override is currently enabled.
@@ -517,11 +663,21 @@ impl RouteCostModel {
     /// neutral label, not a `ComputeBackend` (no layer-up dependency).
     pub fn observe_by_label(&self, shape_class: &str, backend_label: &str, snap: &IoTraceSnapshot) {
         let key = (shape_class.to_string(), backend_label.to_string());
-        let mut cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
-        cells
-            .entry(key)
-            .or_default()
-            .fold(self.alpha, CostQuantities::from_snapshot(snap));
+        {
+            let mut cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
+            cells
+                .entry(key)
+                .or_default()
+                .fold(self.alpha, CostQuantities::from_snapshot(snap));
+        }
+        // Debounced recompute of the frozen consult table. Every Nth observation
+        // rebuilds it (O(cells), tiny); the consult path stays lock-free between
+        // recomputes. Runs inline on the (less latency-sensitive) query-completion
+        // path — no background thread, no shutdown wiring.
+        let n = self.observation_count.fetch_add(1, Ordering::Relaxed);
+        if (n + 1).is_multiple_of(self.recompute_every) {
+            self.recompute_locked();
+        }
     }
 
     /// Current learned estimate for one (shape-class, backend), if any history.
@@ -682,6 +838,112 @@ impl RouteCostModel {
         } else {
             None
         }
+    }
+}
+
+impl RouteConsult for RouteCostModel {
+    fn consult(&self, shape_class: &str) -> Option<ClassRecommendation> {
+        // Single ArcSwap load + HashMap get — the only consult-path cost. The
+        // returned ClassRecommendation is cloned out (cheap: a small Vec) so the
+        // Guard is released immediately; the learn-path mutex is never touched.
+        self.table.load().by_class.get(shape_class).cloned()
+    }
+    fn override_active(&self) -> bool {
+        self.override_enabled.load(Ordering::Relaxed)
+    }
+    fn next_exploration_tick(&self) -> u64 {
+        self.explore_tick.fetch_add(1, Ordering::Relaxed)
+    }
+    fn min_samples(&self) -> u64 {
+        self.min_samples
+    }
+    fn min_advantage(&self) -> f64 {
+        self.min_advantage
+    }
+    fn exploration_interval(&self) -> u64 {
+        self.exploration_interval
+    }
+    fn rtt_budget(&self) -> Option<f64> {
+        self.rtt_budget
+    }
+}
+
+impl RouteCostModel {
+    /// Force a frozen-table recompute now (tests / a future EXPLAIN nudge).
+    /// Production relies on the debounced recompute inside [`Self::observe_by_label`].
+    pub fn recompute(&self) {
+        self.recompute_locked();
+    }
+
+    /// Rebuild the frozen [`RouteRecommendationTable`] from the current `cells`
+    /// and publish it via [`ArcSwap::store`]. The SOLE writer of the frozen
+    /// table — the consult path only reads it. O(cells) (tiny: ≤ ~16 classes ×
+    /// 2 backends). Locks `cells` once for the read.
+    fn recompute_locked(&self) {
+        let cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
+        // Group observed cells by shape-class (the first tuple element).
+        let mut by_class: HashMap<String, Vec<(String, Cell)>> = HashMap::new();
+        for ((class, label), cell) in cells.iter() {
+            by_class
+                .entry(class.clone())
+                .or_default()
+                .push((label.clone(), *cell));
+        }
+        let mut table = RouteRecommendationTable {
+            by_class: HashMap::new(),
+        };
+        for (class, entries) in by_class {
+            let safe = freshness_safe_backends_from_class(&class);
+            // ranked: freshness-safe candidates with ANY history, cheapest-first.
+            let mut ranked: Vec<BackendChoice> = entries
+                .iter()
+                .filter_map(|(label, cell)| {
+                    let backend = parse_backend_label(label)?;
+                    let is_safe = safe.iter().any(|s| backend_label(s) == *label);
+                    if !is_safe || cell.samples == 0 {
+                        return None;
+                    }
+                    Some(BackendChoice {
+                        backend,
+                        score: self.score(cell.quantities()),
+                        samples: cell.samples,
+                        range_gets: cell.range_gets,
+                    })
+                })
+                .collect();
+            ranked.sort_by(|a, b| {
+                a.score
+                    .partial_cmp(&b.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            // explore_target: least-sampled freshness-safe candidate still under
+            // min_samples. Only meaningful when ≥2 safe candidates exist; a
+            // never-observed safe candidate (0 samples) is a valid target.
+            let explore_target = if safe.len() < 2 {
+                None
+            } else {
+                safe.iter()
+                    .map(|b| {
+                        let s = entries
+                            .iter()
+                            .find(|(l, _)| backend_label(b) == *l)
+                            .map(|(_, c)| c.samples)
+                            .unwrap_or(0);
+                        (b.clone(), s)
+                    })
+                    .filter(|(_, s)| *s < self.min_samples)
+                    .min_by_key(|(_, s)| *s)
+                    .map(|(b, _)| b)
+            };
+            table.by_class.insert(
+                class,
+                ClassRecommendation {
+                    ranked,
+                    explore_target,
+                },
+            );
+        }
+        self.table.store(Arc::new(table));
     }
 }
 
@@ -1157,6 +1419,116 @@ mod tests {
     }
 
     #[test]
+    fn recompute_bakes_ranked_cheapest_first() {
+        let m = RouteCostModel::new().with_min_samples(1);
+        // Native cheap (3 GETs), DataFusion dear (300 GETs) for olap/parquet.
+        for _ in 0..3 {
+            m.observe_by_label("olap/parquet", "Native(Volcano)", &snap(3, 1 << 20, 1));
+            m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(300, 1 << 20, 1));
+        }
+        m.recompute();
+        let consult = m.consult("olap/parquet").expect("baked");
+        let ranked = consult.ranked();
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(
+            backend_label(&ranked[0].backend),
+            "Native(Volcano)",
+            "cheapest first"
+        );
+        assert!(ranked[0].score < ranked[1].score);
+    }
+
+    #[test]
+    fn recompute_explore_target_is_least_sampled_cold_candidate() {
+        let m = RouteCostModel::new().with_min_samples(3);
+        // DataFusion warm; Native never observed (0 samples) → explore Native.
+        for _ in 0..5 {
+            m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(4, 1 << 20, 1));
+        }
+        m.recompute();
+        let consult = m.consult("olap/parquet").expect("baked");
+        assert_eq!(
+            consult.explore_target().map(backend_label).as_deref(),
+            Some("Native(Volcano)")
+        );
+    }
+
+    #[test]
+    fn recompute_explore_target_none_once_all_safe_candidates_warm() {
+        let m = RouteCostModel::new().with_min_samples(1);
+        for _ in 0..3 {
+            m.observe_by_label("olap/parquet", "Native(Volcano)", &snap(2, 1 << 20, 1));
+            m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(4, 1 << 20, 1));
+        }
+        m.recompute();
+        let consult = m.consult("olap/parquet").expect("baked");
+        assert_eq!(
+            consult.explore_target(),
+            None,
+            "both warm → nothing to explore"
+        );
+    }
+
+    #[test]
+    fn recompute_only_olap_parquet_exposes_two_safe_candidates() {
+        // The freshness-safety gate from the class prefix: only olap/parquet
+        // exposes both engines; every other class keeps a single static backend.
+        let m = RouteCostModel::new().with_min_samples(1);
+        for (class, label) in [
+            ("olap/parquet", "Native(Volcano)"),
+            ("olap/parquet", "DataFusionLocal"),
+            ("olap/native", "Native(Volcano)"),
+            ("olap/native", "DataFusionLocal"), // NOT freshness-safe here
+            ("oltp/parquet", "DataFusionLocal"), // NOT freshness-safe here
+            ("oltp/native", "Native(Volcano)"),
+        ] {
+            m.observe_by_label(class, label, &snap(2, 1 << 20, 1));
+        }
+        m.recompute();
+        let olap_parquet = m.consult("olap/parquet").expect("baked");
+        assert_eq!(
+            olap_parquet.ranked().len(),
+            2,
+            "olap/parquet has two safe engines"
+        );
+        let olap_native = m.consult("olap/native").expect("baked");
+        assert_eq!(
+            olap_native.ranked().len(),
+            1,
+            "olap/native drops non-safe DataFusion"
+        );
+        assert_eq!(
+            backend_label(&olap_native.ranked()[0].backend),
+            "Native(Volcano)"
+        );
+        let oltp_parquet = m.consult("oltp/parquet").expect("baked");
+        assert!(
+            oltp_parquet.ranked().is_empty(),
+            "oltp/parquet keeps only Native (unobserved) — DF is not freshness-safe"
+        );
+        assert_eq!(
+            oltp_parquet.explore_target(),
+            None,
+            "single safe candidate → no explore"
+        );
+    }
+
+    #[test]
+    fn recompute_skips_unknown_backend_labels() {
+        let m = RouteCostModel::new().with_min_samples(1);
+        // A synthetic/unknown label must be dropped, never panic.
+        m.observe_by_label("olap/parquet", "SomeUnknownEngine", &snap(2, 1 << 20, 1));
+        m.observe_by_label("olap/parquet", "Native(Volcano)", &snap(2, 1 << 20, 1));
+        m.recompute();
+        let consult = m.consult("olap/parquet").expect("baked");
+        assert_eq!(consult.ranked().len(), 1);
+        assert_eq!(
+            backend_label(&consult.ranked()[0].backend),
+            "Native(Volcano)"
+        );
+    }
+
+    #[test]
     fn exploration_never_fires_with_a_single_candidate() {
         // OLTP gets a single freshness-safe candidate → nothing to explore.
         let m = RouteCostModel::new().with_exploration_interval(1);
@@ -1265,7 +1637,8 @@ mod tests {
         };
         let m = RouteCostModel::new()
             .with_min_samples(1)
-            .with_min_advantage(0.1);
+            .with_min_advantage(0.1)
+            .with_recompute_every(1);
         m.set_override_enabled(true);
         let big = QueryShape {
             engages_relational: true,
