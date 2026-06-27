@@ -2872,35 +2872,41 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn create_function_persists_to_durable_catalog() {
+    #[test]
+    fn create_function_persists_to_durable_catalog() {
         // F5: with a durable catalog attached, CREATE FUNCTION persists the definition (so boot
         // recovery can re-register it) in addition to the live registration.
-        use crate::services::canonical_wal::FramedTableWalAppender;
-        let dir = tempfile::tempdir().unwrap();
-        let appender = Arc::new(
-            FramedTableWalAppender::open(dir.path().join("fns.wal"))
-                .await
-                .unwrap(),
-        );
-        let store = Arc::new(crate::services::CanonicalWalFunctionStore::new(appender));
-        let ddl =
-            DdlService::new(Arc::new(CatalogManager::new())).with_function_store(store.clone());
+        //
+        // Hang-prone under the multi-threaded `#[tokio::test]` runtime (CI worker-thread
+        // shutdown race) — runs on an isolated single-threaded runtime with a bounded
+        // timeout via `test_runtime` (see CLAUDE.md #11 streaming-hang flake).
+        crate::query::execution::test_runtime::run_with_timeout(30, async {
+            use crate::services::canonical_wal::FramedTableWalAppender;
+            let dir = tempfile::tempdir().unwrap();
+            let appender = Arc::new(
+                FramedTableWalAppender::open(dir.path().join("fns.wal"))
+                    .await
+                    .unwrap(),
+            );
+            let store = Arc::new(crate::services::CanonicalWalFunctionStore::new(appender));
+            let ddl =
+                DdlService::new(Arc::new(CatalogManager::new())).with_function_store(store.clone());
 
-        ddl.execute(DdlStatement::CreateFunction {
-            name: "quad".to_string(),
-            params: vec![("x".to_string(), ProximaType::Int64)],
-            return_ty: ProximaType::Int64,
-            body: "x * 4".to_string(),
-            or_replace: false,
-        })
-        .await
-        .expect("CREATE FUNCTION quad");
+            ddl.execute(DdlStatement::CreateFunction {
+                name: "quad".to_string(),
+                params: vec![("x".to_string(), ProximaType::Int64)],
+                return_ty: ProximaType::Int64,
+                body: "x * 4".to_string(),
+                or_replace: false,
+            })
+            .await
+            .expect("CREATE FUNCTION quad");
 
-        use crate::services::FunctionStore;
-        let persisted = store.list_all().await.unwrap();
-        assert_eq!(persisted.len(), 1);
-        assert_eq!(persisted[0].name, "quad");
-        assert_eq!(persisted[0].body, "x * 4");
+            use crate::services::FunctionStore;
+            let persisted = store.list_all().await.unwrap();
+            assert_eq!(persisted.len(), 1);
+            assert_eq!(persisted[0].name, "quad");
+            assert_eq!(persisted[0].body, "x * 4");
+        });
     }
 }
