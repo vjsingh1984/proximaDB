@@ -320,7 +320,7 @@ impl AppState {
 
     /// Inject the shared full-text index map (T3.2 Slice 1b).
     /// Production wires this from `SharedServices.fulltext_indexes` so
-    /// REST `/api/v1/hybrid/search` and gRPC `hybrid_search` share the
+    /// REST `/api/v2/hybrid/search` and gRPC `hybrid_search` share the
     /// same in-process map — an indexed document is searchable on
     /// both protocols.
     pub fn with_fulltext_indexes(mut self, indexes: FullTextIndexMap) -> Self {
@@ -1534,7 +1534,7 @@ pub fn create_router(state: AppState) -> axum::Router {
 
     // Experimental hybrid API removed 2026-05-26: it returned mock-backed
     // results that misled customers into thinking the endpoint computed real
-    // BM25+vector fusion. The production hybrid endpoint at `/api/v1/hybrid/search`
+    // BM25+vector fusion. The production hybrid endpoint at `/api/v2/hybrid/search`
     // (port-backed via `RestHybridPortImpl`) is the supported path; gRPC parity
     // landed in commit 6a73ead7f. The module at `src/network/rest/v1/hybrid.rs`
     // remains in-tree for reference but is no longer mounted.
@@ -1581,7 +1581,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         // Agent-memory read surface (TD-100, ADR-022): scoped + fused + audited.
         // Converges on the existing scoped vector search + BM25 + RRF fusion —
         // no new storage path. The lexical leg reuses the same in-process
-        // HybridFullTextIndexMap as /api/v1/hybrid.
+        // HybridFullTextIndexMap as /api/v2/hybrid.
         {
             let mem_indexes = state.fulltext_indexes.clone().unwrap_or_else(|| {
                 Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()))
@@ -1733,10 +1733,10 @@ pub fn create_router(state: AppState) -> axum::Router {
     info!("   POST   /api/v1/vectors/batch (deprecated alias over record-native writes)");
     info!("   GET    /api/v1/vectors/:collection_id/:vector_id (deprecated compatibility)");
     info!("   DELETE /api/v1/vectors/:collection_id/:vector_id (deprecated compatibility)");
-    info!("   POST   /api/v1/hybrid/search (deprecated compatibility; real BM25+vector)");
-    info!("   POST   /api/v1/hybrid/index (deprecated compatibility)");
+    info!("   POST   /api/v2/hybrid/search (canonical BM25+vector; v1 hybrid removed 2026-06-06)");
+    info!("   POST   /api/v2/hybrid/index (canonical; v1 removed 2026-06-06)");
     // /api/v1/experimental/hybrid/search route removed 2026-05-26 — was
-    // mock-backed; production path is /api/v1/hybrid/search above.
+    // mock-backed; production path is /api/v2/hybrid/search above.
 
     router
 }

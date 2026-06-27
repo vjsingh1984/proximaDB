@@ -78,7 +78,7 @@ use proximadb_runtime::HybridPort;
 /// `VectorOpsPort` trait object for vector similarity search.
 ///
 /// This replaces the mock `HybridSearchServiceImpl` for the REST hybrid search
-/// route (`POST /api/v1/hybrid/search`).
+/// route (`POST /api/v2/hybrid/search`).
 pub struct RestHybridPortImpl {
     vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
     indexes: HybridFullTextIndexMap,
