@@ -1026,6 +1026,15 @@ jobs:
     if: needs.changes.outputs.docs == 'true'
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Backstop against concurrent sessions colliding on a TD/ADR id (e.g. two
+      # ADR-031 files, or a new per-file TD reusing a legacy id). Fires on rebase
+      # so a number that collides with freshly-merged develop is caught before
+      # merge. Convention: docs/12-design/HOW_TO_FILE_TD_AND_ADR.adoc.
+      - name: Check TD/ADR id uniqueness
+        run: python3 scripts/check_td_adr_unique.py
       - name: Check documentation links
         run: |
           echo "Checking for broken links in documentation..."

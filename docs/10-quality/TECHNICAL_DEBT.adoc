@@ -8,6 +8,12 @@ items are indexed in
 link:../_archive/quality/2026-06/TECHNICAL_DEBT_CLOSED_2026_06_24.adoc[the Closed Items Archive]
 (full historical prose preserved in git history of this file before the 2026-06-24 reconciliation).
 
+NOTE: **New TDs are filed one-file-per-entry under `td/`** (`docs/10-quality/td/`), not appended
+here — this avoids the cross-session merge conflicts a single shared table causes. This file
+remains the home of the existing entries (referenced ~900× across the codebase; not migrated). The
+`td-adr-unique` CI guard treats these rows as declarations too, so ids stay unique across both.
+Canonical convention: link:../12-design/HOW_TO_FILE_TD_AND_ADR.adoc[HOW_TO_FILE_TD_AND_ADR].
+
 [IMPORTANT]
 ====
 This register tracks _implementation state_, not _product-support level_.
