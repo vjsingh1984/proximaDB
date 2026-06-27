@@ -7131,6 +7131,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-mcp"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "proximadb-memory-pool"
 version = "0.2.0"
 dependencies = [

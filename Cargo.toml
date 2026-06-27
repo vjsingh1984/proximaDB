@@ -61,6 +61,7 @@ members = [
     "crates/platform/proximadb-api",
     "crates/platform/proximadb-runtime",
     "crates/platform/proximadb-admin-ui",
+    "crates/platform/proximadb-mcp",
     "crates/modalities/proximadb-graph",
     "crates/modalities/proximadb-vector",
     "crates/modalities/proximadb-quantization-kernel",
