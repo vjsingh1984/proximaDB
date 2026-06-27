@@ -22,9 +22,12 @@ number collisions caught only at merge.
   active branches (`git rebase origin/develop`).
 . Read the canonical convention — now the single source of truth:
   `docs/12-design/HOW_TO_FILE_TD_AND_ADR.adoc`.
-. **No rule-file edits needed.** `CLAUDE.md` / `GEMINI.md` / `AGENTS.md` now only *point* to that doc
-  (they don't carry the rules), so your local agent files inherit it via git — nothing to
-  hand-maintain per machine.
+. **Rule files are local-only (gitignored).** `CLAUDE.md` / `GEMINI.md` / `AGENTS.md` are **not
+  committed** — each developer keeps a local copy and seeds it from `docs/agent-rules/*.seed` (see
+  `docs/agent-rules/README.adoc`). They only *point* to the canonical doc above; they don't carry
+  the rules. (They were briefly committed in #441; reverted to local-only the same day — a stale
+  `.gitignore` rule had contradicted the committed state, and the team chose genuinely-local rule
+  files with committed seeds.)
 
 == The rules (effective immediately)
 * **One file per entry.** New ADRs → `docs/12-design/adr/ADR-<NNN>-<slug>.adoc` (already the norm).

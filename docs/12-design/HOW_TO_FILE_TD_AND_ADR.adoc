@@ -7,9 +7,12 @@
 **This is the single source of truth for filing Technical Debt (TD) items and
 Architecture Decision Records (ADRs).** It lives in the repo, so it is identical
 on every developer machine. The per-agent rule files (`CLAUDE.md`, `GEMINI.md`,
-`AGENTS.md`) — which vary by developer preference and machine — only *point* here;
-they do not duplicate these rules. Read this; do not re-derive the convention from
-the per-agent files.
+`AGENTS.md`) are **gitignored and per-developer-local** — they are *not* committed,
+so each developer keeps their own copy. Shared defaults ship under
+`docs/agent-rules/*.seed` (copy one to the repo root to seed a new machine — see
+link:../agent-rules/README.adoc[docs/agent-rules/README.adoc]). Those rule files only *point* here;
+they do not duplicate these rules. Read this doc; do not re-derive the convention
+from the per-agent files.
 
 toc::[]
 
