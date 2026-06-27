@@ -806,6 +806,38 @@ impl DrPathBuilder {
         })
     }
 
+    /// Resolve a **per-tenant system path** — the `_metering/` and `_trace/`
+    /// subtrees that hang off the tenant root, *independent of any namespace or
+    /// collection* (TD-161 / TD-164). Unlike [`build_from_parts`], it validates
+    /// only `account_id` + `tenant_id` (the only ids `tenant_root()` renders) and
+    /// leaves `namespace_id`/`collection_id` empty, so callers that hold just a
+    /// tenant — e.g. the storage-snapshot metering daemon, which keys off
+    /// `Collection.config.owner` — can build the durable sink path without
+    /// fabricating placeholder ids (which `validate_id` would reject for the
+    /// reserved `_`-prefixed system segments). Only `tenant_root()` /
+    /// `metering_subprefix()` / `trace_subprefix()` are meaningful on the result;
+    /// `root_prefix()` and the collection-scoped subprefixes are not.
+    pub fn build_tenant_system(
+        account_id: Option<&str>,
+        tenant_id: &str,
+    ) -> Result<DrResolvedPath, PathResolverError> {
+        let account_id = match account_id {
+            Some(account_id) => {
+                Self::validate_id("account_id", account_id)?;
+                Some(account_id.to_string())
+            }
+            None => None,
+        };
+        Self::validate_id("tenant_id", tenant_id)?;
+        Ok(DrResolvedPath {
+            account_id,
+            tenant_id: tenant_id.to_string(),
+            namespace_id: String::new(),
+            collection_id: String::new(),
+            storage_pool_class: StoragePoolClass::default(),
+        })
+    }
+
     /// Canonical validation for a single tenant-isolated path ID segment
     /// (tenant_id / namespace_id / collection_id). Rejects empty, non-ASCII,
     /// path-separator/NUL, whitespace, and `..` traversal. Public so callers

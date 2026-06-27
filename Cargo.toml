@@ -393,6 +393,21 @@ url = "2.4"
 reqwest = { version = "0.11", features = ["json"] }
 lettre = "0.11"  # Email sending for alert notifications
 
+# OTLP metering push (TD-161 dual-sink, ADR-027). OPTIONAL + default-OFF behind the
+# `otlp-metering` feature: the durable per-tenant `_metering` writer is OSS-native (no
+# deps); only the external OTLP push pulls these. Pinned to the 0.32 line, which is the
+# first to resolve against the repo's own `tonic 0.14` / `prost 0.14` with NO duplicate
+# gRPC stack (otlp <=0.30 drags in a second tonic 0.12-0.13 + prost 0.13). `grpc-tonic`
+# reuses the existing tonic transport and avoids pulling reqwest 0.12.
+opentelemetry = { version = "0.32", optional = true }
+# `rt-tokio` + `experimental_metrics_periodicreader_with_async_runtime` gate
+# `runtime::Tokio` and the async-runtime `PeriodicReader`, which drive export on the
+# tokio runtime — REQUIRED with the grpc-tonic exporter (the default thread-based
+# reader block_on's a tonic call with no reactor → runtime panic). The async-runtime
+# feature transitively enables `experimental_async_runtime`.
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio", "experimental_metrics_periodicreader_with_async_runtime", "metrics"], optional = true }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "metrics"], optional = true }
+
 # Storage & Memory Management
 memmap2 = "0.9"
 lru = "0.18"  # LRU cache for disk-backed graph storage
@@ -587,7 +602,7 @@ serde_yaml = "0.9"
 # (in-memory-map-as-durable-source) path during one minor-release migration
 # window can opt OUT via `default-features = false` + explicit feature selection.
 # Plan: remove the feature flag entirely in v0.4 once the migration window closes.
-default = ["sql_frontend", "graph-first-sks", "unified-facade-routing", "canonical-document-store", "datafusion-integration"]
+default = ["sql_frontend", "graph-first-sks", "unified-facade-routing", "canonical-document-store", "datafusion-integration", "otlp-metering"]
 # Optional surfaces; keep off by default to minimize binary size and public API surface
 ai_endpoints = []
 sales_endpoints = []
@@ -640,6 +655,14 @@ onnx = ["proximadb-embedding/onnx"]
 aws = ["object_store/aws", "proximadb-catalog/aws"]
 azure = ["object_store/azure"]
 gcp = ["dep:google-cloud-storage"]
+
+# TD-161 external OTLP metering push (default-OFF). Compiles the OTLP exporter that
+# ships the per-tenant metering snapshot to a collector; runtime-gated additionally by
+# PROXIMADB_OTLP_ENDPOINT so the binary is inert unless explicitly configured. The
+# durable FileSystem `_metering` writer is ALWAYS compiled (OSS-native, no deps) — only
+# this push path is feature-gated to keep the opentelemetry transitive surface out of
+# default builds. Verify the server binary builds with AND without this feature (#11).
+otlp-metering = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 
 # ============================================================================
 # OPTIONAL INTEGRATION FEATURES

@@ -569,9 +569,38 @@ pub fn record_storage_bytes(tenant_id: Option<&str>, storage_type: &str, bytes: 
 /// `stats.data_size_bytes`; an absent/empty owner is attributed to `"default"`
 /// (fail-closed, never dropped). Pure aggregation + the gauge set — the caller
 /// drives it on an interval (the storage-snapshot daemon in `database.rs`).
-pub fn record_storage_snapshot(collections: &[crate::proto::proximadb_v1::Collection]) {
-    use std::collections::HashMap;
-    let mut by_tenant: HashMap<&str, u64> = HashMap::new();
+pub fn record_storage_snapshot(
+    collections: &[crate::proto::proximadb_v1::Collection],
+) -> Vec<TenantStorageUsage> {
+    let usage = aggregate_tenant_storage(collections);
+    for u in &usage {
+        record_storage_bytes(Some(&u.tenant_id), "sst", u.resident_bytes as f64);
+    }
+    usage
+}
+
+/// One tenant's aggregated **resident** storage at snapshot time — the unit the
+/// durable per-tenant `_metering` writer (TD-161) persists and the OTLP push
+/// emitter ships. Serializable so it is the on-disk record shape under
+/// `DrResolvedPath::metering_subprefix()`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TenantStorageUsage {
+    pub tenant_id: String,
+    pub resident_bytes: u64,
+}
+
+/// Pure aggregation backing [`record_storage_snapshot`]: sum
+/// `stats.data_size_bytes` per owning tenant across the live collection set.
+/// An absent/empty `config.owner` is attributed to `"default"` (fail-closed,
+/// never dropped — KSU must account for every resident byte). No side effects:
+/// callers drive the Prometheus level gauge ([`record_storage_snapshot`]) and/or
+/// the durable metering sink (TD-161) from the returned rows. Ordered by
+/// `tenant_id` (`BTreeMap`) so the persisted record + tests are deterministic.
+pub fn aggregate_tenant_storage(
+    collections: &[crate::proto::proximadb_v1::Collection],
+) -> Vec<TenantStorageUsage> {
+    use std::collections::BTreeMap;
+    let mut by_tenant: BTreeMap<&str, u64> = BTreeMap::new();
     for c in collections {
         let tenant = c
             .config
@@ -582,9 +611,13 @@ pub fn record_storage_snapshot(collections: &[crate::proto::proximadb_v1::Collec
         let bytes = c.stats.as_ref().map_or(0i64, |s| s.data_size_bytes).max(0) as u64;
         *by_tenant.entry(tenant).or_insert(0) += bytes;
     }
-    for (tenant, bytes) in by_tenant {
-        record_storage_bytes(Some(tenant), "sst", bytes as f64);
-    }
+    by_tenant
+        .into_iter()
+        .map(|(tenant_id, resident_bytes)| TenantStorageUsage {
+            tenant_id: tenant_id.to_string(),
+            resident_bytes,
+        })
+        .collect()
 }
 
 /// Helper to record compute execution time.

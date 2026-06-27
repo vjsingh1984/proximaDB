@@ -133,6 +133,11 @@ impl ProximaDB {
         // Same snapshot as the route observer above — billed bytes/ms cannot
         // diverge from the cost model's. Always-on (billing is never gated).
         crate::metrics::consumption_metrics::install_billing_observer();
+        // TD-161: arm the external OTLP metering push (ADR-027 dual-sink push half).
+        // Inert unless `PROXIMADB_OTLP_ENDPOINT` is set (and no-op when the
+        // `otlp-metering` feature is compiled out). Must run inside the runtime —
+        // the grpc-tonic exporter's reader is driven on it.
+        crate::observability::metering_otlp::init_from_env();
         // Co-design C5 (integration): register the tenant→tier Port to read the
         // header-fed tier registry (`X-Tenant-Tier` → `record_store::TENANT_TIERS`),
         // so the per-tenant tier the cache LimitsResolver already sees also drives
@@ -178,21 +183,91 @@ impl ProximaDB {
         .await?;
         tracing::info!("✅ ProximaDB::new - SharedServices created with unified CollectionService");
 
-        // ADR-030 KSU: periodic per-tenant resident-storage snapshot. KSU is an
-        // accrual (bytes·seconds), so a level gauge is set on an interval from the
-        // live collection set (grouped by owner); Prometheus integrates it
-        // downstream. Server-lifetime daemon (tokio task, dropped on shutdown) —
-        // mirrors the other long-lived spawns here. First tick is delayed one
-        // interval; failures are skipped (best-effort, never fatal).
+        // ADR-030 KSU: per-tenant resident-storage metering on two decoupled
+        // cadences. KSU is an *accrual* (`bytes·seconds`) over a slow-moving stock
+        // (resident bytes only change on flush/compaction, minutes-to-hours apart),
+        // so neither cadence needs to be fast — and the *durable* one must be slow,
+        // since metering's own object-store writes are billable I/O (the dominant
+        // cost term this co-design effort minimizes). Both are server-lifetime tokio
+        // tasks (dropped on shutdown), first tick delayed one interval, best-effort.
+        //
+        //   1. **Prometheus level gauge** — in-memory `.set()` of the resident level
+        //      that Prometheus integrates downstream. Default 5min (env
+        //      `PROXIMADB_KSU_GAUGE_INTERVAL_SECS`); storage doesn't move faster, so
+        //      a per-minute poll only multiplied the list-collections work.
         {
             let cs = collection_service.clone();
+            let interval_secs = std::env::var("PROXIMADB_KSU_GAUGE_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|s| *s > 0)
+                .unwrap_or(300);
             tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+                let mut ticker =
+                    tokio::time::interval(std::time::Duration::from_secs(interval_secs));
                 ticker.tick().await; // consume the immediate first tick
                 loop {
                     ticker.tick().await;
                     if let Ok(collections) = cs.list_collections().await {
                         crate::metrics::consumption_metrics::record_storage_snapshot(&collections);
+                    }
+                }
+            });
+        }
+
+        //   2. **Durable `_metering` sink (TD-161)** — coalesced **hourly** snapshot
+        //      persisted to each tenant's object-store `_metering/` subtree
+        //      (ADR-027 dual-sink; the differentiator AnvaiOps prices). Default 1h
+        //      (env `PROXIMADB_METERING_FLUSH_INTERVAL_SECS`) matches AWS byte-hour
+        //      billing granularity (~24 PUTs/tenant/day, not ~1440). Wholly
+        //      best-effort: a missing storage location or filesystem-init failure
+        //      disables only the durable sink — never startup or the gauge above.
+        {
+            let cs = collection_service.clone();
+            let base_url = config.storage.storage_urls().into_iter().next();
+            let interval_secs = std::env::var("PROXIMADB_METERING_FLUSH_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|s| *s > 0)
+                .unwrap_or(3600);
+            tokio::spawn(async move {
+                let Some(base_url) = base_url else {
+                    tracing::warn!(
+                        "TD-161: no storage location configured; durable metering writer disabled"
+                    );
+                    return;
+                };
+                let factory =
+                    match storage::persistence::filesystem::FilesystemFactory::create_default()
+                        .await
+                    {
+                        Ok(f) => std::sync::Arc::new(f),
+                        Err(e) => {
+                            tracing::warn!(
+                                "TD-161: filesystem init failed; durable metering disabled: {e}"
+                            );
+                            return;
+                        }
+                    };
+                let writer =
+                    crate::metrics::metering_writer::DurableMeteringWriter::new(factory, base_url);
+                let mut ticker =
+                    tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+                ticker.tick().await; // consume the immediate first tick
+                loop {
+                    ticker.tick().await;
+                    if let Ok(collections) = cs.list_collections().await {
+                        let usage = crate::metrics::consumption_metrics::aggregate_tenant_storage(
+                            &collections,
+                        );
+                        // Account-less legacy `data/{tenant}/` render: the snapshot
+                        // source (`Collection.config.owner`) carries no account id.
+                        let now_secs = chrono::Utc::now().timestamp();
+                        writer.write_storage_snapshot(&usage, None, now_secs).await;
+                        // Same snapshot → the external OTLP push (inert unless
+                        // configured): the durable record and pushed level cannot
+                        // diverge by construction.
+                        crate::observability::metering_otlp::record_storage_snapshot(&usage);
                     }
                 }
             });
