@@ -175,14 +175,29 @@ mod tests {
     }
 
     async fn create_test_metrics_components_with_cleanup(
-        cleanup: bool,
+        _cleanup: bool,
+    ) -> Result<(Arc<MetricsUpdateService>, Arc<MetricsPersistenceLayer>)> {
+        // Unique tempdir per call so tests don't collide on a shared path — the
+        // file-backed MetricsPersistenceLayer accumulates state across runs,
+        // making total_flushes assertions flaky. (Tests that need a SHARED path
+        // across "restarts" use `create_test_metrics_components_at` directly.)
+        let temp_dir = tempfile::TempDir::new()?;
+        let storage_path = format!("file://{}", temp_dir.path().display());
+        std::mem::forget(temp_dir);
+        create_test_metrics_components_at(storage_path).await
+    }
+
+    /// Create test metrics components at an explicit storage path — for tests
+    /// that need a SHARED path across "restarts" (e.g. persistence-across-restarts).
+    async fn create_test_metrics_components_at(
+        storage_path: String,
     ) -> Result<(Arc<MetricsUpdateService>, Arc<MetricsPersistenceLayer>)> {
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let config = MetricsConfig {
             enabled: true,
             collection_partitions: 4,
-            storage_path: "file:///tmp/proximadb_integration_metrics_test".to_string(),
+            storage_path,
             flush_interval_seconds: 30,
             retention_days: 7,
             parallel_scan_threshold: 10,
@@ -191,11 +206,6 @@ mod tests {
             snapshot_interval_seconds: 60,
             max_memory_mb: 512,
         };
-
-        // Clean up test directory only if requested
-        if cleanup {
-            let _ = tokio::fs::remove_dir_all("/tmp/proximadb_integration_metrics_test").await;
-        }
 
         let filesystem_config = Default::default();
         let filesystem_factory = Arc::new(FilesystemFactory::create(filesystem_config).await?);
@@ -786,9 +796,16 @@ mod tests {
 
         let collection_id = "persistence_test_collection";
 
+        // Shared storage path across both phases so Phase 2 reads what Phase 1
+        // persisted (simulates a restart on the same disk). Leaked (forget) so it
+        // outlives both component instances.
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let storage_path = format!("file://{}", temp_dir.path().display());
+        std::mem::forget(temp_dir);
+
         // Phase 1: Create initial metrics store and record data
         {
-            let (metrics_updater, _) = create_test_metrics_components_with_cleanup(true)
+            let (metrics_updater, _) = create_test_metrics_components_at(storage_path.clone())
                 .await
                 .unwrap();
 
@@ -810,7 +827,9 @@ mod tests {
 
         // Phase 2: Create new metrics store (simulating restart) and verify persistence
         {
-            let (_, metrics_store) = create_test_metrics_components().await.unwrap();
+            let (_, metrics_store) = create_test_metrics_components_at(storage_path.clone())
+                .await
+                .unwrap();
 
             let stored_metrics = metrics_store
                 .collection_metrics(collection_id)
