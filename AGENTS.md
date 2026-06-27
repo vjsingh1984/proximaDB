@@ -7,6 +7,8 @@ Depending on your identity, read the corresponding mandate file first:
 *   **Gemini Models:** Read `GEMINI.md`
 *   **Anthropic/Claude Models:** Read `CLAUDE.md`
 
+**Filing a TD or ADR:** follow the canonical, collision-free convention in `docs/12-design/HOW_TO_FILE_TD_AND_ADR.adoc` (one file per entry; prefer a topic-scoped id like `TD-CAT-1`; never reuse a number already on `develop`; the `td-adr-unique` CI guard backstops). That in-repo doc is the single source of truth — these per-agent rule files only point to it, so concurrent sessions/machines never drift.
+
 ## 🚨 Active Development Trajectory (2026-06-04 Pivot) 🚨
 
 ProximaDB is undergoing a massive architectural shift to support a robust SaaS MVP. All agents must align their problem-solving, code generation, and architectural suggestions with the following truths:
