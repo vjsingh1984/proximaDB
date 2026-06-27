@@ -1,0 +1,100 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= ADR-033: Catalog-Object Surrogate Identity — immutable u64 oid; the name is a mutable attribute
+
+[cols="1,3"]
+|===
+|Status|Proposed
+|Date|2026-06-27
+|Deciders|Vijaykumar Singh
+|Relates to|ADR-024 (single canonical type — `ProximaType::UInt64` reuse + the logical/physical separation this applies; note its `pgwire_oid()` is the *type* OID, a different concept), `CATALOG_OBJECT_MODEL_2026_06_21.adoc` (the object model this refines — today's `{namespace_id, tenant_id, name, object_id}` string identity), ADR-027 (DrPath / storage layout, which currently embeds the id in the path), ADR-031/032 (agent-facing catalog co-design tenets)
+|Co-designed with|**AnvaiOps ADR-0021** — the consumer catalog reads these objects; stable u64 oids make its cross-references and references-by-id cheap and rename-proof
+|Supersedes|— (refines `CATALOG_OBJECT_MODEL`'s string identity; additive migration)
+|Tracked under|TD-174 (catalog surrogate-oid sequence + name→oid resolution + DrPath migration from name/uuid to oid)
+|===
+
+== Context
+
+First principle: **a catalog object's identity is the object, not its name.** A renamed table, column, namespace, or account is the *same* object — so the name must be a **mutable attribute**, and identity must be a **stable surrogate** that every reference (foreign keys, the storage path, the query planner) points at. If identity *is* the name (or anything mutable/physical), rename becomes an O(data) reference-and-path rewrite instead of an O(1) metadata update.
+
+Two things about the engine today (audited 2026-06-27):
+
+* **Identity is string-based.** `namespace_id = ns_<uuid>`; the identity tuple is `{namespace_id, tenant_id, name, object_id}` (`CATALOG_OBJECT_MODEL_2026_06_21.adoc` §:67/:95); lookups filter on `table_id.name` (`catalog_introspection.rs`). UUID-strings *survive rename* (they're stable) but are **slow and wide on the catalog's hottest path** — every query resolves table → namespace → tenant by comparing/joining ~40-char strings.
+* **The id is baked into the physical path.** `data/{tenant_id}/{namespace_id}/{collection_id}/` (ADR-027). If any segment is the renameable id, rename risks a **data move**.
+
+These are **user objects** (accounts, namespaces, tables/collections, columns, indexes) that, in the tenant *system schema*, are stored as records — so they need both a fast *logical* identity and a *record* representation.
+
+**Scope boundary.** This ADR is about **catalog objects (metadata)** only. The **data-record** oid (`ProximaRecord.oid: String`) is a *separate, settled* concern — high write-rate, distributed, coordination-free (String / ULID natural or surrogate keys). Catalog metadata is the opposite rate class — low-cardinality, low-rate, centrally serialized through the catalog authority — which is exactly why it can and should use a different identity strategy (below). Do not conflate the two.
+
+== Decision
+
+=== D1 — Catalog identity is an immutable, system-generated `u64` surrogate (`object_oid`); the name is a mutable attribute
+
+Every catalog object gets an immutable `object_oid: u64` at creation. The **name** is a mutable attribute, unique within its parent scope (a table name within its namespace, a namespace name within its tenant, …). **Rename = a single-row name update**; the oid — and every reference to it — never changes. (Postgres precedent: `pg_class.oid` is the identity; `relname` is the attribute.)
+
+=== D2 — Every internal reference uses the oid; name→oid resolution happens once, at the boundary
+
+All cross-references are the u64: `column.table_oid`, `table.namespace_oid`, `namespace.account_oid`, `index.table_oid`, **and the storage path** (D6). A name is resolved to an oid **once**, at DDL / query parse (a per-scope name→oid index); the **hot path** — joins, FK resolution, path building, planning — is pure fixed-width integer comparison, never a string compare. The string lookup is amortized to parse time, off the per-row path.
+
+=== D3 — `u64`, system-wide monotonic, from a central catalog sequence; never reused
+
+* **Width: `u64`, not `u32`.** Postgres's 32-bit OID has real wraparound/exhaustion pain at scale; a multi-tenant system (tenants × namespaces × tables × columns) wants the 64-bit headroom.
+* **Allocation: one durable monotonic sequence owned by the catalog authority** — the component that already *serializes* DDL — so the sequence is never a hot-path bottleneck (catalog writes are rare). Recover the high-water mark on restart.
+* **Never reused, even after drop** (Postgres-style): a stale reference is then detectably *dangling*, never silently aliased onto a different object that reused the number.
+* **Coordination is acceptable here** precisely because catalog DDL is low-rate and already serialized — unlike high-rate distributed *data* records, which stay coordination-free. Different rate class ⇒ different identity strategy (the scope boundary above).
+
+=== D4 — Reserve a low oid range for system/built-in objects
+
+Reserve `0 .. RESERVED_MAX` (e.g. < 1000) for system objects — the tenant system schema, the default namespace (`ns_default` → a fixed, well-known oid), built-in indexes/types — so their oids are stable and pinned, not minted by the user sequence. User objects start above the reserved range. (Postgres precedent: low OIDs are the pinned system catalogs.)
+
+=== D5 — Stored as an indexed `ProximaType::UInt64` column; logical identity ≠ physical handle
+
+Catalog objects are records in the tenant system schema. The `object_oid` is a typed, **indexed** `ProximaType::UInt64` column (reuse ADR-024 — additive, no new type), so storage-layer lookup-by-oid is a native integer index probe, not a string scan. `ProximaRecord.oid` (the String storage handle) is unchanged. The **logical** catalog identity (`u64`) and the **physical** record handle (String) are deliberately separate — the same logical/physical split ADR-024 mandates. Catalog-record→catalog-record references are the u64, never the String record handle.
+
+=== D6 — The DrPath keys off the surrogate oid, not the name (rename becomes metadata-only)
+
+The storage path becomes `data/{tenant_id}/{namespace_oid}/{table_oid}/…`:
+
+* `tenant_id` stays the **externally-assigned** tenant identifier (from the auth system — not a catalog surrogate);
+* `namespace_oid` / `table_oid` are the **u64 surrogates**.
+
+Because the path is keyed by oid, **rename never moves data** — the name lives only in the catalog row. This is the load-bearing change that makes rename O(1) instead of O(data). Migrating ADR-027's current name/uuid-in-path to oid-in-path is **TD-174** (the real work; sequenced, not big-bang — see Consequences).
+
+== Authority and route declaration
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| `authority_mode` | `authoritative` — the catalog authority owns the oid sequence + the object↔oid mapping. This is durable identity, not a projection.
+| `policy_boundary` | Per-tenant via `tenant_id` + RLS. Oids are system-wide unique (per-tenant oid spaces are a rejected/deferred alternative below).
+| `workload_profile` | `ddl_low_rate` — oid allocation rides the already-serialized DDL path; no hot-path contention.
+| `freshness_sla` | `read_your_writes` — a newly created object's oid is immediately resolvable.
+| `compute_route` | name→oid resolution at parse; u64 on every internal route (joins, FK, path, plan).
+| `policy/RLS` | tenant_id scoping; reserved low range for system objects (D4).
+|===
+
+== Consequences
+
+* **Rename is O(1).** Renaming a table/column/namespace/account is a single name-column update — no data move, no reference rewrite. The invariant that prompted this ADR holds by construction.
+* **Catalog joins / FK / path-building become fixed-width `u64` integer ops** — faster compares, denser indexes, and far less storage than UUID-strings, on the per-query hot path.
+* **One new durable piece:** the central monotonic oid sequence (standard; recovered on restart; never-reuse).
+* **Migration cost (TD-174):** existing `ns_<uuid>` / name-keyed objects get an oid assigned; build name→oid + legacy-uuid→oid maps; rewrite the DrPath to be oid-keyed (existing data paths migrated or aliased). Sequenced behind a compatibility shim, not big-bang.
+* **Minor info exposure:** a system-wide monotonic oid leaks coarse cross-tenant creation order (oid gaps). Accepted for the simplicity of oid-alone foreign keys; per-tenant oid spaces remove it at the cost of `(tenant_id, oid)` compound FKs (deferred — see below).
+
+== Rejected alternatives
+
+* **Name as identity.** Rename breaks every reference and the path — the current pain. Rejected.
+* **UUID-string surrogate (today's `ns_<uuid>`).** Survives rename but is slow and wide on the catalog hot path (string compare/join, ~40 bytes per reference) — the regression this ADR fixes. Rejected for catalog; migrate off it.
+* **`u32` OID (Postgres).** Wraparound / exhaustion at multi-tenant scale. Rejected — `u64`.
+* **Random (coordination-free) `u64`.** Buys coordination-freedom the catalog doesn't need (DDL is low-rate, already serialized) and loses monotonic ordering (recent-object clustering, creation-order range scans), plus a small collision risk. Rejected for catalog in favor of monotonic-from-sequence.
+* **ULID for catalog objects.** 16 bytes (2× `u64`), time-sortable + coordination-free — the *right* choice for high-rate distributed **data records**, but for low-rate centrally-managed **catalog metadata** `u64` is half the width and a faster compare, and coordination is free. Rejected for catalog (it is the *data-record* choice — keep the two concerns separate per the scope boundary).
+* **Per-tenant oid space.** Stronger isolation (no cross-tenant ordering leak), but every foreign key becomes `(tenant_id, oid)`. Deferred — system-wide `u64` + a `tenant_id` RLS column is simpler; revisit only if strict isolation requires it.
+
+== References
+
+* ADR-024 (single canonical type — `ProximaType::UInt64` reuse; logical/physical separation; `pgwire_oid()` is the *type* OID, distinct from this *object* oid)
+* `CATALOG_OBJECT_MODEL_2026_06_21.adoc` (the object model refined — string identity → u64 surrogate; the `{namespace_id, tenant_id, name, object_id}` tuple)
+* ADR-027 (DrPath / storage layout — the path currently embeds the id; D6 migrates it to oid-keyed)
+* AnvaiOps ADR-0021 (the consumer catalog — cheap, stable, rename-proof cross-references)
+* TD-174 (catalog surrogate-oid sequence + name→oid resolution + DrPath migration)
+* PostgreSQL catalog OID precedent — `pg_class.oid` / `pg_namespace.oid`: a numeric surrogate is the identity, the name is a mutable attribute, references survive rename.
