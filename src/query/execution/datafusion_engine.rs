@@ -87,6 +87,26 @@ impl DataFusionLocalEngine {
         .map_err(|e| ExecutionError::Context(format!("session: {e}")))?;
 
         for (name, location) in &context.parquet_tables {
+            // ADR-025 (relational cold path): an opt-in table reads its cold
+            // Parquet base reconciled with the authoritative post-snapshot WAL
+            // delta (deletes/updates/inserts after the `MATERIALIZE` snapshot),
+            // keyed by canonical oid. Non-opt-in tables fall through to the bare
+            // Parquet read below (default-OFF), so the OLAP ratchet tables are
+            // untouched.
+            if let Some(cfg) = &context.olap_delta
+                && let Some(tbl) = cfg.tables.get(&normalize_table_key(name))
+            {
+                register_merged_olap_table(
+                    &ctx,
+                    name,
+                    location,
+                    tbl,
+                    cfg.source.as_ref(),
+                    context.tenant_id.as_deref(),
+                )
+                .await?;
+                continue;
+            }
             let table =
                 crate::datafusion::register_object_store_parquet_location(&ctx, name, location)
                     .await
@@ -567,6 +587,125 @@ mod tests {
 }
 
 // Helpers copied from relational_pipeline.rs or shared utilities
+
+/// ADR-025 relational cold-path read-merge. Registers `name` as an in-memory
+/// table whose rows are the materialized Parquet base reconciled with the
+/// authoritative post-snapshot WAL delta: base rows whose canonical oid (the PK
+/// value, recomputed from the base PK column) changed since `snapshot_lsn` are
+/// dropped, and the current live row for every changed oid is appended. The
+/// suppress-set is a rebuildable projection of the canonical WAL (ADR-020), so no
+/// new durable state is introduced. MemTable-backed (whole base in memory) —
+/// acceptable for the opt-in foundation; a streaming provider is future work.
+#[cfg(feature = "datafusion-integration")]
+async fn register_merged_olap_table(
+    ctx: &datafusion::prelude::SessionContext,
+    name: &str,
+    location: &str,
+    table: &crate::query::execution::olap_delta_merge::OlapDeltaTable,
+    source: &dyn crate::query::execution::olap_delta_merge::OlapDeltaSource,
+    tenant: Option<&str>,
+) -> Result<(), ExecutionError> {
+    use crate::services::record_store::proxima_value_to_unique_text;
+    use datafusion::arrow::array::BooleanArray;
+    use datafusion::arrow::compute::filter_record_batch;
+    use datafusion::arrow::record_batch::RecordBatch;
+    use proximadb_storage_common::proxima_arrow::{
+        arrow_cell_to_proxima_value, proxima_records_to_record_batch,
+    };
+    use std::collections::HashSet;
+    use std::sync::Arc;
+
+    // 1. Suppress-set = oids changed since the snapshot (tenant-scoped WAL feed).
+    //    Computed first and cheaply: if NOTHING changed since the snapshot, the
+    //    cold base is already current — register it bare (full Parquet pushdown,
+    //    no MemTable, no base read). Correctness-neutral fast path for the common
+    //    OLAP case (read-mostly tables).
+    let changed = source
+        .changed_oids_since(name, table.snapshot_lsn, tenant)
+        .await
+        .map_err(|e| ExecutionError::Context(format!("olap-merge delta {name}: {e}")))?;
+    if changed.is_empty() {
+        crate::datafusion::register_object_store_parquet_location(ctx, name, location)
+            .await
+            .map_err(|e| {
+                ExecutionError::Context(format!("olap-merge bare register {name}: {e}"))
+            })?;
+        return Ok(());
+    }
+    let suppress: HashSet<String> = changed.iter().cloned().collect();
+
+    // 2. Read the cold Parquet base in an isolated session so the hidden base
+    //    registration never leaks into the query's table namespace.
+    let base_ctx = crate::datafusion::create_session_context()
+        .map_err(|e| ExecutionError::Context(format!("olap-merge base session: {e}")))?;
+    crate::datafusion::register_object_store_parquet_location(&base_ctx, name, location)
+        .await
+        .map_err(|e| ExecutionError::Context(format!("olap-merge base register {name}: {e}")))?;
+    let base_schema = base_ctx
+        .table_provider(name)
+        .await
+        .map_err(|e| ExecutionError::Context(format!("olap-merge base provider {name}: {e}")))?
+        .schema();
+    let base_batches = base_ctx
+        .table(name)
+        .await
+        .map_err(|e| ExecutionError::Context(format!("olap-merge base table {name}: {e}")))?
+        .collect()
+        .await
+        .map_err(|e| ExecutionError::Context(format!("olap-merge base collect {name}: {e}")))?;
+
+    // 3. Keep base rows whose recomputed oid is not suppressed. (TTL on the base
+    //    is eventual-until-rematerialize — the snapshot carries no valid_to_ns,
+    //    a documented first-cut limitation; explicit deletes are always caught by
+    //    the suppress-set.)
+    let pk_idx = base_schema
+        .index_of(table.pk_column.as_str())
+        .map_err(|e| {
+            ExecutionError::Context(format!(
+                "olap-merge pk column `{}` not in base {name}: {e}",
+                table.pk_column
+            ))
+        })?;
+    let mut batches: Vec<RecordBatch> = Vec::with_capacity(base_batches.len() + 1);
+    for batch in &base_batches {
+        let pk_array = batch.column(pk_idx);
+        let keep: BooleanArray = (0..batch.num_rows())
+            .map(|row| {
+                let oid = arrow_cell_to_proxima_value(pk_array, row)
+                    .map(|v| proxima_value_to_unique_text(&v))
+                    .unwrap_or_default();
+                Some(!suppress.contains(&oid))
+            })
+            .collect();
+        let kept = filter_record_batch(batch, &keep)
+            .map_err(|e| ExecutionError::Context(format!("olap-merge filter {name}: {e}")))?;
+        batches.push(kept);
+    }
+
+    // 4. Append the current live rows for the changed oids, encoded with the same
+    //    catalog schema the base was written with and normalized onto the base
+    //    schema so every MemTable partition batch shares one schema.
+    let (schema, append_records) = source
+        .current_records(name, &changed, tenant)
+        .await
+        .map_err(|e| ExecutionError::Context(format!("olap-merge appends {name}: {e}")))?;
+    if !append_records.is_empty() {
+        let append_batch = proxima_records_to_record_batch(&append_records, &schema)
+            .map_err(|e| ExecutionError::Context(format!("olap-merge append batch {name}: {e}")))?;
+        let normalized = RecordBatch::try_new(base_schema.clone(), append_batch.columns().to_vec())
+            .map_err(|e| {
+                ExecutionError::Context(format!("olap-merge append schema {name}: {e}"))
+            })?;
+        batches.push(normalized);
+    }
+
+    // 5. Register the reconciled rows as the table the query reads.
+    let mem = datafusion::datasource::MemTable::try_new(base_schema, vec![batches])
+        .map_err(|e| ExecutionError::Context(format!("olap-merge memtable {name}: {e}")))?;
+    ctx.register_table(name, Arc::new(mem))
+        .map_err(|e| ExecutionError::Context(format!("olap-merge register {name}: {e}")))?;
+    Ok(())
+}
 
 #[cfg(feature = "datafusion-integration")]
 fn arrow_type_to_proxima(dt: &arrow_schema::DataType) -> proximadb_data_model::ProximaType {

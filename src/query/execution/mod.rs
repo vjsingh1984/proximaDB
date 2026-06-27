@@ -10,6 +10,7 @@ pub mod datafusion_engine;
 pub mod engine;
 pub mod executor;
 pub mod low_latency_executor;
+pub mod olap_delta_merge;
 pub mod plan_cache;
 pub mod planner;
 pub mod set_operations;

@@ -163,6 +163,12 @@ pub struct QueryExecutionContext {
     /// Optional request tenant for engines that need tenant-scoped I/O, metrics,
     /// or billing attribution.
     pub tenant_id: Option<String>,
+    /// ADR-025 OLAP read-merge (relational cold path): when set, parquet-backed
+    /// tables listed here are reconciled at scan time against the authoritative
+    /// post-snapshot WAL delta (deletes/updates/inserts that landed after the
+    /// `MATERIALIZE` snapshot), keyed by canonical `oid`. `None` ⇒ legacy bare
+    /// Parquet reads (default-OFF). See [`super::olap_delta_merge`].
+    pub olap_delta: Option<super::olap_delta_merge::OlapDeltaConfig>,
     /// Escape hatch for SQL dialect gaps while the shared relational lowering
     /// catches up. Keep false for production routes that require one logical
     /// plane across Volcano and DataFusion.
