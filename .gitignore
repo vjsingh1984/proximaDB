@@ -403,7 +403,11 @@ newcategory.txt
 ml_prompt.txt
 footer_cache.bin
 
-# AI Assistant instruction files and development artifacts
+# AI-assistant instruction files — per-developer / local-only (NOT committed).
+# CLAUDE.md / GEMINI.md / AGENTS.md at the repo root are each developer's own
+# local copy; shared defaults ship committed under docs/agent-rules/*.seed — copy
+# one to the root to seed a new machine (see docs/agent-rules/README.adoc).
+# Remaining entries below ignore tooling artifacts that should never be committed.
 CLAUDE.md
 GEMINI.md
 AGENTS.md
@@ -475,11 +479,6 @@ benchmark_report_*.csv
 # Obsolete files marked for removal
 *.obsolete
 /target/
-
-# AI Agent configuration files
-AGENTS.md
-CLAUDE.md
-GEMINI.md
 
 # AI tool data folders
 .victor/
