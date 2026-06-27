@@ -213,6 +213,15 @@ Co-design D1/D3 work — the dominant cloud-DB cost term. See `PROXIMADB_AS_LAKE
 
 | TD-040 | Quantization-aware row group pruning | MED | Partial | D1 | PERF
 | Write-side stats added (`vector_norm_min/max/mean`, per-dim component bounds via `update_vector_bounds`). Residual: read-side integration (check bounds vs query-vector distance at query time).
+
+| TD-CAT-1 | Object-store catalog persistence (ADR-032 D1) | HIGH | Partial | D1,D5 | REL
+| The native catalog is the serverless shared truth but persisted only via local `tokio::fs`; cloud URLs were silently cached to `/tmp` (now fail-closed, PR #410). *Foundation landed (PR #415):* `NativeCatalog::new_with_filesystem` + backend-dispatching `io_*` helpers route all I/O through an injected `FileSystem` (dependency-inversion on `proximadb-storage-filesystem-types`); `None` default = byte-identical local behavior; mock-backend round-trip proves durability. Residual (TD-CAT-1b): wire the root `create_native_catalog` to inject the `FilesystemFactory` backend behind a per-collection/env gate so s3/gs/az actually persist. See ADR-032.
+
+| TD-CAT-2 | Tenant-prefixed catalog paths (ADR-032 D2) | HIGH | Open | D5,D1 | REL
+| Catalog metadata persists flat (`metadata/tables/<ns>/<table>.json`) with no `{tenant_id}` segment — the one surface not path-isolated; `upsert_collection_catalog_asset` calls tenant-less `create_namespace` (persisted `tenant_id = None`). → route catalog keys through `DrPathBuilder` (`data/{tenant}/{ns}/…`, Phase-5 `accounts/{account}/…`), record tenant via `create_namespace_for_tenant(.., collection_tenant_id)`; mixed-read-safe marker + legacy fallback + migration; default-OFF. Depends on TD-CAT-1. See ADR-032.
+
+| TD-CAT-3 | Fail-closed deployment mode + retire inert tenant predicate (ADR-032 D3) | HIGH | Open | D5 | REL
+| Service-layer tenant validation is **inert in production** — `*_with_tenant_context` guards on `tenant_manager.is_some()` but nothing calls `with_tenant_manager`, so every request falls through unscoped (and a per-query predicate is the wrong mechanism). → explicit `DeploymentMode::{SingleTenant{default},MultiTenant}` from config; `MultiTenant` fail-closed at every edge (pgwire/REST/gRPC/Flight), `SingleTenant` injects the default tenant (back-compat); structural path isolation (TD-CAT-2) becomes the primary boundary; remove the inert predicate. See ADR-032.
 |===
 
 === D. Elastic Compute / Scale-to-Zero / Continuous Discovery
