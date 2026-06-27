@@ -1,0 +1,162 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= ADR-031: Stable object_id as the Physical Collection Key (name is metadata)
+
+[cols="1,3"]
+|===
+|Status|Proposed
+|Date|2026-06-26
+|Deciders|Vijaykumar Singh
+|Relates to|ADR-020 (Canonical WAL Authority), ADR-025 (Deletion Vectors), ADR-010 (PAX Block Format), `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` (structural isolation)
+|Supersedes|—
+|===
+
+== Context
+
+The canonical record path keys physical state on the **user-facing table name**,
+not a stable internal id:
+
+* `write_mutations` writes the WAL operation's `collection_id = table_schema.name`
+  (`src/services/record_store.rs`); the same is true of every other modality that
+  appends `CanonicalOperation::RecordUpsert`/`RecordDelete` (REST vector/document
+  `src/network/rest/v1/handlers.rs`, graph `src/graph/merge.rs`).
+* The relational memtable partition key is `(tenant_id, name)`
+  (`DirectWalTableRecordStore::partition`).
+* `materialize_table_to_parquet` builds the object path from `&schema.name`.
+* The canonical WAL is a **single shared file** `data_dir/pgwire/canonical-records.wal`
+  (`src/network/shared_services.rs`) — all tenants, all collections, all modalities,
+  each entry tagged with `collection_id` (the name) + `tenant_id`.
+
+This is a design smell, and it is **inconsistent with the rest of the system**,
+which already keys on stable ids: columns carry `id` "stable across renames"
+(`CatalogColumn`), namespaces carry a rename-stable `namespace_id` that "drives
+physical paths", and the object-store path scheme is
+`accounts/{account_id}/{tenant_id}/{namespace_id}/{object_id}/`. SST/HELIX engines
+already use internal ids.
+
+Two concrete defects follow from name-as-key:
+
+1. **Rename-unsafety.** `rename_table` exists, so the name is mutable. Keying the
+   WAL `collection_id`, the data path, and the memtable partition by the name means
+   a `RENAME` would orphan the WAL stream, the materialized data dir, and the
+   partition. A rename must be a *metadata-only* operation.
+2. **Tenant non-uniqueness → feed leak.** Because `collection_id` is the bare name
+   (not tenant-unique), two tenants that both `CREATE TABLE orders` write entries
+   with the same `collection_id="orders"` into the one shared WAL, distinguished
+   only by `tenant_id`. Normal reads are isolated by the `(tenant, name)` partition,
+   but the WAL **change-feed** (`read_changes_since`) bypasses the partition and
+   reads the raw shared WAL, so it must filter on `tenant_id` to isolate tenants
+   (ADR-025 added `read_changes_since_scoped` as the stopgap). Per
+   `CODESIGN_DIMENSIONAL_ARCHITECTURE` §"structural isolation", isolation should be
+   **structural, never a per-query predicate** — the predicate is a stopgap.
+
+== Design tenet (mandate): per-type, globally-unique-across-tenants compact ids
+
+[IMPORTANT]
+====
+**Stable internal ids are compact `u64`, allocated per object *type* by a global
+monotonic allocator, and are unique across *all tenants* within their type.**
+
+* **Compact `u64`, not UUID/ULID.** 8 bytes (vs 16–26), integer equality (vs string
+  compare) on every collection-route / feed / partition lookup, cache-friendly,
+  and `u64` covers ~1.8×10^19 objects/deployment — far beyond any real ceiling. This
+  directly serves the co-design cost spine (smaller WAL/index bytes, cheaper compare).
+* **Per-type id space, globally unique across tenants.** Each object *type* (tenant,
+  namespace, table/collection, …) has its **own** monotonic id space, allocated
+  **globally** (across all tenants). So no two *tables* across all tenants share an
+  `object_id`; `collection_id` is therefore tenant-unique by construction. Numbers
+  **may** repeat *across types* (a `tenant_id` and an `object_id` can both be `5`) —
+  that is harmless because they are distinct type spaces, never compared to each other.
+* **Allocator.** A durable global-monotonic allocator per type (mirror the existing
+  `GlobalLsnAllocator`): never reuses an id, recoverable across restart, no per-tenant
+  partitioning of the id space.
+
+This is a load-bearing design tenet: it is *what* makes collection-routing
+structurally tenant-isolated (no per-query `tenant_id` predicate) and rename-safe.
+====
+
+== Decision
+
+Introduce a **stable, immutable internal `object_id: u64`** for every catalog table
+(allocated per the tenet above) and make it the **physical key** across the record
+path: the WAL `collection_id`, the memtable partition key, and the object-store
+data/WAL/SST paths. The user-facing `name` becomes pure metadata in the catalog
+(a `name → object_id` mapping). `RENAME` mutates only that mapping.
+
+Consequences once cutover completes:
+
+* **Rename-safe.** `RENAME TABLE` is a metadata-only catalog op; no physical bytes move.
+* **Structurally tenant-isolated.** `object_id` is globally unique, so `collection_id`
+  in the WAL is tenant-unique by construction; the change-feed (and every other
+  collection-routed reader) is isolated by the id alone. The ADR-025
+  `read_changes_since_scoped` `tenant_id` predicate becomes redundant and is removed
+  (structural isolation, no wasted compare).
+* **Consistent with the rest of the system** (column ids, `namespace_id`, the
+  `{object_id}` path slot, SST/HELIX engine ids).
+
+== Mixed-read-safe migration (phased, default-OFF) — mandate §8
+
+The WAL `collection_id` is an on-disk/wire field shared by all modalities, so this
+MUST be mixed-read-safe (old name-keyed and new id-keyed entries coexist, detected,
+never a flag-day) and roll out default-OFF until baked. The single shared WAL means
+**all modalities migrate together**; a partial (relational-only) cutover would put
+mixed name/id semantics in one file and is rejected.
+
+* **O0 — additive id (no behavior change).** `CatalogTableSchema` gains
+  `object_id: Option<u64>` (`#[serde(default)]`, back-compat). `create_table`
+  allocates the next id from the global per-type table allocator; `rename_table`
+  preserves it; `get_table` backfills a stable id for legacy rows on first read
+  (monotonic, recorded). Nothing physical uses it yet. **(This is the only phase
+  safe to land independently.)** Encoding on the wire: the WAL `collection_id`
+  String field carries the decimal `object_id` once O2 cuts over (resolver accepts
+  both the legacy name and the decimal-id forms); a typed `u64` field is an optional
+  later compaction.
+* **O1 — resolution + dual-read.** A `name ⇄ object_id` resolver in the catalog;
+  readers (change-feed, partition lookup, path resolution) accept **either** key and
+  prefer `object_id` when present. The change-feed matches an entry if its
+  `collection_id` equals the table's `object_id` **or** (legacy) its `name`.
+* **O2 — dual-write (gated).** Behind a default-OFF gate, every
+  `RecordUpsert`/`RecordDelete` writer stamps `collection_id = object_id` (all
+  modalities, in lock-step). Memtable partition + materialize/WAL/SST paths key on
+  `object_id`. Recovery replays both name- and id-keyed entries via the resolver.
+* **O3 — cutover.** Per-deployment opt-in → default-on once recovery + the
+  multi-modal regression suites (TPC-H/DS, document, events, vector recall, graph)
+  hold. Legacy name-keyed entries remain readable (the resolver never drops the
+  legacy arm).
+* **O4 — simplify.** Once cutover is baked, delete the ADR-025
+  `read_changes_since_scoped` `tenant_id` predicate (now redundant) and make
+  `RENAME` metadata-only end-to-end with a rename-survival test.
+
+Each phase gated by recovery round-trip + the modality regression ratchets.
+
+== Alternatives considered
+
+* **Keep the `tenant_id` feed predicate only (status quo after ADR-025) — REJECTED
+  as the end-state.** Correct for tenant isolation but does not fix rename-unsafety,
+  and is the per-query predicate the structural-isolation mandate frowns on. Retained
+  only as the stopgap until O3.
+* **Tenant-qualify the name (`{tenant}/{name}`) as `collection_id` — REJECTED.**
+  Makes it tenant-unique but is still name-derived (rename-unsafe) and churns the
+  same surface as the id without the rename win.
+* **Per-(tenant,collection) physical WAL files — COMPLEMENTARY, not a substitute.**
+  Worth doing for I/O scaling/structural isolation, but the *path* must be keyed by
+  `object_id` for rename-safety, so it still depends on this ADR.
+* **Relational-only cutover — REJECTED.** The shared WAL would carry mixed name/id
+  semantics; all modalities must move together.
+
+== Consequences
+
+* **Positive:** rename-safe; structural tenant isolation (drop the predicate);
+  consistent id model; foundation for per-collection WAL/path partitioning.
+* **Cost:** a cross-modality, mixed-read-safe migration of the canonical WAL
+  (ADR-020) touching every `RecordUpsert`/`RecordDelete` writer, recovery, paths, and
+  the catalog data model — multi-phase, gated.
+* **Neutral:** ADR-025's read-merge is unaffected by which key the feed uses; it
+  swaps `name` for `object_id` at the feed lookup and inherits rename-safety.
+
+== References
+
+* ADR-020 (canonical WAL authority) · ADR-025 (deletion vectors) · ADR-010 (PAX).
+* `src/services/record_store.rs` (`write_mutations`, `read_changes_since*`),
+  `src/network/shared_services.rs` (single shared WAL),
+  `crates/control/proximadb-catalog/src/lib.rs` (`create_table`/`rename_table`/`CatalogTableSchema`).
