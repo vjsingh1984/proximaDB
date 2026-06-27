@@ -79,8 +79,6 @@ pub struct WALFlushCoordinator {
     next_flush_id: Arc<tokio::sync::Mutex<u64>>,
     /// Storage engine registry for polymorphic flush delegation
     storage_engines: Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
-    /// AXIS manager for IndexConfig-based indexing after flush
-    axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
     /// Optimized flush coordinator for high-performance flushing
     optimized_coordinator: Option<Arc<OptimizedFlushCoordinator>>,
     /// Collection service for fetching metadata
@@ -103,7 +101,6 @@ impl WALFlushCoordinator {
             flush_states: Arc::new(RwLock::new(HashMap::new())),
             next_flush_id: Arc::new(tokio::sync::Mutex::new(1)),
             storage_engines: Arc::new(RwLock::new(HashMap::new())),
-            axis_manager: None,
             optimized_coordinator: None,
             collection_service: None,
             metrics_updater: None,
@@ -191,15 +188,6 @@ impl WALFlushCoordinator {
             "🚀 FlushCoordinator: Optimized flush enabled with batch_size={}, workers={}",
             batch_size, worker_count
         );
-    }
-
-    /// Set the AXIS manager for IndexConfig-based indexing
-    pub fn set_axis_manager(
-        &mut self,
-        axis_manager: Arc<crate::index::axis::management::manager::AxisManager>,
-    ) {
-        self.axis_manager = Some(axis_manager);
-        info!("🔗 FlushCoordinator: AXIS manager registered for IndexConfig-based indexing");
     }
 
     /// Initialize flush state for a collection

@@ -7102,6 +7102,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "proximadb-index-types",
  "proximadb-records",
  "serde",
  "serde_json",

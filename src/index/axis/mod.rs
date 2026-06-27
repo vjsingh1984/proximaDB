@@ -84,6 +84,7 @@ pub mod filterable_metadata;
 
 // Storage↔index decoupling contract (DIP/ISP): boundary impl of the
 // `proximadb-index-traits` role traits for `AxisManager`.
+pub mod compaction_update;
 pub mod contract;
 
 // Shared utilities and types
