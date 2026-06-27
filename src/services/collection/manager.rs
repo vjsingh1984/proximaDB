@@ -253,6 +253,25 @@ impl CollectionService {
         proximadb_tenant::tenant_id_of(collection)
     }
 
+    /// Default corpus-version bucket for writes without a threaded tenant context
+    /// (single-tenant / anonymous deployments). Reads of the same
+    /// corpus-version-keyed caches use the same bucket, so invalidation stays
+    /// consistent regardless of whether a tenant context is present.
+    pub(crate) const DEFAULT_VERSION_TENANT: &str = "default";
+
+    /// The tenant id to key corpus-version (cache-invalidation) bumps by. Falls
+    /// back to [`DEFAULT_VERSION_TENANT`](Self::DEFAULT_VERSION_TENANT) so the
+    /// bump — and therefore cache invalidation — fires **unconditionally** on
+    /// writes. Previously the bump was gated on a tenant context being present,
+    /// so in single-tenant/anonymous deployments (the common case today) writes
+    /// never bumped the version, leaving corpus-version-keyed caches stale.
+    fn version_tenant(tenant_context: Option<&crate::storage::tenant::TenantContext>) -> &str {
+        tenant_context
+            .map(|ctx| ctx.tenant_id.as_str())
+            .filter(|id| !id.is_empty())
+            .unwrap_or(Self::DEFAULT_VERSION_TENANT)
+    }
+
     async fn count_tenant_collections(&self, tenant_id: &str) -> Result<usize> {
         Ok(self
             .list_collections()
@@ -408,20 +427,20 @@ impl CollectionService {
 
         let response = self.delete_collection(collection_name).await?;
 
-        // Bump the corpus_version for (tenant, collection) so the
-        // process-wide PlanCache invalidates on the next planner
-        // lookup. Deleting a collection definitionally invalidates
-        // any cached plans for it. Only fires when we have a tenant
-        // context — anonymous deletions can't be keyed.
-        if let Some(tenant_ctx) = tenant_context
-            && response.success
-        {
+        // Bump the corpus_version for (tenant, collection) so corpus-version-keyed
+        // caches (PlanCache, the per-tenant system-catalog cache) invalidate on
+        // the next lookup. A delete definitionally invalidates any cached
+        // metadata/plans. Bumped **unconditionally** via the effective tenant —
+        // anonymous/single-tenant deletes (no threaded context) must invalidate
+        // too, keyed by the default bucket reads use.
+        if response.success {
+            let tenant = Self::version_tenant(tenant_context);
             let version = crate::catalog::CorpusVersionRegistry::global()
-                .bump(&tenant_ctx.tenant_id, collection_name)
+                .bump(tenant, collection_name)
                 .await;
             debug!(
                 "🔄 corpus_version bumped after delete: tenant={} collection={} version={}",
-                tenant_ctx.tenant_id, collection_name, version
+                tenant, collection_name, version
             );
         }
 
@@ -943,13 +962,14 @@ impl CollectionService {
         // entry that ended up in the cache during a race condition
         // — e.g. a search that arrived between catalog upsert and
         // this bump — gets superseded immediately.
-        if let Some(tenant_ctx) = tenant_context {
+        {
+            let tenant = Self::version_tenant(tenant_context);
             let version = crate::catalog::CorpusVersionRegistry::global()
-                .bump(&tenant_ctx.tenant_id, &config.name)
+                .bump(tenant, &config.name)
                 .await;
             debug!(
                 "🔄 corpus_version bumped after create: tenant={} collection={} version={}",
-                tenant_ctx.tenant_id, config.name, version
+                tenant, config.name, version
             );
         }
 
@@ -1543,6 +1563,26 @@ impl CollectionService {
             identifier,
             start_time.elapsed().as_micros()
         );
+
+        // Bump the corpus_version so corpus-version-keyed caches invalidate after
+        // the schema change. `update_collection` carries no tenant context, so it
+        // keys by the default bucket (consistent with reads). A rename bumps both
+        // the new and the previous name so a read of either key reloads.
+        let new_name = record
+            .config
+            .as_ref()
+            .map(|c| c.name.as_str())
+            .unwrap_or(identifier);
+        let _ = crate::catalog::CorpusVersionRegistry::global()
+            .bump(Self::DEFAULT_VERSION_TENANT, new_name)
+            .await;
+        if let Some(prev_name) = previous_record.config.as_ref().map(|c| c.name.as_str())
+            && prev_name != new_name
+        {
+            let _ = crate::catalog::CorpusVersionRegistry::global()
+                .bump(Self::DEFAULT_VERSION_TENANT, prev_name)
+                .await;
+        }
 
         // Record is already a proto Collection, no conversion needed
         let collection = record;
@@ -2354,6 +2394,85 @@ mod tests {
     /// name<->id. Proves the redesign: name and id are separate, unambiguous
     /// namespaces with NO length dependence (the old 8-char floor is gone), and
     /// resolution is name-authoritative.
+    /// Coherence (invariant #16b): create / update / delete must bump the
+    /// corpus version **even without a threaded tenant context** (the common
+    /// single-tenant/anonymous case), so corpus-version-keyed caches invalidate.
+    /// Previously the bump was tenant-context-gated and thus inert in production.
+    #[tokio::test]
+    async fn writes_bump_corpus_version_without_tenant_context() -> Result<()> {
+        use crate::catalog::CorpusVersionRegistry;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("temp dir")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("Failed to create test xCatalog")?;
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("collection service")?
+            .with_catalog_manager(catalog_manager.clone());
+
+        // Unique name isolates the process-global CorpusVersionRegistry.
+        let name = "cv_bump_probe";
+        let tenant = CollectionService::DEFAULT_VERSION_TENANT;
+        let v0 = CorpusVersionRegistry::global().current(tenant, name).await;
+
+        // create (inherent, tenant-less → effective tenant "default")
+        let config = CollectionConfig {
+            name: name.to_string(),
+            dimension: 8,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
+            ..Default::default()
+        };
+        assert!(
+            service
+                .create_collection(&config)
+                .await
+                .context("create")?
+                .success
+        );
+        let v_create = CorpusVersionRegistry::global().current(tenant, name).await;
+        assert!(
+            v_create > v0,
+            "create must bump corpus version without a tenant context ({v0} -> {v_create})"
+        );
+
+        // update (tenant-less)
+        let update = CollectionConfig {
+            description: Some("updated".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            service
+                .update_collection(name, Some(update))
+                .await
+                .context("update")?
+                .success
+        );
+        let v_update = CorpusVersionRegistry::global().current(tenant, name).await;
+        assert!(
+            v_update > v_create,
+            "update must bump ({v_create} -> {v_update})"
+        );
+
+        // delete (tenant-less)
+        service
+            .delete_collection_with_tenant_context(name, None)
+            .await
+            .context("delete")?;
+        let v_delete = CorpusVersionRegistry::global().current(tenant, name).await;
+        assert!(
+            v_delete > v_update,
+            "delete must bump ({v_update} -> {v_delete})"
+        );
+
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_short_name_resolves_name_authoritative() -> Result<()> {
         use tempfile::TempDir;
