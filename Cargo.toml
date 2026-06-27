@@ -605,11 +605,7 @@ serde_yaml = "0.9"
 default = ["sql_frontend", "graph-first-sks", "unified-facade-routing", "canonical-document-store", "datafusion-integration", "otlp-metering"]
 # Optional surfaces; keep off by default to minimize binary size and public API surface
 ai_endpoints = []
-sales_endpoints = []
 tenant_access = []
-executive_intel = []
-revenue_surface = []
-licensing_surface = []
 # Experimental storage engines (RAPTOR, SWIFT); disabled by default to prevent
 # server panics from unimplemented code paths. Enable for development/testing only.
 experimental-engines = []

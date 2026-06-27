@@ -1698,24 +1698,6 @@ pub fn create_router(state: AppState) -> axum::Router {
         }
     }
 
-    // Optional Sales endpoints (disabled by default; enable with `--features sales_endpoints`)
-    #[cfg(feature = "sales_endpoints")]
-    {
-        use crate::api_handlers::sales_endpoints;
-
-        match tokio::runtime::Runtime::new()
-            .and_then(|rt| rt.block_on(sales_endpoints::initialize_sales_service_state()))
-        {
-            Ok(sales_state) => {
-                router = router.nest("/sales", sales_endpoints::create_sales_router(sales_state));
-                info!("✅ Sales endpoints enabled at /sales");
-            }
-            Err(e) => {
-                warn!("Sales endpoints disabled (initialization failed): {}", e);
-            }
-        }
-    }
-
     info!("✅ REST API: Router created with canonical v2 routes and v1 compatibility adapters:");
     info!(
         "   POST   /api/v2/collections/:collection/records/batch (canonical ProximaRecord writes)"

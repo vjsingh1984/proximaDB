@@ -147,25 +147,6 @@ pub mod ai;
 #[allow(missing_docs)]
 pub mod deployment;
 
-/// Enterprise revenue engine for billing and customer success (opt-in via feature `revenue_surface`)
-#[cfg(feature = "revenue_surface")]
-#[allow(missing_docs)]
-pub mod revenue;
-
-/// Sales enablement platform for customer-facing sales automation (opt-in via feature `sales_endpoints`)
-#[cfg(feature = "sales_endpoints")]
-#[allow(missing_docs)]
-pub mod sales_enablement;
-
-/// License management and tier enforcement for all deployment models (opt-in via feature `licensing_surface`)
-#[cfg(feature = "licensing_surface")]
-#[allow(missing_docs)]
-pub mod licensing;
-
-/// Executive intelligence platform for C-level strategic analytics (opt-in)
-#[cfg(feature = "executive_intel")]
-pub mod executive;
-
 /// AXIS indexing engine with support for multiple algorithms (HNSW, IVF, LSH, etc.)
 #[allow(missing_docs)]
 pub mod index;

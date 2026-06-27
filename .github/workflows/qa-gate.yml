@@ -166,7 +166,7 @@ jobs:
         env:
           CARGO_BUILD_JOBS: "1"
         run: |
-          cargo llvm-cov --lib --no-report --workspace
+          cargo llvm-cov --lib --no-report -p proximadb
           cargo llvm-cov report --json --output-path /tmp/llvm-cov.json
           python3 scripts/coverage_ratchet.py normalize --rust /tmp/llvm-cov.json -o /tmp/rust-current.json
           # Seed the baseline if absent (first run), else ratchet-check.
