@@ -678,6 +678,26 @@ pub struct UniqueConflict {
 /// tuple comparison and predicate evaluation. Shared by the record store and
 /// `DmlService` so the value seen at write time (index maintenance) matches the
 /// value seen at check time.
+///
+/// ADR-031 O2: master gate for keying the WAL `collection_id` by the stable
+/// `object_id` (default OFF). Mixed-read-safe — readers dual-read (name OR id), so
+/// this rolls out per-writer/per-deployment without a flag-day cutover.
+fn wal_object_id_keying_enabled() -> bool {
+    std::env::var("PROXIMADB_WAL_OBJECT_ID_KEY")
+        .ok()
+        .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "on" | "yes"))
+}
+
+/// The WAL `collection_id` for a table: the stable `object_id` (decimal text) when
+/// `object_id_keying` is on and the table carries one, else the bare name (legacy).
+/// Pure (gate passed in) so it unit-tests without touching the process env.
+fn wal_collection_id(table_schema: &CatalogTableSchema, object_id_keying: bool) -> String {
+    if object_id_keying && let Some(oid) = table_schema.object_id {
+        return oid.to_string();
+    }
+    table_schema.name.clone()
+}
+
 pub(crate) fn proxima_value_to_unique_text(value: &proximadb_data_model::ProximaValue) -> String {
     use proximadb_data_model::ProximaValue;
     match value {
@@ -1714,6 +1734,11 @@ impl TableRecordStore for DirectWalTableRecordStore {
         let tenant_scope = Self::tenant_key(tenant_context);
         let partition = self.partition(&tenant_scope, &table_schema.name);
         let index_key = (tenant_scope.clone(), table_schema.name.clone());
+        // ADR-031 O2: the WAL `collection_id` is the stable `object_id` (decimal)
+        // once the cutover gate is on and the table carries one; otherwise the bare
+        // name (legacy). Readers dual-read (name OR object_id), so this can roll out
+        // per-writer, mixed-read-safe.
+        let collection_id = wal_collection_id(table_schema, wal_object_id_keying_enabled());
 
         for mutation in mutations {
             let kind = mutation.kind;
@@ -1732,7 +1757,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
                         ));
                     }
                     operations.push(CanonicalOperation::RecordUpsert {
-                        collection_id: table_schema.name.clone(),
+                        collection_id: collection_id.clone(),
                         record: Box::new(record.clone()),
                         projections: projections.clone(),
                     });
@@ -1749,7 +1774,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
                         ));
                     }
                     operations.push(CanonicalOperation::RecordUpsert {
-                        collection_id: table_schema.name.clone(),
+                        collection_id: collection_id.clone(),
                         record: Box::new(record.clone()),
                         projections: projections.clone(),
                     });
@@ -1757,7 +1782,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
                 }
                 TableRecordMutationKind::Upsert => {
                     operations.push(CanonicalOperation::RecordUpsert {
-                        collection_id: table_schema.name.clone(),
+                        collection_id: collection_id.clone(),
                         record: Box::new(record.clone()),
                         projections: projections.clone(),
                     });
@@ -1765,7 +1790,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
                 }
                 TableRecordMutationKind::Delete => {
                     operations.push(CanonicalOperation::RecordDelete {
-                        collection_id: table_schema.name.clone(),
+                        collection_id: collection_id.clone(),
                         oid: record.oid.clone(),
                         projections: projections.clone(),
                     });
@@ -2095,6 +2120,33 @@ mod tests {
     use futures::stream::BoxStream;
     use proximadb_catalog::{CatalogColumn, CatalogStorageLayout};
     use proximadb_data_model::ProximaValue;
+
+    /// ADR-031 O2: the WAL `collection_id` is the stable `object_id` (decimal) when
+    /// keying is on AND the table carries one, else the bare name (legacy). This is
+    /// what makes the cutover mixed-read-safe + rename-safe.
+    #[test]
+    fn wal_collection_id_prefers_object_id_when_keying_on() {
+        let mut schema = CatalogTableSchema::new("orders");
+        // No object_id yet → always the name, regardless of the gate.
+        assert_eq!(wal_collection_id(&schema, false), "orders");
+        assert_eq!(
+            wal_collection_id(&schema, true),
+            "orders",
+            "no object_id → name even when keying is on"
+        );
+        // With an object_id: keying off → name; keying on → the decimal id.
+        schema.object_id = Some(42);
+        assert_eq!(
+            wal_collection_id(&schema, false),
+            "orders",
+            "keying off → name"
+        );
+        assert_eq!(
+            wal_collection_id(&schema, true),
+            "42",
+            "keying on + object_id → stable id, never the mutable name"
+        );
+    }
     use proximadb_data_model::{ProximaType, VectorElement};
     use proximadb_kernel::error::StorageError;
     use proximadb_records::{EmbeddingCell, EmbeddingValues, RecordScan, RecordStore};

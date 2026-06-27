@@ -672,16 +672,36 @@ impl crate::query::execution::olap_delta_merge::OlapDeltaSource for DmlService {
         snapshot_lsn: u64,
         tenant: Option<&str>,
     ) -> anyhow::Result<Vec<String>> {
-        // Tenant-isolated canonical-WAL change-feed for this table after the
-        // snapshot LSN; the key is the canonical oid (= PK text). The feed is
-        // scoped by tenant_id because the WAL collection_id is the bare table name
-        // (not tenant-unique), so two tenants sharing a table name must not share
-        // the merge delta.
-        let changes = self
+        // Tenant-isolated canonical-WAL change-feed after the snapshot LSN; each
+        // ChangeRow.key is the canonical record oid (= PK text). The feed is scoped
+        // by tenant_id (the WAL collection_id is not tenant-unique under name-keying).
+        //
+        // ADR-031 O2 (mixed-read-safe dual-read): a table's WAL entries may be keyed
+        // by the bare name (legacy) OR the stable object_id (post-cutover), so we
+        // union both. With the object_id-first design this is the path that lets the
+        // tenant predicate drop out at O4 (object_id is globally unique).
+        let mut oids: std::collections::HashSet<String> = self
             .record_store
             .read_changes_since_scoped(table, tenant, snapshot_lsn)
-            .await?;
-        Ok(changes.into_iter().map(|c| c.key).collect())
+            .await?
+            .into_iter()
+            .map(|c| c.key)
+            .collect();
+        if let Ok((schema, _)) = self.resolve_select_table(table, tenant).await
+            && let Some(oid) = schema.object_id
+        {
+            let oid_key = oid.to_string();
+            if oid_key != table {
+                for c in self
+                    .record_store
+                    .read_changes_since_scoped(&oid_key, tenant, snapshot_lsn)
+                    .await?
+                {
+                    oids.insert(c.key);
+                }
+            }
+        }
+        Ok(oids.into_iter().collect())
     }
 
     async fn current_records(
