@@ -134,10 +134,6 @@ jobs:
               # workspace-wide, so a bump must re-run the Rust suite.
               - 'rust-toolchain*'
               - '.cargo/**'
-              # The CI workflow itself defines HOW the Rust suite compiles/runs
-              # (build-jobs, test-threads, nextest profile, swap headroom); a change
-              # here must re-run the suite so the change self-validates on its own PR.
-              - '.github/workflows/ci.yml'
             # `compile` gates the rust-compile hard gate. It is a deliberate
             # SUPERSET of every path that can affect `cargo check --workspace`:
             # the root `src/**`, every workspace member under `crates/**` and
@@ -1182,39 +1178,15 @@ jobs:
         if: matrix.test-type == 'unit'
         uses: taiki-e/install-action@nextest
 
-      # OOM headroom so the compile can parallelize (CARGO_BUILD_JOBS=2 below).
-      # The root `proximadb` test binary (8400+ tests) peaks memory at link; with
-      # two crates compiling concurrently that spike previously OOM-killed the
-      # 16GB runner (exit 143, "runner received a shutdown signal"). An extra
-      # swapfile absorbs the transient spike so we get the ~2x compile speedup
-      # WITHOUT serializing to jobs=1. Swap is a safety margin, not the steady
-      # state — the build stays RAM-resident in the common case (only the brief
-      # link peak may touch it).
-      - name: Add swap headroom (unit compile)
-        if: matrix.test-type == 'unit'
-        run: |
-          sudo fallocate -l 12G /swapfile-ci
-          sudo chmod 600 /swapfile-ci
-          sudo mkswap /swapfile-ci
-          sudo swapon /swapfile-ci
-          echo "--- swap + memory after adding headroom ---"
-          swapon --show
-          free -h
-
       - name: Run Tests
         run: |
           if [ "${{ matrix.test-type }}" = "unit" ]; then
-            # CARGO_BUILD_JOBS=2: the root `proximadb` crate's test binary
-            # (8400+ tests) dominates this job's wall-clock at the COMPILE step
-            # (~42 min of a ~57 min job; the ~15 min test run is the smaller
-            # tail). It is memory-heavy to link, so this was historically pinned
-            # to jobs=1 to avoid OOM (exit 143 mid-link) on the 16GB runner. We
-            # now parallelize the compile (jobs=2) for the ~2x build speedup and
-            # cover the transient link-time memory spike with the swap-headroom
-            # step above, rather than paying the serialized compile every run.
-            # --test-threads bounds nextest's run-phase memory too. If exit-143
-            # OOMs recur, raise swap or revert this to jobs=1.
-            CARGO_BUILD_JOBS=2 cargo nextest run --lib --profile unit --test-threads=2
+            # CARGO_BUILD_JOBS=1: the root `proximadb` crate's test binary
+            # (8400+ tests) is memory-heavy to compile; serializing crate
+            # compilation keeps the 16GB hosted runner from OOMing (it was
+            # being killed mid-link with exit 143 / "runner received a shutdown
+            # signal"). --test-threads bounds nextest's run-phase memory too.
+            CARGO_BUILD_JOBS=1 cargo nextest run --lib --profile unit --test-threads=2
           else
             cargo test ${{ matrix.args }} -- --test-threads=${{ matrix.threads }}
           fi
