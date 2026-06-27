@@ -39,6 +39,7 @@ pub mod embedding_precision_policy;
 pub mod glue;
 pub mod hive;
 pub mod iceberg;
+pub mod id_allocator;
 pub mod native;
 pub mod oltp;
 #[cfg(feature = "polaris-catalog")]
