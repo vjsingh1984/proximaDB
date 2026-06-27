@@ -186,3 +186,40 @@ jobs:
             /tmp/llvm-cov.json
             rust-coverage-seed.json
           if-no-files-found: ignore
+
+  embedding-smoke:
+    name: Native embedding smoke (runtime-full / onnx)
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    # FIRST CUT — the dev->qa gate for native embedding. `onnx` is a non-default
+    # cargo feature and the default `:latest` image is the no-onnx `runtime`
+    # target, so nothing else in CI exercises the BGE/onnx path. This builds the
+    # `runtime-full` image (onnx + baked BGE model) and runs
+    # scripts/embedding_smoke.sh against it, failing if native ingest returns
+    # model_unavailable. Non-blocking until proven green on qa; flip to required
+    # (remove continue-on-error) once stable — same rollout pattern as
+    # rust-coverage-ratchet above.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build runtime-full (onnx) image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: runtime-full
+          tags: proximadb:runtime-full-smoke
+          load: true
+          cache-from: type=gha,scope=runtime-full
+          cache-to: type=gha,scope=runtime-full,mode=max
+      - name: Run engine + embedding smoke
+        run: |
+          set -euo pipefail
+          docker run -d --name px -p 5678:5678 proximadb:runtime-full-smoke
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:5678/health >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:5678/health >/dev/null || { echo '::error:: engine did not become healthy'; docker logs px; exit 1; }
+          bash scripts/embedding_smoke.sh http://localhost:5678
