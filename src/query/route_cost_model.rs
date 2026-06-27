@@ -411,6 +411,22 @@ pub struct RouteCostModel {
     /// freshness-safe candidate is sampled (~1 in `exploration_interval`).
     explore_tick: AtomicU64,
     exploration_interval: u64,
+    /// TD-170 / ADR-034 P7: a HARD per-query round-trip (predicted `range_gets`)
+    /// budget. `None` = disabled (default). When set, the override fires
+    /// regardless of the soft `min_advantage` byte-cost gate if the static choice
+    /// exceeds the budget and a freshness-safe candidate is within it — because
+    /// latency = depth × RTT, so a backend over the round-trip budget loses even
+    /// when it moves fewer bytes.
+    rtt_budget: Option<f64>,
+}
+
+/// Parse `PROXIMADB_ROUTE_RTT_BUDGET` (a positive round-trip count) — the
+/// production source for the TD-170 round-trip budget. Default `None` (disabled).
+fn rtt_budget_from_env() -> Option<f64> {
+    std::env::var("PROXIMADB_ROUTE_RTT_BUDGET")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|b| *b > 0.0)
 }
 
 impl Default for RouteCostModel {
@@ -432,7 +448,16 @@ impl RouteCostModel {
             min_advantage: 0.15,
             explore_tick: AtomicU64::new(0),
             exploration_interval: 16,
+            rtt_budget: rtt_budget_from_env(),
         }
+    }
+
+    /// Set the hard round-trip budget (predicted `range_gets`); `None` disables it
+    /// (the default). Builder form for tests; production reads
+    /// `PROXIMADB_ROUTE_RTT_BUDGET` at construction.
+    pub fn with_rtt_budget(mut self, budget: Option<f64>) -> Self {
+        self.rtt_budget = budget.filter(|b| *b > 0.0);
+        self
     }
 
     /// Tune how often exploration samples an under-explored candidate (~1 in N
@@ -526,11 +551,24 @@ impl RouteCostModel {
         shape_class: &str,
         candidates: &[ComputeBackend],
     ) -> Option<RouteRecommendation> {
+        self.recommend_filtered(shape_class, candidates, None)
+    }
+
+    /// Like [`recommend`] but, when `max_rtt` is `Some`, only considers candidates
+    /// whose predicted `range_gets` is within that round-trip budget (TD-170 hard
+    /// admission filter) — used to pick the cheapest *within-budget* backend.
+    fn recommend_filtered(
+        &self,
+        shape_class: &str,
+        candidates: &[ComputeBackend],
+        max_rtt: Option<f64>,
+    ) -> Option<RouteRecommendation> {
         let mut scored: Vec<(ComputeBackend, RouteCost)> = candidates
             .iter()
             .filter_map(|b| {
                 self.estimate(shape_class, b)
                     .filter(|c| c.samples >= self.min_samples)
+                    .filter(|c| max_rtt.is_none_or(|budget| c.range_gets <= budget))
                     .map(|c| (b.clone(), c))
             })
             .collect();
@@ -573,13 +611,28 @@ impl RouteCostModel {
         if !self.override_active() {
             return None;
         }
-        let rec = self.recommend(shape_class, candidates)?;
-        if backend_label(&rec.backend) == backend_label(static_backend) {
-            return None; // the model already agrees with the static choice
-        }
         let static_cost = self.estimate(shape_class, static_backend)?;
         if static_cost.samples < self.min_samples {
             return None; // not enough evidence about the static route to beat it
+        }
+        // TD-170: the round-trip budget is a HARD admission constraint, checked
+        // BEFORE the soft byte-cost gate — and even when the static route is
+        // otherwise the byte-cheapest. If the static choice's predicted round-trips
+        // exceed the budget, route to the cheapest freshness-safe candidate WITHIN
+        // the budget: a backend over the round-trip budget loses even when it moves
+        // fewer bytes (latency = depth × RTT), regardless of `min_advantage`.
+        if let Some(budget) = self.rtt_budget
+            && static_cost.range_gets > budget
+            && let Some(within) = self.recommend_filtered(shape_class, candidates, Some(budget))
+            && backend_label(&within.backend) != backend_label(static_backend)
+        {
+            return Some(within);
+        }
+        // Soft byte-cost gate: flip only to a candidate beating the static route by
+        // at least `min_advantage`.
+        let rec = self.recommend(shape_class, candidates)?;
+        if backend_label(&rec.backend) == backend_label(static_backend) {
+            return None; // the model already agrees with the static choice
         }
         if rec.score < static_cost.score * (1.0 - self.min_advantage) {
             Some(rec)
@@ -928,6 +981,52 @@ mod tests {
             m.recommend_override("olap/parquet", &ComputeBackend::Native, &cands)
                 .is_none(),
             "marginal advantage must not flip the route"
+        );
+    }
+
+    #[test]
+    fn td170_rtt_budget_routes_away_from_byte_cheapest_over_budget_backend() {
+        // DataFusion is byte-CHEAPEST (no bytes/compute) but blows the round-trip
+        // budget (10 GETs); Native is WITHIN budget (2 GETs) but costs more total
+        // bytes — so the soft byte-cost gate would never flip away from DataFusion.
+        let warm = |m: &RouteCostModel| {
+            for _ in 0..8 {
+                m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(10, 0, 0));
+                m.observe_by_label("olap/parquet", "Native(Volcano)", &snap(2, 50 << 20, 0));
+            }
+        };
+        let cands = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+
+        // No budget: DataFusion is byte-cheapest → recommend = static DataFusion →
+        // the over-round-trip route is KEPT (the soft gate can't see the depth cost).
+        let m = RouteCostModel::new().with_min_samples(1);
+        m.set_override_enabled(true);
+        warm(&m);
+        assert_eq!(
+            m.recommend("olap/parquet", &cands).unwrap().backend,
+            ComputeBackend::DataFusionLocal,
+            "DataFusion is the byte-cheapest backend"
+        );
+        assert!(
+            m.recommend_override("olap/parquet", &ComputeBackend::DataFusionLocal, &cands)
+                .is_none(),
+            "no budget → keeps the byte-cheapest static route despite its round-trips"
+        );
+
+        // Budget = 3: DataFusion (10 GETs) blows it → HARD override to the
+        // within-budget Native, even though Native costs MORE total bytes.
+        let mb = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_rtt_budget(Some(3.0));
+        mb.set_override_enabled(true);
+        warm(&mb);
+        let over = mb
+            .recommend_override("olap/parquet", &ComputeBackend::DataFusionLocal, &cands)
+            .expect("RTT budget must reshape the route off the over-budget backend");
+        assert_eq!(
+            over.backend,
+            ComputeBackend::Native,
+            "RTT budget routes to the within-budget backend over the byte-cheapest one"
         );
     }
 
