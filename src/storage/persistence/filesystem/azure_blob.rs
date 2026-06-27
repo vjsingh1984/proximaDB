@@ -5,8 +5,22 @@
  * you may not use this file except in compliance with the License.
  */
 
-//! Azure Blob Storage (ADLS Gen2) [`FileSystem`] backend on the canonical
-//! `object_store` crate. Feature-gated behind `azure`.
+//! Azure Blob Storage [`FileSystem`] backend on the canonical `object_store`
+//! crate. Feature-gated behind `azure`.
+//!
+//! ## Orientation (ADR-036): this is the **Blob endpoint**, not DFS/HNS
+//!
+//! `MicrosoftAzureBuilder` talks to the **Blob endpoint** (`*.blob.core.windows.net`)
+//! with **flat object keys**. The factory registers four schemes for this one
+//! backend — `az`/`azure` (canonical) and `adls`/`abfs` (ergonomic aliases) — but
+//! all four take the *same* Blob path here (`scheme://container/blob`). The aliases
+//! do **not** engage the ADLS Gen2 DFS endpoint (`*.dfs.core.windows.net`), the
+//! Hadoop ABFS driver, or Hierarchical Namespace. We deliberately run **flat Blob
+//! (HNS-off)**: our workload is flat-key, immutable, ranged-read, so HNS adds
+//! per-operation cost with no benefit. The object-storage **cost lever is the
+//! access tier** (`x-ms-access-tier`: Hot/Cool/Cold/Archive), set per-PUT from
+//! `FileOptions.storage_class` (see [`AzureBlobFileSystem::write`]) — not the
+//! scheme and not the namespace mode.
 //!
 //! `object_store` is the battle-tested Rust object-store abstraction (Arrow /
 //! DataFusion / Delta ecosystem). Unlike the pre-GA `azure_storage_blobs` 0.19
@@ -23,9 +37,9 @@ use object_store::ObjectStore;
 // handle. Required in scope here or the bridge calls below fail to resolve
 // (E0599) — this file is feature-gated (`azure`) and not built by default CI.
 use object_store::ObjectStoreExt;
-use object_store::PutPayload;
 use object_store::azure::MicrosoftAzureBuilder;
 use object_store::path::Path as ObjPath;
+use object_store::{Attribute, Attributes, PutOptions, PutPayload};
 use std::sync::Arc;
 
 use super::{
@@ -208,13 +222,35 @@ impl FileSystem for AzureBlobFileSystem {
         Ok(bytes.to_vec())
     }
 
-    async fn write(&self, path: &str, data: &[u8], _options: Option<FileOptions>) -> FsResult<()> {
+    async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
         let (container, blob) = Self::parse(path)?;
         let store = self.store_for(&container)?;
-        store
-            .put(&ObjPath::from(blob), PutPayload::from(data.to_vec()))
-            .await
-            .map_err(|e| Self::net("Azure put", e))?;
+        let dst = ObjPath::from(blob);
+        let payload = PutPayload::from(data.to_vec());
+        // Access tier is the object-storage cost lever (ADR-036): map the canonical
+        // `FileOptions.storage_class` to `x-ms-access-tier` on the PUT. Unset/typo ⇒
+        // `None` ⇒ the account default tier (today's behavior, unchanged). The tier
+        // is set per-object on the flat Blob endpoint — no ADLS HNS required.
+        match options.as_ref().and_then(FileOptions::access_tier) {
+            Some(tier) => {
+                let mut attributes = Attributes::new();
+                attributes.insert(Attribute::StorageClass, tier.as_azure_access_tier().into());
+                let opts = PutOptions {
+                    attributes,
+                    ..Default::default()
+                };
+                store
+                    .put_opts(&dst, payload, opts)
+                    .await
+                    .map_err(|e| Self::net("Azure put_opts", e))?;
+            }
+            None => {
+                store
+                    .put(&dst, payload)
+                    .await
+                    .map_err(|e| Self::net("Azure put", e))?;
+            }
+        }
         Ok(())
     }
 

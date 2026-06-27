@@ -104,12 +104,121 @@ pub struct FileOptions {
     pub overwrite: bool,
     pub buffer_size: Option<usize>,
     pub encryption: Option<String>,
-    pub storage_class: Option<String>, // For cloud storage
+    /// Canonical object-storage access tier for this write (the cost lever — see
+    /// [`ObjectAccessTier`]). Holds the lowercase canonical name (`hot`|`cool`|
+    /// `cold`|`archive`) or a native provider spelling; a backend maps it to its
+    /// provider class at the I/O boundary. `None` ⇒ the account/backend default
+    /// (today's behavior, unchanged).
+    pub storage_class: Option<String>,
     pub metadata: Option<HashMap<String, String>>,
 
     /// Pre-computed temp path (cached for performance)
     /// None means direct write, Some means atomic write-temp-rename
     pub temp_path: Option<String>,
+}
+
+impl FileOptions {
+    /// Resolve [`FileOptions::storage_class`] to a canonical [`ObjectAccessTier`].
+    /// Returns `None` when unset or unrecognized — the caller then uses the
+    /// backend/account default tier rather than failing the write.
+    pub fn access_tier(&self) -> Option<ObjectAccessTier> {
+        self.storage_class
+            .as_deref()
+            .and_then(ObjectAccessTier::parse)
+    }
+}
+
+/// Canonical, cloud-neutral object-storage **access tier** — the dominant
+/// object-storage **cost lever** (ADR-036). A colder tier trades retrieval
+/// latency/cost for a far lower at-rest GB-month price; on object storage the
+/// at-rest term, not CPU, is what we co-design against. Callers choose a
+/// *canonical* tier and each cloud backend maps it to that provider's native
+/// class at the I/O boundary, so call sites never hard-code `"Cool"` (Azure) vs
+/// `"STANDARD_IA"` (S3) vs `"NEARLINE"` (GCS).
+///
+/// Distinct from [`FileStorageTier`], which models *physical media latency*
+/// (Memory/NVMe/SSD/…); this is the *cloud billing tier* applied per object PUT.
+///
+/// IMPORTANT (Azure orientation, ADR-036): the tier is a property of the **object
+/// PUT** (`x-ms-access-tier`), available on a *flat* Blob account — it does **not**
+/// require ADLS Gen2 Hierarchical Namespace. HNS adds per-operation cost with no
+/// benefit for our flat-key, immutable, ranged-read workload; the access tier is
+/// the lever, the namespace mode is not. The `az://`/`azure://`/`adls://`/`abfs://`
+/// schemes all resolve to the *same* Blob endpoint backend (see the filesystem
+/// factory) — the scheme is **not** a cost lever, only the tier is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ObjectAccessTier {
+    /// Frequent access, lowest latency, highest at-rest price. The backend default.
+    Hot,
+    /// Infrequent access (≈30-day min). Azure `Cool` / S3 `STANDARD_IA` / GCS `NEARLINE`.
+    Cool,
+    /// Rare access, still online/instant-retrieval. Azure `Cold` / S3 Glacier
+    /// Instant Retrieval / GCS `COLDLINE`.
+    Cold,
+    /// Offline, minutes-to-hours retrieval, cheapest. Azure `Archive` / S3 Glacier
+    /// Flexible Retrieval / GCS `ARCHIVE`.
+    Archive,
+}
+
+impl ObjectAccessTier {
+    /// Lenient parse: canonical names + common provider spellings. Returns `None`
+    /// for an unrecognized value — callers fall back to the backend default and
+    /// never fail a write on a tier typo.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "hot" | "standard" => Some(Self::Hot),
+            "cool" | "standard_ia" | "standard-ia" | "onezone_ia" | "nearline" => Some(Self::Cool),
+            "cold" | "coldline" | "glacier_ir" | "glacier-ir" => Some(Self::Cold),
+            "archive"
+            | "glacier"
+            | "glacier_flexible"
+            | "deep_archive"
+            | "glacier_deep_archive" => Some(Self::Archive),
+            _ => None,
+        }
+    }
+
+    /// Azure Blob `x-ms-access-tier` value (also the ADLS Gen2 access tier).
+    pub fn as_azure_access_tier(self) -> &'static str {
+        match self {
+            Self::Hot => "Hot",
+            Self::Cool => "Cool",
+            Self::Cold => "Cold",
+            Self::Archive => "Archive",
+        }
+    }
+
+    /// AWS S3 `x-amz-storage-class` value. `Cold` maps to Glacier Instant Retrieval
+    /// (synchronous, no restore); `Archive` maps to Glacier Flexible Retrieval.
+    pub fn as_s3_storage_class(self) -> &'static str {
+        match self {
+            Self::Hot => "STANDARD",
+            Self::Cool => "STANDARD_IA",
+            Self::Cold => "GLACIER_IR",
+            Self::Archive => "GLACIER",
+        }
+    }
+
+    /// GCS storage class.
+    pub fn as_gcs_storage_class(self) -> &'static str {
+        match self {
+            Self::Hot => "STANDARD",
+            Self::Cool => "NEARLINE",
+            Self::Cold => "COLDLINE",
+            Self::Archive => "ARCHIVE",
+        }
+    }
+
+    /// Canonical lowercase name — the serialized [`FileOptions::storage_class`] form.
+    pub fn as_canonical_str(self) -> &'static str {
+        match self {
+            Self::Hot => "hot",
+            Self::Cool => "cool",
+            Self::Cold => "cold",
+            Self::Archive => "archive",
+        }
+    }
 }
 
 /// Authentication configuration for cloud providers
@@ -603,5 +712,94 @@ impl Default for FilesystemPerformanceConfig {
 impl From<FilesystemError> for proximadb_kernel::error::VectorDBError {
     fn from(err: FilesystemError) -> Self {
         proximadb_kernel::error::VectorDBError::Filesystem(err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod object_access_tier_tests {
+    use super::{FileOptions, ObjectAccessTier};
+
+    #[test]
+    fn parse_accepts_canonical_names_case_insensitively() {
+        assert_eq!(ObjectAccessTier::parse("hot"), Some(ObjectAccessTier::Hot));
+        assert_eq!(
+            ObjectAccessTier::parse("Cool"),
+            Some(ObjectAccessTier::Cool)
+        );
+        assert_eq!(
+            ObjectAccessTier::parse(" COLD "),
+            Some(ObjectAccessTier::Cold)
+        );
+        assert_eq!(
+            ObjectAccessTier::parse("archive"),
+            Some(ObjectAccessTier::Archive)
+        );
+    }
+
+    #[test]
+    fn parse_accepts_native_provider_spellings() {
+        // S3
+        assert_eq!(
+            ObjectAccessTier::parse("STANDARD"),
+            Some(ObjectAccessTier::Hot)
+        );
+        assert_eq!(
+            ObjectAccessTier::parse("STANDARD_IA"),
+            Some(ObjectAccessTier::Cool)
+        );
+        assert_eq!(
+            ObjectAccessTier::parse("GLACIER_IR"),
+            Some(ObjectAccessTier::Cold)
+        );
+        assert_eq!(
+            ObjectAccessTier::parse("GLACIER"),
+            Some(ObjectAccessTier::Archive)
+        );
+        // GCS
+        assert_eq!(
+            ObjectAccessTier::parse("NEARLINE"),
+            Some(ObjectAccessTier::Cool)
+        );
+        assert_eq!(
+            ObjectAccessTier::parse("COLDLINE"),
+            Some(ObjectAccessTier::Cold)
+        );
+    }
+
+    #[test]
+    fn parse_returns_none_for_unknown_so_write_falls_back_to_default() {
+        assert_eq!(ObjectAccessTier::parse("warm"), None);
+        assert_eq!(ObjectAccessTier::parse(""), None);
+    }
+
+    #[test]
+    fn per_cloud_mappings_are_native() {
+        assert_eq!(ObjectAccessTier::Cool.as_azure_access_tier(), "Cool");
+        assert_eq!(ObjectAccessTier::Cold.as_azure_access_tier(), "Cold");
+        assert_eq!(ObjectAccessTier::Cool.as_s3_storage_class(), "STANDARD_IA");
+        assert_eq!(ObjectAccessTier::Cold.as_s3_storage_class(), "GLACIER_IR");
+        assert_eq!(ObjectAccessTier::Archive.as_gcs_storage_class(), "ARCHIVE");
+    }
+
+    #[test]
+    fn canonical_str_round_trips_through_parse() {
+        for t in [
+            ObjectAccessTier::Hot,
+            ObjectAccessTier::Cool,
+            ObjectAccessTier::Cold,
+            ObjectAccessTier::Archive,
+        ] {
+            assert_eq!(ObjectAccessTier::parse(t.as_canonical_str()), Some(t));
+        }
+    }
+
+    #[test]
+    fn file_options_access_tier_resolves_and_defaults_safely() {
+        let mut o = FileOptions::default();
+        assert_eq!(o.access_tier(), None); // unset ⇒ backend default
+        o.storage_class = Some("cool".to_string());
+        assert_eq!(o.access_tier(), Some(ObjectAccessTier::Cool));
+        o.storage_class = Some("nonsense".to_string());
+        assert_eq!(o.access_tier(), None); // typo ⇒ default, never an error
     }
 }

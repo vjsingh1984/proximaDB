@@ -424,9 +424,28 @@ impl FilesystemFactory {
             Ok(backend) => {
                 let fs =
                     self.maybe_wrap_with_encryption(Arc::new(backend) as Arc<dyn FileSystem>)?;
-                for scheme in ["adls", "abfs", "az", "azure"] {
+                // Scheme honesty (ADR-036): all four schemes resolve to the SAME
+                // Azure backend, which talks to the **Blob endpoint**
+                // (`*.blob.core.windows.net`, flat object keys) via `object_store`'s
+                // `MicrosoftAzureBuilder`. `az`/`azure` are the canonical schemes.
+                // `adls`/`abfs` are accepted **aliases** for ergonomics — but they
+                // do NOT engage the ADLS Gen2 DFS endpoint, the ABFS Hadoop driver,
+                // or Hierarchical Namespace; they are a Blob-endpoint write under a
+                // familiar name. We deliberately run flat Blob (HNS-off) + access-tier
+                // as the cost lever; HNS buys nothing for our flat-key, immutable,
+                // ranged-read workload. The one-time log makes the aliasing explicit
+                // so an operator never assumes DFS/HNS semantics from the scheme.
+                for scheme in ["az", "azure", "adls", "abfs"] {
                     self.filesystems.insert(scheme.to_string(), fs.clone());
                 }
+                tracing::info!(
+                    canonical = "az://, azure://",
+                    aliases = "adls://, abfs://",
+                    endpoint = "blob.core.windows.net (flat, HNS-off)",
+                    "Azure FileSystem registered: all schemes route to the Blob \
+                     endpoint; adls/abfs are aliases and do NOT use the DFS/ABFS \
+                     endpoint or Hierarchical Namespace. Cost lever = access tier."
+                );
             }
             Err(e) => tracing::warn!("Azure FileSystem not registered: {e}"),
         }
@@ -727,8 +746,13 @@ impl FilesystemFactory {
         let parsed_url = Url::parse(&normalized_url)?;
 
         match parsed_url.scheme() {
-            "s3" | "gcs" | "gs" => {
-                // Bucket is the hostname
+            // Flat object stores (and the canonical Azure Blob schemes): the
+            // container/bucket is the URL host. `az://container/blob` matches the
+            // backend's flat parse — the Blob endpoint, no account/HNS segment
+            // (ADR-036). `adls`/`abfs` keep their legacy account-in-path/host@account
+            // shapes below for backward compatibility.
+            "s3" | "gcs" | "gs" | "az" | "azure" => {
+                // Bucket/container is the hostname
                 Ok(parsed_url.host_str().map(|s| s.to_string()))
             }
             "adls" => {
