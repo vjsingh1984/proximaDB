@@ -108,7 +108,11 @@ part of this publishable SDK surface.",
         collections::create_collection_v2,
         collections::list_collections_v2,
         collections::get_collection_v2,
-        collections::get_collection_statistics_v2,
+        // NOTE: get_collection_statistics_v2 is intentionally NOT in the
+        // published OpenAPI spec — it lives under `/api/v2/_diagnostics/...`,
+        // and `_diagnostics` routes (route-health / recall-tune / recluster) are
+        // excluded by convention. The route stays registered (rest/v2/mod.rs);
+        // the agent-facing stats surface is the reference MCP `stats` tool.
         collections::delete_collection_v2,
         schema::get_schema,
         schema::update_schema,

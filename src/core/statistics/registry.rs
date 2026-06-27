@@ -11,8 +11,8 @@
 //!
 //! Resident and in-memory only (v1): a restart drops summaries until the next
 //! flush re-populates them — honest, since freshness then reflects the last
-//! observed flush. No `.unwrap()` on the lock: a poisoned lock degrades to
-//! "no statistics", never a panic (panic-policy mandate).
+//! observed flush. The lock is never force-unwrapped: a poisoned lock degrades
+//! to "no statistics", never a panic (panic-policy mandate).
 
 use super::{StatisticsEnvelope, StatisticsSummary};
 use std::collections::HashMap;
