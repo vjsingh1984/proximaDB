@@ -1551,13 +1551,13 @@ mod tests {
         );
 
         // Float values
-        let float_val = strategy.parse_sql_value("3.14");
+        let float_val = strategy.parse_sql_value("3.5");
         assert!(float_val.is_some());
         let f = float_val
             .expect("Float value should be present")
             .as_f64()
             .expect("Should be a float64");
-        assert!((f - 3.14).abs() < 0.001);
+        assert!((f - 3.5).abs() < 0.001);
     }
 
     #[test]

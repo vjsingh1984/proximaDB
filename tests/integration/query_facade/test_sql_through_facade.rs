@@ -395,7 +395,7 @@ async fn test_sql_response_data_types() {
     let rows = vec![serde_json::json!({
         "string_col": "hello",
         "int_col": 42,
-        "float_col": 3.14,
+        "float_col": 3.5,
         "bool_col": true,
         "null_col": null,
         "array_col": [1, 2, 3],

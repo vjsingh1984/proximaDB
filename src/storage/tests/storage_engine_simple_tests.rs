@@ -74,7 +74,7 @@ async fn test_storage_engine_creation() {
 
     // Test euclidean distance calculation
     let result = distance_compute.calculate_distance(&vec1, &vec2, &DistanceMetric::Euclidean);
-    assert!((result.rank_value - 1.4142135).abs() < 0.0001); // sqrt(2)
+    assert!((result.rank_value - std::f32::consts::SQRT_2).abs() < 0.0001); // sqrt(2)
 }
 
 #[tokio::test]

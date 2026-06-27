@@ -5666,7 +5666,7 @@ mod tests {
                     value: Some(SqlVal::NullValue(0)),
                 },
                 SqlValue {
-                    value: Some(SqlVal::NumberValue(3.14)),
+                    value: Some(SqlVal::NumberValue(3.5)),
                 },
             ],
         };

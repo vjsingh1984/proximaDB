@@ -3130,7 +3130,7 @@ mod tests {
         assert!(matches!(int_val, Some(Value::IntValue(42))));
 
         // Float
-        let float_val = json_to_filter_clause_value(&serde_json::json!(3.14));
+        let float_val = json_to_filter_clause_value(&serde_json::json!(3.5));
         assert!(matches!(float_val, Some(Value::DoubleValue(_))));
 
         // Boolean
@@ -3184,9 +3184,9 @@ mod tests {
     #[test]
     fn test_json_to_sql_value_float() {
         use crate::proto::proximadb_v1::sql_value::Value;
-        let val = json_to_sql_value(&serde_json::json!(3.14));
+        let val = json_to_sql_value(&serde_json::json!(3.5));
         match val.value {
-            Some(Value::NumberValue(f)) => assert!((f - 3.14).abs() < f64::EPSILON),
+            Some(Value::NumberValue(f)) => assert!((f - 3.5).abs() < f64::EPSILON),
             other => panic!("Expected NumberValue, got {:?}", other),
         }
     }
@@ -3282,10 +3282,10 @@ mod tests {
     fn test_sql_value_to_json_number() {
         use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
         let sv = SqlValue {
-            value: Some(Value::NumberValue(2.718)),
+            value: Some(Value::NumberValue(2.5)),
         };
         let result = sql_value_to_json(&sv).expect("Should convert number");
-        assert!((result.as_f64().expect("Should be f64") - 2.718).abs() < 0.001);
+        assert!((result.as_f64().expect("Should be f64") - 2.5).abs() < 0.001);
     }
 
     #[test]
@@ -3494,9 +3494,9 @@ mod tests {
 
     #[test]
     fn test_json_to_sql_float() {
-        let sv = json_to_sql_value(&serde_json::json!(3.14));
+        let sv = json_to_sql_value(&serde_json::json!(3.5));
         if let Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) = sv.value {
-            assert!((f - 3.14).abs() < 1e-10);
+            assert!((f - 3.5).abs() < 1e-10);
         } else {
             panic!("Expected NumberValue");
         }
@@ -3604,7 +3604,7 @@ mod tests {
 
     #[test]
     fn test_filter_clause_float() {
-        let val = json_to_filter_clause_value(&serde_json::json!(3.14));
+        let val = json_to_filter_clause_value(&serde_json::json!(3.5));
         assert!(val.is_some());
     }
 

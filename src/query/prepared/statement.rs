@@ -721,7 +721,7 @@ mod tests {
             "'test'"
         );
         assert_eq!(ParameterValue::Int(42).to_sql_string(), "42");
-        assert_eq!(ParameterValue::Float(3.14).to_sql_string(), "3.14");
+        assert_eq!(ParameterValue::Float(3.5).to_sql_string(), "3.5");
         assert_eq!(ParameterValue::Bool(true).to_sql_string(), "true");
         assert_eq!(ParameterValue::Null.to_sql_string(), "NULL");
         assert_eq!(
