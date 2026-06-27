@@ -134,6 +134,10 @@ jobs:
               # workspace-wide, so a bump must re-run the Rust suite.
               - 'rust-toolchain*'
               - '.cargo/**'
+              # The CI workflow itself defines HOW the Rust suite compiles/runs
+              # (build-jobs, test-threads, nextest profile, swap headroom); a change
+              # here must re-run the suite so the change self-validates on its own PR.
+              - '.github/workflows/ci.yml'
             # `compile` gates the rust-compile hard gate. It is a deliberate
             # SUPERSET of every path that can affect `cargo check --workspace`:
             # the root `src/**`, every workspace member under `crates/**` and
@@ -1178,15 +1182,44 @@ jobs:
         if: matrix.test-type == 'unit'
         uses: taiki-e/install-action@nextest
 
+      # OOM headroom for the COMPILE phase only (see the build/run split below).
+      # The root `proximadb` test binary (8400+ tests) peaks memory at link; with
+      # CARGO_BUILD_JOBS=2 two crates compile concurrently and that spike OOM-kills
+      # the 16GB runner (exit 143 mid-link). An extra swapfile absorbs the transient
+      # spike so we get the ~2x compile speedup. The run phase does NOT keep this
+      # swap (it is swapoff'd before tests) — disk-backed swap during the 8300-test
+      # run thrashed it ~3x slower (measured, #433). Swap is a compile-only margin.
+      - name: Add swap headroom (unit compile)
+        if: matrix.test-type == 'unit'
+        run: |
+          sudo fallocate -l 12G /swapfile-ci
+          sudo chmod 600 /swapfile-ci
+          sudo mkswap /swapfile-ci
+          sudo swapon /swapfile-ci
+          echo "--- swap + memory after adding headroom ---"
+          swapon --show
+          free -h
+
       - name: Run Tests
         run: |
           if [ "${{ matrix.test-type }}" = "unit" ]; then
-            # CARGO_BUILD_JOBS=1: the root `proximadb` crate's test binary
-            # (8400+ tests) is memory-heavy to compile; serializing crate
-            # compilation keeps the 16GB hosted runner from OOMing (it was
-            # being killed mid-link with exit 143 / "runner received a shutdown
-            # signal"). --test-threads bounds nextest's run-phase memory too.
-            CARGO_BUILD_JOBS=1 cargo nextest run --lib --profile unit --test-threads=2
+            # Build/run split to win on BOTH phases of this compile-bound job
+            # (measured: ~42 min compile + ~15 min run = ~57 min at jobs=1).
+            #
+            # 1) COMPILE with CARGO_BUILD_JOBS=2 (the dominant term, ~42->~24 min).
+            #    The memory-heavy link is covered by the swapfile added above, so
+            #    parallel compilation does not OOM (exit 143) the 16GB runner.
+            CARGO_BUILD_JOBS=2 cargo nextest run --lib --profile unit --no-run
+            # 2) DROP the swap before running. The 8300-test run is RAM-resident;
+            #    leaving disk-backed swap available let the kernel spill the run's
+            #    working set and thrash it ~3x slower (#433: 902s -> 2661s). swapoff
+            #    returns the run to RAM-only. Tolerate failure (pages already
+            #    faulted back) so it never fails the job.
+            sudo swapoff /swapfile-ci || true
+            echo "--- swap + memory after swapoff (run phase is RAM-only) ---"
+            free -h
+            # 3) RUN the already-built binaries (no recompile; --no-run built them).
+            cargo nextest run --lib --profile unit --test-threads=2
           else
             cargo test ${{ matrix.args }} -- --test-threads=${{ matrix.threads }}
           fi
