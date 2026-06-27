@@ -1057,7 +1057,7 @@ pub(crate) async fn resolve_collection_from_catalog(
         && catalog.table_exists(&table_id).await.unwrap_or(false)
         && let Ok(schema) = catalog.get_table(&table_id).await
         && let Ok(Some(collection)) =
-            crate::services::collection::manager::CollectionService::collection_from_catalog_schema(
+            crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
                 &table_id, &schema,
             )
     {
@@ -1076,7 +1076,7 @@ pub(crate) async fn resolve_collection_from_catalog(
                 continue;
             };
             if let Ok(Some(collection)) =
-                crate::services::collection::manager::CollectionService::collection_from_catalog_schema(
+                crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
                     &table_id, &schema,
                 )
                 && (collection.id == collection_id
@@ -1117,7 +1117,7 @@ pub(crate) async fn list_collections_from_catalog() -> Vec<crate::proto::proxima
                 continue;
             };
             if let Ok(Some(collection)) =
-                crate::services::collection::manager::CollectionService::collection_from_catalog_schema(
+                crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
                     &table_id, &schema,
                 )
             {
