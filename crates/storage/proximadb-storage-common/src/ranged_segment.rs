@@ -343,16 +343,26 @@ impl<'b> RangedSegmentReader<'b> {
         embedding_model_ids: &[String],
         user_column_keys: &[String],
     ) -> Result<Vec<ProximaRecord>, StorageError> {
-        // Phase 1 — prune from per-block metadata alone (footer/col-meta, footer-
-        // cached); no block body is fetched. Collect the surviving blocks' byte
-        // ranges.
+        // Phase 1 — prune each block; no block body is fetched. A **v2** index
+        // carries the block's zone-map summary inline, so we prune from the cached
+        // index with ZERO per-block metadata GETs (cold-path depth 4→2, TD-167
+        // follow-up). A **v1** index falls back to a per-block footer/col-meta read
+        // (footer-cached). Collect the surviving blocks' byte ranges.
         let mut survivors: Vec<std::ops::Range<u64>> = Vec::new();
         for entry in &self.index.blocks {
             let (off, bsz) = (entry.offset, entry.size as u64);
-            let layout = self.block_layout(off, bsz).await?;
-            if evaluate_block(&*layout as &dyn BlockZoneSource, filter, field_to_col)
-                == PruneResult::Skip
-            {
+            let skip = match &entry.zone {
+                Some(zone) => {
+                    evaluate_block(zone as &dyn BlockZoneSource, filter, field_to_col)
+                        == PruneResult::Skip
+                }
+                None => {
+                    let layout = self.block_layout(off, bsz).await?;
+                    evaluate_block(&*layout as &dyn BlockZoneSource, filter, field_to_col)
+                        == PruneResult::Skip
+                }
+            };
+            if skip {
                 continue;
             }
             survivors.push(off..off + bsz);
@@ -525,6 +535,11 @@ mod tests {
     }
 
     fn build_segment_bytes(n: usize, dim: usize) -> Vec<u8> {
+        build_segment_bytes_z(n, dim, false)
+    }
+
+    /// Like [`build_segment_bytes`] but `zonemap` selects the v2 zone-map index.
+    fn build_segment_bytes_z(n: usize, dim: usize, zonemap: bool) -> Vec<u8> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("seg.pax");
         let mut w = PaxSegmentWriter::new(
@@ -535,7 +550,8 @@ mod tests {
             0,
             1,
             Some(16 * 1024),
-        );
+        )
+        .with_zonemap(zonemap);
         for i in 0..n {
             let v: Vec<f32> = (0..dim).map(|d| (i * dim + d) as f32 * 0.001).collect();
             w.add_record(&rec(&format!("r{i}"), 1000 + i as i64, v))
@@ -773,6 +789,77 @@ mod tests {
         assert_eq!(
             batched, 1,
             "surviving block bodies must be one batched fetch, got {batched}"
+        );
+    }
+
+    /// TD-167 follow-up: a **v2 zone-map index** lets the reader prune from the
+    /// cached index alone — issuing ZERO per-block metadata GETs (cold-path depth
+    /// 4→2) — while returning records identical to the v1 (per-block-metadata)
+    /// path. Mixed-read-safe: v1 segments still read via the legacy path.
+    #[tokio::test]
+    async fn td167b_v2_zonemap_prunes_with_no_per_block_metadata_gets() {
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
+
+        let threshold = 1000 + 1500i64;
+        let filter = FilterExpression::Comparison {
+            field: "created_at".into(),
+            operator: ComparisonOperator::GreaterThanOrEqual,
+            value: serde_json::json!(threshold),
+        };
+        let field_to_col = |f: &str| match f {
+            "created_at" => Some(col_id::CREATED_AT),
+            _ => None,
+        };
+
+        // v1 reference path (per-block footer/col-meta reads to prune).
+        let v1 = InMemoryRangeBridge {
+            bytes: build_segment_bytes(2000, 32),
+            ranged_bytes: AtomicU64::new(0),
+            single_calls: AtomicU64::new(0),
+            batched_calls: AtomicU64::new(0),
+        };
+        let v1r = RangedSegmentReader::open(&v1, Path::from("seg.pax"), Some("t"))
+            .await
+            .unwrap();
+        let mut v1_recs = v1r
+            .read_records_pruned(&filter, &field_to_col, &[], &[])
+            .await
+            .unwrap();
+        let v1_single = v1.single_calls.load(Ordering::Relaxed);
+
+        // v2 zone-map index path (prune from the cached index — no metadata GET).
+        let v2 = InMemoryRangeBridge {
+            bytes: build_segment_bytes_z(2000, 32, true),
+            ranged_bytes: AtomicU64::new(0),
+            single_calls: AtomicU64::new(0),
+            batched_calls: AtomicU64::new(0),
+        };
+        let v2r = RangedSegmentReader::open(&v2, Path::from("seg.pax"), Some("t"))
+            .await
+            .unwrap();
+        let mut v2_recs = v2r
+            .read_records_pruned(&filter, &field_to_col, &[], &[])
+            .await
+            .unwrap();
+        let v2_single = v2.single_calls.load(Ordering::Relaxed);
+
+        // Correctness: identical records (order-independent).
+        assert!(!v2_recs.is_empty());
+        v1_recs.sort_by(|a, b| a.oid.cmp(&b.oid));
+        v2_recs.sort_by(|a, b| a.oid.cmp(&b.oid));
+        let v1_oids: Vec<_> = v1_recs.iter().map(|r| r.oid.clone()).collect();
+        let v2_oids: Vec<_> = v2_recs.iter().map(|r| r.oid.clone()).collect();
+        assert_eq!(v1_oids, v2_oids, "v2 zone-map prune must match v1 records");
+
+        // The depth win: v1 pays per-block footer+col-meta single-range GETs to
+        // prune; v2 pays only the one index suffix read, then the batched bodies.
+        assert!(
+            v1_single > 10,
+            "v1 should issue many per-block metadata GETs, got {v1_single}"
+        );
+        assert!(
+            v2_single <= 2,
+            "v2 should prune from the index with ~no per-block metadata GETs, got {v2_single}"
         );
     }
 
