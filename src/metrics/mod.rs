@@ -201,6 +201,9 @@ pub mod exporters;
 /// calibrated_sources). Tracks vector→graph→document fusion operations for
 /// observability and cost model calibration.
 pub mod fusion;
+/// TD-161 durable per-tenant `_metering` writer — persists the KSU storage
+/// snapshot to the tenant's object-store `_metering/` subtree (ADR-027 dual-sink).
+pub mod metering_writer;
 /// Primary-pod write-router observability — counters for the
 /// gateway gate's allow/misroute decisions per tenant.
 pub mod primary_pod_metrics;

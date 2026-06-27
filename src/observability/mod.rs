@@ -78,6 +78,10 @@ pub mod io_trace;
 /// Metering event builder — converts SearchPlanTrace → operator metering
 /// event JSON shape so the data plane and operator pipelines can't drift.
 pub mod metering_event;
+/// TD-161 external OTLP metering push — ships per-tenant billing meters to a
+/// standard OTLP collector (ADR-027 dual-sink push half). Feature `otlp-metering`
+/// + runtime-gated by `PROXIMADB_OTLP_ENDPOINT`; compiles to no-ops otherwise.
+pub mod metering_otlp;
 /// Embedding-precision metrics — Prometheus gauges/counters per
 /// EMBEDDING_PRECISION_LLD_2026_05_22 §"Observability (Q11)" (PR 7b).
 pub mod precision_metrics;
