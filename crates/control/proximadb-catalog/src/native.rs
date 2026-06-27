@@ -98,6 +98,11 @@ pub struct NativeCatalog {
     tables: RwLock<HashMap<String, TableMetadata>>,
     /// Catalog-level cache
     cache: Arc<CatalogCache>,
+    /// ADR-031 O0: monotonic allocator for table `object_id`s (per-type, globally
+    /// unique, never reused). Recovered best-effort via `raise_floor` as tables
+    /// load; eager startup recovery / persisted high-water is an O2 hardening
+    /// (object_id is not yet load-bearing in O0).
+    object_id_allocator: crate::id_allocator::IdAllocator,
 }
 
 /// Table metadata stored in storage
@@ -154,6 +159,7 @@ impl NativeCatalog {
             namespaces: RwLock::new(HashMap::new()),
             tables: RwLock::new(HashMap::new()),
             cache,
+            object_id_allocator: crate::id_allocator::IdAllocator::default(),
         };
 
         // Load existing namespaces
@@ -268,6 +274,12 @@ impl NativeCatalog {
             .map_err(|_| anyhow!("Table '{}' not found", identifier))?;
 
         let meta: TableMetadata = serde_json::from_slice(&data)?;
+
+        // ADR-031 O0: recover the allocator floor from persisted ids so a restart
+        // never reuses an object_id (best-effort as tables load on demand).
+        if let Some(id) = meta.schema.object_id {
+            self.object_id_allocator.raise_floor(id + 1);
+        }
 
         // Cache in memory
         self.tables.write().await.insert(key, meta.clone());
@@ -506,6 +518,14 @@ impl Catalog for NativeCatalog {
     ) -> Result<CatalogTableSchema> {
         // Validate schema
         validate_schema(&schema)?;
+
+        // ADR-031 O0: assign the stable object_id if unset; if the caller supplied
+        // one (import/migration), never reuse it (raise the allocator floor).
+        let mut schema = schema;
+        match schema.object_id {
+            None => schema.object_id = Some(self.object_id_allocator.allocate()),
+            Some(id) => self.object_id_allocator.raise_floor(id + 1),
+        }
 
         // Check namespace exists
         if !self.namespace_exists(&identifier.namespace).await? {
@@ -1071,6 +1091,133 @@ mod tests {
             read.primary_pod.as_ref().unwrap().reason,
             crate::CatalogPrimaryPodReason::Rebalance
         ));
+    }
+
+    // ── ADR-031 O0: stable object_id allocation ──────────────────────
+
+    fn schema_with_id_col(name: &str) -> crate::CatalogTableSchema {
+        crate::CatalogTableSchema::new(name).with_column(crate::CatalogColumn::new(
+            1,
+            "id",
+            proximadb_data_model::ProximaType::Int64,
+        ))
+    }
+
+    #[tokio::test]
+    async fn create_table_assigns_distinct_monotonic_object_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+        let ns = vec!["t".to_string()];
+        cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+
+        let a = cat
+            .create_table(
+                &TableIdentifier::new(ns.clone(), "a"),
+                schema_with_id_col("a"),
+            )
+            .await
+            .unwrap();
+        let b = cat
+            .create_table(
+                &TableIdentifier::new(ns.clone(), "b"),
+                schema_with_id_col("b"),
+            )
+            .await
+            .unwrap();
+
+        let ida = a.object_id.expect("a got an object_id");
+        let idb = b.object_id.expect("b got an object_id");
+        assert!(ida >= 1, "ids start at 1, got {ida}");
+        assert!(idb > ida, "monotonic + distinct: {idb} > {ida}");
+    }
+
+    #[tokio::test]
+    async fn rename_table_preserves_object_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+        let ns = vec!["t".to_string()];
+        cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+        let from = TableIdentifier::new(ns.clone(), "old");
+        let oid = cat
+            .create_table(&from, schema_with_id_col("old"))
+            .await
+            .unwrap()
+            .object_id
+            .expect("object_id assigned");
+
+        let to = TableIdentifier::new(ns.clone(), "new");
+        cat.rename_table(&from, &to).await.expect("rename");
+
+        let after = cat.get_table(&to).await.expect("read renamed");
+        assert_eq!(
+            after.object_id,
+            Some(oid),
+            "rename is metadata-only; object_id is preserved"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_table_with_caller_object_id_raises_allocator_floor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+        let ns = vec!["t".to_string()];
+        cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+
+        // Import a table with a caller-supplied id; the allocator must not reuse it.
+        let mut imported = schema_with_id_col("imported");
+        imported.object_id = Some(100);
+        cat.create_table(&TableIdentifier::new(ns.clone(), "imported"), imported)
+            .await
+            .unwrap();
+
+        let next = cat
+            .create_table(
+                &TableIdentifier::new(ns.clone(), "fresh"),
+                schema_with_id_col("fresh"),
+            )
+            .await
+            .unwrap();
+        assert!(
+            next.object_id.unwrap() > 100,
+            "allocator floor raised above the imported id"
+        );
+    }
+
+    #[tokio::test]
+    async fn object_id_recovered_on_reload_prevents_reuse() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ns = vec!["t".to_string()];
+        let existing = {
+            let cat = fresh_catalog(&tmp).await;
+            cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+            cat.create_table(
+                &TableIdentifier::new(ns.clone(), "first"),
+                schema_with_id_col("first"),
+            )
+            .await
+            .unwrap()
+            .object_id
+            .unwrap()
+        };
+
+        // Fresh catalog (cold allocator). Loading the existing table recovers the
+        // floor (load_table raise_floor); a new table must not reuse the id.
+        let cat2 = fresh_catalog(&tmp).await;
+        let _ = cat2
+            .get_table(&TableIdentifier::new(ns.clone(), "first"))
+            .await
+            .unwrap();
+        let next = cat2
+            .create_table(
+                &TableIdentifier::new(ns.clone(), "second"),
+                schema_with_id_col("second"),
+            )
+            .await
+            .unwrap();
+        assert!(
+            next.object_id.unwrap() > existing,
+            "reload recovered the floor; no id reuse"
+        );
     }
 
     // ── P3.1: set_storage_layouts (NativeCatalog override) ───────────
