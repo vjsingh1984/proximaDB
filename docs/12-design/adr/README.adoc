@@ -101,6 +101,11 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Unified Hot-Path Trace+Meter Emission Seam (one I/O boundary, two structurally-separate sinks)
 | Proposed
 | Implements ADR-027's two-class trace via the per-query `tokio::task_local!` `IO_TRACE` accumulator: it is fed at the `read_range` GET boundary (no tenant needed), drained ONCE at scope-close (where tenant+engine are known), and fans the same snapshot to THREE observers — route-cost + cache (gateable perf, → `avg_get_size` for the cost model + adaptive engine, TD-158) and a NEW billing observer (always-on) that closes the verified **KRU** read-meter (`record_task_execution_time`) gap. **KSU** (storage accrual) is explicitly scoped out as the sibling write-path/periodic gap. Same measured snapshot ⇒ cost-model bytes == billing bytes (no divergence). Honors ADR-027 non-entanglement (separate sinks; billing never gated; CI guard) and the open-core boundary (OSS emits neutral units; AnvaiOps prices them). Closes the cost model's INPUT side only — routing-loop closure is a separate ADR. Tracked: TD-158 + KRU; prereq TD-160
+
+| link:ADR-032-durable-tenant-prefixed-object-store-catalog.adoc[ADR-032]
+| Durable, Tenant-Prefixed Object-Store Catalog (the catalog as the serverless shared truth; structural isolation, not a per-query predicate)
+| Proposed
+| An audit found the catalog is not yet durable on object storage (cloud URLs cached to `/tmp`; now fail-closed via PR #410), its metadata bypasses the `DrPathBuilder` tenant prefix (the one non-isolated surface), and the service-layer per-query tenant predicate is inert in production (no `with_tenant_manager` caller) and is the wrong mechanism. Decision: persist `NativeCatalog` through the existing `FilesystemFactory` (cloud backends already write — a wiring job, not a new client), address catalog assets through `DrPathBuilder` (`data/{tenant}/{ns}/…`, Phase-5 `accounts/{account}/…`), record tenant via `create_namespace_for_tenant`, and move isolation to the network edge (explicit fail-closed `DeploymentMode`) + the path — retiring the inert predicate. Mixed-read-safe, marker-detected, default-OFF, migration tool. Operator catalog stays in AnvaiOps; object-store IAM is future work. Tracked: TD-CAT-1/2/3, TD-113, TD-119, TD-164
 |===
 
 NOTE: ADR-010 through ADR-013 exist in this directory but are not yet
