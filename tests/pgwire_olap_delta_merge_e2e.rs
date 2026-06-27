@@ -302,3 +302,76 @@ async fn olap_delta_merge_is_tenant_isolated() {
 
     unsafe { std::env::remove_var("PROXIMADB_OLAP_DELTA_MERGE") };
 }
+
+/// ADR-031 O2 (end-to-end, mixed-read-safe): with the merge on, a delete written
+/// while WAL object_id-keying is OFF (name-keyed) plus an update + insert written
+/// while it is ON (object_id-keyed) must ALL be reconciled — the merge's dual-read
+/// unions name-keyed and object_id-keyed entries. pgwire CREATE goes through the
+/// native catalog, which allocates the table's object_id, so the update(3)/insert(4)
+/// are genuinely object_id-keyed; if dual-read were broken they'd be missed and this
+/// fails closed. SAFETY: env toggled only between awaited queries (nextest-isolated).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn olap_delta_merge_reconciles_mixed_name_and_object_id_keyed_wal() {
+    unsafe { std::env::set_var("PROXIMADB_OLAP_DELTA_MERGE", "1") };
+    unsafe { std::env::remove_var("PROXIMADB_WAL_OBJECT_ID_KEY") };
+    let server = PgServer::start().await.expect("server start");
+    let (client, conn) = tokio_postgres::connect(&server.conn_str(), tokio_postgres::NoTls)
+        .await
+        .expect("connect");
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    client
+        .simple_query("DROP TABLE IF EXISTS dvm_oid")
+        .await
+        .ok();
+    client
+        .simple_query("CREATE TABLE dvm_oid (id INT PRIMARY KEY, v INT)")
+        .await
+        .unwrap_or_else(|e| panic!("create: {}", explain_err(&e)));
+    for sql in [
+        "INSERT INTO dvm_oid (id, v) VALUES (1, 10)",
+        "INSERT INTO dvm_oid (id, v) VALUES (2, 20)",
+        "INSERT INTO dvm_oid (id, v) VALUES (3, 30)",
+    ] {
+        client
+            .simple_query(sql)
+            .await
+            .unwrap_or_else(|e| panic!("insert `{sql}`: {}", explain_err(&e)));
+    }
+    client
+        .simple_query("ALTER TABLE dvm_oid MATERIALIZE")
+        .await
+        .unwrap_or_else(|e| panic!("materialize: {}", explain_err(&e)));
+
+    // Name-keyed delete (object_id WAL keying OFF).
+    client
+        .simple_query("DELETE FROM dvm_oid WHERE id = 2")
+        .await
+        .unwrap_or_else(|e| panic!("delete: {}", explain_err(&e)));
+
+    // Flip to object_id-keyed WAL for the subsequent writes.
+    unsafe { std::env::set_var("PROXIMADB_WAL_OBJECT_ID_KEY", "1") };
+    client
+        .simple_query("UPDATE dvm_oid SET v = 99 WHERE id = 3")
+        .await
+        .unwrap_or_else(|e| panic!("update: {}", explain_err(&e)));
+    client
+        .simple_query("INSERT INTO dvm_oid (id, v) VALUES (4, 40)")
+        .await
+        .unwrap_or_else(|e| panic!("insert4: {}", explain_err(&e)));
+
+    assert_eq!(
+        pairs(
+            &client,
+            "SELECT id, v FROM dvm_oid GROUP BY id, v ORDER BY id"
+        )
+        .await,
+        vec![(1, 10), (3, 99), (4, 40)],
+        "dual-read must union name-keyed delete(2) + object_id-keyed update(3)/insert(4)"
+    );
+
+    unsafe { std::env::remove_var("PROXIMADB_OLAP_DELTA_MERGE") };
+    unsafe { std::env::remove_var("PROXIMADB_WAL_OBJECT_ID_KEY") };
+}
