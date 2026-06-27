@@ -11,6 +11,7 @@
 |Co-designed with|**AnvaiOps ADR-0021** — the consumer catalog reads these objects; stable u64 oids make its cross-references and references-by-id cheap and rename-proof
 |Supersedes|— (refines `CATALOG_OBJECT_MODEL`'s string identity; additive migration)
 |Tracked under|TD-174 (catalog surrogate-oid sequence + name→oid resolution + DrPath migration from name/uuid to oid)
+|Paired plan|link:../CATALOG_OID_MIGRATION_2026_06_27.adoc[CATALOG_OID_MIGRATION_2026_06_27] — the phased TD-174 execution plan (Phases 0–4 + per-phase invariants)
 |===
 
 == Context

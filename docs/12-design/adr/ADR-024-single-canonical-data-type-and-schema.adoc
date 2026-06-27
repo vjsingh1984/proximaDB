@@ -52,3 +52,16 @@ Each step compiles and lands independently; persisted-shape changes (3, 4) ship 
 * Positive: one logical type and one schema struct; the bridge web collapses to a single Arrow/pgwire/proto mapping; new code stops minting parallel types; logical/physical separation makes the type model honest about quantization.
 * Negative / cost: a durable migration for persisted catalog schemas (mitigated by serde compat shims); a multi-step rollout that temporarily keeps deprecated aliases; coordination with in-flight catalog (TD-061/TD-110) and storage (F-series) work.
 * The Convergence Gate is satisfied: this ADR is the cited justification for the type/schema seam change; seam S8 in `CONVERGENCE_AUDIT_2026_05_30.adoc` tracks it to closure.
+
+== Addendum (2026-06-27): object identity is a separate concern from the logical type
+
+`ProximaType` is the type of a *value* in a column — including id columns. It does **not** prescribe the *identity scheme* of an object (who mints the id, its uniqueness scope, its mutability). That is a separate decision, and the two object classes deliberately use different schemes:
+
+[cols="1,2,2", options="header"]
+|===
+| Object class | Identity | Why different
+| **Data record** (a row in a user table) | `ProximaRecord.oid: String` — a user-provided natural key, or an engine-minted **ULID** (ADR-031 scope) | High write-rate, distributed ⇒ coordination-free; ULID is time-sortable + index-friendly
+| **Catalog object** (account / namespace / table / column / index — metadata) | an immutable **`u64` `object_oid`** from the central catalog sequence; the *name* is a mutable attribute (ADR-033) | Low-rate, centrally-serialized DDL ⇒ coordination is free; fixed-width `u64` is fast to join/FK/index and survives rename
+|===
+
+Both id *values* are themselves `ProximaType`s — `String`/`ULID` for the record oid, `UInt64` for the catalog `object_oid` — so the canonical type system carries them, and this ADR stays the authority for the *value type*. The *identity strategy* is owned by ADR-031 (records) and ADR-033 (catalog objects), not here. And `pgwire_oid()` (Decision §3) is a **third, unrelated** concept: the PostgreSQL *type* OID for wire compatibility — not an object identity at all. Keeping these three apart — value type vs object identity vs pgwire type-OID — is the point of this addendum.
