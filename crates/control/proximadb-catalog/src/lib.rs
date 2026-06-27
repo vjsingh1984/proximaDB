@@ -544,6 +544,15 @@ pub struct CatalogStorageConfig {
 pub struct CatalogTableSchema {
     /// Table name
     pub name: String,
+    /// ADR-031 stable, immutable internal object id (per-type `u64`, globally unique
+    /// across tenants, never reused) — the rename-safe physical key for the WAL
+    /// `collection_id`, memtable partition, and object-store paths. `None` = legacy /
+    /// not-yet-allocated; `create_table` assigns it, `rename_table` preserves it.
+    /// Additive + `#[serde(default)]` so old persisted schemas deserialize to `None`
+    /// (mixed-read-safe). Physical layers still key on `name` until the migration
+    /// cuts over (ADR-031 O2).
+    #[serde(default)]
+    pub object_id: Option<u64>,
     /// Table columns
     pub columns: Vec<CatalogColumn>,
     /// Primary key columns (by name)
@@ -701,6 +710,7 @@ impl Default for CatalogTableSchema {
 
         Self {
             name: String::new(),
+            object_id: None,
             columns: Vec::new(),
             primary_key: Vec::new(),
             indexes: Vec::new(),
