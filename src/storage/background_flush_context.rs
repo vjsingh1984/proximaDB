@@ -316,10 +316,7 @@ impl BackgroundFlushContext {
         // Resolve the owning tenant once, here, from the same collection proto we
         // already fetched (D3: one amortized lookup, never per row). Reuses the
         // canonical resolver so tag/owner precedence matches the network gates.
-        let tenant_id =
-            crate::services::collection::manager::CollectionService::collection_tenant_id(
-                &collection,
-            );
+        let tenant_id = proximadb_tenant::tenant_id_of(&collection);
 
         Ok(Self {
             collection_id: collection_id.to_string(),

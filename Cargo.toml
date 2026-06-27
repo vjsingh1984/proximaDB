@@ -45,6 +45,7 @@ members = [
     "crates/foundation/proximadb-index-traits",
     "crates/foundation/proximadb-records",
     "crates/foundation/proximadb-search-types",
+    "crates/foundation/proximadb-tenant",
     "crates/foundation/proximadb-relational-types",
     "crates/foundation/proximadb-functions",
     "crates/control/proximadb-catalog",
@@ -165,6 +166,7 @@ proximadb-memory-pool = { path = "crates/foundation/proximadb-memory-pool" }
 proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
 proximadb-bloom = { path = "crates/foundation/proximadb-bloom" }
 proximadb-search-types = { path = "crates/foundation/proximadb-search-types" }
+proximadb-tenant = { path = "crates/foundation/proximadb-tenant" }
 proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-cache = { path = "crates/foundation/proximadb-cache" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
@@ -493,6 +495,7 @@ thiserror = "1.0"
 proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
 proximadb-bloom = { path = "crates/foundation/proximadb-bloom" }
 proximadb-search-types = { path = "crates/foundation/proximadb-search-types" }
+proximadb-tenant = { path = "crates/foundation/proximadb-tenant" }
 
 # Utilities
 uuid = { version = "1.0", features = ["v4", "serde"] }  # Required for JWT token generation
