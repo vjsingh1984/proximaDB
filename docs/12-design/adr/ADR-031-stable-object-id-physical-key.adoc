@@ -76,6 +76,20 @@ monotonic allocator, and are unique across *all tenants* within their type.**
   `object_id`; `collection_id` is therefore tenant-unique by construction. Numbers
   **may** repeat *across types* (a `tenant_id` and an `object_id` can both be `5`) —
   that is harmless because they are distinct type spaces, never compared to each other.
+* **Identity is a single global id, NEVER a composite `(account_id, object_id)`.**
+  Because each type's id is globally unique, the lookup/identity key is the lone
+  `object_id`. `account_id`/`tenant_id`/`namespace_id` are functionally determined by
+  `object_id` (the object knows its owner) — by 3NF a composite key would be
+  denormalized redundancy. **Performance:** one `u64` equality (a single instruction)
+  beats a composite's two-field compare (`u32 && u64`, two loads + a branch) on
+  *every* hot path these ids touch — catalog/schema/stats lookup, the route/plan-cache
+  key, query-planner predicate threading, WAL `collection_id` match, and hash/btree
+  index keys (one compact `u64` key, one hash, no tuple). Since the ids are used
+  extensively in planning + metadata ops, the single-scalar win compounds.
+  `account_id`/`tenant_id` still appear in the *path* (structural isolation +
+  locality) and as billing attributes, but **never in the identity/lookup key**;
+  list-by-account is a rare admin op served by the path hierarchy or a small secondary
+  index, not the hot path.
 * **Per-type integer width (tuned, not uniform).** Width is chosen per type by
   cardinality × churn × ubiquity:
   ** `tenant_id`, `account_id` → `u32`. Low cardinality (no deployment approaches
