@@ -1492,6 +1492,119 @@ impl DmlService {
         }
     }
 
+    /// TD-128: discrete multi-key OLTP point-read for the Volcano relational
+    /// pipeline. Resolves each PK in `keys` via [`TableRecordStore::get_by_key`]
+    /// (which applies the canonical dead-record filter — invariant #16), and
+    /// returns the FULL projected row for every key that hits a live record.
+    /// Missing / dead keys are simply absent — the result is NOT positionally
+    /// aligned with `keys`. Single-column PK only (mirrors
+    /// [`Self::point_lookup_relational`]); reuses the same `get_by_key` path the
+    /// legacy native DML PK fast-path uses.
+    pub async fn point_lookup_batch_relational(
+        &self,
+        table_name: &str,
+        keys: &[String],
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<Vec<Vec<ProximaValue>>> {
+        let (table_schema, table_id_name) = self
+            .resolve_select_table(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
+        let all_columns: Vec<String> = table_schema
+            .columns
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        let full_selected = Self::resolve_select_projection(&table_schema, &all_columns)?;
+        let mut rows = Vec::with_capacity(keys.len());
+        for key in keys {
+            let record = self
+                .record_store
+                .get_by_key(
+                    &table_schema,
+                    TableRecordGetRequest {
+                        table_id: table_id_name.clone(),
+                        key: key.clone(),
+                        include_vector: true,
+                        include_props: true,
+                    },
+                    tenant_context,
+                )
+                .await?;
+            if let Some(rich) = record {
+                let record = Self::rich_result_to_record(rich);
+                rows.push(Self::project_one_record(
+                    &record,
+                    &table_schema,
+                    &full_selected,
+                )?);
+            }
+        }
+        Ok(rows)
+    }
+
+    /// TD-127: secondary-index point-read for the Volcano relational pipeline.
+    /// Probes the store's single-column non-PK hash index for the rows whose
+    /// `column` value (canonical text) is in `values`, then returns the FULL
+    /// projected row for each live candidate. Reuses the exact
+    /// [`TableRecordStore::lookup_secondary`] + [`TableRecordStore::get_by_key`]
+    /// path the legacy native DML secondary fast-path uses (so both agree on
+    /// which columns are indexed and on dead-record filtering — invariant #16).
+    ///
+    /// Returns `Ok(None)` when the store has no built index for `column` (the
+    /// caller falls back to a full scan); `Ok(Some(rows))` (possibly empty) when
+    /// the index answered. The index only NARROWS — the caller's residual filter
+    /// re-checks every candidate.
+    pub async fn secondary_lookup_relational(
+        &self,
+        table_name: &str,
+        column: &str,
+        values: &[String],
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<Option<Vec<Vec<ProximaValue>>>> {
+        let (table_schema, table_id_name) = self
+            .resolve_select_table(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
+        let value_set: std::collections::HashSet<String> = values.iter().cloned().collect();
+        let Some(candidate_oids) = self
+            .record_store
+            .lookup_secondary(&table_schema, column, &value_set, tenant_context)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let all_columns: Vec<String> = table_schema
+            .columns
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        let full_selected = Self::resolve_select_projection(&table_schema, &all_columns)?;
+        let mut rows = Vec::with_capacity(candidate_oids.len());
+        for oid in candidate_oids {
+            let record = self
+                .record_store
+                .get_by_key(
+                    &table_schema,
+                    TableRecordGetRequest {
+                        table_id: table_id_name.clone(),
+                        key: oid,
+                        include_vector: true,
+                        include_props: true,
+                    },
+                    tenant_context,
+                )
+                .await?;
+            if let Some(rich) = record {
+                let record = Self::rich_result_to_record(rich);
+                rows.push(Self::project_one_record(
+                    &record,
+                    &table_schema,
+                    &full_selected,
+                )?);
+            }
+        }
+        Ok(Some(rows))
+    }
+
     /// Records-returning, limit-honoring twin of [`Self::resolve_matching_ids`] for
     /// the SELECT path: PK fast-path (OR-safe via [`Self::extract_pk_candidate_ids`],
     /// re-checked against the full tree) else a predicate scan with the limit pushed in.
@@ -7089,8 +7202,13 @@ mod tests {
     /// not a full `TableScan`, and returns exactly the rows the scan would — while
     /// the kill-switch falls back to a scan with identical rows. The schema is
     /// registered programmatically because no DDL surface declares secondary
-    /// indexes yet (a noted follow-on); the cataloged `secondary_indexes` survive
-    /// the `ObjectSchema` round-trip, so the read path sees them.
+    /// indexes yet (a noted follow-on — until a `CREATE INDEX` DDL lands, the
+    /// Volcano relational stack's `SecondaryLookup` path is correct-but-dormant);
+    /// the cataloged `secondary_indexes` survive the `ObjectSchema` round-trip, so
+    /// the read path sees them. This test also covers the Volcano-pipeline
+    /// forwarders `secondary_lookup_relational` (TD-127) and
+    /// `point_lookup_batch_relational` (TD-128), which reuse this same index +
+    /// `get_by_key` path.
     #[tokio::test]
     async fn select_where_uses_secondary_index_for_nonpk_name_and_file() {
         use crate::services::record_store::DirectWalTableRecordStore;
@@ -7253,6 +7371,59 @@ mod tests {
         unsafe { std::env::remove_var("PROXIMADB_SECONDARY_INDEX_DISABLE") };
         assert_eq!(path, RelationalSelectAccessPath::TableScan);
         assert_eq!(ids, vec!["s1", "s2"], "scan fallback returns the same rows");
+
+        // TD-127: the Volcano-pipeline forwarder `secondary_lookup_relational`
+        // reuses the same index + `get_by_key` path and returns FULL projected
+        // rows for each live candidate. `name='emit'` → s3,s4.
+        let mut got: Vec<String> = dml
+            .secondary_lookup_relational("code_symbol", "name", &["emit".to_string()], None)
+            .await
+            .expect("secondary lookup")
+            .expect("name is indexed → Some(rows)")
+            .into_iter()
+            .map(|row| match &row[0] {
+                ProximaValue::String(s) => s.clone(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            vec!["s3", "s4"],
+            "secondary_lookup_relational candidates"
+        );
+
+        // A non-indexed column → Ok(None) (the Volcano executor falls back to a
+        // full scan + residual filter).
+        let none = dml
+            .secondary_lookup_relational("code_symbol", "oid", &["s1".to_string()], None)
+            .await
+            .expect("secondary lookup on non-indexed column");
+        assert!(none.is_none(), "non-indexed column → None (scan fallback)");
+
+        // TD-128: the discrete-batch forwarder `point_lookup_batch_relational`
+        // reuses `get_by_key` per key and returns FULL rows for the hits only
+        // (the missing key is absent).
+        let mut batch: Vec<String> = dml
+            .point_lookup_batch_relational(
+                "code_symbol",
+                &["s1".to_string(), "s3".to_string(), "missing".to_string()],
+                None,
+            )
+            .await
+            .expect("point batch lookup")
+            .into_iter()
+            .map(|row| match &row[0] {
+                ProximaValue::String(s) => s.clone(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        batch.sort();
+        assert_eq!(
+            batch,
+            vec!["s1", "s3"],
+            "batch lookup returns hits, omits miss"
+        );
     }
 
     /// `scan_table_relational` (PATH B reader backend) pushes the output
