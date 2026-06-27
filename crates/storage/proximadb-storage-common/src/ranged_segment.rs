@@ -216,6 +216,28 @@ impl<'b> RangedSegmentReader<'b> {
         Ok(out)
     }
 
+    /// Batched multi-range fetch (TD-167 / ADR-034 P1): fetch every range in a
+    /// single bridge call so K independent block-body reads cost **one** logical
+    /// round-trip, not K serial GETs. Counted as a single `range_gets` because
+    /// latency = depth × RTT and a batched read is depth 1 (the bridge coalesces /
+    /// parallelizes the ranges on the wire). Bytes are summed across the buffers.
+    async fn fetch_ranges(
+        &self,
+        ranges: &[std::ops::Range<u64>],
+    ) -> Result<Vec<Vec<u8>>, StorageError> {
+        if ranges.is_empty() {
+            return Ok(Vec::new());
+        }
+        let out = self
+            .bridge
+            .fetch_vector_segment_ranges(&self.path, ranges, self.tenant_id.as_deref())
+            .await?;
+        let total: u64 = out.iter().map(|b| b.len() as u64).sum();
+        self.bytes_read.fetch_add(total, Ordering::Relaxed);
+        self.range_gets.fetch_add(1, Ordering::Relaxed);
+        Ok(out)
+    }
+
     /// Assemble a block's [`BlockLayout`], consulting the footer cache first
     /// (a hit skips all footer/metadata ranged reads). Segments are immutable, so
     /// the `(tenant, segment#offset)` key needs no TTL/etag.
@@ -321,21 +343,29 @@ impl<'b> RangedSegmentReader<'b> {
         embedding_model_ids: &[String],
         user_column_keys: &[String],
     ) -> Result<Vec<ProximaRecord>, StorageError> {
-        let mut out = Vec::new();
+        // Phase 1 — prune from per-block metadata alone (footer/col-meta, footer-
+        // cached); no block body is fetched. Collect the surviving blocks' byte
+        // ranges.
+        let mut survivors: Vec<std::ops::Range<u64>> = Vec::new();
         for entry in &self.index.blocks {
             let (off, bsz) = (entry.offset, entry.size as u64);
             let layout = self.block_layout(off, bsz).await?;
-
-            // Block-level prune from metadata alone — no block body fetched.
             if evaluate_block(&*layout as &dyn BlockZoneSource, filter, field_to_col)
                 == PruneResult::Skip
             {
                 continue;
             }
+            survivors.push(off..off + bsz);
+        }
 
-            // Surviving block: fetch the whole block and reconstruct its rows.
-            let block_bytes = self.fetch(off, bsz).await?;
-            let reader = PaxBlockReader::open(&block_bytes).map_err(|e| fs_err("open block", e))?;
+        // Phase 2 — fetch ALL surviving block bodies in ONE batched multi-range op
+        // (depth 1) instead of K serial dependent GETs (TD-167 / ADR-034 P1).
+        let bodies = self.fetch_ranges(&survivors).await?;
+
+        // Phase 3 — decode each block's rows.
+        let mut out = Vec::new();
+        for block_bytes in &bodies {
+            let reader = PaxBlockReader::open(block_bytes).map_err(|e| fs_err("open block", e))?;
             for flat in FlatRow::from_block_reader(&reader).map_err(|e| fs_err("flat rows", e))? {
                 out.push(
                     flat.into_record(
@@ -383,6 +413,10 @@ mod tests {
     struct InMemoryRangeBridge {
         bytes: Vec<u8>,
         ranged_bytes: AtomicU64,
+        /// Count of single-range `fetch_vector_segment_range` calls.
+        single_calls: AtomicU64,
+        /// Count of batched `fetch_vector_segment_ranges` calls (TD-167).
+        batched_calls: AtomicU64,
     }
 
     #[async_trait]
@@ -436,11 +470,30 @@ mod tests {
             length: u64,
             _tenant_id: Option<&str>,
         ) -> Result<Vec<u8>, StorageError> {
+            self.single_calls.fetch_add(1, Ordering::Relaxed);
             let start = (offset as usize).min(self.bytes.len());
             let end = ((offset + length) as usize).min(self.bytes.len());
             self.ranged_bytes
                 .fetch_add((end - start) as u64, Ordering::Relaxed);
             Ok(self.bytes[start..end].to_vec())
+        }
+
+        async fn fetch_vector_segment_ranges(
+            &self,
+            _path: &Path,
+            ranges: &[std::ops::Range<u64>],
+            _tenant_id: Option<&str>,
+        ) -> Result<Vec<Vec<u8>>, StorageError> {
+            self.batched_calls.fetch_add(1, Ordering::Relaxed);
+            let mut out = Vec::with_capacity(ranges.len());
+            for r in ranges {
+                let start = (r.start as usize).min(self.bytes.len());
+                let end = (r.end as usize).min(self.bytes.len());
+                self.ranged_bytes
+                    .fetch_add((end - start) as u64, Ordering::Relaxed);
+                out.push(self.bytes[start..end].to_vec());
+            }
+            Ok(out)
         }
 
         async fn persist_vector_segment(
@@ -506,6 +559,8 @@ mod tests {
         let bridge = InMemoryRangeBridge {
             bytes,
             ranged_bytes: AtomicU64::new(0),
+            single_calls: AtomicU64::new(0),
+            batched_calls: AtomicU64::new(0),
         };
         let footer_cache: Arc<FooterCache> = Arc::new(FooterCache::new(
             proximadb_cache::CacheBudget::new(1 << 30, 1 << 30),
@@ -591,6 +646,8 @@ mod tests {
         let bridge = InMemoryRangeBridge {
             bytes: bytes.clone(),
             ranged_bytes: AtomicU64::new(0),
+            single_calls: AtomicU64::new(0),
+            batched_calls: AtomicU64::new(0),
         };
 
         let reader = RangedSegmentReader::open(&bridge, Path::from("seg.pax"), Some("t"))
@@ -627,6 +684,8 @@ mod tests {
         let bridge = InMemoryRangeBridge {
             bytes,
             ranged_bytes: AtomicU64::new(0),
+            single_calls: AtomicU64::new(0),
+            batched_calls: AtomicU64::new(0),
         };
         let reader = RangedSegmentReader::open(&bridge, Path::from("seg.pax"), Some("t"))
             .await
@@ -666,6 +725,57 @@ mod tests {
         );
     }
 
+    /// TD-167 / ADR-034 P1: the surviving block bodies are fetched in exactly ONE
+    /// batched multi-range call regardless of how many blocks survive — collapsing
+    /// the read-path depth from `O(K)` serial body GETs to one batched op. (The
+    /// per-block metadata reads remain single-range here; eliminating them is the
+    /// follow-up zone-map-summary slice.)
+    #[tokio::test]
+    async fn td167_pruned_read_batches_surviving_block_bodies_in_one_call() {
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
+
+        let bytes = build_segment_bytes(2000, 32);
+        let bridge = InMemoryRangeBridge {
+            bytes,
+            ranged_bytes: AtomicU64::new(0),
+            single_calls: AtomicU64::new(0),
+            batched_calls: AtomicU64::new(0),
+        };
+        let reader = RangedSegmentReader::open(&bridge, Path::from("seg.pax"), Some("t"))
+            .await
+            .unwrap();
+        assert!(
+            reader.block_count() > 2,
+            "need several blocks to prove batching"
+        );
+
+        // Keep roughly the upper half ⇒ MANY surviving blocks.
+        let threshold = 1000 + 1000i64;
+        let filter = FilterExpression::Comparison {
+            field: "created_at".into(),
+            operator: ComparisonOperator::GreaterThanOrEqual,
+            value: serde_json::json!(threshold),
+        };
+        let field_to_col = |f: &str| match f {
+            "created_at" => Some(col_id::CREATED_AT),
+            _ => None,
+        };
+
+        let recs = reader
+            .read_records_pruned(&filter, &field_to_col, &[], &[])
+            .await
+            .unwrap();
+        assert!(!recs.is_empty(), "many blocks should survive the cut");
+
+        // The invariant: ONE batched body fetch, not one serial GET per surviving
+        // block. `range_gets` (logical round-trips) counts that batch as 1.
+        let batched = bridge.batched_calls.load(Ordering::Relaxed);
+        assert_eq!(
+            batched, 1,
+            "surviving block bodies must be one batched fetch, got {batched}"
+        );
+    }
+
     #[tokio::test]
     async fn footer_cache_hit_skips_metadata_reads() {
         // Second read of the same segment must skip footer/metadata ranged reads
@@ -674,6 +784,8 @@ mod tests {
         let bridge = InMemoryRangeBridge {
             bytes,
             ranged_bytes: AtomicU64::new(0),
+            single_calls: AtomicU64::new(0),
+            batched_calls: AtomicU64::new(0),
         };
         let footer_cache: Arc<FooterCache> = Arc::new(FooterCache::new(
             proximadb_cache::CacheBudget::new(1 << 30, 1 << 30),
@@ -760,6 +872,8 @@ mod tests {
         let bridge = InMemoryRangeBridge {
             bytes,
             ranged_bytes: AtomicU64::new(0),
+            single_calls: AtomicU64::new(0),
+            batched_calls: AtomicU64::new(0),
         };
         let footer_cache: Arc<FooterCache> = Arc::new(FooterCache::new(
             proximadb_cache::CacheBudget::new(1 << 30, 1 << 30),
@@ -810,6 +924,8 @@ mod tests {
         let bridge = InMemoryRangeBridge {
             bytes,
             ranged_bytes: AtomicU64::new(0),
+            single_calls: AtomicU64::new(0),
+            batched_calls: AtomicU64::new(0),
         };
         let reader = RangedSegmentReader::open(&bridge, Path::from("seg.pax"), Some("t"))
             .await
@@ -848,6 +964,8 @@ mod tests {
         let bridge = InMemoryRangeBridge {
             bytes,
             ranged_bytes: AtomicU64::new(0),
+            single_calls: AtomicU64::new(0),
+            batched_calls: AtomicU64::new(0),
         };
         let footer_cache: Arc<FooterCache> = Arc::new(FooterCache::new(
             proximadb_cache::CacheBudget::new(1 << 30, 1 << 30),
