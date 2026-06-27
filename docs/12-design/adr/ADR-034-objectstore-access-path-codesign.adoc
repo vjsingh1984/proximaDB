@@ -25,9 +25,20 @@ Concretely, a pruned ranged read today is **`1 + 3K` serial dependent GETs** for
 surviving blocks: read the segment index, then *per block* serially `await` the
 block footer (32 B) → the column metadata (N×64 B) → the block body
 (`ranged_segment.rs:176-337`). That is footer→metadata→data — depth 4 — exactly the
-chain a co-designed format exists to collapse. Graph traversal additionally
-pointer-chases through cold object storage (adjacency is co-located in cold blocks;
-no RAM-resident topology), so a k-hop walk is `k` serial round-trips.
+chain a co-designed format exists to collapse.
+
+[NOTE]
+====
+**Correction (runtime audit, 2026-06-27).** An earlier draft of this ADR (and the
+original TD-168) claimed graph traversal *pointer-chases cold object storage*. That
+conflated the *storage* layer (edges are durable in cold PAX columns) with the
+*runtime*: the Orion graph engine already holds the **topology (CSR adjacency) AND
+node/edge payloads in RAM** (`src/graph/engines/orion/storage.rs`,
+`orion/mod.rs:1190` — `get_outgoing_edges` is an O(degree) in-RAM CSR slice, no
+per-hop GET), rebuilt from canonical PAX edge records via WAL replay at startup. A
+k-hop traversal is *already* RAM pointer-chasing. The real graph gap is the inverse
+of P5's original framing — see P5.
+====
 
 == Principles (derived from the cost spine, not surveyed)
 
@@ -46,12 +57,19 @@ no RAM-resident topology), so a k-hop walk is `k` serial round-trips.
   corpus *resident* (warm), so the scan never touches cold storage — provided codes and
   payload live in *separate, independently ranged-readable* regions. (Per ADR-033 this
   is a round-trip lever, not an egress lever.)
-. **Graph traversal is the adversarial workload.** Pointer-chasing is the antithesis of
-  object storage (each hop = one RTT). Fixes, in leverage order: **(a) keep topology in
-  RAM** (adjacency is IDs only, tiny vs payloads) → traversal becomes RAM pointer-chasing
-  + one batched payload GET; **(b) batch the frontier** (a BFS level is independent reads
-  → one `read_ranges`, turning `nodes × RTT` into `depth × RTT`); **(c) materialize
-  neighborhoods** for depth-1 expansion.
+. **Graph traversal is the adversarial workload — keep topology in RAM, payloads cold.**
+  Pointer-chasing IS the antithesis of object storage, so the topology (adjacency) must
+  be RAM-resident — and in proximaDB it *already is* (the Orion CSR; see the Context
+  correction). The principle still holds; the engine simply over-satisfies one half and
+  *under*-satisfies the other: **(a) topology in RAM** ✅ (CSR, IDs-only — done); but
+  **(b) payloads must be COLD + batched** ✗ — Orion keeps *every node/edge payload*
+  resident too, so it is not object-storage-native (whole graph must fit in RAM); and
+  **(c) the topology must be durable/spillable** ✗ — it is rebuilt `O(E)` from PAX via
+  WAL replay at every startup. The corrected co-design target (TD-168): keep CSR topology
+  in RAM, move payloads to object storage (cold, fetched in one batched `read_ranges` per
+  frontier), and persist/spill the topology so a huge graph need not fit in RAM nor pay
+  the `O(E)` cold-start. The original framing ("add a RAM topology") would have duplicated
+  the CSR — the gap is residency *boundedness*, not pointer-chasing.
 . **Tier by round-trip CRITICALITY, not temperature.** Anything on the serial critical
   path — segment indexes, zone-map summaries, vector codes, graph topology — stays hot
   regardless of data temperature; bulk payload (f32, large props) can be cold. The
@@ -79,7 +97,7 @@ no RAM-resident topology), so a k-hop walk is `k` serial round-trips.
 |===
 | Gap | Decision | Principle / TD
 | **Read-path depth** | A pruned read is `1+3K` *serial* GETs (`ranged_segment.rs:326-337`). (a) Hoist a per-block **canonical zone-map summary** into `SegmentIndex` (`pax_block.rs:18`) so pruning needs **zero per-block metadata GETs**; (b) batch surviving bodies via `FileSystem::read_ranges` (`lib.rs:383`) instead of the serial loop. → depth ~1-2. | P1/P2 — **TD-167 (HIGH)**
-| **Graph topology** | Edges are co-located in cold blocks (`record.rs:34-37`); traversal pointer-chases object storage. Extract a small RAM/SSD adjacency index (src→[tgt ids]) + batch the frontier. | P5 — **TD-168 (HIGH)**
+| **Graph residency (corrected)** | The Orion engine already holds CSR topology AND payloads in RAM (`orion/storage.rs`, `orion/mod.rs:1190`) — *not* pointer-chasing cold storage. The real gap: it is RAM-*bound* (whole graph resident, `O(E)` startup rebuild), not object-storage-native. Move payloads cold+batched; make topology durable/spillable. | P5 — **TD-168 (HIGH, re-scoped)**
 | **Code residency** | Codes are one stripe *per block* (K scattered reads/scan). Lay the hot `EMBED_BASE` codes **contiguously across the segment** → one ranged read + one hot-cacheable object. | P4 — **TD-169 (MED)**
 | **Round-trip budget** | The cost model *measures* `range_gets` but doesn't *constrain*. Make `ComputeScheduler` admit/reshape plans against a depth budget (≤3) using the now-predictable GET count. | P7 — **TD-170 (MED)**
 | **Criticality tiering** | `FooterCache` caches footers; generalize to keep index + zone-map summary + code region + topology HOT, payload COLD. | P6 — **TD-171 (MED)**
@@ -103,12 +121,12 @@ wins; TD-162a-2 is deliberately last because it buys < 2× (a scan term), not de
 == Consequences
 
 * The dominant cost term (round-trips) becomes both *measured* (today) and *minimized* (TD-167) and *bounded* (TD-170) — closing the loop ADR-027/ADR-030 opened on the read path.
-* Graph workloads stop being object-storage-pointer-chasing (TD-168) — the largest single latency cliff for the graph modality.
+* Graph workloads become object-storage-*native* (TD-168, re-scoped): topology stays RAM-resident (already the CSR), payloads move cold+batched, and the topology is made durable/spillable — so a graph larger than RAM is servable and cold-start avoids the `O(E)` rebuild. (The original "stop pointer-chasing cold storage" framing was a runtime mis-audit — see the Context correction.)
 * No format rewrite: TD-167 is additive (summary + batching) and is the first PR; the heavier layout changes (TD-169) are version-gated.
 
 == Verification
 
 * A representative pruned vector-search trace shows `io_trace.range_gets` drop from `~1+3K` to `~1-2` after TD-167; recall unchanged within ratchet.
-* A k-hop graph traversal shows round-trips drop from `O(k·frontier)` to `O(k)` after TD-168.
+* Graph (TD-168, re-scoped): a graph whose payloads exceed RAM is servable (payloads cold+batched), and cold-start no longer pays the `O(E)` topology rebuild (durable/spillable topology) — verified against memory residency + cold-start time, not a per-hop GET count (traversal is already RAM-resident).
 * Server binary builds in both feature states; the GET-count harness is a CI ratchet (counts only go down).
 * Out of scope here: the per-gap LLDs (each TD owns its detailed design) and any change to the primary-format strategy (ADR-033 stands).
