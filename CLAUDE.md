@@ -44,6 +44,15 @@ When changing a storage format, reader, codec, cache, or engine you MUST:
 5. **Meter every dimension as a TAM surface.** Storage (KSU), read/compute (KRU/KIU), network
    **outgress (KOU — metered/shipped: read + result direction at pgwire/REST/Flight; distinct from
    KEU = embedding)**, and cache are metered per-tenant; governance is metered as tier entitlement.
+6. **Object storage = flat keys + per-object access tier; the tier is the cost lever, not the
+   scheme or namespace (ADR-036).** Target the **Blob endpoint, flat keys, HNS-off** on Azure
+   (`ADLS Gen2 = Blob + HNS`; our `adls`/`abfs`/`az`/`azure` schemes all resolve to the *same* flat
+   Blob backend — `adls`/`abfs` are documented aliases, NOT the DFS/ABFS/HNS endpoint). The dominant
+   *at-rest* cost term is **GB-month**, moved by the **access tier** (Hot/Cool/Cold/Archive) set
+   per-PUT — plumb it through the canonical, cloud-neutral `ObjectAccessTier` /
+   `FileOptions.storage_class` (mapped to Azure `x-ms-access-tier` / S3 `x-amz-storage-class` at the
+   I/O boundary), never per-cloud strings at call sites; default-safe (unset ⇒ account default). HNS
+   buys nothing for our flat-key, immutable, ranged-read workload.
 ====
 
 ### Core Directives

@@ -129,6 +129,14 @@ impl FileSystem for GcsFileSystem {
     }
 
     async fn write(&self, path: &str, data: &[u8], _options: Option<FileOptions>) -> FsResult<()> {
+        // NOTE (ADR-036): the canonical `FileOptions.storage_class` → GCS storage
+        // class (`ObjectAccessTier::as_gcs_storage_class`) is not yet wired here.
+        // Unlike the object_store-backed Azure/S3 backends (which set the class via
+        // `Attribute::StorageClass` on the PUT), this backend uses the native
+        // `google-cloud-storage` Simple media upload, which cannot carry a storage
+        // class — that needs a metadata/resumable upload. GCS is not the MVP cloud
+        // (Azure is); tracked as a follow-up under TD-173. Writes use the bucket
+        // default class today.
         let (bucket, object) = Self::parse(path)?;
         let upload_type = UploadType::Simple(Media::new(object));
         self.client
