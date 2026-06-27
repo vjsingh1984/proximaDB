@@ -39,6 +39,7 @@ pub mod embedding_precision_policy;
 pub mod glue;
 pub mod hive;
 pub mod iceberg;
+pub mod id_allocator;
 pub mod native;
 pub mod oltp;
 #[cfg(feature = "polaris-catalog")]
@@ -543,6 +544,15 @@ pub struct CatalogStorageConfig {
 pub struct CatalogTableSchema {
     /// Table name
     pub name: String,
+    /// ADR-031 stable, immutable internal object id (per-type `u64`, globally unique
+    /// across tenants, never reused) — the rename-safe physical key for the WAL
+    /// `collection_id`, memtable partition, and object-store paths. `None` = legacy /
+    /// not-yet-allocated; `create_table` assigns it, `rename_table` preserves it.
+    /// Additive + `#[serde(default)]` so old persisted schemas deserialize to `None`
+    /// (mixed-read-safe). Physical layers still key on `name` until the migration
+    /// cuts over (ADR-031 O2).
+    #[serde(default)]
+    pub object_id: Option<u64>,
     /// Table columns
     pub columns: Vec<CatalogColumn>,
     /// Primary key columns (by name)
@@ -700,6 +710,7 @@ impl Default for CatalogTableSchema {
 
         Self {
             name: String::new(),
+            object_id: None,
             columns: Vec::new(),
             primary_key: Vec::new(),
             indexes: Vec::new(),
@@ -4356,6 +4367,20 @@ pub trait Catalog: Send + Sync {
     async fn list_tables(&self, namespace: &[String]) -> anyhow::Result<Vec<TableIdentifier>>;
     async fn table_exists(&self, identifier: &TableIdentifier) -> anyhow::Result<bool>;
     async fn get_table(&self, identifier: &TableIdentifier) -> anyhow::Result<CatalogTableSchema>;
+
+    /// ADR-031 O1 (dual-read): resolve a table by its stable `object_id` — the
+    /// inverse of `get_table(...).object_id`. Returns `None` when no table carries
+    /// that id, or when the backend does not allocate object_ids (external
+    /// catalogs). Lets `dyn Catalog` consumers (change-feed, recovery, planner)
+    /// key on the global id rather than the mutable name. Default: `None`.
+    async fn get_table_by_object_id(
+        &self,
+        object_id: u64,
+    ) -> anyhow::Result<Option<TableIdentifier>> {
+        let _ = object_id;
+        Ok(None)
+    }
+
     async fn rename_table(
         &self,
         from: &TableIdentifier,
