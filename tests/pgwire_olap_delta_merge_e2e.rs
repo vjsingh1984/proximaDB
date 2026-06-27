@@ -79,8 +79,12 @@ impl PgServer {
         })
     }
     fn conn_str(&self) -> String {
+        self.conn_str_for("proximadb")
+    }
+    /// Connection string scoped to a tenant (the startup `dbname` = tenant/catalog).
+    fn conn_str_for(&self, dbname: &str) -> String {
         format!(
-            "host=127.0.0.1 port={} user=postgres dbname=proximadb sslmode=disable",
+            "host=127.0.0.1 port={} user=postgres dbname={dbname} sslmode=disable",
             self.pg_port
         )
     }
@@ -136,6 +140,18 @@ async fn one_i64(client: &tokio_postgres::Client, sql: &str) -> i64 {
             _ => None,
         })
         .unwrap_or(i64::MIN)
+}
+
+/// Connect a client scoped to a tenant (startup `dbname` = tenant/catalog).
+async fn connect(server: &PgServer, dbname: &str) -> tokio_postgres::Client {
+    let (client, conn) =
+        tokio_postgres::connect(&server.conn_str_for(dbname), tokio_postgres::NoTls)
+            .await
+            .expect("connect");
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    client
 }
 
 /// A3 + A4: after MATERIALIZE, a `DELETE`/`UPDATE`/`INSERT` is invisible to the
@@ -225,5 +241,64 @@ async fn olap_delta_merge_gate_off_stale_then_on_corrects() {
     // no server thread reads this env var concurrently (Rust 2024 marks env
     // mutation unsafe for the general concurrent case). Tests run under nextest
     // process isolation (CLAUDE.md §11).
+    unsafe { std::env::remove_var("PROXIMADB_OLAP_DELTA_MERGE") };
+}
+
+/// Tenant isolation of the read-merge (and the empty-delta fast path). Two
+/// tenants share a table name; tenant A mutates after MATERIALIZE, tenant B does
+/// not. A's OLAP read reflects A's delete/update; B's is UNAFFECTED — B's feed is
+/// tenant-scoped (empty), so the fast path serves B's pristine snapshot. A cross-
+/// tenant feed leak would surface A's delete/update in B's result.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn olap_delta_merge_is_tenant_isolated() {
+    // SAFETY: set before the server starts; never mutated while a request is in
+    // flight. nextest process isolation (CLAUDE.md §11).
+    unsafe { std::env::set_var("PROXIMADB_OLAP_DELTA_MERGE", "1") };
+    let server = PgServer::start().await.expect("server start");
+    let tenant_a = format!("tenant_a_{}", server.pg_port);
+    let tenant_b = format!("tenant_b_{}", server.pg_port);
+    let a = connect(&server, &tenant_a).await;
+    let b = connect(&server, &tenant_b).await;
+
+    // Both tenants: identical table name + data, each materialized to its own
+    // tenant-isolated Parquet snapshot.
+    for c in [&a, &b] {
+        c.simple_query("CREATE TABLE shared (id INT PRIMARY KEY, v INT)")
+            .await
+            .unwrap_or_else(|e| panic!("create: {}", explain_err(&e)));
+        for sql in [
+            "INSERT INTO shared (id, v) VALUES (1, 10)",
+            "INSERT INTO shared (id, v) VALUES (2, 20)",
+            "INSERT INTO shared (id, v) VALUES (3, 30)",
+        ] {
+            c.simple_query(sql)
+                .await
+                .unwrap_or_else(|e| panic!("insert `{sql}`: {}", explain_err(&e)));
+        }
+        c.simple_query("ALTER TABLE shared MATERIALIZE")
+            .await
+            .unwrap_or_else(|e| panic!("materialize: {}", explain_err(&e)));
+    }
+
+    // Only tenant A mutates after its snapshot.
+    a.simple_query("DELETE FROM shared WHERE id = 2")
+        .await
+        .unwrap_or_else(|e| panic!("A delete: {}", explain_err(&e)));
+    a.simple_query("UPDATE shared SET v = 99 WHERE id = 3")
+        .await
+        .unwrap_or_else(|e| panic!("A update: {}", explain_err(&e)));
+
+    let q = "SELECT id, v FROM shared GROUP BY id, v ORDER BY id";
+    assert_eq!(
+        pairs(&a, q).await,
+        vec![(1, 10), (3, 99)],
+        "tenant A must see its own post-snapshot delete(2)/update(3→99)"
+    );
+    assert_eq!(
+        pairs(&b, q).await,
+        vec![(1, 10), (2, 20), (3, 30)],
+        "tenant B must NOT see tenant A's changes (feed is tenant-isolated)"
+    );
+
     unsafe { std::env::remove_var("PROXIMADB_OLAP_DELTA_MERGE") };
 }

@@ -93,19 +93,19 @@ impl DataFusionLocalEngine {
             // keyed by canonical oid. Non-opt-in tables fall through to the bare
             // Parquet read below (default-OFF), so the OLAP ratchet tables are
             // untouched.
-            if let Some(cfg) = &context.olap_delta {
-                if let Some(tbl) = cfg.tables.get(&normalize_table_key(name)) {
-                    register_merged_olap_table(
-                        &ctx,
-                        name,
-                        location,
-                        tbl,
-                        cfg.source.as_ref(),
-                        context.tenant_id.as_deref(),
-                    )
-                    .await?;
-                    continue;
-                }
+            if let Some(cfg) = &context.olap_delta
+                && let Some(tbl) = cfg.tables.get(&normalize_table_key(name))
+            {
+                register_merged_olap_table(
+                    &ctx,
+                    name,
+                    location,
+                    tbl,
+                    cfg.source.as_ref(),
+                    context.tenant_id.as_deref(),
+                )
+                .await?;
+                continue;
             }
             let table =
                 crate::datafusion::register_object_store_parquet_location(&ctx, name, location)
@@ -615,7 +615,26 @@ async fn register_merged_olap_table(
     use std::collections::HashSet;
     use std::sync::Arc;
 
-    // 1. Read the cold Parquet base in an isolated session so the hidden base
+    // 1. Suppress-set = oids changed since the snapshot (tenant-scoped WAL feed).
+    //    Computed first and cheaply: if NOTHING changed since the snapshot, the
+    //    cold base is already current — register it bare (full Parquet pushdown,
+    //    no MemTable, no base read). Correctness-neutral fast path for the common
+    //    OLAP case (read-mostly tables).
+    let changed = source
+        .changed_oids_since(name, table.snapshot_lsn, tenant)
+        .await
+        .map_err(|e| ExecutionError::Context(format!("olap-merge delta {name}: {e}")))?;
+    if changed.is_empty() {
+        crate::datafusion::register_object_store_parquet_location(ctx, name, location)
+            .await
+            .map_err(|e| {
+                ExecutionError::Context(format!("olap-merge bare register {name}: {e}"))
+            })?;
+        return Ok(());
+    }
+    let suppress: HashSet<String> = changed.iter().cloned().collect();
+
+    // 2. Read the cold Parquet base in an isolated session so the hidden base
     //    registration never leaks into the query's table namespace.
     let base_ctx = crate::datafusion::create_session_context()
         .map_err(|e| ExecutionError::Context(format!("olap-merge base session: {e}")))?;
@@ -634,13 +653,6 @@ async fn register_merged_olap_table(
         .collect()
         .await
         .map_err(|e| ExecutionError::Context(format!("olap-merge base collect {name}: {e}")))?;
-
-    // 2. Suppress-set = oids changed since the snapshot (canonical WAL change-feed).
-    let changed = source
-        .changed_oids_since(name, table.snapshot_lsn, tenant)
-        .await
-        .map_err(|e| ExecutionError::Context(format!("olap-merge delta {name}: {e}")))?;
-    let suppress: HashSet<String> = changed.iter().cloned().collect();
 
     // 3. Keep base rows whose recomputed oid is not suppressed. (TTL on the base
     //    is eventual-until-rematerialize — the snapshot carries no valid_to_ns,

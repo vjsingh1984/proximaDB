@@ -9,6 +9,7 @@ pub mod cache_config;
 pub mod collection_path;
 pub mod column_projector;
 pub mod columnar_constants;
+pub mod deletion_vector;
 pub mod delta_simd;
 pub mod engine_constants;
 pub mod engine_profile;

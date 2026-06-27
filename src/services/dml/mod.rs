@@ -670,15 +670,16 @@ impl crate::query::execution::olap_delta_merge::OlapDeltaSource for DmlService {
         &self,
         table: &str,
         snapshot_lsn: u64,
-        _tenant: Option<&str>,
+        tenant: Option<&str>,
     ) -> anyhow::Result<Vec<String>> {
-        // Canonical-WAL change-feed for this table after the snapshot LSN; the key
-        // is the canonical oid (= PK text). Tenant scoping rides the record store's
-        // collection partitioning; per-tenant isolation of the merge feed is a
-        // documented follow-up (default-OFF, opt-in foundation).
+        // Tenant-isolated canonical-WAL change-feed for this table after the
+        // snapshot LSN; the key is the canonical oid (= PK text). The feed is
+        // scoped by tenant_id because the WAL collection_id is the bare table name
+        // (not tenant-unique), so two tenants sharing a table name must not share
+        // the merge delta.
         let changes = self
             .record_store
-            .read_changes_since(table, snapshot_lsn)
+            .read_changes_since_scoped(table, tenant, snapshot_lsn)
             .await?;
         Ok(changes.into_iter().map(|c| c.key).collect())
     }

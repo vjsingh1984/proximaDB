@@ -443,6 +443,40 @@ pub struct ChangeRow {
     pub props: Option<serde_json::Value>,
 }
 
+/// Build a [`ChangeRow`] for `collection_id` from a canonical WAL entry, or `None`
+/// if the entry is not an upsert/delete for that collection. Shared by the
+/// tenant-agnostic and tenant-scoped change-feeds so they stay in lock-step.
+fn change_row_from_entry(
+    entry: &proximadb_storage_common::wal_entry::CanonicalWalEntry,
+    collection_id: &str,
+) -> Option<ChangeRow> {
+    match &entry.operation {
+        CanonicalOperation::RecordUpsert {
+            collection_id: c,
+            record,
+            ..
+        } if c == collection_id => Some(ChangeRow {
+            lsn: entry.sequence_number,
+            op: "upsert".to_string(),
+            collection: c.clone(),
+            key: record.oid.clone(),
+            props: serde_json::to_value(&record.props).ok(),
+        }),
+        CanonicalOperation::RecordDelete {
+            collection_id: c,
+            oid,
+            ..
+        } if c == collection_id => Some(ChangeRow {
+            lsn: entry.sequence_number,
+            op: "delete".to_string(),
+            collection: c.clone(),
+            key: oid.clone(),
+            props: None,
+        }),
+        _ => None,
+    }
+}
+
 #[async_trait]
 pub trait TableRecordStore: Send + Sync {
     /// Write catalog-validated record mutations.
@@ -600,6 +634,23 @@ pub trait TableRecordStore: Send + Sync {
     ) -> Result<Vec<ChangeRow>> {
         let _ = (collection_id, since_lsn);
         Ok(Vec::new())
+    }
+
+    /// Tenant-scoped CDC change-feed: like [`read_changes_since`] but returns only
+    /// changes belonging to `tenant` (matched against the WAL entry's `tenant_id`,
+    /// with `None`/empty treated as the unscoped/default tenant). Required for the
+    /// OLAP read-merge because the WAL `collection_id` is the bare table name (not
+    /// tenant-unique), so two tenants sharing a table name would otherwise share
+    /// the feed. The default delegates to the tenant-agnostic [`read_changes_since`];
+    /// the WAL-backed store overrides it to enforce isolation.
+    async fn read_changes_since_scoped(
+        &self,
+        collection_id: &str,
+        tenant: Option<&str>,
+        since_lsn: u64,
+    ) -> Result<Vec<ChangeRow>> {
+        let _ = tenant;
+        self.read_changes_since(collection_id, since_lsn).await
     }
 }
 
@@ -1611,47 +1662,41 @@ impl DirectWalTableRecordStore {
 impl TableRecordStore for DirectWalTableRecordStore {
     /// CDC change-feed over the canonical WAL: surface every RecordUpsert/RecordDelete for
     /// `collection_id` (the table name) with sequence number > `since_lsn`, oldest first.
+    /// Tenant-agnostic (all tenants) — see [`read_changes_since_scoped`] for the
+    /// tenant-isolated feed the OLAP read-merge uses.
     async fn read_changes_since(
         &self,
         collection_id: &str,
         since_lsn: u64,
     ) -> Result<Vec<ChangeRow>> {
         let entries = self.wal_appender.read_all_entries().await?;
-        let mut out = Vec::new();
-        for e in entries {
-            if e.sequence_number <= since_lsn {
-                continue;
-            }
-            match e.operation {
-                CanonicalOperation::RecordUpsert {
-                    collection_id: c,
-                    record,
-                    ..
-                } if c == collection_id => {
-                    out.push(ChangeRow {
-                        lsn: e.sequence_number,
-                        op: "upsert".to_string(),
-                        collection: c,
-                        key: record.oid.clone(),
-                        props: serde_json::to_value(&record.props).ok(),
-                    });
-                }
-                CanonicalOperation::RecordDelete {
-                    collection_id: c,
-                    oid,
-                    ..
-                } if c == collection_id => {
-                    out.push(ChangeRow {
-                        lsn: e.sequence_number,
-                        op: "delete".to_string(),
-                        collection: c,
-                        key: oid,
-                        props: None,
-                    });
-                }
-                _ => {}
-            }
-        }
+        let mut out: Vec<ChangeRow> = entries
+            .iter()
+            .filter(|e| e.sequence_number > since_lsn)
+            .filter_map(|e| change_row_from_entry(e, collection_id))
+            .collect();
+        out.sort_by_key(|r| r.lsn);
+        Ok(out)
+    }
+
+    /// Tenant-isolated change-feed: like [`read_changes_since`] but keeps only
+    /// entries whose `tenant_id` matches `tenant` (None/"" = the unscoped tenant).
+    /// The WAL `collection_id` is the bare table name (not tenant-unique), so this
+    /// match is what isolates two tenants that share a table name.
+    async fn read_changes_since_scoped(
+        &self,
+        collection_id: &str,
+        tenant: Option<&str>,
+        since_lsn: u64,
+    ) -> Result<Vec<ChangeRow>> {
+        let entries = self.wal_appender.read_all_entries().await?;
+        let want = tenant.filter(|t| !t.is_empty());
+        let mut out: Vec<ChangeRow> = entries
+            .iter()
+            .filter(|e| e.sequence_number > since_lsn)
+            .filter(|e| e.tenant_id.as_deref().filter(|t| !t.is_empty()) == want)
+            .filter_map(|e| change_row_from_entry(e, collection_id))
+            .collect();
         out.sort_by_key(|r| r.lsn);
         Ok(out)
     }
