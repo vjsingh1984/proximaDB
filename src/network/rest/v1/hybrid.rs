@@ -3,7 +3,8 @@
 //! Experimental REST API for hybrid search combining BM25 full-text search with vector similarity.
 //!
 //! This module is mock-backed and intended for fusion strategy experimentation.
-//! Production hybrid search lives in `handlers.rs` at `/api/v1/hybrid/search`.
+//! Production hybrid search lives in `handlers.rs` at `/api/v2/hybrid/search`
+//! (relocated from /api/v1 on 2026-06-06; v1 hybrid was removed).
 //!
 //! ## Available Endpoints
 //!

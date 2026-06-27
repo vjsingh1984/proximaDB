@@ -155,7 +155,7 @@ pub struct SharedServices {
     pub graph_port: Arc<dyn proximadb_runtime::GraphPort>,
 
     /// Shared in-process full-text index map for hybrid retrieval
-    /// (BM25 side of `/api/v1/hybrid/search`). REST and gRPC entry
+    /// (BM25 side of `/api/v2/hybrid/search`). REST and gRPC entry
     /// points read from this single map so an indexed document is
     /// immediately searchable on both protocols.
     ///
