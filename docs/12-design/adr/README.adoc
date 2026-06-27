@@ -126,6 +126,16 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Azure / Object-Store Orientation — one account, Blob endpoint, flat keys, HNS-off, access-tier as the cost lever
 | Proposed
 | Re-orients the code to Azure ground truth after the MVP work found we registered four schemes (`adls`/`abfs`/`az`/`azure`) as if distinct, titled the backend "ADLS Gen2", and **silently dropped** the per-object access tier (every cloud `write` ignored `FileOptions`). Truth: one Storage account, **Blob endpoint** (flat keys) + an optional DFS endpoint *only* under Hierarchical Namespace; **ADLS Gen2 = Blob + HNS**; our four schemes all resolve to the *same* flat Blob backend, so `adls`/`abfs` were misleading (never engaged ABFS/DFS/HNS). The **cost lever is the access tier** (Hot/Cool/Cold/Archive), a property of the PUT available on a **flat (HNS-off)** account — HNS is a cost add, not a benefit, for our flat-key/immutable/ranged-read workload. Decisions: run flat Blob HNS-off (default cold = Cool/Cold tier); plumb a **canonical cloud-neutral `ObjectAccessTier`** (`hot`/`cool`/`cold`/`archive`) through `FileOptions.storage_class` → `object_store` `Attribute::StorageClass` (Azure `x-ms-access-tier` + S3 `x-amz-storage-class`), default-safe on unset/typo; scheme honesty (`az`/`azure` canonical, `adls`/`abfs` documented Blob aliases + one-time INFO log). GCS + `ProximaObjectStore` tier deferred (need backend-aware mapping; not the MVP path). Additive, no flag-day, moves the **at-rest GB-month** cost term (not the round-trip count). Tracked: TD-173
+
+| link:ADR-037-statistics-substrate-and-reference-mcp.adoc[ADR-037]
+| Statistics Substrate & Reference MCP Surface — aggregate the zone maps once; explain, routing, and agents all read it
+| Proposed
+| The agent-facing catalog's *producer* half: an agent is context-bounded, not compute-bounded, so the engine (the only thing co-located with the data) must hand it the minimal sufficient statistic. Maintain *mergeable* streaming sketches (HLL / t-digest / count-min / reservoir) on the existing flush/compaction pass + the PAX zone-map min/max — **no new scan, no scan-to-answer `ANALYZE`** — and assemble a frozen v1 `StatisticsEnvelope` exposed on the introspection surface (units only — NO $/PII; those are the AnvaiOps boundary). Per-modality extractors (graph/vector/document/trace/timeseries) fill the envelope's blocks over existing engines; a thin **reference MCP** projects existing surfaces (list/describe/stats/explain/search/memory) unprivileged. Also feeds ADR-004's `estimated_selectivity`/`estimated_rows` slots. (Renumbered from ADR-031 — that number landed for stable-object-id.) Tracked: TD-174/175/176, TD-177..180 (block-stats spine)
+
+| link:ADR-038-statistics-envelope-freshness-coherence.adoc[ADR-038]
+| Statistics Envelope Freshness Coherence — per-source freshness, conservative floor (v1.1)
+| Proposed
+| v1.1 of the ADR-037 envelope: each modality/source block carries its **own** freshness watermark (it was produced at a different flush), and the envelope's top-level freshness is the **conservative floor** (oldest source) so a consumer never over-trusts a stale block. (Renumbered from ADR-032 — that number landed for the durable tenant-prefixed catalog.) Tracked: TD-174
 |===
 
 NOTE: ADR-010 through ADR-013 exist in this directory but are not yet

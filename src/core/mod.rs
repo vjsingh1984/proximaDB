@@ -57,6 +57,12 @@ pub mod metadata_query;
 /// Core search functionality, filters, and result types
 pub mod search;
 
+/// Statistics substrate — the agent-facing catalog producer (ADR-037).
+/// Aggregates PAX zone maps + streaming sketches at the flush/compaction
+/// boundary into the versioned, modality-neutral `StatisticsEnvelope` (frozen
+/// v1 contract). Units only — no pricing/semantics (those are AnvaiOps ADR-0021).
+pub mod statistics;
+
 /// Serialization utilities for various formats
 /// Extracted to the `proximadb-serialization` crate; re-exported here for source
 /// compatibility (root-crate decomposition).

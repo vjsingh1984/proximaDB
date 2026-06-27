@@ -589,6 +589,22 @@ impl SstEngine {
         self.index_flushed_into_axis(params, vec![final_file_path.clone()])
             .await;
 
+        // ADR-037 / TD-174: maintain the resident statistics summary at the flush
+        // write boundary (the sibling of the KSU resident-bytes meter) and stamp
+        // the freshness watermark. Best-effort and O(records) — observes the
+        // records already in hand, never a separate corpus scan (Decision 1).
+        if let Some(cid) = params.collection_id.as_deref() {
+            // Text columns (if any) drive the document/BM25 corpus block; all
+            // other scalar props drive per-field distribution sketches.
+            let text_columns: std::collections::HashSet<&str> = params
+                .collection_config
+                .as_ref()
+                .and_then(|c| c.config.as_ref())
+                .map(|cfg| cfg.text_columns.iter().map(|s| s.as_str()).collect())
+                .unwrap_or_default();
+            observe_flush_into_statistics(cid, &params.vector_records, &text_columns);
+        }
+
         // Create flush result with file path for AXIS index building
         Ok(FlushResult {
             success: true,
@@ -651,6 +667,164 @@ fn l0_compaction_enabled() -> bool {
 /// Statistics from vector sorting operation
 // Using SortingStats from utils.rs instead of local SortStats
 pub type SortStats = SortingStats;
+
+/// ADR-037 / TD-174: fold the just-flushed *live* records into the resident
+/// statistics summary and stamp the flush freshness watermark. Best-effort —
+/// it never fails or blocks the flush, and observes records already in hand at
+/// the write boundary (no separate scan; Decision 1). The generic
+/// `observe_*` API lives in `core::statistics`; the record→value mapping is
+/// engine-local (this layer owns `ProximaRecord`).
+fn observe_flush_into_statistics(
+    collection_id: &str,
+    records: &[ProximaRecord],
+    text_columns: &std::collections::HashSet<&str>,
+) {
+    if records.is_empty() {
+        return;
+    }
+    // Real wall-clock "now" for liveness; a None fallback (impossible for current
+    // dates) degrades to 0, which filters only tombstones — never panics.
+    let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let registry = crate::core::statistics::statistics_registry();
+    registry.update(collection_id, |summary| {
+        for rec in records {
+            // Invariant #16a: dead records (tombstoned / TTL-expired) must not
+            // skew live statistics.
+            if rec.is_dead(now_ns) {
+                continue;
+            }
+            // Vector centroid/spread from the embedding payload(s).
+            for cell in &rec.embeddings {
+                let v = cell.values.to_fp32_owned();
+                if !v.is_empty() {
+                    summary.observe_vector(&v);
+                }
+            }
+            // Walk the property tree once: text columns feed the document/BM25
+            // corpus block (TD-175); every other scalar feeds per-field sketches.
+            let mut doc_tokens: Vec<String> = Vec::new();
+            for (name, node) in &rec.props {
+                let proximadb_records::ProximaTreeNode::Value(pv) = node else {
+                    continue;
+                };
+                if text_columns.contains(name.as_str()) {
+                    if let Some(text) = scalar_text(pv) {
+                        tokenize_into(text, &mut doc_tokens);
+                    }
+                } else if let Some((json, ty)) = scalar_proxima_to_json(pv) {
+                    summary.observe_field(
+                        name,
+                        &serde_json::Value::String(ty.to_string()),
+                        Some(&json),
+                    );
+                }
+            }
+            // One document per record (across all its text columns): term
+            // frequency → top_terms + unique-terms HLL; doc length + distinct
+            // terms → doc_count / avg_doc_length / document-frequency (idf).
+            if !doc_tokens.is_empty() {
+                for t in &doc_tokens {
+                    summary.observe_term(t);
+                }
+                let mut distinct = doc_tokens.clone();
+                distinct.sort();
+                distinct.dedup();
+                summary.observe_document(doc_tokens.len() as u64, &distinct);
+            }
+        }
+        // Attest the freshness FACT: this snapshot is as-of the flush, now. A
+        // watermark, never an SLA (the SLA is AnvaiOps policy, ADR-0021).
+        summary.set_freshness(chrono::Utc::now().to_rfc3339(), "flush", None);
+    });
+}
+
+/// Map a scalar `ProximaValue` to its (JSON value, canonical `ProximaType`
+/// label) for field-level statistics. Non-scalar variants
+/// (Array/Map/Struct/Json/Binary/vectors) and non-finite floats return `None` —
+/// they carry no orderable field distribution.
+fn scalar_proxima_to_json(
+    pv: &proximadb_records::ProximaValue,
+) -> Option<(serde_json::Value, &'static str)> {
+    use proximadb_records::ProximaValue as V;
+    use serde_json::Value as J;
+    let out = match pv {
+        V::Boolean(b) => (J::Bool(*b), "Boolean"),
+        V::Int8(n) => (J::from(*n), "Int8"),
+        V::Int16(n) => (J::from(*n), "Int16"),
+        V::Int32(n) => (J::from(*n), "Int32"),
+        V::Int64(n) => (J::from(*n), "Int64"),
+        V::UInt8(n) => (J::from(*n), "UInt8"),
+        V::UInt16(n) => (J::from(*n), "UInt16"),
+        V::UInt32(n) => (J::from(*n), "UInt32"),
+        V::UInt64(n) => (J::from(*n), "UInt64"),
+        V::Float16(f) | V::Float32(f) => (
+            J::Number(serde_json::Number::from_f64(*f as f64)?),
+            "Float32",
+        ),
+        V::Float64(f) => (J::Number(serde_json::Number::from_f64(*f)?), "Float64"),
+        V::Decimal(s) => (J::String(s.clone()), "Decimal"),
+        V::String(s) | V::Symbol(s) => (J::String(s.clone()), "String"),
+        V::Date(d) => (J::from(*d), "Date"),
+        // Temporal epochs travel as Int64 so they get numeric min/max + quantiles.
+        V::Time(t, _) | V::Timestamp(t, _) | V::TimestampTz(t, _) => (J::from(*t), "Int64"),
+        _ => return None,
+    };
+    Some(out)
+}
+
+/// Borrow the textual payload of a scalar value (String/Symbol) for tokenization.
+fn scalar_text(pv: &proximadb_records::ProximaValue) -> Option<&str> {
+    use proximadb_records::ProximaValue as V;
+    match pv {
+        V::String(s) | V::Symbol(s) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+/// Word-level tokenizer for document/BM25 corpus statistics (ADR-037 TD-175):
+/// lowercase, split on non-alphanumeric, drop empties and absurdly long tokens.
+/// This is the BM25 **word** granularity (idf/df over terms), deliberately
+/// distinct from the BERT subword `tokenizers::Tokenizer` used for
+/// embeddings/reranking — different purpose, not a duplication.
+fn tokenize_into(text: &str, out: &mut Vec<String>) {
+    for raw in text.split(|c: char| !c.is_alphanumeric()) {
+        if raw.is_empty() || raw.len() > 64 {
+            continue;
+        }
+        out.push(raw.to_lowercase());
+    }
+}
+
+#[cfg(test)]
+mod statistics_observe_tests {
+    use super::{scalar_text, tokenize_into};
+    use proximadb_records::ProximaValue;
+
+    #[test]
+    fn tokenizer_lowercases_and_splits_on_non_alphanumeric() {
+        let mut out = Vec::new();
+        tokenize_into("Checkout 500s on payment-submit!", &mut out);
+        assert_eq!(out, vec!["checkout", "500s", "on", "payment", "submit"]);
+    }
+
+    #[test]
+    fn tokenizer_drops_empties_and_overlong_tokens() {
+        let mut out = Vec::new();
+        let long = "x".repeat(100);
+        tokenize_into(&format!("ok   {long} fine"), &mut out);
+        assert_eq!(out, vec!["ok", "fine"]);
+    }
+
+    #[test]
+    fn scalar_text_only_for_string_like() {
+        assert_eq!(scalar_text(&ProximaValue::String("hi".into())), Some("hi"));
+        assert_eq!(
+            scalar_text(&ProximaValue::Symbol("sym".into())),
+            Some("sym")
+        );
+        assert_eq!(scalar_text(&ProximaValue::Int64(7)), None);
+    }
+}
 
 #[cfg(test)]
 mod tests {

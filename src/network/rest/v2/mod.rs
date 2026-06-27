@@ -207,6 +207,14 @@ pub fn create_v2_router() -> Router<AppState> {
             "/_diagnostics/collections/{collection_id}/route-health",
             get(collections::get_collection_route_health_v2),
         )
+        // ADR-037 (TD-174) — agent-facing statistics envelope: the
+        // modality-neutral, units-only boundary object the agent catalog
+        // consumes. Read from the resident summary maintained at the
+        // flush/compaction write boundary (never a corpus scan).
+        .route(
+            "/_diagnostics/collections/{collection_id}/statistics",
+            get(collections::get_collection_statistics_v2),
+        )
         // Adaptive HNSW retune. POST resolves DriftKind::EfSearchOnly
         // in-place via AxisManager::apply_hnsw_ef_hot_swap; reports
         // DriftKind::EfConstructionOrM cases as "rebuild required"
