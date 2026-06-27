@@ -73,6 +73,13 @@ pub struct ExplainCostEstimate {
     pub estimated_cost: f64,
     /// Estimated output row count
     pub estimated_rows: u64,
+    /// Estimated fraction of input rows passing this operator's predicate
+    /// (ADR-004's `estimated_selectivity` slot). Producer: the ADR-037 statistics
+    /// envelope's per-field distinct/cardinality (see
+    /// `core::statistics::StatisticsSummary::equality_selectivity`). `None` when
+    /// no resident statistics are available for the predicate's field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimated_selectivity: Option<f64>,
     /// Optional free-form notes (e.g. "HNSW index used")
     pub notes: Option<String>,
 }
@@ -2449,6 +2456,7 @@ mod tests {
             operation: "VectorSearch(products)".to_string(),
             estimated_cost: 3.5,
             estimated_rows: 100,
+            estimated_selectivity: None,
             notes: Some("HNSW index used".to_string()),
         };
         assert_eq!(estimate.estimated_rows, 100);
@@ -2486,12 +2494,14 @@ mod tests {
                     operation: "VectorSearch(products)".to_string(),
                     estimated_cost: 3.5,
                     estimated_rows: 100,
+                    estimated_selectivity: None,
                     notes: None,
                 },
                 ExplainCostEstimate {
                     operation: "GraphTraversal(knowledge)".to_string(),
                     estimated_cost: 6.0,
                     estimated_rows: 500,
+                    estimated_selectivity: None,
                     notes: Some("depth=3".to_string()),
                 },
             ])

@@ -304,6 +304,8 @@ docs/log/
 *.json
 !package.json
 !config.json
+# Versioned wire contracts (e.g. statistics-envelope.v1) must track without -f.
+!docs/12-design/contracts/*.json
 !config/tier-config.json
 !config/tier-config.example.json
 !docs/_internal/roadmap/PANIC_POLICY_BASELINE.json
