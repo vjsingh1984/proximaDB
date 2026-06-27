@@ -33,6 +33,47 @@ vector-DB landscape (ClickHouse, Snowflake, BigQuery, DuckDB, Delta/Iceberg,
 Lance, Turbopuffer). 22 sources, 106 claims extracted, 25 adversarially verified
 (24 confirmed, 1 refuted).
 
+== Cost model (first principles — the spine)
+
+The survey reports what others *converged on*; this section derives *why* from the
+physics, so the format decisions rest on the cost model, not on imitation. For a
+query whose storage substrate is object storage (per-GET RTT ~50-250 ms, billed
+per-request + per-egress-GB, immutable objects), the cost decomposes into terms of
+very different magnitude:
+
+[.text-center]
+....
+  Latency(q) ≈ DEPTH(dependent-GET chain) × RTT  +  bytes_on_critical_path / bandwidth
+  $(q)       ≈ requests × GET_fee  +  egress_bytes × egress_rate  +  compute_ms × c
+....
+
+The decisive fact: **100 GETs issued in parallel ≈ one GET's latency; 3 GETs issued
+serially ≈ 3×.** Latency is the *depth* of the dependent-request chain, not the byte
+total or the request count. This yields a strict priority order that the rest of the
+ADR (and ADR-034) optimize against:
+
+[.text-center]
+**minimize dependency DEPTH ≫ minimize parallel-batch WIDTH ≫ minimize BYTES ≫ minimize CPU.**
+
+Depth is latency (what kills you); width is throughput-bound (cheap); bytes are
+egress-$; CPU is nearly free. *This is the real reason a co-designed format beats
+Parquet:* not "fewer bytes," but **collapsing the footer→metadata→index→data serial
+chain** that Parquet (and, internally today, our own ranged reader) pays.
+
+=== Egress correction — two terms for two workloads
+
+An earlier framing wrongly called quantization an "egress lever." Corrected:
+
+* **Egress ($) is the customer-facing *result* only.** For an ANN top-k that is tiny (k × {id, score, small payload}); quantization does not change it (you rerank to f32 and return the same top-k).
+* **Object-store → compute reads are internal / same-region** — metered as KOU *read* direction but priced ~0; they are **not** egress. Their cost is GET round-trips + transfer *time*, not egress dollars.
+* Therefore **quantization is a round-trip / cache-residency lever, not an egress lever**: small codes (SQ8 ¼, RaBitQ ~1/32) keep the candidate corpus resident, turning cold GETs into warm reads — it attacks *depth/round-trips* (the dominant term for intra-region search), not egress.
+* **Egress genuinely dominates** a *different* workload class — bulk export, wide OLAP result sets shipped to the client, embedding flows (KEU), and cross-region/cross-cloud reads (where the S3→compute hop *does* cross a billing boundary). Projection + result-side compression are the levers there.
+
+So the co-design mandate's "dominant cost = round-trips **+** egress" is **two terms
+for two workloads**: round-trips dominate intra-region search (quantization's
+target); egress dominates export / wide-result / cross-region (projection's target).
+Conflating them is the error this section corrects.
+
 == Evidence (verified)
 
 === Nobody uses Parquet as a primary format
