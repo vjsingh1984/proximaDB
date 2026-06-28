@@ -378,8 +378,9 @@ pub async fn depth_first_search(
 ) -> Result<TraversalResult> {
     let start_time = std::time::Instant::now();
 
-    // Validate start node exists
-    if engine.get_node(start_node_id)?.is_none() {
+    // Validate start node exists — TOPOLOGY check (cold-payload-safe, TD-168): a
+    // cold start payload must not look "not found" (mirrors the BFS fix).
+    if !engine.contains_node(start_node_id) {
         return Err(ProximaDBError::InvalidInput(format!(
             "Start node {} not found",
             start_node_id
@@ -433,22 +434,20 @@ pub async fn depth_first_search(
         visited_nodes.insert(current_node_id.clone());
         stats.max_depth_reached = std::cmp::max(stats.max_depth_reached, depth);
 
-        // Get current node
-        let current_node = match engine.get_node(&current_node_id)? {
-            Some(node) => node,
-            None => continue, // Node was deleted during traversal
-        };
-
-        // Apply node filter
-        if config
-            .node_filter
-            .as_ref()
-            .is_some_and(|f| !f(&current_node))
-        {
-            continue;
+        // Liveness via TOPOLOGY (cold-payload-safe): a cold payload is not a
+        // deletion — only a node absent from the CSR index is. Payload is
+        // best-effort (RAM hits); the cold result set is materialized from
+        // `node_ids`. A `node_filter` applies only on a hot payload (mirrors BFS).
+        if !engine.contains_node(&current_node_id) {
+            continue; // genuinely deleted during traversal
         }
-
-        result_nodes.push(current_node);
+        let current_node = engine.get_node(&current_node_id)?;
+        if let Some(node) = &current_node {
+            if config.node_filter.as_ref().is_some_and(|f| !f(node)) {
+                continue;
+            }
+            result_nodes.push(node.clone());
+        }
         result_node_ids.push(current_node_id.clone());
         stats.nodes_visited += 1;
 
@@ -2115,6 +2114,72 @@ mod tests {
         assert_eq!(result.nodes.len(), 2);
         assert_eq!(result.stats.nodes_visited, 2);
         assert_eq!(result.stats.edges_traversed, 1);
+    }
+
+    /// TD-168 cold-payload correctness: DFS must traverse a graph whose node
+    /// PAYLOADS are cold (evicted) but whose TOPOLOGY is resident — mirrors the BFS
+    /// cold test. Before the fix, start-validation and expansion checked `get_node`
+    /// (payload) and treated a cold node as deleted, halting on the start node.
+    #[tokio::test]
+    async fn dfs_traverses_when_node_payloads_are_cold() {
+        let engine = OrionGraphEngine::new();
+        for id in ["0", "1", "2"] {
+            engine
+                .insert_node(Node {
+                    id: id.to_string(),
+                    labels: vec!["Node".to_string()],
+                    properties: std::collections::HashMap::new(),
+                    embedding: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                })
+                .await
+                .expect("insert node");
+        }
+        for (eid, from, to) in [("e1", "0", "1"), ("e2", "1", "2")] {
+            engine
+                .insert_edge(Edge {
+                    id: eid.to_string(),
+                    from_node_id: from.to_string(),
+                    to_node_id: to.to_string(),
+                    edge_type: "CONNECTS".to_string(),
+                    properties: std::collections::HashMap::new(),
+                    weight: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                })
+                .await
+                .expect("insert edge");
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        for id in ["0", "1", "2"] {
+            engine.memory_pool().nodes.remove(&id.to_string());
+        }
+        assert!(
+            engine
+                .get_node(&"0".to_string())
+                .expect("get_node")
+                .is_none(),
+            "payloads are cold"
+        );
+        assert!(engine.contains_node(&"0".to_string()), "topology resident");
+
+        let result = depth_first_search(&engine, &"0".to_string(), TraversalConfig::default())
+            .await
+            .expect("DFS must traverse a topology-resident, payload-cold graph");
+        let mut ids = result.node_ids.clone();
+        ids.sort();
+        assert_eq!(
+            ids,
+            vec!["0".to_string(), "1".to_string(), "2".to_string()],
+            "all reachable nodes visited via topology"
+        );
+        assert_eq!(result.stats.nodes_visited, 3);
+        assert!(
+            result.nodes.is_empty(),
+            "cold payloads are not RAM-materialized by the engine"
+        );
     }
 
     #[tokio::test]
