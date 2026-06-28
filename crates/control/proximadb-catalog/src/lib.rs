@@ -4414,6 +4414,18 @@ pub trait Catalog: Send + Sync {
         Ok(None)
     }
 
+    /// Resolve a namespace's levels from its stable catalog `object_id`
+    /// (ADR-031 / TD-181) — the namespace analogue of `get_table_by_object_id`.
+    /// Default `Ok(None)` for external/federated catalogs that don't mint
+    /// ProximaDB object_ids.
+    async fn get_namespace_by_object_id(
+        &self,
+        object_id: u64,
+    ) -> anyhow::Result<Option<Vec<String>>> {
+        let _ = object_id;
+        Ok(None)
+    }
+
     async fn rename_table(
         &self,
         from: &TableIdentifier,
