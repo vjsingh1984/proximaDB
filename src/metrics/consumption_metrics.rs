@@ -84,6 +84,19 @@ lazy_static! {
         "Embedding units (Kilo-Embedding-Units, KEU, Dimension 5) per tenant by provider, model, and operation",
         &["tenant_id", "provider", "model", "operation"]
     );
+    /// Bytes written to object storage per tenant **by access tier** — write-time
+    /// visibility into the cold-tier cost lever (ADR-036/TD-173; TD-168 graph cold
+    /// payloads). `tier` is the canonical name (`hot`/`cool`/`cold`/`archive`),
+    /// known at the `put_with_tier` call site. This is a *written-bytes* counter,
+    /// distinct from the periodic *resident-bytes* `STORAGE_BYTES_SECONDS` gauge
+    /// (whose Cool-vs-Hot split needs collection-level tier metadata — a separate
+    /// metering change). Neutral telemetry; the per-tier $ weight is control-plane
+    /// (anvaiops) policy.
+    pub static ref OBJECT_STORE_WRITE_BYTES_BY_TIER: CounterVec = registered_counter_vec(
+        "proximadb_object_store_write_bytes_by_tier_total",
+        "Bytes written to object storage per tenant by access tier (write-time; the cold-tier cost lever)",
+        &["tenant_id", "tier"]
+    );
 }
 
 /// Cloud provider hosting the object store — the multi-cloud axis for egress
@@ -662,6 +675,24 @@ pub fn install_billing_observer() {
 ///
 /// Free-path bytes are metered (for visibility) but deliberately do NOT enter the
 /// cost model, so the egress cost term stays inert on the free path.
+/// Record `bytes` written to object storage for one tenant at access `tier` — the
+/// write-time half of the cold-tier cost lever (TD-168/TD-173). `tier` is the
+/// canonical name from `ObjectAccessTier::as_str` (`hot`/`cool`/`cold`/`archive`).
+/// Empty `tenant_id` is attributed to `default` (single-tenant). No-ops on zero.
+pub fn record_object_store_write_bytes_by_tier(tenant_id: &str, tier: &str, bytes: u64) {
+    if bytes == 0 {
+        return;
+    }
+    let t_id = if tenant_id.is_empty() {
+        "default"
+    } else {
+        tenant_id
+    };
+    OBJECT_STORE_WRITE_BYTES_BY_TIER
+        .with_label_values(&[t_id, tier])
+        .inc_by(bytes as f64);
+}
+
 pub fn record_kou_bytes(
     tenant_id: Option<&str>,
     locality: KouLocality,
