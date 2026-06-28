@@ -514,6 +514,29 @@ fn lower_scalar_function(name: &str, args: Vec<Expr>) -> DFResult<Expr> {
         "floor" => f::floor(one(name, args)?),
         "sqrt" => f::sqrt(one(name, args)?),
         "concat" => f::concat(args), // variadic
+        // JSON extraction is a registry function (for native + frontend typing), but on the
+        // OLAP side it has dedicated Arrow-vectorized UDFs (`udf.rs`). Bind THOSE here — NOT
+        // the engine-neutral kernel via the F2 fallback below, whose untyped (0-arity)
+        // signature would shadow the typed `(Utf8,Utf8)` UDF and break coercion in comparison
+        // contexts (ADR-043 Inv 3; mirrors the `DATAFUSION_NATIVE_SCALARS` skip-list).
+        "json_extract" => {
+            Expr::ScalarFunction(datafusion::logical_expr::expr::ScalarFunction::new_udf(
+                std::sync::Arc::new(super::udf::json_extract_udf()),
+                args,
+            ))
+        }
+        "json_extract_text" => {
+            Expr::ScalarFunction(datafusion::logical_expr::expr::ScalarFunction::new_udf(
+                std::sync::Arc::new(super::udf::json_extract_text_udf()),
+                args,
+            ))
+        }
+        "json_extract_path_text" => {
+            Expr::ScalarFunction(datafusion::logical_expr::expr::ScalarFunction::new_udf(
+                std::sync::Arc::new(super::udf::json_extract_path_text_udf()),
+                args,
+            ))
+        }
         // F2 fallback: a registry function DataFusion lacks natively (custom functions; and via
         // F4/F5 vector distances + user CREATE FUNCTIONs). Bind its engine-neutral kernel as a
         // ScalarUDF and call it. Variadic registry funcs aren't fixed-arity-adaptable here.
