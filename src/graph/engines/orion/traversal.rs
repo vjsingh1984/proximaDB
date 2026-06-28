@@ -906,8 +906,10 @@ pub async fn dijkstra_shortest_path(
 
     let _start_time = std::time::Instant::now();
 
-    // Validate start node exists
-    if engine.get_node(start_node_id)?.is_none() {
+    // Validate start node exists — TOPOLOGY check (cold-payload-safe, TD-168):
+    // Dijkstra expands via edge weights (topology), so a cold start payload must
+    // not look "not found".
+    if !engine.contains_node(start_node_id) {
         return Err(ProximaDBError::InvalidInput(format!(
             "Start node {} not found",
             start_node_id
@@ -1059,20 +1061,27 @@ pub async fn astar_shortest_path(
         }
     }
 
-    // Validate start and target nodes
-    if engine.get_node(start_node_id)?.is_none() {
+    // Validate start and target — TOPOLOGY checks (cold-payload-safe, TD-168): a
+    // cold payload must not look "not found". The embedding heuristic already
+    // self-degrades to 0.0 when a payload/embedding is cold (A* → Dijkstra-like,
+    // still a correct shortest path), so the target embedding is best-effort.
+    if !engine.contains_node(start_node_id) {
         return Err(ProximaDBError::InvalidInput(format!(
             "Start node {} not found",
             start_node_id
         )));
     }
+    if !engine.contains_node(target_node_id) {
+        return Err(ProximaDBError::InvalidInput(format!(
+            "Target node {} not found",
+            target_node_id
+        )));
+    }
 
-    let target_node = engine.get_node(target_node_id)?.ok_or_else(|| {
-        ProximaDBError::InvalidInput(format!("Target node {} not found", target_node_id))
-    })?;
-
-    // Get target embedding for heuristic (if available)
-    let target_embedding = target_node.embedding.clone();
+    // Get target embedding for the heuristic (best-effort; None when cold ⇒ h=0).
+    let target_embedding = engine
+        .get_node(target_node_id)?
+        .and_then(|n| n.embedding.clone());
 
     // Create heuristic function based on config
     let heuristic = move |node_id: &NodeId| -> f64 {
@@ -1320,20 +1329,26 @@ pub async fn vector_guided_astar(
         }
     }
 
-    // Validate start and target nodes
-    if engine.get_node(start_node_id)?.is_none() {
+    // Validate start and target — TOPOLOGY checks (cold-payload-safe, TD-168). The
+    // hybrid heuristic self-degrades to 0.0 when a payload/embedding is cold, so
+    // the target embedding is best-effort.
+    if !engine.contains_node(start_node_id) {
         return Err(ProximaDBError::InvalidInput(format!(
             "Start node {} not found",
             start_node_id
         )));
     }
+    if !engine.contains_node(target_node_id) {
+        return Err(ProximaDBError::InvalidInput(format!(
+            "Target node {} not found",
+            target_node_id
+        )));
+    }
 
-    let target_node = engine.get_node(target_node_id)?.ok_or_else(|| {
-        ProximaDBError::InvalidInput(format!("Target node {} not found", target_node_id))
-    })?;
-
-    // Get target embedding for graph-based heuristic fallback
-    let target_embedding = target_node.embedding.clone();
+    // Get target embedding for the graph-based heuristic fallback (best-effort).
+    let target_embedding = engine
+        .get_node(target_node_id)?
+        .and_then(|n| n.embedding.clone());
 
     // Clamp alpha to valid range
     let alpha = alpha.clamp(0.0, 1.0);
@@ -2168,6 +2183,86 @@ mod tests {
 
         // For now, skip the complex BFS test and just verify the graph structure
         // Deferred: Fix the BFS shortest path algorithm later
+    }
+
+    /// TD-168 cold-payload correctness: Dijkstra and A* must find the shortest
+    /// path on a graph whose node PAYLOADS are cold (evicted) but whose TOPOLOGY +
+    /// edge weights are resident. Both expand over topology/edge-weights; A*'s
+    /// embedding heuristic self-degrades to 0 when payloads are cold (→ Dijkstra-
+    /// like, still a correct path). Before the fix, start/target validation checked
+    /// `get_node` (payload) and errored on a cold start/target.
+    #[tokio::test]
+    async fn shortest_path_when_node_payloads_are_cold() {
+        let engine = OrionGraphEngine::new();
+        for id in ["0", "1", "2"] {
+            engine
+                .insert_node(Node {
+                    id: id.to_string(),
+                    labels: vec!["Node".to_string()],
+                    properties: std::collections::HashMap::new(),
+                    embedding: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                })
+                .await
+                .expect("insert node");
+        }
+        for (eid, from, to) in [("e1", "0", "1"), ("e2", "1", "2")] {
+            engine
+                .insert_edge(Edge {
+                    id: eid.to_string(),
+                    from_node_id: from.to_string(),
+                    to_node_id: to.to_string(),
+                    edge_type: "CONNECTS".to_string(),
+                    properties: std::collections::HashMap::new(),
+                    weight: Some(1.0),
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                })
+                .await
+                .expect("insert edge");
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Evict node payloads; keep topology (node_to_index + CSR + edge weights).
+        for id in ["0", "1", "2"] {
+            engine.memory_pool().nodes.remove(&id.to_string());
+        }
+        assert!(
+            engine
+                .get_node(&"0".to_string())
+                .expect("get_node")
+                .is_none(),
+            "payloads are cold"
+        );
+        assert!(engine.contains_node(&"0".to_string()), "topology resident");
+
+        let expected = vec!["0".to_string(), "1".to_string(), "2".to_string()];
+
+        let (dj_path, _) = dijkstra_shortest_path(
+            &engine,
+            &"0".to_string(),
+            &"2".to_string(),
+            TraversalConfig::default(),
+        )
+        .await
+        .expect("dijkstra over cold graph")
+        .expect("dijkstra path exists");
+        assert_eq!(
+            dj_path, expected,
+            "Dijkstra finds the path over cold topology"
+        );
+
+        let (astar_path, _) = astar_shortest_path(
+            &engine,
+            &"0".to_string(),
+            &"2".to_string(),
+            TraversalConfig::default(),
+        )
+        .await
+        .expect("astar over cold graph")
+        .expect("astar path exists");
+        assert_eq!(astar_path, expected, "A* finds the path over cold topology");
     }
 
     #[tokio::test]
