@@ -168,6 +168,26 @@ pub trait RecordStore: Send + Sync {
 
     async fn get_record(&self, key: &RecordKey) -> RecordStoreResult<Option<ProximaRecord>>;
 
+    /// Batch point-lookup: fetch many records by key in one logical operation,
+    /// returning one slot per input key, in order (`None` = absent).
+    ///
+    /// The default loops [`Self::get_record`] (correct, no I/O saving). Stores
+    /// backed by object storage SHOULD override to issue the independent gets
+    /// **concurrently**, so K point-lookups cost ~one round-trip of latency
+    /// instead of K serial RTTs — the depth-collapse for result/frontier
+    /// materialization (ADR-034 P1: latency = depth × RTT). Note this collapses
+    /// *latency/depth*, not the op count (distinct objects ⇒ still K GETs).
+    async fn get_records(
+        &self,
+        keys: &[RecordKey],
+    ) -> RecordStoreResult<Vec<Option<ProximaRecord>>> {
+        let mut out = Vec::with_capacity(keys.len());
+        for key in keys {
+            out.push(self.get_record(key).await?);
+        }
+        Ok(out)
+    }
+
     async fn delete_record(&self, key: &RecordKey) -> RecordStoreResult<bool>;
 
     async fn upsert_records(

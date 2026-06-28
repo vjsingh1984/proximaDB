@@ -1054,6 +1054,63 @@ mod tests {
         unsafe { std::env::remove_var("PROXIMADB_GRAPH_COLD_PAYLOADS") };
     }
 
+    /// Depth-collapse: `get_nodes` batches the cold misses through
+    /// `RecordStore::get_records` and returns one slot per id, in order
+    /// (present/absent/present), served via the batched cold-fetch path.
+    #[tokio::test]
+    async fn get_nodes_batches_cold_misses_in_order() {
+        let graph_id = format!("cold_batch_{}", std::process::id());
+        let graph_id = graph_id.as_str();
+        let record_store = Arc::new(
+            crate::graph::ColdGraphRecordStore::from_storage_root(
+                "memory://",
+                proximadb_storage_filesystem_types::ObjectAccessTier::Cool,
+            )
+            .expect("open memory cold store"),
+        );
+        // Seed n1 and n3 directly (engine never sees them); n2 is absent.
+        for id in ["n1", "n3"] {
+            let node = Node {
+                id: id.to_string(),
+                labels: vec!["Person".to_string()],
+                properties: HashMap::new(),
+                embedding: None,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+            };
+            record_store
+                .upsert_record(
+                    crate::graph::adjacency_projection::node_to_canonical_record(graph_id, &node),
+                )
+                .await
+                .expect("seed node");
+        }
+
+        let service =
+            GraphOperationsService::new().with_canonical_record_store(record_store.clone());
+        service
+            .create_graph_collection(CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .expect("create graph");
+
+        unsafe { std::env::set_var("PROXIMADB_GRAPH_COLD_PAYLOADS", "1") };
+        let ids = vec!["n1".to_string(), "n2".to_string(), "n3".to_string()];
+        let got = service.get_nodes(graph_id, &ids).await.expect("get_nodes");
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0].as_ref().map(|n| n.id.as_str()), Some("n1"));
+        assert!(got[1].is_none(), "absent node → None slot");
+        assert_eq!(got[2].as_ref().map(|n| n.id.as_str()), Some("n3"));
+        unsafe { std::env::remove_var("PROXIMADB_GRAPH_COLD_PAYLOADS") };
+    }
+
     /// Verify that ORION CSR can be rebuilt from the adjacency projection.
     ///
     /// Creates 2 edges via the service (which updates the adjacency projection),

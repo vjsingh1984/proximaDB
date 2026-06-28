@@ -492,6 +492,145 @@ impl GraphOperationsService {
         Ok(Some(edge))
     }
 
+    /// Batched [`Self::get_node`] — the depth-collapse for result/frontier
+    /// materialization (ADR-034 P1: latency = depth × RTT). Engine-resident nodes
+    /// are served from RAM; the engine misses are cold-fetched from the canonical
+    /// record store in ONE concurrent batch ([`RecordStore::get_records`]) so K
+    /// cold point-lookups cost ~1 round-trip of latency instead of K serial GETs.
+    /// Returns one slot per id, in order; fetched payloads are admitted to the
+    /// byte-budgeted cache exactly as [`Self::cold_fetch_node`]. Gate OFF or no
+    /// record store ⇒ engine-only (today's behavior, unchanged).
+    pub async fn get_nodes(
+        &self,
+        graph_id: &str,
+        ids: &[String],
+    ) -> Result<Vec<Option<Arc<Node>>>> {
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        let mut out: Vec<Option<Arc<Node>>> = Vec::with_capacity(ids.len());
+        let mut miss_slots: Vec<usize> = Vec::new();
+        for (i, id) in ids.iter().enumerate() {
+            match engine.get_node(id)? {
+                Some(node) => out.push(Some(node)),
+                None => {
+                    out.push(None);
+                    miss_slots.push(i);
+                }
+            }
+        }
+        if miss_slots.is_empty() || !cold_payloads_enabled() {
+            return Ok(out);
+        }
+        let store = match &self.canonical_record_store {
+            Some(store) => store,
+            None => return Ok(out),
+        };
+        let cache = &self.payload_caches().nodes;
+        // Cache-resident misses are served without I/O; the rest form one batch.
+        let mut fetch_slots: Vec<usize> = Vec::new();
+        let mut fetch_keys: Vec<RecordKey> = Vec::new();
+        for &slot in &miss_slots {
+            let id = &ids[slot];
+            let cache_key = CacheKey::new(graph_id, CacheKind::Other, format!("node/{id}"));
+            if let Some(node) = cache.get(&cache_key).await {
+                out[slot] = Some(node);
+            } else {
+                fetch_slots.push(slot);
+                fetch_keys.push(RecordKey::new(
+                    GraphNodeKey::new(graph_id, id).canonical_oid(),
+                ));
+            }
+        }
+        if fetch_keys.is_empty() {
+            return Ok(out);
+        }
+        let records = store
+            .get_records(&fetch_keys)
+            .await
+            .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        for (slot, record) in fetch_slots.into_iter().zip(records) {
+            if let Some(node) = record.and_then(|record| node_from_canonical_record(&record)) {
+                let node = Arc::new(node);
+                let id = &ids[slot];
+                let cache_key = CacheKey::new(graph_id, CacheKind::Other, format!("node/{id}"));
+                cache
+                    .insert(
+                        cache_key,
+                        payload_weight(&node.id, &node.properties),
+                        node.clone(),
+                    )
+                    .await;
+                out[slot] = Some(node);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Batched [`Self::get_edge`] — symmetric to [`Self::get_nodes`] (one
+    /// concurrent cold batch for engine misses; depth-collapse, ADR-034 P1).
+    pub async fn get_edges(
+        &self,
+        graph_id: &str,
+        ids: &[String],
+    ) -> Result<Vec<Option<Arc<Edge>>>> {
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        let mut out: Vec<Option<Arc<Edge>>> = Vec::with_capacity(ids.len());
+        let mut miss_slots: Vec<usize> = Vec::new();
+        for (i, id) in ids.iter().enumerate() {
+            match engine.get_edge(id)? {
+                Some(edge) => out.push(Some(edge)),
+                None => {
+                    out.push(None);
+                    miss_slots.push(i);
+                }
+            }
+        }
+        if miss_slots.is_empty() || !cold_payloads_enabled() {
+            return Ok(out);
+        }
+        let store = match &self.canonical_record_store {
+            Some(store) => store,
+            None => return Ok(out),
+        };
+        let cache = &self.payload_caches().edges;
+        let mut fetch_slots: Vec<usize> = Vec::new();
+        let mut fetch_keys: Vec<RecordKey> = Vec::new();
+        for &slot in &miss_slots {
+            let id = &ids[slot];
+            let cache_key = CacheKey::new(graph_id, CacheKind::Other, format!("edge/{id}"));
+            if let Some(edge) = cache.get(&cache_key).await {
+                out[slot] = Some(edge);
+            } else {
+                fetch_slots.push(slot);
+                fetch_keys.push(RecordKey::new(
+                    GraphEdgeKey::new(graph_id, id).canonical_oid(),
+                ));
+            }
+        }
+        if fetch_keys.is_empty() {
+            return Ok(out);
+        }
+        let records = store
+            .get_records(&fetch_keys)
+            .await
+            .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        for (slot, record) in fetch_slots.into_iter().zip(records) {
+            if let Some(edge) = record.and_then(|record| edge_from_canonical_record(&record)) {
+                let edge = Arc::new(edge);
+                let id = &ids[slot];
+                let cache_key = CacheKey::new(graph_id, CacheKind::Other, format!("edge/{id}"));
+                cache
+                    .insert(
+                        cache_key,
+                        payload_weight(&edge.id, &edge.properties),
+                        edge.clone(),
+                    )
+                    .await;
+                out[slot] = Some(edge);
+            }
+        }
+        Ok(out)
+    }
+
     /// Inject the canonical WAL appender that `flush_wal` uses to persist
     /// `CanonicalOperation::Checkpoint(SnapshotManifest)` entries.
     ///
