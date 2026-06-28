@@ -346,6 +346,8 @@ impl EntityOrchestrator {
                 principal: None,
                 policy: FusionPolicy::default(),
                 oid_key: FusionOidKey::EntityNode,
+                // TD-138 document modality is REST-only for now; orchestrator passes `None`.
+                document: None,
             };
             let (items, _stats) = self
                 .fusion

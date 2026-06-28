@@ -68,7 +68,11 @@ impl ProximaEntityServiceImpl {
         Self {
             graph_service: graph.clone(),
             vector_service: vector.clone(),
-            fusion_service: Arc::new(FusionService::new(vector, graph)),
+            fusion_service: Arc::new(FusionService::new(
+                vector,
+                graph,
+                crate::network::hybrid_search::HybridFullTextIndexMap::default(),
+            )),
             document_service: document,
         }
     }
@@ -504,6 +508,8 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
                 principal,
                 policy: FusionPolicy::default(),
                 oid_key: FusionOidKey::EntityNode,
+                // TD-138 document modality is REST-only for now; gRPC entity fusion is deferred.
+                document: None,
             };
 
             let (items, _stats) = self

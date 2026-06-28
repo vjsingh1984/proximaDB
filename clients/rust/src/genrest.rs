@@ -2490,6 +2490,21 @@ pub mod types {
     ///      ],
     ///      "format": "float"
     ///    },
+    ///    "document_collection": {
+    ///      "description": "Collection whose document index to BM25-search. Defaults to `vector_collection` (documents\nco-indexed with the vectors share the record `oid`, so they merge by `oid`).",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "document_weight": {
+    ///      "description": "Document modality weight (mirrors `vector_weight` / `graph_weight`). Defaults to 1.0.",
+    ///      "type": [
+    ///        "number",
+    ///        "null"
+    ///      ],
+    ///      "format": "float"
+    ///    },
     ///    "edge_types": {
     ///      "type": "array",
     ///      "items": {
@@ -2545,6 +2560,13 @@ pub mod types {
     ///      "description": "Use the rank-based RRF fallback instead of PIT-calibrated linear.",
     ///      "type": "boolean"
     ///    },
+    ///    "text_query": {
+    ///      "description": "Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also searches the\ncollection's document index and merges BM25 hits into the result by shared `oid` — tri-modal\n(vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
     ///    "total_budget": {
     ///      "type": [
     ///        "integer",
@@ -2572,6 +2594,13 @@ pub mod types {
         ///Consensus boost added to any `oid` present in ≥2 sources.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub consensus_beta: ::std::option::Option<f32>,
+        /// Collection whose document index to BM25-search. Defaults to `vector_collection` (documents
+        /// co-indexed with the vectors share the record `oid`, so they merge by `oid`).
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub document_collection: ::std::option::Option<::std::string::String>,
+        ///Document modality weight (mirrors `vector_weight` / `graph_weight`). Defaults to 1.0.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub document_weight: ::std::option::Option<f32>,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub edge_types: ::std::vec::Vec<::std::string::String>,
         ///Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.
@@ -2596,6 +2625,11 @@ pub mod types {
         ///Use the rank-based RRF fallback instead of PIT-calibrated linear.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub rrf: ::std::option::Option<bool>,
+        /// Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also searches the
+        /// collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
+        /// (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub text_query: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub total_budget: ::std::option::Option<u64>,
         ///Vector collection to seed from (its records co-indexed with this graph by `oid`).
@@ -8763,6 +8797,12 @@ pub mod types {
         pub struct FusionSearchRequest {
             consensus_beta:
                 ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
+            document_collection: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            document_weight:
+                ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
             edge_types: ::std::result::Result<
                 ::std::vec::Vec<::std::string::String>,
                 ::std::string::String,
@@ -8779,6 +8819,10 @@ pub mod types {
                 ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
             query_vector: ::std::result::Result<::std::vec::Vec<f32>, ::std::string::String>,
             rrf: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+            text_query: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
             total_budget: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
             vector_collection: ::std::result::Result<::std::string::String, ::std::string::String>,
             vector_weight: ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
@@ -8787,6 +8831,8 @@ pub mod types {
             fn default() -> Self {
                 Self {
                     consensus_beta: Ok(Default::default()),
+                    document_collection: Ok(Default::default()),
+                    document_weight: Ok(Default::default()),
                     edge_types: Ok(Default::default()),
                     grain: Ok(Default::default()),
                     graph_weight: Ok(Default::default()),
@@ -8796,6 +8842,7 @@ pub mod types {
                     min_weight_fraction: Ok(Default::default()),
                     query_vector: Err("no value supplied for query_vector".to_string()),
                     rrf: Ok(Default::default()),
+                    text_query: Ok(Default::default()),
                     total_budget: Ok(Default::default()),
                     vector_collection: Err("no value supplied for vector_collection".to_string()),
                     vector_weight: Ok(Default::default()),
@@ -8810,6 +8857,26 @@ pub mod types {
             {
                 self.consensus_beta = value.try_into().map_err(|e| {
                     format!("error converting supplied value for consensus_beta: {e}")
+                });
+                self
+            }
+            pub fn document_collection<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.document_collection = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for document_collection: {e}")
+                });
+                self
+            }
+            pub fn document_weight<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<f32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.document_weight = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for document_weight: {e}")
                 });
                 self
             }
@@ -8903,6 +8970,16 @@ pub mod types {
                     .map_err(|e| format!("error converting supplied value for rrf: {e}"));
                 self
             }
+            pub fn text_query<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.text_query = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for text_query: {e}"));
+                self
+            }
             pub fn total_budget<T>(mut self, value: T) -> Self
             where
                 T: ::std::convert::TryInto<::std::option::Option<u64>>,
@@ -8941,6 +9018,8 @@ pub mod types {
             ) -> ::std::result::Result<Self, super::error::ConversionError> {
                 Ok(Self {
                     consensus_beta: value.consensus_beta?,
+                    document_collection: value.document_collection?,
+                    document_weight: value.document_weight?,
                     edge_types: value.edge_types?,
                     grain: value.grain?,
                     graph_weight: value.graph_weight?,
@@ -8950,6 +9029,7 @@ pub mod types {
                     min_weight_fraction: value.min_weight_fraction?,
                     query_vector: value.query_vector?,
                     rrf: value.rrf?,
+                    text_query: value.text_query?,
                     total_budget: value.total_budget?,
                     vector_collection: value.vector_collection?,
                     vector_weight: value.vector_weight?,
@@ -8960,6 +9040,8 @@ pub mod types {
             fn from(value: super::FusionSearchRequest) -> Self {
                 Self {
                     consensus_beta: Ok(value.consensus_beta),
+                    document_collection: Ok(value.document_collection),
+                    document_weight: Ok(value.document_weight),
                     edge_types: Ok(value.edge_types),
                     grain: Ok(value.grain),
                     graph_weight: Ok(value.graph_weight),
@@ -8969,6 +9051,7 @@ pub mod types {
                     min_weight_fraction: Ok(value.min_weight_fraction),
                     query_vector: Ok(value.query_vector),
                     rrf: Ok(value.rrf),
+                    text_query: Ok(value.text_query),
                     total_budget: Ok(value.total_budget),
                     vector_collection: Ok(value.vector_collection),
                     vector_weight: Ok(value.vector_weight),

@@ -18,7 +18,9 @@ use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::openapi::ErrorResponse;
 use crate::network::rest::v1::handlers::AppState;
 use crate::security::rbac_service::UnifiedUserContext;
-use crate::services::fusion_service::{FusionOidKey, GraphFusionParams, GraphGrain};
+use crate::services::fusion_service::{
+    DocumentFusionSpec, FusionOidKey, GraphFusionParams, GraphGrain,
+};
 
 fn default_limit() -> usize {
     10
@@ -59,6 +61,15 @@ pub struct FusionSearchRequest {
     /// When absent, fusion is unbounded.
     pub min_weight_fraction: Option<f32>,
     pub total_budget: Option<usize>,
+    /// Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also searches the
+    /// collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
+    /// (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
+    pub text_query: Option<String>,
+    /// Collection whose document index to BM25-search. Defaults to `vector_collection` (documents
+    /// co-indexed with the vectors share the record `oid`, so they merge by `oid`).
+    pub document_collection: Option<String>,
+    /// Document modality weight (mirrors `vector_weight` / `graph_weight`). Defaults to 1.0.
+    pub document_weight: Option<f32>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -184,6 +195,18 @@ pub async fn fusion_search_v2(
         },
         policy,
         oid_key: FusionOidKey::Canonical,
+        // TD-138 document modality: enable iff a non-empty `text_query` was supplied. Built from the
+        // request fields; the shared service's DocumentExpander runs the BM25 search.
+        document: request
+            .text_query
+            .as_ref()
+            .filter(|t| !t.trim().is_empty())
+            .map(|t| DocumentFusionSpec {
+                text_query: t.clone(),
+                collection: request.document_collection.clone(),
+                weight: request.document_weight.unwrap_or(1.0),
+                k: None,
+            }),
     };
 
     let (items, stats) = service

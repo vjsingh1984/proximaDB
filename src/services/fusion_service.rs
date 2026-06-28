@@ -353,6 +353,25 @@ pub enum GraphGrain {
     Both,
 }
 
+/// Optional document-modality contribution to a fusion query (TD-138). When present, the shared
+/// [`FusionService`] runs BM25/full-text search over the collection's in-memory index (via
+/// [`DocumentExpander`]) and emits an `oid`-keyed [`SourceId::Document`] source that merges with the
+/// vector + graph sources by shared `oid`. Absent ⇒ no document contribution (the default, preserving
+/// plain vector+graph fusion). The expander fails closed on a missing/poisoned index, so fusion
+/// proceeds on the other modalities rather than erroring (D5/D6).
+#[derive(Debug, Clone)]
+pub struct DocumentFusionSpec {
+    /// The BM25/full-text query. Its presence is what enables the document source.
+    pub text_query: String,
+    /// Collection whose full-text index to search. `None` ⇒ the vector collection (documents
+    /// co-indexed with the vectors share the record `oid`, so they merge by `oid`).
+    pub collection: Option<String>,
+    /// Document modality weight (mirrors `vector_weight` / `graph_weight`).
+    pub weight: f32,
+    /// Top-k documents to take from the index. `None` ⇒ reuse the query `limit`.
+    pub k: Option<usize>,
+}
+
 /// Parameters for one graph-modality fusion query.
 #[derive(Debug, Clone)]
 pub struct GraphFusionParams {
@@ -384,17 +403,35 @@ pub struct GraphFusionParams {
     /// [`FusionOidKey::EntityNode`] so its auxiliary vector oids and canonical graph oids
     /// co-rank under the entity `node_id`.
     pub oid_key: FusionOidKey,
+    /// Optional document-modality contribution (TD-138). `None` ⇒ vector+graph only (the default).
+    pub document: Option<DocumentFusionSpec>,
 }
 
 /// Orchestrates the graph instance of the fusion seam over the live vector + graph engines.
 pub struct FusionService {
     vector: Arc<VectorOperationsService>,
     graph: Arc<GraphOperationsService>,
+    /// Document modality expander (TD-138). Holds the shared full-text index map; fail-closed when
+    /// the map is empty (surfaces that don't wire live documents pass `HybridFullTextIndexMap::default()`).
+    document: DocumentExpander,
 }
 
 impl FusionService {
-    pub fn new(vector: Arc<VectorOperationsService>, graph: Arc<GraphOperationsService>) -> Self {
-        Self { vector, graph }
+    /// Construct the shared fusion service. `fulltext_indexes` powers the optional document modality
+    /// (via [`DocumentExpander`]); an empty map ([`HybridFullTextIndexMap::default`]) leaves the
+    /// document expander fail-closed so fusion is vector+graph only — used by surfaces (gRPC/embedded)
+    /// that don't wire live documents yet. Constructed ONCE at boot and shared via `Arc`, per the
+    /// search-surface contract (never per-handler).
+    pub fn new(
+        vector: Arc<VectorOperationsService>,
+        graph: Arc<GraphOperationsService>,
+        fulltext_indexes: HybridFullTextIndexMap,
+    ) -> Self {
+        Self {
+            vector,
+            graph,
+            document: DocumentExpander::new(fulltext_indexes),
+        }
     }
 
     /// Vector-seed → graph-expand → fuse-by-`oid`. Tenant isolation is structural (the collection and
@@ -543,6 +580,27 @@ impl FusionService {
                 traversal_edges_to_source(&params.graph_id, &edges, params.graph_weight),
                 params.oid_key,
             ));
+        }
+
+        // 3b. Optional document modality (TD-138): BM25 over the collection's full-text index → an
+        //     `oid`-keyed [`SourceId::Document`] source that merges with vector + graph by shared `oid`.
+        //     Pushed BEFORE cost routing so TD-141 budgets it like any other source, and key-normalized
+        //     so it lands in the same fusion-key space as the vector + graph sources. Fail-closed on a
+        //     missing/poisoned index (empty source → no contribution, no error).
+        if let Some(spec) = params.document.as_ref()
+            && !spec.text_query.is_empty()
+        {
+            let collection = spec
+                .collection
+                .as_deref()
+                .unwrap_or(&params.vector_collection);
+            let doc_source = self.document.expand(
+                collection,
+                &spec.text_query,
+                spec.k.unwrap_or(params.limit),
+                spec.weight,
+            );
+            sources.push(normalize_source_keys(doc_source, params.oid_key));
         }
 
         // 3c. Optional cost routing (TD-141): budget each modality by weight and drop negligible ones.
@@ -794,6 +852,28 @@ mod tests {
             .find(|i| i.oid == oid)
             .expect("shared oid fused");
         assert_eq!(fused.source_count, 2, "vector + document merge by oid");
+    }
+
+    /// TD-138 end-state: a vector hit, a graph-expanded node, and a BM25 document hit that are the
+    /// SAME entity (same canonical `oid`) fuse into one item with `source_count == 3` — all three
+    /// modalities converge onto the seam by shared `oid`, calibrated by the Fuser.
+    #[test]
+    fn vector_graph_document_sources_tri_modal_fuse_by_shared_oid() {
+        let oid = "graph/g1/node/n1";
+        let vector = vector_hits_to_source(&[hit(oid, 0.9)], 1.0);
+        let graph = traversal_nodes_to_source("g1", &[node("n1")], 1.0);
+        let document = bm25_hits_to_source(&[doc_hit(oid, 3.2)], 1.0);
+        let (items, stats) =
+            Fuser::new(FusionPolicy::default()).fuse(vec![vector, graph, document], 10);
+        assert_eq!(stats.sources_fused, 3);
+        let fused = items
+            .iter()
+            .find(|i| i.oid == oid)
+            .expect("shared oid fused across all three modalities");
+        assert_eq!(
+            fused.source_count, 3,
+            "vector + graph + document merge by oid"
+        );
     }
 
     fn edge(id: &str) -> Edge {

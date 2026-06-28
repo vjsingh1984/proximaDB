@@ -3707,6 +3707,10 @@ impl EmbeddedProximaDB {
             let service = FusionService::new(
                 self.shared_services.vector_operations_service.clone(),
                 self.shared_services.graph_service.clone(),
+                // TD-138: share the live full-text index map so the document modality is powered
+                // when a caller supplies a document spec (the params below pass `document: None`
+                // for now; the shared map is wired so a future embedded text_query works directly).
+                self.shared_services.fulltext_indexes.clone(),
             );
             let params = GraphFusionParams {
                 route_policy: None,
@@ -3733,6 +3737,9 @@ impl EmbeddedProximaDB {
                     FusionPolicy::default()
                 },
                 oid_key: FusionOidKey::Canonical,
+                // TD-138 document modality is REST-only for now; embedded passes `None`
+                // (vector+graph only). The service above still shares the live index map.
+                document: None,
             };
             service.graph_fusion_search(params).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {

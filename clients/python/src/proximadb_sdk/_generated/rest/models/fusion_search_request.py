@@ -21,6 +21,11 @@ class FusionSearchRequest:
         query_vector (list[float]): Query embedding for the ANN seed.
         vector_collection (str): Vector collection to seed from (its records co-indexed with this graph by `oid`).
         consensus_beta (Union[None, Unset, float]): Consensus boost added to any `oid` present in ≥2 sources.
+        document_collection (Union[None, Unset, str]): Collection whose document index to BM25-search. Defaults to
+            `vector_collection` (documents
+            co-indexed with the vectors share the record `oid`, so they merge by `oid`).
+        document_weight (Union[None, Unset, float]): Document modality weight (mirrors `vector_weight` /
+            `graph_weight`). Defaults to 1.0.
         edge_types (Union[Unset, list[str]]):
         grain (Union[None, Unset, str]): Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.
         graph_weight (Union[None, Unset, float]):
@@ -31,6 +36,10 @@ class FusionSearchRequest:
             (weight fraction) and budget each.
             When absent, fusion is unbounded.
         rrf (Union[Unset, bool]): Use the rank-based RRF fallback instead of PIT-calibrated linear.
+        text_query (Union[None, Unset, str]): Optional BM25/full-text query (TD-138). When present (and non-empty),
+            fusion also searches the
+            collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
+            (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
         total_budget (Union[None, Unset, int]):
         vector_weight (Union[None, Unset, float]):
     """
@@ -38,6 +47,8 @@ class FusionSearchRequest:
     query_vector: list[float]
     vector_collection: str
     consensus_beta: Union[None, Unset, float] = UNSET
+    document_collection: Union[None, Unset, str] = UNSET
+    document_weight: Union[None, Unset, float] = UNSET
     edge_types: Union[Unset, list[str]] = UNSET
     grain: Union[None, Unset, str] = UNSET
     graph_weight: Union[None, Unset, float] = UNSET
@@ -46,6 +57,7 @@ class FusionSearchRequest:
     max_seeds: Union[Unset, int] = UNSET
     min_weight_fraction: Union[None, Unset, float] = UNSET
     rrf: Union[Unset, bool] = UNSET
+    text_query: Union[None, Unset, str] = UNSET
     total_budget: Union[None, Unset, int] = UNSET
     vector_weight: Union[None, Unset, float] = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -60,6 +72,18 @@ class FusionSearchRequest:
             consensus_beta = UNSET
         else:
             consensus_beta = self.consensus_beta
+
+        document_collection: Union[None, Unset, str]
+        if isinstance(self.document_collection, Unset):
+            document_collection = UNSET
+        else:
+            document_collection = self.document_collection
+
+        document_weight: Union[None, Unset, float]
+        if isinstance(self.document_weight, Unset):
+            document_weight = UNSET
+        else:
+            document_weight = self.document_weight
 
         edge_types: Union[Unset, list[str]] = UNSET
         if not isinstance(self.edge_types, Unset):
@@ -91,6 +115,12 @@ class FusionSearchRequest:
 
         rrf = self.rrf
 
+        text_query: Union[None, Unset, str]
+        if isinstance(self.text_query, Unset):
+            text_query = UNSET
+        else:
+            text_query = self.text_query
+
         total_budget: Union[None, Unset, int]
         if isinstance(self.total_budget, Unset):
             total_budget = UNSET
@@ -113,6 +143,10 @@ class FusionSearchRequest:
         )
         if consensus_beta is not UNSET:
             field_dict["consensus_beta"] = consensus_beta
+        if document_collection is not UNSET:
+            field_dict["document_collection"] = document_collection
+        if document_weight is not UNSET:
+            field_dict["document_weight"] = document_weight
         if edge_types is not UNSET:
             field_dict["edge_types"] = edge_types
         if grain is not UNSET:
@@ -129,6 +163,8 @@ class FusionSearchRequest:
             field_dict["min_weight_fraction"] = min_weight_fraction
         if rrf is not UNSET:
             field_dict["rrf"] = rrf
+        if text_query is not UNSET:
+            field_dict["text_query"] = text_query
         if total_budget is not UNSET:
             field_dict["total_budget"] = total_budget
         if vector_weight is not UNSET:
@@ -151,6 +187,26 @@ class FusionSearchRequest:
             return cast(Union[None, Unset, float], data)
 
         consensus_beta = _parse_consensus_beta(d.pop("consensus_beta", UNSET))
+
+        def _parse_document_collection(data: object) -> Union[None, Unset, str]:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(Union[None, Unset, str], data)
+
+        document_collection = _parse_document_collection(
+            d.pop("document_collection", UNSET)
+        )
+
+        def _parse_document_weight(data: object) -> Union[None, Unset, float]:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(Union[None, Unset, float], data)
+
+        document_weight = _parse_document_weight(d.pop("document_weight", UNSET))
 
         edge_types = cast(list[str], d.pop("edge_types", UNSET))
 
@@ -191,6 +247,15 @@ class FusionSearchRequest:
 
         rrf = d.pop("rrf", UNSET)
 
+        def _parse_text_query(data: object) -> Union[None, Unset, str]:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(Union[None, Unset, str], data)
+
+        text_query = _parse_text_query(d.pop("text_query", UNSET))
+
         def _parse_total_budget(data: object) -> Union[None, Unset, int]:
             if data is None:
                 return data
@@ -213,6 +278,8 @@ class FusionSearchRequest:
             query_vector=query_vector,
             vector_collection=vector_collection,
             consensus_beta=consensus_beta,
+            document_collection=document_collection,
+            document_weight=document_weight,
             edge_types=edge_types,
             grain=grain,
             graph_weight=graph_weight,
@@ -221,6 +288,7 @@ class FusionSearchRequest:
             max_seeds=max_seeds,
             min_weight_fraction=min_weight_fraction,
             rrf=rrf,
+            text_query=text_query,
             total_budget=total_budget,
             vector_weight=vector_weight,
         )

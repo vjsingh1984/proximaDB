@@ -45,7 +45,11 @@ impl ProximaFusionServiceImpl {
         graph: Arc<crate::graph::GraphOperationsService>,
     ) -> Self {
         Self {
-            fusion: Arc::new(FusionService::new(vector, graph)),
+            fusion: Arc::new(FusionService::new(
+                vector,
+                graph,
+                crate::network::hybrid_search::HybridFullTextIndexMap::default(),
+            )),
         }
     }
 
@@ -130,6 +134,9 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
             principal,
             policy,
             oid_key: FusionOidKey::Canonical,
+            // TD-138 document modality is REST-only for now; gRPC document fusion is deferred
+            // (TD-143). `None` ⇒ vector+graph only (no behavior change).
+            document: None,
         };
 
         let (items, stats) = self
