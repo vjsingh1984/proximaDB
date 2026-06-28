@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check docs-claim-check release-smoke
+.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check docs-claim-check release-smoke cloud-emulator-test
 
 # Default target
 all: build test
@@ -336,6 +336,13 @@ integration-full: build-release
 	cd tests/python && python -m pytest test_integration_comprehensive.py -v
 	@echo "Stopping server..."
 	pkill -f proximadb-server || true
+
+# Cloud object-store emulator tier validation (TD-168/TD-173): Azurite/MinIO/fake-gcs
+# via Docker. The exact path the qa-gate CI job runs (single source of truth).
+# Requires docker + aws/az CLIs + curl.
+cloud-emulator-test:
+	@echo "☁️  Validating object-store Cool tier against Azure/S3/GCS emulators..."
+	@bash scripts/run_cloud_emulator_tests.sh
 
 # Help target
 help:
