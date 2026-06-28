@@ -188,12 +188,42 @@ impl CatalogManager {
             ..Default::default()
         };
 
-        let catalog = proximadb_catalog::native::NativeCatalog::new(
-            name.to_string(),
-            config,
-            self.cache.clone(),
-        )
-        .await?;
+        // TD-CAT-1b (S0): object-store catalog URLs (s3://, gs://, az://) persist
+        // durably by routing all catalog I/O through an injected `FileSystem`
+        // backend resolved from the configured backends. `file://` (and bare
+        // local paths) keep the local-`tokio::fs` path (`fs = None`) so the
+        // on-disk layout and existing tests are byte-identical — the object-store
+        // branch only *relaxes* `NativeCatalog::parse_storage_url`'s fail-closed
+        // bail, it does not change the local path. A cloud scheme whose backend
+        // feature isn't compiled in surfaces a clear `UnsupportedScheme` error
+        // (still strictly safer than silently caching the catalog under /tmp).
+        let is_object_store = storage_url.starts_with("s3://")
+            || storage_url.starts_with("gs://")
+            || storage_url.starts_with("az://");
+
+        let catalog = if is_object_store {
+            let factory =
+                crate::storage::persistence::filesystem::FilesystemFactory::create_default()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("filesystem factory init failed: {e}"))?;
+            let fs = factory.get_filesystem(storage_url).map_err(|e| {
+                anyhow::anyhow!("no filesystem backend for catalog url '{storage_url}': {e}")
+            })?;
+            proximadb_catalog::native::NativeCatalog::new_with_filesystem(
+                name.to_string(),
+                config,
+                self.cache.clone(),
+                Some(fs),
+            )
+            .await?
+        } else {
+            proximadb_catalog::native::NativeCatalog::new(
+                name.to_string(),
+                config,
+                self.cache.clone(),
+            )
+            .await?
+        };
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -1042,6 +1072,65 @@ mod tests {
         assert_eq!(default.name(), "first");
 
         // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    /// TD-CAT-1b (S0): the injected-`FileSystem` seam persists catalog metadata
+    /// durably and reads it back across a fresh catalog instance. This is the
+    /// exact code path `create_native_catalog` now uses for object-store URLs,
+    /// proven here over a real `file://` backend (the local backend is always
+    /// registered; cloud backends are feature-gated and covered by emulator
+    /// tests). Before #415 + this slice, object-store catalog URLs fail-closed;
+    /// this asserts the routed-through-backend write+read round-trips.
+    #[tokio::test]
+    async fn native_catalog_injected_filesystem_round_trips() {
+        use crate::storage::persistence::filesystem::FilesystemFactory;
+        use proximadb_catalog::Catalog;
+        use proximadb_catalog::native::{NativeCatalog, NativeCatalogConfig};
+
+        let temp_dir = std::env::temp_dir().join("proximadb_s0_injected_fs");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        let url = format!("file://{}", temp_dir.display());
+
+        let factory = FilesystemFactory::create_default()
+            .await
+            .expect("filesystem factory");
+        let fs = factory.get_filesystem(&url).expect("file:// backend");
+        let cache = CatalogManager::new().cache();
+        let config = NativeCatalogConfig {
+            storage_url: url.clone(),
+            ..Default::default()
+        };
+
+        // Write a namespace THROUGH the injected backend (fs = Some).
+        let catalog = NativeCatalog::new_with_filesystem(
+            "injected".to_string(),
+            config.clone(),
+            cache.clone(),
+            Some(fs.clone()),
+        )
+        .await
+        .expect("construct catalog with injected fs");
+        catalog
+            .create_namespace(&["s0_ns".to_string()], std::collections::HashMap::new())
+            .await
+            .expect("create namespace via injected fs");
+
+        // A FRESH catalog over the same URL+backend must load it from disk —
+        // proving the metadata was persisted durably through the backend, not
+        // just held in memory.
+        let reopened =
+            NativeCatalog::new_with_filesystem("injected".to_string(), config, cache, Some(fs))
+                .await
+                .expect("reopen catalog with injected fs");
+        assert!(
+            reopened
+                .namespace_exists(&["s0_ns".to_string()])
+                .await
+                .expect("namespace_exists"),
+            "namespace written through the injected backend must survive a reopen (durable)"
+        );
+
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
 
