@@ -1238,6 +1238,7 @@ impl DdlService {
 
             let catalog_col = CatalogColumn {
                 id: idx as i32 + 1,
+                object_id: None,
                 name: col.name.clone(),
                 data_type,
                 nullable: col.nullable,

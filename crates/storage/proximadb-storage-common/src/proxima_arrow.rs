@@ -409,6 +409,7 @@ pub fn infer_proxima_schema(records: &[ProximaRecord]) -> ProximaSchema {
     let mut push = |name: String, data_type: ProximaType, id: &mut i32| {
         columns.push(ProximaColumn {
             id: *id,
+            object_id: None,
             name,
             data_type,
             nullable: true,
@@ -571,6 +572,7 @@ mod tests {
     fn col(id: i32, name: &str, dt: ProximaType, nullable: bool) -> ProximaColumn {
         ProximaColumn {
             id,
+            object_id: None,
             name: name.to_string(),
             data_type: dt,
             nullable,

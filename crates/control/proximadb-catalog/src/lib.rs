@@ -312,8 +312,19 @@ impl CatalogNamespace {
 /// Column definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogColumn {
-    /// Column ID (stable across renames)
+    /// Column ID — the **physical** field identity: stable across renames and
+    /// mapped 1:1 to the Iceberg/Parquet field-id (ADR-010). This is the on-disk
+    /// column mapping, NOT the catalog surrogate; see `object_id`.
     pub id: i32,
+    /// ADR-031 / TD-181: the **catalog** surrogate identity — a stable, immutable
+    /// `u64` `object_id` from the one system-wide catalog sequence (globally
+    /// unique, never reused). Distinct role from `id` (the physical field-id):
+    /// `object_id` is what catalog→catalog references and the path migration key
+    /// on; `id` is the Parquet/PAX field mapping. Both coexist by role (ADR-031
+    /// reconciliation amendment 4). Additive + `#[serde(default)]`, so legacy
+    /// rows and not-yet-persisted columns load as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_id: Option<u64>,
     /// Column name
     pub name: String,
     /// Data type (canonical logical type — ADR-024).
@@ -351,6 +362,7 @@ impl CatalogColumn {
     pub fn new(id: i32, name: impl Into<String>, data_type: ProximaType) -> Self {
         Self {
             id,
+            object_id: None,
             name: name.into(),
             data_type,
             nullable: true,
@@ -360,6 +372,12 @@ impl CatalogColumn {
             is_deleted: false,
             original_id: None,
         }
+    }
+
+    /// Set the stable `u64` catalog object identity (ADR-031 / TD-181).
+    pub fn with_object_id(mut self, object_id: u64) -> Self {
+        self.object_id = Some(object_id);
+        self
     }
 
     /// Set nullable
@@ -411,6 +429,7 @@ impl CatalogColumn {
     pub fn from_arrow_field(field: &arrow_schema::Field, id: i32) -> Self {
         Self {
             id,
+            object_id: None,
             name: field.name().clone(),
             data_type: ProximaType::from_arrow_type(field.data_type()),
             nullable: field.is_nullable(),

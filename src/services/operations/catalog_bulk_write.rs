@@ -409,6 +409,7 @@ impl CatalogBulkWriteService {
 
             let column = CatalogColumn {
                 id: idx as i32,
+                object_id: None,
                 name: field.name().clone(),
                 data_type,
                 nullable: field.is_nullable(),

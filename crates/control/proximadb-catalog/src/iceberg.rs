@@ -731,6 +731,7 @@ impl Catalog for IcebergCatalog {
             .iter()
             .map(|f| CatalogColumn {
                 id: f.id,
+                object_id: None,
                 name: f.name.clone(),
                 data_type: Self::iceberg_type_to_data_type(&f.field_type),
                 nullable: !f.required,
@@ -891,6 +892,7 @@ impl Catalog for IcebergCatalog {
             .iter()
             .map(|f| CatalogColumn {
                 id: f.id,
+                object_id: None,
                 name: f.name.clone(),
                 data_type: Self::iceberg_type_to_data_type(&f.field_type),
                 nullable: !f.required,

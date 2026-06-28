@@ -325,6 +325,7 @@ impl PolarisCatalog {
 
         CatalogColumn {
             id: field.id,
+            object_id: None,
             name: field.name.clone(),
             data_type,
             nullable: !field.required,
