@@ -242,6 +242,20 @@ pub struct SharedServices {
     /// (fail-open). Default-OFF until `PROXIMADB_WRITE_FENCING=1`.
     pub storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>>,
 
+    /// Partition lease manager for per-collection write authority (Phase 7c).
+    ///
+    /// When enabled via `PROXIMADB_PARTITION_LEASE_ON` and object-store
+    /// deployment, this manager acquires/renews generation-fenced leases
+    /// over `(tenant, collection)` partitions. Protocol handlers consult
+    /// `consult_for_write_leased` before DDL writes to ensure split-brain-free
+    /// local writes. Single-pod deployments leave this `None` (pure in-memory
+    /// `primary_pod_registry` lookup).
+    ///
+    /// The lease is a latency optimization; the object-store fence in
+    /// `SystemCatalog` is the correctness authority.
+    pub partition_lease_manager:
+        Option<Arc<crate::cluster::partition_lease::PartitionLeaseManager>>,
+
     /// Shared canonical WAL appender at `<data_dir>/pgwire/canonical-records.wal`.
     ///
     /// Opened once in `SharedServices::new` (when `opt_config` is provided so
@@ -2138,6 +2152,64 @@ impl SharedServices {
             );
         }
 
+        // Phase 7c: resolve self_pod_id for partition lease manager initialization
+        let self_pod_id_resolved = crate::cluster::primary_pod_registry::resolve_self_pod_id(None);
+
+        // Phase 7c: partition lease manager for per-collection write authority
+        let partition_lease_manager: Option<
+            std::sync::Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
+        > = {
+            // Only initialize for object-store deployments when explicitly enabled
+            let is_objstore = storage_config.metadata_url.starts_with("s3://")
+                || storage_config.metadata_url.starts_with("gs://")
+                || storage_config.metadata_url.starts_with("az://")
+                || storage_config.metadata_url.starts_with("memory://");
+            let lease_enabled = std::env::var("PROXIMADB_PARTITION_LEASE_ON")
+                .ok()
+                .and_then(|v| v.parse::<bool>().ok())
+                .unwrap_or(false);
+
+            if is_objstore && lease_enabled {
+                use crate::storage::trait_components::path_resolver::DrPathBuilder;
+                // Use DrPathBuilder for the lease prefix (under _catalog/leases)
+                let lease_prefix = DrPathBuilder::partition_lease_prefix();
+                // Lease TTL: 60 seconds by default (configurable via env)
+                let lease_ms = std::env::var("PROXIMADB_PARTITION_LEASE_SECS")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(60) as i64
+                    * 1000;
+
+                match crate::cluster::partition_lease::PartitionLeaseStore::from_url(
+                    &storage_config.metadata_url,
+                    lease_prefix,
+                ) {
+                    Ok(lease_store) => {
+                        let lease_mgr = crate::cluster::partition_lease::PartitionLeaseManager::new(
+                            std::sync::Arc::new(lease_store),
+                            primary_pod_registry.clone(),
+                            &self_pod_id_resolved,
+                            lease_ms,
+                        );
+                        info!(
+                            "✅ SharedServices: partition lease manager enabled (TTL={}ms)",
+                            lease_ms
+                        );
+                        Some(std::sync::Arc::new(lease_mgr))
+                    }
+                    Err(err) => {
+                        warn!(
+                            "⚠️ SharedServices: failed to create partition lease store, disabling: {}",
+                            err
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        };
+
         info!(
             "✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)"
         );
@@ -2222,7 +2294,10 @@ impl SharedServices {
                 // the gRPC v2 service share the identical pod
                 // identity. Pulled from `PROXIMADB_POD_ID` env var
                 // with a `"self"` fallback for single-node setups.
-                self_pod_id: crate::cluster::primary_pod_registry::resolve_self_pod_id(None),
+                self_pod_id: self_pod_id_resolved,
+                // Phase 7c: partition lease manager for per-collection
+                // write authority (initialized above).
+                partition_lease_manager,
                 // T2.3 / TD-066 production wiring: the shared canonical
                 // WAL appender opened earlier (Some when opt_config is
                 // provided). Held here so multi_server.rs can clone it
