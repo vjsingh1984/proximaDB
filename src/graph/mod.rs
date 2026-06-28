@@ -64,6 +64,10 @@ pub mod catapult;
 /// Cold graph-payload record store (TD-168 Phase 2): durable, Cool-tiered object
 /// storage backing for node/edge payloads so a graph larger than RAM is servable.
 pub mod cold_payload_store;
+/// Segment-batched cold graph-payload store (TD-168 #3, Phase 1): many records per
+/// object to cut object-store op count, with an oid→byte-range index for ranged
+/// point-gets. Capability only — not yet wired into production.
+pub mod cold_segment_store;
 pub mod engines;
 pub mod merge;
 pub mod model;
@@ -79,6 +83,7 @@ pub mod service_algorithms;
 
 // Re-export public types
 pub use cold_payload_store::ColdGraphRecordStore;
+pub use cold_segment_store::ColdGraphSegmentStore;
 pub use engines::orion::OrionGraphEngine;
 pub use engines::{
     EmbeddingMode, EngineCapabilities, GraphEngineConfig, GraphEngineFactory, GraphEngineType,
