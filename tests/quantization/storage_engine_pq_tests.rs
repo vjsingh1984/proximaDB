@@ -21,7 +21,7 @@ fn create_test_vectors(count: usize, dimension: usize, pattern: &str) -> Vec<Vec
                     let base = (i as f32 + j as f32) * 0.01;
                     match pattern {
                         "linear" => base,
-                        "sinusoidal" => (base * 6.28).sin(),
+                        "sinusoidal" => (base * std::f32::consts::TAU).sin(),
                         "clustered" => {
                             let cluster = i % 3;
                             base + cluster as f32 * 2.0

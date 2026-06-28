@@ -1224,7 +1224,7 @@ mod tests {
 
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
         let euclidean_result = compute.calculate_distance(&a, &b, &DistanceMetric::Euclidean);
-        assert!((euclidean_result.distance - 1.414).abs() < 0.01);
+        assert!((euclidean_result.distance - std::f32::consts::SQRT_2).abs() < 0.01);
 
         let cosine_result = compute.calculate_distance(&a, &b, &DistanceMetric::Cosine);
         assert!((cosine_result.distance - 1.0).abs() < 0.01); // Orthogonal vectors

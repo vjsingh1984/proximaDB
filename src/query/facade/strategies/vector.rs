@@ -294,12 +294,12 @@ mod tests {
     fn test_sql_value_to_json_float() {
         use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
         let value = SqlValue {
-            value: Some(Value::NumberValue(3.14)),
+            value: Some(Value::NumberValue(3.5)),
         };
         let json = sql_value_to_json(&value);
         if let serde_json::Value::Number(n) = json {
             let f = n.as_f64().unwrap();
-            assert!((f - 3.14).abs() < 0.001);
+            assert!((f - 3.5).abs() < 0.001);
         } else {
             panic!("Expected Number");
         }

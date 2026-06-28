@@ -28,7 +28,7 @@ fn generate_training_vectors(count: usize, dimensions: usize, pattern: &str) -> 
                     match pattern {
                         "uniform" => base % 1.0,
                         "gaussian" => {
-                            let x = base * 6.28; // 2π
+                            let x = base * std::f32::consts::TAU; // 2π
                             (x.sin() + x.cos()) * 0.5
                         },
                         "clustered" => {

@@ -14,7 +14,7 @@ fn grpc_roundtrip_sqlvalue_prost() {
             v1::SqlRowField {
                 key: "f64".into(),
                 value: Some(v1::SqlValue {
-                    value: Some(v1::sql_value::Value::NumberValue(3.14)),
+                    value: Some(v1::sql_value::Value::NumberValue(3.5)),
                 }),
             },
             v1::SqlRowField {
