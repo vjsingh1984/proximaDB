@@ -345,6 +345,16 @@ impl OrionGraphEngine {
         Arc::clone(&self.memory_pool)
     }
 
+    /// Topology-only existence: `true` if the node is in the CSR index, regardless
+    /// of whether its payload is RAM-resident. The cold-payload tier (TD-168) keeps
+    /// the topology (`node_to_index`) resident while node/edge payloads may be cold
+    /// in object storage, so traversal **liveness** must be checked here — NOT via
+    /// [`get_node`], which returns `None` for a cold payload and would make a live
+    /// node look "deleted" and halt expansion.
+    pub fn contains_node(&self, id: &NodeId) -> bool {
+        self.node_to_index.contains_key(id)
+    }
+
     /// Get or create CSR index for a node
     async fn get_or_create_node_index(&self, node_id: &NodeId) -> Result<usize> {
         // Check if node index already exists
