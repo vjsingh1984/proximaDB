@@ -192,25 +192,25 @@ pub async fn fusion_search_v2(
         oid_key: FusionOidKey::Canonical,
     };
 
-    let (items, stats) = service
-        .graph_fusion_search(params)
+    let (items, stats, node_labels) = service
+        .graph_fusion_search_with_labels(params)
         .await
         .map_err(|error| ApiError::Internal(format!("fusion search failed: {error}")))?;
 
     Ok(Json(FusionSearchResponse {
         results: items
             .into_iter()
-            .map(|item| FusionHit {
-                oid: item.oid,
-                score: item.score,
-                source_count: item.source_count,
-                // SEAM (#485): the contract field is landed here. POPULATE from the
-                // reached node's labels during graph expansion — thread `labels` onto
-                // the internal fusion item (the `graph_fusion_search` result type) from
-                // `Node.labels` at the point the expansion visits each node, then map it
-                // here (`labels: item.labels`). Empty for now keeps it compiling +
-                // back-compat; the population is the remaining producer work.
-                labels: Vec::new(),
+            .map(|item| {
+                // #485: the reached node's graph label(s), joined post-fuse by the fusion service
+                // (FusedItem stays modality-pure), so cross-modal-joint consumers read the label
+                // per fused hit without a separate node lookup. Empty for vector-only/edge hits.
+                let labels = node_labels.get(&item.oid).cloned().unwrap_or_default();
+                FusionHit {
+                    oid: item.oid,
+                    score: item.score,
+                    source_count: item.source_count,
+                    labels,
+                }
             })
             .collect(),
         stats: stats.into(),

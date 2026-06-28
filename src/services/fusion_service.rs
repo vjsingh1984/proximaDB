@@ -180,6 +180,28 @@ pub(crate) fn traversal_nodes_to_source(
     SourceCandidates::new(SourceId::Graph, weight, scores)
 }
 
+/// Map each reached node's fused `oid` → its graph label(s) (#485). The graph expansion already
+/// visits every node (with `Node.labels` in hand), so this is near-free and lets the cross-modal
+/// fusion service attach the label to a fused hit *post-fuse* without a separate node lookup —
+/// keeping [`FusedItem`] modality-pure. Unlabeled nodes are skipped (no entry ⇒ empty labels);
+/// vector-only and edge-grain hits never appear here. Keyed by the same `fusion_key` the sources
+/// use, so it joins on the `FusedItem.oid` for both `Canonical` and `EntityNode` keying.
+pub(crate) fn node_labels_by_oid(
+    graph_id: &str,
+    nodes: &[Node],
+    oid_key: FusionOidKey,
+) -> HashMap<String, Vec<String>> {
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    for node in nodes {
+        if node.labels.is_empty() {
+            continue;
+        }
+        let oid = oid_key.fusion_key(&GraphNodeKey::new(graph_id, node.id.clone()).canonical_oid());
+        map.entry(oid).or_insert_with(|| node.labels.clone());
+    }
+    map
+}
+
 /// Graph traversal **edges** → an `oid`-keyed graph source at *edge grain* (the relationship is the
 /// fusion unit). `oid` is the canonical `graph/{graph_id}/edge/{edge_id}` — distinct from node `oid`s,
 /// so edges rank as their own items. Score = `1/(rank+1)` from traversal order; an edge seen more than
@@ -410,10 +432,10 @@ impl FusionService {
     /// T1.2: Implements graceful degradation — if graph traversal fails for a seed, the search
     /// continues with the remaining seeds and the vector source alone. Only total failure (vector
     /// search exhausts retries) returns an error.
-    pub async fn graph_fusion_search(
+    pub async fn graph_fusion_search_with_labels(
         &self,
         params: GraphFusionParams,
-    ) -> Result<(Vec<FusedItem>, FusionStats)> {
+    ) -> Result<(Vec<FusedItem>, FusionStats, HashMap<String, Vec<String>>)> {
         use std::time::Instant;
 
         let started = Instant::now();
@@ -557,6 +579,15 @@ impl FusionService {
             }
         }
 
+        // #485: capture the reached node labels (node-grain only) before fusing, keyed by the same
+        // fused oid, so we can attach the graph label to each hit post-fuse without re-touching the
+        // node store and without polluting the modality-pure FusedItem.
+        let node_labels = if matches!(params.grain, GraphGrain::Nodes | GraphGrain::Both) {
+            node_labels_by_oid(&params.graph_id, &nodes, params.oid_key)
+        } else {
+            HashMap::new()
+        };
+
         // 4. Calibrate + fuse-by-oid + rank, OR the raw-union kill-switch fallback (TD-131). The OID
         //    set is identical between the two when `limit ≥ candidate count` — calibration only re-ranks.
         let result = if fusion_calibration_disabled() {
@@ -579,7 +610,19 @@ impl FusionService {
             started.elapsed(),
         );
 
-        Ok(result)
+        Ok((result.0, result.1, node_labels))
+    }
+
+    /// Vector → graph expand → calibrated fuse-by-oid (the back-compat surface used by the
+    /// gRPC / embedded / entity-orchestrator callers that do not need per-hit graph labels).
+    /// Delegates to [`graph_fusion_search_with_labels`](Self::graph_fusion_search_with_labels)
+    /// and drops the `oid → labels` join.
+    pub async fn graph_fusion_search(
+        &self,
+        params: GraphFusionParams,
+    ) -> Result<(Vec<FusedItem>, FusionStats)> {
+        let (items, stats, _labels) = self.graph_fusion_search_with_labels(params).await?;
+        Ok((items, stats))
     }
 
     /// Resolve `oid` → backing `ProximaRecord` via the graph service's canonical store and apply the
@@ -687,6 +730,55 @@ mod tests {
         assert_eq!(
             fused.source_count, 2,
             "vector + graph hit on the same oid merge"
+        );
+    }
+
+    /// #485: the reached node's labels join onto the fused hit by `oid`, and a fused hit from a
+    /// labeled node carries them while unlabeled / vector-only hits carry none.
+    #[test]
+    fn fused_hit_carries_reached_node_labels() {
+        let labeled = Node {
+            id: "fn_login".to_string(),
+            labels: vec!["Function".to_string()],
+            ..Default::default()
+        };
+        let nodes = [labeled.clone(), node("fn_anon")]; // fn_anon has no labels
+
+        let labels_by_oid = node_labels_by_oid("g1", &nodes, FusionOidKey::Canonical);
+        assert_eq!(
+            labels_by_oid.get("graph/g1/node/fn_login"),
+            Some(&vec!["Function".to_string()]),
+            "labeled node's canonical oid carries its labels"
+        );
+        assert!(
+            !labels_by_oid.contains_key("graph/g1/node/fn_anon"),
+            "unlabeled node has no entry → empty labels downstream"
+        );
+
+        // Join onto a fused hit: the labeled node fuses with a vector hit on the shared oid; the
+        // post-fuse join surfaces the label, while a vector-only oid stays unlabeled.
+        let oid = "graph/g1/node/fn_login";
+        let vector = vector_hits_to_source(&[hit(oid, 0.9), hit("graph/g1/node/other", 0.5)], 1.0);
+        let graph = traversal_nodes_to_source("g1", &[labeled], 1.0);
+        let (items, _stats) = Fuser::new(FusionPolicy::default()).fuse(vec![vector, graph], 10);
+
+        let fused = items.iter().find(|i| i.oid == oid).expect("shared oid fused");
+        assert_eq!(
+            labels_by_oid.get(&fused.oid).cloned().unwrap_or_default(),
+            vec!["Function".to_string()],
+            "fused hit from the labeled node carries its label"
+        );
+        let other = items
+            .iter()
+            .find(|i| i.oid == "graph/g1/node/other")
+            .expect("vector-only oid present");
+        assert!(
+            labels_by_oid
+                .get(&other.oid)
+                .cloned()
+                .unwrap_or_default()
+                .is_empty(),
+            "vector-only hit carries no label"
         );
     }
 
