@@ -23,9 +23,55 @@ use std::sync::Arc;
 use bytes::Bytes;
 use futures::StreamExt;
 use object_store::path::Path;
-use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt, PutMode, PutOptions};
+use object_store::{
+    Attribute, Attributes, ObjectMeta, ObjectStore, ObjectStoreExt, PutMode, PutOptions,
+};
 use proximadb_kernel::error::StorageError;
+use proximadb_storage_filesystem_types::ObjectAccessTier;
 use url::Url;
+
+/// Which cloud backend an [`ObjectStore`] handle is, detected from its `Display`
+/// type name (stable `object_store` store names: `MicrosoftAzure`, `AmazonS3`,
+/// `GoogleCloudStorage`, `LocalFileSystem`, `InMemory`). Substring-matched so it
+/// survives middleware wrappers (prefix/limit/throttle). Drives the
+/// canonical-tier → provider-native-class mapping in [`ProximaObjectStore::put_with_tier`],
+/// because `object_store`'s `Attribute::StorageClass` forwards the value verbatim
+/// into the provider header (`x-ms-access-tier` / `x-amz-storage-class`) and each
+/// cloud expects its own spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectBackendKind {
+    Azure,
+    S3,
+    Gcs,
+    /// Local file / in-memory / unrecognized — no per-object access tier applies.
+    Untiered,
+}
+
+impl ObjectBackendKind {
+    fn detect(store: &dyn ObjectStore) -> Self {
+        let name = store.to_string();
+        if name.contains("MicrosoftAzure") {
+            Self::Azure
+        } else if name.contains("AmazonS3") {
+            Self::S3
+        } else if name.contains("GoogleCloudStorage") {
+            Self::Gcs
+        } else {
+            Self::Untiered
+        }
+    }
+
+    /// The provider-native storage-class string for `tier`, or `None` for an
+    /// untiered backend (local/memory) where the access tier is meaningless.
+    fn native_tier(self, tier: ObjectAccessTier) -> Option<&'static str> {
+        match self {
+            Self::Azure => Some(tier.as_azure_access_tier()),
+            Self::S3 => Some(tier.as_s3_storage_class()),
+            Self::Gcs => Some(tier.as_gcs_storage_class()),
+            Self::Untiered => None,
+        }
+    }
+}
 
 /// Map an `object_store`/url failure to the canonical `StorageError` (the same error the
 /// `ObjectStoreBridge` seam returns), preserving NotFound/AlreadyExists where possible.
@@ -74,22 +120,38 @@ pub fn store_for_url(url: &str) -> Result<(Arc<dyn ObjectStore>, Path), StorageE
 pub struct ProximaObjectStore {
     store: Arc<dyn ObjectStore>,
     base: Path,
+    /// Backend kind, captured once at construction so [`Self::put_with_tier`] can
+    /// map a canonical tier to the provider-native class without re-inspecting the
+    /// store per write.
+    backend: ObjectBackendKind,
 }
 
 impl ProximaObjectStore {
     /// Open a store from a URL (see [`store_for_url`]).
     pub fn from_url(url: &str) -> Result<Self, StorageError> {
         let (store, base) = store_for_url(url)?;
-        Ok(Self { store, base })
+        let backend = ObjectBackendKind::detect(store.as_ref());
+        Ok(Self {
+            store,
+            base,
+            backend,
+        })
     }
 
     /// Wrap an existing `object_store` handle (base = root). Useful when the store is built
     /// elsewhere (e.g. a shared `Arc<dyn ObjectStore>` from the bridge).
     pub fn new(store: Arc<dyn ObjectStore>) -> Self {
+        let backend = ObjectBackendKind::detect(store.as_ref());
         Self {
             store,
             base: Path::default(),
+            backend,
         }
+    }
+
+    /// The detected cloud backend kind (drives [`Self::put_with_tier`]).
+    pub fn backend(&self) -> ObjectBackendKind {
+        self.backend
     }
 
     /// The underlying object store (for `ObjectStoreBridge::inner_store()` and direct use).
@@ -119,6 +181,43 @@ impl ProximaObjectStore {
             .await
             .map(|_| ())
             .map_err(|e| os_err("put", e))
+    }
+
+    /// Write `bytes` to `path` at a per-object **access tier** — the object-storage
+    /// cost lever (ADR-035/036, TD-173): a colder tier trades retrieval latency/cost
+    /// for a far lower at-rest GB-month price. The canonical [`ObjectAccessTier`] is
+    /// mapped to the backend's native class (Azure `x-ms-access-tier` / S3
+    /// `x-amz-storage-class` / GCS storage class) and set via `object_store`'s
+    /// `Attribute::StorageClass` on the PUT. On an untiered backend (local/memory)
+    /// the tier is meaningless, so this degrades to a plain overwrite [`Self::put`].
+    ///
+    /// This closes the TD-173 `ProximaObjectStore` tier gap (the FileSystem Azure/S3
+    /// backends already do this); it is the prerequisite for tiering cold
+    /// graph/warehouse payloads written through the object-store path. It is a
+    /// **capability only** — callers opt in per write, so no data is tiered until a
+    /// caller asks for it.
+    pub async fn put_with_tier(
+        &self,
+        path: &Path,
+        bytes: Bytes,
+        tier: ObjectAccessTier,
+    ) -> Result<(), StorageError> {
+        let native = match self.backend.native_tier(tier) {
+            Some(native) => native,
+            // Untiered backend: the access tier has no meaning — write normally.
+            None => return self.put(path, bytes).await,
+        };
+        let mut attributes = Attributes::new();
+        attributes.insert(Attribute::StorageClass, native.into());
+        let opts = PutOptions {
+            attributes,
+            ..Default::default()
+        };
+        self.store
+            .put_opts(&self.full_path(path), bytes.into(), opts)
+            .await
+            .map(|_| ())
+            .map_err(|e| os_err("put_with_tier", e))
     }
 
     /// Atomically write `bytes` to `path` ONLY if no object already exists there
@@ -354,6 +453,38 @@ mod tests {
             b"first",
             "rejected create must not overwrite"
         );
+    }
+
+    /// The canonical tier maps to each cloud's native storage-class spelling; an
+    /// untiered backend yields `None` (the tier is meaningless there).
+    #[test]
+    fn tier_native_mapping_per_backend() {
+        use ObjectBackendKind::*;
+        assert_eq!(Azure.native_tier(ObjectAccessTier::Cool), Some("Cool"));
+        assert_eq!(Azure.native_tier(ObjectAccessTier::Cold), Some("Cold"));
+        assert_eq!(S3.native_tier(ObjectAccessTier::Cool), Some("STANDARD_IA"));
+        assert_eq!(Gcs.native_tier(ObjectAccessTier::Cool), Some("NEARLINE"));
+        assert_eq!(Untiered.native_tier(ObjectAccessTier::Cool), None);
+    }
+
+    /// A memory/local store is detected as untiered.
+    #[test]
+    fn memory_store_is_untiered() {
+        let os = ProximaObjectStore::new(Arc::new(object_store::memory::InMemory::new()));
+        assert_eq!(os.backend(), ObjectBackendKind::Untiered);
+    }
+
+    /// `put_with_tier` on an untiered backend degrades to a plain write (the tier is a
+    /// no-op there) — so callers can request a tier unconditionally and it only takes
+    /// effect on a cloud backend. Asserting the bytes land verifies the degrade path.
+    #[tokio::test]
+    async fn put_with_tier_degrades_to_put_on_untiered_backend() {
+        let os = ProximaObjectStore::new(Arc::new(object_store::memory::InMemory::new()));
+        let p = Path::from("cold/seg.pax");
+        os.put_with_tier(&p, Bytes::from_static(b"payload"), ObjectAccessTier::Cool)
+            .await
+            .unwrap();
+        assert_eq!(&os.get(&p).await.unwrap()[..], b"payload");
     }
 
     #[test]
