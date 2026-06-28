@@ -253,7 +253,8 @@ pub struct SharedServices {
     ///
     /// The lease is a latency optimization; the object-store fence in
     /// `SystemCatalog` is the correctness authority.
-    pub partition_lease_manager: Option<Arc<crate::cluster::partition_lease::PartitionLeaseManager>>,
+    pub partition_lease_manager:
+        Option<Arc<crate::cluster::partition_lease::PartitionLeaseManager>>,
 
     /// Shared canonical WAL appender at `<data_dir>/pgwire/canonical-records.wal`.
     ///
@@ -2176,7 +2177,8 @@ impl SharedServices {
                 let lease_ms = std::env::var("PROXIMADB_PARTITION_LEASE_SECS")
                     .ok()
                     .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(60) as i64 * 1000;
+                    .unwrap_or(60) as i64
+                    * 1000;
 
                 match crate::cluster::partition_lease::PartitionLeaseStore::from_url(
                     &storage_config.metadata_url,

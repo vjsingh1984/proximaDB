@@ -472,15 +472,6 @@ impl DrResolvedPath {
     pub fn trace_subprefix(&self) -> String {
         format!("{}_trace/", self.tenant_root())
     }
-
-    /// Partition lease manifest subprefix `<root>_catalog/leases/`. Holds the
-    /// generation-fenced partition lease manifests for Phase 7c (per-collection
-    /// write authority). Each `(tenant, collection)` gets its own manifest log
-    /// under `<tenant>/<collection>/_manifests/`. The leading underscore keeps
-    /// lease metadata lexically separate from data subprefixes.
-    pub fn partition_lease_prefix(&self) -> String {
-        format!("{}_catalog/leases/", self.root_prefix())
-    }
 }
 
 /// Resolve the catalog-addressed index locations for a collection's vector-ANN
@@ -974,6 +965,17 @@ impl DrPathBuilder {
     pub fn system_catalog_subprefix() -> String {
         // Constants are pre-validated single segments — infallible.
         format!("{}{}/", Self::OPERATOR_ROOT, Self::SYSTEM_CATALOG_SUBPATH)
+    }
+
+    /// Partition lease manifest **base** prefix `_catalog/leases/` — the storage
+    /// location (under the metadata object store) where per-`(tenant, collection)`
+    /// generation-fenced lease manifests live for Phase 7c (per-collection write
+    /// authority). Structural base; the `PartitionLeaseStore` nests per-partition
+    /// manifest logs beneath it. Used at boot by `SharedServices` to construct the
+    /// lease store. NOTE: exact co-location (vs the system catalog) is a design
+    /// TBD when `PROXIMADB_PARTITION_LEASE_ON` ships default-on.
+    pub fn partition_lease_prefix() -> String {
+        "_catalog/leases/".to_string()
     }
 
     /// Relative object key of the system catalog WAL under
