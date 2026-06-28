@@ -2525,6 +2525,14 @@ pub mod types {
     ///      "type": "integer",
     ///      "minimum": 0.0
     ///    },
+    ///    "min_weight_fraction": {
+    ///      "description": "Cost-routing policy inputs (TD-141): drop negligible modalities (weight fraction) and budget each.\nWhen absent, fusion is unbounded.",
+    ///      "type": [
+    ///        "number",
+    ///        "null"
+    ///      ],
+    ///      "format": "float"
+    ///    },
     ///    "query_vector": {
     ///      "description": "Query embedding for the ANN seed.",
     ///      "type": "array",
@@ -2536,6 +2544,13 @@ pub mod types {
     ///    "rrf": {
     ///      "description": "Use the rank-based RRF fallback instead of PIT-calibrated linear.",
     ///      "type": "boolean"
+    ///    },
+    ///    "total_budget": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "minimum": 0.0
     ///    },
     ///    "vector_collection": {
     ///      "description": "Vector collection to seed from (its records co-indexed with this graph by `oid`).",
@@ -2572,11 +2587,17 @@ pub mod types {
         ///How many of the top vector seeds to expand from (bounded expansion).
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub max_seeds: ::std::option::Option<u64>,
+        /// Cost-routing policy inputs (TD-141): drop negligible modalities (weight fraction) and budget each.
+        /// When absent, fusion is unbounded.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub min_weight_fraction: ::std::option::Option<f32>,
         ///Query embedding for the ANN seed.
         pub query_vector: ::std::vec::Vec<f32>,
         ///Use the rank-based RRF fallback instead of PIT-calibrated linear.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub rrf: ::std::option::Option<bool>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub total_budget: ::std::option::Option<u64>,
         ///Vector collection to seed from (its records co-indexed with this graph by `oid`).
         pub vector_collection: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -8754,8 +8775,11 @@ pub mod types {
             limit: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
             max_depth: ::std::result::Result<::std::option::Option<i32>, ::std::string::String>,
             max_seeds: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            min_weight_fraction:
+                ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
             query_vector: ::std::result::Result<::std::vec::Vec<f32>, ::std::string::String>,
             rrf: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+            total_budget: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
             vector_collection: ::std::result::Result<::std::string::String, ::std::string::String>,
             vector_weight: ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
         }
@@ -8769,8 +8793,10 @@ pub mod types {
                     limit: Ok(Default::default()),
                     max_depth: Ok(Default::default()),
                     max_seeds: Ok(Default::default()),
+                    min_weight_fraction: Ok(Default::default()),
                     query_vector: Err("no value supplied for query_vector".to_string()),
                     rrf: Ok(Default::default()),
+                    total_budget: Ok(Default::default()),
                     vector_collection: Err("no value supplied for vector_collection".to_string()),
                     vector_weight: Ok(Default::default()),
                 }
@@ -8847,6 +8873,16 @@ pub mod types {
                     .map_err(|e| format!("error converting supplied value for max_seeds: {e}"));
                 self
             }
+            pub fn min_weight_fraction<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<f32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.min_weight_fraction = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for min_weight_fraction: {e}")
+                });
+                self
+            }
             pub fn query_vector<T>(mut self, value: T) -> Self
             where
                 T: ::std::convert::TryInto<::std::vec::Vec<f32>>,
@@ -8865,6 +8901,16 @@ pub mod types {
                 self.rrf = value
                     .try_into()
                     .map_err(|e| format!("error converting supplied value for rrf: {e}"));
+                self
+            }
+            pub fn total_budget<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.total_budget = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for total_budget: {e}"));
                 self
             }
             pub fn vector_collection<T>(mut self, value: T) -> Self
@@ -8901,8 +8947,10 @@ pub mod types {
                     limit: value.limit?,
                     max_depth: value.max_depth?,
                     max_seeds: value.max_seeds?,
+                    min_weight_fraction: value.min_weight_fraction?,
                     query_vector: value.query_vector?,
                     rrf: value.rrf?,
+                    total_budget: value.total_budget?,
                     vector_collection: value.vector_collection?,
                     vector_weight: value.vector_weight?,
                 })
@@ -8918,8 +8966,10 @@ pub mod types {
                     limit: Ok(value.limit),
                     max_depth: Ok(value.max_depth),
                     max_seeds: Ok(value.max_seeds),
+                    min_weight_fraction: Ok(value.min_weight_fraction),
                     query_vector: Ok(value.query_vector),
                     rrf: Ok(value.rrf),
+                    total_budget: Ok(value.total_budget),
                     vector_collection: Ok(value.vector_collection),
                     vector_weight: Ok(value.vector_weight),
                 }

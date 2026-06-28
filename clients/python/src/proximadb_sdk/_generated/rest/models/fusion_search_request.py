@@ -27,7 +27,11 @@ class FusionSearchRequest:
         limit (Union[Unset, int]):
         max_depth (Union[Unset, int]): k-hop expansion depth (bounded; default 1 — the validated sweet spot).
         max_seeds (Union[Unset, int]): How many of the top vector seeds to expand from (bounded expansion).
+        min_weight_fraction (Union[None, Unset, float]): Cost-routing policy inputs (TD-141): drop negligible modalities
+            (weight fraction) and budget each.
+            When absent, fusion is unbounded.
         rrf (Union[Unset, bool]): Use the rank-based RRF fallback instead of PIT-calibrated linear.
+        total_budget (Union[None, Unset, int]):
         vector_weight (Union[None, Unset, float]):
     """
 
@@ -40,7 +44,9 @@ class FusionSearchRequest:
     limit: Union[Unset, int] = UNSET
     max_depth: Union[Unset, int] = UNSET
     max_seeds: Union[Unset, int] = UNSET
+    min_weight_fraction: Union[None, Unset, float] = UNSET
     rrf: Union[Unset, bool] = UNSET
+    total_budget: Union[None, Unset, int] = UNSET
     vector_weight: Union[None, Unset, float] = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -77,7 +83,19 @@ class FusionSearchRequest:
 
         max_seeds = self.max_seeds
 
+        min_weight_fraction: Union[None, Unset, float]
+        if isinstance(self.min_weight_fraction, Unset):
+            min_weight_fraction = UNSET
+        else:
+            min_weight_fraction = self.min_weight_fraction
+
         rrf = self.rrf
+
+        total_budget: Union[None, Unset, int]
+        if isinstance(self.total_budget, Unset):
+            total_budget = UNSET
+        else:
+            total_budget = self.total_budget
 
         vector_weight: Union[None, Unset, float]
         if isinstance(self.vector_weight, Unset):
@@ -107,8 +125,12 @@ class FusionSearchRequest:
             field_dict["max_depth"] = max_depth
         if max_seeds is not UNSET:
             field_dict["max_seeds"] = max_seeds
+        if min_weight_fraction is not UNSET:
+            field_dict["min_weight_fraction"] = min_weight_fraction
         if rrf is not UNSET:
             field_dict["rrf"] = rrf
+        if total_budget is not UNSET:
+            field_dict["total_budget"] = total_budget
         if vector_weight is not UNSET:
             field_dict["vector_weight"] = vector_weight
 
@@ -156,7 +178,27 @@ class FusionSearchRequest:
 
         max_seeds = d.pop("max_seeds", UNSET)
 
+        def _parse_min_weight_fraction(data: object) -> Union[None, Unset, float]:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(Union[None, Unset, float], data)
+
+        min_weight_fraction = _parse_min_weight_fraction(
+            d.pop("min_weight_fraction", UNSET)
+        )
+
         rrf = d.pop("rrf", UNSET)
+
+        def _parse_total_budget(data: object) -> Union[None, Unset, int]:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(Union[None, Unset, int], data)
+
+        total_budget = _parse_total_budget(d.pop("total_budget", UNSET))
 
         def _parse_vector_weight(data: object) -> Union[None, Unset, float]:
             if data is None:
@@ -177,7 +219,9 @@ class FusionSearchRequest:
             limit=limit,
             max_depth=max_depth,
             max_seeds=max_seeds,
+            min_weight_fraction=min_weight_fraction,
             rrf=rrf,
+            total_budget=total_budget,
             vector_weight=vector_weight,
         )
 
