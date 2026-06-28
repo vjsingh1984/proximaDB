@@ -1984,8 +1984,22 @@ impl CollectionService {
             crate::storage::metadata::collection_mapping::collection_table_identifier(config);
 
         if !catalog.namespace_exists(&identifier.namespace).await? {
+            // TD-CAT-2a (audit gap G6): record the owning tenant on the persisted
+            // namespace via the tenant-aware constructor, instead of the
+            // tenant-less `create_namespace` that left `CatalogNamespace.tenant_id`
+            // = None. The tenant is derived the same way every storage/network
+            // boundary derives it (`collection_tenant_id`: `tenant:` tag / owner).
+            // Additive + inert until consumed: the only behavior-shifting reader,
+            // DrPathBuilder index-location resolution, is gated default-OFF
+            // (`PROXIMADB_INDEX_CATALOG_PATHS`), and catalog asset paths are still
+            // flat/name-keyed — so this records identity now for the
+            // tenant-prefixed-paths slice (TD-CAT-2b) without shifting any path.
             catalog
-                .create_namespace(&identifier.namespace, std::collections::HashMap::new())
+                .create_namespace_for_tenant(
+                    &identifier.namespace,
+                    std::collections::HashMap::new(),
+                    Self::collection_tenant_id(collection).as_deref(),
+                )
                 .await?;
         }
 
@@ -2699,6 +2713,64 @@ mod tests {
         assert!(
             warm_file.exists(),
             "warm tier must materialize {warm_file:?} on a read (proves it's in the chain)"
+        );
+
+        Ok(())
+    }
+
+    /// TD-CAT-2a (audit gap G6): creating a `tenant:`-tagged collection records
+    /// the owning tenant on the freshly-created namespace. The upsert routes
+    /// through `create_namespace_for_tenant`, so the persisted
+    /// `CatalogNamespace.tenant_id` carries the tenant derived by
+    /// `collection_tenant_id` (the `tenant:` tag) — instead of the `None` the
+    /// old tenant-less `create_namespace` left behind.
+    #[tokio::test]
+    async fn tenant_tagged_collection_records_namespace_tenant() -> Result<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("temp dir")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("xcatalog")?;
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("service")?
+            .with_catalog_manager(catalog_manager.clone());
+
+        // A namespaced name → the upsert creates a brand-new namespace
+        // `tdc2a_ns` (the tenant is recorded only on namespace creation, so the
+        // namespace must be fresh for the tenant-aware constructor to fire).
+        let config = CollectionConfig {
+            name: "tdc2a_ns.tbl".to_string(),
+            dimension: 8,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
+            tags: vec!["tenant:acme".to_string()],
+            ..Default::default()
+        };
+        assert!(
+            service
+                .create_collection(&config)
+                .await
+                .context("create")?
+                .success
+        );
+
+        let catalog = catalog_manager
+            .default_catalog()
+            .await
+            .context("default catalog")?;
+        let ns = catalog
+            .get_namespace(&["tdc2a_ns".to_string()])
+            .await
+            .context("get_namespace")?;
+        assert_eq!(
+            ns.tenant_id.as_deref(),
+            Some("acme"),
+            "the freshly-created namespace must record the owning tenant (TD-CAT-2a)"
         );
 
         Ok(())
