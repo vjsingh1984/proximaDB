@@ -102,6 +102,11 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Proposed
 | Implements ADR-027's two-class trace via the per-query `tokio::task_local!` `IO_TRACE` accumulator: it is fed at the `read_range` GET boundary (no tenant needed), drained ONCE at scope-close (where tenant+engine are known), and fans the same snapshot to THREE observers — route-cost + cache (gateable perf, → `avg_get_size` for the cost model + adaptive engine, TD-158) and a NEW billing observer (always-on) that closes the verified **KRU** read-meter (`record_task_execution_time`) gap. **KSU** (storage accrual) is explicitly scoped out as the sibling write-path/periodic gap. Same measured snapshot ⇒ cost-model bytes == billing bytes (no divergence). Honors ADR-027 non-entanglement (separate sinks; billing never gated; CI guard) and the open-core boundary (OSS emits neutral units; AnvaiOps prices them). Closes the cost model's INPUT side only — routing-loop closure is a separate ADR. Tracked: TD-158 + KRU; prereq TD-160
 
+| link:ADR-031-stable-object-id-physical-key.adoc[ADR-031]
+| Stable `object_id` as the Physical Collection Key — the **catalog-object surrogate identity** authority (name is a mutable attribute)
+| Proposed
+| Keys the canonical-WAL `collection_id`, the memtable partition, and storage paths on a stable immutable `u64` `object_id` instead of the mutable name — **rename-safe** + **structurally tenant-isolated** (drops the per-query `tenant_id` feed predicate, since the id is globally unique). The **authority for catalog-object surrogate identity** (account/namespace/table/column/index): the parallel `ADR-033-catalog-object-surrogate-identity` draft (PR #436) was closed — `033` was taken (primary-storage-format) and re-use fails the #441 `td-adr-unique` guard — and its decisions, the salvaged execution plan, and the ADR-024 identity addendum are folded here; `object_id` ≡ `object_oid`. Mixed-read-safe **O0–O4** cutover, default-OFF (relational O0–O2 merged). Execution plan: `CATALOG_OID_MIGRATION_2026_06_27.adoc` (TD-181). Tracked: ADR-031 O0–O4.
+
 | link:ADR-032-durable-tenant-prefixed-object-store-catalog.adoc[ADR-032]
 | Durable, Tenant-Prefixed Object-Store Catalog (the catalog as the serverless shared truth; structural isolation, not a per-query predicate)
 | Proposed
