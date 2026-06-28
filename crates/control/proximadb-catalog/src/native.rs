@@ -777,6 +777,32 @@ impl NativeCatalog {
     }
 
     /// Load table metadata from storage
+    /// TD-181 P3 (S2b): read a table's serialized metadata, preferring the
+    /// oid-keyed authority file when oid paths are on. The decision tree:
+    /// in oid mode, resolve `name → oid` via the durable index and read
+    /// `_syscat/objects/{oid}.json`; on any miss (legacy-only table, or a
+    /// dangling index entry whose oid file is gone) fall back to the legacy
+    /// name path. With the gate off it is exactly the legacy read. A bypass is
+    /// never wrong — it just isn't oid-keyed.
+    async fn read_table_bytes(&self, identifier: &TableIdentifier) -> Result<Option<Vec<u8>>> {
+        if self.oid_paths_on() {
+            let oid = self
+                .object_name_index
+                .read()
+                .await
+                .get(&identifier.to_fqn())
+                .copied();
+            if let Some(oid) = oid
+                && let Some(data) = self.io_read_opt(&Self::object_file_rel(oid)).await?
+            {
+                return Ok(Some(data));
+            }
+            // Fall through to the legacy name path (mixed-read fallback).
+        }
+        self.io_read_opt(&Self::table_metadata_rel(identifier))
+            .await
+    }
+
     async fn load_table(&self, identifier: &TableIdentifier) -> Result<TableMetadata> {
         let key = identifier.to_fqn();
 
@@ -785,9 +811,9 @@ impl NativeCatalog {
             return Ok(meta.clone());
         }
 
-        // Load from storage
+        // Load from storage (oid-keyed authority preferred, legacy fallback).
         let data = self
-            .io_read_opt(&Self::table_metadata_rel(identifier))
+            .read_table_bytes(identifier)
             .await?
             .ok_or_else(|| anyhow!("Table '{}' not found", identifier))?;
 
@@ -1156,35 +1182,37 @@ impl Catalog for NativeCatalog {
     }
 
     async fn drop_table(&self, identifier: &TableIdentifier, purge: bool) -> Result<bool> {
-        // Delete metadata
-        let removed = self
+        // TD-181 P3: resolve the oid from the durable index BEFORE the entry is
+        // removed, so we can delete the oid-keyed authority copy too. Delete
+        // BOTH copies (authority-first, before the index entry). Removal counts
+        // as success if EITHER copy existed — so a pure-oid table (no legacy
+        // shadow) is still dropped, not silently skipped.
+        let oid = if self.oid_paths_on() {
+            self.object_name_index
+                .read()
+                .await
+                .get(&identifier.to_fqn())
+                .copied()
+        } else {
+            None
+        };
+        let legacy_removed = self
             .io_remove_file(&Self::table_metadata_rel(identifier))
             .await;
+        let oid_removed = if let Some(oid) = oid {
+            self.io_remove_file(&Self::object_file_rel(oid)).await
+        } else {
+            false
+        };
+        let removed = legacy_removed || oid_removed;
 
         if removed {
             // Remove from in-memory cache
             self.tables.write().await.remove(&identifier.to_fqn());
 
-            // TD-181 P3 (S2a): in oid mode also delete the oid-keyed authority
-            // copy. Resolve the oid from the durable index BEFORE the entry is
-            // removed below. Authority-first: both object files (legacy above +
-            // oid here) are deleted before the index entry, so a crash leaves a
-            // dangling index entry (pruned lazily on a NotFound read), never a
-            // resurrected table.
-            if self.oid_paths_on()
-                && let Some(oid) = self
-                    .object_name_index
-                    .read()
-                    .await
-                    .get(&identifier.to_fqn())
-                    .copied()
-            {
-                self.io_remove_file(&Self::object_file_rel(oid)).await;
-            }
-
             // ADR-031 O1 + TD-181 P1: drop the reverse + forward index entries and
-            // persist. Authority-first: the object file was deleted above, so a
-            // crash here leaves a dangling index entry (pruned lazily on a
+            // persist. Authority-first: the object file(s) were deleted above, so
+            // a crash here leaves a dangling index entry (pruned lazily on a
             // NotFound read), never a resurrected table.
             self.index_remove_table(identifier).await?;
 
@@ -1208,16 +1236,46 @@ impl Catalog for NativeCatalog {
     }
 
     async fn list_tables(&self, namespace: &[String]) -> Result<Vec<TableIdentifier>> {
-        let identifiers = self
+        // Legacy name-keyed stems (present for legacy + dual-written tables).
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut out: Vec<TableIdentifier> = Vec::new();
+        for name in self
             .io_list_json_stems(&Self::tables_dir_rel(namespace))
             .await
-            .into_iter()
-            .map(|name| TableIdentifier::new(namespace.to_vec(), name))
-            .collect();
-        Ok(identifiers)
+        {
+            let id = TableIdentifier::new(namespace.to_vec(), name);
+            if seen.insert(id.to_fqn()) {
+                out.push(id);
+            }
+        }
+        // TD-181 P3 (S2b): in oid mode, UNION in oid-only tables (no legacy
+        // shadow) from the durable index, filtered to this namespace and
+        // deduped by (namespace, name). The flat `_syscat/objects/` layout is
+        // not namespace-partitioned, so the index is the only way to enumerate
+        // a namespace's oid-keyed tables.
+        if self.oid_paths_on() {
+            for id in self.object_id_index.read().await.values() {
+                if id.namespace == namespace && seen.insert(id.to_fqn()) {
+                    out.push(id.clone());
+                }
+            }
+        }
+        Ok(out)
     }
 
     async fn table_exists(&self, identifier: &TableIdentifier) -> Result<bool> {
+        // TD-181 P3 (S2b): in oid mode a table exists if the durable index knows
+        // it (covers a pure-oid table with no legacy shadow) OR the legacy file
+        // is present (covers an unindexed orphan). Gate off ⇒ legacy only.
+        if self.oid_paths_on()
+            && self
+                .object_name_index
+                .read()
+                .await
+                .contains_key(&identifier.to_fqn())
+        {
+            return Ok(true);
+        }
         self.io_exists(&Self::table_metadata_rel(identifier)).await
     }
 
@@ -2140,6 +2198,91 @@ mod tests {
                 .await
                 .unwrap(),
             "no marker when gate off"
+        );
+    }
+
+    /// TD-181 P3 (S2b) — the keystone mixed-read proof. With the gate ON a
+    /// catalog dir holding BOTH a legacy-only table (name path, no oid file) and
+    /// an oid-only table (oid file, no legacy shadow) resolves both via `get`,
+    /// lists exactly the two with no duplicates, reports both as existing, and
+    /// drops each (removing all of its files).
+    #[tokio::test]
+    async fn s2b_mixed_read_legacy_and_oid_only_tables() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ns = vec!["db".to_string()];
+        let id_a = TableIdentifier::new(ns.clone(), "a"); // legacy-only on disk
+        let id_b = TableIdentifier::new(ns.clone(), "b"); // oid-only on disk
+
+        let (oid_a, oid_b) = {
+            let cat = fresh_catalog(&tmp).await;
+            cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+
+            // A: created gate OFF → legacy name path only (+ durable index entry).
+            cat.set_oid_paths_for_test(false);
+            let oid_a = cat
+                .create_table(&id_a, schema_with_id_col("a"))
+                .await
+                .unwrap()
+                .object_id
+                .unwrap();
+
+            // B: created gate ON → dual-written; strip the legacy shadow to
+            // simulate a pure-oid table (the S2 endgame, no name-path copy).
+            cat.set_oid_paths_for_test(true);
+            let oid_b = cat
+                .create_table(&id_b, schema_with_id_col("b"))
+                .await
+                .unwrap()
+                .object_id
+                .unwrap();
+            cat.io_remove_file(&NativeCatalog::table_metadata_rel(&id_b))
+                .await;
+            (oid_a, oid_b)
+        };
+
+        // Reopen so reads hit disk (empty in-memory table cache); gate ON.
+        let cat = fresh_catalog(&tmp).await;
+        cat.set_oid_paths_for_test(true);
+
+        // get resolves BOTH: A via the legacy fallback, B via the oid file.
+        assert_eq!(
+            cat.get_table(&id_a).await.unwrap().object_id,
+            Some(oid_a),
+            "legacy-only table resolves via fallback"
+        );
+        assert_eq!(
+            cat.get_table(&id_b).await.unwrap().object_id,
+            Some(oid_b),
+            "oid-only table resolves via the oid file"
+        );
+
+        // list returns exactly the two, deduped (legacy stems ∪ index entries).
+        let mut listed = cat.list_tables(&ns).await.unwrap();
+        listed.sort_by(|x, y| x.name.cmp(&y.name));
+        assert_eq!(
+            listed,
+            vec![id_a.clone(), id_b.clone()],
+            "list unions legacy + oid-only with no duplicates"
+        );
+
+        // exists true for both.
+        assert!(cat.table_exists(&id_a).await.unwrap());
+        assert!(cat.table_exists(&id_b).await.unwrap());
+
+        // drop removes each table's file(s): legacy-only A, oid-only B.
+        assert!(cat.drop_table(&id_a, false).await.unwrap(), "drop A");
+        assert!(cat.drop_table(&id_b, false).await.unwrap(), "drop B");
+        assert!(
+            cat.list_tables(&ns).await.unwrap().is_empty(),
+            "both tables gone after drop"
+        );
+        assert!(
+            cat.get_table(&id_a).await.is_err(),
+            "A not found after drop"
+        );
+        assert!(
+            cat.get_table(&id_b).await.is_err(),
+            "B not found after drop"
         );
     }
 
