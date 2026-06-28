@@ -59,5 +59,14 @@ slow-timeout = { period = "120s", terminate-after = 3 }
 filter = 'test(/_e2e$/) | test(/_integration_test$/) | binary(integration)'
 test-group = 'serial-network'
 
+[[profile.default.overrides]]
+filter = 'test(/datafusion/) | test(/native_volcano/)'
+test-group = 'datafusion-heavy'
+
+[[profile.unit.overrides]]
+filter = 'test(/datafusion/) | test(/native_volcano/)'
+test-group = 'datafusion-heavy'
+
 [test-groups]
 serial-network = { max-threads = 1 }
+datafusion-heavy = { max-threads = 1 }
