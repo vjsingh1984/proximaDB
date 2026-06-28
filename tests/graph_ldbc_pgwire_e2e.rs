@@ -103,6 +103,47 @@ fn explain_err(e: &tokio_postgres::Error) -> String {
     }
 }
 
+/// Run a single-column query and parse each row's first cell as `i64`, returned
+/// **sorted** for order-independent set comparison (ADR-040 `canon()`-style — row
+/// order across engines/routes is a separate concern from result correctness; see
+/// TD-185 for the materialized-read ORDER BY discrepancy this surfaced).
+async fn col_ints(client: &tokio_postgres::Client, sql: &str) -> Vec<i64> {
+    let mut v: Vec<i64> = client
+        .simple_query(sql)
+        .await
+        .unwrap_or_else(|e| panic!("query `{sql}`: {}", explain_err(&e)))
+        .into_iter()
+        .filter_map(|m| match m {
+            tokio_postgres::SimpleQueryMessage::Row(r) => {
+                r.get(0).and_then(|s| s.parse::<i64>().ok())
+            }
+            _ => None,
+        })
+        .collect();
+    v.sort_unstable();
+    v
+}
+
+/// Run a two-column query and parse each row into an `(i64, i64)` pair, returned
+/// **sorted** for order-independent set comparison (see [`col_ints`]).
+async fn col_int_pairs(client: &tokio_postgres::Client, sql: &str) -> Vec<(i64, i64)> {
+    let mut v: Vec<(i64, i64)> = client
+        .simple_query(sql)
+        .await
+        .unwrap_or_else(|e| panic!("query `{sql}`: {}", explain_err(&e)))
+        .into_iter()
+        .filter_map(|m| match m {
+            tokio_postgres::SimpleQueryMessage::Row(r) => Some((
+                r.get(0).unwrap_or_default().parse().unwrap_or(i64::MIN),
+                r.get(1).unwrap_or_default().parse().unwrap_or(i64::MIN),
+            )),
+            _ => None,
+        })
+        .collect();
+    v.sort_unstable();
+    v
+}
+
 const SCHEMA: &[(&str, &str)] = &[
     (
         "person",
@@ -235,5 +276,64 @@ async fn graph_ldbc_pgwire_conformance() {
         "Graph LDBC conformance regressed: {} passed < ratchet {}",
         passed.len(),
         GRAPH_RATCHET
+    );
+
+    // ADR-040 P1 (TD-182): VALUE-correctness spot checks. The ratchet above only
+    // proves these LDBC queries EXECUTE; assert the actual graph results so a
+    // wrong-but-clean answer cannot pass. Comparison is order-independent (results
+    // are sorted — ADR-040 `canon()` style; the materialized-read ORDER BY quirk
+    // this surfaced is tracked as TD-185). Expected values are hand-derived from the
+    // seed graph (triangle 1-2-3 + chain 3-4-5-6, edges stored both directions) —
+    // adjacency 1:{2,3} 2:{1,3} 3:{1,2,4} 4:{3,5} 5:{4,6} 6:{5}.
+    assert_eq!(
+        col_ints(
+            &client,
+            "select k.k_person2 as friend from knows k where k.k_person1 = 1 order by friend"
+        )
+        .await,
+        vec![2, 3],
+        "g02: direct (1-hop) friends of person 1"
+    );
+    assert_eq!(
+        col_ints(
+            &client,
+            "select distinct k2.k_person2 as fof from knows k1 join knows k2 on k1.k_person2 = k2.k_person1 where k1.k_person1 = 1 and k2.k_person2 <> 1 and k2.k_person2 not in (select k_person2 from knows where k_person1 = 1) order by fof"
+        )
+        .await,
+        vec![4],
+        "g04: two-hop friends-of-friends of 1 (exclude self + direct friends)"
+    );
+    assert_eq!(
+        col_int_pairs(
+            &client,
+            "select k_person1 as person, count(*) as degree from knows group by k_person1 order by degree desc, person"
+        )
+        .await,
+        vec![(1, 2), (2, 2), (3, 3), (4, 2), (5, 2), (6, 1)],
+        "g05: degree per person (3 is the cut vertex, degree 3)"
+    );
+    assert_eq!(
+        col_ints(
+            &client,
+            "select k_person2 as f from knows where k_person1 = 1 intersect select k_person2 as f from knows where k_person1 = 4"
+        )
+        .await,
+        vec![3],
+        "g06: mutual friends of 1 and 4 (INTERSECT) is person 3"
+    );
+    // g10 KNOWN-BAD (TD-185): variable-hop reachability via a recursive CTE should
+    // return [6] (all nodes reachable from person 1), but the engine currently
+    // returns NO rows — a silent wrong answer the execution ratchet counted as a
+    // pass. Pinned as known-bad (ADR-040 pattern, cf. document TD-183) so the fix is
+    // auto-detected: when the recursive-CTE path works this assert fails, and g10
+    // graduates to `assert_eq!(… , vec![6])` + TD-185 closes.
+    assert!(
+        col_ints(
+            &client,
+            "with recursive reach(id) as (select 1 union select k.k_person2 from knows k join reach r on k.k_person1 = r.id) select count(distinct id) as reachable from reach"
+        )
+        .await
+        .is_empty(),
+        "g10 (TD-185): recursive-CTE reachability now returns rows — fix landed; update g10 to assert == vec![6] and close TD-185"
     );
 }
