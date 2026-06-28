@@ -64,8 +64,13 @@ from .index_config_input import IndexConfigInput
 from .index_config_input_parameters import IndexConfigInputParameters
 from .index_policy_input import IndexPolicyInput
 from .index_spec_output import IndexSpecOutput
+from .ingest_document import IngestDocument
+from .ingest_document_metadata import IngestDocumentMetadata
+from .ingest_documents_request import IngestDocumentsRequest
+from .ingest_documents_response import IngestDocumentsResponse
 from .ingest_log_body import IngestLogBody
 from .ingest_log_response_200 import IngestLogResponse200
+from .ingested_record import IngestedRecord
 from .insert_document_body import InsertDocumentBody
 from .insert_document_response_200 import InsertDocumentResponse200
 from .insert_error import InsertError
@@ -178,6 +183,11 @@ __all__ = (
     "IndexConfigInputParameters",
     "IndexPolicyInput",
     "IndexSpecOutput",
+    "IngestDocument",
+    "IngestDocumentMetadata",
+    "IngestDocumentsRequest",
+    "IngestDocumentsResponse",
+    "IngestedRecord",
     "IngestLogBody",
     "IngestLogResponse200",
     "InsertDocumentBody",
