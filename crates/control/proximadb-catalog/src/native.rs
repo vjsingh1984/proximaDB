@@ -122,6 +122,13 @@ pub struct NativeCatalog {
     /// Phase-2 reference cutover (`table.namespace_oid → namespace`) to resolve
     /// by id instead of by name.
     namespace_object_id_index: RwLock<HashMap<u64, Vec<String>>>,
+    /// TD-181 P1: durable forward index `table fqn → object_id`, persisted to
+    /// `metadata/object_index.json` and loaded eagerly at startup. It is the
+    /// name→oid direction the lazy `object_id_index` (oid→name) cannot answer
+    /// for a not-yet-loaded table, and the prerequisite for any oid-keyed reader
+    /// (S2) and for WAL-oid resolution. Maintained paired with `object_id_index`
+    /// on create/load/rename/drop; rebuilt by scanning object files if absent.
+    object_name_index: RwLock<HashMap<String, u64>>,
 }
 
 /// Table metadata stored in storage
@@ -151,6 +158,28 @@ impl From<&TableIdentifier> for TableIdentifierSerde {
             name: id.name.clone(),
         }
     }
+}
+
+/// TD-181 P1: durable secondary index mapping a table's stable `object_id` to
+/// its `(namespace, name)` identity. It is a **derived cache** — each table's
+/// `objects/{oid}.json` (S2) / `metadata/tables/{ns}/{name}.json` (legacy) is
+/// the authority and carries the same identity — so the index is always
+/// rebuildable by scanning the object files. It exists so an oid-keyed reader
+/// can resolve a name → oid (and back) without first loading the object file,
+/// which is impossible once the file path itself is keyed by oid.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ObjectIndex {
+    /// One entry per table. Namespaces keep their own durable store
+    /// (`namespaces.json`) + eager reverse index, so they are not duplicated here.
+    #[serde(default)]
+    tables: Vec<ObjectIndexEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ObjectIndexEntry {
+    object_id: u64,
+    namespace: Vec<String>,
+    name: String,
 }
 
 impl NativeCatalog {
@@ -228,6 +257,7 @@ impl NativeCatalog {
             object_id_allocator: crate::id_allocator::IdAllocator::default(),
             object_id_index: RwLock::new(HashMap::new()),
             namespace_object_id_index: RwLock::new(HashMap::new()),
+            object_name_index: RwLock::new(HashMap::new()),
         };
 
         // Ensure the base location exists (local mkdir; object-store no-op).
@@ -235,6 +265,12 @@ impl NativeCatalog {
 
         // Load existing namespaces
         catalog.load_namespaces().await?;
+
+        // TD-181 P1: load the durable table object_id index eagerly (rebuilding
+        // it from the authoritative object files if it is absent — first boot
+        // after upgrade). After this, oid↔name resolution is available without a
+        // name-keyed load, which oid-keyed reads (S2) and WAL-oid depend on.
+        catalog.load_object_index().await?;
 
         Ok(catalog)
     }
@@ -337,6 +373,144 @@ impl NativeCatalog {
         self.io_write(&Self::namespace_index_rel(), &data).await
     }
 
+    // ── TD-181 P1: durable table object_id index ───────────────────────────
+
+    /// Persist the in-memory `object_id_index` (the authoritative set of
+    /// oid→identifier mappings) to `metadata/object_index.json`. The forward
+    /// `object_name_index` is its inverse and is kept paired in memory, so the
+    /// index file is serialized from `object_id_index` alone.
+    async fn save_object_index(&self) -> Result<()> {
+        let tables: Vec<ObjectIndexEntry> = {
+            let idx = self.object_id_index.read().await;
+            idx.iter()
+                .map(|(oid, id)| ObjectIndexEntry {
+                    object_id: *oid,
+                    namespace: id.namespace.clone(),
+                    name: id.name.clone(),
+                })
+                .collect()
+        };
+        let data = serde_json::to_vec_pretty(&ObjectIndex { tables })?;
+        self.io_write(&Self::object_index_rel(), &data).await
+    }
+
+    /// Load the durable table object_id index eagerly, populating BOTH reverse
+    /// (`object_id_index`) and forward (`object_name_index`) maps and raising the
+    /// allocator floor. If the index file is absent (first boot after upgrade),
+    /// rebuild it by scanning the authoritative object files **once** and persist
+    /// — never an unconditional per-boot scan (steady state is a single file read).
+    async fn load_object_index(&self) -> Result<()> {
+        if let Some(data) = self.io_read_opt(&Self::object_index_rel()).await? {
+            let index: ObjectIndex = serde_json::from_slice(&data)?;
+            self.populate_object_index(&index.tables).await;
+            debug!(
+                "Loaded {} table object_id index entries",
+                index.tables.len()
+            );
+            return Ok(());
+        }
+        // Absent → one-time rebuild from authoritative object files.
+        let entries = self.scan_object_index_entries().await?;
+        if entries.is_empty() {
+            return Ok(());
+        }
+        self.populate_object_index(&entries).await;
+        self.save_object_index().await?;
+        info!(
+            "Rebuilt durable object_id index from {} object file(s)",
+            entries.len()
+        );
+        Ok(())
+    }
+
+    /// Populate the in-memory reverse + forward indexes from index entries and
+    /// raise the allocator floor so a restart never reuses an id.
+    async fn populate_object_index(&self, entries: &[ObjectIndexEntry]) {
+        let mut by_id = self.object_id_index.write().await;
+        let mut by_name = self.object_name_index.write().await;
+        for e in entries {
+            let id = TableIdentifier::new(e.namespace.clone(), e.name.clone());
+            self.raise_object_id_floor(Some(e.object_id));
+            by_name.insert(id.to_fqn(), e.object_id);
+            by_id.insert(e.object_id, id);
+        }
+    }
+
+    /// Scan the legacy name-keyed table files (the authority pre-S2) and collect
+    /// their `(object_id, namespace, name)`. Used once to rebuild the index when
+    /// the durable file is absent.
+    async fn scan_object_index_entries(&self) -> Result<Vec<ObjectIndexEntry>> {
+        let mut entries = Vec::new();
+        let namespaces: Vec<Vec<String>> = {
+            self.namespaces
+                .read()
+                .await
+                .values()
+                .map(|ns| ns.levels.clone())
+                .collect()
+        };
+        for ns in namespaces {
+            for name in self.io_list_json_stems(&Self::tables_dir_rel(&ns)).await {
+                let id = TableIdentifier::new(ns.clone(), name);
+                if let Some(data) = self.io_read_opt(&Self::table_metadata_rel(&id)).await? {
+                    let meta: TableMetadata = serde_json::from_slice(&data)?;
+                    if let Some(object_id) = meta.schema.object_id {
+                        entries.push(ObjectIndexEntry {
+                            object_id,
+                            namespace: id.namespace.clone(),
+                            name: id.name.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(entries)
+    }
+
+    /// Insert/refresh a table's identity in both index directions, then persist.
+    /// Authority-first: callers write the object file BEFORE this so a crash
+    /// leaves an orphan object (re-indexed on next load), never a phantom entry.
+    async fn index_upsert_table(&self, oid: u64, identifier: &TableIdentifier) -> Result<()> {
+        {
+            self.object_id_index
+                .write()
+                .await
+                .insert(oid, identifier.clone());
+            self.object_name_index
+                .write()
+                .await
+                .insert(identifier.to_fqn(), oid);
+        }
+        self.save_object_index().await
+    }
+
+    /// Remove a table's identity from both index directions, then persist.
+    /// Authority-first: callers delete the object file BEFORE this so a crash
+    /// leaves a dangling entry (pruned lazily on a NotFound read), never resurrects.
+    async fn index_remove_table(&self, identifier: &TableIdentifier) -> Result<()> {
+        let fqn = identifier.to_fqn();
+        if let Some(oid) = self.object_name_index.write().await.remove(&fqn) {
+            self.object_id_index.write().await.remove(&oid);
+        }
+        self.save_object_index().await
+    }
+
+    /// Repoint a table's identity across a rename (oid is stable), then persist.
+    async fn index_rename_table(
+        &self,
+        oid: u64,
+        from: &TableIdentifier,
+        to: &TableIdentifier,
+    ) -> Result<()> {
+        {
+            let mut by_name = self.object_name_index.write().await;
+            by_name.remove(&from.to_fqn());
+            by_name.insert(to.to_fqn(), oid);
+        }
+        self.object_id_index.write().await.insert(oid, to.clone());
+        self.save_object_index().await
+    }
+
     // ── Relative path helpers ──────────────────────────────────────────────
     // Storage-root-relative, '/'-joined keys. Resolved against `base_path`
     // (local `PathBuf`) or `config.storage_url` (injected backend) by the
@@ -346,6 +520,11 @@ impl NativeCatalog {
     /// Relative key for the namespace index.
     fn namespace_index_rel() -> String {
         "metadata/namespaces.json".to_string()
+    }
+
+    /// TD-181 P1: relative key for the durable table object_id index.
+    fn object_index_rel() -> String {
+        "metadata/object_index.json".to_string()
     }
 
     /// Relative key for a table's metadata.
@@ -561,10 +740,23 @@ impl NativeCatalog {
         // resolution survives (best-effort as tables load on demand).
         self.raise_object_id_floor(meta.schema.object_id);
         if let Some(id) = meta.schema.object_id {
-            self.object_id_index
-                .write()
+            // TD-181 P1: opportunistically heal the durable index if this object
+            // file isn't indexed yet (an orphan from a crash between object-write
+            // and index-persist). Re-index + persist only when missing, so the
+            // common already-indexed load stays write-free.
+            let missing = !self
+                .object_name_index
+                .read()
                 .await
-                .insert(id, identifier.clone());
+                .contains_key(&identifier.to_fqn());
+            if missing {
+                self.index_upsert_table(id, identifier).await?;
+            } else {
+                self.object_id_index
+                    .write()
+                    .await
+                    .insert(id, identifier.clone());
+            }
         }
         // ADR-031 / TD-181: recover the floor from persisted column + index
         // object_ids too (both ride in the table's schema), so a restart never
@@ -865,12 +1057,11 @@ impl Catalog for NativeCatalog {
         };
 
         self.save_table(&meta).await?;
-        // ADR-031 O1: maintain the reverse object_id → identifier index.
+        // ADR-031 O1 + TD-181 P1: maintain the reverse object_id → identifier
+        // index AND the durable name↔oid index. Authority-first: the object file
+        // (save_table above) is written before the index is updated/persisted.
         if let Some(oid) = schema.object_id {
-            self.object_id_index
-                .write()
-                .await
-                .insert(oid, identifier.clone());
+            self.index_upsert_table(oid, identifier).await?;
         }
         info!("Created table: {}", identifier);
 
@@ -887,12 +1078,11 @@ impl Catalog for NativeCatalog {
             // Remove from in-memory cache
             self.tables.write().await.remove(&identifier.to_fqn());
 
-            // ADR-031 O1: drop the reverse object_id index entry for this table.
-            let dropped_fqn = identifier.to_fqn();
-            self.object_id_index
-                .write()
-                .await
-                .retain(|_, id| id.to_fqn() != dropped_fqn);
+            // ADR-031 O1 + TD-181 P1: drop the reverse + forward index entries and
+            // persist. Authority-first: the object file was deleted above, so a
+            // crash here leaves a dangling index entry (pruned lazily on a
+            // NotFound read), never a resurrected table.
+            self.index_remove_table(identifier).await?;
 
             // Purge data files if requested
             if purge
@@ -943,9 +1133,10 @@ impl Catalog for NativeCatalog {
     }
 
     async fn get_table_by_object_id(&self, object_id: u64) -> Result<Option<TableIdentifier>> {
-        // Reverse index is populated lazily as tables load (and on create); a fresh
-        // process resolves an id only after its table has been loaded by name.
-        // Eager startup index build is the O2 recovery hardening.
+        // TD-181 P1: the reverse index is now built eagerly at startup from the
+        // durable `object_index.json` (rebuilt by scan if absent), so a fresh
+        // process resolves any persisted id without first loading its table by
+        // name. Still maintained on create/load/rename/drop.
         Ok(self.object_id_index.read().await.get(&object_id).cloned())
     }
 
@@ -977,10 +1168,11 @@ impl Catalog for NativeCatalog {
         // Save to new location
         self.save_table(&meta).await?;
 
-        // ADR-031 O1: object_id is preserved across rename (metadata-only); repoint
-        // the reverse index to the new identifier.
+        // ADR-031 O1 + TD-181 P1: object_id is preserved across rename
+        // (metadata-only); repoint the reverse + forward index to the new
+        // identifier and persist. The new copy is already on disk (authority).
         if let Some(oid) = meta.schema.object_id {
-            self.object_id_index.write().await.insert(oid, to.clone());
+            self.index_rename_table(oid, from, to).await?;
         }
 
         // Delete old location (best-effort; the new copy is already persisted).
@@ -1669,6 +1861,86 @@ mod tests {
         let idb = b.object_id.expect("b got an object_id");
         assert!(ida >= 1, "ids start at 1, got {ida}");
         assert!(idb > ida, "monotonic + distinct: {idb} > {ida}");
+    }
+
+    /// TD-181 P1: the durable `object_index.json` records every table both
+    /// directions, and — because the object files are authority and the index is
+    /// a derived cache — deleting the index and reopening rebuilds an identical
+    /// index by scanning the object files.
+    #[tokio::test]
+    async fn object_index_persists_and_rebuilds_from_object_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ns = vec!["db".to_string()];
+        let id_a = TableIdentifier::new(ns.clone(), "a");
+        let id_b = TableIdentifier::new(ns.clone(), "b");
+
+        let (oid_a, oid_b) = {
+            let cat = fresh_catalog(&tmp).await;
+            cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+            let oid_a = cat
+                .create_table(&id_a, schema_with_id_col("a"))
+                .await
+                .unwrap()
+                .object_id
+                .unwrap();
+            let oid_b = cat
+                .create_table(&id_b, schema_with_id_col("b"))
+                .await
+                .unwrap()
+                .object_id
+                .unwrap();
+
+            // Both directions resolve in-memory.
+            assert_eq!(
+                cat.get_table_by_object_id(oid_a).await.unwrap(),
+                Some(id_a.clone())
+            );
+            assert_eq!(
+                cat.object_name_index
+                    .read()
+                    .await
+                    .get(&id_a.to_fqn())
+                    .copied(),
+                Some(oid_a)
+            );
+
+            // The on-disk index holds exactly the two tables.
+            let raw = cat
+                .io_read_opt(&NativeCatalog::object_index_rel())
+                .await
+                .unwrap()
+                .expect("index file written");
+            let parsed: ObjectIndex = serde_json::from_slice(&raw).unwrap();
+            assert_eq!(parsed.tables.len(), 2);
+
+            // Delete the derived index; the authoritative object files remain.
+            cat.io_remove_file(&NativeCatalog::object_index_rel()).await;
+            (oid_a, oid_b)
+        };
+
+        // Reopen the same storage: absent index → one-time scan-rebuild.
+        let reopened = fresh_catalog(&tmp).await;
+        assert_eq!(
+            reopened.get_table_by_object_id(oid_a).await.unwrap(),
+            Some(id_a),
+            "rebuilt index must resolve oid_a → its identifier"
+        );
+        assert_eq!(
+            reopened.get_table_by_object_id(oid_b).await.unwrap(),
+            Some(id_b),
+            "rebuilt index must resolve oid_b → its identifier"
+        );
+        let rebuilt_raw = reopened
+            .io_read_opt(&NativeCatalog::object_index_rel())
+            .await
+            .unwrap()
+            .expect("index rebuilt + persisted on reopen");
+        let rebuilt: ObjectIndex = serde_json::from_slice(&rebuilt_raw).unwrap();
+        assert_eq!(
+            rebuilt.tables.len(),
+            2,
+            "scan-rebuild recovers exactly the persisted object files"
+        );
     }
 
     // ── ADR-031 / TD-181 P0: namespace object_id allocation ──────────
