@@ -679,9 +679,14 @@ mod tests {
         const N: usize = 300;
         const K: usize = 10;
         const POOL: usize = 50;
-        // created_at_ns = BASE_TS + i; the filter keeps only the tail.
-        const BASE_TS: i64 = 1_000;
-        const THRESHOLD: i64 = BASE_TS + 280; // records 280..299 survive
+        // Two clusters with a large gap in created_at so no PAX block can
+        // straddle the filter boundary. The gap (100k ns ≈ many block widths)
+        // guarantees the zone-map min/max of any block falls entirely on one
+        // side of THRESHOLD, making the prune deterministic regardless of the
+        // exact block boundaries the writer produces on different runners.
+        //   records 0..199:   created_at = 1_000 + i     (prunable)
+        //   records 200..299: created_at = 100_000 + i   (surviving)
+        const THRESHOLD: i64 = 50_000;
 
         let gen_vec = |seed: u64| -> Vec<f32> {
             let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
@@ -711,8 +716,13 @@ mod tests {
         )
         .with_quant(VectorQuant::RaBitQ);
         for (i, v) in corpus.iter().enumerate() {
-            w.add_record(&rec(&format!("v{i}"), BASE_TS + i as i64, v.clone()))
-                .unwrap();
+            // Two clusters: [0..200) at 1k+i, [200..300) at 100k+i.
+            let ts = if i < 200 {
+                1_000 + i as i64
+            } else {
+                100_000 + i as i64
+            };
+            w.add_record(&rec(&format!("v{i}"), ts, v.clone())).unwrap();
         }
         let meta = w.finish().unwrap();
         assert!(
@@ -722,7 +732,7 @@ mod tests {
         );
         let bytes = std::fs::read(&path).unwrap();
 
-        // A query that lives in a SURVIVING block (created_at 1290 >= THRESHOLD).
+        // A query that lives in a SURVIVING block (created_at 100290 >= THRESHOLD).
         let query = corpus[290].clone();
 
         let filter = FilterExpression::Comparison {
