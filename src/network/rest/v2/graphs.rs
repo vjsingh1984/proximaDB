@@ -66,6 +66,12 @@ pub struct FusionHit {
     pub oid: String,
     pub score: f32,
     pub source_count: usize,
+    /// Graph node label(s) of the reached node. Exposed so cross-modal-joint
+    /// consumers can correlate a fused hit by its graph label without a separate
+    /// node lookup (#485). The expansion already reaches the node, so this is
+    /// near-free to fill. Additive + back-compat (empty until populated).
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -198,6 +204,13 @@ pub async fn fusion_search_v2(
                 oid: item.oid,
                 score: item.score,
                 source_count: item.source_count,
+                // SEAM (#485): the contract field is landed here. POPULATE from the
+                // reached node's labels during graph expansion — thread `labels` onto
+                // the internal fusion item (the `graph_fusion_search` result type) from
+                // `Node.labels` at the point the expansion visits each node, then map it
+                // here (`labels: item.labels`). Empty for now keeps it compiling +
+                // back-compat; the population is the remaining producer work.
+                labels: Vec::new(),
             })
             .collect(),
         stats: stats.into(),
