@@ -18,7 +18,7 @@
 #   scripts/worktree.sh rm    <type/topic> [--force] # remove (guards dirty)
 #   scripts/worktree.sh clean [--dry-run]            # reclaim merged/squashed worktrees
 #   scripts/worktree.sh gc    [--all] [--dry-run]    # purge incremental/ bloat (kept worktrees)
-#   scripts/worktree.sh guard                        # fail if in main checkout
+#   scripts/worktree.sh guard                        # fail if in main checkout (ff-syncs it first)
 #
 # Typical flow (also the agent mandate — see CLAUDE.md):
 #   eval "$(scripts/worktree.sh new feat/my-thing)"  # cd's you into it
@@ -226,9 +226,36 @@ cmd_gc() {
     "$verb" "$(awk -v k="$freed_kb" 'BEGIN{printf "%.1f", k/1024/1024}')" >&2
 }
 
+# Keep the MAIN checkout current: fetch the default branch and fast-forward the
+# main checkout's branch when it IS the default, is behind origin, and has a
+# clean tree — so merges landed remotely (by other sessions / CI) propagate to
+# the main checkout before you start work. Non-fatal: a network failure, a dirty
+# tree, or a non-default branch just prints a note and continues. Never force or
+# rebase (a ff-only on a clean default branch cannot lose work).
+_sync_main_if_behind() {
+  local main; main="$(repo_main)"
+  [ -n "$main" ] || return 0
+  git -C "$main" fetch --quiet "$REMOTE" "$BASE_DEFAULT" 2>/dev/null \
+    || { printf 'worktree: (main) fetch %s failed — main may be stale\n' "$REMOTE/$BASE_DEFAULT" >&2; return 0; }
+  local br; br="$(git -C "$main" rev-parse --abbrev-ref HEAD 2>/dev/null || echo)"
+  [ "$br" = "$BASE_DEFAULT" ] \
+    || { printf 'worktree: (main) on branch %s, not %s — left as-is\n' "$br" "$BASE_DEFAULT" >&2; return 0; }
+  git -C "$main" diff-index --quiet HEAD -- 2>/dev/null \
+    || { printf 'worktree: (main) %s has uncommitted changes — skipped ff to avoid losing them\n' "$br" >&2; return 0; }
+  # origin/<base> NOT an ancestor of <br>  ⇒  local is behind origin.
+  if ! git -C "$main" merge-base --is-ancestor "$REMOTE/$BASE_DEFAULT" "$br" 2>/dev/null; then
+    git -C "$main" merge --ff-only "$REMOTE/$BASE_DEFAULT" >/dev/null 2>&1 \
+      && printf 'worktree: (main) fast-forwarded %s to %s\n' "$br" "$REMOTE/$BASE_DEFAULT" >&2 \
+      || printf 'worktree: (main) ff to %s failed (diverged?) — main left as-is\n' "$REMOTE/$BASE_DEFAULT" >&2
+  fi
+  return 0
+}
+
 # Guardrail: refuse if the CWD is the MAIN checkout (agents call this before
-# editing). A worktree's toplevel != the main checkout's toplevel.
+# editing), after first keeping the main checkout current. A worktree's toplevel
+# != the main checkout's toplevel.
 cmd_guard() {
+  _sync_main_if_behind   # pull-after-merge: keep the main checkout current
   local here; here="$(git rev-parse --show-toplevel 2>/dev/null || echo)"
   [ -n "$here" ] || die "not in a git repo"
   if [ "$here" = "$(repo_main)" ]; then
