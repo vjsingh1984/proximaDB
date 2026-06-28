@@ -228,4 +228,59 @@ mod tests {
             "bytes must land even when the tier is meaningless"
         );
     }
+
+    /// Integration (real Azure API via the Azurite emulator): prove the *feature*
+    /// end-to-end on a genuine Azure Blob backend — a canonical graph record is
+    /// written at the Cool tier (the `x-ms-access-tier: Cool` header must be
+    /// accepted, not 4xx'd) and round-trips by oid through the ProximaRecordV2
+    /// wire. Complements the object-store-level `put_with_tier_accepted_by_real_azure`
+    /// by covering the ColdGraphRecordStore serialization path on a real backend.
+    ///
+    /// `object_store` 0.13 does not surface the tier on read, so a tier read-back
+    /// assertion needs the Azure SDK (deferred, TD-168). Not run in CI (no Azurite
+    /// service). Manual:
+    /// ```text
+    /// docker run --rm -p 10000:10000 mcr.microsoft.com/azure-storage/azurite \
+    ///   azurite-blob --blobHost 0.0.0.0
+    /// # create container `proximadb-test` once
+    /// PROXIMADB_AZURE_TEST=1 cargo test -p proximadb --features azure \
+    ///   -- --ignored cold_graph_record_store_round_trips_on_real_azure
+    /// ```
+    #[cfg(feature = "azure")]
+    #[tokio::test]
+    #[ignore = "needs Azurite — set PROXIMADB_AZURE_TEST=1 with Azurite running"]
+    async fn cold_graph_record_store_round_trips_on_real_azure() {
+        if std::env::var("PROXIMADB_AZURE_TEST").is_err() {
+            eprintln!("skip: set PROXIMADB_AZURE_TEST=1 with Azurite running");
+            return;
+        }
+        let azure = object_store::azure::MicrosoftAzureBuilder::new()
+            .with_use_emulator(true)
+            .with_allow_http(true)
+            .with_container_name("proximadb-test")
+            .build()
+            .expect("build Azurite (emulator) store");
+        let store = ColdGraphRecordStore::new(
+            ProximaObjectStore::new(std::sync::Arc::new(azure)),
+            ObjectAccessTier::Cool,
+        );
+        assert_eq!(
+            store.store.backend(),
+            ObjectBackendKind::Azure,
+            "emulator store must detect as Azure so the Cool tier path runs"
+        );
+
+        let oid = "graph/azure_e2e/node/n1";
+        store
+            .upsert_record(record(oid, "tenantA"))
+            .await
+            .expect("Azure must accept the Cool-tiered record PUT");
+        let got = store
+            .get_record(&RecordKey::new(oid))
+            .await
+            .expect("get")
+            .expect("record present on real Azure backend");
+        assert_eq!(got.oid, oid);
+        let _ = store.delete_record(&RecordKey::new(oid)).await;
+    }
 }
