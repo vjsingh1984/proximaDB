@@ -425,20 +425,36 @@ impl OrionPersistence {
     ) -> Result<PathBuf> {
         info!("Creating ORION snapshot");
 
-        // Collect all nodes
-        let nodes = engine
-            .memory_pool
-            .nodes
-            .iter()
-            .map(|entry| (*entry.value()).clone())
-            .collect::<Vec<_>>();
+        // TD-168 Phase 1b: when the cold-payload tier is ON, write a **topology-only**
+        // (v3) snapshot — CSR + node_to_index only, NO node/edge payloads — so a graph
+        // whose payloads exceed RAM need not materialize every payload to snapshot, and
+        // cold-start loads topology only (payloads are served lazily from the canonical
+        // record store via the service cold-fetch path). When OFF (default), the full
+        // v2 snapshot is written exactly as before. The same `OrionSnapshot` struct
+        // carries both; a v3 is simply a v2 with empty `nodes`/`edges` + `version = 3`.
+        let topology_only = crate::graph::service::cold_payloads_enabled();
 
-        // Collect all edges
-        let edges = engine
-            .edge_metadata
-            .iter()
-            .map(|entry| (*entry.value()).clone())
-            .collect::<Vec<_>>();
+        // Collect node/edge payloads ONLY for the full (v2) snapshot. The clones are the
+        // expensive part a huge graph wants to avoid, so they are skipped entirely for v3.
+        let nodes: Vec<Node> = if topology_only {
+            Vec::new()
+        } else {
+            engine
+                .memory_pool
+                .nodes
+                .iter()
+                .map(|entry| entry.value().as_ref().clone())
+                .collect()
+        };
+        let edges: Vec<Edge> = if topology_only {
+            Vec::new()
+        } else {
+            engine
+                .edge_metadata
+                .iter()
+                .map(|entry| entry.value().as_ref().clone())
+                .collect()
+        };
 
         // Build node_to_index mapping
         let node_to_index = engine
@@ -469,11 +485,15 @@ impl OrionPersistence {
             ))
         }?;
 
-        // Create snapshot
+        // Create snapshot. Same v2 shape either way (nothing is released, so no new
+        // on-disk version is warranted): a topology-only snapshot is simply a v2 with
+        // empty `nodes`/`edges`. Load detects it from that shape — a full snapshot
+        // always has `nodes.len() == node_to_index.len()`, so empty payloads + non-empty
+        // topology is unambiguously topology-only.
         let snapshot = OrionSnapshot {
             version: 2,
-            nodes: nodes.into_iter().map(|n| (*n).clone()).collect(),
-            edges: edges.into_iter().map(|e| (*e).clone()).collect(),
+            nodes,
+            edges,
             csr_outgoing_offsets,
             csr_outgoing_targets,
             csr_incoming_offsets,
@@ -593,6 +613,27 @@ impl OrionPersistence {
         };
         // Capture the watermark before the restore loops move out of `snapshot`.
         let checkpoint_lsn = snapshot.checkpoint_lsn;
+        // A topology-only (TD-168) snapshot is a v2 snapshot written with the cold-payload
+        // gate ON: it carries the full topology but EMPTY payloads. A full snapshot always
+        // has `nodes.len() == node_to_index.len()`, so empty payloads alongside a non-empty
+        // topology is unambiguous — no on-disk version bump needed.
+        let topology_only_snapshot =
+            snapshot.nodes.is_empty() && !snapshot.node_to_index.is_empty();
+
+        // Mixed-read-safety (fail-closed): a topology-only snapshot's reads depend on the
+        // cold-fetch path, which is the SAME `PROXIMADB_GRAPH_COLD_PAYLOADS` gate. Loading
+        // one with the gate OFF would leave the engine with topology but no payloads AND no
+        // cold-fetch, so get_node/get_edge would silently return None (apparent data loss).
+        // Refuse the load loudly instead, so flipping the gate off after enabling it yields
+        // a clear error, not silent corruption.
+        if topology_only_snapshot && !crate::graph::service::cold_payloads_enabled() {
+            return Err(ProximaDBError::InvalidInput(format!(
+                "graph '{}': snapshot is topology-only (empty payloads) but the cold-payload \
+                 tier (PROXIMADB_GRAPH_COLD_PAYLOADS) is OFF — enable it to load this snapshot, \
+                 otherwise node/edge payloads are unreachable",
+                self.graph_id
+            )));
+        }
 
         // Clear existing data
         engine.memory_pool.nodes.clear();
@@ -646,20 +687,40 @@ impl OrionPersistence {
             }
         }
 
+        // Counts come from the TOPOLOGY (node_to_index + CSR), not the payload maps:
+        // for a topology-only (v3) load the payload maps are empty by design, so reading
+        // their lengths would report 0. node_to_index has every node; the outgoing CSR
+        // `targets` has one entry per directed edge — both correct for v2 and v3.
+        let node_count = engine.node_to_index.len() as u64;
+        let edge_count = {
+            let csr_out = Self::read_lock(&engine.csr_outgoing, "CSR outgoing")?;
+            csr_out.targets.len() as u64
+        };
+
         // Update stats
         {
             let mut stats = engine
                 .stats
                 .write()
                 .map_err(|_| ProximaDBError::Internal("stats write lock poisoned".to_string()))?;
-            stats.nodes_created = engine.memory_pool.nodes.len() as u64;
-            stats.edges_created = engine.edge_metadata.len() as u64;
+            stats.nodes_created = node_count;
+            stats.edges_created = edge_count;
         }
 
         info!(
-            "ORION snapshot loaded: {} nodes, {} edges",
-            engine.memory_pool.nodes.len(),
-            engine.edge_metadata.len()
+            "ORION snapshot loaded ({}): {} nodes, {} edges{}",
+            if topology_only_snapshot {
+                "topology-only / cold payloads"
+            } else {
+                "full payloads"
+            },
+            node_count,
+            edge_count,
+            if topology_only_snapshot {
+                " (payloads served lazily from the record store)"
+            } else {
+                ""
+            }
         );
 
         Ok(checkpoint_lsn)
@@ -1506,5 +1567,116 @@ impl OrionPersistence {
     }
 }
 
-// Tests temporarily removed due to compilation issues
-// Deferred: Fix tests once OrionGraphEngine methods are properly implemented
+#[cfg(test)]
+mod topology_only_snapshot_tests {
+    use super::*;
+    use crate::graph::engines::GraphEngine;
+    use crate::graph::engines::orion::OrionGraphEngine;
+
+    async fn engine(graph_id: &str, base: &std::path::Path) -> OrionGraphEngine {
+        let base_url = format!("file://{}", base.display());
+        OrionGraphEngine::with_persistence_for_graph(graph_id.to_string(), base_url, false)
+            .await
+            .expect("engine with persistence")
+    }
+
+    fn node(id: &str) -> Node {
+        Node {
+            id: id.to_string(),
+            labels: vec!["N".to_string()],
+            ..Default::default()
+        }
+    }
+
+    /// TD-168 Phase 1b: a topology-only snapshot (gate ON) carries CSR + node_to_index
+    /// but NO payloads; it round-trips the topology, leaves payloads cold, and is
+    /// fail-closed when loaded with the gate OFF. The full (gate OFF) snapshot is
+    /// unchanged. Process-isolated under nextest, so the env gate doesn't leak.
+    #[tokio::test]
+    async fn topology_only_snapshot_round_trips_payloads_cold_and_fails_closed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base = tmp.path().join("orion");
+        std::fs::create_dir_all(&base).expect("mkdir");
+
+        // Build a 2-node, 1-edge graph in the source engine (full, in-RAM).
+        let src = engine("g1", &base).await;
+        src.insert_node(node("a")).await.expect("node a");
+        src.insert_node(node("b")).await.expect("node b");
+        src.insert_edge(Edge {
+            id: "e".to_string(),
+            from_node_id: "a".to_string(),
+            to_node_id: "b".to_string(),
+            edge_type: "R".to_string(),
+            ..Default::default()
+        })
+        .await
+        .expect("edge");
+        assert_eq!(src.node_to_index.len(), 2);
+
+        // (1) Gate ON → topology-only snapshot; load into a fresh engine.
+        unsafe { std::env::set_var("PROXIMADB_GRAPH_COLD_PAYLOADS", "1") };
+        let topo_path = src
+            .persistence()
+            .expect("persistence")
+            .save_snapshot(&src, 0)
+            .await
+            .expect("save topology-only");
+
+        let warm = engine("g1", &base).await;
+        warm.persistence()
+            .expect("persistence")
+            .load_snapshot(&warm, &topo_path)
+            .await
+            .expect("load topology-only");
+        // Topology restored, payloads NOT resident (served cold via the service path).
+        assert_eq!(warm.node_to_index.len(), 2, "topology (nodes) restored");
+        assert!(
+            warm.memory_pool.nodes.is_empty(),
+            "node payloads stay cold after topology-only load"
+        );
+        assert!(
+            warm.edge_metadata.is_empty(),
+            "edge payloads stay cold after topology-only load"
+        );
+        // Edge TOPOLOGY survives in the CSR (one directed out-edge), even though no edge
+        // payload is resident.
+        let out_edges = OrionPersistence::read_lock(&warm.csr_outgoing, "csr")
+            .expect("csr read")
+            .targets
+            .len();
+        assert_eq!(out_edges, 1, "edge topology restored in CSR");
+
+        // (2) Fail-closed: same topology-only snapshot, gate OFF → error (no silent
+        // data-invisibility).
+        unsafe { std::env::remove_var("PROXIMADB_GRAPH_COLD_PAYLOADS") };
+        let blocked = engine("g1", &base).await;
+        let result = blocked
+            .persistence()
+            .expect("persistence")
+            .load_snapshot(&blocked, &topo_path)
+            .await;
+        assert!(
+            result.is_err(),
+            "topology-only snapshot must fail-closed when the cold-payload gate is OFF"
+        );
+
+        // (3) Gate OFF → full snapshot round-trips with payloads resident (today's path).
+        let full_path = src
+            .persistence()
+            .expect("persistence")
+            .save_snapshot(&src, 0)
+            .await
+            .expect("save full");
+        let full = engine("g1", &base).await;
+        full.persistence()
+            .expect("persistence")
+            .load_snapshot(&full, &full_path)
+            .await
+            .expect("load full");
+        assert_eq!(
+            full.memory_pool.nodes.len(),
+            2,
+            "full snapshot loads payloads"
+        );
+    }
+}

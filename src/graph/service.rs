@@ -152,7 +152,9 @@ impl GraphPayloadCaches {
 }
 
 /// True when the cold graph-payload tier (TD-168) is enabled via the env gate.
-fn cold_payloads_enabled() -> bool {
+/// `pub(crate)` so the Orion persistence layer can gate topology-only snapshots on
+/// the same switch (TD-168 Phase 1b).
+pub(crate) fn cold_payloads_enabled() -> bool {
     std::env::var(COLD_PAYLOADS_ENV)
         .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
         .unwrap_or(false)
