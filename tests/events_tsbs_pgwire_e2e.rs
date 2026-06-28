@@ -431,4 +431,42 @@ async fn events_tsbs_pgwire_conformance() {
         ],
         "windowed_avg: per-host moving average (1 preceding + current)"
     );
+
+    // rate/delta (TD-182 P1c): the audit flagged time-series derivatives as wholly
+    // uncovered. `range` is a plain max-min aggregate; `lag_delta` is the period-over-
+    // period change via the LAG window (first row per host has no predecessor → NULL).
+    // Keyed by (hostname, usage_user) — usage values are distinct within a host — so
+    // the row-order quirk (TD-185) doesn't matter.
+    assert_eq!(
+        canon_rows(
+            &client,
+            "select hostname, max(usage_user) - min(usage_user) as rng from cpu group by hostname order by hostname"
+        )
+        .await,
+        vec![row(&["host_0", "70"]), row(&["host_1", "42"])],
+        "range: per-host max-min usage_user (host_0 95-25=70, host_1 92-50=42)"
+    );
+    // lag_delta KNOWN-BAD (TD-187): the LAG window currently evaluates to 0 (not the
+    // previous row's value, nor NULL for the first row), so `usage_user - lag(...)`
+    // returns usage_user unchanged. Pinned known-bad (ADR-040 pattern, cf. TD-185)
+    // so the fix auto-trips this; when LAG works, replace with the real deltas
+    // (host_0: NULL/10/-55/60, host_1: NULL/-32/10/42) and close TD-187.
+    assert_eq!(
+        canon_rows(
+            &client,
+            "select hostname, usage_user, usage_user - lag(usage_user) over (partition by hostname order by ts) as delta from cpu"
+        )
+        .await,
+        vec![
+            row(&["host_0", "25", "25"]),
+            row(&["host_0", "35", "35"]),
+            row(&["host_0", "40", "40"]),
+            row(&["host_0", "95", "95"]),
+            row(&["host_1", "50", "50"]),
+            row(&["host_1", "60", "60"]),
+            row(&["host_1", "70", "70"]),
+            row(&["host_1", "92", "92"]),
+        ],
+        "lag_delta (TD-187): LAG now returns the previous value — fix landed; replace with real deltas and close TD-187"
+    );
 }
