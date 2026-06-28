@@ -90,6 +90,7 @@ jobs:
       core_changes: ${{ steps.filter.outputs.core_changes }}
       gpu_paths: ${{ steps.filter.outputs.gpu_paths }}
       network_changes: ${{ steps.filter.outputs.network_changes }}
+      pgwire_accuracy_changes: ${{ steps.filter.outputs.pgwire_accuracy_changes }}
       # SDK change detection
       go_sdk: ${{ steps.filter.outputs.go_sdk }}
       nodejs_sdk: ${{ steps.filter.outputs.nodejs_sdk }}
@@ -199,6 +200,20 @@ jobs:
               - 'src/network/**'
               - 'src/api_handlers/**'
               - 'proto/**'
+            # Multi-modal pgwire value-accuracy e2e suite (TD-182 P0). The suite
+            # exercises the SQL/pgwire + relational + DML + cold-path-merge code,
+            # so re-run it when any of those change, when the suite files change,
+            # or when this workflow itself changes (so wiring edits self-verify).
+            pgwire_accuracy_changes:
+              - 'src/query/**'
+              - 'src/network/**'
+              - 'src/services/dml/**'
+              - 'src/core/**'
+              - 'tests/*pgwire*'
+              - 'tests/document_json*'
+              - 'tests/events_tsbs*'
+              - 'tests/sql_value_roundtrip.rs'
+              - '.github/workflows/ci.yml'
             # SDK filters
             go_sdk:
               - 'clients/go/**'
@@ -1266,6 +1281,46 @@ jobs:
             fi
           done
 
+  rust-integration-test-pgwire-accuracy:
+    name: Rust Integration Tests (pgwire accuracy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [changes]
+    if: |
+      !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
+      needs.changes.outputs.pgwire_accuracy_changes == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-nightly-dev"
+          shared-key: "build"
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      # TD-182 P0: the multi-modal pgwire VALUE-ACCURACY suite — these e2e tests
+      # assert exact result values (and the merged cold-path aggregates), not just
+      # clean execution, so they catch silent wrong-answer regressions the
+      # conformance ratchets miss. Run with --test-threads=1: they toggle the
+      # PROXIMADB_OLAP_DELTA_MERGE process env between awaited queries, so they
+      # must not run concurrently within one process.
+      - name: Run pgwire accuracy e2e
+        run: |
+          for test_name in \
+            pgwire_relational_engine_e2e \
+            pgwire_olap_delta_merge_e2e \
+            document_json_pgwire_e2e \
+            events_tsbs_pgwire_e2e \
+            pgwire_null_rendering_e2e \
+            pgwire_select_or_predicate_e2e \
+            sql_value_roundtrip; do
+            echo "Running $test_name..."
+            cargo test --test "$test_name" -- --test-threads=1
+          done
+
   rust-integration-test-graph:
     name: Rust Integration Tests (graph)
     runs-on: ubuntu-latest
@@ -1691,6 +1746,7 @@ jobs:
       - rust-test
       - rust-integration-test-storage
       - rust-integration-test-query
+      - rust-integration-test-pgwire-accuracy
       - rust-integration-test-graph
       - rust-integration-test-cluster
       - rust-coverage

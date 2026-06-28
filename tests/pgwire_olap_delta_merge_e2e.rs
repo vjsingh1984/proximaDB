@@ -423,6 +423,10 @@ async fn olap_delta_merge_correct_aggregates_through_join() {
         let _ = conn.await;
     });
 
+    // Idempotent setup: the catalog can survive across local re-runs, so drop any
+    // leftovers first (matching the DROP-IF-EXISTS convention of the sibling tests).
+    client.simple_query("DROP TABLE IF EXISTS txn").await.ok();
+    client.simple_query("DROP TABLE IF EXISTS acct").await.ok();
     client
         .simple_query("CREATE TABLE acct (id INT PRIMARY KEY, region VARCHAR)")
         .await
