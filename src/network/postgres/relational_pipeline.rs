@@ -751,42 +751,35 @@ impl RelationalReader for DmlTableReader {
         if let Some(pred) = &ctx.predicate {
             pred.type_check(&self.full_schema)
                 .map_err(ReaderError::PredicateEval)?;
-            // The pushed-down predicate is evaluated row-wise below through a boolean
-            // closure that has no error channel, so an eval failure would otherwise be
-            // silently coerced to `false` and drop every row. Pre-validate that each
-            // referenced function resolves in the executor registry and fail loudly
-            // here instead. (TD-183: native JSON filters — `json_extract*` — are not
-            // yet registered natively, so they surface as a clear error and the OLAP
-            // route serves them, rather than silently returning 0 rows.)
-            let mut func_names: Vec<&str> = Vec::new();
-            pred.collect_func_names(&mut func_names);
-            for name in func_names {
-                if builtins().lookup_scalar(name).is_none() {
-                    return Err(ReaderError::PredicateEval(ExprError::UnknownFunction {
-                        name: name.to_string(),
-                    }));
-                }
-            }
         }
         let predicate: Option<Expr> = ctx.predicate.clone();
-        let row_pred = move |full_row: &[ProximaValue]| -> bool {
+        // ADR-043 Invariant 1 — fail-loud predicate: evaluate against the real
+        // builtin registry and PROPAGATE any eval error (unknown function, cast,
+        // arithmetic, type) instead of coercing it to `false`. The empty registry
+        // (`NoFunctions`) and the error-swallowing `matches!(…, Ok(Boolean(true)))`
+        // here were a silent-data-loss seam: a pushed-down predicate the native
+        // engine could not evaluate dropped every row and presented as a clean empty
+        // result. `scan_table_relational` now surfaces the captured error; a query
+        // native cannot serve fails loudly and the OLAP route answers it (ADR-039).
+        let row_pred = move |full_row: &[ProximaValue]| -> Result<bool, ExprError> {
             match &predicate {
-                // Evaluate against the real builtin registry (not an empty one) so
-                // functions actually resolve in pushed-down native predicates;
-                // unresolvable functions were already rejected in `open` above.
-                Some(expr) => matches!(
-                    expr.eval(&full_row.to_vec(), builtins()),
-                    Ok(ProximaValue::Boolean(true))
-                ),
-                None => true,
+                Some(expr) => match expr.eval(&full_row.to_vec(), builtins())? {
+                    ProximaValue::Boolean(b) => Ok(b),
+                    // SQL three-valued logic: NULL (and any non-boolean predicate
+                    // result) is not TRUE, so the row is excluded — this is a
+                    // *value*, not an error, and is the correct filter semantics.
+                    _ => Ok(false),
+                },
+                None => Ok(true),
             }
         };
-        let row_pred_ref: Option<&(dyn Fn(&[ProximaValue]) -> bool + Send + Sync)> =
-            if ctx.predicate.is_some() {
-                Some(&row_pred)
-            } else {
-                None
-            };
+        let row_pred_ref: Option<
+            &(dyn Fn(&[ProximaValue]) -> Result<bool, ExprError> + Send + Sync),
+        > = if ctx.predicate.is_some() {
+            Some(&row_pred)
+        } else {
+            None
+        };
         let limit = ctx.limit.map(|l| l as usize);
         let (_schema, rows) = self
             .dml
