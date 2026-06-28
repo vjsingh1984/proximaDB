@@ -5,8 +5,9 @@
 //! Proves the central correctness property: after `ALTER TABLE … MATERIALIZE`
 //! freezes a cold Parquet snapshot, subsequent `DELETE` / `UPDATE` / `INSERT`
 //! over pgwire are reflected in OLAP `SELECT`s that route to the DataFusion
-//! engine — and that the behavior is genuinely gated (default-OFF serves the
-//! stale snapshot; opt-in reconciles it).
+//! engine — and that the behavior is genuinely gated (the
+//! `PROXIMADB_OLAP_DELTA_MERGE=0` kill-switch serves the stale snapshot; the
+//! default-ON merge reconciles it).
 //!
 //! Gated on `datafusion-integration`: the read-merge lives on the DataFusion
 //! OLAP route, and the gate-OFF assertion (stale snapshot) is only meaningful
@@ -210,17 +211,18 @@ async fn olap_delta_merge_gate_off_stale_then_on_corrects() {
     let q_rows = "SELECT id, v FROM dvm GROUP BY id, v ORDER BY id";
     let q_count = "SELECT COUNT(*) AS c FROM dvm";
 
-    // Gate OFF (default): the DataFusion route serves the STALE snapshot — this
-    // proves the merge is genuinely gated and the legacy behavior is preserved.
+    // Gate OFF (kill-switch): the merge is default-ON, so an explicit falsy value
+    // forces the legacy bare-Parquet read and the DataFusion route serves the
+    // STALE snapshot — proving the kill-switch preserves legacy behavior.
     // SAFETY: toggled only between awaited queries — no request is in flight, so
     // no server thread reads this env var concurrently (Rust 2024 marks env
     // mutation unsafe for the general concurrent case). Tests run under nextest
     // process isolation (CLAUDE.md §11).
-    unsafe { std::env::remove_var("PROXIMADB_OLAP_DELTA_MERGE") };
+    unsafe { std::env::set_var("PROXIMADB_OLAP_DELTA_MERGE", "0") };
     assert_eq!(
         pairs(&client, q_rows).await,
         vec![(1, 10), (2, 20), (3, 30)],
-        "gate-off must serve the stale materialized snapshot"
+        "kill-switch (=0) must serve the stale materialized snapshot"
     );
 
     // Gate ON: the read-merge reconciles delete(2) / update(3→99) / insert(4).
@@ -237,11 +239,19 @@ async fn olap_delta_merge_gate_off_stale_then_on_corrects() {
         "COUNT(*) must be the merged cardinality, not the Parquet footer count"
     );
 
+    // Default-ON (ADR-025 PR3, the headline of this flip): with the env var UNSET
+    // the merge is on by default — removing it must STILL reconcile the snapshot,
+    // not revert to the stale base. This also leaves the var cleared for cleanup.
     // SAFETY: toggled only between awaited queries — no request is in flight, so
     // no server thread reads this env var concurrently (Rust 2024 marks env
     // mutation unsafe for the general concurrent case). Tests run under nextest
     // process isolation (CLAUDE.md §11).
     unsafe { std::env::remove_var("PROXIMADB_OLAP_DELTA_MERGE") };
+    assert_eq!(
+        pairs(&client, q_rows).await,
+        vec![(1, 10), (3, 99), (4, 40)],
+        "default-ON (env unset) must reconcile post-snapshot delete/update/insert"
+    );
 }
 
 /// Tenant isolation of the read-merge (and the empty-delta fast path). Two

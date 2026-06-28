@@ -476,14 +476,35 @@ fn catalog_table_is_parquet_backed(
     })
 }
 
-/// Global master switch for the ADR-025 OLAP read-merge (default-OFF). A table is
-/// merged only when this is on OR the table carries an `olap_delta_merge` opt-in
-/// property — honoring the staged, per-collection-opt-in rollout mandate.
+/// Master switch for the ADR-025 OLAP read-merge. **Default-ON** (ADR-025 PR3):
+/// once a table is materialized, OLAP `SELECT`s reconcile its cold Parquet base
+/// with the authoritative post-snapshot WAL delta so `DELETE`/`UPDATE`/`INSERT`
+/// written after `MATERIALIZE` are reflected. Read-mostly tables (nothing changed
+/// since the snapshot) take the empty-delta fast path — a bare Parquet read — so
+/// default-ON is correctness- and cost-neutral for them.
+///
+/// Kill-switch: set `PROXIMADB_OLAP_DELTA_MERGE` to a falsy token
+/// (`0`/`false`/`off`/`no`, case-insensitive) to force the legacy bare-Parquet
+/// read engine-wide; individual tables can still opt back in via the
+/// `olap_delta_merge` storage-layout property. Any other value — or leaving it
+/// unset — keeps the merge on.
 #[cfg(feature = "datafusion-integration")]
 fn olap_delta_merge_enabled() -> bool {
-    std::env::var("PROXIMADB_OLAP_DELTA_MERGE")
-        .ok()
-        .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "on" | "yes"))
+    olap_delta_merge_on(std::env::var("PROXIMADB_OLAP_DELTA_MERGE").ok().as_deref())
+}
+
+/// Pure kill-switch policy for [`olap_delta_merge_enabled`], split out so it is
+/// unit-testable without mutating the process environment: `None` (unset) or any
+/// non-falsy value ⇒ merge ON; only an explicit falsy token turns it OFF.
+#[cfg(feature = "datafusion-integration")]
+fn olap_delta_merge_on(var: Option<&str>) -> bool {
+    match var {
+        Some(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        ),
+        None => true,
+    }
 }
 
 /// Resolve the ADR-025 read-merge parameters for a parquet-backed table, or `None`
@@ -1847,6 +1868,26 @@ mod tests {
         ));
         assert!(!gate("SELECT id FROM inv ORDER BY qty LIMIT 5"));
         assert!(!gate("SELECT id, status FROM inv WHERE id = 'i1'"));
+    }
+
+    /// ADR-025 PR3: the OLAP read-merge is default-ON, with an explicit falsy
+    /// `PROXIMADB_OLAP_DELTA_MERGE` token as the engine-wide kill-switch. Tests the
+    /// pure policy directly so it never has to mutate the process environment.
+    #[cfg(feature = "datafusion-integration")]
+    #[test]
+    fn olap_delta_merge_default_on_with_explicit_killswitch() {
+        // Default-ON: unset and any non-falsy value enable the merge.
+        assert!(olap_delta_merge_on(None));
+        for on in ["1", "true", "on", "yes", "anything", ""] {
+            assert!(olap_delta_merge_on(Some(on)), "`{on}` must keep merge ON");
+        }
+        // Kill-switch: explicit falsy tokens (case-insensitive, trimmed) disable it.
+        for off in ["0", "false", "off", "no", "OFF", " False ", "No"] {
+            assert!(
+                !olap_delta_merge_on(Some(off)),
+                "`{off}` must disable merge"
+            );
+        }
     }
 
     fn card_hint(sql: &str) -> crate::query::compute_scheduler::CardinalityClass {

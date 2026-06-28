@@ -133,6 +133,30 @@ legacy when the marker is absent. Template: `RABITQ_PAX_SEGMENT_MIGRATION_PLAN_2
 
 Each phase gated by round-trip + recall/quality tests vs the f32 baseline.
 
+[NOTE]
+====
+**Relational cold path — shipped (WAL-first realization).** The relational
+OLTP+OLAP cold path realizes ADR-025 _WAL-first_: rather than a persistent
+on-disk DV, an OLAP `SELECT` over a materialized Parquet base is reconciled at
+read time against the canonical-WAL change-feed, keyed by record `oid`. The
+in-memory suppress-set this computes **is** the deletion vector — a rebuildable
+projection of the WAL by construction (ADR-020, never a parallel authority), and
+re-`MATERIALIZE` plays the role of N3 compaction (atomic dead-filtered rewrite).
+
+Phases shipped: read-merge core + pgwire wiring (PR1); the `DeletionVector` N0
+primitive + tenant-scoped feed + empty-delta fast path (PR2); and the
+**default-ON** flip (PR3) once the TPC-H(22)/TPC-DS(16) pgwire ratchets held.
+Kill-switch: `PROXIMADB_OLAP_DELTA_MERGE=0` (any falsy token) forces the legacy
+bare-Parquet read engine-wide; per-table opt-in via the `olap_delta_merge`
+storage-layout property survives the kill-switch. Read-mostly tables (no
+post-snapshot change) take the empty-delta fast path — a bare Parquet read — so
+default-ON is correctness- and cost-neutral for them.
+
+The persistent on-disk DV (N0–N4 above — Puffin / inline PAX, ANN-segment DV)
+remains the deferred follow-up, where the vector/graph modalities plug in (you
+cannot cheaply merge a WAL delta into HNSW traversal).
+====
+
 == Open Decisions (resolve before N0)
 
 1. **DV storage location** — Puffin sidecar (Iceberg-standard, interop) vs
