@@ -107,6 +107,13 @@ pub struct CollectionService {
     /// write self-invalidates them. Active only for the single-tenant,
     /// name-keyed read path (see `collection()`).
     syscat_cache: Option<Arc<crate::catalog::syscat_cache::HotSysCatCache>>,
+    /// ADR-035 D2 / TD-SC-2b: local directory for the on-disk warm tier. When set
+    /// (explicitly, or from `PROXIMADB_SYSCAT_WARM_DIR`), the hot cache reads
+    /// through a [`WarmDiskStore`](crate::catalog::syscat_warm::WarmDiskStore)
+    /// before the canonical catalog, so a hot miss is served from the OS page
+    /// cache instead of object-store round-trips. Must be set before
+    /// `with_catalog_manager` (which builds the cache). `None` ⇒ hot → canonical.
+    syscat_warm_dir: Option<std::path::PathBuf>,
 
     // NEW: Multi-tenant integration
     /// Optional tenant manager for multi-tenant isolation
@@ -155,9 +162,10 @@ impl CollectionService {
             index_config_cache: Arc::new(dashmap::DashMap::new()),
             storage_config,
             catalog_manager: None,
-            syscat_cache: None,   // Built in `with_catalog_manager`.
-            tenant_manager: None, // Will be set via with_tenant_manager()
-            rbac_enforcer: None,  // Will be set via with_rbac_enforcer()
+            syscat_cache: None,    // Built in `with_catalog_manager`.
+            syscat_warm_dir: None, // Set via `with_syscat_warm_dir` / env.
+            tenant_manager: None,  // Will be set via with_tenant_manager()
+            rbac_enforcer: None,   // Will be set via with_rbac_enforcer()
             #[cfg(feature = "experimental-turboquant")]
             turboquant_registry: None, // Will be set via with_turboquant_registry()
         })
@@ -193,10 +201,28 @@ impl CollectionService {
         // Build the hot read cache over a catalog-manager-only inner source (no
         // `Arc` cycle back to this service). Usage is gated at read time on
         // single-tenant mode + a name (non-UUID) key — see `collection()`.
-        let inner: Arc<dyn crate::catalog::syscat_cache::CatalogMetadataSource> =
+        let canonical: Arc<dyn crate::catalog::syscat_cache::CatalogMetadataSource> =
             Arc::new(CatalogAssetSource {
                 catalog_manager: catalog_manager.clone(),
             });
+
+        // TD-SC-2b: insert the on-disk warm tier between hot and canonical when a
+        // cache dir is configured (explicit builder, else `PROXIMADB_SYSCAT_WARM_DIR`).
+        // Unset ⇒ hot → canonical, unchanged. The warm tier is corpus-version
+        // stamped, so it stays coherent with no write-path coupling.
+        let warm_dir = self.syscat_warm_dir.clone().or_else(|| {
+            std::env::var("PROXIMADB_SYSCAT_WARM_DIR")
+                .ok()
+                .filter(|dir| !dir.is_empty())
+                .map(std::path::PathBuf::from)
+        });
+        let inner: Arc<dyn crate::catalog::syscat_cache::CatalogMetadataSource> = match warm_dir {
+            Some(dir) => Arc::new(crate::catalog::syscat_warm::WarmDiskStore::new(
+                dir, canonical,
+            )),
+            None => canonical,
+        };
+
         self.syscat_cache = Some(Arc::new(
             crate::catalog::syscat_cache::HotSysCatCache::with_defaults(
                 SYSCAT_CACHE_POOL_BYTES,
@@ -204,6 +230,15 @@ impl CollectionService {
             ),
         ));
         self.catalog_manager = Some(catalog_manager);
+        self
+    }
+
+    /// ADR-035 D2 / TD-SC-2b: enable the on-disk warm tier rooted at `dir`. Call
+    /// **before** [`with_catalog_manager`](Self::with_catalog_manager) (which
+    /// builds the cache). Production wires this from `PROXIMADB_SYSCAT_WARM_DIR`;
+    /// the explicit builder keeps it testable without mutating process env.
+    pub fn with_syscat_warm_dir(mut self, dir: std::path::PathBuf) -> Self {
+        self.syscat_warm_dir = Some(dir);
         self
     }
 
@@ -2613,6 +2648,57 @@ mod tests {
                 .context("read after delete")?
                 .is_none(),
             "cache must invalidate on write — a deleted collection must not be served stale"
+        );
+
+        Ok(())
+    }
+
+    /// TD-SC-2b: with a warm dir configured, the hot cache reads through the
+    /// on-disk warm tier — a `collection()` read materializes a warm file on
+    /// local disk (proving the `WarmDiskStore` is wired into the chain), and the
+    /// result is correct.
+    #[tokio::test]
+    async fn warm_tier_wired_materializes_disk_entry() -> Result<()> {
+        use tempfile::TempDir;
+
+        let cat_dir = TempDir::new().context("cat dir")?;
+        let warm_dir = TempDir::new().context("warm dir")?;
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &format!("file://{}", cat_dir.path().display()))
+            .await
+            .context("xcatalog")?;
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("service")?
+            .with_syscat_warm_dir(warm_dir.path().to_path_buf())
+            .with_catalog_manager(catalog_manager.clone());
+
+        let name = "sc2b_warm_wire_probe";
+        let config = CollectionConfig {
+            name: name.to_string(),
+            dimension: 8,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
+            ..Default::default()
+        };
+        assert!(
+            service
+                .create_collection(&config)
+                .await
+                .context("create")?
+                .success
+        );
+
+        // Read through hot → warm → canonical; the warm tier writes a file.
+        assert!(service.collection(name).await.context("read")?.is_some());
+        let warm_file = warm_dir
+            .path()
+            .join(CollectionService::DEFAULT_VERSION_TENANT)
+            .join(format!("{name}.bin"));
+        assert!(
+            warm_file.exists(),
+            "warm tier must materialize {warm_file:?} on a read (proves it's in the chain)"
         );
 
         Ok(())
