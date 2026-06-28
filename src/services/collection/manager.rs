@@ -101,6 +101,12 @@ pub struct CollectionService {
     /// xCatalog manager — the sole authoritative store for collection lifecycle
     /// metadata. When wired, collection reads/writes resolve through xCatalog.
     catalog_manager: Option<Arc<CatalogManager>>,
+    /// ADR-035 D2 / TD-SC-1b: hot read cache fronting `collection()` so repeated
+    /// metadata reads avoid the catalog's 1+N+M object-store round-trips. Built
+    /// when the catalog manager is wired; entries are corpus-version-stamped so a
+    /// write self-invalidates them. Active only for the single-tenant,
+    /// name-keyed read path (see `collection()`).
+    syscat_cache: Option<Arc<crate::catalog::syscat_cache::HotSysCatCache>>,
 
     // NEW: Multi-tenant integration
     /// Optional tenant manager for multi-tenant isolation
@@ -149,6 +155,7 @@ impl CollectionService {
             index_config_cache: Arc::new(dashmap::DashMap::new()),
             storage_config,
             catalog_manager: None,
+            syscat_cache: None,   // Built in `with_catalog_manager`.
             tenant_manager: None, // Will be set via with_tenant_manager()
             rbac_enforcer: None,  // Will be set via with_rbac_enforcer()
             #[cfg(feature = "experimental-turboquant")]
@@ -183,6 +190,19 @@ impl CollectionService {
     /// During migration, xCatalog is the lifecycle metadata authority when configured while the
     /// legacy metadata backend is kept in sync for storage-engine callers that still read it.
     pub fn with_catalog_manager(mut self, catalog_manager: Arc<CatalogManager>) -> Self {
+        // Build the hot read cache over a catalog-manager-only inner source (no
+        // `Arc` cycle back to this service). Usage is gated at read time on
+        // single-tenant mode + a name (non-UUID) key — see `collection()`.
+        let inner: Arc<dyn crate::catalog::syscat_cache::CatalogMetadataSource> =
+            Arc::new(CatalogAssetSource {
+                catalog_manager: catalog_manager.clone(),
+            });
+        self.syscat_cache = Some(Arc::new(
+            crate::catalog::syscat_cache::HotSysCatCache::with_defaults(
+                SYSCAT_CACHE_POOL_BYTES,
+                inner,
+            ),
+        ));
         self.catalog_manager = Some(catalog_manager);
         self
     }
@@ -985,6 +1005,20 @@ impl CollectionService {
 
     /// Get the full proto collection with all metadata - direct access to deserialized object
     pub async fn collection(&self, identifier: &str) -> Result<Option<Collection>> {
+        // Serve through the hot cache only on the path where invalidation is
+        // provably coherent: single-tenant mode (writes bump corpus_version under
+        // the `"default"` bucket, #435) AND a NAME key (not a UUID). A UUID lookup
+        // is keyed in a version space the name-keyed write bump never touches, so
+        // it would never invalidate — bypass it. Multi-tenant reads also bypass
+        // until a tenant-aware caching slice lands. Bypass ⇒ today's direct read.
+        if let Some(cache) = &self.syscat_cache
+            && self.tenant_manager.is_none()
+            && uuid::Uuid::parse_str(identifier).is_err()
+        {
+            return cache
+                .resolve(Self::DEFAULT_VERSION_TENANT, identifier)
+                .await;
+        }
         self.get_native_proto(identifier).await
     }
 
@@ -1986,82 +2020,14 @@ impl CollectionService {
         let Some(catalog_manager) = &self.catalog_manager else {
             return Ok(None);
         };
-
-        if let Ok((catalog, table_id)) = catalog_manager.resolve_table(identifier).await
-            && catalog.table_exists(&table_id).await.unwrap_or(false)
-        {
-            let schema = catalog.get_table(&table_id).await?;
-            if let Some(collection) =
-                crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
-                    &table_id, &schema,
-                )?
-            {
-                return Ok(Some(collection));
-            }
-        }
-
-        for collection in self.list_collections_from_catalog().await? {
-            if collection.id == identifier {
-                return Ok(Some(collection));
-            }
-            if let Some(config) = &collection.config
-                && config.name == identifier
-            {
-                return Ok(Some(collection));
-            }
-        }
-
-        Ok(None)
+        read_collection_asset(catalog_manager, identifier).await
     }
 
     async fn list_collections_from_catalog(&self) -> Result<Vec<Collection>> {
         let Some(catalog_manager) = &self.catalog_manager else {
             return Ok(Vec::new());
         };
-
-        let catalog = match catalog_manager.default_catalog().await {
-            Ok(catalog) => catalog,
-            Err(_) => return Ok(Vec::new()),
-        };
-
-        let mut namespaces: Vec<Vec<String>> = catalog
-            .list_namespaces(None)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|namespace| namespace.levels)
-            .collect();
-        if !namespaces.iter().any(|namespace| namespace == &["default"]) {
-            namespaces.push(vec!["default".to_string()]);
-        }
-
-        let mut collections = Vec::new();
-        let mut seen_ids = HashSet::new();
-        for namespace in namespaces {
-            let table_ids = match catalog.list_tables(&namespace).await {
-                Ok(table_ids) => table_ids,
-                Err(_) => continue,
-            };
-
-            for table_id in table_ids {
-                let schema = match catalog.get_table(&table_id).await {
-                    Ok(schema) => schema,
-                    Err(_) => continue,
-                };
-                let Some(collection) =
-                    crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
-                        &table_id, &schema,
-                    )?
-                else {
-                    continue;
-                };
-                if seen_ids.insert(collection.id.clone()) {
-                    collections.push(collection);
-                }
-            }
-        }
-
-        Ok(collections)
+        read_collections_from_catalog(catalog_manager).await
     }
 
     /// Generate unique collection ID using UUIDs.
@@ -2080,6 +2046,113 @@ impl CollectionService {
         Err(anyhow::anyhow!(
             "Unable to generate a unique UUID for collection"
         ))
+    }
+}
+
+/// Per-tenant system-catalog hot-cache pool (ADR-035 D2 / TD-SC-1b): a shared
+/// byte budget across tenants with a 1 MB/tenant ceiling. 256 MB ⇒ ~256
+/// concurrently-active tenants at the ceiling; a single-tenant deployment uses
+/// only the one `"default"` bucket (≤1 MB).
+const SYSCAT_CACHE_POOL_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Read a single collection asset from the catalog by name-or-UUID. Free function
+/// (depends only on the catalog manager) so it can back BOTH the
+/// `CollectionService` method and the hot-cache's inner source **without a
+/// self-referential `Arc` cycle** (the cache must not hold the service that holds
+/// the cache).
+async fn read_collection_asset(
+    catalog_manager: &CatalogManager,
+    identifier: &str,
+) -> Result<Option<Collection>> {
+    if let Ok((catalog, table_id)) = catalog_manager.resolve_table(identifier).await
+        && catalog.table_exists(&table_id).await.unwrap_or(false)
+    {
+        let schema = catalog.get_table(&table_id).await?;
+        if let Some(collection) =
+            crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
+                &table_id, &schema,
+            )?
+        {
+            return Ok(Some(collection));
+        }
+    }
+
+    for collection in read_collections_from_catalog(catalog_manager).await? {
+        if collection.id == identifier {
+            return Ok(Some(collection));
+        }
+        if let Some(config) = &collection.config
+            && config.name == identifier
+        {
+            return Ok(Some(collection));
+        }
+    }
+
+    Ok(None)
+}
+
+/// List every collection asset across namespaces (the expensive 1+N+M path the
+/// hot cache amortises). Free function — catalog-manager-only, see
+/// [`read_collection_asset`].
+async fn read_collections_from_catalog(
+    catalog_manager: &CatalogManager,
+) -> Result<Vec<Collection>> {
+    let catalog = match catalog_manager.default_catalog().await {
+        Ok(catalog) => catalog,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    let mut namespaces: Vec<Vec<String>> = catalog
+        .list_namespaces(None)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|namespace| namespace.levels)
+        .collect();
+    if !namespaces.iter().any(|namespace| namespace == &["default"]) {
+        namespaces.push(vec!["default".to_string()]);
+    }
+
+    let mut collections = Vec::new();
+    let mut seen_ids = HashSet::new();
+    for namespace in namespaces {
+        let table_ids = match catalog.list_tables(&namespace).await {
+            Ok(table_ids) => table_ids,
+            Err(_) => continue,
+        };
+
+        for table_id in table_ids {
+            let schema = match catalog.get_table(&table_id).await {
+                Ok(schema) => schema,
+                Err(_) => continue,
+            };
+            let Some(collection) =
+                crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
+                    &table_id, &schema,
+                )?
+            else {
+                continue;
+            };
+            if seen_ids.insert(collection.id.clone()) {
+                collections.push(collection);
+            }
+        }
+    }
+
+    Ok(collections)
+}
+
+/// Hot-cache inner source: reads collection metadata straight from the catalog.
+/// Holds `Arc<CatalogManager>` (not the `CollectionService`), so the cache and the
+/// service do not form an `Arc` cycle.
+struct CatalogAssetSource {
+    catalog_manager: Arc<CatalogManager>,
+}
+
+#[async_trait::async_trait]
+impl crate::catalog::syscat_cache::CatalogMetadataSource for CatalogAssetSource {
+    async fn fetch(&self, _tenant_id: &str, name: &str) -> Result<Option<Collection>> {
+        read_collection_asset(&self.catalog_manager, name).await
     }
 }
 
@@ -2468,6 +2541,78 @@ mod tests {
         assert!(
             v_delete > v_update,
             "delete must bump ({v_update} -> {v_delete})"
+        );
+
+        Ok(())
+    }
+
+    /// TD-SC-1b: `collection()` is fronted by the hot cache, and a write
+    /// invalidates it (no stale read). After caching a live collection, deleting
+    /// it must make the next `collection()` return `None` — proving the
+    /// corpus-version stamp on the cached entry self-invalidates on the write's
+    /// bump (#435). Also exercises the UUID bypass path.
+    #[tokio::test]
+    async fn collection_cache_serves_then_invalidates_on_write() -> Result<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("temp dir")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("xcatalog")?;
+        // No tenant manager → single-tenant → the cache path is active.
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("service")?
+            .with_catalog_manager(catalog_manager.clone());
+
+        let name = "sc1b_cache_probe";
+        let config = CollectionConfig {
+            name: name.to_string(),
+            dimension: 8,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
+            ..Default::default()
+        };
+        assert!(
+            service
+                .create_collection(&config)
+                .await
+                .context("create")?
+                .success
+        );
+
+        // Read through the cache (name key) — present, and a second read still
+        // present (served from cache or catalog; both correct).
+        let first = service.collection(name).await.context("read1")?;
+        assert!(first.is_some(), "collection must be found after create");
+        assert!(service.collection(name).await.context("read2")?.is_some());
+
+        // UUID identifier bypasses the cache and reads through (non-existent id).
+        assert!(
+            service
+                .collection("00000000-0000-0000-0000-000000000000")
+                .await
+                .context("uuid read")?
+                .is_none()
+        );
+
+        // Delete bumps corpus_version("default", name); the cached entry's stamp
+        // no longer matches → the next read must reflect the delete (None), not a
+        // stale hit.
+        service
+            .delete_collection_with_tenant_context(name, None)
+            .await
+            .context("delete")?;
+        assert!(
+            service
+                .collection(name)
+                .await
+                .context("read after delete")?
+                .is_none(),
+            "cache must invalidate on write — a deleted collection must not be served stale"
         );
 
         Ok(())
