@@ -21,6 +21,7 @@ mod schema_tests {
     fn make_column(id: i32, name: &str, data_type: ProximaType, nullable: bool) -> ProximaColumn {
         ProximaColumn {
             id,
+            object_id: None,
             name: name.to_string(),
             data_type,
             nullable,
@@ -269,6 +270,7 @@ mod spark_tests {
     fn make_column(id: i32, name: &str, data_type: ProximaType) -> ProximaColumn {
         ProximaColumn {
             id,
+            object_id: None,
             name: name.to_string(),
             data_type,
             nullable: false,

@@ -192,6 +192,7 @@ impl UnityCatalog {
 
         CatalogColumn {
             id: col.position,
+            object_id: None,
             name: col.name.clone(),
             data_type,
             nullable: col.nullable,

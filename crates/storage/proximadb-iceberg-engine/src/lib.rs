@@ -910,6 +910,7 @@ mod tests {
         fn col(id: i32, name: &str, dt: ProximaType, nullable: bool) -> ProximaColumn {
             ProximaColumn {
                 id,
+                object_id: None,
                 name: name.to_string(),
                 data_type: dt,
                 nullable,

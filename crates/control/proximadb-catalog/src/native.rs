@@ -154,6 +154,30 @@ impl From<&TableIdentifier> for TableIdentifierSerde {
 }
 
 impl NativeCatalog {
+    /// ADR-031 / TD-181: mint a catalog `object_id` from the single system-wide
+    /// sequence. Allocates a fresh id when `existing` is `None`; otherwise adopts
+    /// the caller-supplied id and raises the allocator floor so it is never
+    /// reused. The single place that encodes the allocation policy (DRY) — every
+    /// create path (table, namespace, index, column) routes through it.
+    fn mint_object_id(&self, existing: Option<u64>) -> u64 {
+        match existing {
+            Some(id) => {
+                self.object_id_allocator.raise_floor(id + 1);
+                id
+            }
+            None => self.object_id_allocator.allocate(),
+        }
+    }
+
+    /// ADR-031 / TD-181: recover the allocator floor from a persisted `object_id`
+    /// so a restart never reuses it. The load-path inverse of `mint_object_id`;
+    /// every recovery path (table, namespace, index, column) routes through it.
+    fn raise_object_id_floor(&self, existing: Option<u64>) {
+        if let Some(id) = existing {
+            self.object_id_allocator.raise_floor(id + 1);
+        }
+    }
+
     /// Create a new native catalog backed by local `tokio::fs` (the default,
     /// back-compat path). Equivalent to `new_with_filesystem(.., None)`.
     pub async fn new(
@@ -254,9 +278,7 @@ impl NativeCatalog {
                 // allocates strictly above every existing id and a restart never
                 // reuses one (mirrors load_table's recovery).
                 for ns in namespaces.values() {
-                    if let Some(oid) = ns.object_id {
-                        self.object_id_allocator.raise_floor(oid + 1);
-                    }
+                    self.raise_object_id_floor(ns.object_id);
                 }
                 // Idempotent backfill: legacy rows persisted before these identities
                 // existed deserialize with `namespace_id = None` (the opaque path
@@ -537,19 +559,21 @@ impl NativeCatalog {
         // ADR-031 O0/O1: recover the allocator floor + the reverse object_id index
         // from persisted ids so a restart never reuses an id and object_id → table
         // resolution survives (best-effort as tables load on demand).
+        self.raise_object_id_floor(meta.schema.object_id);
         if let Some(id) = meta.schema.object_id {
-            self.object_id_allocator.raise_floor(id + 1);
             self.object_id_index
                 .write()
                 .await
                 .insert(id, identifier.clone());
         }
-        // ADR-031 / TD-181 P0: recover the floor from persisted index object_ids
-        // too (indexes ride in the table's schema), so a restart never reuses one.
+        // ADR-031 / TD-181: recover the floor from persisted column + index
+        // object_ids too (both ride in the table's schema), so a restart never
+        // reuses one.
+        for column in &meta.schema.columns {
+            self.raise_object_id_floor(column.object_id);
+        }
         for index in &meta.schema.indexes {
-            if let Some(id) = index.object_id {
-                self.object_id_allocator.raise_floor(id + 1);
-            }
+            self.raise_object_id_floor(index.object_id);
         }
 
         // Cache in memory
@@ -802,22 +826,17 @@ impl Catalog for NativeCatalog {
         // Validate schema
         validate_schema(&schema)?;
 
-        // ADR-031 O0: assign the stable object_id if unset; if the caller supplied
-        // one (import/migration), never reuse it (raise the allocator floor).
+        // ADR-031 / TD-181: mint stable object_ids for the table and every
+        // catalog object carried in its schema — columns and indexes — from the
+        // one system-wide sequence. `mint_object_id` allocates when unset and
+        // adopts-without-reuse a caller-supplied id (import/migration/CTAS).
         let mut schema = schema;
-        match schema.object_id {
-            None => schema.object_id = Some(self.object_id_allocator.allocate()),
-            Some(id) => self.object_id_allocator.raise_floor(id + 1),
+        schema.object_id = Some(self.mint_object_id(schema.object_id));
+        for column in &mut schema.columns {
+            column.object_id = Some(self.mint_object_id(column.object_id));
         }
-
-        // ADR-031 / TD-181 P0: mint object_ids for any indexes carried in the
-        // schema (CTAS / import) from the same single sequence; a caller-supplied
-        // id raises the floor instead of being reused.
         for index in &mut schema.indexes {
-            match index.object_id {
-                None => index.object_id = Some(self.object_id_allocator.allocate()),
-                Some(id) => self.object_id_allocator.raise_floor(id + 1),
-            }
+            index.object_id = Some(self.mint_object_id(index.object_id));
         }
 
         // Check namespace exists
@@ -1099,14 +1118,10 @@ impl Catalog for NativeCatalog {
             }
         }
 
-        // ADR-031 / TD-181 P0: mint the index object_id from the shared sequence
-        // (a caller-supplied id raises the floor; never reused). Allocated after
-        // the dup/column validation so a rejected create doesn't burn an id.
+        // ADR-031 / TD-181: mint the index object_id from the shared sequence,
+        // after the dup/column validation so a rejected create doesn't burn an id.
         let mut index = index;
-        match index.object_id {
-            None => index.object_id = Some(self.object_id_allocator.allocate()),
-            Some(id) => self.object_id_allocator.raise_floor(id + 1),
-        }
+        index.object_id = Some(self.mint_object_id(index.object_id));
 
         meta.schema.indexes.push(index.clone());
         meta.updated_at = Self::now_millis();
@@ -1888,6 +1903,76 @@ mod tests {
             .expect("resolve")
             .expect("reverse index rebuilt on load");
         assert_eq!(resolved, levels);
+    }
+
+    // ── ADR-031 / TD-181 P0 completion: column object_id ─────────────
+
+    #[tokio::test]
+    async fn create_table_assigns_column_object_ids_from_shared_sequence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+        let ns = vec!["t".to_string()];
+        cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+
+        let schema = cat
+            .create_table(
+                &TableIdentifier::new(ns.clone(), "tbl"),
+                schema_with_id_col("tbl"),
+            )
+            .await
+            .unwrap();
+        let tbl_oid = schema.object_id.expect("table object_id");
+        let col_oid = schema.columns[0]
+            .object_id
+            .expect("column got an object_id");
+
+        assert!(col_oid >= 1, "ids start at 1, got {col_oid}");
+        assert_ne!(
+            col_oid, tbl_oid,
+            "one shared sequence: column and table oids never collide"
+        );
+        // The column also keeps its physical Iceberg field-id (the `id` field),
+        // independent of the catalog object_id (ADR-031 amendment 4).
+        assert_eq!(schema.columns[0].id, 1, "field-id (physical) is unchanged");
+    }
+
+    #[tokio::test]
+    async fn column_object_id_recovered_on_reload_prevents_reuse() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ns = vec!["t".to_string()];
+        let id = TableIdentifier::new(ns.clone(), "tbl");
+        let col_oid = {
+            let cat = fresh_catalog(&tmp).await;
+            cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+            cat.create_table(&id, schema_with_id_col("tbl"))
+                .await
+                .unwrap()
+                .columns[0]
+                .object_id
+                .expect("column object_id")
+        };
+
+        // Cold restart: load_table (via get_table) recovers the allocator floor
+        // from the persisted COLUMN object_id, so the next allocation never
+        // reuses it (columns ride in the table schema).
+        let cat2 = fresh_catalog(&tmp).await;
+        cat2.get_table(&id).await.expect("load table");
+        cat2.create_namespace(&["t2".to_string()], HashMap::new())
+            .await
+            .unwrap();
+        let next = cat2
+            .create_table(
+                &TableIdentifier::new(vec!["t2".to_string()], "tbl2"),
+                schema_with_id_col("tbl2"),
+            )
+            .await
+            .unwrap()
+            .object_id
+            .expect("table object_id");
+        assert!(
+            next > col_oid,
+            "reload recovered the floor past the column oid: {next} > {col_oid}"
+        );
     }
 
     #[tokio::test]

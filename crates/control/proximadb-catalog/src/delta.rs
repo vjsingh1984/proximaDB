@@ -809,6 +809,7 @@ impl Catalog for DeltaCatalog {
 
                 CatalogColumn {
                     id: i as i32,
+                    object_id: None,
                     name: f.name.clone(),
                     data_type: Self::spark_type_to_data_type(&f.data_type),
                     nullable: f.nullable,
@@ -1012,6 +1013,7 @@ impl Catalog for DeltaCatalog {
 
                 CatalogColumn {
                     id: i as i32,
+                    object_id: None,
                     name: f.name.clone(),
                     data_type: Self::spark_type_to_data_type(&f.data_type),
                     nullable: f.nullable,

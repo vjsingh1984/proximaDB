@@ -156,6 +156,7 @@ impl GlueCatalog {
 
         CatalogColumn {
             id: 0, // Glue doesn't expose stable column IDs
+            object_id: None,
             name: col.name().to_string(),
             data_type,
             nullable: true, // Glue doesn't track nullability well

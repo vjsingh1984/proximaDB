@@ -327,6 +327,7 @@ fn avro_field_to_column(field: &AvroStyleField, default_id: i32) -> Result<Proxi
 
     Ok(ProximaColumn {
         id: field.column_id.unwrap_or(default_id),
+        object_id: None,
         name: field.name.clone(),
         data_type,
         nullable,
@@ -493,6 +494,7 @@ mod tests {
         );
         schema.columns.push(ProximaColumn {
             id: 99,
+            object_id: None,
             name: "deleted".to_string(),
             data_type: ProximaType::Boolean,
             nullable: true,
@@ -640,6 +642,7 @@ mod tests {
         let columns = vec![
             ProximaColumn {
                 id: 10,
+                object_id: None,
                 name: "id".to_string(),
                 data_type: ProximaType::String,
                 nullable: false,
@@ -651,6 +654,7 @@ mod tests {
             },
             ProximaColumn {
                 id: 11,
+                object_id: None,
                 name: "tags".to_string(),
                 data_type: ProximaType::Array(Box::new(ProximaType::String)),
                 nullable: true,
@@ -662,6 +666,7 @@ mod tests {
             },
             ProximaColumn {
                 id: 12,
+                object_id: None,
                 name: "embedding".to_string(),
                 data_type: ProximaType::DenseVector {
                     element: DmVectorElement::Float32,
@@ -676,6 +681,7 @@ mod tests {
             },
             ProximaColumn {
                 id: 13,
+                object_id: None,
                 name: "price".to_string(),
                 data_type: ProximaType::Decimal {
                     precision: 8,
