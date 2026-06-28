@@ -6594,6 +6594,7 @@ dependencies = [
  "proximadb-index-traits",
  "proximadb-index-types",
  "proximadb-kernel",
+ "proximadb-mcp",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
  "proximadb-object-store",

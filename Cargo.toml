@@ -311,6 +311,7 @@ proximadb-quantization-types = { path = "crates/foundation/proximadb-quantizatio
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
+proximadb-mcp = { path = "crates/platform/proximadb-mcp" }
 proximadb-runtime = { path = "crates/platform/proximadb-runtime" }
 proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
