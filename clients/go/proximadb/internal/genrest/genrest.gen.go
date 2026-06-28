@@ -1296,12 +1296,6 @@ type ListCollectionsParams struct {
 	IncludeStats *bool `form:"include_stats,omitempty" json:"include_stats,omitempty"`
 }
 
-// IngestDocumentsParams defines parameters for IngestDocuments.
-type IngestDocumentsParams struct {
-	// XEmbedSource Embedding source — `native` (default) lets the server embed the record text.
-	XEmbedSource *string `json:"X-Embed-Source,omitempty"`
-}
-
 // GetRecordParams defines parameters for GetRecord.
 type GetRecordParams struct {
 	// IncludeVector Whether to include the vector in the response
@@ -2978,9 +2972,9 @@ type ClientInterface interface {
 	GetCollection(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IngestDocumentsWithBody request with any body
-	IngestDocumentsWithBody(ctx context.Context, collectionId string, params *IngestDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	IngestDocumentsWithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	IngestDocuments(ctx context.Context, collectionId string, params *IngestDocumentsParams, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	IngestDocuments(ctx context.Context, collectionId string, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpsertEntityV2WithBody request with any body
 	UpsertEntityV2WithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3213,8 +3207,8 @@ func (c *Client) GetCollection(ctx context.Context, collectionId string, reqEdit
 	return c.Client.Do(req)
 }
 
-func (c *Client) IngestDocumentsWithBody(ctx context.Context, collectionId string, params *IngestDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIngestDocumentsRequestWithBody(c.Server, collectionId, params, contentType, body)
+func (c *Client) IngestDocumentsWithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestDocumentsRequestWithBody(c.Server, collectionId, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3225,8 +3219,8 @@ func (c *Client) IngestDocumentsWithBody(ctx context.Context, collectionId strin
 	return c.Client.Do(req)
 }
 
-func (c *Client) IngestDocuments(ctx context.Context, collectionId string, params *IngestDocumentsParams, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIngestDocumentsRequest(c.Server, collectionId, params, body)
+func (c *Client) IngestDocuments(ctx context.Context, collectionId string, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestDocumentsRequest(c.Server, collectionId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4174,18 +4168,18 @@ func NewGetCollectionRequest(server string, collectionId string) (*http.Request,
 }
 
 // NewIngestDocumentsRequest calls the generic IngestDocuments builder with application/json body
-func NewIngestDocumentsRequest(server string, collectionId string, params *IngestDocumentsParams, body IngestDocumentsJSONRequestBody) (*http.Request, error) {
+func NewIngestDocumentsRequest(server string, collectionId string, body IngestDocumentsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewIngestDocumentsRequestWithBody(server, collectionId, params, "application/json", bodyReader)
+	return NewIngestDocumentsRequestWithBody(server, collectionId, "application/json", bodyReader)
 }
 
 // NewIngestDocumentsRequestWithBody generates requests for IngestDocuments with any type of body
-func NewIngestDocumentsRequestWithBody(server string, collectionId string, params *IngestDocumentsParams, contentType string, body io.Reader) (*http.Request, error) {
+func NewIngestDocumentsRequestWithBody(server string, collectionId string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4216,21 +4210,6 @@ func NewIngestDocumentsRequestWithBody(server string, collectionId string, param
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		if params.XEmbedSource != nil {
-			var headerParam0 string
-
-			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Embed-Source", runtime.ParamLocationHeader, *params.XEmbedSource)
-			if err != nil {
-				return nil, err
-			}
-
-			req.Header.Set("X-Embed-Source", headerParam0)
-		}
-
-	}
 
 	return req, nil
 }
@@ -5877,9 +5856,9 @@ type ClientWithResponsesInterface interface {
 	GetCollectionWithResponse(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*GetCollectionHTTPResp, error)
 
 	// IngestDocumentsWithBodyWithResponse request with any body
-	IngestDocumentsWithBodyWithResponse(ctx context.Context, collectionId string, params *IngestDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error)
+	IngestDocumentsWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error)
 
-	IngestDocumentsWithResponse(ctx context.Context, collectionId string, params *IngestDocumentsParams, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error)
+	IngestDocumentsWithResponse(ctx context.Context, collectionId string, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error)
 
 	// UpsertEntityV2WithBodyWithResponse request with any body
 	UpsertEntityV2WithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpsertEntityV2HTTPResp, error)
@@ -7104,16 +7083,16 @@ func (c *ClientWithResponses) GetCollectionWithResponse(ctx context.Context, col
 }
 
 // IngestDocumentsWithBodyWithResponse request with arbitrary body returning *IngestDocumentsHTTPResp
-func (c *ClientWithResponses) IngestDocumentsWithBodyWithResponse(ctx context.Context, collectionId string, params *IngestDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error) {
-	rsp, err := c.IngestDocumentsWithBody(ctx, collectionId, params, contentType, body, reqEditors...)
+func (c *ClientWithResponses) IngestDocumentsWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error) {
+	rsp, err := c.IngestDocumentsWithBody(ctx, collectionId, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseIngestDocumentsHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) IngestDocumentsWithResponse(ctx context.Context, collectionId string, params *IngestDocumentsParams, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error) {
-	rsp, err := c.IngestDocuments(ctx, collectionId, params, body, reqEditors...)
+func (c *ClientWithResponses) IngestDocumentsWithResponse(ctx context.Context, collectionId string, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error) {
+	rsp, err := c.IngestDocuments(ctx, collectionId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

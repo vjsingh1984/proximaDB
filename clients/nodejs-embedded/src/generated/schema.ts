@@ -2210,10 +2210,7 @@ export interface operations {
     ingestDocuments: {
         parameters: {
             query?: never;
-            header?: {
-                /** @description Embedding source — `native` (default) lets the server embed the record text. */
-                "X-Embed-Source"?: string | null;
-            };
+            header?: never;
             path: {
                 /** @description Target collection name/ID. */
                 collection_id: string;

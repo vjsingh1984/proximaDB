@@ -13814,12 +13814,10 @@ impl Client {
     ///
     /// Arguments:
     /// - `collection_id`: Target collection name/ID.
-    /// - `x_embed_source`: Embedding source — `native` (default) lets the server embed the record text.
     /// - `body`
     /// ```text
     /// let response = client.ingest_documents()
     /// .collection_id(collection_id)
-    /// .x_embed_source(x_embed_source)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14869,7 +14867,6 @@ pub mod builder {
     pub struct IngestDocuments<'a> {
         client: &'a super::Client,
         collection_id: Result<::std::string::String, String>,
-        x_embed_source: Result<Option<::std::option::Option<::std::string::String>>, String>,
         body: Result<types::builder::IngestDocumentsRequest, String>,
     }
     impl<'a> IngestDocuments<'a> {
@@ -14877,7 +14874,6 @@ pub mod builder {
             Self {
                 client: client,
                 collection_id: Err("collection_id was not initialized".to_string()),
-                x_embed_source: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
         }
@@ -14888,19 +14884,6 @@ pub mod builder {
             self.collection_id = value.try_into().map_err(|_| {
                 "conversion to `:: std :: string :: String` for collection_id failed".to_string()
             });
-            self
-        }
-        pub fn x_embed_source<V>(mut self, value: V) -> Self
-        where
-            V: std::convert::TryInto<::std::option::Option<::std::string::String>>,
-        {
-            self.x_embed_source = value
-                .try_into()
-                .map(Some)
-                .map_err(|_| {
-                    "conversion to `:: std :: option :: Option < :: std :: string :: String >` for x_embed_source failed"
-                        .to_string()
-                });
             self
         }
         pub fn body<V>(mut self, value: V) -> Self
@@ -14933,11 +14916,9 @@ pub mod builder {
             let Self {
                 client,
                 collection_id,
-                x_embed_source,
                 body,
             } = self;
             let collection_id = collection_id.map_err(Error::InvalidRequest)?;
-            let x_embed_source = x_embed_source.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::IngestDocumentsRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
@@ -14946,14 +14927,11 @@ pub mod builder {
                 client.baseurl,
                 encode_path(&collection_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
-            if let Some(value) = x_embed_source {
-                header_map.append("X-Embed-Source", value.to_string().try_into()?);
-            }
             #[allow(unused_mut)]
             let mut request = client
                 .client

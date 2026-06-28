@@ -13,18 +13,15 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_response import ErrorResponse
 from ...models.ingest_documents_request import IngestDocumentsRequest
 from ...models.ingest_documents_response import IngestDocumentsResponse
-from ...types import UNSET, Response, Unset
+from ...types import UNSET, Response
 
 
 def _get_kwargs(
     collection_id: str,
     *,
     body: IngestDocumentsRequest,
-    x_embed_source: Union[None, Unset, str] = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    if not isinstance(x_embed_source, Unset):
-        headers["X-Embed-Source"] = x_embed_source
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -79,7 +76,6 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: IngestDocumentsRequest,
-    x_embed_source: Union[None, Unset, str] = UNSET,
 ) -> Response[Union[ErrorResponse, IngestDocumentsResponse]]:
     """Ingest documents for native server-side embedding.
 
@@ -90,7 +86,6 @@ def sync_detailed(
 
     Args:
         collection_id (str):
-        x_embed_source (Union[None, Unset, str]):
         body (IngestDocumentsRequest):
 
     Raises:
@@ -104,7 +99,6 @@ def sync_detailed(
     kwargs = _get_kwargs(
         collection_id=collection_id,
         body=body,
-        x_embed_source=x_embed_source,
     )
 
     response = client.get_httpx_client().request(
@@ -119,7 +113,6 @@ def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     body: IngestDocumentsRequest,
-    x_embed_source: Union[None, Unset, str] = UNSET,
 ) -> Optional[Union[ErrorResponse, IngestDocumentsResponse]]:
     """Ingest documents for native server-side embedding.
 
@@ -130,7 +123,6 @@ def sync(
 
     Args:
         collection_id (str):
-        x_embed_source (Union[None, Unset, str]):
         body (IngestDocumentsRequest):
 
     Raises:
@@ -145,7 +137,6 @@ def sync(
         collection_id=collection_id,
         client=client,
         body=body,
-        x_embed_source=x_embed_source,
     ).parsed
 
 
@@ -154,7 +145,6 @@ async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: IngestDocumentsRequest,
-    x_embed_source: Union[None, Unset, str] = UNSET,
 ) -> Response[Union[ErrorResponse, IngestDocumentsResponse]]:
     """Ingest documents for native server-side embedding.
 
@@ -165,7 +155,6 @@ async def asyncio_detailed(
 
     Args:
         collection_id (str):
-        x_embed_source (Union[None, Unset, str]):
         body (IngestDocumentsRequest):
 
     Raises:
@@ -179,7 +168,6 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         collection_id=collection_id,
         body=body,
-        x_embed_source=x_embed_source,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -192,7 +180,6 @@ async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     body: IngestDocumentsRequest,
-    x_embed_source: Union[None, Unset, str] = UNSET,
 ) -> Optional[Union[ErrorResponse, IngestDocumentsResponse]]:
     """Ingest documents for native server-side embedding.
 
@@ -203,7 +190,6 @@ async def asyncio(
 
     Args:
         collection_id (str):
-        x_embed_source (Union[None, Unset, str]):
         body (IngestDocumentsRequest):
 
     Raises:
@@ -219,6 +205,5 @@ async def asyncio(
             collection_id=collection_id,
             client=client,
             body=body,
-            x_embed_source=x_embed_source,
         )
     ).parsed

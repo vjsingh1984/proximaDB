@@ -2353,14 +2353,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Embedding source — `native` (default) lets the server embed the record text.
-        in: header
-        name: X-Embed-Source
-        required: false
-        schema:
-          type:
-          - string
-          - 'null'
       requestBody:
         content:
           application/json:

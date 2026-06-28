@@ -89,7 +89,11 @@ pub struct IngestDocumentsResponse {
         `X-Tenant-ID` scopes records to a tenant; `X-Ingest-Mode` carries the billing mode.",
     params(
         ("collection_id" = String, Path, description = "Target collection name/ID."),
-        ("X-Embed-Source" = Option<String>, Header, description = "Embedding source — `native` (default) lets the server embed the record text."),
+        // X-Embed-Source is read from the HeaderMap in the handler (not a typed
+        // extractor), so it isn't declared as a utoipa param — declaring it as
+        // Option<String> trips E0599 (Option<String>: Display) in codegen. It's
+        // documented in the operation description + carried per-call by the SDK
+        // header-passthrough (ADR-041 P2).
     ),
     request_body = IngestDocumentsRequest,
     responses(
