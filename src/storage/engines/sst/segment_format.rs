@@ -638,11 +638,15 @@ mod tests {
             );
 
             // The cold scan must meter the segment read on the active trace.
+            // `bytes_read` is always-on; `range_gets` is gated behind the
+            // `io-trace` feature (ADR-027 two-class trace) — so the range_gets
+            // assertion only runs when the feature is enabled.
             let snap = crate::observability::io_trace::snapshot().unwrap();
             assert!(
                 snap.bytes_read > 0,
                 "io_trace must record bytes_read for the PAX cold scan"
             );
+            #[cfg(feature = "io-trace")]
             assert!(
                 snap.range_gets >= 1,
                 "io_trace must record at least one range-get for the PAX cold scan"
@@ -769,16 +773,24 @@ mod tests {
             (hits, snap.bytes_read, snap.range_gets)
         }));
 
-        // (1) The round-trip win: pruning reads strictly fewer bytes and gets.
+        // (1) The round-trip win: pruning reads strictly fewer bytes.
+        // `range_gets` is gated behind `io-trace` (ADR-027) — when OFF it's
+        // always 0, so only assert the bytes reduction (always-on counter).
+        // The range_gets reduction is asserted only when io-trace is enabled.
         assert!(
-            pruned.1 < baseline.1 && pruned.2 < baseline.2,
-            "metadata prune must reduce I/O: pruned ({} bytes, {} gets) vs baseline \
-             ({} bytes, {} gets)",
+            pruned.1 < baseline.1,
+            "metadata prune must reduce bytes: pruned ({}) vs baseline ({})",
             pruned.1,
-            pruned.2,
             baseline.1,
-            baseline.2
         );
+        #[cfg(feature = "io-trace")]
+        assert!(
+            pruned.2 < baseline.2,
+            "metadata prune must reduce range_gets: pruned ({}) vs baseline ({})",
+            pruned.2,
+            baseline.2,
+        );
+        #[cfg(feature = "io-trace")]
         assert!(
             pruned.2 >= 1,
             "at least the surviving block must be scanned"
