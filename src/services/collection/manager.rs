@@ -115,6 +115,14 @@ pub struct CollectionService {
     /// `with_catalog_manager` (which builds the cache). `None` ⇒ hot → canonical.
     syscat_warm_dir: Option<std::path::PathBuf>,
 
+    /// TD-CAT-2b (S3a): whether collection catalog assets are stored under a
+    /// tenant-prefixed namespace (`[tenant, ...levels]`, the convention the
+    /// DDL/DML path already uses via `resolve_table_scoped`). Read once from
+    /// `PROXIMADB_CATALOG_TENANT_NAMESPACES` at construction (default-OFF);
+    /// interior mutability so tests toggle it deterministically without env
+    /// races. Off ⇒ today's bare-namespace behavior.
+    tenant_namespaces: std::sync::atomic::AtomicBool,
+
     // NEW: Multi-tenant integration
     /// Optional tenant manager for multi-tenant isolation
     tenant_manager: Option<Arc<crate::storage::tenant::TenantManager>>,
@@ -164,8 +172,9 @@ impl CollectionService {
             catalog_manager: None,
             syscat_cache: None,    // Built in `with_catalog_manager`.
             syscat_warm_dir: None, // Set via `with_syscat_warm_dir` / env.
-            tenant_manager: None,  // Will be set via with_tenant_manager()
-            rbac_enforcer: None,   // Will be set via with_rbac_enforcer()
+            tenant_namespaces: std::sync::atomic::AtomicBool::new(Self::tenant_namespaces_enabled()),
+            tenant_manager: None, // Will be set via with_tenant_manager()
+            rbac_enforcer: None,  // Will be set via with_rbac_enforcer()
             #[cfg(feature = "experimental-turboquant")]
             turboquant_registry: None, // Will be set via with_turboquant_registry()
         })
@@ -306,6 +315,51 @@ impl CollectionService {
     /// gates that share that one primitive.
     pub(crate) fn collection_tenant_id(collection: &Collection) -> Option<String> {
         proximadb_tenant::tenant_id_of(collection)
+    }
+
+    /// TD-CAT-2b (S3a): presence-based, default-OFF gate for storing collection
+    /// catalog assets under a tenant-prefixed namespace. Read once at
+    /// construction into [`tenant_namespaces`](Self::tenant_namespaces); call
+    /// sites consult [`tenant_namespaces_on`](Self::tenant_namespaces_on).
+    fn tenant_namespaces_enabled() -> bool {
+        std::env::var_os("PROXIMADB_CATALOG_TENANT_NAMESPACES").is_some()
+    }
+
+    /// Whether collection assets are written under a tenant-prefixed namespace.
+    fn tenant_namespaces_on(&self) -> bool {
+        self.tenant_namespaces
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Test-only deterministic toggle for the tenant-namespaces gate, avoiding
+    /// the process-global env races a parallel test suite would otherwise hit.
+    #[cfg(test)]
+    fn set_tenant_namespaces_for_test(&self, on: bool) {
+        self.tenant_namespaces
+            .store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// TD-CAT-2b (S3a): tenant-scope a collection's catalog identifier by
+    /// prepending the tenant as namespace level 0 — the same convention the
+    /// DDL/DML path uses via `CatalogManager::resolve_table_scoped`. This keeps
+    /// two tenants' identically-named namespaces (`default`, …) structurally
+    /// distinct in the single multi-tenant catalog instead of colliding on the
+    /// bare `levels.join(".")` key. A no-op when the gate is off or the
+    /// collection is not tenant-scoped, so legacy bare assets are unchanged.
+    fn tenant_scoped_identifier(
+        enabled: bool,
+        tenant: Option<&str>,
+        identifier: crate::catalog::TableIdentifier,
+    ) -> crate::catalog::TableIdentifier {
+        match tenant {
+            Some(tenant) if enabled && !tenant.is_empty() => {
+                let mut namespace = Vec::with_capacity(identifier.namespace.len() + 1);
+                namespace.push(tenant.to_string());
+                namespace.extend(identifier.namespace.iter().cloned());
+                crate::catalog::TableIdentifier::new(namespace, identifier.name)
+            }
+            _ => identifier,
+        }
     }
 
     /// Default corpus-version bucket for writes without a threaded tenant context
@@ -1980,8 +2034,16 @@ impl CollectionService {
         };
 
         let catalog = catalog_manager.default_catalog().await?;
-        let identifier =
-            crate::storage::metadata::collection_mapping::collection_table_identifier(config);
+        // TD-CAT-2b (S3a): scope the asset under a tenant-prefixed namespace when
+        // the gate is on, so two tenants' identically-named namespaces don't
+        // collide on the bare key. Done once here, then every op below
+        // (namespace_exists / create / table_exists / get / drop / create_table)
+        // is consistently tenant-scoped.
+        let identifier = Self::tenant_scoped_identifier(
+            self.tenant_namespaces_on(),
+            Self::collection_tenant_id(collection).as_deref(),
+            crate::storage::metadata::collection_mapping::collection_table_identifier(config),
+        );
 
         if !catalog.namespace_exists(&identifier.namespace).await? {
             // TD-CAT-2a (audit gap G6): record the owning tenant on the persisted
@@ -2057,8 +2119,13 @@ impl CollectionService {
         };
 
         let catalog = catalog_manager.default_catalog().await?;
-        let identifier =
-            crate::storage::metadata::collection_mapping::collection_table_identifier(config);
+        // TD-CAT-2b (S3a): mirror the write-side scoping so a drop targets the
+        // same tenant-prefixed asset the upsert created.
+        let identifier = Self::tenant_scoped_identifier(
+            self.tenant_namespaces_on(),
+            Self::collection_tenant_id(collection).as_deref(),
+            crate::storage::metadata::collection_mapping::collection_table_identifier(config),
+        );
         if catalog.table_exists(&identifier).await? {
             let _ = catalog.drop_table(&identifier, false).await?;
         }
@@ -2771,6 +2838,107 @@ mod tests {
             ns.tenant_id.as_deref(),
             Some("acme"),
             "the freshly-created namespace must record the owning tenant (TD-CAT-2a)"
+        );
+
+        Ok(())
+    }
+
+    /// TD-CAT-2b (S3a): the pure scoping function prepends the tenant as
+    /// namespace level 0 only when enabled and a non-empty tenant is present.
+    #[test]
+    fn tenant_scoped_identifier_prepends_tenant_when_enabled() {
+        let base = TableIdentifier::new(vec!["default".to_string()], "t".to_string());
+
+        let scoped = CollectionService::tenant_scoped_identifier(true, Some("acme"), base.clone());
+        assert_eq!(
+            scoped.namespace,
+            vec!["acme".to_string(), "default".to_string()]
+        );
+        assert_eq!(scoped.name, "t");
+
+        // Off ⇒ unchanged; no tenant ⇒ unchanged; empty tenant ⇒ unchanged.
+        assert_eq!(
+            CollectionService::tenant_scoped_identifier(false, Some("acme"), base.clone())
+                .namespace,
+            vec!["default".to_string()]
+        );
+        assert_eq!(
+            CollectionService::tenant_scoped_identifier(true, None, base.clone()).namespace,
+            vec!["default".to_string()]
+        );
+        assert_eq!(
+            CollectionService::tenant_scoped_identifier(true, Some(""), base).namespace,
+            vec!["default".to_string()]
+        );
+    }
+
+    /// TD-CAT-2b (S3a): with the gate ON, two tenants creating an
+    /// identically-named namespace land under DISTINCT tenant-prefixed
+    /// namespaces — no collision on the bare key — each recording its own tenant.
+    #[tokio::test]
+    async fn tenant_namespaces_isolate_same_named_namespace() -> Result<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("temp dir")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("xcatalog")?;
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("service")?
+            .with_catalog_manager(catalog_manager.clone());
+        service.set_tenant_namespaces_for_test(true);
+
+        // Two collections in the SAME bare namespace `shared`, different tenants
+        // (distinct collection names — the service dedupes by name; it's the
+        // shared NAMESPACE that must not collide across tenants).
+        for tenant in ["acme", "globex"] {
+            let config = CollectionConfig {
+                name: format!("shared.{tenant}_tbl"),
+                dimension: 8,
+                primary_index: Some("default".to_string()),
+                auto_index_selection: Some(false),
+                tags: vec![format!("tenant:{tenant}")],
+                ..Default::default()
+            };
+            assert!(
+                service
+                    .create_collection(&config)
+                    .await
+                    .with_context(|| format!("create for {tenant}"))?
+                    .success
+            );
+        }
+
+        let catalog = catalog_manager
+            .default_catalog()
+            .await
+            .context("default catalog")?;
+
+        // Each tenant has its OWN `shared` namespace, recording its own tenant.
+        for tenant in ["acme", "globex"] {
+            let ns = catalog
+                .get_namespace(&[tenant.to_string(), "shared".to_string()])
+                .await
+                .with_context(|| format!("get_namespace for {tenant}"))?;
+            assert_eq!(
+                ns.tenant_id.as_deref(),
+                Some(tenant),
+                "tenant-prefixed namespace records its owning tenant"
+            );
+        }
+
+        // The bare `shared` namespace was never created — no cross-tenant
+        // collision on the shared key.
+        assert!(
+            !catalog
+                .namespace_exists(&["shared".to_string()])
+                .await
+                .context("bare namespace_exists")?,
+            "no bare `shared` namespace ⇒ tenants did not collide on the shared key"
         );
 
         Ok(())
