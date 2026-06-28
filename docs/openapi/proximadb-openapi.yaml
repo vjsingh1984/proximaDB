@@ -1050,6 +1050,77 @@ components:
       - algorithm
       - is_primary
       type: object
+    IngestDocument:
+      description: A single record submitted for native embedding + indexing.
+      properties:
+        id:
+          type: string
+        metadata:
+          additionalProperties: {}
+          description: Arbitrary metadata fields. Stored as ProximaRecord props.
+          propertyNames:
+            type: string
+          type: object
+        text:
+          description: |-
+            Raw text content. Required when `X-Embed-Source: native` (default);
+            optional when the client also supplied a vector.
+          type:
+          - string
+          - 'null'
+        vector:
+          description: |-
+            Optional client-provided vector. When present, the server skips
+            embedding for this record. Use case: SDK that already embedded
+            locally (legacy path).
+          items:
+            format: float
+            type: number
+          type:
+          - array
+          - 'null'
+      required:
+      - id
+      type: object
+    IngestDocumentsRequest:
+      properties:
+        records:
+          items:
+            $ref: '#/components/schemas/IngestDocument'
+          type: array
+      required:
+      - records
+      type: object
+    IngestDocumentsResponse:
+      properties:
+        mode:
+          type: string
+        records:
+          items:
+            $ref: '#/components/schemas/IngestedRecord'
+          type: array
+        retry_after_ms:
+          format: int64
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+      required:
+      - mode
+      - records
+      type: object
+    IngestedRecord:
+      properties:
+        dim:
+          format: int32
+          minimum: 0
+          type: integer
+        id:
+          type: string
+      required:
+      - id
+      - dim
+      type: object
     InsertError:
       description: Error details for a failed record insertion
       properties:
@@ -2271,6 +2342,53 @@ paths:
       summary: Get collection details.
       tags:
       - Collections
+  /api/v2/collections/{collection_id}/documents:
+    post:
+      description: Canonical document-ingest surface (ADR-041, spec-driven-primary). Body `{records:[{id,text,metadata}]}`; the server embeds `text` natively under `X-Embed-Source=native` (default) when no per-record `vector` is supplied. `X-Tenant-ID` scopes records to a tenant; `X-Ingest-Mode` carries the billing mode.
+      operationId: ingestDocuments
+      parameters:
+      - description: Target collection name/ID.
+        in: path
+        name: collection_id
+        required: true
+        schema:
+          type: string
+      - description: Embedding source — `native` (default) lets the server embed the record text.
+        in: header
+        name: X-Embed-Source
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestDocumentsRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestDocumentsResponse'
+          description: Ingested.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid request.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Collection not found.
+      summary: Ingest documents for native server-side embedding.
+      tags:
+      - Documents
   /api/v2/collections/{collection_id}/entities:
     post:
       operationId: upsert_entity_v2
@@ -3374,3 +3492,5 @@ tags:
   name: Query
 - description: Entity orchestration (graph node + embeddings + provenance).
   name: Entities
+- description: Native-embedding document ingest.
+  name: Documents

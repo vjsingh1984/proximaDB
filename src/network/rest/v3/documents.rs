@@ -39,7 +39,7 @@ use crate::services::{
 // ── Request / response DTOs ────────────────────────────────────────────────
 
 /// A single record submitted for native embedding + indexing.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct IngestDocument {
     pub id: String,
     /// Raw text content. Required when `X-Embed-Source: native` (default);
@@ -56,18 +56,18 @@ pub struct IngestDocument {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct IngestDocumentsRequest {
     pub records: Vec<IngestDocument>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct IngestedRecord {
     pub id: String,
     pub dim: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct IngestDocumentsResponse {
     pub mode: String,
     pub records: Vec<IngestedRecord>,
@@ -77,6 +77,27 @@ pub struct IngestDocumentsResponse {
 
 // ── Handler ────────────────────────────────────────────────────────────────
 
+#[utoipa::path(
+    post,
+    path = "/api/v2/collections/{collection_id}/documents",
+    tag = "Documents",
+    operation_id = "ingestDocuments",
+    summary = "Ingest documents for native server-side embedding.",
+    description = "Canonical document-ingest surface (ADR-041, spec-driven-primary). Body \
+        `{records:[{id,text,metadata}]}`; the server embeds `text` natively under \
+        `X-Embed-Source=native` (default) when no per-record `vector` is supplied. \
+        `X-Tenant-ID` scopes records to a tenant; `X-Ingest-Mode` carries the billing mode.",
+    params(
+        ("collection_id" = String, Path, description = "Target collection name/ID."),
+        ("X-Embed-Source" = Option<String>, Header, description = "Embedding source — `native` (default) lets the server embed the record text."),
+    ),
+    request_body = IngestDocumentsRequest,
+    responses(
+        (status = 200, description = "Ingested.", body = IngestDocumentsResponse),
+        (status = 400, description = "Invalid request.", body = crate::network::rest::openapi::ErrorResponse),
+        (status = 404, description = "Collection not found.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn ingest_documents(
     Path(collection): Path<String>,
     State(state): State<AppState>,

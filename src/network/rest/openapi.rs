@@ -50,6 +50,7 @@ use serde_json::Value;
 use utoipa::OpenApi;
 
 use crate::network::rest::v2::{collections, entities, graphs, query, records, schema};
+use crate::network::rest::v3::documents;
 
 /// Canonical ProximaDB error envelope (`{ error: { type, message, code } }`).
 ///
@@ -129,6 +130,8 @@ part of this publishable SDK surface.",
         entities::get_entity_v2,
         entities::delete_entity_v2,
         entities::search_entities_v2,
+        // Canonical document-ingest surface (ADR-041). Native server-side embedding.
+        documents::ingest_documents,
     ),
     components(
         schemas(
@@ -141,6 +144,11 @@ part of this publishable SDK surface.",
             entities::SearchEntitiesRequest,
             entities::SearchEntitiesResponse,
             entities::EntitySearchResult,
+            // Canonical document-ingest surface (ADR-041).
+            documents::IngestDocument,
+            documents::IngestDocumentsRequest,
+            documents::IngestedRecord,
+            documents::IngestDocumentsResponse,
         ),
     ),
     tags(
@@ -150,6 +158,7 @@ part of this publishable SDK surface.",
         (name = "Search", description = "Vector similarity + typed-filter search."),
         (name = "Query", description = "AQL / UQL query facade."),
         (name = "Entities", description = "Entity orchestration (graph node + embeddings + provenance)."),
+        (name = "Documents", description = "Native-embedding document ingest."),
     ),
 )]
 pub struct ApiDoc;
