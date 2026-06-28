@@ -43,8 +43,8 @@ use proximadb_relational_planner::{
 use proximadb_relational_reader::{ReaderCapabilities, ReaderError, RelationalReader, ScanContext};
 use proximadb_relational_types::{ColumnInfo, Expr, NoFunctions, RelationalRow, RelationalSchema};
 use sqlparser::ast::{
-    Expr as SqlExpr, GroupByExpr, Query as SqlQuery, SelectItem, SetExpr, Statement, TableFactor,
-    TableWithJoins,
+    BinaryOperator, Expr as SqlExpr, GroupByExpr, Query as SqlQuery, SelectItem, SetExpr,
+    Statement, TableFactor, TableWithJoins,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -1044,6 +1044,20 @@ pub struct SelectRouteExplanation {
     /// per-operator timing is a follow-up (no Volcano instrumentation yet).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_elapsed_us: Option<u64>,
+    /// ADR-004 / TD-174 (gap #4): stats-backed estimated selectivity of the
+    /// `WHERE` clause — the product of per-`col = ?` equality selectivities
+    /// (`1/ndistinct` from the resident HLL distinct count, ADR-037 producer).
+    /// A 0..1 fraction the AnvaiOps cost consumer prices. `None` (omitted) when
+    /// the query has no equality predicate, targets multiple tables, or the
+    /// collection has no resident statistics yet — correct-or-absent, never a
+    /// guessed value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_selectivity: Option<f64>,
+    /// Estimated surviving rows = `record_count × estimated_selectivity`, when
+    /// both the selectivity and the resident `record_count` are known. `None`
+    /// (omitted) otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_rows: Option<u64>,
 }
 
 /// Build the `EXPLAIN SELECT` payload. `Err` if `sql` is not a routable single
@@ -1068,7 +1082,91 @@ fn decision_to_explanation(
         physical_plan: None,
         execution_rows: None,
         execution_elapsed_us: None,
+        estimated_selectivity: None,
+        estimated_rows: None,
     }
+}
+
+/// Collect the LHS column names of top-level `col = <literal>` equality predicates
+/// in a single-table SELECT's `WHERE` clause (AND-chained). Non-equality
+/// predicates, OR branches, and `col = col` (no literal) are ignored — only the
+/// shapes statistics can estimate. Returns an empty Vec for anything else.
+fn equality_predicate_columns(query: &SqlQuery) -> Vec<String> {
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return Vec::new();
+    };
+    let Some(selection) = select.selection.as_ref() else {
+        return Vec::new();
+    };
+    let mut cols = Vec::new();
+    collect_eq_columns(selection, &mut cols);
+    cols
+}
+
+fn collect_eq_columns(expr: &SqlExpr, out: &mut Vec<String>) {
+    match expr {
+        SqlExpr::BinaryOp {
+            left,
+            op: BinaryOperator::And,
+            right,
+        } => {
+            collect_eq_columns(left, out);
+            collect_eq_columns(right, out);
+        }
+        SqlExpr::BinaryOp {
+            left,
+            op: BinaryOperator::Eq,
+            right,
+        } => {
+            // `col = <literal>`: a bare identifier on one side, a literal value on
+            // the other (either order). `col = col` has no literal → not estimable.
+            if let (Some(col), true) = (ident_name(left), is_literal(right)) {
+                out.push(col);
+            } else if let (Some(col), true) = (ident_name(right), is_literal(left)) {
+                out.push(col);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn ident_name(expr: &SqlExpr) -> Option<String> {
+    match expr {
+        SqlExpr::Identifier(id) => Some(id.value.clone()),
+        // `t.col` → the bare column name (stats are keyed by column).
+        SqlExpr::CompoundIdentifier(parts) => parts.last().map(|p| p.value.clone()),
+        _ => None,
+    }
+}
+
+fn is_literal(expr: &SqlExpr) -> bool {
+    matches!(expr, SqlExpr::Value(_))
+}
+
+/// Stats-backed selectivity + row estimate for a single-table SELECT's equality
+/// `WHERE` predicates. `eq_sel(field) -> Option<f64>` returns the per-field
+/// equality selectivity (DI seam for testing; production passes the registry).
+/// Returns `(selectivity, estimated_rows)` only when at least one predicate has a
+/// resident statistic — else `None` (caller leaves EXPLAIN unchanged). Multiple
+/// predicates multiply (independence assumption, standard CBO).
+fn stats_filter_estimate(
+    cols: &[String],
+    record_count: Option<u64>,
+    eq_sel: impl Fn(&str) -> Option<f64>,
+) -> Option<(f64, Option<u64>)> {
+    let mut selectivity = 1.0_f64;
+    let mut any = false;
+    for col in cols {
+        if let Some(s) = eq_sel(col) {
+            selectivity *= s;
+            any = true;
+        }
+    }
+    if !any {
+        return None;
+    }
+    let rows = record_count.map(|n| (n as f64 * selectivity).ceil() as u64);
+    Some((selectivity, rows))
 }
 
 /// Prepare an engaging SELECT for EXPLAIN (cold path): resolve table schemas, build
@@ -1202,6 +1300,34 @@ async fn route_and_plan_select(
         Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
     );
     let mut explanation = decision_to_explanation(&decision);
+
+    // ADR-004 / TD-174 (gap #4): disclose stats-backed selectivity for a
+    // single-table SELECT with `col = ?` equality predicate(s). Resolve the table
+    // to the canonical collection id (the key the flush path stamps stats under),
+    // multiply the resident per-field equality selectivities, and estimate
+    // surviving rows from the resident record_count. Best-effort and
+    // correct-or-absent: any unresolved table / absent statistics leaves the
+    // fields `None` (omitted from EXPLAIN) rather than guessing.
+    {
+        let mut table_names = Vec::new();
+        collect_table_names(query, &mut table_names);
+        if table_names.len() == 1 {
+            let cols = equality_predicate_columns(query);
+            if !cols.is_empty()
+                && let Some(collection_id) =
+                    dml.resolve_collection_id(&table_names[0], tenant).await
+            {
+                let registry = crate::core::statistics::statistics_registry();
+                let record_count = registry.envelope(&collection_id).map(|e| e.record_count);
+                if let Some((selectivity, rows)) = stats_filter_estimate(&cols, record_count, |f| {
+                    registry.equality_selectivity(&collection_id, f)
+                }) {
+                    explanation.estimated_selectivity = Some(selectivity);
+                    explanation.estimated_rows = rows;
+                }
+            }
+        }
+    }
     // For the DataFusion route, disclose the concrete Parquet row-group split
     // inventory (partition count + footer row/byte estimates) in place of the
     // conservative whole-collection placeholder, by reading the same object-store
@@ -1654,6 +1780,59 @@ mod tests {
         let keys: Vec<String> = names.iter().map(|n| normalize_table_key(n)).collect();
         assert!(keys.contains(&"emp".to_string()), "got {keys:?}");
         assert!(keys.contains(&"dept".to_string()), "got {keys:?}");
+    }
+
+    fn parse_query(sql: &str) -> SqlQuery {
+        let statements = Parser::parse_sql(&GenericDialect {}, sql).expect("parse");
+        let [Statement::Query(query)] = statements.as_slice() else {
+            panic!("expected query");
+        };
+        (**query).clone()
+    }
+
+    #[test]
+    fn equality_predicate_columns_extracts_and_chained_literals_only() {
+        // AND-chained equalities → both columns; `t.col` → bare name; literal on
+        // either side works.
+        let q = parse_query("SELECT * FROM t WHERE status = 'open' AND 7 = t.priority");
+        let mut cols = equality_predicate_columns(&q);
+        cols.sort();
+        assert_eq!(cols, vec!["priority".to_string(), "status".to_string()]);
+
+        // No WHERE → empty.
+        assert!(equality_predicate_columns(&parse_query("SELECT * FROM t")).is_empty());
+        // Non-equality (range) and col=col (no literal) → ignored.
+        assert!(
+            equality_predicate_columns(&parse_query("SELECT * FROM t WHERE a > 1 AND b = c"))
+                .is_empty()
+        );
+        // OR is not AND-chained equality → ignored (not estimable here).
+        assert!(
+            equality_predicate_columns(&parse_query("SELECT * FROM t WHERE a = 1 OR b = 2"))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn stats_filter_estimate_multiplies_and_estimates_rows() {
+        let cols = vec!["a".to_string(), "b".to_string(), "unknown".to_string()];
+        // a: 1/4, b: 1/5, unknown: no stat. product = 0.05; rows = ceil(1000*0.05)=50.
+        let (sel, rows) = stats_filter_estimate(&cols, Some(1000), |f| match f {
+            "a" => Some(0.25),
+            "b" => Some(0.2),
+            _ => None,
+        })
+        .expect("at least one field has a stat");
+        assert!((sel - 0.05).abs() < 1e-9, "selectivity {sel}");
+        assert_eq!(rows, Some(50));
+
+        // No field has a stat → None (EXPLAIN left unchanged, never guessed).
+        assert!(stats_filter_estimate(&cols, Some(1000), |_| None).is_none());
+        // Stat but no record_count → selectivity present, rows None.
+        let (sel2, rows2) =
+            stats_filter_estimate(&["a".to_string()], None, |_| Some(0.1)).expect("has stat");
+        assert!((sel2 - 0.1).abs() < 1e-9);
+        assert_eq!(rows2, None);
     }
 
     #[test]
