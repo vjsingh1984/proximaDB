@@ -31,6 +31,11 @@ pub mod partition_pruning;
 // CATALOG_OBJECT_MODEL #3 read-port: catalog adapter for AXIS index-location resolution.
 pub mod index_location_resolver;
 
+// ADR-035 / TD-SC-1: per-tenant system-catalog hot read cache (byte-bounded,
+// TTL'd, corpus-version-stamped) — fronts the canonical catalog so metadata
+// reads avoid the 1+N+M object-store round-trips.
+pub mod syscat_cache;
+
 // Internal schema registry (multi-model unified catalog)
 pub mod internal;
 
