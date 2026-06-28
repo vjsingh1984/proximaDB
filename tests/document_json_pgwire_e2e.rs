@@ -15,12 +15,14 @@
 //!     canonicalization; disagreement means at least one engine is wrong and the
 //!     query does not count.
 //!
-//! The conversion exposed that **7 of 11** queries are wrong today: every
-//! `->` / `->>` / `json_extract_path_text` extraction used in a SELECT projection
-//! or WHERE filter returns 0 rows on both engines (only the aggregation path, d09,
-//! works). These are held KNOWN-BAD under TD-183 — asserted to still be wrong so
-//! PR2's fix trips the guards and forces the ratchet bump — and excluded from
-//! `DOC_ACCURACY_RATCHET`. Accurate today: d01, d02, d03, d09.
+//! The accuracy conversion exposed that JSON-path extraction in a SELECT
+//! projection or WHERE filter returned 0 rows (the queries were misrouted to the
+//! document store). The routing fix (engagement-gate change in
+//! `relational_pipeline.rs`) resolved the three projections d04/d05/d08, so 7 of
+//! 11 are accurate: d01/d02/d03 (no JSON path), d09 (aggregation), d04/d05/d08
+//! (projections). The remaining four (d06/d07/d10/d11) stay KNOWN-BAD under TD-183
+//! — asserted to still be wrong so the next fix trips the guards and forces the
+//! ratchet up — and excluded from `DOC_ACCURACY_RATCHET`.
 //!
 //!   RUST_LOG=proximadb=debug cargo test --test document_json_pgwire_e2e -- --nocapture
 
@@ -33,11 +35,12 @@ use tempfile::TempDir;
 use tokio::time::sleep;
 
 /// Queries that must be verified CORRECT (anchored + differential) to count.
-/// Only 4 of 11 are accurate today — d01/d02/d03 (no JSON path) and d09 (JSON
-/// extraction via the aggregation path). The other 7 are JSON-path projections/
-/// filters that return 0 rows, held known-bad under TD-183 until PR2's fix; the
-/// ratchet rises as they are repaired.
-const DOC_ACCURACY_RATCHET: usize = 4;
+/// 7 of 11 are accurate after the JSON-path routing fix: d01/d02/d03 (no JSON
+/// path), d09 (aggregation path), and d04/d05/d08 (JSON-path projections now
+/// routed to the relational/OLAP engine). The remaining 4 (d06/d07/d10/d11) stay
+/// known-bad under TD-183 pending native JSON kernels + DataFusion fixes; the
+/// ratchet rises further as they land.
+const DOC_ACCURACY_RATCHET: usize = 7;
 
 fn free_port() -> u16 {
     let l = TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -156,20 +159,24 @@ fn doc_queries() -> Vec<(&'static str, String)> {
     ]
 }
 
-/// JSON-path bugs (TD-183): EVERY query that uses a `->` / `->>` /
-/// `json_extract_path_text` extraction in a SELECT projection or WHERE filter
-/// returns **0 rows on both engines** today (only the aggregation path, d09,
-/// handles JSON extraction). The accuracy conversion exposed that this is a whole
-/// class, not three queries. They are asserted to STAY wrong so PR2's fix trips
-/// the guard and forces the ratchet to rise. Excluded from `DOC_ACCURACY_RATCHET`.
+/// JSON-path bugs still open under TD-183, asserted to STAY wrong so the next
+/// fix trips the guard and forces the ratchet up. Excluded from the ratchet.
+///
+/// The routing fix (this PR — engagement-gate change in `relational_pipeline.rs`)
+/// resolved the three SELECT *projections* (d04/d05/d08): they now reach the
+/// relational/OLAP route and DataFusion answers them correctly. The remaining four
+/// need follow-up work that is a different concern (function registration / type
+/// coercion), tracked under TD-183 for PR3:
+///   * d06/d07 — native filter eval silently returns 0 rows for JSON functions
+///     (native scalar kernels not registered in `proximadb-functions`).
+///   * d10     — DataFusion has no `json_extract_path_text` (only `json_extract_text`);
+///     needs an alias UDF.
+///   * d11     — DataFusion cannot coerce `Utf8 = Boolean` for `(… )::boolean`.
 const KNOWN_BAD_TD183: &[&str] = &[
-    "d04_arrow_text",         // doc->>'title'                  projection
-    "d05_arrow_json",         // doc->'price'                   projection
-    "d06_filter_json_scalar", // (doc->>'price')::int > 8       filter
-    "d07_filter_json_text",   // doc->>'title' = 'alpha'        filter
-    "d08_nested_path",        // doc->'author'->>'name'         projection
-    "d10_json_extract_fn",    // json_extract_path_text(doc,..)  projection
-    "d11_bool_field",         // (doc->>'in_stock')::boolean    filter
+    "d06_filter_json_scalar", // (doc->>'price')::int > 8       filter — native eval
+    "d07_filter_json_text",   // doc->>'title' = 'alpha'        filter — native eval
+    "d10_json_extract_fn",    // json_extract_path_text(doc,..)  proj  — DF missing fn
+    "d11_bool_field",         // (doc->>'in_stock')::boolean    filter — DF cast coercion
 ];
 
 /// One result row as text cells (pgwire `simple_query` form); SQL NULL → "NULL".

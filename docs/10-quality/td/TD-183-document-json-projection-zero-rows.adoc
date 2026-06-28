@@ -59,12 +59,40 @@ harness treats a native error as single-engine and anchors d09 on DataFusion.
 * Anchored + differential coverage for all 7 queries already exists (this TD's
   guards in the accuracy harness) and will verify the fix.
 
-== Resolution plan (PR2)
+== Root cause (diagnosed)
 
-. Diagnose from the harness's per-engine report which engine drops rows and the exact
-  code site (projection lowering vs. UDF invocation vs. cast handling).
-. Fix the SELECT-projection JSON-path evaluation (and the d06 scalar-cast divergence)
-  so a projected JSON path yields one row per input row with the extracted value.
-. In `tests/document_json_pgwire_e2e.rs`: remove the fixed ids from `KNOWN_BAD_TD183`
-  and raise `DOC_ACCURACY_RATCHET` toward the full suite size (11). The existing
-  known-bad guards fail the moment the queries become correct, forcing this step.
+A plain projection/filter SELECT does not *engage* the relational pipeline (no
+join/GROUP BY/aggregate), so `try_run_relational_select_pipeline` returns `None`
+and BOTH engines are bypassed (`relational_pipeline.rs` `set_expr_engages`;
+`protocol.rs:1497` `require_engagement`). The query then falls to store-type
+dispatch (`protocol.rs:1175`) where, because the translated SQL contains
+`JSON_EXTRACT`, `detect_store_type_from_query` (`multimodel_router.rs:182`)
+misclassifies it as `DataModel::Document`. `execute_document_query`
+(`protocol.rs:2680`) ignores the projection and reads an empty document collection
+→ 0 rows. d09 escapes only because GROUP BY makes it engage the pipeline first.
+
+== Resolution
+
+**PR2 — routing fix (done):** `set_expr_engages` now also engages when a projection
+or WHERE contains a `JSON_EXTRACT[_TEXT]` / `json_extract_path_text` call, so these
+queries reach the relational/OLAP route. This resolves the three SELECT projections
+**d04/d05/d08** (DataFusion answers them; native errors on the missing kernel and is
+anchored single-engine). Ratchet raised 4 → 7.
+
+**PR3 — remaining four (open):**
+
+* **d06, d07** — native filter evaluation silently returns 0 rows for JSON
+  functions. Register `json_extract` / `json_extract_text` native scalar kernels in
+  `crates/foundation/proximadb-functions/src/lib.rs` (`register_builtin_scalars`),
+  reusing the `extract_one` logic from `src/datafusion/udf.rs`.
+* **d10** — DataFusion has no `json_extract_path_text` (only `json_extract_text`);
+  register an alias UDF in `src/datafusion/udf.rs` (and the native kernel).
+* **d11** — DataFusion cannot coerce `Utf8 = Boolean` for `(doc->>'in_stock')::boolean
+  = true`; needs cast/coercion handling on the OLAP route.
+
+Each fix removes its ids from `KNOWN_BAD_TD183` and raises `DOC_ACCURACY_RATCHET`
+toward 11; the known-bad guards fail the moment a query becomes correct, forcing the
+bump.
+
+The secondary native d09 `rebind_columns` planner error
+(`proximadb-relational-planner/src/lib.rs:1735`) is independent and out of scope.

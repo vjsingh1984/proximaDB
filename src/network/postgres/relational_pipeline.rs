@@ -1667,6 +1667,15 @@ fn set_expr_engages(body: &SetExpr) -> bool {
             // the legacy single-table path can serve — engage the relational/OLAP
             // route so it reaches DataFusion.
             let has_derived = select.from.iter().any(table_with_joins_has_derived);
+            // TD-183: a JSON-path extraction (`->`/`->>`/`json_extract_path_text`,
+            // lowered to `JSON_EXTRACT[_TEXT]` calls by the translator) in a plain
+            // projection or WHERE must engage the relational/OLAP route. Otherwise the
+            // non-engaging SELECT falls through to store-type dispatch, is misread as a
+            // *document* query because the SQL text contains `JSON_EXTRACT`, and is
+            // served by the document handler against an empty collection → 0 rows.
+            // Aggregated forms (e.g. d09 GROUP BY) already engage via `has_group_by`.
+            let has_json_extract = select.projection.iter().any(select_item_has_json_extract)
+                || select.selection.as_ref().is_some_and(expr_has_json_extract);
             has_join
                 || has_group_by
                 || select.having.is_some()
@@ -1674,7 +1683,43 @@ fn set_expr_engages(body: &SetExpr) -> bool {
                 || has_where_subquery
                 || has_projection_subquery
                 || has_derived
+                || has_json_extract
         }
+        _ => false,
+    }
+}
+
+/// True if a projected item applies a JSON-path extraction function. Mirrors
+/// [`select_item_has_aggregate`]; used by the engagement gate (TD-183).
+fn select_item_has_json_extract(item: &SelectItem) -> bool {
+    match item {
+        SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } => {
+            expr_has_json_extract(expr)
+        }
+        _ => false,
+    }
+}
+
+/// True if `expr` contains a `JSON_EXTRACT` / `JSON_EXTRACT_TEXT` /
+/// `json_extract_path_text` call anywhere in its tree. The extraction is always the
+/// outermost function or is wrapped in Cast/Nested/Unary/Binary (e.g.
+/// `(JSON_EXTRACT_TEXT(doc,'price'))::int > 8`), so walking those node kinds — the
+/// same set [`expr_has_aggregate`] walks — is sufficient.
+fn expr_has_json_extract(expr: &SqlExpr) -> bool {
+    match expr {
+        SqlExpr::Function(f) => {
+            let name = f.name.to_string().to_ascii_lowercase();
+            matches!(
+                name.rsplit('.').next().unwrap_or(&name),
+                "json_extract" | "json_extract_text" | "json_extract_path_text"
+            )
+        }
+        SqlExpr::Nested(inner) => expr_has_json_extract(inner),
+        SqlExpr::UnaryOp { expr, .. } => expr_has_json_extract(expr),
+        SqlExpr::BinaryOp { left, right, .. } => {
+            expr_has_json_extract(left) || expr_has_json_extract(right)
+        }
+        SqlExpr::Cast { expr, .. } => expr_has_json_extract(expr),
         _ => false,
     }
 }
