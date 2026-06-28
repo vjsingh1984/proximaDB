@@ -35,3 +35,17 @@ on `develop`; the `td-adr-unique` CI guard backstops). That doc, the
 all ship via git and apply to everyone — only *these* per-agent rule files are
 local. Keep the seed copies' pointer to that doc current when you update your
 local rules.
+
+== Skills (local-only, seeded like the rule files)
+
+`.claude/skills/` is gitignored too (it is per-machine state). Shared skill
+*seeds* live under `docs/agent-rules/skills/` and are committed. To activate one
+on a fresh clone or new machine, copy the seed into the local skills tree:
+
+    mkdir -p .claude/skills/td-adr-convention
+    cp docs/agent-rules/skills/td-adr-convention/SKILL.md \
+       .claude/skills/td-adr-convention/SKILL.md
+
+The `td-adr-convention` skill operationalizes the TD/ADR filing rules above (it
+points at the same `HOW_TO_FILE_TD_AND_ADR` source of truth) so an agent can file
+or migrate TD/ADR entries collision-free without re-deriving the convention.
