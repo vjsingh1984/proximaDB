@@ -23,7 +23,60 @@
 //!
 //! Tests use these via `#[test] fn` instead of `#[tokio::test] async fn`.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+/// Hard wall-clock cap for hang-prone async tests. Well above their real runtime
+/// (<1s) but far below nextest's 120s slow-timeout, so a genuine hang fails the
+/// test fast and clearly instead of stalling the whole unit job through nextest's
+/// slow-timeout + retry cycle (the measured ~20-min CI tax behind CLAUDE.md #11).
+const TEST_WATCHDOG_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Drive `body` (a closure that runs the test to completion on THIS thread) under
+/// an independent watchdog that bounds wall-clock time **even when the work blocks
+/// its thread** — a non-async deadlock (e.g. a re-entrant `std::sync::Mutex` in the
+/// Volcano executor) that an in-runtime `tokio::time::timeout` cannot interrupt,
+/// because the single runtime thread is the one that is wedged.
+///
+/// The work stays on the calling thread (so test futures need not be `Send`/
+/// `'static` — borrows are fine). A separate watchdog thread holds only an
+/// `Arc<AtomicBool>`; if `body` has not signalled completion within
+/// [`TEST_WATCHDOG_TIMEOUT`], the watchdog aborts the process. Under nextest's
+/// process-per-test isolation that fails ONLY this test (fast), instead of letting
+/// it hang to the 120s slow-timeout and be retried.
+fn with_watchdog<T>(body: impl FnOnce() -> T) -> T {
+    let done = Arc::new(AtomicBool::new(false));
+    let watchdog_done = done.clone();
+    let watchdog = std::thread::Builder::new()
+        .name("async-test-watchdog".to_string())
+        .spawn(move || {
+            let deadline = TEST_WATCHDOG_TIMEOUT;
+            let step = Duration::from_millis(50);
+            let mut waited = Duration::ZERO;
+            while waited < deadline {
+                if watchdog_done.load(Ordering::Acquire) {
+                    return;
+                }
+                std::thread::sleep(step);
+                waited += step;
+            }
+            if !watchdog_done.load(Ordering::Acquire) {
+                eprintln!(
+                    "FATAL: async test exceeded {TEST_WATCHDOG_TIMEOUT:?} — a streaming/runtime \
+                     deadlock (CLAUDE.md #11). Aborting to fail fast instead of hanging the unit \
+                     job (safe under nextest process-per-test isolation)."
+                );
+                std::process::abort();
+            }
+        })
+        .expect("spawn async-test watchdog thread");
+
+    let result = body();
+    done.store(true, Ordering::Release);
+    let _ = watchdog.join();
+    result
+}
 
 /// Run a synchronous-in-async test body without a tokio runtime.
 ///
@@ -36,7 +89,12 @@ pub fn run_sync<F, T>(f: F) -> T
 where
     F: std::future::Future<Output = T>,
 {
-    futures::executor::block_on(f)
+    // The "no yield points → can't hang" assumption did NOT hold for the Volcano
+    // streaming path (`native_volcano_stream_*` intermittently hung past 120s in
+    // CI): `try_unfold` + the executor's `std::sync::Mutex` object pools can
+    // deadlock the single block_on thread. The watchdog bounds that to a fast,
+    // clear failure.
+    with_watchdog(|| futures::executor::block_on(f))
 }
 
 /// Run an async test body on a single-threaded tokio runtime with a bounded
@@ -61,13 +119,21 @@ pub fn run_with_timeout<F, T>(timeout_secs: u64, f: F) -> T
 where
     F: std::future::Future<Output = T>,
 {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("failed to build current_thread tokio runtime for test");
-    rt.block_on(async {
-        tokio::time::timeout(Duration::from_secs(timeout_secs), f)
-            .await
-            .expect("async test timed out — investigate for a genuine deadlock")
+    // The in-runtime `tokio::time::timeout` only fires for an *async* stall; if the
+    // future BLOCKS the current_thread runtime's only thread (a sync deadlock), the
+    // timer can never run and the 30s cap never triggers — which is exactly how the
+    // streaming/DataFusion tests rode to nextest's 120s slow-timeout. Keep the inner
+    // tokio timeout as the graceful path, and wrap the whole thing in the watchdog
+    // so a thread-blocking hang is still bounded (via abort) rather than indefinite.
+    with_watchdog(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build current_thread tokio runtime for test");
+        rt.block_on(async {
+            tokio::time::timeout(Duration::from_secs(timeout_secs), f)
+                .await
+                .expect("async test timed out — investigate for a genuine deadlock")
+        })
     })
 }

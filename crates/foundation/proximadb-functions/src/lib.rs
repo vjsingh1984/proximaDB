@@ -187,9 +187,24 @@ impl ProximaFunctionRegistry {
     }
 
     /// Register the same scalar under an alias name (e.g. `ucase` → `upper`).
+    ///
+    /// The target lookup is cloned out and its `DashMap` read-guard dropped
+    /// *before* the alias insert. Holding the `get` `Ref` (a shard read-lock)
+    /// across `insert` (a shard write-lock) self-deadlocks the calling thread
+    /// whenever `alias` and `target` hash to the same shard — and DashMap's
+    /// hasher is random-seeded per process, so that collision (and the hang) was
+    /// intermittent (~1-2%/process). This was the root cause of the rare
+    /// `native_volcano_*` / SQL-function CI hang: the builtin-registry `LazyLock`
+    /// init wedged here (confirmed by stack sample), riding to nextest's 120s
+    /// slow-timeout. The registry init is on the server's first-SQL-function path
+    /// too, so this is a latent production hazard, not only a test flake.
     pub fn alias_scalar(&self, alias: &str, target: &str) {
-        if let Some(def) = self.scalars.get(&target.to_ascii_lowercase()) {
-            self.scalars.insert(alias.to_ascii_lowercase(), def.clone());
+        let target_def = self
+            .scalars
+            .get(&target.to_ascii_lowercase())
+            .map(|def| def.clone());
+        if let Some(def) = target_def {
+            self.scalars.insert(alias.to_ascii_lowercase(), def);
         }
     }
 
@@ -615,6 +630,35 @@ mod tests {
                 .unwrap(),
             ProximaValue::String("X".into())
         );
+    }
+
+    /// Regression: `alias_scalar` must not hold the target's `DashMap` read-guard
+    /// across the alias `insert` — that self-deadlocks when both keys hash to the
+    /// same shard (random per process, so it was a ~1-2% intermittent hang). Many
+    /// aliases over one target make a same-shard collision near-certain, so this
+    /// would wedge a thread WITHOUT the fix and completes instantly WITH it.
+    #[test]
+    fn alias_scalar_is_reentrancy_safe_under_shard_collisions() {
+        let r = ProximaFunctionRegistry::default();
+        r.register_scalar(ScalarFunctionDef {
+            signature: FunctionSignature {
+                name: "base".to_string(),
+                arg_types: vec![ProximaType::String],
+                variadic: false,
+                return_ty: ProximaType::String,
+                volatility: Volatility::Immutable,
+            },
+            kernel: Arc::new(|args: &[ProximaValue]| Ok(args[0].clone())),
+        });
+        // Enough aliases that two are overwhelmingly likely to share a shard.
+        for i in 0..256 {
+            r.alias_scalar(&format!("base_alias_{i}"), "base");
+        }
+        assert_eq!(r.scalar_count(), 257);
+        assert!(r.lookup_scalar("base_alias_200").is_some());
+        // Aliasing a missing target is a no-op (still no guard held across insert).
+        r.alias_scalar("orphan", "does_not_exist");
+        assert!(r.lookup_scalar("orphan").is_none());
     }
 
     #[test]
