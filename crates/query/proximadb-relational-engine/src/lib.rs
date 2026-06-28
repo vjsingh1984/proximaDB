@@ -766,6 +766,7 @@ mod tests {
         let planner = Planner::new(StaticCapabilities {
             caps: RC::full(),
             pk_columns: vec![0],
+            secondary_columns: Vec::new(),
         });
         let physical = planner.plan(logical).unwrap();
         let factory = EngineReaderFactory::new(engine.clone());
@@ -823,6 +824,7 @@ mod tests {
         let planner = Planner::new(StaticCapabilities {
             caps: RC::full(),
             pk_columns: vec![0],
+            secondary_columns: Vec::new(),
         });
         let physical = planner.plan(logical).unwrap();
         let factory = EngineReaderFactory::new(engine.clone());
@@ -863,6 +865,7 @@ mod tests {
         let planner = Planner::new(StaticCapabilities {
             caps: RC::full(),
             pk_columns: vec![0],
+            secondary_columns: Vec::new(),
         });
         let physical = planner.plan(logical).unwrap();
         let factory = EngineReaderFactory::new(engine.clone());

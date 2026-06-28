@@ -472,6 +472,16 @@ pub struct ScanExec {
     pk_emitted: bool,
     /// PkLookup row, computed at `open`.
     pk_row: Option<RelationalRow>,
+    /// For PkLookupBatch / SecondaryLookup (candidate path): the FULL
+    /// rows resolved at `open`, streamed (with projection narrowing)
+    /// by `next_row`. (TD-127 / TD-128.)
+    buffered_rows: Vec<RelationalRow>,
+    buffer_cursor: usize,
+    /// For SecondaryLookup: the reader had no built index (`Ok(None)`)
+    /// so `open` fell back to a full scan; `next_row` streams the
+    /// reader directly (it applies projection internally) instead of
+    /// the buffer. (TD-127.)
+    secondary_fell_back: bool,
 }
 
 impl ScanExec {
@@ -494,7 +504,41 @@ impl ScanExec {
             snapshot,
             pk_emitted: false,
             pk_row: None,
+            buffered_rows: Vec::new(),
+            buffer_cursor: 0,
+            secondary_fell_back: false,
         }
+    }
+
+    /// Narrow a FULL (unprojected) row to the scan's projection,
+    /// resolving names against the reader's full schema (the reader
+    /// is not `open`ed on the lookup paths, so `schema()` is the full
+    /// table schema). Shared by the PkLookup / PkLookupBatch /
+    /// SecondaryLookup candidate paths.
+    fn project_full_row(&self, row: RelationalRow) -> Result<RelationalRow, ExecError> {
+        let Some(names) = &self.projection else {
+            return Ok(row);
+        };
+        let full = self.reader.schema();
+        let mut out = Vec::with_capacity(names.len());
+        for name in names {
+            let (idx, _) = full.column_by_name(name).ok_or_else(|| {
+                ExecError::Internal(format!("projection column `{}` not in reader schema", name))
+            })?;
+            out.push(row[idx].clone());
+        }
+        Ok(out)
+    }
+
+    /// Stream the next buffered (lookup-path) row, narrowing it to the
+    /// projection. `Ok(None)` at buffer EOF.
+    fn next_buffered_row(&mut self) -> Result<Option<RelationalRow>, ExecError> {
+        if self.buffer_cursor >= self.buffered_rows.len() {
+            return Ok(None);
+        }
+        let row = self.buffered_rows[self.buffer_cursor].clone();
+        self.buffer_cursor += 1;
+        Ok(Some(self.project_full_row(row)?))
     }
 }
 
@@ -520,6 +564,40 @@ impl ExecNode for ScanExec {
                 self.pk_row = self.reader.lookup_pk(&key_values).await?;
                 self.pk_emitted = false;
             }
+            ScanAccess::PkLookupBatch { keys } => {
+                // Evaluate each constant key tuple, then probe in one batch.
+                let mut key_values = Vec::with_capacity(keys.len());
+                for k in keys {
+                    key_values.push(evaluate_key(k)?);
+                }
+                self.buffered_rows = self.reader.lookup_pk_batch(&key_values).await?;
+                self.buffer_cursor = 0;
+            }
+            ScanAccess::SecondaryLookup { column, values } => {
+                let probe_values = evaluate_key(values)?;
+                match self.reader.lookup_secondary(column, &probe_values).await? {
+                    Some(rows) => {
+                        // Index answered — stream candidates (the residual
+                        // Filter the planner kept re-checks each).
+                        self.buffered_rows = rows;
+                        self.buffer_cursor = 0;
+                        self.secondary_fell_back = false;
+                    }
+                    None => {
+                        // No built index — fall back to a full scan. The
+                        // reader applies projection/predicate internally; the
+                        // residual Filter above still re-checks for correctness.
+                        let ctx = ScanContext {
+                            projection: self.projection.clone(),
+                            predicate: self.predicate.clone(),
+                            limit: self.limit,
+                            snapshot: self.snapshot,
+                        };
+                        self.reader.open(&ctx).await?;
+                        self.secondary_fell_back = true;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -540,27 +618,20 @@ impl ExecNode for ScanExec {
                     None => return Ok(None),
                     Some(r) => r,
                 };
-                let projected = match &self.projection {
-                    None => row,
-                    Some(names) => {
-                        // Reader's schema() returns the full table
-                        // schema when not opened — exactly what we
-                        // need to resolve projection ordinals.
-                        let full = self.reader.schema();
-                        let mut out = Vec::with_capacity(names.len());
-                        for name in names {
-                            let (idx, _) = full.column_by_name(name).ok_or_else(|| {
-                                ExecError::Internal(format!(
-                                    "projection column `{}` not in reader schema",
-                                    name
-                                ))
-                            })?;
-                            out.push(row[idx].clone());
-                        }
-                        out
-                    }
-                };
-                Ok(Some(projected))
+                Ok(Some(self.project_full_row(row)?))
+            }
+            // TD-128: discrete batch — stream the buffered FULL rows,
+            // narrowing each to the projection.
+            ScanAccess::PkLookupBatch { .. } => self.next_buffered_row(),
+            // TD-127: secondary lookup — either the buffered candidate
+            // rows (narrowed) or, on the no-index fallback, the reader's
+            // own (already-projected) full-scan stream.
+            ScanAccess::SecondaryLookup { .. } => {
+                if self.secondary_fell_back {
+                    Ok(self.reader.next_row().await?)
+                } else {
+                    self.next_buffered_row()
+                }
             }
         }
     }
@@ -2427,12 +2498,15 @@ mod tests {
     /// table returns a clone of a stored `VecReader` source.
     struct VecReaderFactory {
         sources: Mutex<HashMap<String, (RelationalSchema, Vec<RelationalRow>, Vec<usize>)>>,
+        /// Optional non-PK secondary-index ordinals per table (TD-127).
+        secondary: Mutex<HashMap<String, Vec<usize>>>,
     }
 
     impl VecReaderFactory {
         fn new() -> Self {
             Self {
                 sources: Mutex::new(HashMap::new()),
+                secondary: Mutex::new(HashMap::new()),
             }
         }
         fn register(
@@ -2447,6 +2521,14 @@ mod tests {
                 .unwrap()
                 .insert(name.to_string(), (schema, rows, pk_columns));
         }
+        /// Register a non-PK secondary index on the given ordinals (TD-127),
+        /// so the table's reader answers `lookup_secondary` for them.
+        fn register_secondary(&self, name: &str, columns: Vec<usize>) {
+            self.secondary
+                .lock()
+                .unwrap()
+                .insert(name.to_string(), columns);
+        }
     }
 
     impl ReaderFactory for VecReaderFactory {
@@ -2456,7 +2538,16 @@ mod tests {
                 .get(&table.name)
                 .ok_or_else(|| ExecError::Internal(format!("no table {}", table.name)))?
                 .clone();
-            Ok(Box::new(VecReader::new(schema, rows, pk)))
+            let secondary = self
+                .secondary
+                .lock()
+                .unwrap()
+                .get(&table.name)
+                .cloned()
+                .unwrap_or_default();
+            Ok(Box::new(
+                VecReader::new(schema, rows, pk).with_secondary_index(secondary),
+            ))
         }
     }
 
@@ -3360,6 +3451,114 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].len(), 1, "row should be narrowed to one column");
         assert_eq!(rows[0][0], ProximaValue::String("bob".into()));
+    }
+
+    // ----- PK batch lookup (TD-128) ------------------------------------
+
+    #[tokio::test]
+    async fn scan_pk_lookup_batch_returns_matching_rows() {
+        let plan = PhysicalPlan::Scan {
+            table: TableId::new("users"),
+            output_schema: users_schema(),
+            projection: None,
+            predicate: None,
+            limit: None,
+            access: ScanAccess::PkLookupBatch {
+                keys: vec![
+                    vec![Expr::literal(ProximaValue::Int64(1))],
+                    vec![Expr::literal(ProximaValue::Int64(3))],
+                    vec![Expr::literal(ProximaValue::Int64(999))], // miss
+                ],
+            },
+        };
+        let f = factory_with_users();
+        let mut exec = build_executor(plan, &f, &ExecutionContext::default()).unwrap();
+        exec.open().await.unwrap();
+        let rows = collect(&mut *exec).await.unwrap();
+        assert_eq!(rows.len(), 2, "two hits, miss omitted");
+        let names: Vec<&str> = rows
+            .iter()
+            .map(|r| match &r[1] {
+                ProximaValue::String(s) => s.as_str(),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert!(names.contains(&"alice"));
+        assert!(names.contains(&"carol"));
+    }
+
+    #[tokio::test]
+    async fn scan_pk_lookup_batch_applies_projection() {
+        let narrowed =
+            RelationalSchema::new(vec![ColumnInfo::new("name", ProximaType::String, true)]);
+        let plan = PhysicalPlan::Scan {
+            table: TableId::new("users"),
+            output_schema: narrowed,
+            projection: Some(vec!["name".into()]),
+            predicate: None,
+            limit: None,
+            access: ScanAccess::PkLookupBatch {
+                keys: vec![
+                    vec![Expr::literal(ProximaValue::Int64(1))],
+                    vec![Expr::literal(ProximaValue::Int64(2))],
+                ],
+            },
+        };
+        let f = factory_with_users();
+        let mut exec = build_executor(plan, &f, &ExecutionContext::default()).unwrap();
+        exec.open().await.unwrap();
+        let rows = collect(&mut *exec).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.len() == 1), "narrowed to one column");
+    }
+
+    // ----- Secondary lookup (TD-127) -----------------------------------
+
+    #[tokio::test]
+    async fn scan_secondary_lookup_returns_candidates() {
+        // Secondary index on `name` (ordinal 1).
+        let plan = PhysicalPlan::Scan {
+            table: TableId::new("users"),
+            output_schema: users_schema(),
+            projection: None,
+            predicate: None,
+            limit: None,
+            access: ScanAccess::SecondaryLookup {
+                column: "name".into(),
+                values: vec![Expr::literal(ProximaValue::String("bob".into()))],
+            },
+        };
+        let f = factory_with_users();
+        f.register_secondary("users", vec![1]);
+        let mut exec = build_executor(plan, &f, &ExecutionContext::default()).unwrap();
+        exec.open().await.unwrap();
+        let rows = collect(&mut *exec).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][0], ProximaValue::Int64(2));
+    }
+
+    #[tokio::test]
+    async fn scan_secondary_lookup_falls_back_to_full_scan_without_index() {
+        // No secondary index registered → reader answers Ok(None) → the
+        // executor falls back to a full scan (all rows). The residual
+        // Filter the planner keeps would re-narrow in a full plan; here we
+        // assert the fallback streams every row rather than erroring.
+        let plan = PhysicalPlan::Scan {
+            table: TableId::new("users"),
+            output_schema: users_schema(),
+            projection: None,
+            predicate: None,
+            limit: None,
+            access: ScanAccess::SecondaryLookup {
+                column: "name".into(),
+                values: vec![Expr::literal(ProximaValue::String("bob".into()))],
+            },
+        };
+        let f = factory_with_users(); // NO register_secondary
+        let mut exec = build_executor(plan, &f, &ExecutionContext::default()).unwrap();
+        exec.open().await.unwrap();
+        let rows = collect(&mut *exec).await.unwrap();
+        assert_eq!(rows.len(), 3, "fallback full scan emits all rows");
     }
 
     // ----- Values ------------------------------------------------------

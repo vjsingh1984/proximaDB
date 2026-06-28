@@ -97,11 +97,11 @@ NOTE: `Pri` = product priority (CRIT/HIGH/MED/LOW). The status line in the `Note
 |===
 | ID | Area | Pri | Status | Dim | Pillar | Notes — problem → next action (key location; deps)
 
-| TD-127 | OLTP secondary indexes | HIGH | Open | D4 | PERF
-| Volcano point-lookup covers PK only (`ScanAccess::PkLookup`); code-graph lookups by name/file fall to full-scan+filter. → secondary-index access path + reader cap `secondary_lookup` in `proximadb-relational-planner` (`push_predicates`) + `record_store.rs`. See `CODE_GRAPH_CORRELATED_SUBSTRATE_2026_06_22.adoc`.
+| TD-127 | OLTP secondary indexes | HIGH | Partial | D4 | PERF
+| *Volcano access path landed (this PR):* `ScanAccess::SecondaryLookup` + reader cap `secondary_lookup` in `proximadb-relational-planner` (`push_predicates`), wired to the existing `TableRecordStore::lookup_secondary` hash index (PR #215). Correct-but-dormant: `lookup_secondary` returns `None` → graceful FullScan fallback until a SQL `CREATE INDEX`→catalog `secondary_indexes` surface lands. *Residual:* `CREATE INDEX` DDL wiring (overlaps TD-061). See `CODE_GRAPH_CORRELATED_SUBSTRATE_2026_06_22.adoc`.
 
-| TD-128 | OLTP IN-list / range pushdown | HIGH | Open | D4 | PERF
-| `WHERE col IN (...)` / `BETWEEN` not pushed to a multi-key batch (full-scan+filter today). → planner predicate pushdown + `ScanAccess` multi-key batch; reader `pk_lookup_batch`. Companion to TD-127.
+| TD-128 | OLTP IN-list / range pushdown (discrete batches) | HIGH | Resolved | D4 | PERF
+| *Resolved (this PR):* `WHERE pk IN (...)` / eq-OR lowers to `ScanAccess::PkLookupBatch` (single-col PK) via `proximadb-relational-planner` `push_predicates` + reader `pk_lookup_batch`, in the Volcano path pgwire drives (EXPLAIN discloses `access=PkLookupBatch`). Pending archive move. *Deferred (new follow-on TD):* true range (`BETWEEN`→`RangeScan`) — no ordered/range index exists; ranges keep `zone_map_skip`.
 
 | TD-076 | pgwire SQL parity Phase 2/3 (ADR-018) | MED | Open | D4 | OE
 | Phase 1 (basic DML + vector-distance) wired. Phase 2 (`ORDER BY`/aggregates/joins/`pg_class`) + Phase 3 (PG parity) gap; live probe found crashes on aggregates/joins. v0.2 ships pgwire Beta @ Phase 1. See ADR-018.

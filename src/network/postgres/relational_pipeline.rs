@@ -166,6 +166,7 @@ pub async fn try_run_select(
         let resolver = StaticCapabilities {
             caps: ReaderCapabilities::full(),
             pk_columns: Vec::new(),
+            secondary_columns: Vec::new(),
         };
         return Some(run_plan(&factory, resolver, logical, controls).await);
     }
@@ -416,7 +417,17 @@ fn plan_over_snapshot(
         .iter()
         .map(|(key, prepared)| (key.clone(), prepared.pk_columns.clone()))
         .collect();
-    let resolver = SnapshotCapabilities { pk_by_table };
+    // TD-127: per-table secondary-indexed columns so the planner can rewrite a
+    // non-PK equality / IN-list to ScanAccess::SecondaryLookup.
+    let secondary_by_table: HashMap<String, Vec<String>> = snapshot
+        .tables
+        .iter()
+        .map(|(key, prepared)| (key.clone(), prepared.secondary_columns.clone()))
+        .collect();
+    let resolver = SnapshotCapabilities {
+        pk_by_table,
+        secondary_by_table,
+    };
     let planner = Planner::new(resolver);
     Some(planner.plan(logical).map_err(|e| format!("plan: {e}")))
 }
@@ -521,6 +532,11 @@ struct PreparedTable {
     table_name: String,
     schema: RelationalSchema,
     pk_columns: Vec<usize>,
+    /// TD-127: names of this table's single-column non-PK secondary indexes
+    /// (from `schema_secondary_index_columns`). Threaded into the planner's
+    /// `CapabilityResolver::secondary_index_columns` so an equality / IN on
+    /// one of these columns can rewrite to `ScanAccess::SecondaryLookup`.
+    secondary_columns: Vec<String>,
 }
 
 impl PreparedTable {
@@ -540,6 +556,9 @@ impl PreparedTable {
             table_name: name.to_string(),
             schema: RelationalSchema::new(cols),
             pk_columns: pk,
+            secondary_columns: crate::services::record_store::schema_secondary_index_columns(
+                schema,
+            ),
         }
     }
 }
@@ -588,17 +607,31 @@ impl ReaderFactory for SnapshotCatalog {
 /// route). ADR-018 Phase 2 (pgwire SQL parity); TD-076.
 struct SnapshotCapabilities {
     pk_by_table: HashMap<String, Vec<usize>>,
+    /// TD-127: per-table secondary-indexed column names. Empty / absent =
+    /// no secondary index → planner keeps a full scan + filter.
+    secondary_by_table: HashMap<String, Vec<String>>,
 }
 
 impl CapabilityResolver for SnapshotCapabilities {
     fn capabilities(&self, _table: &TableId) -> ReaderCapabilities {
-        // Unchanged pushdown behavior (projection/predicate); PK-lookup is gated
-        // per-table by `primary_key` below.
+        // Unchanged pushdown behavior (projection/predicate). PK-lookup,
+        // PK-batch (TD-128) and secondary-lookup (TD-127) are advertised here
+        // but gated per-table by `primary_key` / `secondary_index_columns`
+        // below, so a table without the relevant index keeps a full scan.
         ReaderCapabilities::full()
+            .with_pk_lookup_batch(true)
+            .with_secondary_lookup(true)
     }
 
     fn primary_key(&self, table: &TableId) -> Vec<usize> {
         self.pk_by_table
+            .get(&normalize_table_key(&table.name))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn secondary_index_columns(&self, table: &TableId) -> Vec<String> {
+        self.secondary_by_table
             .get(&normalize_table_key(&table.name))
             .cloned()
             .unwrap_or_default()
@@ -660,9 +693,14 @@ impl RelationalReader for DmlTableReader {
 
     fn capabilities(&self) -> ReaderCapabilities {
         // Honors projection + predicate + limit + single-column PK lookup
-        // (see `lookup_pk`). The planner gates PkLookup per-table via the
-        // resolver's `primary_key`, so this flag is informational here.
-        ReaderCapabilities::full().with_pk_lookup(true)
+        // (see `lookup_pk`), discrete PK batch (TD-128, `lookup_pk_batch`) and
+        // OLTP secondary lookup (TD-127, `lookup_secondary`). The planner gates
+        // each per-table via the resolver's `primary_key` /
+        // `secondary_index_columns`, so these flags are informational here.
+        ReaderCapabilities::full()
+            .with_pk_lookup(true)
+            .with_pk_lookup_batch(true)
+            .with_secondary_lookup(true)
     }
 
     fn schema(&self) -> &RelationalSchema {
@@ -751,6 +789,80 @@ impl RelationalReader for DmlTableReader {
         );
         self.dml
             .point_lookup_relational(&self.table_name, &key_str, self.tenant.as_ref())
+            .await
+            .map_err(|e| ReaderError::Storage(e.to_string()))
+    }
+
+    /// TD-128: discrete multi-key OLTP point-read (`PK IN (...)` / eq-OR).
+    /// Forwards to [`DmlService::point_lookup_batch_relational`], which reuses
+    /// the same `get_by_key` path (dead-record-filtered) as the single-key
+    /// fast-path. Single-column PK only; SQL NULL keys can't match a stored oid
+    /// and are skipped. Returns the FULL candidate rows (the executor narrows).
+    async fn lookup_pk_batch(
+        &self,
+        keys: &[Vec<ProximaValue>],
+    ) -> Result<Vec<RelationalRow>, ReaderError> {
+        let mut key_strs = Vec::with_capacity(keys.len());
+        for key in keys {
+            if key.len() != 1 {
+                return Err(ReaderError::PkArityMismatch {
+                    expected: 1,
+                    actual: key.len(),
+                });
+            }
+            if let Some(s) = text_encode(&key[0]) {
+                key_strs.push(s);
+            }
+        }
+        tracing::debug!(
+            target: "proximadb::pgwire::new_pipeline",
+            access_path = "PkLookupBatch",
+            table = %self.table_name,
+            keys = key_strs.len(),
+            "relational PK batch point lookup"
+        );
+        self.dml
+            .point_lookup_batch_relational(&self.table_name, &key_strs, self.tenant.as_ref())
+            .await
+            .map_err(|e| ReaderError::Storage(e.to_string()))
+    }
+
+    /// TD-127: OLTP secondary-index point-read. Forwards to
+    /// [`DmlService::secondary_lookup_relational`], which probes the store's
+    /// single-column hash index and re-materializes each live candidate via
+    /// `get_by_key` (dead-record-filtered). `Ok(None)` (no built index, or all
+    /// probe values NULL) → the executor falls back to a full scan + the
+    /// residual filter; `Ok(Some(rows))` → FULL candidate rows (the executor
+    /// narrows and the residual filter re-checks — the index only narrows).
+    async fn lookup_secondary(
+        &self,
+        column: &str,
+        values: &[ProximaValue],
+    ) -> Result<Option<Vec<RelationalRow>>, ReaderError> {
+        let mut value_strs = Vec::with_capacity(values.len());
+        for v in values {
+            if let Some(s) = text_encode(v) {
+                value_strs.push(s);
+            }
+        }
+        if value_strs.is_empty() {
+            // No probe-able (non-NULL) values — let the executor scan + filter.
+            return Ok(None);
+        }
+        tracing::debug!(
+            target: "proximadb::pgwire::new_pipeline",
+            access_path = "SecondaryLookup",
+            table = %self.table_name,
+            column = %column,
+            "relational secondary index point lookup"
+        );
+        self.dml
+            .secondary_lookup_relational(
+                &self.table_name,
+                column,
+                &value_strs,
+                self.tenant.as_ref(),
+            )
             .await
             .map_err(|e| ReaderError::Storage(e.to_string()))
     }
@@ -1575,7 +1687,12 @@ mod tests {
         let mut pk_by_table = HashMap::new();
         pk_by_table.insert("users".to_string(), vec![0]); // single-col PK at ordinal 0
         pk_by_table.insert("edges".to_string(), Vec::new()); // composite/no-PK → none
-        let resolver = SnapshotCapabilities { pk_by_table };
+        let mut secondary_by_table = HashMap::new();
+        secondary_by_table.insert("users".to_string(), vec!["name".to_string()]);
+        let resolver = SnapshotCapabilities {
+            pk_by_table,
+            secondary_by_table,
+        };
 
         // Single-col PK table → planner can pick PkLookup (name normalized).
         assert_eq!(resolver.primary_key(&TableId::new("users")), vec![0]);
@@ -1585,6 +1702,28 @@ mod tests {
         assert!(resolver.primary_key(&TableId::new("unknown")).is_empty());
         // Pushdown capabilities unchanged (pk_lookup gated per-table by primary_key).
         assert!(resolver.capabilities(&TableId::new("users")).pk_lookup);
+        // TD-128/TD-127: batch + secondary advertised (gated per-table below).
+        assert!(
+            resolver
+                .capabilities(&TableId::new("users"))
+                .pk_lookup_batch
+        );
+        assert!(
+            resolver
+                .capabilities(&TableId::new("users"))
+                .secondary_lookup
+        );
+        // TD-127: secondary-indexed columns surfaced per-table (name-normalized);
+        // unknown tables → empty → planner keeps a full scan.
+        assert_eq!(
+            resolver.secondary_index_columns(&TableId::new("USERS")),
+            vec!["name".to_string()]
+        );
+        assert!(
+            resolver
+                .secondary_index_columns(&TableId::new("edges"))
+                .is_empty()
+        );
     }
 
     #[test]
