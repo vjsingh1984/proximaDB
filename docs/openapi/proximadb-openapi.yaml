@@ -755,6 +755,14 @@ components:
           description: How many of the top vector seeds to expand from (bounded expansion).
           minimum: 0
           type: integer
+        min_weight_fraction:
+          description: |-
+            Cost-routing policy inputs (TD-141): drop negligible modalities (weight fraction) and budget each.
+            When absent, fusion is unbounded.
+          format: float
+          type:
+          - number
+          - 'null'
         query_vector:
           description: Query embedding for the ANN seed.
           items:
@@ -764,6 +772,11 @@ components:
         rrf:
           description: Use the rank-based RRF fallback instead of PIT-calibrated linear.
           type: boolean
+        total_budget:
+          minimum: 0
+          type:
+          - integer
+          - 'null'
         vector_collection:
           description: Vector collection to seed from (its records co-indexed with this graph by `oid`).
           type: string
