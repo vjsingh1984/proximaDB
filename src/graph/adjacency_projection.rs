@@ -32,11 +32,14 @@ use proximadb_graph::projection::{
     ProjectionResult, TopologyApplyResult, TopologyEpoch, TopologyFormat,
     adjacency_entries_for_edge,
 };
-use proximadb_graph::record::{CanonicalEdge, CanonicalNode, GraphNodeKey};
+use proximadb_graph::record::{
+    CanonicalEdge, CanonicalNode, GraphNodeKey, canonical_edge_from_record,
+    canonical_node_from_record,
+};
 use proximadb_records::{ProximaRecord, ProximaTree, ProximaTreeNode};
 
 use crate::graph::{Edge, Node};
-use crate::graph::{PropertyValue, property_value};
+use crate::graph::{PropertyArray, PropertyObject, PropertyValue, property_value};
 
 /// In-memory adjacency table projection for one graph dataset.
 #[derive(Debug)]
@@ -253,6 +256,110 @@ pub fn node_to_canonical_record(graph_id: &str, node: &Node) -> ProximaRecord {
     canonical.into_proxima_record()
 }
 
+/// Reconstruct the root graph node compatibility shape from a canonical record —
+/// the inverse of [`node_to_canonical_record`]. Returns `None` if the record is
+/// not a graph-node record. Used by the cold-payload tier (TD-168) to materialize
+/// a `Node` fetched from the canonical record store on a cache miss.
+///
+/// Fields the forward projection does not persist are reconstructed as defaults:
+/// `embedding` is `None`, and `labels` carries the single stored label (the
+/// canonical record keeps one label, not the full multi-label set).
+pub fn node_from_canonical_record(record: &ProximaRecord) -> Option<Node> {
+    let canonical = canonical_node_from_record(record)?;
+    let labels = if canonical.node_label.is_empty() {
+        Vec::new()
+    } else {
+        vec![canonical.node_label]
+    };
+    Some(Node {
+        id: canonical.key.node_id,
+        labels,
+        properties: tree_to_property_map(&canonical.properties),
+        embedding: None,
+        created_at_ms: ns_to_ms(canonical.created_at_ns),
+        updated_at_ms: ns_to_ms(canonical.updated_at_ns),
+    })
+}
+
+/// Reconstruct the root graph edge compatibility shape from a canonical record —
+/// the inverse of [`edge_to_canonical_record`]. Endpoints are recovered by
+/// reversing the canonical node oid (`graph/{graph_id}/node/{node_id}`). `weight`
+/// is not persisted by the forward projection and is reconstructed as `None`.
+pub fn edge_from_canonical_record(record: &ProximaRecord) -> Option<Edge> {
+    let canonical = canonical_edge_from_record(record)?;
+    let graph_id = canonical.key.graph_id.clone();
+    Some(Edge {
+        id: canonical.key.edge_id,
+        from_node_id: node_id_from_oid(&canonical.src_node_oid, &graph_id),
+        to_node_id: node_id_from_oid(&canonical.dst_node_oid, &graph_id),
+        edge_type: canonical.edge_label,
+        properties: tree_to_property_map(&canonical.properties),
+        weight: None,
+        created_at_ms: ns_to_ms(canonical.created_at_ns),
+        updated_at_ms: ns_to_ms(canonical.updated_at_ns),
+    })
+}
+
+/// Recover the original node id from a canonical node oid
+/// (`graph/{graph_id}/node/{node_id}`). Falls back to the whole oid if the prefix
+/// does not match — never panics.
+fn node_id_from_oid(oid: &str, graph_id: &str) -> String {
+    oid.strip_prefix(&format!("graph/{graph_id}/node/"))
+        .unwrap_or(oid)
+        .to_string()
+}
+
+/// Canonical record clock is nanoseconds; the graph model carries milliseconds.
+fn ns_to_ms(ns: i64) -> i64 {
+    ns / 1_000_000
+}
+
+fn tree_to_property_map(tree: &ProximaTree) -> std::collections::HashMap<String, PropertyValue> {
+    tree.iter()
+        .map(|(key, node)| (key.clone(), tree_node_to_property_value(node)))
+        .collect()
+}
+
+fn tree_node_to_property_value(node: &ProximaTreeNode) -> PropertyValue {
+    match node {
+        ProximaTreeNode::Object(fields) => PropertyValue {
+            value: Some(property_value::Value::ObjectValue(PropertyObject {
+                fields: fields
+                    .iter()
+                    .map(|(key, child)| (key.clone(), tree_node_to_property_value(child)))
+                    .collect(),
+            })),
+        },
+        ProximaTreeNode::Value(value) => proxima_value_to_property_value(value),
+    }
+}
+
+fn proxima_value_to_property_value(value: &ProximaValue) -> PropertyValue {
+    use property_value::Value;
+    // Inverse of `property_value_to_proxima`. Graph properties only ever serialize
+    // the variants handled below; any other `ProximaValue` is not part of the graph
+    // property shape, so it maps defensively to an empty value rather than panicking.
+    let inner = match value {
+        ProximaValue::String(v) => Some(Value::StringValue(v.clone())),
+        ProximaValue::Int64(v) => Some(Value::IntValue(*v)),
+        ProximaValue::Float64(v) => Some(Value::DoubleValue(*v)),
+        ProximaValue::Boolean(v) => Some(Value::BoolValue(*v)),
+        ProximaValue::Binary(v) => Some(Value::BytesValue(v.clone())),
+        ProximaValue::Array(items) => Some(Value::ArrayValue(PropertyArray {
+            values: items.iter().map(proxima_value_to_property_value).collect(),
+        })),
+        ProximaValue::Struct(fields) => Some(Value::ObjectValue(PropertyObject {
+            fields: fields
+                .iter()
+                .map(|(key, child)| (key.clone(), proxima_value_to_property_value(child)))
+                .collect(),
+        })),
+        ProximaValue::DenseVector(v) => Some(Value::VectorValue(v.clone())),
+        _ => None,
+    };
+    PropertyValue { value: inner }
+}
+
 fn property_map_to_tree(
     properties: &std::collections::HashMap<String, PropertyValue>,
 ) -> ProximaTree {
@@ -464,6 +571,97 @@ mod tests {
                 "Ada".to_string()
             )))
         );
+    }
+
+    fn prop_str(s: &str) -> PropertyValue {
+        PropertyValue {
+            value: Some(property_value::Value::StringValue(s.to_string())),
+        }
+    }
+    fn prop_int(i: i64) -> PropertyValue {
+        PropertyValue {
+            value: Some(property_value::Value::IntValue(i)),
+        }
+    }
+
+    #[test]
+    fn node_round_trips_through_canonical_record() {
+        // TD-168: a node fetched from the cold record store must reconstruct
+        // identically to the original (over the fields the canonical record
+        // persists — single label, no embedding).
+        let mut properties = HashMap::new();
+        properties.insert("name".to_string(), prop_str("Ada"));
+        properties.insert("rank".to_string(), prop_int(7));
+        properties.insert(
+            "tags".to_string(),
+            PropertyValue {
+                value: Some(property_value::Value::ArrayValue(PropertyArray {
+                    values: vec![prop_str("a"), prop_str("b")],
+                })),
+            },
+        );
+        properties.insert(
+            "meta".to_string(),
+            PropertyValue {
+                value: Some(property_value::Value::ObjectValue(PropertyObject {
+                    fields: {
+                        let mut m = HashMap::new();
+                        m.insert("k".to_string(), prop_int(1));
+                        m
+                    },
+                })),
+            },
+        );
+        let node = Node {
+            id: "n1".to_string(),
+            labels: vec!["Person".to_string()],
+            properties,
+            embedding: None,
+            created_at_ms: 10,
+            updated_at_ms: 20,
+        };
+
+        let record = node_to_canonical_record("g1", &node);
+        let restored = node_from_canonical_record(&record).expect("node record");
+        assert_eq!(restored, node);
+    }
+
+    #[test]
+    fn edge_round_trips_through_canonical_record() {
+        // TD-168: endpoints are recovered by reversing the canonical node oid;
+        // `weight` is not persisted by the projection, so the original must omit
+        // it for an identity round-trip.
+        let mut properties = HashMap::new();
+        properties.insert("since".to_string(), prop_int(2020));
+        let edge = Edge {
+            id: "e1".to_string(),
+            from_node_id: "n1".to_string(),
+            to_node_id: "n2".to_string(),
+            edge_type: "KNOWS".to_string(),
+            properties,
+            weight: None,
+            created_at_ms: 10,
+            updated_at_ms: 20,
+        };
+
+        let record = edge_to_canonical_record("g1", &edge);
+        let restored = edge_from_canonical_record(&record).expect("edge record");
+        assert_eq!(restored, edge);
+    }
+
+    #[test]
+    fn from_record_rejects_wrong_element_kind() {
+        // A node record is not an edge and vice-versa.
+        let node_rec = node_to_canonical_record(
+            "g1",
+            &Node {
+                id: "n1".to_string(),
+                labels: vec!["Person".to_string()],
+                ..Default::default()
+            },
+        );
+        assert!(edge_from_canonical_record(&node_rec).is_none());
+        assert!(node_from_canonical_record(&node_rec).is_some());
     }
 
     #[tokio::test]

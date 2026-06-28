@@ -131,7 +131,13 @@ impl super::GraphOperationsService {
             ));
         }
         let engine = self.get_or_create_graph_engine(graph_id).await?;
-        engine.get_edge(id)
+        if let Some(edge) = engine.get_edge(id)? {
+            return Ok(Some(edge));
+        }
+        // TD-168 cold-payload tier (gated default-OFF): on a hot miss, serve from
+        // the byte-budgeted cache over the canonical record store. The gate is
+        // checked inside `cold_fetch_edge` (returns today's `None` when off).
+        self.cold_fetch_edge(graph_id, id).await
     }
 
     /// Query edges by endpoints, properties and types.
@@ -848,6 +854,115 @@ mod tests {
                 .expect("get deleted node")
                 .is_none()
         );
+    }
+
+    /// TD-168 cold-payload tier: a node/edge whose payload is durable in the
+    /// canonical record store but NOT resident in the engine is servable when the
+    /// gate is ON, and yields `None` (today's behavior) when OFF. Process-isolated
+    /// under nextest, so the env gate does not leak across tests.
+    #[tokio::test]
+    async fn cold_payload_tier_serves_node_and_edge_on_engine_miss() {
+        let graph_id = format!("cold_payload_test_{}", std::process::id());
+        let graph_id = graph_id.as_str();
+        let record_store = Arc::new(MemoryRecordStore::default());
+
+        // Seed canonical records directly — the engine never sees these, so a hit
+        // can only come from the cold record-store path.
+        let node = Node {
+            id: "cold_n1".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: HashMap::new(),
+            embedding: None,
+            created_at_ms: 7,
+            updated_at_ms: 9,
+        };
+        let edge = Edge {
+            id: "cold_e1".to_string(),
+            from_node_id: "cold_n1".to_string(),
+            to_node_id: "cold_n2".to_string(),
+            edge_type: "KNOWS".to_string(),
+            properties: HashMap::new(),
+            weight: None,
+            created_at_ms: 7,
+            updated_at_ms: 9,
+        };
+        record_store
+            .upsert_record(
+                crate::graph::adjacency_projection::node_to_canonical_record(graph_id, &node),
+            )
+            .await
+            .expect("seed node record");
+        record_store
+            .upsert_record(
+                crate::graph::adjacency_projection::edge_to_canonical_record(graph_id, &edge),
+            )
+            .await
+            .expect("seed edge record");
+
+        let service =
+            GraphOperationsService::new().with_canonical_record_store(record_store.clone());
+        service
+            .create_graph_collection(CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .expect("create graph");
+
+        // Gate OFF (default): engine miss → None, no cold-fetch.
+        unsafe { std::env::remove_var("PROXIMADB_GRAPH_COLD_PAYLOADS") };
+        assert!(
+            service
+                .get_node(graph_id, &"cold_n1".to_string())
+                .await
+                .expect("get_node off")
+                .is_none(),
+            "gate OFF must not cold-fetch nodes"
+        );
+        assert!(
+            service
+                .get_edge(graph_id, &"cold_e1".to_string())
+                .await
+                .expect("get_edge off")
+                .is_none(),
+            "gate OFF must not cold-fetch edges"
+        );
+
+        // Gate ON: engine miss → cold-fetch from the record store.
+        unsafe { std::env::set_var("PROXIMADB_GRAPH_COLD_PAYLOADS", "1") };
+        let got_node = service
+            .get_node(graph_id, &"cold_n1".to_string())
+            .await
+            .expect("get_node on")
+            .expect("cold-served node");
+        assert_eq!(got_node.id, "cold_n1");
+        assert_eq!(got_node.labels, vec!["Person".to_string()]);
+
+        let got_edge = service
+            .get_edge(graph_id, &"cold_e1".to_string())
+            .await
+            .expect("get_edge on")
+            .expect("cold-served edge");
+        assert_eq!(got_edge.id, "cold_e1");
+        assert_eq!(got_edge.from_node_id, "cold_n1");
+        assert_eq!(got_edge.to_node_id, "cold_n2");
+        assert_eq!(got_edge.edge_type, "KNOWS");
+
+        // A missing id still yields None even with the gate on.
+        assert!(
+            service
+                .get_node(graph_id, &"nonexistent".to_string())
+                .await
+                .expect("get_node missing")
+                .is_none()
+        );
+
+        unsafe { std::env::remove_var("PROXIMADB_GRAPH_COLD_PAYLOADS") };
     }
 
     /// Verify that ORION CSR can be rebuilt from the adjacency projection.
