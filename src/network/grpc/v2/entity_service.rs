@@ -512,11 +512,22 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
                 .map_err(|e| entity_status("search entities (fusion)", e))?;
 
             // Project fused vector oids → entity nodes. The seam late-materializes
-            // (oid + score only), so fetch each node for its metadata.
+            // (oid + score only), so fetch the nodes for their metadata. Batched
+            // (`get_nodes`) so the M result lookups collapse to ~1 round-trip of
+            // latency for the cold misses (ADR-034 depth-collapse) instead of one
+            // serial GET per result.
+            let node_ids: Vec<String> = items
+                .iter()
+                .map(|item| Self::node_id_from_auxiliary_oid(&item.oid).to_owned())
+                .collect();
+            let nodes = self
+                .graph_service
+                .get_nodes(&collection, &node_ids)
+                .await
+                .map_err(|e| entity_status("materialize search entities", e))?;
             let mut results = Vec::with_capacity(items.len());
-            for item in items {
-                let node_id = Self::node_id_from_auxiliary_oid(&item.oid).to_owned();
-                if let Ok(Some(node)) = self.graph_service.get_node(&collection, &node_id).await {
+            for (item, node) in items.iter().zip(nodes) {
+                if let Some(node) = node {
                     results.push(pv2::EntityResult {
                         entity: Some(node_to_entity(&node, &collection)),
                         score: item.score,

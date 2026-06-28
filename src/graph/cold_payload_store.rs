@@ -125,6 +125,17 @@ impl RecordStore for ColdGraphRecordStore {
         }
     }
 
+    async fn get_records(
+        &self,
+        keys: &[RecordKey],
+    ) -> RecordStoreResult<Vec<Option<ProximaRecord>>> {
+        // Issue the independent object-store GETs concurrently so K cold point-
+        // lookups collapse to ~1 round-trip of latency (ADR-034 depth-collapse)
+        // instead of K serial RTTs. Each `get_record` decodes the ProximaRecordV2
+        // wire; `try_join_all` preserves input order and short-circuits on error.
+        futures::future::try_join_all(keys.iter().map(|key| self.get_record(key))).await
+    }
+
     async fn delete_record(&self, key: &RecordKey) -> RecordStoreResult<bool> {
         let path = Self::key_for(&key.oid);
         // `object_store` delete-of-missing is backend-inconsistent (InMemory/S3 are
@@ -180,6 +191,37 @@ mod tests {
             .expect("present");
         assert_eq!(got.oid, rec.oid);
         assert_eq!(got.tenant_id, rec.tenant_id);
+    }
+
+    #[tokio::test]
+    async fn get_records_batches_in_order_with_present_and_absent() {
+        let store = mem_store();
+        store
+            .upsert_record(record("graph/g1/node/a", "t"))
+            .await
+            .expect("upsert a");
+        store
+            .upsert_record(record("graph/g1/node/c", "t"))
+            .await
+            .expect("upsert c");
+
+        // Mixed batch: present, absent, present — order + slots preserved.
+        let keys = [
+            RecordKey::new("graph/g1/node/a"),
+            RecordKey::new("graph/g1/node/b"),
+            RecordKey::new("graph/g1/node/c"),
+        ];
+        let got = store.get_records(&keys).await.expect("get_records");
+        assert_eq!(got.len(), 3);
+        assert_eq!(
+            got[0].as_ref().map(|r| r.oid.as_str()),
+            Some("graph/g1/node/a")
+        );
+        assert!(got[1].is_none());
+        assert_eq!(
+            got[2].as_ref().map(|r| r.oid.as_str()),
+            Some("graph/g1/node/c")
+        );
     }
 
     #[tokio::test]

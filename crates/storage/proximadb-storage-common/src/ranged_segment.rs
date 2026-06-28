@@ -284,6 +284,13 @@ impl<'b> RangedSegmentReader<'b> {
         let footer = BlockFooter::from_bytes(&tail).map_err(|e| fs_err("block footer", e))?;
 
         // 2. metadata regions (offsets are block-relative; add block_offset).
+        // NOTE: batching these into one `fetch_ranges` is a real per-block
+        // round-trip win (3→1) but it routes metadata through the *batched* bridge
+        // method, which collides with the TD-167 body-batch accounting invariant
+        // (`td167_pruned_read_batches_surviving_block_bodies_in_one_call` asserts
+        // exactly one batched bridge call — for the bodies). Deferred to a focused
+        // change that also reconciles that test (distinguish metadata vs body
+        // batches). See IOTRACE_DEPTH_COLLAPSE_SEAMS_2026_06_28.md (seam #4).
         let mr = metadata_ranges(&footer, block_size);
         let col_meta = self
             .fetch(
