@@ -123,6 +123,12 @@ pub struct OrionPersistence {
     /// operators/metrics can see the truncation working).
     last_replay_applied: std::sync::atomic::AtomicU64,
 
+    /// TD-066 (d): number of engine-WAL segments reclaimed by the most recent
+    /// `truncate_wal_through_checkpoint` call. Observable
+    /// (`last_truncate_reclaimed`) so size-bounding/crash-safety tests can prove
+    /// segments were actually reclaimed (and operators can see truncation work).
+    last_truncate_reclaimed: std::sync::atomic::AtomicU64,
+
     /// Base URL for storage (e.g., "file:///data", "s3://bucket", etc.)
     base_url: String,
 
@@ -299,6 +305,7 @@ impl OrionPersistence {
             max_snapshots: 10,
             incremental_snapshots: false,
             last_replay_applied: std::sync::atomic::AtomicU64::new(0),
+            last_truncate_reclaimed: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -789,6 +796,54 @@ impl OrionPersistence {
             tracing::debug!(lsn, "canonical-emission marker appended to engine WAL");
         }
         Ok(())
+    }
+
+    /// TD-066 (d): number of engine-WAL segments reclaimed by the most recent
+    /// `truncate_wal_through_checkpoint` call. Lets tests and observers confirm
+    /// the WAL is actually being bounded.
+    pub fn last_truncate_reclaimed(&self) -> u64 {
+        self.last_truncate_reclaimed
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// TD-066 (d): after a durable snapshot at `checkpoint_lsn`, reclaim engine
+    /// WAL segments fully covered by it (every segment whose frames all precede
+    /// the `CanonicalEmission(checkpoint_lsn)` marker).
+    ///
+    /// CRASH-SAFETY CONTRACT: callers MUST invoke this only AFTER
+    /// `save_snapshot` returns, so the deleted frames are already covered by a
+    /// durable snapshot. The underlying primitive deletes lowest-segment-first,
+    /// so a crash mid-truncation still leaves a recoverable contiguous suffix.
+    /// No-op (returns 0) when no WAL writer is configured or the marker is
+    /// absent.
+    pub async fn truncate_wal_through_checkpoint(&self, checkpoint_lsn: u64) -> Result<u64> {
+        if let Some(ref wal_writer) = self.wal_writer {
+            let reclaimed = wal_writer
+                .lock()
+                .await
+                .truncate_through_canonical_marker(checkpoint_lsn)
+                .await
+                .map_err(|e| {
+                    tracing::error!(
+                        checkpoint_lsn, error = ?e,
+                        "engine WAL truncation through checkpoint failed"
+                    );
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
+                })?;
+            self.last_truncate_reclaimed
+                .store(reclaimed, std::sync::atomic::Ordering::Relaxed);
+            if reclaimed > 0 {
+                tracing::debug!(
+                    checkpoint_lsn,
+                    reclaimed,
+                    "TD-066 (d): engine WAL truncated to checkpoint LSN"
+                );
+            }
+            return Ok(reclaimed);
+        }
+        Ok(0)
     }
 
     /// Write node operation to WAL

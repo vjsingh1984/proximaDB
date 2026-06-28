@@ -1165,6 +1165,22 @@ impl GraphOperationsService {
                     // marker flush (see invariant above).
                     if scoped && let Some(persistence) = orion.persistence() {
                         persistence.save_snapshot(orion, checkpoint_lsn).await?;
+                        // TD-066 (d): the snapshot at `checkpoint_lsn` is now
+                        // durable, so engine-WAL segments fully covered by it
+                        // can be reclaimed. Ordered STRICTLY AFTER the snapshot
+                        // (marker → flush → snapshot → truncate): a crash at any
+                        // point still recovers from `snapshot + surviving
+                        // post-marker frames`, bounding WAL growth without
+                        // risking data loss.
+                        let reclaimed = persistence
+                            .truncate_wal_through_checkpoint(checkpoint_lsn)
+                            .await?;
+                        tracing::debug!(
+                            graph_id,
+                            checkpoint_lsn,
+                            reclaimed,
+                            "TD-066 (d): engine WAL truncated after durable snapshot"
+                        );
                     }
                 }
             }
