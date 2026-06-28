@@ -6490,6 +6490,7 @@ dependencies = [
  "aes-gcm",
  "anyhow",
  "apache-avro",
+ "arc-swap",
  "arrow",
  "arrow-array",
  "arrow-buffer",
