@@ -87,12 +87,14 @@ impl DataFusionLocalEngine {
         .map_err(|e| ExecutionError::Context(format!("session: {e}")))?;
 
         for (name, location) in &context.parquet_tables {
-            // ADR-025 (relational cold path): an opt-in table reads its cold
+            // ADR-025 (relational cold path): a materialized table reads its cold
             // Parquet base reconciled with the authoritative post-snapshot WAL
             // delta (deletes/updates/inserts after the `MATERIALIZE` snapshot),
-            // keyed by canonical oid. Non-opt-in tables fall through to the bare
-            // Parquet read below (default-OFF), so the OLAP ratchet tables are
-            // untouched.
+            // keyed by canonical oid. The merge is default-ON; a table with
+            // nothing changed since its snapshot takes the empty-delta fast path
+            // inside `register_merged_olap_table` (a bare Parquet read), so
+            // read-mostly OLAP ratchet tables are untouched. Kill-switched or
+            // ineligible tables fall through to the bare Parquet read below.
             if let Some(cfg) = &context.olap_delta
                 && let Some(tbl) = cfg.tables.get(&normalize_table_key(name))
             {

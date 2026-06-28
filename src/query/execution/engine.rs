@@ -167,7 +167,8 @@ pub struct QueryExecutionContext {
     /// tables listed here are reconciled at scan time against the authoritative
     /// post-snapshot WAL delta (deletes/updates/inserts that landed after the
     /// `MATERIALIZE` snapshot), keyed by canonical `oid`. `None` ⇒ legacy bare
-    /// Parquet reads (default-OFF). See [`super::olap_delta_merge`].
+    /// Parquet reads (the merge is default-ON; the kill-switch
+    /// `PROXIMADB_OLAP_DELTA_MERGE=0` forces this). See [`super::olap_delta_merge`].
     pub olap_delta: Option<super::olap_delta_merge::OlapDeltaConfig>,
     /// Escape hatch for SQL dialect gaps while the shared relational lowering
     /// catches up. Keep false for production routes that require one logical
