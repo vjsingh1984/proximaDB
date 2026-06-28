@@ -762,7 +762,10 @@ mod tests {
         let graph = traversal_nodes_to_source("g1", &[labeled], 1.0);
         let (items, _stats) = Fuser::new(FusionPolicy::default()).fuse(vec![vector, graph], 10);
 
-        let fused = items.iter().find(|i| i.oid == oid).expect("shared oid fused");
+        let fused = items
+            .iter()
+            .find(|i| i.oid == oid)
+            .expect("shared oid fused");
         assert_eq!(
             labels_by_oid.get(&fused.oid).cloned().unwrap_or_default(),
             vec!["Function".to_string()],

@@ -2444,6 +2444,13 @@ pub mod types {
     ///    "source_count"
     ///  ],
     ///  "properties": {
+    ///    "labels": {
+    ///      "description": "Graph node label(s) of the reached node. Exposed so cross-modal-joint\nconsumers can correlate a fused hit by its graph label without a separate\nnode lookup (#485). The expansion already reaches the node, so this is\nnear-free to fill. Additive + back-compat (empty until populated).",
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
     ///    "oid": {
     ///      "type": "string"
     ///    },
@@ -2461,6 +2468,12 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct FusionHit {
+        /// Graph node label(s) of the reached node. Exposed so cross-modal-joint
+        /// consumers can correlate a fused hit by its graph label without a separate
+        /// node lookup (#485). The expansion already reaches the node, so this is
+        /// near-free to fill. Additive + back-compat (empty until populated).
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub labels: ::std::vec::Vec<::std::string::String>,
         pub oid: ::std::string::String,
         pub score: f32,
         pub source_count: u64,
@@ -8693,6 +8706,10 @@ pub mod types {
         }
         #[derive(Clone, Debug)]
         pub struct FusionHit {
+            labels: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
             oid: ::std::result::Result<::std::string::String, ::std::string::String>,
             score: ::std::result::Result<f32, ::std::string::String>,
             source_count: ::std::result::Result<u64, ::std::string::String>,
@@ -8700,6 +8717,7 @@ pub mod types {
         impl ::std::default::Default for FusionHit {
             fn default() -> Self {
                 Self {
+                    labels: Ok(Default::default()),
                     oid: Err("no value supplied for oid".to_string()),
                     score: Err("no value supplied for score".to_string()),
                     source_count: Err("no value supplied for source_count".to_string()),
@@ -8707,6 +8725,16 @@ pub mod types {
             }
         }
         impl FusionHit {
+            pub fn labels<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.labels = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for labels: {e}"));
+                self
+            }
             pub fn oid<T>(mut self, value: T) -> Self
             where
                 T: ::std::convert::TryInto<::std::string::String>,
@@ -8744,6 +8772,7 @@ pub mod types {
                 value: FusionHit,
             ) -> ::std::result::Result<Self, super::error::ConversionError> {
                 Ok(Self {
+                    labels: value.labels?,
                     oid: value.oid?,
                     score: value.score?,
                     source_count: value.source_count?,
@@ -8753,6 +8782,7 @@ pub mod types {
         impl ::std::convert::From<super::FusionHit> for FusionHit {
             fn from(value: super::FusionHit) -> Self {
                 Self {
+                    labels: Ok(value.labels),
                     oid: Ok(value.oid),
                     score: Ok(value.score),
                     source_count: Ok(value.source_count),
