@@ -36,6 +36,10 @@ pub mod index_location_resolver;
 // reads avoid the 1+N+M object-store round-trips.
 pub mod syscat_cache;
 
+// ADR-035 / TD-SC-2: on-disk warm tier between the hot cache and the canonical
+// catalog (OS page cache instead of object-store round-trips on a hot miss).
+pub mod syscat_warm;
+
 // Internal schema registry (multi-model unified catalog)
 pub mod internal;
 
