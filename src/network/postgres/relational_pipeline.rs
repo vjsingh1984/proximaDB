@@ -31,6 +31,7 @@ use crate::query::execution::{
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use proximadb_data_model::{ProximaType, ProximaValue};
+use proximadb_functions::builtins;
 use proximadb_relational_algebra::TableId;
 use proximadb_relational_engine::{
     EngineReaderFactory, InMemoryRelationalEngine, RelationalWriter,
@@ -41,7 +42,7 @@ use proximadb_relational_planner::{
     CapabilityResolver, PhysicalPlan, Planner, StaticCapabilities, explain_physical,
 };
 use proximadb_relational_reader::{ReaderCapabilities, ReaderError, RelationalReader, ScanContext};
-use proximadb_relational_types::{ColumnInfo, Expr, NoFunctions, RelationalRow, RelationalSchema};
+use proximadb_relational_types::{ColumnInfo, Expr, ExprError, RelationalRow, RelationalSchema};
 use sqlparser::ast::{
     BinaryOperator, Expr as SqlExpr, GroupByExpr, Query as SqlQuery, SelectItem, SetExpr,
     Statement, TableFactor, TableWithJoins,
@@ -750,12 +751,31 @@ impl RelationalReader for DmlTableReader {
         if let Some(pred) = &ctx.predicate {
             pred.type_check(&self.full_schema)
                 .map_err(ReaderError::PredicateEval)?;
+            // The pushed-down predicate is evaluated row-wise below through a boolean
+            // closure that has no error channel, so an eval failure would otherwise be
+            // silently coerced to `false` and drop every row. Pre-validate that each
+            // referenced function resolves in the executor registry and fail loudly
+            // here instead. (TD-183: native JSON filters — `json_extract*` — are not
+            // yet registered natively, so they surface as a clear error and the OLAP
+            // route serves them, rather than silently returning 0 rows.)
+            let mut func_names: Vec<&str> = Vec::new();
+            pred.collect_func_names(&mut func_names);
+            for name in func_names {
+                if builtins().lookup_scalar(name).is_none() {
+                    return Err(ReaderError::PredicateEval(ExprError::UnknownFunction {
+                        name: name.to_string(),
+                    }));
+                }
+            }
         }
         let predicate: Option<Expr> = ctx.predicate.clone();
         let row_pred = move |full_row: &[ProximaValue]| -> bool {
             match &predicate {
+                // Evaluate against the real builtin registry (not an empty one) so
+                // functions actually resolve in pushed-down native predicates;
+                // unresolvable functions were already rejected in `open` above.
                 Some(expr) => matches!(
-                    expr.eval(&full_row.to_vec(), &NoFunctions),
+                    expr.eval(&full_row.to_vec(), builtins()),
                     Ok(ProximaValue::Boolean(true))
                 ),
                 None => true,

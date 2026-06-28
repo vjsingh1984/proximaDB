@@ -604,6 +604,63 @@ impl Expr {
             }
         }
     }
+
+    /// Recursively collect every function-call name referenced in this expression
+    /// (in evaluation order). Used to pre-validate that a predicate's functions
+    /// resolve against the executor's registry before scanning, so a scan that
+    /// cannot evaluate a function fails loudly instead of silently dropping rows.
+    pub fn collect_func_names<'a>(&'a self, out: &mut Vec<&'a str>) {
+        match self {
+            Expr::Column(_) | Expr::Literal { .. } => {}
+            Expr::Cast { expr, .. } | Expr::UnaryOp { expr, .. } | Expr::IsNull { expr, .. } => {
+                expr.collect_func_names(out)
+            }
+            Expr::BinaryOp { left, right, .. } | Expr::NullIf { left, right } => {
+                left.collect_func_names(out);
+                right.collect_func_names(out);
+            }
+            Expr::Between {
+                expr, low, high, ..
+            } => {
+                expr.collect_func_names(out);
+                low.collect_func_names(out);
+                high.collect_func_names(out);
+            }
+            Expr::In { expr, list, .. } => {
+                expr.collect_func_names(out);
+                for e in list {
+                    e.collect_func_names(out);
+                }
+            }
+            Expr::Like { expr, pattern, .. } => {
+                expr.collect_func_names(out);
+                pattern.collect_func_names(out);
+            }
+            Expr::Case {
+                branches,
+                otherwise,
+            } => {
+                for (cond, then) in branches {
+                    cond.collect_func_names(out);
+                    then.collect_func_names(out);
+                }
+                if let Some(default) = otherwise {
+                    default.collect_func_names(out);
+                }
+            }
+            Expr::Coalesce(args) => {
+                for a in args {
+                    a.collect_func_names(out);
+                }
+            }
+            Expr::FuncCall { name, args, .. } => {
+                out.push(name.as_str());
+                for a in args {
+                    a.collect_func_names(out);
+                }
+            }
+        }
+    }
 }
 
 /// Best-effort inference of a `ProximaValue`'s `ProximaType`.
