@@ -7198,6 +7198,7 @@ dependencies = [
  "futures",
  "object_store",
  "proximadb-kernel",
+ "proximadb-storage-filesystem-types",
  "tempfile",
  "tokio",
  "url",
