@@ -446,20 +446,25 @@ mod tests {
         assert_eq!(normalize_table_key("\"Mixed\""), "mixed");
     }
 
-    #[tokio::test]
-    async fn dispatcher_rejects_unimplemented_backend_with_typed_error() {
-        let err = execute_sql_with_backend(
-            ComputeBackend::DataFusionDistributed,
-            "SELECT 1",
-            QueryExecutionContext::default(),
-        )
-        .await
-        .expect_err("distributed execution is not implemented");
+    // Watchdog-wrapped (`run_sync`): a bare `#[tokio::test]` here has no 30s bound,
+    // so the multi-threaded-runtime hang (CLAUDE.md #11) rides to nextest's 120s
+    // slow-timeout. These Volcano tests are pure compute (no real `.await` I/O).
+    #[test]
+    fn dispatcher_rejects_unimplemented_backend_with_typed_error() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let err = execute_sql_with_backend(
+                ComputeBackend::DataFusionDistributed,
+                "SELECT 1",
+                QueryExecutionContext::default(),
+            )
+            .await
+            .expect_err("distributed execution is not implemented");
 
-        assert!(matches!(
-            err,
-            ExecutionError::UnsupportedBackend(ComputeBackend::DataFusionDistributed)
-        ));
+            assert!(matches!(
+                err,
+                ExecutionError::UnsupportedBackend(ComputeBackend::DataFusionDistributed)
+            ));
+        });
     }
 
     #[test]
@@ -496,46 +501,50 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn native_volcano_adapter_executes_values_plan() {
-        let result = NativeVolcanoEngine::execute_physical(
-            values_plan(),
-            &EmptyReaderFactory,
-            ExecutionControls::default(),
-        )
-        .await
-        .expect("values plan should execute");
+    #[test]
+    fn native_volcano_adapter_executes_values_plan() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let result = NativeVolcanoEngine::execute_physical(
+                values_plan(),
+                &EmptyReaderFactory,
+                ExecutionControls::default(),
+            )
+            .await
+            .expect("values plan should execute");
 
-        assert_eq!(result.schema.columns[0].name, "id");
-        assert_eq!(
-            result.rows,
-            vec![vec![ProximaValue::Int64(1)], vec![ProximaValue::Int64(2)]]
-        );
+            assert_eq!(result.schema.columns[0].name, "id");
+            assert_eq!(
+                result.rows,
+                vec![vec![ProximaValue::Int64(1)], vec![ProximaValue::Int64(2)]]
+            );
+        });
     }
 
-    #[tokio::test]
-    async fn native_volcano_metered_adapter_returns_rows_and_metrics() {
-        let plan = PhysicalPlan::Limit {
-            input: Box::new(values_plan()),
-            limit: Some(1),
-            offset: 0,
-        };
-        let (result, metrics) = NativeVolcanoEngine::execute_physical_metered(
-            plan,
-            &EmptyReaderFactory,
-            ExecutionControls::default(),
-        )
-        .await
-        .expect("metered values plan should execute");
+    #[test]
+    fn native_volcano_metered_adapter_returns_rows_and_metrics() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let plan = PhysicalPlan::Limit {
+                input: Box::new(values_plan()),
+                limit: Some(1),
+                offset: 0,
+            };
+            let (result, metrics) = NativeVolcanoEngine::execute_physical_metered(
+                plan,
+                &EmptyReaderFactory,
+                ExecutionControls::default(),
+            )
+            .await
+            .expect("metered values plan should execute");
 
-        assert_eq!(result.rows, vec![vec![ProximaValue::Int64(1)]]);
-        let labels: Vec<&str> = metrics.iter().map(|m| m.label.as_str()).collect();
-        assert_eq!(labels, vec!["Limit", "Values"]);
-        assert_eq!(
-            metrics.iter().map(|m| m.arity).collect::<Vec<_>>(),
-            vec![1, 0]
-        );
-        assert_eq!(metrics[0].rows, 1);
+            assert_eq!(result.rows, vec![vec![ProximaValue::Int64(1)]]);
+            let labels: Vec<&str> = metrics.iter().map(|m| m.label.as_str()).collect();
+            assert_eq!(labels, vec!["Limit", "Values"]);
+            assert_eq!(
+                metrics.iter().map(|m| m.arity).collect::<Vec<_>>(),
+                vec![1, 0]
+            );
+            assert_eq!(metrics[0].rows, 1);
+        });
     }
 
     #[test]
@@ -674,39 +683,43 @@ mod tests {
         });
     }
 
-    #[tokio::test]
-    async fn native_volcano_materialized_truncates_without_error() {
-        let controls = ExecutionControls {
-            max_rows: Some(1),
-            row_limit_mode: RowLimitMode::Truncate,
-            ..Default::default()
-        };
-        let result =
-            NativeVolcanoEngine::execute_physical(values_plan(), &EmptyReaderFactory, controls)
-                .await
-                .expect("truncate mode returns the capped result, not an error");
+    #[test]
+    fn native_volcano_materialized_truncates_without_error() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let controls = ExecutionControls {
+                max_rows: Some(1),
+                row_limit_mode: RowLimitMode::Truncate,
+                ..Default::default()
+            };
+            let result =
+                NativeVolcanoEngine::execute_physical(values_plan(), &EmptyReaderFactory, controls)
+                    .await
+                    .expect("truncate mode returns the capped result, not an error");
 
-        assert_eq!(result.rows, vec![vec![ProximaValue::Int64(1)]]);
+            assert_eq!(result.rows, vec![vec![ProximaValue::Int64(1)]]);
+        });
     }
 
-    #[tokio::test]
-    async fn native_volcano_materialized_errors_on_overflow() {
-        let controls = ExecutionControls {
-            max_rows: Some(1),
-            row_limit_mode: RowLimitMode::Error,
-            ..Default::default()
-        };
-        let err =
-            NativeVolcanoEngine::execute_physical(values_plan(), &EmptyReaderFactory, controls)
-                .await
-                .expect_err("error mode rejects an oversized result");
+    #[test]
+    fn native_volcano_materialized_errors_on_overflow() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let controls = ExecutionControls {
+                max_rows: Some(1),
+                row_limit_mode: RowLimitMode::Error,
+                ..Default::default()
+            };
+            let err =
+                NativeVolcanoEngine::execute_physical(values_plan(), &EmptyReaderFactory, controls)
+                    .await
+                    .expect_err("error mode rejects an oversized result");
 
-        assert!(matches!(
-            err,
-            ExecutionError::RowLimitExceeded {
-                limit: 1,
-                actual: 2
-            }
-        ));
+            assert!(matches!(
+                err,
+                ExecutionError::RowLimitExceeded {
+                    limit: 1,
+                    actual: 2
+                }
+            ));
+        });
     }
 }
