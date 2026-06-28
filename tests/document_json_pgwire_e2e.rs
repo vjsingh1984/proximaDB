@@ -18,11 +18,14 @@
 //! The accuracy conversion exposed that JSON-path extraction in a SELECT
 //! projection or WHERE filter returned 0 rows (the queries were misrouted to the
 //! document store). Fixed incrementally: the routing fix (#480) repaired the
-//! projections d04/d05/d08; the DataFusion `json_extract_path_text` alias UDF (this
-//! PR) repaired the function-form projection d10. 8 of 11 are now accurate. The
-//! filters d06/d07 (native filter path returns 0 rows for a JSON function) and d11
-//! (DataFusion `Utf8 = Boolean` coercion) stay KNOWN-BAD under TD-183 — asserted to
-//! still be wrong so the next fix trips the guard — and excluded from the ratchet.
+//! projections d04/d05/d08; the DataFusion `json_extract_path_text` alias UDF (#486)
+//! repaired the function-form projection d10; the native predicate fix (this PR)
+//! repaired d07 (pushed-down WHERE predicates now evaluate against the real builtin
+//! registry and reject unresolvable functions loudly instead of silently dropping
+//! rows). 9 of 11 are now accurate. d06 (a cast-wrapped predicate that bypasses the
+//! new pre-validation) and d11 (DataFusion `Utf8 = Boolean` coercion) stay KNOWN-BAD
+//! under TD-183 — asserted to still be wrong so the next fix trips the guard —
+//! excluded from the ratchet.
 //!
 //!   RUST_LOG=proximadb=debug cargo test --test document_json_pgwire_e2e -- --nocapture
 
@@ -35,11 +38,12 @@ use tempfile::TempDir;
 use tokio::time::sleep;
 
 /// Queries that must be verified CORRECT (anchored + differential) to count.
-/// 8 of 11 are accurate: d01/d02/d03 (no JSON path), d09 (aggregation), d04/d05/d08
-/// (projections, routing fix #480), and d10 (DataFusion `json_extract_path_text`
-/// alias UDF, this PR). d06/d07/d11 remain known-bad under TD-183 (native filter
-/// eval + DataFusion coercion); the ratchet rises as those land.
-const DOC_ACCURACY_RATCHET: usize = 8;
+/// 9 of 11 are accurate: d01/d02/d03 (no JSON path), d09 (aggregation), d04/d05/d08
+/// (projections, routing fix #480), d10 (DataFusion `json_extract_path_text` alias
+/// #486), and d07 (native predicate fix, this PR). d06 (cast-path bypass) and d11
+/// (DataFusion `Utf8 = Boolean` coercion) remain known-bad under TD-183; the ratchet
+/// rises as those land.
+const DOC_ACCURACY_RATCHET: usize = 9;
 
 fn free_port() -> u16 {
     let l = TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -162,16 +166,20 @@ fn doc_queries() -> Vec<(&'static str, String)> {
 /// fix trips the guard and forces the ratchet up. Excluded from the ratchet.
 ///
 /// Resolved so far: the routing fix (#480) fixed the projections d04/d05/d08; the
-/// DataFusion `json_extract_path_text` alias UDF (this PR) fixed the function-form
-/// projection d10. Remaining, all needing deeper work (separate follow-up):
-///   * d06/d07 — the native (pre-MATERIALIZE) filter path returns 0 rows for a JSON
-///     function in WHERE (it is not evaluated through the scalar kernel); registering
-///     the native kernel does not help and regresses DataFusion via registry binding.
-///   * d07/d11 — DataFusion coercion: `json_extract_text(Utf8,Utf8)` in a bare `=`
-///     comparison and `Utf8 = Boolean` for `(… )::boolean` both fail type coercion.
+/// DataFusion `json_extract_path_text` alias UDF (#486) fixed the function-form
+/// projection d10; the native predicate fix (this PR — pushed-down WHERE predicates
+/// now evaluate against the real builtin registry and reject unresolvable functions
+/// loudly instead of silently dropping rows) made d07 accurate (native errors on the
+/// unregistered JSON function → anchored single-engine; DataFusion is correct).
+/// Remaining:
+///   * d06 — `(doc->>'price')::int > 8`: the cast-wrapped predicate takes a path that
+///     bypasses the new `DmlTableReader::open` pre-validation, so it still silently
+///     returns 0 rows on native (DataFusion is correct). Needs that path to route
+///     through the same validate/evaluate fix.
+///   * d11 — DataFusion cannot coerce `Utf8 = Boolean` for `(doc->>'in_stock')::boolean
+///     = true`; the `::boolean` cast is dropped in lowering.
 const KNOWN_BAD_TD183: &[&str] = &[
-    "d06_filter_json_scalar", // (doc->>'price')::int > 8       filter — native 0-rows
-    "d07_filter_json_text",   // doc->>'title' = 'alpha'        filter — native 0-rows + DF coercion
+    "d06_filter_json_scalar", // (doc->>'price')::int > 8       filter — cast-path bypass
     "d11_bool_field",         // (doc->>'in_stock')::boolean    filter — DF cast coercion
 ];
 

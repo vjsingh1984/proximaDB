@@ -92,15 +92,30 @@ regresses DataFusion coercion in comparison contexts (observed on d07). They als
 NOT fix d06/d07 — the native *filter* path returns 0 rows without ever invoking the
 kernel, so that is a separate native-filter-evaluation defect, not a missing kernel.
 
-**PR4 — remaining three (open):**
+**PR4 — native predicate fix (done):**
 
-* **d06, d07** — the native (pre-MATERIALIZE) filter path returns 0 rows for a JSON
-  function in WHERE; the scan does not evaluate the json-extract scalar. Fix the
-  native filter/scan path to evaluate JSON-extract predicates (and add native kernels
-  *without* the registry-shadow regression — e.g. skip F2 binding for them robustly).
-* **d07, d11** — DataFusion coercion: `json_extract_text(Utf8,Utf8)` in a bare `=`
-  comparison, and `Utf8 = Boolean` for `(doc->>'in_stock')::boolean = true`, both fail
-  type coercion on the OLAP route.
+Root cause of the native filter 0-rows: `DmlTableReader::open`'s pushed-down predicate
+closure (`relational_pipeline.rs`) evaluated against an EMPTY registry (`&NoFunctions`)
+and coerced any eval `Err` to `false` via `matches!(…, Ok(Boolean(true)))` — so *any*
+function in a pushed-down WHERE (even `upper`) silently dropped every row. Fix: evaluate
+against `proximadb_functions::builtins()`, and pre-validate in `open` that every
+predicate function resolves (new `Expr::collect_func_names`), returning a loud
+`UnknownFunction` error instead of silently dropping rows.
+
+* **d07** (`doc->>'title' = 'alpha'`) — now native errors loud on the unregistered
+  `json_extract_text` → anchored single-engine (DataFusion correct). Accurate. Ratchet
+  8 → 9. Also fixes the latent "no function works in a pushed-down native WHERE" bug.
+
+**PR5 — remaining two (open):**
+
+* **d06** (`(doc->>'price')::int > 8`) — the cast-wrapped predicate takes a path that
+  bypasses `DmlTableReader::open`'s pre-validation, so it still silently returns 0 rows
+  on native (DataFusion correct). Route that path through the same validate/evaluate
+  fix (or evaluate it through `builtins()` so the cast-of-json predicate errors loud).
+* **d11** (`(doc->>'in_stock')::boolean = true`) — DataFusion drops the `::boolean`
+  cast in frontend lowering, so the analyzer sees `Utf8 = Boolean` and fails coercion
+  (`src/datafusion/logical_lowering.rs:429` is correct; the gap is upstream in
+  `proximadb-relational-frontend` not emitting the `Expr::Cast { ty: Boolean }`).
 
 Each fix removes its ids from `KNOWN_BAD_TD183` and raises `DOC_ACCURACY_RATCHET`
 toward 11; the known-bad guards fail the moment a query becomes correct, forcing the
