@@ -1487,10 +1487,38 @@ impl SharedServices {
                 graph_service_inst.with_canonical_wal_path(appender.path().to_path_buf());
         }
         // Wire the storage root so graph engines persist under the same base path as vectors
-        if let Some(first_loc) = storage_config.storage_locations.first() {
-            graph_service_inst.set_base_storage_url(first_loc.url.clone());
-        } else {
-            graph_service_inst.set_base_storage_url(storage_config.metadata_url.clone());
+        let graph_storage_url = storage_config
+            .storage_locations
+            .first()
+            .map(|loc| loc.url.clone())
+            .unwrap_or_else(|| storage_config.metadata_url.clone());
+        graph_service_inst.set_base_storage_url(graph_storage_url.clone());
+
+        // TD-168 Phase 2: when the cold-payload tier is ON, back the graph's
+        // canonical record store with a Cool-tiered object store so node/edge
+        // payloads are durable off-RAM and the cold-fetch read path (#446) can
+        // materialize them on a cache miss. Graph-only by construction, so every
+        // object is Cool with no risk of mis-tiering hot relational data.
+        // Default-OFF: with the gate unset nothing is constructed, the canonical
+        // record store stays None, and the all-RAM path is unchanged.
+        if crate::graph::service::cold_payloads_enabled() {
+            match crate::graph::ColdGraphRecordStore::from_storage_root(
+                &graph_storage_url,
+                proximadb_storage_filesystem_types::ObjectAccessTier::Cool,
+            ) {
+                Ok(cold_store) => {
+                    graph_service_inst =
+                        graph_service_inst.with_canonical_record_store(Arc::new(cold_store));
+                    info!(
+                        "✅ SharedServices: graph cold-payload tier ON — canonical node/edge payloads → Cool object storage ({graph_storage_url})"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "SharedServices: graph cold-payload tier requested (PROXIMADB_GRAPH_COLD_PAYLOADS) but cold store init failed for `{graph_storage_url}`: {e}; falling back to the all-RAM path"
+                    );
+                }
+            }
         }
 
         // Create a simple file-backed metrics updater under data_root/metrics

@@ -162,6 +162,18 @@ pub enum ObjectAccessTier {
 }
 
 impl ObjectAccessTier {
+    /// Canonical, cloud-neutral lowercase name — the stable label for metrics and
+    /// the inverse of the canonical names accepted by [`Self::parse`]
+    /// (`hot`/`cool`/`cold`/`archive`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Hot => "hot",
+            Self::Cool => "cool",
+            Self::Cold => "cold",
+            Self::Archive => "archive",
+        }
+    }
+
     /// Lenient parse: canonical names + common provider spellings. Returns `None`
     /// for an unrecognized value — callers fall back to the backend default and
     /// never fail a write on a tier typo.

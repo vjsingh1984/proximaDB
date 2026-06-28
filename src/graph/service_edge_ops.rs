@@ -965,6 +965,95 @@ mod tests {
         unsafe { std::env::remove_var("PROXIMADB_GRAPH_COLD_PAYLOADS") };
     }
 
+    /// TD-168 Phase 2 end-to-end: the *production* cold store
+    /// (`ColdGraphRecordStore` over object storage) — not the in-memory mock —
+    /// backs the canonical record store. A node/edge seeded into it (durable via
+    /// `put_with_tier`, here on `memory://` which is untiered so the tier degrades
+    /// to a plain write) is served through the cold-fetch path on an engine miss,
+    /// proving the dedicated store satisfies the `RecordStore` contract AND that
+    /// graph records survive the `ProximaRecordV2` bincode round-trip intact.
+    #[tokio::test]
+    async fn cold_graph_record_store_serves_payloads_end_to_end() {
+        let graph_id = format!("cold_store_e2e_{}", std::process::id());
+        let graph_id = graph_id.as_str();
+        let record_store = Arc::new(
+            crate::graph::ColdGraphRecordStore::from_storage_root(
+                "memory://",
+                proximadb_storage_filesystem_types::ObjectAccessTier::Cool,
+            )
+            .expect("open memory cold store"),
+        );
+
+        let node = Node {
+            id: "cold_n1".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: HashMap::new(),
+            embedding: None,
+            created_at_ms: 7,
+            updated_at_ms: 9,
+        };
+        let edge = Edge {
+            id: "cold_e1".to_string(),
+            from_node_id: "cold_n1".to_string(),
+            to_node_id: "cold_n2".to_string(),
+            edge_type: "KNOWS".to_string(),
+            properties: HashMap::new(),
+            weight: None,
+            created_at_ms: 7,
+            updated_at_ms: 9,
+        };
+        // Seed the cold store directly — the engine never sees these, so a hit can
+        // only come from `ColdGraphRecordStore` via the cold-fetch path.
+        record_store
+            .upsert_record(
+                crate::graph::adjacency_projection::node_to_canonical_record(graph_id, &node),
+            )
+            .await
+            .expect("seed node into cold store");
+        record_store
+            .upsert_record(
+                crate::graph::adjacency_projection::edge_to_canonical_record(graph_id, &edge),
+            )
+            .await
+            .expect("seed edge into cold store");
+
+        let service =
+            GraphOperationsService::new().with_canonical_record_store(record_store.clone());
+        service
+            .create_graph_collection(CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .expect("create graph");
+
+        unsafe { std::env::set_var("PROXIMADB_GRAPH_COLD_PAYLOADS", "1") };
+        let got_node = service
+            .get_node(graph_id, &"cold_n1".to_string())
+            .await
+            .expect("get_node on")
+            .expect("cold-served node from ColdGraphRecordStore");
+        assert_eq!(got_node.id, "cold_n1");
+        assert_eq!(got_node.labels, vec!["Person".to_string()]);
+
+        let got_edge = service
+            .get_edge(graph_id, &"cold_e1".to_string())
+            .await
+            .expect("get_edge on")
+            .expect("cold-served edge from ColdGraphRecordStore");
+        assert_eq!(got_edge.id, "cold_e1");
+        assert_eq!(got_edge.from_node_id, "cold_n1");
+        assert_eq!(got_edge.to_node_id, "cold_n2");
+        assert_eq!(got_edge.edge_type, "KNOWS");
+
+        unsafe { std::env::remove_var("PROXIMADB_GRAPH_COLD_PAYLOADS") };
+    }
+
     /// Verify that ORION CSR can be rebuilt from the adjacency projection.
     ///
     /// Creates 2 edges via the service (which updates the adjacency projection),

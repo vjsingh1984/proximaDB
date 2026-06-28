@@ -61,6 +61,9 @@ pub mod adjacency_projection;
 pub mod canonical;
 /// Catapult shortcut table (LLD 6.3, arXiv 2603.02164).
 pub mod catapult;
+/// Cold graph-payload record store (TD-168 Phase 2): durable, Cool-tiered object
+/// storage backing for node/edge payloads so a graph larger than RAM is servable.
+pub mod cold_payload_store;
 pub mod engines;
 pub mod merge;
 pub mod model;
@@ -75,6 +78,7 @@ pub mod service;
 pub mod service_algorithms;
 
 // Re-export public types
+pub use cold_payload_store::ColdGraphRecordStore;
 pub use engines::orion::OrionGraphEngine;
 pub use engines::{
     EmbeddingMode, EngineCapabilities, GraphEngineConfig, GraphEngineFactory, GraphEngineType,
