@@ -385,3 +385,104 @@ async fn olap_delta_merge_reconciles_mixed_name_and_object_id_keyed_wal() {
     unsafe { std::env::remove_var("PROXIMADB_OLAP_DELTA_MERGE") };
     unsafe { std::env::remove_var("PROXIMADB_WAL_OBJECT_ID_KEY") };
 }
+
+/// Run a (text, i64) 2-column query into `(String, i64)` pairs — for a grouped
+/// aggregate keyed by a string dimension.
+async fn text_i64_pairs(client: &tokio_postgres::Client, sql: &str) -> Vec<(String, i64)> {
+    client
+        .simple_query(sql)
+        .await
+        .unwrap_or_else(|e| panic!("query `{sql}`: {}", explain_err(&e)))
+        .into_iter()
+        .filter_map(|m| match m {
+            tokio_postgres::SimpleQueryMessage::Row(r) => Some((
+                r.get(0).unwrap_or_default().to_string(),
+                r.get(1).unwrap_or_default().parse().unwrap_or(i64::MIN),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// VALUE-ACCURACY on the analytical path: a multi-table JOIN + GROUP BY + SUM over
+/// a fact table carrying a NON-EMPTY post-snapshot delta must return the *merged*
+/// aggregate values — not the stale base, and without double-counting the appended
+/// rows. The TPC-H/TPC-DS ratchets never mutate after MATERIALIZE, so they only
+/// ever exercise the empty-delta fast path; this is the case they do not cover.
+/// The merge reconciles rows into the scanned table BEFORE planning, so a correct
+/// SUM here proves merged rows flow correctly through JOIN + aggregation (the
+/// dimension `acct` is also materialized but unmutated → empty-delta fast path,
+/// while `txn` is merged — exercising both registration paths in one query).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn olap_delta_merge_correct_aggregates_through_join() {
+    let server = PgServer::start().await.expect("server start");
+    let (client, conn) = tokio_postgres::connect(&server.conn_str(), tokio_postgres::NoTls)
+        .await
+        .expect("connect");
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    client
+        .simple_query("CREATE TABLE acct (id INT PRIMARY KEY, region VARCHAR)")
+        .await
+        .unwrap_or_else(|e| panic!("create acct: {}", explain_err(&e)));
+    client
+        .simple_query("CREATE TABLE txn (id INT PRIMARY KEY, acct_id INT, amount INT)")
+        .await
+        .unwrap_or_else(|e| panic!("create txn: {}", explain_err(&e)));
+    for sql in [
+        "INSERT INTO acct (id, region) VALUES (1, 'US')",
+        "INSERT INTO acct (id, region) VALUES (2, 'EU')",
+        "INSERT INTO txn (id, acct_id, amount) VALUES (1, 1, 10)",
+        "INSERT INTO txn (id, acct_id, amount) VALUES (2, 1, 20)",
+        "INSERT INTO txn (id, acct_id, amount) VALUES (3, 2, 30)",
+    ] {
+        client
+            .simple_query(sql)
+            .await
+            .unwrap_or_else(|e| panic!("seed `{sql}`: {}", explain_err(&e)));
+    }
+    for t in ["acct", "txn"] {
+        client
+            .simple_query(&format!("ALTER TABLE {t} MATERIALIZE"))
+            .await
+            .unwrap_or_else(|e| panic!("materialize {t}: {}", explain_err(&e)));
+    }
+
+    // Post-snapshot mutations on the FACT only: delete(2) drops 20 from US,
+    // update(3→99) lifts EU from 30 to 99, insert(4=40) adds 40 to US.
+    client
+        .simple_query("DELETE FROM txn WHERE id = 2")
+        .await
+        .unwrap_or_else(|e| panic!("delete: {}", explain_err(&e)));
+    client
+        .simple_query("UPDATE txn SET amount = 99 WHERE id = 3")
+        .await
+        .unwrap_or_else(|e| panic!("update: {}", explain_err(&e)));
+    client
+        .simple_query("INSERT INTO txn (id, acct_id, amount) VALUES (4, 1, 40)")
+        .await
+        .unwrap_or_else(|e| panic!("insert: {}", explain_err(&e)));
+
+    let q = "SELECT a.region, SUM(t.amount) AS s FROM txn t \
+             JOIN acct a ON t.acct_id = a.id GROUP BY a.region ORDER BY a.region";
+
+    // Kill-switch OFF → stale base: US = 10 + 20 = 30, EU = 30.
+    // SAFETY: env toggled only between awaited queries — no in-flight request;
+    // nextest / `--test-threads=1` process/thread isolation (CLAUDE.md §11).
+    unsafe { std::env::set_var("PROXIMADB_OLAP_DELTA_MERGE", "0") };
+    assert_eq!(
+        text_i64_pairs(&client, q).await,
+        vec![("EU".to_string(), 30), ("US".to_string(), 30)],
+        "kill-switch must serve stale aggregates through the join (US=30, EU=30)"
+    );
+
+    // Default-ON (env unset) → merged: US = 10 + 40 = 50 (id2 deleted), EU = 99.
+    unsafe { std::env::remove_var("PROXIMADB_OLAP_DELTA_MERGE") };
+    assert_eq!(
+        text_i64_pairs(&client, q).await,
+        vec![("EU".to_string(), 99), ("US".to_string(), 50)],
+        "merge must reflect delete/update/insert in JOIN+GROUP BY+SUM (US=50, EU=99)"
+    );
+}
