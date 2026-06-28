@@ -97,6 +97,33 @@ jobs:
         # prematurely). Well-separated seeded vectors → recall@10 = 1.0 on both paths.
         run: cargo test --test embedded_flush_recovery recall -- --nocapture
 
+  # Validate the object-store access-tier cost lever (TD-168/TD-173) against REAL
+  # cloud APIs via emulators — Azurite (Azure), MinIO (S3), fake-gcs (GCP) — the
+  # "develop→qa upfront validation" for the cold-payload tier. The default CI only
+  # exercises put_with_tier on memory:// (where the tier degrades to a plain put),
+  # so a native-class mapping regression that a real cloud API would 4xx is
+  # invisible there; this job runs the tier path end-to-end. Azure + S3 are strict
+  # (PUT-with-tier accepted + round-trip); GCS is best-effort (the test self-skips
+  # on a fake-gcs/object_store incompatibility). All orchestration lives in
+  # scripts/run_cloud_emulator_tests.sh so the CI path == `make cloud-emulator-test`.
+  cloud-emulator-object-store:
+    name: Cloud object-store emulators (Azurite/MinIO/fake-gcs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-qa-cloud-emulator"
+      - name: Validate Cool tier against Azure/S3/GCS emulators
+        # docker + aws/az CLIs are preinstalled on ubuntu-latest runners.
+        run: bash scripts/run_cloud_emulator_tests.sh
+
   sdk-coverage-ratchet:
     name: SDK Coverage Ratchet
     runs-on: ubuntu-latest

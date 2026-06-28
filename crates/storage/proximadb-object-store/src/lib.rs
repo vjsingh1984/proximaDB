@@ -501,60 +501,121 @@ mod tests {
         let _ = result;
     }
 
-    /// Integration (real Azure API via the Azurite emulator): prove `put_with_tier`
-    /// is *accepted* by a genuine Azure Blob endpoint, not just no-op'd on the
-    /// memory backend. Azurite validates the `x-ms-access-tier` value, so an invalid
-    /// native-class string (a mapping regression) would surface here as a 4xx — the
-    /// failure mode the memory-degrade unit test cannot catch.
-    ///
-    /// NOTE: `object_store` 0.13 does not surface the access tier on read
-    /// (`GetResult`/`ObjectMeta` attributes omit `x-ms-access-tier`; see
-    /// `object_store::client::get::get_attributes`), so a tier *read-back* assertion
-    /// would require the raw Azure SDK — deferred (TD-168). This asserts: backend is
-    /// detected as Azure (so the tier path runs, not the Untiered degrade), the PUT
-    /// is accepted, and the bytes round-trip.
-    ///
-    /// Not run in CI (no Azurite service). Manual:
-    /// ```text
-    /// docker run --rm -p 10000:10000 mcr.microsoft.com/azure-storage/azurite \
-    ///   azurite-blob --blobHost 0.0.0.0
-    /// # create container `proximadb-test` once (azure-cli or REST against Azurite)
-    /// PROXIMADB_AZURE_TEST=1 cargo test -p proximadb-object-store --features azure \
-    ///   -- --ignored put_with_tier_accepted_by_real_azure
-    /// ```
+    // ── Cloud-emulator integration: put_with_tier against real Azure/S3/GCS APIs ──
+    //
+    // The memory-degrade unit test cannot catch a native-class mapping regression
+    // (an invalid storage-class string a real cloud API would 4xx). These run the
+    // tier path against emulators — Azurite (Azure), MinIO (S3), fake-gcs (GCP) —
+    // so the `x-ms-access-tier` / `x-amz-storage-class` / `x-goog-storage-class`
+    // header is exercised end-to-end. Azure + S3 go through the PRODUCTION
+    // `store_for_url` + forwarded-env path (highest fidelity); GCS uses the builder
+    // (object_store has no clean emulator env key for GCS) and is best-effort.
+    //
+    // `object_store` 0.13 does not surface the tier on read (GET/HEAD attributes
+    // omit it; see `client::get::get_attributes`), so these assert *acceptance* +
+    // round-trip, not the resident tier value. The CI job (qa-gate) adds an
+    // out-of-band Azurite tier read-back (`az ... --query blobTier`) for the strong
+    // proof; a strong in-test read-back needs the Azure SDK (deferred, TD-168).
+    //
+    // Gated `#[ignore]` + per-cloud env presence, so they compile under
+    // `--features aws,azure,gcp`/`cloud-full` (CI-drift-safe) but run only when the
+    // matching emulator env is set. See `.github/workflows/qa-gate.yml` (the
+    // develop→qa gate) and `make cloud-emulator-test` (local) /
+    // `docs/12-design/runtime-evidence/TD168_COOL_TIER_AZURITE_VALIDATION_2026_06_28.md`.
+
+    /// Azure (Azurite) via the production `from_url` + env path. Azurite accepts AND
+    /// persists `x-ms-access-tier: Cool` (the CI job verifies the resident tier
+    /// out-of-band). Set by CI: `AZURE_STORAGE_USE_EMULATOR=true`, `AZURE_ALLOW_HTTP=true`.
     #[cfg(feature = "azure")]
     #[tokio::test]
-    #[ignore = "needs Azurite — set PROXIMADB_AZURE_TEST=1 with Azurite running"]
-    async fn put_with_tier_accepted_by_real_azure() {
-        if std::env::var("PROXIMADB_AZURE_TEST").is_err() {
-            eprintln!("skip: set PROXIMADB_AZURE_TEST=1 with Azurite running");
+    #[ignore = "needs Azurite — set AZURE_STORAGE_USE_EMULATOR=true with Azurite running"]
+    async fn put_with_tier_accepted_by_azurite() {
+        if std::env::var("AZURE_STORAGE_USE_EMULATOR").is_err() {
+            eprintln!("skip: set AZURE_STORAGE_USE_EMULATOR=true with Azurite running");
             return;
         }
-        let store = object_store::azure::MicrosoftAzureBuilder::new()
-            .with_use_emulator(true)
-            .with_allow_http(true)
-            .with_container_name("proximadb-test")
-            .build()
-            .expect("build Azurite (emulator) store");
-        let os = ProximaObjectStore::new(Arc::new(store));
-        assert_eq!(
-            os.backend(),
-            ObjectBackendKind::Azure,
-            "emulator store must detect as Azure so put_with_tier exercises the tier path"
-        );
-
-        let path = Path::from("cold/tier-probe.bin");
+        let os = ProximaObjectStore::from_url("az://proximadb-test/cold/probe-azure.bin")
+            .or_else(|_| ProximaObjectStore::from_url("az://proximadb-test"))
+            .expect("open Azurite store via from_url");
+        assert_eq!(os.backend(), ObjectBackendKind::Azure);
+        let p = Path::from("cold/probe-azure.bin");
         os.put_with_tier(
-            &path,
-            Bytes::from_static(b"cool-payload"),
+            &p,
+            Bytes::from_static(b"cool-azure"),
             ObjectAccessTier::Cool,
         )
         .await
-        .expect("a real Azure endpoint must accept x-ms-access-tier: Cool");
-        assert_eq!(
-            &os.get(&path).await.expect("get round-trip")[..],
-            b"cool-payload"
-        );
-        let _ = os.delete(&path).await;
+        .expect("Azurite must accept x-ms-access-tier: Cool");
+        assert_eq!(&os.get(&p).await.expect("get")[..], b"cool-azure");
+        // NOTE: intentionally NOT deleted — the qa-gate job reads this blob's
+        // resident tier back out-of-band (`az ... --query blobTier`) for the strong
+        // Cool-tier proof object_store cannot surface. The emulator is ephemeral.
+    }
+
+    /// AWS S3 (MinIO) via the production `from_url` + env path. MinIO *accepts* the
+    /// `x-amz-storage-class: STANDARD_IA` header but does not persist the class
+    /// (best-effort S3 compat) — so this proves the header is accepted (no 4xx) +
+    /// round-trip. Set by CI: `AWS_ENDPOINT`, `AWS_ALLOW_HTTP=true`,
+    /// `AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false`, `AWS_ACCESS_KEY_ID/SECRET/REGION`.
+    #[cfg(feature = "aws")]
+    #[tokio::test]
+    #[ignore = "needs MinIO/S3 — set AWS_ENDPOINT with the emulator running"]
+    async fn put_with_tier_accepted_by_minio() {
+        if std::env::var("AWS_ENDPOINT").is_err() && std::env::var("AWS_ENDPOINT_URL").is_err() {
+            eprintln!("skip: set AWS_ENDPOINT to the MinIO/S3 emulator");
+            return;
+        }
+        let os = ProximaObjectStore::from_url("s3://proximadb-test/cold/probe-s3.bin")
+            .or_else(|_| ProximaObjectStore::from_url("s3://proximadb-test"))
+            .expect("open MinIO/S3 store via from_url");
+        assert_eq!(os.backend(), ObjectBackendKind::S3);
+        let p = Path::from("cold/probe-s3.bin");
+        os.put_with_tier(&p, Bytes::from_static(b"cool-s3"), ObjectAccessTier::Cool)
+            .await
+            .expect("S3/MinIO must accept x-amz-storage-class: STANDARD_IA");
+        assert_eq!(&os.get(&p).await.expect("get")[..], b"cool-s3");
+        let _ = os.delete(&p).await;
+    }
+
+    /// GCP (fake-gcs-server) via the builder (`object_store` has no emulator env key
+    /// for GCS). Best-effort ("to extent feasible"): fake-gcs may not honor the
+    /// `x-goog-storage-class` header, and object_store's GCS builder may reject an
+    /// anonymous/emulator build — so a connect/build failure SKIPS rather than fails
+    /// (this is the known-fragile backend; tracked in TD-168). Set by CI:
+    /// `PROXIMADB_GCS_TEST_ENDPOINT=http://localhost:4443`.
+    #[cfg(feature = "gcp")]
+    #[tokio::test]
+    #[ignore = "needs fake-gcs — set PROXIMADB_GCS_TEST_ENDPOINT with the emulator running"]
+    async fn put_with_tier_against_fake_gcs() {
+        let endpoint = match std::env::var("PROXIMADB_GCS_TEST_ENDPOINT") {
+            Ok(e) => e,
+            Err(_) => {
+                eprintln!("skip: set PROXIMADB_GCS_TEST_ENDPOINT to the fake-gcs emulator");
+                return;
+            }
+        };
+        let built = object_store::gcp::GoogleCloudStorageBuilder::new()
+            .with_base_url(&endpoint)
+            .with_bucket_name("proximadb-test")
+            .build();
+        let store = match built {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("skip (best-effort): fake-gcs build unsupported by object_store: {e}");
+                return;
+            }
+        };
+        let os = ProximaObjectStore::new(Arc::new(store));
+        assert_eq!(os.backend(), ObjectBackendKind::Gcs);
+        let p = Path::from("cold/probe-gcs.bin");
+        if let Err(e) = os
+            .put_with_tier(&p, Bytes::from_static(b"cool-gcs"), ObjectAccessTier::Cool)
+            .await
+        {
+            eprintln!("skip (best-effort): fake-gcs rejected the tiered PUT: {e}");
+            return;
+        }
+        assert_eq!(&os.get(&p).await.expect("get")[..], b"cool-gcs");
+        let _ = os.delete(&p).await;
     }
 }
