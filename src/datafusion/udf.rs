@@ -59,6 +59,20 @@ pub fn json_extract_text_udf() -> ScalarUDF {
     )
 }
 
+/// Postgres `json_extract_path_text(json_text, key)` — the text-extract form spelled
+/// as a function (the portable alternative to `->>`). Same kernel as
+/// `json_extract_text`; registered under its own name so the OLAP route resolves it
+/// (TD-183).
+pub fn json_extract_path_text_udf() -> ScalarUDF {
+    create_udf(
+        "json_extract_path_text",
+        vec![DataType::Utf8, DataType::Utf8],
+        DataType::Utf8,
+        Volatility::Immutable,
+        Arc::new(|args| json_extract_impl(args, true)),
+    )
+}
+
 fn json_extract_impl(args: &[ColumnarValue], as_text: bool) -> DFResult<ColumnarValue> {
     if args.len() != 2 {
         return Err(DataFusionError::Execution(format!(

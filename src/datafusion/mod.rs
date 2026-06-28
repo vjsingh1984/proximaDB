@@ -187,6 +187,7 @@ fn build_session_context(
     // columns (`doc->'a'->>'b'`) work on the OLAP route, not just the legacy path.
     ctx.register_udf(udf::json_extract_udf());
     ctx.register_udf(udf::json_extract_text_udf());
+    ctx.register_udf(udf::json_extract_path_text_udf());
 
     // F2: bind every NON-native registry scalar as a DataFusion ScalarUDF (the consolidated
     // engine-neutral functions defined once in proximadb-functions). DataFusion's own
