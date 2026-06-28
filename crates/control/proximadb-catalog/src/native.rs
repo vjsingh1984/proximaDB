@@ -129,6 +129,11 @@ pub struct NativeCatalog {
     /// (S2) and for WAL-oid resolution. Maintained paired with `object_id_index`
     /// on create/load/rename/drop; rebuilt by scanning object files if absent.
     object_name_index: RwLock<HashMap<String, u64>>,
+    /// TD-181 P3 (S2a): whether object_id-keyed metadata paths are written.
+    /// Read once from `PROXIMADB_CATALOG_OBJECT_ID_PATHS` at construction (a
+    /// process-stable deployment setting, not a per-write toggle); interior
+    /// mutability so tests can force it deterministically without env races.
+    oid_paths: std::sync::atomic::AtomicBool,
 }
 
 /// Table metadata stored in storage
@@ -180,6 +185,21 @@ struct ObjectIndexEntry {
     object_id: u64,
     namespace: Vec<String>,
     name: String,
+}
+
+/// TD-181 P3 (S2a): marker recording that this catalog has begun writing
+/// object_id-keyed metadata under `_syscat/objects/{oid}.json`. Written once
+/// when the first oid-keyed object is persisted. A reader uses its presence to
+/// decide whether to consult the oid layout (S2b); its absence means a pure
+/// legacy name-keyed catalog.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MigrationMarker {
+    /// On-disk layout version (bump on any future incompatible change).
+    layout_version: u32,
+    /// Whether object_id-keyed metadata paths are in use.
+    oid_paths: bool,
+    /// Millis-since-epoch when oid paths were first enabled for this catalog.
+    migrated_at: i64,
 }
 
 impl NativeCatalog {
@@ -258,6 +278,7 @@ impl NativeCatalog {
             object_id_index: RwLock::new(HashMap::new()),
             namespace_object_id_index: RwLock::new(HashMap::new()),
             object_name_index: RwLock::new(HashMap::new()),
+            oid_paths: std::sync::atomic::AtomicBool::new(Self::object_id_paths_enabled()),
         };
 
         // Ensure the base location exists (local mkdir; object-store no-op).
@@ -527,6 +548,43 @@ impl NativeCatalog {
         "metadata/object_index.json".to_string()
     }
 
+    /// TD-181 P3 (S2a): relative key for an object_id-keyed table metadata file.
+    /// Flat (not namespace-partitioned) — cross-tenant uniqueness comes from the
+    /// globally-unique `object_id`, so identical names across tenants never
+    /// collide. `list_tables` resolves names through the durable index (S2b).
+    fn object_file_rel(object_id: u64) -> String {
+        format!("_syscat/objects/{object_id}.json")
+    }
+
+    /// TD-181 P3 (S2a): relative key for the layout migration marker.
+    fn migration_marker_rel() -> String {
+        "_syscat/_migration.json".to_string()
+    }
+
+    /// TD-181 P3 (S2a): presence-based, default-OFF gate for object_id-keyed
+    /// metadata writes (mirrors `PROXIMADB_INDEX_CATALOG_PATHS`). Unset ⇒ today's
+    /// pure name-keyed behavior; set ⇒ dual-write the oid layout alongside the
+    /// legacy name path (rollback-safe; reads cut over in S2b). Read once at
+    /// construction into [`oid_paths`](Self::oid_paths); call sites consult
+    /// [`oid_paths_on`](Self::oid_paths_on).
+    fn object_id_paths_enabled() -> bool {
+        std::env::var_os("PROXIMADB_CATALOG_OBJECT_ID_PATHS").is_some()
+    }
+
+    /// Whether this catalog writes object_id-keyed metadata (the construction
+    /// snapshot of [`object_id_paths_enabled`](Self::object_id_paths_enabled)).
+    fn oid_paths_on(&self) -> bool {
+        self.oid_paths.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Test-only deterministic toggle for the oid-paths gate, avoiding the
+    /// process-global env races a parallel test suite would otherwise hit.
+    #[cfg(test)]
+    fn set_oid_paths_for_test(&self, on: bool) {
+        self.oid_paths
+            .store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Relative key for a table's metadata.
     fn table_metadata_rel(identifier: &TableIdentifier) -> String {
         format!(
@@ -719,6 +777,32 @@ impl NativeCatalog {
     }
 
     /// Load table metadata from storage
+    /// TD-181 P3 (S2b): read a table's serialized metadata, preferring the
+    /// oid-keyed authority file when oid paths are on. The decision tree:
+    /// in oid mode, resolve `name → oid` via the durable index and read
+    /// `_syscat/objects/{oid}.json`; on any miss (legacy-only table, or a
+    /// dangling index entry whose oid file is gone) fall back to the legacy
+    /// name path. With the gate off it is exactly the legacy read. A bypass is
+    /// never wrong — it just isn't oid-keyed.
+    async fn read_table_bytes(&self, identifier: &TableIdentifier) -> Result<Option<Vec<u8>>> {
+        if self.oid_paths_on() {
+            let oid = self
+                .object_name_index
+                .read()
+                .await
+                .get(&identifier.to_fqn())
+                .copied();
+            if let Some(oid) = oid
+                && let Some(data) = self.io_read_opt(&Self::object_file_rel(oid)).await?
+            {
+                return Ok(Some(data));
+            }
+            // Fall through to the legacy name path (mixed-read fallback).
+        }
+        self.io_read_opt(&Self::table_metadata_rel(identifier))
+            .await
+    }
+
     async fn load_table(&self, identifier: &TableIdentifier) -> Result<TableMetadata> {
         let key = identifier.to_fqn();
 
@@ -727,9 +811,9 @@ impl NativeCatalog {
             return Ok(meta.clone());
         }
 
-        // Load from storage
+        // Load from storage (oid-keyed authority preferred, legacy fallback).
         let data = self
-            .io_read_opt(&Self::table_metadata_rel(identifier))
+            .read_table_bytes(identifier)
             .await?
             .ok_or_else(|| anyhow!("Table '{}' not found", identifier))?;
 
@@ -785,6 +869,19 @@ impl NativeCatalog {
         self.io_write(&Self::table_metadata_rel(&identifier), &data)
             .await?;
 
+        // TD-181 P3 (S2a): when oid paths are enabled, dual-write the authority
+        // copy at the oid-keyed path and ensure the migration marker exists. The
+        // legacy name path above stays as the shadow so a rollback (gate OFF) is
+        // lossless; reads keep using the name path until S2b. The bytes are
+        // identical — the same self-describing `TableMetadata` (carries its
+        // identifier + object_id), so the two copies can never disagree.
+        if self.oid_paths_on()
+            && let Some(oid) = meta.schema.object_id
+        {
+            self.io_write(&Self::object_file_rel(oid), &data).await?;
+            self.ensure_migration_marker().await?;
+        }
+
         // Update in-memory cache
         self.tables
             .write()
@@ -792,6 +889,22 @@ impl NativeCatalog {
             .insert(identifier.to_fqn(), meta.clone());
 
         Ok(())
+    }
+
+    /// TD-181 P3 (S2a): write the layout migration marker once (idempotent — a
+    /// no-op when it already exists), recording that this catalog now persists
+    /// object_id-keyed metadata.
+    async fn ensure_migration_marker(&self) -> Result<()> {
+        if self.io_exists(&Self::migration_marker_rel()).await? {
+            return Ok(());
+        }
+        let marker = MigrationMarker {
+            layout_version: 1,
+            oid_paths: true,
+            migrated_at: Self::now_millis(),
+        };
+        let data = serde_json::to_vec_pretty(&marker)?;
+        self.io_write(&Self::migration_marker_rel(), &data).await
     }
 
     /// Get current timestamp in milliseconds
@@ -1069,18 +1182,37 @@ impl Catalog for NativeCatalog {
     }
 
     async fn drop_table(&self, identifier: &TableIdentifier, purge: bool) -> Result<bool> {
-        // Delete metadata
-        let removed = self
+        // TD-181 P3: resolve the oid from the durable index BEFORE the entry is
+        // removed, so we can delete the oid-keyed authority copy too. Delete
+        // BOTH copies (authority-first, before the index entry). Removal counts
+        // as success if EITHER copy existed — so a pure-oid table (no legacy
+        // shadow) is still dropped, not silently skipped.
+        let oid = if self.oid_paths_on() {
+            self.object_name_index
+                .read()
+                .await
+                .get(&identifier.to_fqn())
+                .copied()
+        } else {
+            None
+        };
+        let legacy_removed = self
             .io_remove_file(&Self::table_metadata_rel(identifier))
             .await;
+        let oid_removed = if let Some(oid) = oid {
+            self.io_remove_file(&Self::object_file_rel(oid)).await
+        } else {
+            false
+        };
+        let removed = legacy_removed || oid_removed;
 
         if removed {
             // Remove from in-memory cache
             self.tables.write().await.remove(&identifier.to_fqn());
 
             // ADR-031 O1 + TD-181 P1: drop the reverse + forward index entries and
-            // persist. Authority-first: the object file was deleted above, so a
-            // crash here leaves a dangling index entry (pruned lazily on a
+            // persist. Authority-first: the object file(s) were deleted above, so
+            // a crash here leaves a dangling index entry (pruned lazily on a
             // NotFound read), never a resurrected table.
             self.index_remove_table(identifier).await?;
 
@@ -1104,16 +1236,46 @@ impl Catalog for NativeCatalog {
     }
 
     async fn list_tables(&self, namespace: &[String]) -> Result<Vec<TableIdentifier>> {
-        let identifiers = self
+        // Legacy name-keyed stems (present for legacy + dual-written tables).
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut out: Vec<TableIdentifier> = Vec::new();
+        for name in self
             .io_list_json_stems(&Self::tables_dir_rel(namespace))
             .await
-            .into_iter()
-            .map(|name| TableIdentifier::new(namespace.to_vec(), name))
-            .collect();
-        Ok(identifiers)
+        {
+            let id = TableIdentifier::new(namespace.to_vec(), name);
+            if seen.insert(id.to_fqn()) {
+                out.push(id);
+            }
+        }
+        // TD-181 P3 (S2b): in oid mode, UNION in oid-only tables (no legacy
+        // shadow) from the durable index, filtered to this namespace and
+        // deduped by (namespace, name). The flat `_syscat/objects/` layout is
+        // not namespace-partitioned, so the index is the only way to enumerate
+        // a namespace's oid-keyed tables.
+        if self.oid_paths_on() {
+            for id in self.object_id_index.read().await.values() {
+                if id.namespace == namespace && seen.insert(id.to_fqn()) {
+                    out.push(id.clone());
+                }
+            }
+        }
+        Ok(out)
     }
 
     async fn table_exists(&self, identifier: &TableIdentifier) -> Result<bool> {
+        // TD-181 P3 (S2b): in oid mode a table exists if the durable index knows
+        // it (covers a pure-oid table with no legacy shadow) OR the legacy file
+        // is present (covers an unindexed orphan). Gate off ⇒ legacy only.
+        if self.oid_paths_on()
+            && self
+                .object_name_index
+                .read()
+                .await
+                .contains_key(&identifier.to_fqn())
+        {
+            return Ok(true);
+        }
         self.io_exists(&Self::table_metadata_rel(identifier)).await
     }
 
@@ -1940,6 +2102,187 @@ mod tests {
             rebuilt.tables.len(),
             2,
             "scan-rebuild recovers exactly the persisted object files"
+        );
+    }
+
+    /// TD-181 P3 (S2a): with the oid-paths gate ON, a create dual-writes the
+    /// oid-keyed authority file AND the legacy name-path shadow (byte-identical),
+    /// writes the migration marker, and a drop removes both copies.
+    #[tokio::test]
+    async fn oid_paths_dual_write_creates_oid_file_marker_and_drops_both() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+        cat.set_oid_paths_for_test(true);
+        let ns = vec!["db".to_string()];
+        cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+        let id = TableIdentifier::new(ns, "t");
+        let oid = cat
+            .create_table(&id, schema_with_id_col("t"))
+            .await
+            .unwrap()
+            .object_id
+            .unwrap();
+
+        // Both copies exist and agree (same self-describing TableMetadata bytes).
+        let legacy = cat
+            .io_read_opt(&NativeCatalog::table_metadata_rel(&id))
+            .await
+            .unwrap()
+            .expect("legacy shadow written");
+        let authority = cat
+            .io_read_opt(&NativeCatalog::object_file_rel(oid))
+            .await
+            .unwrap()
+            .expect("oid authority file written");
+        assert_eq!(legacy, authority, "oid and legacy copies must be identical");
+
+        // Migration marker present.
+        assert!(
+            cat.io_exists(&NativeCatalog::migration_marker_rel())
+                .await
+                .unwrap(),
+            "migration marker written on first oid-keyed object"
+        );
+
+        // Drop removes BOTH copies (authority-first).
+        assert!(cat.drop_table(&id, false).await.unwrap());
+        assert!(
+            cat.io_read_opt(&NativeCatalog::object_file_rel(oid))
+                .await
+                .unwrap()
+                .is_none(),
+            "oid authority file deleted on drop"
+        );
+        assert!(
+            cat.io_read_opt(&NativeCatalog::table_metadata_rel(&id))
+                .await
+                .unwrap()
+                .is_none(),
+            "legacy shadow deleted on drop"
+        );
+    }
+
+    /// TD-181 P3 (S2a): with the gate OFF (default) a create writes only the
+    /// legacy name path — no oid file, no marker — i.e. today's exact behavior.
+    #[tokio::test]
+    async fn oid_paths_off_writes_only_legacy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+        cat.set_oid_paths_for_test(false);
+        let ns = vec!["db".to_string()];
+        cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+        let id = TableIdentifier::new(ns, "t");
+        let oid = cat
+            .create_table(&id, schema_with_id_col("t"))
+            .await
+            .unwrap()
+            .object_id
+            .unwrap();
+
+        assert!(
+            cat.io_read_opt(&NativeCatalog::table_metadata_rel(&id))
+                .await
+                .unwrap()
+                .is_some(),
+            "legacy name path written"
+        );
+        assert!(
+            cat.io_read_opt(&NativeCatalog::object_file_rel(oid))
+                .await
+                .unwrap()
+                .is_none(),
+            "no oid file when gate off"
+        );
+        assert!(
+            !cat.io_exists(&NativeCatalog::migration_marker_rel())
+                .await
+                .unwrap(),
+            "no marker when gate off"
+        );
+    }
+
+    /// TD-181 P3 (S2b) — the keystone mixed-read proof. With the gate ON a
+    /// catalog dir holding BOTH a legacy-only table (name path, no oid file) and
+    /// an oid-only table (oid file, no legacy shadow) resolves both via `get`,
+    /// lists exactly the two with no duplicates, reports both as existing, and
+    /// drops each (removing all of its files).
+    #[tokio::test]
+    async fn s2b_mixed_read_legacy_and_oid_only_tables() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ns = vec!["db".to_string()];
+        let id_a = TableIdentifier::new(ns.clone(), "a"); // legacy-only on disk
+        let id_b = TableIdentifier::new(ns.clone(), "b"); // oid-only on disk
+
+        let (oid_a, oid_b) = {
+            let cat = fresh_catalog(&tmp).await;
+            cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+
+            // A: created gate OFF → legacy name path only (+ durable index entry).
+            cat.set_oid_paths_for_test(false);
+            let oid_a = cat
+                .create_table(&id_a, schema_with_id_col("a"))
+                .await
+                .unwrap()
+                .object_id
+                .unwrap();
+
+            // B: created gate ON → dual-written; strip the legacy shadow to
+            // simulate a pure-oid table (the S2 endgame, no name-path copy).
+            cat.set_oid_paths_for_test(true);
+            let oid_b = cat
+                .create_table(&id_b, schema_with_id_col("b"))
+                .await
+                .unwrap()
+                .object_id
+                .unwrap();
+            cat.io_remove_file(&NativeCatalog::table_metadata_rel(&id_b))
+                .await;
+            (oid_a, oid_b)
+        };
+
+        // Reopen so reads hit disk (empty in-memory table cache); gate ON.
+        let cat = fresh_catalog(&tmp).await;
+        cat.set_oid_paths_for_test(true);
+
+        // get resolves BOTH: A via the legacy fallback, B via the oid file.
+        assert_eq!(
+            cat.get_table(&id_a).await.unwrap().object_id,
+            Some(oid_a),
+            "legacy-only table resolves via fallback"
+        );
+        assert_eq!(
+            cat.get_table(&id_b).await.unwrap().object_id,
+            Some(oid_b),
+            "oid-only table resolves via the oid file"
+        );
+
+        // list returns exactly the two, deduped (legacy stems ∪ index entries).
+        let mut listed = cat.list_tables(&ns).await.unwrap();
+        listed.sort_by(|x, y| x.name.cmp(&y.name));
+        assert_eq!(
+            listed,
+            vec![id_a.clone(), id_b.clone()],
+            "list unions legacy + oid-only with no duplicates"
+        );
+
+        // exists true for both.
+        assert!(cat.table_exists(&id_a).await.unwrap());
+        assert!(cat.table_exists(&id_b).await.unwrap());
+
+        // drop removes each table's file(s): legacy-only A, oid-only B.
+        assert!(cat.drop_table(&id_a, false).await.unwrap(), "drop A");
+        assert!(cat.drop_table(&id_b, false).await.unwrap(), "drop B");
+        assert!(
+            cat.list_tables(&ns).await.unwrap().is_empty(),
+            "both tables gone after drop"
+        );
+        assert!(
+            cat.get_table(&id_a).await.is_err(),
+            "A not found after drop"
+        );
+        assert!(
+            cat.get_table(&id_b).await.is_err(),
+            "B not found after drop"
         );
     }
 

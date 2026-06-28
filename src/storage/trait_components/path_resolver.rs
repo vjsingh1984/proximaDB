@@ -926,6 +926,12 @@ impl DrPathBuilder {
         "_metering",
         "_trace",
         "_manifests",
+        // TD-181 P3 (S2a): per-tenant system catalog subtree holding the
+        // object_id-keyed metadata (`_syscat/objects/{oid}.json`) + index +
+        // migration marker. Reserved before anything is written under it so a
+        // user object can never shadow the segment (the structural half of the
+        // system-only `_syscat/*` write guard).
+        "_syscat",
     ];
 
     /// Default account ID for deployments that have not provisioned an explicit
