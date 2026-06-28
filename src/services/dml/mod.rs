@@ -47,6 +47,7 @@ use proximadb_catalog::{
 use proximadb_data_model::ProximaType;
 use proximadb_data_model::ProximaValue;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
+use proximadb_relational_types::ExprError;
 use tracing::{debug, info, warn};
 
 use crate::catalog::CatalogManager;
@@ -1197,7 +1198,9 @@ impl DmlService {
         &self,
         table_name: &str,
         output_columns: Option<&[String]>,
-        full_row_predicate: Option<&(dyn Fn(&[ProximaValue]) -> bool + Send + Sync)>,
+        full_row_predicate: Option<
+            &(dyn Fn(&[ProximaValue]) -> Result<bool, ExprError> + Send + Sync),
+        >,
         limit: Option<usize>,
         tenant_context: Option<&TenantContext>,
     ) -> Result<(CatalogTableSchema, Vec<Vec<ProximaValue>>)> {
@@ -1218,11 +1221,28 @@ impl DmlService {
         };
 
         // Push the predicate INTO the store scan: project each record to a full
-        // row and apply the caller's full-row predicate. A projection error
-        // (should not happen for a valid record) excludes the row.
+        // row and apply the caller's full-row predicate. The scan-predicate API is
+        // `Fn(&ProximaRecord) -> bool` (no error channel), so a predicate eval error
+        // is captured here and surfaced after the scan as a hard error — NEVER
+        // coerced to `false` (which would silently drop rows). ADR-043 Invariant 1:
+        // a predicate the engine cannot evaluate fails loudly so the OLAP route can
+        // serve it, instead of returning a silently-wrong empty result.
+        let pred_err: std::sync::Mutex<Option<ExprError>> = std::sync::Mutex::new(None);
         let record_pred = |record: &ProximaRecord| -> bool {
             match Self::project_one_record(record, &table_schema, &full_selected) {
-                Ok(full_row) => full_row_predicate.is_none_or(|p| p(&full_row)),
+                Ok(full_row) => match full_row_predicate {
+                    Some(p) => match p(&full_row) {
+                        Ok(keep) => keep,
+                        Err(e) => {
+                            let mut slot = pred_err.lock().unwrap_or_else(|p| p.into_inner());
+                            if slot.is_none() {
+                                *slot = Some(e);
+                            }
+                            false
+                        }
+                    },
+                    None => true,
+                },
                 Err(_) => false,
             }
         };
@@ -1243,6 +1263,10 @@ impl DmlService {
                 tenant_context,
             )
             .await?;
+
+        if let Some(e) = pred_err.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            return Err(anyhow!("predicate evaluation failed: {e}"));
+        }
 
         let rows = Self::project_select_rows(&records, &table_schema, &output_selected)?;
         Ok((table_schema, rows))
@@ -7511,8 +7535,9 @@ mod tests {
         assert!(rows.iter().all(|r| r.len() == 3));
 
         // (b) Predicate over the FULL row: status (ordinal 1) == 'active' → i1,i2.
-        let pred =
-            |row: &[ProximaValue]| matches!(&row[1], ProximaValue::String(s) if s == "active");
+        let pred = |row: &[ProximaValue]| -> Result<bool, ExprError> {
+            Ok(matches!(&row[1], ProximaValue::String(s) if s == "active"))
+        };
         let (_s, rows) = dml
             .scan_table_relational("inv", None, Some(&pred), None, None)
             .await
@@ -7526,6 +7551,22 @@ mod tests {
             .collect();
         ids.sort();
         assert_eq!(ids, vec!["i1", "i2"], "predicate filters to active rows");
+
+        // (b2) ADR-043 Invariant 1: a predicate that errors is surfaced as a hard
+        // error, NEVER silently dropped to an empty result.
+        let failing_pred = |_row: &[ProximaValue]| -> Result<bool, ExprError> {
+            Err(ExprError::UnknownFunction {
+                name: "does_not_exist".to_string(),
+            })
+        };
+        let err = dml
+            .scan_table_relational("inv", None, Some(&failing_pred), None, None)
+            .await
+            .expect_err("a predicate eval error must surface, not silently drop rows");
+        assert!(
+            err.to_string().contains("predicate evaluation failed"),
+            "expected a loud predicate error, got: {err}"
+        );
 
         // (c) Output projection narrows + orders columns → just [status].
         let cols = vec!["status".to_string()];
