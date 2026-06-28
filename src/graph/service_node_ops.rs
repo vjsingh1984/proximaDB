@@ -350,7 +350,15 @@ impl super::GraphOperationsService {
             ));
         }
         let engine = self.get_or_create_graph_engine(graph_id).await?;
-        engine.get_node(id)
+        if let Some(node) = engine.get_node(id)? {
+            return Ok(Some(node));
+        }
+        // TD-168 cold-payload tier (gated default-OFF): on a hot (in-RAM) miss,
+        // serve the payload from the byte-budgeted cache over the canonical record
+        // store, so a graph whose payloads exceed RAM is still servable. The gate is
+        // checked inside `cold_fetch_node`, which returns `None` (today's behavior)
+        // when the tier is off.
+        self.cold_fetch_node(graph_id, id).await
     }
 
     /// Update a node, applying ADR-012 merge semantics for label sets.

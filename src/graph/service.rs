@@ -106,13 +106,73 @@ use crate::storage::cache::orchestrator::{
     CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats,
 };
 use dashmap::DashMap;
+use proximadb_cache::{CacheBudget, CacheKey, CacheKind, TenantCache};
 use proximadb_graph::projection::TopologyEpoch;
 use proximadb_kernel::error::ProximaDBError;
 use proximadb_records::{RecordKey, RecordStore};
 use proximadb_storage_common::{CanonicalOperation, CanonicalWalEntry, SnapshotManifest};
+
+use crate::graph::adjacency_projection::{edge_from_canonical_record, node_from_canonical_record};
+use proximadb_graph::record::{GraphEdgeKey, GraphNodeKey};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Env gate (default-OFF) for the TD-168 cold graph-payload tier. When set truthy,
+/// `get_node`/`get_edge` fall back to a byte-budgeted cache over the canonical
+/// record store on a hot (in-RAM) miss, so a graph whose payloads exceed RAM is
+/// still servable. When unset, the engine's all-RAM path is used unchanged.
+const COLD_PAYLOADS_ENV: &str = "PROXIMADB_GRAPH_COLD_PAYLOADS";
+
+/// Per-tenant byte budget for the cold graph-payload caches (TD-168). Coarse
+/// default; criticality-aware sizing is deferred to TD-171.
+const GRAPH_PAYLOAD_CACHE_BYTES: u64 = 128 * 1024 * 1024;
+
+/// Byte-budgeted cold-payload caches for one `GraphOperationsService`. Built lazily
+/// only when the gate is ON, so the default (all-RAM) path pays nothing.
+struct GraphPayloadCaches {
+    nodes: TenantCache<Arc<Node>>,
+    edges: TenantCache<Arc<Edge>>,
+}
+
+impl GraphPayloadCaches {
+    fn new() -> Self {
+        Self {
+            nodes: TenantCache::new(CacheBudget::new(
+                GRAPH_PAYLOAD_CACHE_BYTES,
+                GRAPH_PAYLOAD_CACHE_BYTES,
+            )),
+            edges: TenantCache::new(CacheBudget::new(
+                GRAPH_PAYLOAD_CACHE_BYTES,
+                GRAPH_PAYLOAD_CACHE_BYTES,
+            )),
+        }
+    }
+}
+
+/// True when the cold graph-payload tier (TD-168) is enabled via the env gate.
+fn cold_payloads_enabled() -> bool {
+    std::env::var(COLD_PAYLOADS_ENV)
+        .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+}
+
+/// Coarse byte-weight estimate for a graph payload, used for the cache budget. The
+/// budget only needs a positive, roughly-proportional weight — exactness is
+/// unnecessary — so this sums the id length and a flat per-property estimate,
+/// clamped into `u32`.
+fn payload_weight(
+    id: &str,
+    properties: &HashMap<String, crate::graph::model::PropertyValue>,
+) -> u32 {
+    const BASE_BYTES: usize = 64;
+    const PER_PROPERTY_BYTES: usize = 64;
+    BASE_BYTES
+        .saturating_add(id.len())
+        .saturating_add(properties.len().saturating_mul(PER_PROPERTY_BYTES))
+        .min(u32::MAX as usize) as u32
+}
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
@@ -169,6 +229,9 @@ pub struct GraphOperationsService {
     transaction_manager: Arc<service_transactions::TransactionManager>,
     /// RBAC manager for permission validation
     rbac_manager: Option<Arc<ConsolidatedRBACManager>>,
+    /// Cold graph-payload caches (TD-168), built lazily on first cold read only
+    /// when `PROXIMADB_GRAPH_COLD_PAYLOADS` is set. Empty (and free) otherwise.
+    payload_caches: OnceLock<GraphPayloadCaches>,
 }
 
 impl GraphOperationsService {
@@ -206,6 +269,7 @@ impl GraphOperationsService {
             graph_settings: default_settings,
             transaction_manager,
             rbac_manager: None,
+            payload_caches: OnceLock::new(),
         };
 
         // Register lightweight graph cache providers with orchestrator
@@ -287,6 +351,7 @@ impl GraphOperationsService {
             graph_settings: default_settings,
             transaction_manager,
             rbac_manager: None,
+            payload_caches: OnceLock::new(),
         };
 
         // Register cache providers
@@ -346,6 +411,83 @@ impl GraphOperationsService {
     /// filtering. `None` for single-tenant/embedded builds without a wired store ⇒ the gate fails open.
     pub fn canonical_record_store(&self) -> Option<&Arc<dyn RecordStore>> {
         self.canonical_record_store.as_ref()
+    }
+
+    /// Lazily-built cold-payload caches (TD-168). Constructed on first use only,
+    /// so the all-RAM default path never allocates them.
+    fn payload_caches(&self) -> &GraphPayloadCaches {
+        self.payload_caches.get_or_init(GraphPayloadCaches::new)
+    }
+
+    /// Cold-fetch a node payload from the canonical record store on a hot miss
+    /// (TD-168, gated). Serves from a byte-budgeted cache; on a cache miss reads
+    /// the canonical record, reconstructs the `Node`, and admits it (subject to the
+    /// budget). Returns `Ok(None)` when no canonical record exists — a missing
+    /// record is never cached. Callers must check the gate before calling.
+    async fn cold_fetch_node(&self, graph_id: &str, id: &str) -> Result<Option<Arc<Node>>> {
+        if !cold_payloads_enabled() {
+            return Ok(None);
+        }
+        let store = match &self.canonical_record_store {
+            Some(store) => store,
+            None => return Ok(None),
+        };
+        let cache = &self.payload_caches().nodes;
+        let cache_key = CacheKey::new(graph_id, CacheKind::Other, format!("node/{id}"));
+        if let Some(node) = cache.get(&cache_key).await {
+            return Ok(Some(node));
+        }
+        let record_key = RecordKey::new(GraphNodeKey::new(graph_id, id).canonical_oid());
+        let record = store
+            .get_record(&record_key)
+            .await
+            .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        let node = match record.and_then(|record| node_from_canonical_record(&record)) {
+            Some(node) => Arc::new(node),
+            None => return Ok(None),
+        };
+        cache
+            .insert(
+                cache_key,
+                payload_weight(&node.id, &node.properties),
+                node.clone(),
+            )
+            .await;
+        Ok(Some(node))
+    }
+
+    /// Cold-fetch an edge payload from the canonical record store on a hot miss
+    /// (TD-168, gated). See [`Self::cold_fetch_node`].
+    async fn cold_fetch_edge(&self, graph_id: &str, id: &str) -> Result<Option<Arc<Edge>>> {
+        if !cold_payloads_enabled() {
+            return Ok(None);
+        }
+        let store = match &self.canonical_record_store {
+            Some(store) => store,
+            None => return Ok(None),
+        };
+        let cache = &self.payload_caches().edges;
+        let cache_key = CacheKey::new(graph_id, CacheKind::Other, format!("edge/{id}"));
+        if let Some(edge) = cache.get(&cache_key).await {
+            return Ok(Some(edge));
+        }
+        let record_key = RecordKey::new(GraphEdgeKey::new(graph_id, id).canonical_oid());
+        let record = store
+            .get_record(&record_key)
+            .await
+            .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        let edge = match record.and_then(|record| edge_from_canonical_record(&record)) {
+            Some(edge) => Arc::new(edge),
+            None => return Ok(None),
+        };
+        cache
+            .insert(
+                cache_key,
+                payload_weight(&edge.id, &edge.properties),
+                edge.clone(),
+            )
+            .await;
+        Ok(Some(edge))
     }
 
     /// Inject the canonical WAL appender that `flush_wal` uses to persist
