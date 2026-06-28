@@ -525,6 +525,13 @@ impl NativeCatalog {
                 .await
                 .insert(id, identifier.clone());
         }
+        // ADR-031 / TD-181 P0: recover the floor from persisted index object_ids
+        // too (indexes ride in the table's schema), so a restart never reuses one.
+        for index in &meta.schema.indexes {
+            if let Some(id) = index.object_id {
+                self.object_id_allocator.raise_floor(id + 1);
+            }
+        }
 
         // Cache in memory
         self.tables.write().await.insert(key, meta.clone());
@@ -768,6 +775,16 @@ impl Catalog for NativeCatalog {
         match schema.object_id {
             None => schema.object_id = Some(self.object_id_allocator.allocate()),
             Some(id) => self.object_id_allocator.raise_floor(id + 1),
+        }
+
+        // ADR-031 / TD-181 P0: mint object_ids for any indexes carried in the
+        // schema (CTAS / import) from the same single sequence; a caller-supplied
+        // id raises the floor instead of being reused.
+        for index in &mut schema.indexes {
+            match index.object_id {
+                None => index.object_id = Some(self.object_id_allocator.allocate()),
+                Some(id) => self.object_id_allocator.raise_floor(id + 1),
+            }
         }
 
         // Check namespace exists
@@ -1036,6 +1053,15 @@ impl Catalog for NativeCatalog {
                     identifier
                 ));
             }
+        }
+
+        // ADR-031 / TD-181 P0: mint the index object_id from the shared sequence
+        // (a caller-supplied id raises the floor; never reused). Allocated after
+        // the dup/column validation so a rejected create doesn't burn an id.
+        let mut index = index;
+        match index.object_id {
+            None => index.object_id = Some(self.object_id_allocator.allocate()),
+            Some(id) => self.object_id_allocator.raise_floor(id + 1),
         }
 
         meta.schema.indexes.push(index.clone());
@@ -1661,6 +1687,90 @@ mod tests {
             .unwrap()
             .object_id
             .expect("namespace object_id");
+        assert!(
+            next > existing,
+            "reload recovered the floor: {next} > {existing}"
+        );
+    }
+
+    // ── ADR-031 / TD-181 P0 tail: index object_id ────────────────────
+
+    #[tokio::test]
+    async fn create_index_assigns_object_id_from_shared_sequence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+        let ns = vec!["t".to_string()];
+        cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+        let id = TableIdentifier::new(ns.clone(), "tbl");
+        let tbl_oid = cat
+            .create_table(&id, schema_with_id_col("tbl"))
+            .await
+            .unwrap()
+            .object_id
+            .expect("table object_id");
+
+        let created = cat
+            .create_index(
+                &id,
+                crate::CatalogIndex::new(
+                    "idx_id",
+                    vec!["id".to_string()],
+                    crate::CatalogIndexType::BTree,
+                ),
+            )
+            .await
+            .unwrap();
+        let idx_oid = created.object_id.expect("index got an object_id");
+
+        assert!(idx_oid >= 1, "ids start at 1, got {idx_oid}");
+        assert_ne!(
+            idx_oid, tbl_oid,
+            "one shared sequence: index and table oids never collide"
+        );
+    }
+
+    #[tokio::test]
+    async fn index_object_id_recovered_on_reload_prevents_reuse() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ns = vec!["t".to_string()];
+        let id = TableIdentifier::new(ns.clone(), "tbl");
+        let existing = {
+            let cat = fresh_catalog(&tmp).await;
+            cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+            cat.create_table(&id, schema_with_id_col("tbl"))
+                .await
+                .unwrap();
+            cat.create_index(
+                &id,
+                crate::CatalogIndex::new(
+                    "idx_a",
+                    vec!["id".to_string()],
+                    crate::CatalogIndexType::BTree,
+                ),
+            )
+            .await
+            .unwrap()
+            .object_id
+            .expect("index object_id")
+        };
+
+        // Cold restart: create_index loads the table first (load_table), which
+        // recovers the allocator floor from the persisted index object_id so the
+        // next index never reuses it.
+        let cat2 = fresh_catalog(&tmp).await;
+        let next = cat2
+            .create_index(
+                &id,
+                crate::CatalogIndex::new(
+                    "idx_b",
+                    vec!["id".to_string()],
+                    crate::CatalogIndexType::BTree,
+                ),
+            )
+            .await
+            .unwrap()
+            .object_id
+            .expect("index object_id");
         assert!(
             next > existing,
             "reload recovered the floor: {next} > {existing}"

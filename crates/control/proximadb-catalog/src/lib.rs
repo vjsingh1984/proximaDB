@@ -1387,6 +1387,13 @@ fn measured_ratio(raw_bytes: u64, encoded_bytes: u64) -> f64 {
 /// Index definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogIndex {
+    /// ADR-031 / TD-181 P0: stable, immutable `u64` catalog object identity,
+    /// minted from the single system-wide catalog sequence (globally unique,
+    /// never reused) — the same sequence that mints table and namespace oids.
+    /// Additive + `#[serde(default)]`, so legacy persisted indexes load as
+    /// `None` (mixed-read-safe; backfilled on first allocation pass).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_id: Option<u64>,
     /// Index name
     pub name: String,
     /// Indexed columns
@@ -1407,6 +1414,7 @@ impl CatalogIndex {
         index_type: CatalogIndexType,
     ) -> Self {
         Self {
+            object_id: None,
             name: name.into(),
             columns,
             index_type,
@@ -1418,6 +1426,12 @@ impl CatalogIndex {
     /// Set unique
     pub fn unique(mut self) -> Self {
         self.is_unique = true;
+        self
+    }
+
+    /// Set the stable `u64` catalog object identity (ADR-031 / TD-181 P0).
+    pub fn with_object_id(mut self, object_id: u64) -> Self {
+        self.object_id = Some(object_id);
         self
     }
 }
