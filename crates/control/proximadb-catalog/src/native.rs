@@ -242,22 +242,40 @@ impl NativeCatalog {
             Ok(Some(data)) => {
                 let mut namespaces: HashMap<String, CatalogNamespace> =
                     serde_json::from_slice(&data)?;
-                // Idempotent backfill: legacy rows persisted before namespace
-                // identity existed deserialize with `namespace_id = None`. Assign
-                // an opaque id so warehouse paths can route through DrPathBuilder.
-                // Persist once if anything changed; a no-op on subsequent loads.
-                let mut backfilled = 0usize;
+                // ADR-031 / TD-181 P0: recover the catalog-oid allocator floor from
+                // persisted namespace object_ids FIRST, so any backfill below
+                // allocates strictly above every existing id and a restart never
+                // reuses one (mirrors load_table's recovery).
+                for ns in namespaces.values() {
+                    if let Some(oid) = ns.object_id {
+                        self.object_id_allocator.raise_floor(oid + 1);
+                    }
+                }
+                // Idempotent backfill: legacy rows persisted before these identities
+                // existed deserialize with `namespace_id = None` (the opaque path
+                // token, so warehouse paths can route through DrPathBuilder) and/or
+                // `object_id = None` (the stable catalog surrogate). Assign both;
+                // persist once if anything changed; a no-op on subsequent loads.
+                let mut ns_id_backfilled = 0usize;
+                let mut oid_backfilled = 0usize;
                 for ns in namespaces.values_mut() {
                     if ns.namespace_id.is_none() {
                         ns.namespace_id = Some(Self::new_namespace_id());
-                        backfilled += 1;
+                        ns_id_backfilled += 1;
+                    }
+                    if ns.object_id.is_none() {
+                        ns.object_id = Some(self.object_id_allocator.allocate());
+                        oid_backfilled += 1;
                     }
                 }
                 let count = namespaces.len();
                 *self.namespaces.write().await = namespaces;
-                if backfilled > 0 {
+                if ns_id_backfilled > 0 || oid_backfilled > 0 {
                     self.save_namespaces().await?;
-                    info!("Backfilled namespace_id for {backfilled} legacy namespace(s)");
+                    info!(
+                        "Backfilled namespace_id for {ns_id_backfilled} and object_id \
+                         for {oid_backfilled} legacy namespace(s)"
+                    );
                 }
                 debug!("Loaded {count} namespaces from {rel}");
             }
@@ -571,6 +589,10 @@ impl NativeCatalog {
             location: None,
             created_at_ms: now,
             updated_at_ms: now,
+            // ADR-031 / TD-181 P0: mint the stable catalog object_id from the same
+            // single system-wide sequence that mints table object_ids (one sequence,
+            // not per-type — ADR-031 reconciliation amendment 1). Native-minted only.
+            object_id: Some(self.object_id_allocator.allocate()),
             // Opaque, rename-stable server-issued id that drives physical paths
             // (DrPathBuilder). `tenant_id` is the owning tenant when created in a
             // tenant scope; together they make the namespace DR-addressable.
@@ -1562,6 +1584,87 @@ mod tests {
         let idb = b.object_id.expect("b got an object_id");
         assert!(ida >= 1, "ids start at 1, got {ida}");
         assert!(idb > ida, "monotonic + distinct: {idb} > {ida}");
+    }
+
+    // ── ADR-031 / TD-181 P0: namespace object_id allocation ──────────
+
+    #[tokio::test]
+    async fn create_namespace_assigns_distinct_monotonic_object_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+
+        let a = cat
+            .create_namespace(&["ns_a".to_string()], HashMap::new())
+            .await
+            .unwrap();
+        let b = cat
+            .create_namespace(&["ns_b".to_string()], HashMap::new())
+            .await
+            .unwrap();
+
+        let ida = a.object_id.expect("namespace a got an object_id");
+        let idb = b.object_id.expect("namespace b got an object_id");
+        assert!(ida >= 1, "ids start at 1, got {ida}");
+        assert!(idb > ida, "monotonic + distinct: {idb} > {ida}");
+    }
+
+    #[tokio::test]
+    async fn namespace_and_table_share_one_object_id_sequence() {
+        // ADR-031 reconciliation amendment 1: ONE system-wide sequence mints
+        // both namespace and table object_ids (not per-type spaces), so every
+        // catalog object_id in a deployment is mutually distinct.
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+
+        let ns = vec!["shared".to_string()];
+        let ns_oid = cat
+            .create_namespace(&ns, HashMap::new())
+            .await
+            .unwrap()
+            .object_id
+            .expect("namespace object_id");
+        let tbl_oid = cat
+            .create_table(
+                &TableIdentifier::new(ns.clone(), "t"),
+                schema_with_id_col("t"),
+            )
+            .await
+            .unwrap()
+            .object_id
+            .expect("table object_id");
+
+        assert_ne!(
+            ns_oid, tbl_oid,
+            "one shared sequence: ids never collide across object types"
+        );
+    }
+
+    #[tokio::test]
+    async fn namespace_object_id_recovered_on_reload_prevents_reuse() {
+        let tmp = tempfile::tempdir().unwrap();
+        let existing = {
+            let cat = fresh_catalog(&tmp).await;
+            cat.create_namespace(&["db".to_string()], HashMap::new())
+                .await
+                .unwrap()
+                .object_id
+                .expect("namespace object_id")
+        };
+
+        // Cold restart: a fresh catalog eagerly loads namespaces (constructor →
+        // load_namespaces), which must recover the allocator floor from the
+        // persisted object_id so the next allocation never reuses it.
+        let cat2 = fresh_catalog(&tmp).await;
+        let next = cat2
+            .create_namespace(&["db2".to_string()], HashMap::new())
+            .await
+            .unwrap()
+            .object_id
+            .expect("namespace object_id");
+        assert!(
+            next > existing,
+            "reload recovered the floor: {next} > {existing}"
+        );
     }
 
     #[tokio::test]

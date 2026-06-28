@@ -159,6 +159,18 @@ pub struct CatalogNamespace {
     pub updated_at_ms: i64,
 
     // --- Engine multi-tenant authority fields (stable identifiers) ---
+    /// ADR-031 / TD-181 P0: stable, immutable `u64` **catalog object identity**,
+    /// minted from the single system-wide catalog sequence (globally unique
+    /// across all tenants, never reused). This is the catalog-object surrogate
+    /// the planner/FK/path layers will key on; it is distinct from
+    /// `namespace_id` (the legacy `ns_<uuid>` path token, retired in a later
+    /// phase) and from `tenant_id`/`account_id` (externally assigned, **not**
+    /// catalog surrogates — ADR-031 reconciliation amendment 2). Additive +
+    /// `#[serde(default)]`, so legacy rows and federated (external-catalog)
+    /// namespaces load as `None` (mixed-read-safe; only native-minted
+    /// namespaces carry one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_id: Option<u64>,
     /// Opaque, stable, server-issued ULID. Never reused, never changes on
     /// rename. Drives physical paths and provider rule filters. `None`
     /// for legacy rows pending P0.5 migration backfill.
@@ -212,6 +224,7 @@ impl CatalogNamespace {
             location: None,
             created_at_ms: now,
             updated_at_ms: now,
+            object_id: None,
             namespace_id: None,
             tenant_id: None,
             account_id: None,
@@ -224,6 +237,12 @@ impl CatalogNamespace {
     /// Get fully qualified name
     pub fn fqn(&self) -> String {
         self.levels.join(".")
+    }
+
+    /// Set the stable `u64` catalog object identity (ADR-031 / TD-181 P0).
+    pub fn with_object_id(mut self, object_id: u64) -> Self {
+        self.object_id = Some(object_id);
+        self
     }
 
     /// Add a property
