@@ -101,6 +101,7 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
         };
 
         let params = GraphFusionParams {
+            route_policy: None,
             graph_id: req.graph_id.clone(),
             vector_collection: req.vector_collection.clone(),
             query_vector: req.query_vector.clone(),

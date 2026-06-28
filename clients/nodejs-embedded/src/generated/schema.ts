@@ -1200,10 +1200,17 @@ export interface components {
             max_depth?: number;
             /** @description How many of the top vector seeds to expand from (bounded expansion). */
             max_seeds?: number;
+            /**
+             * Format: float
+             * @description Cost-routing policy inputs (TD-141): drop negligible modalities (weight fraction) and budget each.
+             *     When absent, fusion is unbounded.
+             */
+            min_weight_fraction?: number | null;
             /** @description Query embedding for the ANN seed. */
             query_vector: number[];
             /** @description Use the rank-based RRF fallback instead of PIT-calibrated linear. */
             rrf?: boolean;
+            total_budget?: number | null;
             /** @description Vector collection to seed from (its records co-indexed with this graph by `oid`). */
             vector_collection: string;
             /** Format: float */

@@ -459,11 +459,16 @@ type FusionSearchRequest struct {
 	// MaxSeeds How many of the top vector seeds to expand from (bounded expansion).
 	MaxSeeds *int `json:"max_seeds,omitempty"`
 
+	// MinWeightFraction Cost-routing policy inputs (TD-141): drop negligible modalities (weight fraction) and budget each.
+	// When absent, fusion is unbounded.
+	MinWeightFraction *float32 `json:"min_weight_fraction"`
+
 	// QueryVector Query embedding for the ANN seed.
 	QueryVector []float32 `json:"query_vector"`
 
 	// Rrf Use the rank-based RRF fallback instead of PIT-calibrated linear.
-	Rrf *bool `json:"rrf,omitempty"`
+	Rrf         *bool `json:"rrf,omitempty"`
+	TotalBudget *int  `json:"total_budget"`
 
 	// VectorCollection Vector collection to seed from (its records co-indexed with this graph by `oid`).
 	VectorCollection string   `json:"vector_collection"`

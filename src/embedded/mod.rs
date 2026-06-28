@@ -3709,6 +3709,7 @@ impl EmbeddedProximaDB {
                 self.shared_services.graph_service.clone(),
             );
             let params = GraphFusionParams {
+                route_policy: None,
                 graph_id: graph_id.to_string(),
                 vector_collection: vector_collection.to_string(),
                 query_vector,

@@ -484,6 +484,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
                 req.top_k as usize
             };
             let params = GraphFusionParams {
+                route_policy: None,
                 graph_id: collection.clone(),
                 vector_collection: collection.clone(),
                 query_vector,
