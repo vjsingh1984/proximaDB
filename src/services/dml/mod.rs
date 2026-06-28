@@ -1637,6 +1637,21 @@ impl DmlService {
         Ok((table_schema, records))
     }
 
+    /// Resolve a table name to its canonical collection id (`table_id.name`) —
+    /// the key the write/flush path stamps statistics under (so an EXPLAIN
+    /// statistics lookup uses the same key). `None` if the table can't be
+    /// resolved. Used by the relational EXPLAIN selectivity disclosure (TD-174).
+    pub(crate) async fn resolve_collection_id(
+        &self,
+        table_name: &str,
+        tenant: Option<&str>,
+    ) -> Option<String> {
+        self.resolve_select_table(table_name, tenant)
+            .await
+            .ok()
+            .map(|(_, collection_id)| collection_id)
+    }
+
     async fn resolve_select_table(
         &self,
         table_name: &str,
