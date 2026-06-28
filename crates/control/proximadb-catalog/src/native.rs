@@ -116,6 +116,12 @@ pub struct NativeCatalog {
     /// create/load/rename/drop; populated lazily as tables load (eager build at
     /// startup is the O2 recovery hardening).
     object_id_index: RwLock<HashMap<u64, TableIdentifier>>,
+    /// ADR-031 / TD-181: reverse index `object_id → namespace levels`, the
+    /// namespace analogue of `object_id_index`. Maintained on create/load/drop
+    /// (namespaces have no rename path). Enables the Phase-1 backfill and the
+    /// Phase-2 reference cutover (`table.namespace_oid → namespace`) to resolve
+    /// by id instead of by name.
+    namespace_object_id_index: RwLock<HashMap<u64, Vec<String>>>,
 }
 
 /// Table metadata stored in storage
@@ -197,6 +203,7 @@ impl NativeCatalog {
             cache,
             object_id_allocator: crate::id_allocator::IdAllocator::default(),
             object_id_index: RwLock::new(HashMap::new()),
+            namespace_object_id_index: RwLock::new(HashMap::new()),
         };
 
         // Ensure the base location exists (local mkdir; object-store no-op).
@@ -266,6 +273,18 @@ impl NativeCatalog {
                     if ns.object_id.is_none() {
                         ns.object_id = Some(self.object_id_allocator.allocate());
                         oid_backfilled += 1;
+                    }
+                }
+                // ADR-031 / TD-181: (re)build the object_id → levels reverse index
+                // from the loaded set (all namespaces now carry an object_id after
+                // the backfill above), mirroring the table object_id_index.
+                {
+                    let mut idx = self.namespace_object_id_index.write().await;
+                    idx.clear();
+                    for ns in namespaces.values() {
+                        if let Some(oid) = ns.object_id {
+                            idx.insert(oid, ns.levels.clone());
+                        }
                     }
                 }
                 let count = namespaces.len();
@@ -615,6 +634,13 @@ impl NativeCatalog {
             .write()
             .await
             .insert(key.clone(), ns.clone());
+        // ADR-031 / TD-181: maintain the object_id → levels reverse index.
+        if let Some(oid) = ns.object_id {
+            self.namespace_object_id_index
+                .write()
+                .await
+                .insert(oid, ns.levels.clone());
+        }
         self.save_namespaces().await?;
 
         info!("Created namespace: {}", key);
@@ -685,7 +711,14 @@ impl Catalog for NativeCatalog {
             }
         }
 
-        let removed = self.namespaces.write().await.remove(&key).is_some();
+        let removed_ns = self.namespaces.write().await.remove(&key);
+        // ADR-031 / TD-181: drop the object_id → levels reverse-index entry too.
+        if let Some(ns) = &removed_ns
+            && let Some(oid) = ns.object_id
+        {
+            self.namespace_object_id_index.write().await.remove(&oid);
+        }
+        let removed = removed_ns.is_some();
         if removed {
             self.save_namespaces().await?;
             info!("Dropped namespace: {}", key);
@@ -895,6 +928,17 @@ impl Catalog for NativeCatalog {
         // process resolves an id only after its table has been loaded by name.
         // Eager startup index build is the O2 recovery hardening.
         Ok(self.object_id_index.read().await.get(&object_id).cloned())
+    }
+
+    async fn get_namespace_by_object_id(&self, object_id: u64) -> Result<Option<Vec<String>>> {
+        // Namespaces load eagerly at construction (load_namespaces), so this
+        // reverse index is fully populated up front — unlike the lazy table index.
+        Ok(self
+            .namespace_object_id_index
+            .read()
+            .await
+            .get(&object_id)
+            .cloned())
     }
 
     async fn rename_table(&self, from: &TableIdentifier, to: &TableIdentifier) -> Result<()> {
@@ -1775,6 +1819,75 @@ mod tests {
             next > existing,
             "reload recovered the floor: {next} > {existing}"
         );
+    }
+
+    // ── ADR-031 / TD-181: namespace reverse resolver ─────────────────
+
+    #[tokio::test]
+    async fn namespace_reverse_resolver_round_trips_object_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+        let levels = vec!["db".to_string(), "schema".to_string()];
+        let oid = cat
+            .create_namespace(&levels, HashMap::new())
+            .await
+            .unwrap()
+            .object_id
+            .expect("namespace object_id");
+
+        let resolved = cat
+            .get_namespace_by_object_id(oid)
+            .await
+            .expect("resolve")
+            .expect("object_id maps to a namespace");
+        assert_eq!(
+            resolved, levels,
+            "reverse index returns the namespace levels"
+        );
+    }
+
+    #[tokio::test]
+    async fn namespace_reverse_resolver_cleared_on_drop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+        let levels = vec!["db".to_string()];
+        let oid = cat
+            .create_namespace(&levels, HashMap::new())
+            .await
+            .unwrap()
+            .object_id
+            .expect("namespace object_id");
+        assert!(cat.get_namespace_by_object_id(oid).await.unwrap().is_some());
+
+        assert!(cat.drop_namespace(&levels, false).await.unwrap());
+        assert!(
+            cat.get_namespace_by_object_id(oid).await.unwrap().is_none(),
+            "drop clears the reverse-index entry"
+        );
+    }
+
+    #[tokio::test]
+    async fn namespace_reverse_resolver_rebuilt_on_reload() {
+        let tmp = tempfile::tempdir().unwrap();
+        let levels = vec!["db".to_string()];
+        let oid = {
+            let cat = fresh_catalog(&tmp).await;
+            cat.create_namespace(&levels, HashMap::new())
+                .await
+                .unwrap()
+                .object_id
+                .expect("namespace object_id")
+        };
+
+        // A fresh catalog eagerly loads namespaces (load_namespaces), which
+        // rebuilds the reverse index — so the id resolves with no prior get.
+        let cat2 = fresh_catalog(&tmp).await;
+        let resolved = cat2
+            .get_namespace_by_object_id(oid)
+            .await
+            .expect("resolve")
+            .expect("reverse index rebuilt on load");
+        assert_eq!(resolved, levels);
     }
 
     #[tokio::test]
