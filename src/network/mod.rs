@@ -179,6 +179,9 @@ pub mod auth;
 pub mod grpc;
 /// Hybrid (vector + BM25 text) search execution engine
 pub mod hybrid_search;
+/// In-process reference MCP transport (ADR-037 Decision 5) — bound only when
+/// `api.mcp_port` is configured (off by default).
+pub mod mcp;
 /// Metrics endpoints (Prometheus, JSON, health)
 pub mod metrics_service;
 /// HTTP middleware stack (auth, CORS, rate limiting, TLS)
