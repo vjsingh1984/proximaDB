@@ -25,7 +25,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Hard wall-clock cap for hang-prone async tests. Well above their real runtime
 /// (<1s) but far below nextest's 120s slow-timeout, so a genuine hang fails the
@@ -51,21 +51,28 @@ fn with_watchdog<T>(body: impl FnOnce() -> T) -> T {
     let watchdog = std::thread::Builder::new()
         .name("async-test-watchdog".to_string())
         .spawn(move || {
-            let deadline = TEST_WATCHDOG_TIMEOUT;
+            // Bound by REAL wall-clock via `Instant::elapsed`, never by accumulating
+            // nominal sleep durations. On the oversubscribed CI runner this watchdog
+            // exists to protect (nextest fans out test-threads = ncpu while the host is
+            // contended), `thread::sleep(50ms)` overshoots, so summing the *nominal*
+            // 50ms steps reaches the 30s deadline only after far more than 30s of real
+            // time — dilating the bound toward (and past) nextest's 120s slow-timeout,
+            // the very hang it is meant to cut short. `Instant` is immune to that.
             let step = Duration::from_millis(50);
-            let mut waited = Duration::ZERO;
-            while waited < deadline {
+            let start = Instant::now();
+            while start.elapsed() < TEST_WATCHDOG_TIMEOUT {
                 if watchdog_done.load(Ordering::Acquire) {
                     return;
                 }
                 std::thread::sleep(step);
-                waited += step;
             }
             if !watchdog_done.load(Ordering::Acquire) {
                 eprintln!(
-                    "FATAL: async test exceeded {TEST_WATCHDOG_TIMEOUT:?} — a streaming/runtime \
-                     deadlock (CLAUDE.md #11). Aborting to fail fast instead of hanging the unit \
-                     job (safe under nextest process-per-test isolation)."
+                    "FATAL: async test exceeded {TEST_WATCHDOG_TIMEOUT:?} (real elapsed \
+                     {:.1}s) — a streaming/runtime deadlock (CLAUDE.md #11). Aborting to \
+                     fail fast instead of hanging the unit job (safe under nextest \
+                     process-per-test isolation).",
+                    start.elapsed().as_secs_f64()
                 );
                 std::process::abort();
             }
