@@ -1479,6 +1479,36 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * @description TD-064: predicate-aware recall shortfall (REST wire shape).
+         *
+         *     Mirrors `observability::search_plan_trace::PredicateShortfall` as an
+         *     explicit REST/OpenAPI schema so the field is typed and documented on the
+         *     wire without forcing the observability type (or the slim `IndexQueryResult`
+         *     DTO) to derive `ToSchema`.
+         */
+        PredicateShortfallWire: {
+            /**
+             * @description ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or
+             *     `pre_filter`).
+             */
+            ann_filtering_mode: string;
+            /**
+             * Format: int32
+             * @description Candidate pool size considered before the predicate (oversample budget).
+             */
+            oversample_pool: number;
+            /**
+             * Format: int32
+             * @description The `top_k` value the caller asked for.
+             */
+            requested_k: number;
+            /**
+             * Format: int32
+             * @description Results actually returned after predicate filtering + merge.
+             */
+            returned_k: number;
+        };
         ProbeResponse: {
             status: string;
         };
@@ -1872,6 +1902,7 @@ export interface components {
              * @description Search latency in milliseconds
              */
             latency_ms: number;
+            predicate_shortfall?: null | components["schemas"]["PredicateShortfallWire"];
             /** @description Request ID for tracing */
             request_id: string;
             /** @description Search results */

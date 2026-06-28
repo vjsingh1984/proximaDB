@@ -4200,6 +4200,69 @@ pub mod types {
             Default::default()
         }
     }
+    /// TD-064: predicate-aware recall shortfall (REST wire shape).
+    ///
+    /// Mirrors `observability::search_plan_trace::PredicateShortfall` as an
+    /// explicit REST/OpenAPI schema so the field is typed and documented on the
+    /// wire without forcing the observability type (or the slim `IndexQueryResult`
+    /// DTO) to derive `ToSchema`.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "TD-064: predicate-aware recall shortfall (REST wire shape).\n\nMirrors `observability::search_plan_trace::PredicateShortfall` as an\nexplicit REST/OpenAPI schema so the field is typed and documented on the\nwire without forcing the observability type (or the slim `IndexQueryResult`\nDTO) to derive `ToSchema`.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "ann_filtering_mode",
+    ///    "oversample_pool",
+    ///    "requested_k",
+    ///    "returned_k"
+    ///  ],
+    ///  "properties": {
+    ///    "ann_filtering_mode": {
+    ///      "description": "ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or\n`pre_filter`).",
+    ///      "type": "string"
+    ///    },
+    ///    "oversample_pool": {
+    ///      "description": "Candidate pool size considered before the predicate (oversample budget).",
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "requested_k": {
+    ///      "description": "The `top_k` value the caller asked for.",
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "returned_k": {
+    ///      "description": "Results actually returned after predicate filtering + merge.",
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PredicateShortfallWire {
+        /// ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or
+        /// `pre_filter`).
+        pub ann_filtering_mode: ::std::string::String,
+        ///Candidate pool size considered before the predicate (oversample budget).
+        pub oversample_pool: i32,
+        ///The `top_k` value the caller asked for.
+        pub requested_k: i32,
+        ///Results actually returned after predicate filtering + merge.
+        pub returned_k: i32,
+    }
+    impl PredicateShortfallWire {
+        pub fn builder() -> builder::PredicateShortfallWire {
+            Default::default()
+        }
+    }
     ///`ProbeResponse`
     ///
     /// <details><summary>JSON schema</summary>
@@ -5773,6 +5836,9 @@ pub mod types {
     ///      "format": "int64",
     ///      "minimum": 0.0
     ///    },
+    ///    "predicate_shortfall": {
+    ///      "$ref": "#/components/schemas/PredicateShortfallWire"
+    ///    },
     ///    "request_id": {
     ///      "description": "Request ID for tracing",
     ///      "type": "string"
@@ -5810,6 +5876,8 @@ pub mod types {
         pub explain: ::std::option::Option<::serde_json::Value>,
         ///Search latency in milliseconds
         pub latency_ms: i64,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub predicate_shortfall: ::std::option::Option<PredicateShortfallWire>,
         ///Request ID for tracing
         pub request_id: ::std::string::String,
         ///Search results
@@ -10796,6 +10864,88 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct PredicateShortfallWire {
+            ann_filtering_mode: ::std::result::Result<::std::string::String, ::std::string::String>,
+            oversample_pool: ::std::result::Result<i32, ::std::string::String>,
+            requested_k: ::std::result::Result<i32, ::std::string::String>,
+            returned_k: ::std::result::Result<i32, ::std::string::String>,
+        }
+        impl ::std::default::Default for PredicateShortfallWire {
+            fn default() -> Self {
+                Self {
+                    ann_filtering_mode: Err("no value supplied for ann_filtering_mode".to_string()),
+                    oversample_pool: Err("no value supplied for oversample_pool".to_string()),
+                    requested_k: Err("no value supplied for requested_k".to_string()),
+                    returned_k: Err("no value supplied for returned_k".to_string()),
+                }
+            }
+        }
+        impl PredicateShortfallWire {
+            pub fn ann_filtering_mode<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.ann_filtering_mode = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for ann_filtering_mode: {e}")
+                });
+                self
+            }
+            pub fn oversample_pool<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.oversample_pool = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for oversample_pool: {e}")
+                });
+                self
+            }
+            pub fn requested_k<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.requested_k = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for requested_k: {e}"));
+                self
+            }
+            pub fn returned_k<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.returned_k = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for returned_k: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<PredicateShortfallWire> for super::PredicateShortfallWire {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: PredicateShortfallWire,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    ann_filtering_mode: value.ann_filtering_mode?,
+                    oversample_pool: value.oversample_pool?,
+                    requested_k: value.requested_k?,
+                    returned_k: value.returned_k?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::PredicateShortfallWire> for PredicateShortfallWire {
+            fn from(value: super::PredicateShortfallWire) -> Self {
+                Self {
+                    ann_filtering_mode: Ok(value.ann_filtering_mode),
+                    oversample_pool: Ok(value.oversample_pool),
+                    requested_k: Ok(value.requested_k),
+                    returned_k: Ok(value.returned_k),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct ProbeResponse {
             status: ::std::result::Result<::std::string::String, ::std::string::String>,
         }
@@ -12570,6 +12720,10 @@ pub mod types {
                 ::std::string::String,
             >,
             latency_ms: ::std::result::Result<i64, ::std::string::String>,
+            predicate_shortfall: ::std::result::Result<
+                ::std::option::Option<super::PredicateShortfallWire>,
+                ::std::string::String,
+            >,
             request_id: ::std::result::Result<::std::string::String, ::std::string::String>,
             results: ::std::result::Result<
                 ::std::vec::Vec<super::TypedSearchResult>,
@@ -12586,6 +12740,7 @@ pub mod types {
                 Self {
                     explain: Ok(Default::default()),
                     latency_ms: Err("no value supplied for latency_ms".to_string()),
+                    predicate_shortfall: Ok(Default::default()),
                     request_id: Err("no value supplied for request_id".to_string()),
                     results: Err("no value supplied for results".to_string()),
                     search_plan_trace: Ok(Default::default()),
@@ -12612,6 +12767,16 @@ pub mod types {
                 self.latency_ms = value
                     .try_into()
                     .map_err(|e| format!("error converting supplied value for latency_ms: {e}"));
+                self
+            }
+            pub fn predicate_shortfall<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::PredicateShortfallWire>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.predicate_shortfall = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for predicate_shortfall: {e}")
+                });
                 self
             }
             pub fn request_id<T>(mut self, value: T) -> Self
@@ -12663,6 +12828,7 @@ pub mod types {
                 Ok(Self {
                     explain: value.explain?,
                     latency_ms: value.latency_ms?,
+                    predicate_shortfall: value.predicate_shortfall?,
                     request_id: value.request_id?,
                     results: value.results?,
                     search_plan_trace: value.search_plan_trace?,
@@ -12675,6 +12841,7 @@ pub mod types {
                 Self {
                     explain: Ok(value.explain),
                     latency_ms: Ok(value.latency_ms),
+                    predicate_shortfall: Ok(value.predicate_shortfall),
                     request_id: Ok(value.request_id),
                     results: Ok(value.results),
                     search_plan_trace: Ok(value.search_plan_trace),

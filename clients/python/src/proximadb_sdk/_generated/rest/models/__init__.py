@@ -80,6 +80,7 @@ from .node_input import NodeInput
 from .node_input_properties import NodeInputProperties
 from .node_response import NodeResponse
 from .node_response_properties_type_0 import NodeResponsePropertiesType0
+from .predicate_shortfall_wire import PredicateShortfallWire
 from .probe_response import ProbeResponse
 from .proxima_record_input import ProximaRecordInput
 from .proxima_record_input_props_type_0 import ProximaRecordInputPropsType0
@@ -194,6 +195,7 @@ __all__ = (
     "NodeInputProperties",
     "NodeResponse",
     "NodeResponsePropertiesType0",
+    "PredicateShortfallWire",
     "ProbeResponse",
     "ProximaRecordInput",
     "ProximaRecordInputPropsType0",

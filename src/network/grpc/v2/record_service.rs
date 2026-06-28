@@ -33,11 +33,11 @@ use crate::proto::proximadb_v2::{
     self, BackpressureLevel, BackpressureSignal, BatchError, BatchWriteMode,
     BatchWriteStreamRequest, BatchWriteStreamResponse, CreateSchemaRequest, CreateSchemaResponse,
     EvolveSchemaRequest, EvolveSchemaResponse, GetSchemaRequest, GetSchemaResponse,
-    ListSchemasRequest, ListSchemasResponse, ProximaRecordBatch, ProximaRecordBatchResponse,
-    TypedSearchRequest, TypedSearchResponse, TypedSearchResult, V2Collection, V2CollectionConfig,
-    V2DeleteCollectionRequest, V2DeleteCollectionResponse, V2GetCollectionRequest,
-    V2ListCollectionsRequest, V2ListCollectionsResponse, V2QueryRequest, V2QueryResponse,
-    V2QueryRow, proxima_record_service_server::ProximaRecordService,
+    ListSchemasRequest, ListSchemasResponse, PredicateShortfall, ProximaRecordBatch,
+    ProximaRecordBatchResponse, TypedSearchRequest, TypedSearchResponse, TypedSearchResult,
+    V2Collection, V2CollectionConfig, V2DeleteCollectionRequest, V2DeleteCollectionResponse,
+    V2GetCollectionRequest, V2ListCollectionsRequest, V2ListCollectionsResponse, V2QueryRequest,
+    V2QueryResponse, V2QueryRow, proxima_record_service_server::ProximaRecordService,
     proxima_record_service_server::ProximaRecordServiceServer,
 };
 use crate::services::operations::BatchOperationResult;
@@ -1124,11 +1124,6 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                 (outcome, tq)
             })
             .await;
-        // TD-064 NOTE: this take returns None outside the scope (the
-        // task-local binding has already ended above). Pre-existing
-        // behaviour kept as-is; the structured-event path remains the
-        // operator-visible signal for shortfall in this handler.
-        let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
 
         match search_outcome {
             Ok(resp) => {
@@ -1137,35 +1132,26 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                 let results = self.convert_search_results(&resp, include_vector);
                 let total_found = resp.total_found;
 
-                // TD-064: surface shortfall as search_stats keys for clients
-                // that don't have a separate EXPLAIN channel. Keys are
-                // namespaced so they coexist with future stats fields.
-                let mut search_stats: HashMap<String, String> = HashMap::new();
-                if let Some(sf) = predicate_shortfall {
-                    search_stats.insert(
-                        "predicate_shortfall.requested_k".to_string(),
-                        sf.requested_k.to_string(),
-                    );
-                    search_stats.insert(
-                        "predicate_shortfall.returned_k".to_string(),
-                        sf.returned_k.to_string(),
-                    );
-                    search_stats.insert(
-                        "predicate_shortfall.oversample_pool".to_string(),
-                        sf.oversample_pool.to_string(),
-                    );
-                    search_stats.insert(
-                        "predicate_shortfall.ann_filtering_mode".to_string(),
-                        sf.ann_filtering_mode,
-                    );
-                }
+                // TD-064: typed, top-level shortfall carried on the service
+                // response (`resp.predicate_shortfall`), recomputed against the
+                // final WAL+AXIS+storage merge. Replaces the old `search_stats`
+                // map stuffing — that path called `take_shortfall()` OUTSIDE
+                // the scope above (task-local binding already ended), so it was
+                // always empty; this reads the authoritative field instead.
+                let predicate_shortfall = resp.predicate_shortfall.map(|sf| PredicateShortfall {
+                    requested_k: sf.requested_k,
+                    returned_k: sf.returned_k,
+                    oversample_pool: sf.oversample_pool,
+                    ann_filtering_mode: sf.ann_filtering_mode,
+                });
 
                 Ok(Response::new(TypedSearchResponse {
                     results,
                     total_found,
                     search_time_us: 0, // Would need timing
                     collection_id: Some(req.collection_id),
-                    search_stats,
+                    search_stats: HashMap::new(),
+                    predicate_shortfall,
                 }))
             }
             Err(e) => {

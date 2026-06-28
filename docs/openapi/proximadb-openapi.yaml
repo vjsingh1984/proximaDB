@@ -1271,6 +1271,41 @@ components:
       required:
       - id
       type: object
+    PredicateShortfallWire:
+      description: |-
+        TD-064: predicate-aware recall shortfall (REST wire shape).
+
+        Mirrors `observability::search_plan_trace::PredicateShortfall` as an
+        explicit REST/OpenAPI schema so the field is typed and documented on the
+        wire without forcing the observability type (or the slim `IndexQueryResult`
+        DTO) to derive `ToSchema`.
+      properties:
+        ann_filtering_mode:
+          description: |-
+            ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or
+            `pre_filter`).
+          type: string
+        oversample_pool:
+          description: Candidate pool size considered before the predicate (oversample budget).
+          format: int32
+          minimum: 0
+          type: integer
+        requested_k:
+          description: The `top_k` value the caller asked for.
+          format: int32
+          minimum: 0
+          type: integer
+        returned_k:
+          description: Results actually returned after predicate filtering + merge.
+          format: int32
+          minimum: 0
+          type: integer
+      required:
+      - requested_k
+      - returned_k
+      - oversample_pool
+      - ann_filtering_mode
+      type: object
     ProbeResponse:
       properties:
         status:
@@ -1907,6 +1942,17 @@ components:
           format: int64
           minimum: 0
           type: integer
+        predicate_shortfall:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/PredicateShortfallWire'
+            description: |-
+              TD-064: predicate-aware shortfall — present when a filtered search
+              returned fewer than the requested `top_k` after the WAL+AXIS+storage
+              merge. **Always emitted when present (NOT `debug`-gated)**, unlike
+              `search_plan_trace`: a silent `<top_k` under a tenant/RLS filter is
+              fail-open, so the client must be able to distinguish "fewer than k
+              records match my filter" from "the engine returned my full top-k".
         request_id:
           description: Request ID for tracing
           type: string
