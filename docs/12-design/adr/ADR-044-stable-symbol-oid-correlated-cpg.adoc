@@ -4,7 +4,7 @@
 
 [cols="1,3"]
 |===
-|Status|Proposed
+|Status|Accepted
 |Date|2026-06-28
 |Deciders|Vijaykumar Singh
 |Relates to|ADR-031 (stable `object_id` as the physical *catalog* key — name is metadata; this ADR extends the same tenet to the *symbol/data-record* layer ADR-031 explicitly excluded), `CODE_GRAPH_CORRELATED_SUBSTRATE_2026_06_22.adoc` (one symbol = one row + node + vector, fused by shared oid with no join), ADR-029 (shared `victor-codegraph` chunker — the minter), `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` (incremental re-index is an I/O-round-trip cost term)
@@ -133,3 +133,19 @@ new identity — which is the correct semantics (those *are* different symbols).
   on the canonical `oid`; mixed-read fallback to `legacy_oid` during the bake.
 . **P3 — cutover.** Flip default-ON per the recall/correlation ratchet; drop the
   legacy alias one release later.
+
+== Implementation status (2026-06-28)
+
+* **P0 minter — DONE** (victor PR #304): `victor_codegraph.stable_symbol_oid` +
+  adapter dual-emit (`stable_oid`/`legacy_oid`/`content_version`) + edge endpoints via
+  the id-map + tree-sitter signature extraction + the contract test (line move keeps the
+  oid; rename/signature churns it; body edit bumps `content_version` not the oid).
+* **P1 consumers — DONE** (anvaiops PR #273): the connector stops re-minting; readers
+  are id-shape-independent (impact name-match off the `name` prop via `id_to_name`,
+  editor line off the `start_line` prop); ProximaDB SDK already delegates and surfaces
+  the canonical oid via the adapter (no change).
+* **Cross-surface consistency — VERIFIED:** the same symbol yields the identical key from
+  victor-codegraph and the anvaiops connector (`graph/{repo}/node/{key}` ⇔ `{key}`), and a
+  line shift does not change it.
+* All gated **default-OFF** (`VICTOR_CODEGRAPH_STABLE_OID` / `ANVAIOPS_CODEGRAPH_STABLE_OID`).
+* **P2 cutover — TODO:** flip default-ON behind a correlation/recall parity ratchet.
