@@ -125,6 +125,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// still servable. When unset, the engine's all-RAM path is used unchanged.
 const COLD_PAYLOADS_ENV: &str = "PROXIMADB_GRAPH_COLD_PAYLOADS";
 
+/// When the cold-payload tier is on (`COLD_PAYLOADS_ENV`), back it with the
+/// **segment** store (`ColdGraphSegmentStore`, batches records into shared object
+/// segments — far fewer PUTs) instead of the per-record `ColdGraphRecordStore`. The
+/// segment store BUFFERS in RAM, so it is only crash-safe with the recovery
+/// re-population backstop ([`crate::storage::persistence::write_ahead_log::wal_operations::canonical_recovery_repopulate_enabled`])
+/// and the checkpoint/shutdown flush hook; the wiring (`shared_services`) refuses to
+/// use it without that backstop. Default-OFF (#52).
+const SEGMENT_STORE_ENV: &str = "PROXIMADB_GRAPH_SEGMENT_STORE";
+
 /// Per-tenant byte budget for the cold graph-payload caches (TD-168). Coarse
 /// default; criticality-aware sizing is deferred to TD-171.
 const GRAPH_PAYLOAD_CACHE_BYTES: u64 = 128 * 1024 * 1024;
@@ -156,6 +165,14 @@ impl GraphPayloadCaches {
 /// the same switch (TD-168 Phase 1b).
 pub(crate) fn cold_payloads_enabled() -> bool {
     std::env::var(COLD_PAYLOADS_ENV)
+        .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+}
+
+/// True when the cold-payload tier should use the batched segment store
+/// (`SEGMENT_STORE_ENV`) rather than the per-record store. See [`SEGMENT_STORE_ENV`].
+pub(crate) fn segment_store_enabled() -> bool {
+    std::env::var(SEGMENT_STORE_ENV)
         .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
         .unwrap_or(false)
 }
@@ -927,6 +944,12 @@ impl GraphOperationsService {
         let Some(engine) = self.graphs.get(graph_id).map(|e| e.value().clone()) else {
             return Ok(0);
         };
+        // PRECONDITION (#52 Phase 1): rebuilding the cold store from the engine assumes
+        // the engine is FULL-RESIDENT — `get_all_nodes`/`get_all_edges` must return the
+        // complete graph. This holds while ORION keeps all payload in RAM and snapshots
+        // it. True payload-offload cold-tiering (engine evicts payload to the cold store
+        // as the sole home) breaks this assumption: the cold store would then have to be
+        // a durable authority (flush + segment-tail index rebuild), not a projection.
         let nodes = engine.get_all_nodes()?;
         let edges = engine.get_all_edges()?;
         let mut records = Vec::with_capacity(nodes.len() + edges.len());
@@ -1378,6 +1401,24 @@ impl GraphOperationsService {
                     }
                 }
             }
+        }
+
+        // Flush the canonical/cold record store's write buffer to durable storage.
+        // This is an INDEPENDENT durability action — the cold store is a projection,
+        // not part of the engine-WAL snapshot/truncate ordering above — so it runs
+        // UNCONDITIONALLY (not gated on `scoped`): a buffered store (e.g.
+        // `ColdGraphSegmentStore`) must be flushed at every checkpoint AND graceful
+        // shutdown (`database.rs` calls `flush_wal` per graph on stop), in both the
+        // scoped and non-scoped configs, or its buffer is lost on crash/stop. A
+        // durable-on-write store overrides this to a no-op. NOTE: `canonical_record_store`
+        // is one store shared across graphs (oids embed `graph_id`), so this per-graph
+        // flush drains the global buffer — redundant across graphs but correct; if the
+        // store is ever made per-graph this flush becomes load-bearing.
+        if let Some(store) = &self.canonical_record_store {
+            store
+                .flush()
+                .await
+                .map_err(|e| ProximaDBError::Internal(format!("canonical store flush: {e}")))?;
         }
         Ok(())
     }

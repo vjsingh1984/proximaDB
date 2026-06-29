@@ -206,6 +206,16 @@ pub trait RecordStore: Send + Sync {
             record_oids,
         })
     }
+
+    /// Flush any in-memory write buffer to durable storage. The default is a no-op:
+    /// durable-on-write stores (one object PUT per record) have nothing to flush.
+    /// A **buffered** store (e.g. a segment store that batches records into one
+    /// object) MUST override this so callers can force its buffer durable at a
+    /// checkpoint / graceful-shutdown boundary — otherwise an unflushed buffer is
+    /// lost on crash. Called from the graph checkpoint/shutdown path (`flush_wal`).
+    async fn flush(&self) -> RecordStoreResult<()> {
+        Ok(())
+    }
 }
 
 /// Optional scan contract for stores that can expose canonical record ranges.

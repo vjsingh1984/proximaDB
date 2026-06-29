@@ -1502,21 +1502,68 @@ impl SharedServices {
         // Default-OFF: with the gate unset nothing is constructed, the canonical
         // record store stays None, and the all-RAM path is unchanged.
         if crate::graph::service::cold_payloads_enabled() {
-            match crate::graph::ColdGraphRecordStore::from_storage_root(
-                &graph_storage_url,
-                proximadb_storage_filesystem_types::ObjectAccessTier::Cool,
-            ) {
-                Ok(cold_store) => {
-                    graph_service_inst =
-                        graph_service_inst.with_canonical_record_store(Arc::new(cold_store));
-                    info!(
-                        "✅ SharedServices: graph cold-payload tier ON — canonical node/edge payloads → Cool object storage ({graph_storage_url})"
-                    );
+            let tier = proximadb_storage_filesystem_types::ObjectAccessTier::Cool;
+            // #52: optionally back the cold tier with the BATCHED segment store
+            // (`ColdGraphSegmentStore`) instead of the per-record store — far fewer
+            // object PUTs. It BUFFERS in RAM, so it is crash-safe only with the
+            // recovery re-population backstop (PR #520, gated separately and
+            // default-OFF) plus the checkpoint/shutdown flush hook. If that backstop
+            // is OFF we REFUSE to wire it and fall back to the durable-on-write
+            // `ColdGraphRecordStore` — fail-safe, never an unprotected buffered store.
+            //
+            // Phase-1 precondition: recovery re-population rebuilds the cold store via
+            // `engine.get_all_nodes()/get_all_edges()`, valid only while the ORION
+            // engine is FULL-RESIDENT and snapshots full payloads. True payload-offload
+            // cold-tiering (engine evicts payload) is a later phase that needs the
+            // segment store to be a durable authority (segment-tail index rebuild), not
+            // a projection.
+            let mut use_segment_store = crate::graph::service::segment_store_enabled();
+            if use_segment_store
+                && !crate::storage::persistence::write_ahead_log::wal_operations::canonical_recovery_repopulate_enabled()
+            {
+                warn!(
+                    "SharedServices: PROXIMADB_GRAPH_SEGMENT_STORE is set but PROXIMADB_GRAPH_CANONICAL_RECOVERY is OFF — the buffered segment store has no crash-recovery backstop; refusing to wire it and falling back to the durable-on-write ColdGraphRecordStore. Set PROXIMADB_GRAPH_CANONICAL_RECOVERY=1 to enable the segment store."
+                );
+                use_segment_store = false;
+            }
+
+            if use_segment_store {
+                match crate::graph::ColdGraphSegmentStore::from_storage_root(
+                    &graph_storage_url,
+                    tier,
+                )
+                .await
+                {
+                    Ok(seg_store) => {
+                        graph_service_inst =
+                            graph_service_inst.with_canonical_record_store(Arc::new(seg_store));
+                        info!(
+                            "✅ SharedServices: graph cold-payload tier ON (SEGMENT store) — canonical node/edge payloads batched → Cool object storage ({graph_storage_url}); crash-recovery backstop enabled"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "SharedServices: segment store requested (PROXIMADB_GRAPH_SEGMENT_STORE) but init failed for `{graph_storage_url}`: {e}; falling back to the all-RAM path"
+                        );
+                    }
                 }
-                Err(e) => {
-                    warn!(
-                        "SharedServices: graph cold-payload tier requested (PROXIMADB_GRAPH_COLD_PAYLOADS) but cold store init failed for `{graph_storage_url}`: {e}; falling back to the all-RAM path"
-                    );
+            } else {
+                match crate::graph::ColdGraphRecordStore::from_storage_root(
+                    &graph_storage_url,
+                    tier,
+                ) {
+                    Ok(cold_store) => {
+                        graph_service_inst =
+                            graph_service_inst.with_canonical_record_store(Arc::new(cold_store));
+                        info!(
+                            "✅ SharedServices: graph cold-payload tier ON — canonical node/edge payloads → Cool object storage ({graph_storage_url})"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "SharedServices: graph cold-payload tier requested (PROXIMADB_GRAPH_COLD_PAYLOADS) but cold store init failed for `{graph_storage_url}`: {e}; falling back to the all-RAM path"
+                        );
+                    }
                 }
             }
         }
