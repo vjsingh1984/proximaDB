@@ -4420,8 +4420,12 @@ impl DmlService {
                 let mut values: Vec<ProximaValue> = Vec::with_capacity(fk_for_pred.len());
                 for col in &fk_for_pred {
                     match record.props.get(col) {
-                        Some(ProximaTreeNode::Value(value)) => values.push(value.clone()),
-                        _ => return false, // NULL/absent/non-scalar FK → exempt.
+                        Some(ProximaTreeNode::Value(value))
+                            if !matches!(value, ProximaValue::Null) =>
+                        {
+                            values.push(value.clone());
+                        }
+                        _ => return false, // NULL/absent/non-scalar FK → MATCH SIMPLE exempt.
                     }
                 }
                 match encode_primary_key_tuple(&values) {
@@ -4634,8 +4638,13 @@ impl DmlService {
                 let mut exempt = false;
                 for col in fk_columns {
                     match record.props.get(col) {
-                        Some(ProximaTreeNode::Value(value)) => values.push(value.clone()),
+                        Some(ProximaTreeNode::Value(value))
+                            if !matches!(value, ProximaValue::Null) =>
+                        {
+                            values.push(value.clone());
+                        }
                         _ => {
+                            // NULL / absent / non-scalar FK column → MATCH SIMPLE exempt.
                             exempt = true;
                             break;
                         }
