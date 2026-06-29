@@ -17,6 +17,15 @@ use proximadb_proto::v1::{
 /// gRPC adapter returns `UNIMPLEMENTED` for every RPC.
 #[async_trait]
 pub trait HybridPort: Send + Sync {
+    /// DEPRECATED (TD-138): the v1 hybrid query — the legacy 12-strategy
+    /// `HybridFusionEngine` (vector+BM25, `doc_id`-keyed, no graph). Use the v2
+    /// fusion seam (`FusionService`) instead: `POST /api/v2/graphs/{graph_id}/fusion-search`
+    /// or gRPC `ProximaFusionService.FusionSearch`. Removal + caller migration is
+    /// phased (TD-143 did this for the gRPC v1 surface). Note-only (no `since`):
+    /// clippy `deprecated_semver` denies a non-semver `since`.
+    #[deprecated(
+        note = "v1 hybrid_search (legacy 12-strategy HybridFusionEngine) is deprecated; use the v2 fusion seam (FusionService). See TD-138."
+    )]
     async fn hybrid_search(
         &self,
         request: HybridFusionSearchRequest,

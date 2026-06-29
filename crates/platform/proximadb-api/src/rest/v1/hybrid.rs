@@ -153,6 +153,7 @@ pub fn sql_value_to_json(v: &SqlValue) -> serde_json::Value {
 /// `POST /api/v2/hybrid/search` — BM25 + vector hybrid search.
 ///
 /// Delegates to `HybridPort::hybrid_search`.
+#[allow(deprecated)] // delegates to the deprecated v1 HybridPort::hybrid_search (TD-138 phase 1)
 pub async fn hybrid_search(
     State(state): State<HybridRestState>,
     Json(request): Json<HybridSearchRestRequest>,
@@ -167,6 +168,19 @@ pub async fn hybrid_search(
             "at least one of vector or text_query is required".to_string(),
         ));
     }
+
+    // TD-138 phase 1 (deprecate, keep live): surface every use loudly so operators
+    // migrate to the v2 fusion seam. The endpoint already replies with HTTP
+    // deprecation headers (`with_v1_compatibility_headers`); this is the per-request
+    // runtime signal (mirrors TD-143's gRPC v1 deprecation warn).
+    tracing::warn!(
+        target: "proximadb::deprecation",
+        collection = %request.collection,
+        "POST /api/v{{1,2}}/hybrid/search (legacy 12-strategy HybridFusionEngine) is DEPRECATED \
+         — doc_id-keyed vector+BM25, no graph modality. Use the v2 fusion seam: \
+         POST /api/v2/graphs/{{graph_id}}/fusion-search (GraphFusionParams) or gRPC \
+         ProximaFusionService.FusionSearch (vector+graph+document, oid-keyed, calibrated). See TD-138."
+    );
 
     let proto_request = build_hybrid_fusion_request(request)?;
 
