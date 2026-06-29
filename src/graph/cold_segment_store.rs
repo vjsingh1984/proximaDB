@@ -234,6 +234,7 @@ impl ColdGraphSegmentStore {
     /// shared backing (e.g. crash-recovery tests / a reopen path) can rehydrate it,
     /// mirroring what [`Self::from_storage_root`] does internally.
     pub(crate) async fn load_index(&self) -> RecordStoreResult<()> {
+        // 1. Fast path: load the durable sidecar if present.
         match self.store.get(&ObjectPath::from(INDEX_KEY)).await {
             Ok(bytes) => {
                 let snapshot: Vec<(String, RecordLoc)> = bincode::deserialize(&bytes)
@@ -248,14 +249,120 @@ impl ColdGraphSegmentStore {
                     self.index.insert(oid, loc);
                 }
                 self.seq.store(max_seq, Ordering::Relaxed);
-                Ok(())
             }
-            // No sidecar yet ⇒ empty index (reads fall back to legacy). Not an error.
-            Err(StorageError::NotFound(_)) => Ok(()),
-            Err(e) => Err(anyhow::anyhow!(
-                "cold segment store: load index failed: {e}"
-            )),
+            // No sidecar yet ⇒ rebuild entirely from segments below (or empty).
+            Err(StorageError::NotFound(_)) => {}
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "cold segment store: load index failed: {e}"
+                ));
+            }
         }
+        // 2. Heal: a segment whose body PUT succeeded but whose sidecar update did not
+        //    (crash in `write_segment` between the two PUTs) is durable-but-unfindable
+        //    via the sidecar alone. Scan any segment NOT covered by the sidecar and
+        //    rebuild its entries from the self-describing tail directory — closing that
+        //    window without waiting for a recovery re-population cycle. The segment
+        //    format `[records][dir][dir_len u64][MAGIC]` was designed for exactly this.
+        self.heal_index_from_segments().await
+    }
+
+    /// Merge into the index any segment with `seq >= self.seq` — i.e. written after the
+    /// sidecar's last persist (or all of them if the sidecar was missing). Processed in
+    /// ascending `seq` so a newer segment's entry for an oid wins, mirroring write order.
+    async fn heal_index_from_segments(&self) -> RecordStoreResult<()> {
+        let covered_through = self.seq.load(Ordering::Relaxed);
+        let metas = self
+            .store
+            .list(Some(&ObjectPath::from(SEG_PREFIX)))
+            .await
+            .map_err(|e| anyhow::anyhow!("cold segment store: list segments failed: {e}"))?;
+        // `list` yields BASE-prefixed locations; the rest of the store keys by the
+        // caller-relative segment path (and `get_range` re-applies the base). Parse the
+        // seq from the listed name but RECONSTRUCT the canonical relative path — exactly
+        // `write_segment`'s format — so reads and the stored index entry stay consistent
+        // on a non-empty base (file://, s3://). The `index.bin` sidecar (also under the
+        // prefix) fails the `seg-` parse and is skipped.
+        let mut uncovered: Vec<(u64, ObjectPath)> = metas
+            .into_iter()
+            .filter_map(|meta| {
+                let seq = parse_seg_seq(meta.location.as_ref())?;
+                (seq >= covered_through).then(|| {
+                    (
+                        seq,
+                        ObjectPath::from(format!("{SEG_PREFIX}/seg-{seq:016x}.gcseg")),
+                    )
+                })
+            })
+            .collect();
+        if uncovered.is_empty() {
+            return Ok(());
+        }
+        uncovered.sort_by_key(|(seq, _)| *seq);
+        let mut max_seq = covered_through;
+        for (seq, path) in &uncovered {
+            self.merge_segment_directory(path).await?;
+            max_seq = max_seq.max(seq + 1);
+        }
+        self.seq.store(max_seq, Ordering::Relaxed);
+        tracing::info!(
+            healed = uncovered.len(),
+            "cold segment store: rebuilt index entries from segment tails missing from the sidecar"
+        );
+        Ok(())
+    }
+
+    /// Read one segment's trailing `[dir][dir_len u64 LE][MAGIC]` directory and insert
+    /// its oid→location entries (no record bodies are fetched).
+    async fn merge_segment_directory(&self, path: &ObjectPath) -> RecordStoreResult<()> {
+        const TRAILER: u64 = 16; // dir_len (8) + MAGIC (8)
+        let size = self
+            .store
+            .object_size(path)
+            .await
+            .map_err(|e| anyhow::anyhow!("cold segment store: size `{path}` failed: {e}"))?;
+        if size < TRAILER {
+            return Err(anyhow::anyhow!(
+                "cold segment store: segment `{path}` smaller than its trailer"
+            ));
+        }
+        let tail = self.store.get_suffix(path, TRAILER).await.map_err(|e| {
+            anyhow::anyhow!("cold segment store: read trailer `{path}` failed: {e}")
+        })?;
+        if tail.len() != TRAILER as usize || &tail[8..16] != SEG_MAGIC {
+            return Err(anyhow::anyhow!(
+                "cold segment store: segment `{path}` has a bad trailer magic"
+            ));
+        }
+        let dir_len =
+            u64::from_le_bytes(tail[0..8].try_into().map_err(|_| {
+                anyhow::anyhow!("cold segment store: segment `{path}` bad dir_len")
+            })?);
+        if size < TRAILER + dir_len {
+            return Err(anyhow::anyhow!(
+                "cold segment store: segment `{path}` directory is truncated"
+            ));
+        }
+        let dir_start = size - TRAILER - dir_len;
+        let dir_bytes = self
+            .store
+            .get_range(path, dir_start..(size - TRAILER))
+            .await
+            .map_err(|e| anyhow::anyhow!("cold segment store: read dir `{path}` failed: {e}"))?;
+        let dir: Vec<(String, u64, u64)> = bincode::deserialize(&dir_bytes)
+            .map_err(|e| anyhow::anyhow!("cold segment store: decode dir `{path}` failed: {e}"))?;
+        let segment = path.to_string();
+        for (oid, offset, len) in dir {
+            self.index.insert(
+                oid,
+                RecordLoc {
+                    segment: segment.clone(),
+                    offset,
+                    len,
+                },
+            );
+        }
+        Ok(())
     }
 
     fn decode(bytes: &[u8], oid: &str) -> RecordStoreResult<ProximaRecord> {
@@ -556,6 +663,65 @@ mod tests {
         assert_eq!(got.oid, "graph/g/node/a");
         // Sequence resumed past the loaded segment.
         assert_eq!(s2.seq.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn index_rebuilds_from_segment_tails_when_sidecar_lost() {
+        // The durable-but-unfindable window: segment bodies are durable but the index
+        // sidecar is missing/stale (crash between the segment PUT and `persist_index`).
+        // `load_index` must rebuild from the self-describing segment tails. Newer
+        // segments win on oid collisions (ascending-seq merge).
+        let backing = ProximaObjectStore::from_url("memory://").expect("mem");
+        let s1 = ColdGraphSegmentStore::new(backing.clone(), ObjectAccessTier::Cool)
+            .with_flush_thresholds(u64::MAX, usize::MAX);
+        // seg0: a(v1), b, c.
+        for id in ["a", "b", "c"] {
+            s1.upsert_record(record(&format!("graph/g/node/{id}")))
+                .await
+                .expect("upsert");
+        }
+        s1.flush().await.expect("flush seg0");
+        // seg1: a(v2) — a newer copy in a higher-seq segment — and d.
+        s1.upsert_record(ProximaRecord {
+            oid: "graph/g/node/a".to_string(),
+            tenant_id: "t".to_string(),
+            record_version: 2,
+            ..ProximaRecord::default()
+        })
+        .await
+        .expect("upsert a v2");
+        s1.upsert_record(record("graph/g/node/d"))
+            .await
+            .expect("upsert d");
+        s1.flush().await.expect("flush seg1");
+
+        // Lose the sidecar (simulates the never-persisted / stale index window).
+        s1.store
+            .delete(&ObjectPath::from(INDEX_KEY))
+            .await
+            .expect("delete sidecar");
+
+        // Reopen: no sidecar ⇒ rebuild entirely from both segment tails.
+        let s2 = ColdGraphSegmentStore::new(backing, ObjectAccessTier::Cool);
+        s2.load_index().await.expect("rebuild from tails");
+        for id in ["a", "b", "c", "d"] {
+            assert!(
+                s2.get_record(&RecordKey::new(format!("graph/g/node/{id}")))
+                    .await
+                    .expect("get")
+                    .is_some(),
+                "{id} recovered from segment-tail rebuild"
+            );
+        }
+        // Newer segment wins: a resolves to v2 (seg1), not v1 (seg0).
+        let a = s2
+            .get_record(&RecordKey::new("graph/g/node/a"))
+            .await
+            .expect("get a")
+            .expect("a present");
+        assert_eq!(a.record_version, 2, "higher-seq segment wins for a");
+        // Sequence resumed past the highest segment (seg1).
+        assert_eq!(s2.seq.load(Ordering::Relaxed), 2);
     }
 
     #[tokio::test]
