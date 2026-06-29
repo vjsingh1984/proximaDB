@@ -4179,12 +4179,13 @@ impl DmlService {
         Ok(guards)
     }
 
-    /// TD-110: the same-namespace/tenant child tables whose (single- or
-    /// multi-column) FK references `parent_id`'s full primary key, with the FK
-    /// columns and action. Factored out so both the discovery pass and the
-    /// recursive worker share one copy of the FK-matching logic. Self-references
-    /// are excluded; only FKs that reference the parent's FULL PK (in order) are
-    /// returned — partial / non-PK references remain unsupported (S2 scope).
+    /// TD-110: the child tables (anywhere in the tenant's namespace subtree —
+    /// cross-namespace within the tenant, S3) whose (single- or multi-column) FK
+    /// references `parent_id`'s full primary key, with the FK columns and action.
+    /// Factored out so both the discovery pass and the recursive worker share one
+    /// copy of the FK-matching logic. Self-references are excluded; only FKs that
+    /// reference the parent's FULL PK (in order) are returned — partial / non-PK
+    /// references remain unsupported (S2 scope).
     async fn child_tables_referencing(
         &self,
         catalog: &Arc<dyn crate::catalog::Catalog>,
@@ -4203,7 +4204,17 @@ impl DmlService {
         if parent_pk_cols.is_empty() {
             return Ok(Vec::new());
         }
-        let sibling_ids = catalog.list_tables(&parent_id.namespace).await?;
+        // TD-110 S3: enumerate candidate children across the tenant's WHOLE
+        // namespace subtree (not just the parent's namespace), so a child living
+        // in another namespace whose FK references this parent is found. Scoped
+        // to the tenant (`Some([tenant])`) to keep child discovery intra-tenant;
+        // cross-tenant children are never enumerated. The per-child reference
+        // match below still requires the FK to resolve to THIS parent (name AND
+        // namespace), so a same-named table in another namespace never matches.
+        let tenant_scope = tenant_context.map(|t| vec![t.tenant_id.clone()]);
+        let sibling_ids = catalog
+            .list_all_tables_in_scope(tenant_scope.as_deref())
+            .await?;
         let mut out = Vec::new();
         for child_id in sibling_ids {
             if child_id.name == parent_id.name && child_id.namespace == parent_id.namespace {
@@ -9996,6 +10007,127 @@ mod tests {
         assert!(
             get("c1").await.is_none(),
             "composite CASCADE must remove the child row"
+        );
+    }
+
+    /// TD-110 S3: cross-namespace FOREIGN KEY — a child in namespace B whose FK
+    /// references a parent in namespace A is found by ON DELETE child discovery
+    /// (a RESTRICT child blocks the parent delete; a CASCADE child is removed).
+    #[tokio::test]
+    async fn delete_enforces_cross_namespace_fk() {
+        use crate::query::table_write_executor::PlannedOnlyTableWriteExecutor;
+        use crate::services::record_store::{DirectWalTableRecordStore, TableRecordGetRequest};
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        for ns in ["xns_a", "xns_b"] {
+            ddl.execute(DdlStatement::CreateNamespace {
+                namespace: vec![ns.to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("create namespace");
+        }
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        for create in [
+            "CREATE TABLE xns_a.xpar (id TEXT NOT NULL, name TEXT, PRIMARY KEY (id));",
+            "CREATE TABLE xns_b.xchl_casc (id TEXT NOT NULL, pid TEXT, PRIMARY KEY (id), FOREIGN KEY (pid) REFERENCES xns_a.xpar (id) ON DELETE CASCADE);",
+            "CREATE TABLE xns_b.xchl_restr (id TEXT NOT NULL, pid TEXT, PRIMARY KEY (id), FOREIGN KEY (pid) REFERENCES xns_a.xpar (id));",
+        ] {
+            let stmt = parser
+                .parse_ddl(create)
+                .expect("parse create")
+                .expect("ddl");
+            ddl.execute(stmt).await.expect("create table");
+        }
+
+        let wal_appender = Arc::new(
+            FramedTableWalAppender::open(temp_dir.path().join("xns_fk.wal"))
+                .await
+                .expect("open WAL"),
+        );
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            wal_appender,
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store.clone(),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let run = |sql: &'static str| parser.parse_dml(sql).expect("parse dml").expect("dml");
+
+        dml.execute(run(
+            "INSERT INTO xns_a.xpar (id, name) VALUES ('p1', 'Al');",
+        ))
+        .await
+        .expect("seed cross-ns parent");
+        dml.execute(run(
+            "INSERT INTO xns_b.xchl_restr (id, pid) VALUES ('r1', 'p1');",
+        ))
+        .await
+        .expect("seed restrict child");
+
+        // RESTRICT: deleting the parent is rejected — a child in ANOTHER
+        // namespace still references it (cross-namespace child discovery).
+        let err = dml
+            .execute(run("DELETE FROM xns_a.xpar WHERE id = 'p1';"))
+            .await
+            .expect_err("cross-ns RESTRICT must reject the parent delete");
+        assert!(
+            err.to_string().contains("ON DELETE NO ACTION"),
+            "unexpected error: {err}"
+        );
+
+        // Drop the RESTRICT child, add a CASCADE child, then the parent delete
+        // cascades across namespaces.
+        dml.execute(run("DELETE FROM xns_b.xchl_restr WHERE id = 'r1';"))
+            .await
+            .expect("remove restrict child");
+        dml.execute(run(
+            "INSERT INTO xns_b.xchl_casc (id, pid) VALUES ('c1', 'p1');",
+        ))
+        .await
+        .expect("seed cascade child");
+
+        let get_casc = |key: &'static str| {
+            let store = record_store.clone();
+            let manager = manager.clone();
+            async move {
+                let (catalog, id) = manager
+                    .resolve_table("xns_b.xchl_casc")
+                    .await
+                    .expect("resolve");
+                let schema = catalog.get_table(&id).await.expect("schema");
+                store
+                    .get_by_key(
+                        &schema,
+                        TableRecordGetRequest {
+                            table_id: id.name.clone(),
+                            key: key.to_string(),
+                            include_vector: false,
+                            include_props: true,
+                        },
+                        None,
+                    )
+                    .await
+                    .expect("get_by_key")
+            }
+        };
+        assert!(get_casc("c1").await.is_some());
+        dml.execute(run("DELETE FROM xns_a.xpar WHERE id = 'p1';"))
+            .await
+            .expect("cross-ns CASCADE delete must succeed");
+        assert!(
+            get_casc("c1").await.is_none(),
+            "cross-ns CASCADE must remove the child in the other namespace"
         );
     }
 
