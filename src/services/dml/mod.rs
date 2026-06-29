@@ -2762,6 +2762,11 @@ impl DmlService {
         let dml_lock_guard = self
             .acquire_table_dml_lock(&table_id, tenant_context, LockIntent::Write)
             .await?;
+        // TD-110 S1: non-reentrant in-process operation lock for this table,
+        // held for the whole INSERT. Pairs with the same lock a cascading
+        // parent DELETE takes on its child set, so a child INSERT concurrent
+        // with a parent DELETE serializes (blocks) rather than orphaning.
+        let _op_lock = self.catalog_manager.op_locks().acquire(&table_id).await?;
         let (write_intent, write_lane_decision) = Self::route_row_dml_write_intent(
             &table_schema,
             WriteOperationKind::Insert,
@@ -2944,6 +2949,8 @@ impl DmlService {
         let dml_lock_guard = self
             .acquire_table_dml_lock(&table_id, tenant_context, LockIntent::Write)
             .await?;
+        // TD-110 S1: non-reentrant in-process operation lock (see execute_insert).
+        let _op_lock = self.catalog_manager.op_locks().acquire(&table_id).await?;
         let ids_to_update = if let Some(ref wc) = where_clause {
             self.resolve_matching_ids(&table_schema, &table_id.name, wc, tenant_context)
                 .await?
@@ -3106,6 +3113,39 @@ impl DmlService {
         if ids_to_delete.is_empty() {
             return Ok(DmlResult::success(0, "No rows matched WHERE clause"));
         }
+
+        // TD-110 S1: lock the transitive child set for the FULL critical section
+        // (cascade scan → child mutations → parent tombstone) so a concurrent
+        // writer cannot slip a child row in mid-flight and orphan it. Two layers:
+        //   • in-process op-locks (`TableOpLockRegistry`, non-reentrant, blocking):
+        //     serialize concurrent CONNECTIONS on a single (embedded) pod. The
+        //     durable DML lock below is pod-level + re-entrant, so without this an
+        //     intra-pod child INSERT during the parent DELETE could orphan.
+        //   • durable DML write locks (cross-pod, non-blocking): serialize the same
+        //     section across pods; a conflict surfaces as a typed `DmlLockConflict`
+        //     (pgwire 55P03 / gRPC ABORTED) for client retry.
+        // Acquired in deterministic (namespace, name) order (op-locks block, so the
+        // global order avoids self-deadlock). Guards are bound to the end of this
+        // function — released only after the parent tombstone is written.
+        let child_closure = self
+            .discover_cascade_child_set(&catalog, &table_id, &table_schema, tenant_context)
+            .await?;
+        let mut op_lock_tables: Vec<TableIdentifier> = child_closure
+            .iter()
+            .map(|(namespace, name)| TableIdentifier {
+                namespace: namespace.clone(),
+                name: name.clone(),
+            })
+            .collect();
+        op_lock_tables.push(table_id.clone()); // parent is in the critical section too
+        let _cascade_op_locks = self
+            .catalog_manager
+            .op_locks()
+            .acquire_sorted(op_lock_tables)
+            .await?;
+        let _cascade_child_dml_locks = self
+            .acquire_cascade_child_dml_locks(&child_closure, tenant_context)
+            .await?;
 
         // TD-110: apply ON DELETE referential actions (RESTRICT/CASCADE/SET NULL)
         // BEFORE removing the parent rows — RESTRICT may abort the DELETE, and
@@ -4004,8 +4044,13 @@ impl DmlService {
             return Ok(()); // No PK → nothing can reference these rows.
         };
 
-        // Reject a cyclic CASCADE chain up front, before any lock or mutation,
-        // so the error leaves nothing partially deleted.
+        // Reject a cyclic CASCADE chain up front, before any mutation, so the
+        // error leaves nothing partially deleted. The transitive write locks
+        // (in-process op-locks + durable DML locks) for the child set are
+        // acquired by the caller, `execute_delete`, and held across this cascade
+        // AND the subsequent parent-tombstone write — closing the cross-table
+        // TOCTOU for the full critical section (cross-pod via the durable locks,
+        // intra-pod via the non-reentrant op-locks).
         self.assert_no_cascade_cycle(
             parent_catalog,
             parent_table_id,
@@ -4014,22 +4059,39 @@ impl DmlService {
         )
         .await?;
 
-        // Discover the transitive child set (any FK action — RESTRICT scans and
-        // SET-NULL updates also need the lock) and acquire write locks in a
-        // deterministic order before any mutation.
-        let child_set = self
-            .discover_cascade_child_set(
-                parent_catalog,
-                parent_table_id,
-                parent_schema,
-                tenant_context,
-            )
-            .await?;
-        let mut sorted_children: Vec<(Vec<String>, String)> = child_set.into_iter().collect();
-        sorted_children.sort();
-        let mut child_guards: Vec<DmlLockGuard> = Vec::with_capacity(sorted_children.len());
-        for (namespace, name) in &sorted_children {
-            let lock_target = crate::catalog::TableIdentifier {
+        self.enforce_delete_referential_actions_inner(
+            parent_catalog,
+            parent_table_id,
+            parent_schema,
+            deleted_keys,
+            tenant_context,
+            std::collections::HashSet::new(),
+            0,
+        )
+        .await
+    }
+
+    /// TD-110 S1: acquire the cross-pod DML write locks for the transitive child
+    /// set (a `BTreeSet`, so already in deterministic `(namespace, name)` order)
+    /// to close the cross-table TOCTOU across pods. Non-blocking: a conflict
+    /// surfaces as a typed `ProximaDBError::DmlLockConflict` (pgwire 55P03 / gRPC
+    /// ABORTED) for client retry, and already-acquired guards are released first
+    /// so no lock is leaked. Returns an empty vec when no DML lock service is
+    /// configured (embedded/test paths — intra-pod serialization is then provided
+    /// by the in-process op-locks).
+    async fn acquire_cascade_child_dml_locks(
+        &self,
+        child_set: &std::collections::BTreeSet<(Vec<String>, String)>,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<Vec<DmlLockGuard>> {
+        if self.dml_lock_service.is_none() || child_set.is_empty() {
+            return Ok(Vec::new());
+        }
+        // BTreeSet iterates in sorted (namespace, name) order — acquire in that
+        // order so concurrent DELETEs over overlapping child sets can't deadlock.
+        let mut guards: Vec<DmlLockGuard> = Vec::with_capacity(child_set.len());
+        for (namespace, name) in child_set {
+            let lock_target = TableIdentifier {
                 namespace: namespace.clone(),
                 name: name.clone(),
             };
@@ -4037,36 +4099,17 @@ impl DmlService {
                 .acquire_table_dml_lock(&lock_target, tenant_context, LockIntent::Write)
                 .await
             {
-                Ok(Some(guard)) => child_guards.push(guard),
+                Ok(Some(guard)) => guards.push(guard),
                 Ok(None) => {} // No lock service configured → locking is a no-op.
                 Err(e) => {
-                    // Release whatever we acquired before propagating the
-                    // conflict so we never leak held child locks.
-                    for guard in child_guards {
+                    for guard in guards {
                         guard.release().await;
                     }
                     return Err(e);
                 }
             }
         }
-
-        let outcome = self
-            .enforce_delete_referential_actions_inner(
-                parent_catalog,
-                parent_table_id,
-                parent_schema,
-                deleted_keys,
-                tenant_context,
-                std::collections::HashSet::new(),
-                0,
-            )
-            .await;
-
-        // Always release the child locks, whether the cascade succeeded or not.
-        for guard in child_guards {
-            guard.release().await;
-        }
-        outcome
+        Ok(guards)
     }
 
     /// TD-110: the same-namespace/tenant child tables whose single-column FK
