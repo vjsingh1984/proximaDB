@@ -22,7 +22,7 @@ toc::[]
 ----
 LEGACY (default)                         OID-KEYED (gated on)
 metadata/tables/{ns}/{name}.json   --->  _syscat/objects/{object_id}.json   (authority)
-                                         metadata/object_index.json         (durable name<->oid index)
+                                         _syscat/index.json                 (durable name<->oid index)
                                          _syscat/_migration.json            (layout marker)
 metadata/namespaces.json (shared)  --->  namespace levels carry the tenant: [tenant, ...levels]
 ----
@@ -39,7 +39,7 @@ metadata/namespaces.json (shared)  --->  namespace levels carry the tenant: [ten
 == Coherence — the index is a derived cache, the object files are authority
 
 Each `_syscat/objects/{oid}.json` is **self-describing** (it carries its own
-`(namespace, name)` + `object_id`), so `metadata/object_index.json` (the
+`(namespace, name)` + `object_id`), so `_syscat/index.json` (the
 `name <-> object_id` map loaded eagerly at startup) is **always rebuildable** by
 scanning the object files. Writes are **authority-first**:
 
