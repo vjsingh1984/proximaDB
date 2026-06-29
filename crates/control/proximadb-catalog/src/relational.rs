@@ -266,12 +266,7 @@ impl CatalogRow {
         if pk_values.is_empty() {
             return Ok(None);
         }
-
-        let mut parts = Vec::with_capacity(pk_values.len());
-        for value in pk_values {
-            parts.push(stable_value_string(&value)?);
-        }
-        Ok(Some(parts.join("\u{1f}")))
+        Ok(Some(encode_primary_key_tuple(&pk_values)?))
     }
 
     /// Project this validated row into the canonical durable record envelope.
@@ -861,6 +856,32 @@ fn stable_value_string(value: &ProximaValue) -> Result<String> {
     Ok(key)
 }
 
+/// Encode a primary-key tuple (in catalog PK-column order) into the stable
+/// `\u{1f}`-joined form used for the record `oid` and key-only lookups
+/// (`get_by_key` compares `record.oid == key` exactly). Single source of truth:
+/// both [`CatalogRow::primary_key_string`] and the DML FK-existence / ON DELETE
+/// cascade paths route through it, so a probe always matches the encoded `oid`.
+pub fn encode_primary_key_tuple(values: &[ProximaValue]) -> Result<String> {
+    let mut parts = Vec::with_capacity(values.len());
+    for value in values {
+        parts.push(stable_value_string(value)?);
+    }
+    Ok(parts.join("\u{1f}"))
+}
+
+/// Inverse of [`encode_primary_key_tuple`]: split an encoded primary-key string
+/// into its per-column components (in PK order). `stable_value_string` does not
+/// escape `\u{1f}` within String values, so a value containing the separator is
+/// ambiguous (a pre-existing limitation for composite-PK insert; not introduced
+/// here).
+pub fn split_primary_key_tuple(encoded: &str) -> Vec<&str> {
+    if encoded.is_empty() {
+        Vec::new()
+    } else {
+        encoded.split('\u{1f}').collect()
+    }
+}
+
 fn new_local_record_id(schema: &CatalogTableSchema) -> String {
     let now_ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -929,6 +950,35 @@ mod tests {
                 primary_key: vec!["id".to_string()],
                 ..Default::default()
             })
+    }
+
+    #[test]
+    fn primary_key_tuple_encode_decode_round_trip() {
+        // Composite tuple in PK order; note Boolean encodes as "true" (the `oid`
+        // encoder used by `get_by_key`), NOT "t" — the divergence S2 unifies on.
+        let values = vec![
+            ProximaValue::String("us-east".to_string()),
+            ProximaValue::Int64(42),
+            ProximaValue::Boolean(true),
+        ];
+        let encoded = encode_primary_key_tuple(&values).expect("encode");
+        assert_eq!(encoded, "us-east\u{1f}42\u{1f}true");
+        assert_eq!(
+            split_primary_key_tuple(&encoded),
+            vec!["us-east", "42", "true"]
+        );
+
+        // Single-column tuple has no separator.
+        let one = encode_primary_key_tuple(&[ProximaValue::Int64(7)]).expect("encode one");
+        assert_eq!(one, "7");
+        assert_eq!(split_primary_key_tuple(&one), vec!["7"]);
+
+        // An empty String PK-column value is preserved (leading separator).
+        let with_empty =
+            encode_primary_key_tuple(&[ProximaValue::String(String::new()), ProximaValue::Int64(1)])
+                .expect("encode empty-first");
+        assert_eq!(with_empty, "\u{1f}1");
+        assert_eq!(split_primary_key_tuple(&with_empty), vec!["", "1"]);
     }
 
     #[test]
