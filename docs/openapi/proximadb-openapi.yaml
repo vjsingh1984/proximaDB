@@ -738,6 +738,19 @@ components:
           type:
           - number
           - 'null'
+        document_collection:
+          description: |-
+            Collection whose document index to BM25-search. Defaults to `vector_collection` (documents
+            co-indexed with the vectors share the record `oid`, so they merge by `oid`).
+          type:
+          - string
+          - 'null'
+        document_weight:
+          description: Document modality weight (mirrors `vector_weight` / `graph_weight`). Defaults to 1.0.
+          format: float
+          type:
+          - number
+          - 'null'
         edge_types:
           items:
             type: string
@@ -781,6 +794,14 @@ components:
         rrf:
           description: Use the rank-based RRF fallback instead of PIT-calibrated linear.
           type: boolean
+        text_query:
+          description: |-
+            Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also searches the
+            collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
+            (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
+          type:
+          - string
+          - 'null'
         total_budget:
           minimum: 0
           type:

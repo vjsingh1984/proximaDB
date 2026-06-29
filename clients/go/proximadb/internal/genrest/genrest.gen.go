@@ -450,8 +450,15 @@ type FusionHit struct {
 // FusionSearchRequest defines model for FusionSearchRequest.
 type FusionSearchRequest struct {
 	// ConsensusBeta Consensus boost added to any `oid` present in ≥2 sources.
-	ConsensusBeta *float32  `json:"consensus_beta"`
-	EdgeTypes     *[]string `json:"edge_types,omitempty"`
+	ConsensusBeta *float32 `json:"consensus_beta"`
+
+	// DocumentCollection Collection whose document index to BM25-search. Defaults to `vector_collection` (documents
+	// co-indexed with the vectors share the record `oid`, so they merge by `oid`).
+	DocumentCollection *string `json:"document_collection"`
+
+	// DocumentWeight Document modality weight (mirrors `vector_weight` / `graph_weight`). Defaults to 1.0.
+	DocumentWeight *float32  `json:"document_weight"`
+	EdgeTypes      *[]string `json:"edge_types,omitempty"`
 
 	// Grain Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.
 	Grain       *string  `json:"grain"`
@@ -472,8 +479,13 @@ type FusionSearchRequest struct {
 	QueryVector []float32 `json:"query_vector"`
 
 	// Rrf Use the rank-based RRF fallback instead of PIT-calibrated linear.
-	Rrf         *bool `json:"rrf,omitempty"`
-	TotalBudget *int  `json:"total_budget"`
+	Rrf *bool `json:"rrf,omitempty"`
+
+	// TextQuery Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also searches the
+	// collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
+	// (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
+	TextQuery   *string `json:"text_query"`
+	TotalBudget *int    `json:"total_budget"`
 
 	// VectorCollection Vector collection to seed from (its records co-indexed with this graph by `oid`).
 	VectorCollection string   `json:"vector_collection"`
