@@ -273,6 +273,37 @@ impl std::fmt::Debug for FilesystemFactory {
     }
 }
 
+/// Forwards `CountingFileSystem` GET reads into the per-query `IoTrace`
+/// (TD-096 S2). The record fns are ADR-030 always-on accumulators: they no-op
+/// outside an active `io_trace` scope and when the `io-trace` perf-emission
+/// feature is compiled out, so this impl is unconditional and zero-cost when no
+/// query is being traced.
+#[derive(Debug, Default)]
+struct IoTraceFsRecorder;
+
+impl proximadb_storage_filesystem_types::counting::IoRecorder for IoTraceFsRecorder {
+    fn record_full_read(&self, bytes: u64) {
+        crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+        if bytes > 0 {
+            crate::observability::io_trace::record_bytes_read(bytes);
+        }
+    }
+    fn record_range_read(&self, bytes: u64) {
+        crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+        crate::observability::io_trace::record_range_gets(1);
+        if bytes > 0 {
+            crate::observability::io_trace::record_bytes_read(bytes);
+        }
+    }
+    fn record_batched_ranges(&self, bytes: u64) {
+        crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+        crate::observability::io_trace::record_range_gets(1);
+        if bytes > 0 {
+            crate::observability::io_trace::record_bytes_read(bytes);
+        }
+    }
+}
+
 impl FilesystemFactory {
     fn maybe_wrap_with_encryption(
         &self,
@@ -536,16 +567,21 @@ impl FilesystemFactory {
             .cloned()
             .ok_or_else(|| FilesystemError::UnsupportedScheme(scheme_str.to_string()))?;
 
-        // TD-096 S2 / S1.5: when the GET-count instrumentation env gate is set,
-        // wrap the filesystem so a bench can tally per-search read operations
-        // (the object-store GET cost term). Default OFF — a single
-        // `env::var_os` check per factory lookup, which engines cache — so there
-        // is zero behavior change in production and existing tests.
+        // TD-096 S2: when the GET-count instrumentation env gate is set, wrap the
+        // filesystem so (a) a bench can tally per-search read operations via the
+        // global counters, AND (b) each read is forwarded into the per-query
+        // `IoTrace` (via `IoTraceFsRecorder`) so GET counts drive the route cost
+        // model + per-tenant KRU. Default OFF — one `env::var_os` check per
+        // cached factory lookup — so there is zero behavior change otherwise.
+        // The recorder calls `io_trace::record_*`, which are ADR-030 always-on
+        // accumulators that no-op outside an active query scope (and when the
+        // `io-trace` perf-emission feature is compiled out).
         if std::env::var_os("PROXIMADB_COUNT_FS_IO").is_some() {
             Ok(Arc::new(
-                proximadb_storage_filesystem_types::counting::CountingFileSystem::new(
+                proximadb_storage_filesystem_types::counting::CountingFileSystem::new_with_recorder(
                     fs,
                     proximadb_storage_filesystem_types::counting::global_counters(),
+                    std::sync::Arc::new(IoTraceFsRecorder),
                 ),
             ))
         } else {

@@ -216,6 +216,20 @@ impl EmbeddedConfig {
         }
     }
 
+    /// Cold-path benchmark config (TD-096 S2): identical to [`Self::for_benchmarks`]
+    /// but with the block cache **disabled** (`cache_size_mb: 0`) and the RL planner
+    /// off (deterministic). Pair with a flush-then-**reopen** so the WAL memtable and
+    /// cache start empty — this forces searches to read from the `FileSystem`-backed
+    /// SST files so `CountingFileSystem` measures real disk GETs (the warm-cache +
+    /// WAL-retention confound that masked S2's measurement is removed).
+    pub fn for_benchmarks_cold(data_path: impl Into<String>) -> Self {
+        let mut cfg = Self::for_benchmarks(data_path);
+        cfg.cache_size_mb = 0;
+        cfg.enable_rl_planner = false;
+        cfg.rl_policy_path = None;
+        cfg
+    }
+
     /// Create an optimized configuration for memory-constrained environments
     ///
     /// Uses minimal cache and aggressive pruning
