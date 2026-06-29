@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Error as IoError;
 
+/// TD-096 S2 / S1.5: GET-count instrumentation on the filesystem seam.
+pub mod counting;
+
 /// Filesystem operation result type
 pub type FsResult<T> = Result<T, FilesystemError>;
 

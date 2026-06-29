@@ -530,10 +530,27 @@ impl FilesystemFactory {
         let scheme = extract_scheme(url)?;
         let scheme_str = scheme.as_str();
 
-        self.filesystems
+        let fs = self
+            .filesystems
             .get(scheme_str)
             .cloned()
-            .ok_or_else(|| FilesystemError::UnsupportedScheme(scheme_str.to_string()))
+            .ok_or_else(|| FilesystemError::UnsupportedScheme(scheme_str.to_string()))?;
+
+        // TD-096 S2 / S1.5: when the GET-count instrumentation env gate is set,
+        // wrap the filesystem so a bench can tally per-search read operations
+        // (the object-store GET cost term). Default OFF — a single
+        // `env::var_os` check per factory lookup, which engines cache — so there
+        // is zero behavior change in production and existing tests.
+        if std::env::var_os("PROXIMADB_COUNT_FS_IO").is_some() {
+            Ok(Arc::new(
+                proximadb_storage_filesystem_types::counting::CountingFileSystem::new(
+                    fs,
+                    proximadb_storage_filesystem_types::counting::global_counters(),
+                ),
+            ))
+        } else {
+            Ok(fs)
+        }
     }
 
     /// Get an IntelligentFilesystem with automatic scheme-specific filesystem selection.
