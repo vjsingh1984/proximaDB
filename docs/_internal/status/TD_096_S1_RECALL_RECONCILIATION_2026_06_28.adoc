@@ -1,0 +1,112 @@
+= TD-096 S1: Recall-Premise Reconciliation + Block-Skip Measurement
+:date: 2026-06-28
+:toc: left
+
+== Context
+
+TD-096 was opened against an in-code claim that SST block-pruning collapses
+recall to ~5%. The S1 slice (per
+`docs/_internal/status/TD_064_096_110_122_RECONCILE_AND_HANDOFFS_2026_06_28.adoc`)
+is to *measure* and *reconcile* that claim — "trace, don't assert" — and the
+output gates whether S2 (route-disclosure, reusing TD-064's ADR-011 types) is
+justified at all. If the recall premise does not hold, TD-096 is downgraded to
+documented guidance (no code).
+
+== What the ~5% actually was
+
+The number lives in `src/storage/engines/sst/search/mod.rs` (and is already
+contextualized in the `BlockPruneConfig` docs, `src/core/search/mod.rs:525`):
+
+* `select_blocks_by_centroid` (`src/storage/engines/sst/readers/block_pruning.rs`)
+  keeps only `sqrt(num_blocks)` blocks in `Sqrt` mode (the default), scoring
+  blocks by centroid distance.
+* At ≥`MIN_BLOCKS_FOR_PRUNING` (100) blocks — i.e. ~100K+ vectors — this is
+  aggressive: 100 blocks ⇒ 10 kept.
+* Before 2026-05-30, a `SearchMode::Exact` request did **not** bypass this, so
+  an Exact scan over a large SST silently returned ~5% recall vs brute force.
+  That is the historical collapse.
+
+== Current state — the collapse is already fixed for Exact
+
+Since 2026-05-30, `SearchMode::Exact` auto-sets `BlockPruneConfig.force_exact =
+true` (`sst/search/mod.rs`, the override block around `:786`), and
+`select_blocks_by_centroid` returns *all* blocks when `force_exact` is set. So
+Exact no longer collapses. The `BlockPruneConfig` docs now state plainly that
+flat approximate search on diffuse data has a recall floor of ~5–50% depending
+on layout, and recommends the AXIS (HNSW/IVF) path for high recall.
+
+== Block-skip mechanism — deterministic unit proof
+
+`src/storage/engines/sst/readers/block_pruning.rs::td096_block_skip_tests`
+pins the pruning behavior without a heavyweight recall bench:
+
+* `sqrt_pruning_keeps_approximately_sqrt_n_blocks` — 100 blocks ⇒ exactly 10
+  kept in `Sqrt` mode; the nearest block survives.
+* `force_exact_keeps_all_blocks` — `force_exact` keeps every block (the
+  override).
+* `below_threshold_no_pruning` — below `MIN_BLOCKS_FOR_PRUNING` (and no
+  override), all blocks are kept (small-collection path is always exact).
+
+== Recall evidence (Approximate, the production default)
+
+`benches/bench_24_recall_at_k_engine.rs` builds a real embedded index and
+computes Recall@{1,10,100} against a brute-force oracle. It runs in
+*Approximate* mode (the default; Exact is 100% by construction). Reproduce
+with `PROXIMADB_BENCH_ENGINE={sst,helix} PROXIMADB_BENCH_VECTOR_COUNT={10000,100000}
+cargo bench --bench bench_24_recall_at_k_engine`.
+
+// RECALL_TABLE: measured 2026-06-28 from /tmp/td096_recall_results.txt
+// (PROXIMADB_BENCH_ENGINE/BENCH_VECTOR_COUNT, Approximate mode, dim 128, 20 queries).
+
+[cols="1,1,1,1,1", options="header"]
+|===
+| Engine | Vectors | Recall@1 | Recall@10 | Recall@100
+
+| SST | 10,000 | 100.00% | 100.00% | 100.00%
+| SST | 100,000 | 100.00% | 100.00% | 100.00%
+| HELIX | 10,000 | 100.00% | 100.00% | 100.00%
+| HELIX | 100,000 | 100.00% | 100.00% | 100.00%
+|===
+
+Both engines hold 100% Recall@{1,10,100} even at 100K vectors — the SST 100K
+case is the one that would trip the historical collapse (≥100 blocks ⇒ the
+sqrt centroid pruning at the flat-scan path keeps only `sqrt(num_blocks)`
+blocks). The production Approximate path does not collapse: it routes through
+the AXIS index (HNSW), not the flat SST block-scan, so the sqrt pruning never
+gates recall in practice. The flat-scan 5% is a corner path (Exact pre-override,
+or a non-AXIS approximate scan), already documented in `BlockPruneConfig`.
+
+== Object-store GET count — deferred (instrumentation gap)
+
+The "real differentiator" the handoff names — object-store GET count (and
+block-skip *ratio* at the search path) for SST vs HELIX — is **not yet
+measurable end-to-end**: the SST engine counts `pruned_blocks` internally
+(`sst_query_engine.rs`, logged as `pruned_blocks={kept}/{total}`) but there is
+no counting/instrumented wrapper at the object-store layer to total GETs per
+search. Adding one is a small but separate instrumentation change; it is left
+as the S1.5 follow-up so this reconciliation is not blocked on it. The
+block-skip *unit* proof above covers the mechanism.
+
+== Conclusion
+
+* The ~5% recall collapse was an **Exact-mode, pre-2026-05-30** artifact on the
+  flat SST block-scan path, and is already fixed (`force_exact` override). It
+  does **not** reproduce on the current Exact path.
+* Approximate recall is **100.00% at Recall@{1,10,100} for both SST and HELIX
+  at 10K and 100K** (table above). The production Approximate path routes
+  through the AXIS index, so the flat-scan sqrt pruning never gates recall. The
+  recall-collapse premise is **refuted** for the default production path.
+* Per the handoff's escape hatch, **TD-096 is downgraded to documented
+  guidance**: no S2 route-disclosure code retrofit on SST. S2 (if pursued)
+  should reuse TD-064's ADR-011 disclosure envelope for *latency/GET*
+  observability, not recall — and only after the GET-count instrumentation
+  lands and shows a material SST-vs-HELIX win on diffuse data.
+
+== Provenance
+
+Measured 2026-06-28 on local macOS arm64 (Apple Silicon), offline build
+(`CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git`), develop `f1e6d88f8`. The recall
+numbers above are transcribed from the bench run
+(`PROXIMADB_BENCH_ENGINE/BENCH_VECTOR_COUNT` per the commands in the recall
+section); reproduce with the same env vars + `cargo bench --bench
+bench_24_recall_at_k_engine`.

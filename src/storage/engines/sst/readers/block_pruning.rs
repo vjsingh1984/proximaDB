@@ -214,3 +214,90 @@ pub(crate) fn metric_distance(a: &[f32], b: &[f32], metric: DistanceMetric) -> f
     let distance_compute = UnifiedDistanceCompute::default();
     distance_compute.distance_with_metric(a, b, &metric)
 }
+
+#[cfg(test)]
+mod td096_block_skip_tests {
+    //! TD-096 S1: deterministic proof of the sqrt centroid-pruning block-skip
+    //! ratio — the mechanism behind the historical ~5% Exact-mode recall
+    //! collapse (now bypassed for `SearchMode::Exact` via `force_exact`; see
+    //! `src/storage/engines/sst/search/mod.rs` and the `BlockPruneConfig` docs).
+    //! These pin the pruning behavior so a regression that re-introduces the
+    //! collapse is caught without a heavyweight recall bench.
+    use super::*;
+    use crate::core::search::BlockPruneMode;
+
+    /// `n` orthogonal unit basis vectors in `dim` dimensions (e_0..e_{n-1}) —
+    /// distinct directions so Cosine ranking is unambiguous (e_i·e_j = δ_ij).
+    fn basis_centroids(n: usize, dim: usize) -> Vec<Vec<f32>> {
+        (0..n)
+            .map(|i| {
+                let mut v = vec![0.0f32; dim];
+                v[i] = 1.0;
+                v
+            })
+            .collect()
+    }
+
+    fn entries_with_centroids(centroids: &[Vec<f32>]) -> Vec<IndexEntry> {
+        centroids
+            .iter()
+            .map(|c| IndexEntry {
+                block_centroid: c.clone(),
+                block_centroid_fp16: None,
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    /// At N≥threshold blocks, Sqrt mode keeps only ~sqrt(N) — the aggressive
+    /// skip that, pre-`force_exact`, dropped Exact recall to ~5% at scale.
+    #[test]
+    fn sqrt_pruning_keeps_approximately_sqrt_n_blocks() {
+        // 100 orthogonal centroids (Cosine ranking is unambiguous: e_i·e_j=δ).
+        let entries = entries_with_centroids(&basis_centroids(100, 100));
+        let mut cfg = BlockPruneConfig::for_testing(); // bypass the 100-block threshold
+        cfg.mode = BlockPruneMode::Sqrt;
+        let mut query = vec![0.0f32; 100];
+        query[50] = 1.0; // == e_50, the nearest centroid by Cosine
+        let selected = select_blocks_by_centroid(&query, &entries, DistanceMetric::Cosine, &cfg);
+        assert_eq!(
+            selected.len(),
+            10,
+            "Sqrt mode must keep sqrt(100)=10 of 100 blocks"
+        );
+        // The nearest block (centroid e_50) must survive the prune.
+        assert!(selected.contains(&50));
+    }
+
+    /// `force_exact` bypasses pruning entirely — the override that eliminated
+    /// the 5% collapse for `SearchMode::Exact`.
+    #[test]
+    fn force_exact_keeps_all_blocks() {
+        let entries = entries_with_centroids(&basis_centroids(50, 50));
+        let mut cfg = BlockPruneConfig::for_testing();
+        cfg.force_exact = true;
+        // Direction is irrelevant under force_exact (no scoring).
+        let query = vec![1.0f32; 50];
+        let selected = select_blocks_by_centroid(&query, &entries, DistanceMetric::Cosine, &cfg);
+        assert_eq!(
+            selected.len(),
+            50,
+            "force_exact must keep every block (no pruning)"
+        );
+    }
+
+    /// Below the production MIN_BLOCKS_FOR_PRUNING threshold (and no override),
+    /// no pruning happens — the small-collection path is always exact.
+    #[test]
+    fn below_threshold_no_pruning() {
+        let entries = entries_with_centroids(&basis_centroids(10, 10));
+        let cfg = BlockPruneConfig::default(); // min_blocks_override=None → threshold=100
+        let query = vec![1.0f32; 10];
+        let selected = select_blocks_by_centroid(&query, &entries, DistanceMetric::Cosine, &cfg);
+        assert_eq!(
+            selected.len(),
+            10,
+            "below MIN_BLOCKS_FOR_PRUNING, all blocks are kept"
+        );
+    }
+}

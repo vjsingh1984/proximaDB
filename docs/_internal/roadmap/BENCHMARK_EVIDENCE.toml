@@ -79,15 +79,15 @@ notes = "Ran 2026-06-16: bench_08 measures the quantization-speed kernel (dim 12
 id = "recall_at_10"
 claim = "~97% Recall@10 (HNSW, M=32)"
 metric = "recall_at_10_pct"
-status = "unverified"
+status = "measured"
 asserted_in = ["README.adoc:99", "docs/10-quality/benchmarks/BENCHMARKS.adoc:18"]
 bench_source = "benches/bench_24_recall_at_k_engine.rs"
-bench_command = "cargo bench --bench bench_24_recall_at_k_engine"
-artifact = ""
-hardware = ""
-date = ""
-version = ""
-notes = "Ran 2026-06-16: bench_23_recall_at_k is registered and runnable but only benchmarks the recall-COMPUTATION utility over synthetic vectors + SIMULATED approximate results. A real index-vs-ground-truth bench now exists at benches/bench_24_recall_at_k_engine.rs with deterministic vectors and bounded search-readiness probing, but this claim stays UNVERIFIED until that bench is run on recorded hardware and its output is archived. README states 'not an SLA'."
+bench_command = "PROXIMADB_BENCH_ENGINE=sst PROXIMADB_BENCH_VECTOR_COUNT=100000 cargo bench --bench bench_24_recall_at_k_engine"
+artifact = "docs/_internal/status/TD_096_S1_RECALL_RECONCILIATION_2026_06_28.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), no other workload"
+date = "2026-06-28"
+version = "v0.2"
+notes = "TD-096 S1 (2026-06-28): ran bench_24_recall_at_k_engine in Approximate mode (dim 128, 20 queries, deterministic seeded LCG) at 10K and 100K vectors for BOTH sst and helix — Recall@{1,10,100} = 100.00% across the board, including the SST 100K case (>=100 blocks, the condition that historically tripped a ~5% collapse on the flat Exact block-scan path, now bypassed via force_exact). 100% >= the ~97% claim, so the claim is substantiated. DATA CAVEAT: this is random normalized dim-128 data (easy for HNSW — neighbors well-separated); the 97% figure in README is not an SLA and real high-dim embedding corpora may differ. See the reconciliation doc for the full table + the block-skip unit proof (block_pruning.rs::td096_block_skip_tests)."
 
 [[claims]]
 id = "hybrid_search_latency"
