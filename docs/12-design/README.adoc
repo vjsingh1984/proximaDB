@@ -171,6 +171,10 @@ Read these in order for future-shaping architecture work:
   duplicate-doc findings, and archive batch plan.
 * `DESIGN_PATTERNS.adoc` - general design patterns and implementation references.
 * `SUPPORTED_SURFACES.adoc` - supported API/projection status and retirement candidates.
+* `NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.adoc` - the native Rust columnar OLAP engine blueprint
+  (PAX-columnar scan spine; DataFusion is the interim OLAP executor). Companion:
+  `NATIVE_OLAP_8ENGINE_COMPARATIVE_STUDY_2026_06_22.adoc` - the source-level 8-engine comparative
+  study (DataFusion/Ballista/DuckDB/Velox/Trino/Spark/ClickHouse/Polars) that distilled the blueprint.
 
 == ADRs
 
