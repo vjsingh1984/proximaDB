@@ -812,10 +812,26 @@ impl NativeCatalog {
         }
 
         // Load from storage (oid-keyed authority preferred, legacy fallback).
-        let data = self
-            .read_table_bytes(identifier)
-            .await?
-            .ok_or_else(|| anyhow!("Table '{}' not found", identifier))?;
+        let Some(data) = self.read_table_bytes(identifier).await? else {
+            // TD-181 P1: dangling index entry — the name resolves in the durable
+            // index but NEITHER the oid file nor the legacy file exists. A crash
+            // between `drop_table`'s file-delete and its index-persist leaves this,
+            // and it would otherwise persist as a phantom in `list_tables` across
+            // restarts (the index union lists it, but every `get` returns
+            // NotFound). Prune it lazily here — the long-documented behavior — so
+            // the index self-heals on the next read instead of needing a full
+            // rebuild. Guarded on the index actually holding the entry, so a
+            // genuinely-absent table stays a plain NotFound with no write.
+            if self
+                .object_name_index
+                .read()
+                .await
+                .contains_key(&identifier.to_fqn())
+            {
+                self.index_remove_table(identifier).await?;
+            }
+            return Err(anyhow!("Table '{}' not found", identifier));
+        };
 
         let meta: TableMetadata = serde_json::from_slice(&data)?;
 
@@ -2283,6 +2299,71 @@ mod tests {
         assert!(
             cat.get_table(&id_b).await.is_err(),
             "B not found after drop"
+        );
+    }
+
+    /// TD-181 P1: a dangling index entry (name in the durable index, but both the
+    /// oid file and the legacy file gone — the state a crash between
+    /// `drop_table`'s file-delete and index-persist leaves) phantoms in
+    /// `list_tables`. A read of it returns NotFound AND prunes the entry, so the
+    /// phantom is gone afterwards — the long-documented lazy self-heal.
+    #[tokio::test]
+    async fn dangling_index_entry_is_pruned_on_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ns = vec!["db".to_string()];
+        let id = TableIdentifier::new(ns.clone(), "t");
+
+        let oid = {
+            let cat = fresh_catalog(&tmp).await;
+            cat.set_oid_paths_for_test(true);
+            cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+            let oid = cat
+                .create_table(&id, schema_with_id_col("t"))
+                .await
+                .unwrap()
+                .object_id
+                .unwrap();
+            // Crash mid-drop: both authority files gone, durable index survives.
+            cat.io_remove_file(&NativeCatalog::object_file_rel(oid))
+                .await;
+            cat.io_remove_file(&NativeCatalog::table_metadata_rel(&id))
+                .await;
+            oid
+        };
+
+        // Reopen: the durable index reloads the (now dangling) entry; the
+        // in-memory table cache is cold, so a read goes to disk.
+        let cat = fresh_catalog(&tmp).await;
+        cat.set_oid_paths_for_test(true);
+
+        // Pre-prune: the entry phantoms in list_tables (the index union lists it).
+        assert!(
+            cat.list_tables(&ns)
+                .await
+                .unwrap()
+                .iter()
+                .any(|t| t.name == "t"),
+            "dangling entry phantoms in list before pruning"
+        );
+
+        // A read of it is NotFound and triggers the lazy prune.
+        assert!(
+            cat.get_table(&id).await.is_err(),
+            "get of a dangling entry returns NotFound"
+        );
+
+        // Post-prune: gone from both the list and the reverse index.
+        assert!(
+            cat.list_tables(&ns)
+                .await
+                .unwrap()
+                .iter()
+                .all(|t| t.name != "t"),
+            "dangling entry pruned from list after the read"
+        );
+        assert!(
+            cat.get_table_by_object_id(oid).await.unwrap().is_none(),
+            "reverse index entry pruned"
         );
     }
 
