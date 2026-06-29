@@ -102,6 +102,19 @@ pub fn canonical_replay_scope_enabled() -> bool {
     std::env::var("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE").as_deref() == Ok("1")
 }
 
+/// TD-066 (c) Part 2 — canonical-store recovery re-population (default OFF).
+/// Graph recovery replays the engine WAL into the in-memory engine only; the
+/// canonical/cold record store (a write-time projection, and a *buffered* one for
+/// `ColdGraphSegmentStore`) is NOT rebuilt — an unflushed buffer is lost on crash.
+/// When enabled, recovery re-drives every recovered node/edge through the
+/// canonical store (idempotent upsert) so the cold store is rebuilt from the
+/// authoritative recovered state — closing the data-loss path that blocks wiring
+/// `ColdGraphSegmentStore` to production. Aligns graph durability to ADR-020
+/// (canonical store rebuildable from recovery). Flip fleet-wide after baking.
+pub fn canonical_recovery_repopulate_enabled() -> bool {
+    std::env::var("PROXIMADB_GRAPH_CANONICAL_RECOVERY").as_deref() == Ok("1")
+}
+
 /// Parse the segment index out of a `wal_{:08}.log` segment filename. Accepts
 /// either a bare filename or a full path (takes the last path component).
 /// Returns `None` for anything that isn't a WAL segment file.

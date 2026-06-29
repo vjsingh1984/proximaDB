@@ -856,6 +856,103 @@ mod tests {
         );
     }
 
+    /// TD-066 Part 2 / #52: graph recovery replays the engine WAL into the in-memory
+    /// engine only, leaving a *buffered* canonical/cold store empty after a crash.
+    /// `repopulate_canonical_store` re-drives the recovered nodes + edges through the
+    /// canonical store so the cold tier is rebuilt from the authoritative recovered
+    /// engine state — the data-loss fix that unblocks wiring `ColdGraphSegmentStore`.
+    #[tokio::test]
+    async fn recovery_repopulates_canonical_store_from_engine() {
+        let graph_id = format!("canonical_recovery_test_{}", std::process::id());
+        let graph_id = graph_id.as_str();
+        let record_store = Arc::new(MemoryRecordStore::default());
+        let service =
+            GraphOperationsService::new().with_canonical_record_store(record_store.clone());
+
+        service
+            .create_graph_collection(CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .expect("create graph");
+
+        for node_id in ["n1", "n2", "n3"] {
+            service
+                .create_node(
+                    graph_id,
+                    Node {
+                        id: node_id.to_string(),
+                        labels: vec!["Person".to_string()],
+                        properties: HashMap::new(),
+                        embedding: None,
+                        created_at_ms: 1,
+                        updated_at_ms: 1,
+                    },
+                )
+                .await
+                .expect("create node");
+        }
+        service
+            .create_edge(
+                graph_id,
+                Edge {
+                    id: "e1".to_string(),
+                    from_node_id: "n1".to_string(),
+                    to_node_id: "n2".to_string(),
+                    edge_type: "KNOWS".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+            )
+            .await
+            .expect("create edge");
+
+        // Simulate a crash that lost the buffered cold store while the engine —
+        // rebuilt from its own WAL on restart — retains the authoritative state.
+        record_store.records.write().expect("clear store").clear();
+        assert!(
+            record_store.records.read().expect("read store").is_empty(),
+            "cold store emptied (buffer lost on crash)"
+        );
+
+        // Recovery re-population rebuilds the canonical store from the engine.
+        let driven = service
+            .repopulate_canonical_store(graph_id)
+            .await
+            .expect("repopulate canonical store");
+        assert_eq!(
+            driven, 4,
+            "3 nodes + 1 edge re-driven into the canonical store"
+        );
+
+        for node_id in ["n1", "n2", "n3"] {
+            assert!(
+                record_store
+                    .get_record(&RecordKey::new(format!("graph/{graph_id}/node/{node_id}")))
+                    .await
+                    .expect("get recovered node")
+                    .is_some(),
+                "node {node_id} re-populated after recovery"
+            );
+        }
+        assert!(
+            record_store
+                .get_record(&RecordKey::new(format!("graph/{graph_id}/edge/e1")))
+                .await
+                .expect("get recovered edge")
+                .is_some(),
+            "edge re-populated after recovery"
+        );
+    }
+
     /// TD-168 cold-payload tier: a node/edge whose payload is durable in the
     /// canonical record store but NOT resident in the engine is servable when the
     /// gate is ON, and yields `None` (today's behavior) when OFF. Process-isolated

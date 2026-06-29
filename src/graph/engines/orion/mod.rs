@@ -1329,6 +1329,14 @@ impl GraphEngine for OrionGraphEngine {
         }
         Ok(nodes)
     }
+
+    fn get_all_edges(&self) -> Result<Vec<Arc<Edge>>> {
+        let mut edges = Vec::new();
+        for entry in self.memory_pool.edges.iter() {
+            edges.push(Arc::clone(&*entry));
+        }
+        Ok(edges)
+    }
 }
 
 impl Default for OrionGraphEngine {
