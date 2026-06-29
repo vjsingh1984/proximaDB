@@ -3283,7 +3283,14 @@ impl VectorOperationsService {
             collection_id
         );
         let axis_optimized_results = match build_axis_hybrid_query_with_policy(
-            collection_id,
+            // TD-AXIS-1: use the collection's canonical id (UUID) — NOT the
+            // caller's collection_id (which may be the human-readable NAME).
+            // enable_hmgi registered the UUID in hmgi_enabled_collections;
+            // passing the name caused is_hmgi_enabled to return false → HMGI
+            // skipped → IVF fallback → 0 results (ANN index not serving).
+            // ADR-031 follow-up: migrate hmgi_enabled_collections to the stable
+            // object_id (base62) and use that here instead of the UUID.
+            &collection.id,
             &axis_search_params,
             ann_filtering_mode,
             ann_filtering_selectivity.map(|_| proximadb_catalog::AnnFilteringPolicy::default()),
