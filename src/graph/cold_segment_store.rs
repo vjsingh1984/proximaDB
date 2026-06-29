@@ -149,20 +149,38 @@ impl ColdGraphSegmentStore {
             body.extend_from_slice(bytes);
             dir.push((oid.clone(), offset, bytes.len() as u64));
         }
-        let dir_bytes = bincode::serialize(&dir)
-            .map_err(|e| anyhow::anyhow!("cold segment store: encode directory failed: {e}"))?;
+        let dir_bytes = match bincode::serialize(&dir) {
+            Ok(dir_bytes) => dir_bytes,
+            Err(e) => {
+                self.requeue(pending)?;
+                return Err(anyhow::anyhow!(
+                    "cold segment store: encode directory failed: {e}"
+                ));
+            }
+        };
         body.extend_from_slice(&dir_bytes);
         body.extend_from_slice(&(dir_bytes.len() as u64).to_le_bytes());
         body.extend_from_slice(SEG_MAGIC);
 
-        self.store
+        // The records were `mem::take`-n out of the buffer by the caller BEFORE this
+        // PUT; if the PUT fails, re-queue them so a later flush retries rather than
+        // dropping them — a transient object-store error must not silently lose
+        // buffered writes (the engine is authoritative and recovery re-population is
+        // the backstop, but a blip shouldn't require a full recovery cycle).
+        if let Err(e) = self
+            .store
             .put_with_tier(
                 &ObjectPath::from(seg_path.clone()),
                 Bytes::from(body),
                 self.tier,
             )
             .await
-            .map_err(|e| anyhow::anyhow!("cold segment store: put `{seg_path}` failed: {e}"))?;
+        {
+            self.requeue(pending)?;
+            return Err(anyhow::anyhow!(
+                "cold segment store: put `{seg_path}` failed: {e}"
+            ));
+        }
 
         for (oid, offset, len) in dir {
             self.index.insert(
@@ -174,7 +192,25 @@ impl ColdGraphSegmentStore {
                 },
             );
         }
+        // The segment is now durable. An index-sidecar failure here leaves the
+        // records durable-but-unfindable until recovery re-population rewrites them
+        // (the segment-tail index rebuild that would heal this directly is a tracked
+        // follow-up). Do NOT re-queue — re-flushing would duplicate the durable
+        // segment.
         self.persist_index().await
+    }
+
+    /// Re-insert a failed flush batch at the FRONT of the buffer so a later flush
+    /// retries it. The records left the buffer (`mem::take`) before the segment PUT,
+    /// so on a transient PUT/encode failure this is what prevents silent data loss.
+    fn requeue(&self, mut pending: Vec<(String, Vec<u8>)>) -> RecordStoreResult<()> {
+        let restored: u64 = pending.iter().map(|(_, bytes)| bytes.len() as u64).sum();
+        let mut b = self.lock_buffer()?;
+        // Failed batch first, then any writes that landed since the take (FIFO-ish).
+        pending.append(&mut b.records);
+        b.records = pending;
+        b.bytes += restored;
+        Ok(())
     }
 
     /// Persist the oid→location index as a bincode sidecar (best-effort durable map
@@ -193,7 +229,11 @@ impl ColdGraphSegmentStore {
             .map_err(|e| anyhow::anyhow!("cold segment store: persist index failed: {e}"))
     }
 
-    async fn load_index(&self) -> RecordStoreResult<()> {
+    /// Load the persisted oid→location index sidecar over the current backing.
+    /// `pub(crate)` so a caller that constructs the store with [`Self::new`] over a
+    /// shared backing (e.g. crash-recovery tests / a reopen path) can rehydrate it,
+    /// mirroring what [`Self::from_storage_root`] does internally.
+    pub(crate) async fn load_index(&self) -> RecordStoreResult<()> {
         match self.store.get(&ObjectPath::from(INDEX_KEY)).await {
             Ok(bytes) => {
                 let snapshot: Vec<(String, RecordLoc)> = bincode::deserialize(&bytes)
@@ -274,6 +314,14 @@ impl RecordStore for ColdGraphSegmentStore {
         };
         self.write_segment(pending).await?;
         Ok(record)
+    }
+
+    /// Force the in-memory buffer durable (segment + index sidecar). Overrides the
+    /// `RecordStore` default no-op so the graph checkpoint / graceful-shutdown path
+    /// (`flush_wal`) can flush this buffered store. Delegates to the inherent
+    /// [`Self::flush`].
+    async fn flush(&self) -> RecordStoreResult<()> {
+        ColdGraphSegmentStore::flush(self).await
     }
 
     async fn get_record(&self, key: &RecordKey) -> RecordStoreResult<Option<ProximaRecord>> {
@@ -508,6 +556,61 @@ mod tests {
         assert_eq!(got.oid, "graph/g/node/a");
         // Sequence resumed past the loaded segment.
         assert_eq!(s2.seq.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn flush_via_record_store_trait_makes_buffer_durable_across_reopen() {
+        // The checkpoint/shutdown path flushes through the `RecordStore` trait
+        // object, so the trait override (not just the inherent method) must dispatch
+        // to the real flush. High thresholds keep writes buffered until we flush.
+        let backing = ProximaObjectStore::from_url("memory://").expect("mem");
+        let s1 = ColdGraphSegmentStore::new(backing.clone(), ObjectAccessTier::Cool)
+            .with_flush_thresholds(u64::MAX, usize::MAX);
+        for id in ["a", "b", "c"] {
+            s1.upsert_record(record(&format!("graph/g/node/{id}")))
+                .await
+                .expect("upsert");
+        }
+        assert!(s1.index.is_empty(), "buffered, nothing flushed yet");
+
+        // Flush THROUGH the trait object — proves `RecordStore::flush` dispatches.
+        let dyn_store: &dyn RecordStore = &s1;
+        dyn_store.flush().await.expect("trait flush");
+
+        // Reopen over the same backing: every record is durable + index-findable.
+        let s2 = ColdGraphSegmentStore::new(backing, ObjectAccessTier::Cool);
+        s2.load_index().await.expect("load index");
+        for id in ["a", "b", "c"] {
+            let oid = format!("graph/g/node/{id}");
+            assert!(
+                s2.get_record(&RecordKey::new(oid))
+                    .await
+                    .expect("get")
+                    .is_some(),
+                "record durable after trait flush + reopen"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn requeue_restores_failed_batch_to_buffer() {
+        // The buffer is `mem::take`-n before the segment PUT; `requeue` must put a
+        // failed batch back so a later flush retries instead of dropping it.
+        let store = mem_store().with_flush_thresholds(u64::MAX, usize::MAX);
+        store
+            .upsert_record(record("graph/g/node/a"))
+            .await
+            .expect("upsert");
+        let pending = {
+            let mut b = store.lock_buffer().expect("lock");
+            b.bytes = 0;
+            std::mem::take(&mut b.records)
+        };
+        assert_eq!(pending.len(), 1);
+        store.requeue(pending).expect("requeue");
+        // The record is back in the buffer and a real flush now persists it.
+        store.flush().await.expect("flush");
+        assert!(store.index.contains_key("graph/g/node/a"));
     }
 
     #[tokio::test]

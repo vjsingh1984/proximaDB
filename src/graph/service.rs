@@ -1379,6 +1379,24 @@ impl GraphOperationsService {
                 }
             }
         }
+
+        // Flush the canonical/cold record store's write buffer to durable storage.
+        // This is an INDEPENDENT durability action — the cold store is a projection,
+        // not part of the engine-WAL snapshot/truncate ordering above — so it runs
+        // UNCONDITIONALLY (not gated on `scoped`): a buffered store (e.g.
+        // `ColdGraphSegmentStore`) must be flushed at every checkpoint AND graceful
+        // shutdown (`database.rs` calls `flush_wal` per graph on stop), in both the
+        // scoped and non-scoped configs, or its buffer is lost on crash/stop. A
+        // durable-on-write store overrides this to a no-op. NOTE: `canonical_record_store`
+        // is one store shared across graphs (oids embed `graph_id`), so this per-graph
+        // flush drains the global buffer — redundant across graphs but correct; if the
+        // store is ever made per-graph this flush becomes load-bearing.
+        if let Some(store) = &self.canonical_record_store {
+            store
+                .flush()
+                .await
+                .map_err(|e| ProximaDBError::Internal(format!("canonical store flush: {e}")))?;
+        }
         Ok(())
     }
 

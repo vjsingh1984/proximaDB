@@ -1309,4 +1309,79 @@ mod tests {
             "CSR should have both outgoing neighbours for node a"
         );
     }
+
+    /// #52 / TD-066 Part 2: `flush_wal` (the checkpoint AND graceful-shutdown path)
+    /// must flush a BUFFERED canonical store unconditionally — in BOTH the scoped and
+    /// non-scoped engine-WAL configs. This is the regression guard for the flush
+    /// placement: if it were buried inside the `if scoped` block, the non-scoped run
+    /// would silently leave the buffer unflushed (lost on crash/stop). Verified by
+    /// reopening a fresh store over the same object backing and finding the record.
+    #[tokio::test]
+    async fn flush_wal_flushes_buffered_cold_store_in_both_gate_states() {
+        use crate::graph::ColdGraphSegmentStore;
+        use proximadb_object_store::ProximaObjectStore;
+        use proximadb_storage_filesystem_types::ObjectAccessTier;
+
+        for scoped in [None, Some("1")] {
+            match scoped {
+                Some(v) => unsafe {
+                    std::env::set_var("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE", v)
+                },
+                None => unsafe { std::env::remove_var("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE") },
+            }
+
+            let backing = ProximaObjectStore::from_url("memory://").expect("mem store");
+            // High thresholds ⇒ the write stays buffered until flush_wal flushes it.
+            let cold = ColdGraphSegmentStore::new(backing.clone(), ObjectAccessTier::Cool)
+                .with_flush_thresholds(u64::MAX, usize::MAX);
+            let graph_id = format!("flush_wal_cold_{}_{scoped:?}", std::process::id());
+            let graph_id = graph_id.as_str();
+            let service = GraphOperationsService::new().with_canonical_record_store(Arc::new(cold));
+
+            service
+                .create_graph_collection(CreateGraphRequest {
+                    graph_id: graph_id.to_string(),
+                    name: None,
+                    description: None,
+                    schema: None,
+                    storage_config: None,
+                    engine_config: None,
+                    access_control: None,
+                })
+                .await
+                .expect("create graph");
+            service
+                .create_node(
+                    graph_id,
+                    Node {
+                        id: "n1".to_string(),
+                        labels: vec!["Person".to_string()],
+                        properties: HashMap::new(),
+                        embedding: None,
+                        created_at_ms: 1,
+                        updated_at_ms: 1,
+                    },
+                )
+                .await
+                .expect("create node");
+
+            // The checkpoint/shutdown path must flush the cold buffer regardless of
+            // the scoped gate.
+            service.flush_wal(graph_id).await.expect("flush_wal");
+
+            // Reopen over the same backing: the buffered node is now durable.
+            let reopened = ColdGraphSegmentStore::new(backing, ObjectAccessTier::Cool);
+            reopened.load_index().await.expect("load index");
+            assert!(
+                reopened
+                    .get_record(&RecordKey::new(format!("graph/{graph_id}/node/n1")))
+                    .await
+                    .expect("get")
+                    .is_some(),
+                "flush_wal flushed the cold buffer (scoped={scoped:?})"
+            );
+
+            unsafe { std::env::remove_var("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE") };
+        }
+    }
 }
