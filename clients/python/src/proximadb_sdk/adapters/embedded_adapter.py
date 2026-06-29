@@ -1315,6 +1315,40 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             },
         }
 
+    def ingest_documents(
+        self,
+        collection_id: str,
+        records: list[dict[str, Any]],
+        *,
+        tenant_id: str | None = None,
+        ingest_mode: str | None = None,
+        embed_source: str = "native",
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Ingest documents via the embedded API (native, else vector-fallback per record)."""
+        results: list[dict[str, Any]] = []
+        for rec in records:
+            rid = rec.get("id")
+            # Store the record's metadata AS the document — matches the legacy
+            # insert_document shape so document reads (get_document/query_documents)
+            # stay consistent. (embed_source/text aren't used on the embedded
+            # vector-fallback path.)
+            document = dict(rec.get("metadata") or {})
+            document.setdefault("id", rid)
+            try:
+                if hasattr(self._db, "insert_document"):
+                    doc_id, version = self._db.insert_document(
+                        collection_id, document, rid
+                    )
+                else:
+                    r = self._insert_document_as_vector(collection_id, document, rid)
+                    doc_id, version = r["id"], r.get("version", 1)
+                results.append({"id": doc_id, "version": version})
+            except Exception as e:
+                logger.error(f"Failed to ingest document {rid}: {e}")
+                raise
+        return {"mode": "embedded", "records": results}
+
     def insert_document(
         self,
         collection_name: str,

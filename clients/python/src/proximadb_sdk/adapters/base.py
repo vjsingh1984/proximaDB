@@ -208,9 +208,32 @@ class BaseProtocolAdapter(ABC):
         id: str | None = None,
         **kwargs,
     ) -> dict[str, Any]:
-        """Insert a document."""
+        """Insert a document into a document-collection (legacy document-collections surface).
+
+        Retained for document-collection CRUD consumers (e.g. the agentic store);
+        for new semantic-document writes prefer :meth:`ingest_documents` (ADR-041).
+        """
         raise NotImplementedError(
             f"{self.__class__.__name__} does not support document inserts"
+        )
+
+    def ingest_documents(
+        self,
+        collection_id: str,
+        records: list[dict[str, Any]],
+        *,
+        tenant_id: str | None = None,
+        ingest_mode: str | None = None,
+        embed_source: str = "native",
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Ingest documents for native server-side embedding (ADR-041 canonical surface).
+
+        Each record is a ``{id, text, metadata?, vector?}`` dict; the server embeds
+        ``text`` natively under ``embed_source="native"`` when no ``vector`` is given.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support document ingest"
         )
 
     def get_document(

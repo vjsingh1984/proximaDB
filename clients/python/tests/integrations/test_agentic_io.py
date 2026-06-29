@@ -47,6 +47,24 @@ class FakeAdapter:
         self.documents.setdefault(collection_name, {})[doc_id] = dict(document)
         return {"success": True, "id": doc_id}
 
+    def ingest_documents(
+        self,
+        collection_id: str,
+        records: list[dict[str, Any]],
+        **_: Any,
+    ) -> dict[str, Any]:
+        # Store each record's metadata as the document so get_document/query_documents
+        # read-back stays consistent with the legacy insert_document shape.
+        bucket = self.documents.setdefault(collection_id, {})
+        for rec in records:
+            doc_id = rec["id"]
+            document = dict(rec.get("metadata") or {})
+            document["id"] = doc_id
+            if rec.get("text") is not None:
+                document["text"] = rec["text"]
+            bucket[doc_id] = document
+        return {"success": True, "records": [{"id": r["id"]} for r in records]}
+
     def get_document(self, collection_name: str, doc_id: str) -> dict[str, Any] | None:
         document = self.documents.get(collection_name, {}).get(doc_id)
         if document is None:
