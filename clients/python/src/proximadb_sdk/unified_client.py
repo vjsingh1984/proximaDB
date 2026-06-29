@@ -20,6 +20,7 @@ from typing import Any, Union
 import httpx
 import numpy as np
 
+from ._deprecations import warn_insert_document_deprecated
 from .adapters import BaseProtocolAdapter, create_adapter
 from .auth import AuthConfig, AuthMethod, ProximaDBAuth
 from .config import ClientConfig, PortMode, Protocol, load_config
@@ -2060,7 +2061,16 @@ class ProximaDBClient:
         id: str | None = None,
         **kwargs,
     ) -> dict[str, Any]:
-        """Insert a document."""
+        """Insert a document.
+
+        .. deprecated:: ADR-041 (P3)
+            ``insert_document`` is deprecated and will be removed in a future
+            minor release. Use :meth:`ingest_documents` for document writes; it
+            targets the canonical ``POST /api/v2/collections/{id}/documents``
+            route and surfaces server errors instead of silently falling back to
+            an in-memory repository. Behavior is unchanged in P3.
+        """
+        warn_insert_document_deprecated(stacklevel=3)
         adapter_result = self._call_document_adapter(
             "insert_document", collection_name, document, id, **kwargs
         )

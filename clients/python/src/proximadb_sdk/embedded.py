@@ -72,6 +72,8 @@ from typing import (
     runtime_checkable,
 )
 
+from ._deprecations import warn_insert_document_deprecated
+
 # Socket file names MUST match the Rust constants in
 # crates/platform/proximadb-runtime/src/bootstrap_config.rs.
 UDS_REST_SOCKET_NAME = "rest.sock"
@@ -1459,7 +1461,14 @@ prefetch_budget = 4
 
         Returns:
             Insert result with document ID and version
+
+        .. deprecated:: ADR-041 (P3)
+            ``insert_document`` is deprecated and will be removed in a future
+            minor release. Use the (sync) :meth:`~ProximaDBClient.ingest_documents`
+            for document writes; an async ``ingest_documents`` variant is
+            planned. Behavior is unchanged in P3.
         """
+        warn_insert_document_deprecated(is_async=True, stacklevel=3)
         if not self._started:
             await self.start()
 
