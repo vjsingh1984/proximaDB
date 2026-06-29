@@ -832,3 +832,168 @@ async fn pgwire_enforces_composite_fk_referential_actions() {
             .expect_err("a dangling composite FK tuple must be rejected");
     }
 }
+
+/// TD-110 S3: cross-namespace FOREIGN KEY over pgwire — a child in namespace B
+/// whose FK references a parent in namespace A (`REFERENCES a.parent`) is found
+/// by ON DELETE child discovery: CASCADE removes it, RESTRICT rejects the parent
+/// delete, SET NULL nulls the FK.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pgwire_enforces_cross_namespace_fk_referential_actions() {
+    let server = PgwireTestServer::start().await.expect("server start");
+    let (client, connection) =
+        tokio_postgres::connect(&server.pg_connection_string(), tokio_postgres::NoTls)
+            .await
+            .expect("connect");
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("pgwire connection error: {e}");
+        }
+    });
+
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let ns_a = format!("xnsa_{suffix}");
+    let ns_b = format!("xnsb_{suffix}");
+    let parent = format!("{ns_a}.parent");
+    client
+        .simple_query(&format!("CREATE NAMESPACE {ns_a}"))
+        .await
+        .expect("CREATE NAMESPACE a");
+    client
+        .simple_query(&format!("CREATE NAMESPACE {ns_b}"))
+        .await
+        .expect("CREATE NAMESPACE b");
+    client
+        .simple_query(&format!(
+            "CREATE TABLE {parent} (id VARCHAR PRIMARY KEY, name VARCHAR)"
+        ))
+        .await
+        .expect("CREATE cross-ns parent");
+
+    // ---- CASCADE: child in ns_b references the parent in ns_a. ----
+    {
+        let child = format!("{ns_b}.chl_casc");
+        client
+            .simple_query(&format!(
+                "CREATE TABLE {child} (id VARCHAR PRIMARY KEY, pid VARCHAR, \
+                 FOREIGN KEY (pid) REFERENCES {parent}(id) ON DELETE CASCADE)"
+            ))
+            .await
+            .expect("CREATE cross-ns cascade child");
+        client
+            .simple_query(&format!(
+                "INSERT INTO {parent} (id, name) VALUES ('p1', 'Al')"
+            ))
+            .await
+            .expect("INSERT cross-ns parent");
+        client
+            .simple_query(&format!(
+                "INSERT INTO {child} (id, pid) VALUES ('c1', 'p1')"
+            ))
+            .await
+            .expect("INSERT cross-ns cascade child");
+        sleep(Duration::from_millis(300)).await;
+
+        client
+            .simple_query(&format!("DELETE FROM {parent} WHERE id = 'p1'"))
+            .await
+            .expect("cross-ns CASCADE delete must succeed");
+
+        let rows = client
+            .simple_query(&format!("SELECT COUNT(*) AS n FROM {child}"))
+            .await
+            .expect("COUNT cross-ns cascade child");
+        assert_eq!(
+            count_star(&rows),
+            0,
+            "cross-ns CASCADE must remove the child in the other namespace"
+        );
+    }
+
+    // ---- RESTRICT: a child in ns_b blocks deleting the parent in ns_a. ----
+    {
+        client
+            .simple_query(&format!(
+                "INSERT INTO {parent} (id, name) VALUES ('p2', 'Bo')"
+            ))
+            .await
+            .expect("INSERT parent p2");
+        let child = format!("{ns_b}.chl_restr");
+        client
+            .simple_query(&format!(
+                "CREATE TABLE {child} (id VARCHAR PRIMARY KEY, pid VARCHAR, \
+                 FOREIGN KEY (pid) REFERENCES {parent}(id))"
+            ))
+            .await
+            .expect("CREATE cross-ns restrict child");
+        client
+            .simple_query(&format!(
+                "INSERT INTO {child} (id, pid) VALUES ('r2', 'p2')"
+            ))
+            .await
+            .expect("INSERT cross-ns restrict child");
+        sleep(Duration::from_millis(300)).await;
+
+        let _ = client
+            .simple_query(&format!("DELETE FROM {parent} WHERE id = 'p2'"))
+            .await
+            .expect_err("cross-ns RESTRICT must reject the parent delete");
+
+        let parent_rows = client
+            .simple_query(&format!("SELECT COUNT(*) AS n FROM {parent}"))
+            .await
+            .expect("COUNT parent (restrict)");
+        assert_eq!(
+            count_star(&parent_rows),
+            1,
+            "parent must survive a cross-ns RESTRICT-rejected delete"
+        );
+    }
+
+    // ---- SET NULL: deleting the parent nulls the FK on the ns_b child. ----
+    {
+        client
+            .simple_query(&format!(
+                "INSERT INTO {parent} (id, name) VALUES ('p3', 'Cy')"
+            ))
+            .await
+            .expect("INSERT parent p3");
+        let child = format!("{ns_b}.chl_null");
+        client
+            .simple_query(&format!(
+                "CREATE TABLE {child} (id VARCHAR PRIMARY KEY, pid VARCHAR, \
+                 FOREIGN KEY (pid) REFERENCES {parent}(id) ON DELETE SET NULL)"
+            ))
+            .await
+            .expect("CREATE cross-ns set-null child");
+        client
+            .simple_query(&format!(
+                "INSERT INTO {child} (id, pid) VALUES ('s3', 'p3')"
+            ))
+            .await
+            .expect("INSERT cross-ns set-null child");
+        sleep(Duration::from_millis(300)).await;
+
+        client
+            .simple_query(&format!("DELETE FROM {parent} WHERE id = 'p3'"))
+            .await
+            .expect("cross-ns SET NULL delete must succeed");
+
+        let rows = client
+            .simple_query(&format!("SELECT id, pid FROM {child}"))
+            .await
+            .expect("SELECT cross-ns set-null child");
+        assert_eq!(
+            col_set(&rows, "id"),
+            ["s3".to_string()].into_iter().collect::<BTreeSet<_>>(),
+            "cross-ns SET NULL must keep the child row"
+        );
+        assert_eq!(
+            scalar(&rows, "pid"),
+            None,
+            "cross-ns SET NULL must clear the child FK"
+        );
+    }
+}
