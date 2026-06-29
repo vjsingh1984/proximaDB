@@ -46,6 +46,29 @@ fn fs_err(ctx: &str, e: impl std::fmt::Display) -> StorageError {
     StorageError::Corruption(format!("ranged segment {ctx}: {e}"))
 }
 
+/// Slice a block-relative metadata `range` out of a buffer that begins at block-relative
+/// `base`. Bounds-checked so a corrupt footer offset is a clean error, not a panic.
+fn slice_meta<'a>(
+    buf: &'a [u8],
+    base: u64,
+    range: &std::ops::Range<u64>,
+) -> Result<&'a [u8], StorageError> {
+    let start = range.start.checked_sub(base);
+    let end = range.end.checked_sub(base);
+    match (start, end) {
+        (Some(s), Some(e)) if (e as usize) <= buf.len() && s <= e => {
+            Ok(&buf[s as usize..e as usize])
+        }
+        _ => Err(fs_err(
+            "metadata slice",
+            format!(
+                "range {range:?} outside buffer (base {base}, len {})",
+                buf.len()
+            ),
+        )),
+    }
+}
+
 /// A PAX segment opened for ranged, projected reads, with optional multitenant
 /// footer/index caching (segments are immutable/write-once, so path-keyed cache
 /// entries need no TTL or etag for correctness).
@@ -269,45 +292,59 @@ impl<'b> RangedSegmentReader<'b> {
 
     /// Range-read one block's footer + metadata regions and assemble its
     /// [`BlockLayout`] — no stripe bytes are fetched.
+    ///
+    /// TD-167 / ADR-034 P1 (seam #4): collapse the per-block metadata chain. The footer
+    /// (last 32 B) carries the metadata offsets, and the three metadata regions (column
+    /// footer, vector params, row-group dir) sit contiguously in `[meta_start, footer)`,
+    /// so after the footer GET a **single** ranged read of that span covers all of them —
+    /// each region is then sliced from the SAME buffer with no further I/O. This takes
+    /// the legacy footer→col_meta→vparam→rgdir chain of **up to 4 serial dependent GETs**
+    /// down to **2** (footer, then one metadata blob), regardless of how many regions are
+    /// present. The blob is exactly the metadata extent — **no stripe bytes** are pulled
+    /// in (projection stays cheap; unlike a fixed speculative tail it cannot over-read a
+    /// small block's body). Single-range fetches throughout, so the batched-bridge body
+    /// accounting (`fetch_ranges`/`batched_calls`) is untouched — which is why the earlier
+    /// deferral (it had routed metadata through the batched method) no longer applies.
     async fn build_block_layout(
         &self,
         block_offset: u64,
         block_size: u64,
     ) -> Result<BlockLayout, StorageError> {
-        // 1. trailing block footer.
+        // 1. Trailing block footer (its offsets locate the metadata regions).
+        let footer_start = block_size - BLOCK_FOOTER_SIZE as u64;
         let tail = self
-            .fetch(
-                block_offset + block_size - BLOCK_FOOTER_SIZE as u64,
-                BLOCK_FOOTER_SIZE as u64,
-            )
+            .fetch(block_offset + footer_start, BLOCK_FOOTER_SIZE as u64)
             .await?;
         let footer = BlockFooter::from_bytes(&tail).map_err(|e| fs_err("block footer", e))?;
 
-        // 2. metadata regions (offsets are block-relative; add block_offset).
-        // NOTE: batching these into one `fetch_ranges` is a real per-block
-        // round-trip win (3→1) but it routes metadata through the *batched* bridge
-        // method, which collides with the TD-167 body-batch accounting invariant
-        // (`td167_pruned_read_batches_surviving_block_bodies_in_one_call` asserts
-        // exactly one batched bridge call — for the bodies). Deferred to a focused
-        // change that also reconciles that test (distinguish metadata vs body
-        // batches). See IOTRACE_DEPTH_COLLAPSE_SEAMS_2026_06_28.md (seam #4).
+        // 2. ONE ranged read of the whole metadata extent [meta_start, footer_start) —
+        // col_meta + vparam + rgdir are contiguous there — then slice each region out.
         let mr = metadata_ranges(&footer, block_size);
-        let col_meta = self
-            .fetch(
-                block_offset + mr.col_meta.start,
-                mr.col_meta.end - mr.col_meta.start,
-            )
-            .await?;
-        let vparam = match mr.vparam {
-            Some(r) => Some(self.fetch(block_offset + r.start, r.end - r.start).await?),
+        let mut meta_start = mr.col_meta.start;
+        if let Some(r) = &mr.vparam {
+            meta_start = meta_start.min(r.start);
+        }
+        if let Some(r) = &mr.rgdir {
+            meta_start = meta_start.min(r.start);
+        }
+        let meta_buf = if footer_start > meta_start {
+            self.fetch(block_offset + meta_start, footer_start - meta_start)
+                .await?
+        } else {
+            Vec::new() // degenerate: no metadata before the footer
+        };
+
+        let col_meta = slice_meta(&meta_buf, meta_start, &mr.col_meta)?;
+        let vparam = match &mr.vparam {
+            Some(r) => Some(slice_meta(&meta_buf, meta_start, r)?),
             None => None,
         };
-        let rgdir = match mr.rgdir {
-            Some(r) => Some(self.fetch(block_offset + r.start, r.end - r.start).await?),
+        let rgdir = match &mr.rgdir {
+            Some(r) => Some(slice_meta(&meta_buf, meta_start, r)?),
             None => None,
         };
 
-        BlockLayout::assemble(footer, &col_meta, vparam.as_deref(), rgdir.as_deref())
+        BlockLayout::assemble(footer, col_meta, vparam, rgdir)
             .map_err(|e| fs_err("assemble layout", e))
     }
 
@@ -896,6 +933,44 @@ mod tests {
             v2_single <= 2,
             "v2 should prune from the index with ~no per-block metadata GETs, got {v2_single}"
         );
+    }
+
+    /// TD-167 / ADR-034 P1 (seam #4): assembling one block's metadata layout costs
+    /// exactly TWO single-range GETs — the footer, then one read of the whole metadata
+    /// extent (col-meta + vparam + rgdir sliced from that buffer) — down from the legacy
+    /// chain of up to four serial dependent GETs. No batched-bridge call is involved, so
+    /// the body-batch accounting is untouched.
+    #[tokio::test]
+    async fn td167_seam4_block_layout_collapses_metadata_to_two_gets() {
+        let bytes = build_segment_bytes(2000, 32);
+        let bridge = InMemoryRangeBridge {
+            bytes,
+            ranged_bytes: AtomicU64::new(0),
+            single_calls: AtomicU64::new(0),
+            batched_calls: AtomicU64::new(0),
+        };
+        let reader = RangedSegmentReader::open(&bridge, Path::from("seg.pax"), Some("t"))
+            .await
+            .unwrap();
+        assert!(reader.block_count() >= 1);
+        let entry = &reader.index.blocks[0];
+        let (off, bsz) = (entry.offset, entry.size as u64);
+
+        let before_single = bridge.single_calls.load(Ordering::Relaxed);
+        let before_batched = bridge.batched_calls.load(Ordering::Relaxed);
+        let layout = reader.block_layout(off, bsz).await.unwrap();
+        let single = bridge.single_calls.load(Ordering::Relaxed) - before_single;
+        let batched = bridge.batched_calls.load(Ordering::Relaxed) - before_batched;
+
+        assert_eq!(
+            single, 2,
+            "footer + one metadata-blob GET (was up to 4 serial), got {single}"
+        );
+        assert_eq!(
+            batched, 0,
+            "metadata uses single-range fetch, not the batched bridge"
+        );
+        assert!(layout.row_count() > 0, "decoded a usable layout");
     }
 
     #[tokio::test]

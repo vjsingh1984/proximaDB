@@ -27,7 +27,7 @@ So: concurrency buys latency; **op-count/$ reduction needs segment batching** (T
 | 1 | Graph BFS frontier materialization | `service_traversal_api.rs:453` | O(K) serial | **deferred** — uses engine-level `engine.get_node` (RAM-only, **cold-unaware**); needs cold-awareness *then* batching (see below) |
 | 2 | Entity/search result materialization | `entity_service.rs:517` | O(M) serial `get_node` | **FIXED** — batched via `get_nodes` (depth M→1 for cold misses) |
 | 3 | RecordStore had no batch get (root cause) | `store.rs:169` | forces #1/#2 loops | **FIXED** — `get_records(&[RecordKey])` added (default loop; concurrent override in `ColdGraphRecordStore`) |
-| 4 | PAX block metadata assembly | `ranged_segment.rs:272` | up to 4 serial ranged GETs/block | **deferred** — batching the 3 metadata regions is a real 3→1 per-block win, but routing metadata through the *batched* bridge method collides with the TD-167 body-batch accounting invariant (`td167_pruned_read_batches_surviving_block_bodies_in_one_call` asserts exactly one batched bridge call). Needs the test reconciled (metadata vs body batches) — own change. |
+| 4 | PAX block metadata assembly | `ranged_segment.rs:272` | up to 4 serial ranged GETs/block | **FIXED (2026-06-29)** — `build_block_layout` now reads the footer, then the **whole contiguous metadata extent `[meta_start, footer_start)` in one single-range GET**, slicing col_meta/vparam/rgdir locally: **4→2** GETs/block, no stripe over-read. Using single-range `fetch` (not the batched bridge) sidesteps the body-batch accounting collision entirely — the earlier deferral assumed routing metadata through `fetch_ranges`. Test: `td167_seam4_block_layout_collapses_metadata_to_two_gets`. |
 | 5 | Segment-listing loop / footer HEAD+GET | `record_store.rs:3881` / `object_store.rs:309` | O(N) / 2-RTT | deferred (not per-query hot; footer cache mitigates) |
 
 ## What this PR changed
@@ -36,7 +36,7 @@ So: concurrency buys latency; **op-count/$ reduction needs segment batching** (T
 - **`GraphOperationsService::get_nodes` / `get_edges`** — engine-hot lookups stay in RAM; engine misses are cold-fetched in **one concurrent batch**; cache admission unchanged from `cold_fetch_node`. Gate-OFF / no-store ⇒ engine-only (unchanged).
 - **Entity search** (`entity_service`) materialization wired to `get_nodes` (seam #2).
 
-(Seam #4, PAX metadata batching, was prototyped then **deferred** — see the table — because it collides with the TD-167 body-batch accounting test; it warrants its own change.)
+(Seam #4, PAX metadata batching, is now **fixed** — see the table — by reading the contiguous metadata extent as one single-range GET, which avoids the batched-bridge accounting collision the earlier prototype hit.)
 
 All default-safe: no behavior change when the cold tier is OFF; `get_records` default impl keeps every existing `RecordStore` working unchanged.
 
