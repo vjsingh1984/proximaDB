@@ -1384,4 +1384,115 @@ mod tests {
             unsafe { std::env::remove_var("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE") };
         }
     }
+
+    /// #52 end-to-end: a graph backed by the BUFFERED `ColdGraphSegmentStore` that
+    /// crashes before the buffer flushes loses the cold copy — but recovery
+    /// re-population rebuilds it from the (full-resident) engine, and a flush makes it
+    /// durable again. This is the safety property that lets the segment store be wired.
+    #[tokio::test]
+    async fn segment_store_crash_without_flush_recovers_via_repopulate() {
+        use crate::graph::ColdGraphSegmentStore;
+        use proximadb_object_store::ProximaObjectStore;
+        use proximadb_storage_filesystem_types::ObjectAccessTier;
+
+        let backing = ProximaObjectStore::from_url("memory://").expect("mem store");
+        // High thresholds ⇒ writes stay buffered (the pre-flush crash window).
+        let cold = Arc::new(
+            ColdGraphSegmentStore::new(backing.clone(), ObjectAccessTier::Cool)
+                .with_flush_thresholds(u64::MAX, usize::MAX),
+        );
+        let graph_id = format!("seg_crash_recover_{}", std::process::id());
+        let graph_id = graph_id.as_str();
+        let service = GraphOperationsService::new().with_canonical_record_store(cold.clone());
+
+        service
+            .create_graph_collection(CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .expect("create graph");
+        for node_id in ["n1", "n2", "n3"] {
+            service
+                .create_node(
+                    graph_id,
+                    Node {
+                        id: node_id.to_string(),
+                        labels: vec!["Person".to_string()],
+                        properties: HashMap::new(),
+                        embedding: None,
+                        created_at_ms: 1,
+                        updated_at_ms: 1,
+                    },
+                )
+                .await
+                .expect("create node");
+        }
+        service
+            .create_edge(
+                graph_id,
+                Edge {
+                    id: "e1".to_string(),
+                    from_node_id: "n1".to_string(),
+                    to_node_id: "n2".to_string(),
+                    edge_type: "KNOWS".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+            )
+            .await
+            .expect("create edge");
+
+        // CRASH: the buffer was never flushed. A fresh store over the same backing
+        // has an empty buffer and `load_index` finds nothing — the records are lost.
+        let crashed = ColdGraphSegmentStore::new(backing.clone(), ObjectAccessTier::Cool);
+        crashed.load_index().await.expect("load index");
+        assert!(
+            crashed
+                .get_record(&RecordKey::new(format!("graph/{graph_id}/node/n1")))
+                .await
+                .expect("get")
+                .is_none(),
+            "buffered records are lost on crash without flush"
+        );
+
+        // RECOVERY: re-drive the recovered engine state back into the cold store, then
+        // flush to make it durable (in production: `recover_graph` repopulates,
+        // `flush_wal` flushes).
+        let driven = service
+            .repopulate_canonical_store(graph_id)
+            .await
+            .expect("repopulate");
+        assert_eq!(driven, 4, "3 nodes + 1 edge re-driven");
+        cold.flush().await.expect("flush");
+
+        // A fresh reopen now finds every node + edge durably.
+        let recovered = ColdGraphSegmentStore::new(backing, ObjectAccessTier::Cool);
+        recovered.load_index().await.expect("load index");
+        for node_id in ["n1", "n2", "n3"] {
+            assert!(
+                recovered
+                    .get_record(&RecordKey::new(format!("graph/{graph_id}/node/{node_id}")))
+                    .await
+                    .expect("get")
+                    .is_some(),
+                "node {node_id} durable after recovery + flush"
+            );
+        }
+        assert!(
+            recovered
+                .get_record(&RecordKey::new(format!("graph/{graph_id}/edge/e1")))
+                .await
+                .expect("get")
+                .is_some(),
+            "edge durable after recovery + flush"
+        );
+    }
 }
