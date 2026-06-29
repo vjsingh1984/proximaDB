@@ -104,6 +104,46 @@ fn explain_err(e: &tokio_postgres::Error) -> String {
     }
 }
 
+/// Normalize a result cell for value comparison: numeric cells are rounded to 2
+/// decimals (collapsing f64 decimal-accumulation error on `DOUBLE PRECISION` price
+/// sums, e.g. 69.4799… → "69.48") and rendered minimally (whole numbers without a
+/// decimal); SQL NULL → "NULL"; other text passes through.
+fn norm_cell(s: &str) -> String {
+    match s.parse::<f64>() {
+        Ok(f) => {
+            let r = (f * 100.0).round() / 100.0;
+            if r.fract() == 0.0 {
+                format!("{}", r as i64)
+            } else {
+                format!("{r}")
+            }
+        }
+        Err(_) => s.to_string(),
+    }
+}
+
+/// Run a query and return its rows as normalized text cells, **sorted** for
+/// order-independent set comparison (ADR-040 `canon()` style; row order across
+/// routes is a separate concern — see TD-185).
+async fn canon_rows(client: &tokio_postgres::Client, sql: &str) -> Vec<Vec<String>> {
+    let mut rows: Vec<Vec<String>> = client
+        .simple_query(sql)
+        .await
+        .unwrap_or_else(|e| panic!("query `{sql}`: {}", explain_err(&e)))
+        .into_iter()
+        .filter_map(|m| match m {
+            tokio_postgres::SimpleQueryMessage::Row(r) => Some(
+                (0..r.len())
+                    .map(|i| norm_cell(r.get(i).unwrap_or("NULL")))
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .collect();
+    rows.sort();
+    rows
+}
+
 /// Core TPC-DS star-schema subset (standard column names, subset of columns).
 const SCHEMA: &[(&str, &str)] = &[
     (
@@ -284,4 +324,63 @@ async fn tpcds_pgwire_conformance() {
         "INTERSECT customer should be ss_customer_sk=1"
     );
     eprintln!("✓ INTERSECT value-correctness: exactly customer 1");
+
+    // ADR-040 (TD-182): VALUE-correctness anchors for the feature-distinct shapes
+    // the relational-engine test does NOT cover — ROLLUP, CUBE, and a rank() window.
+    // Expected values hand-derived from the seed (store_sales ⋈ item ⋈ date_dim).
+    // canon_rows sorts + 2-dp-normalizes, so comparison is order-independent and
+    // free of DOUBLE-PRECISION accumulation noise; expecteds are sorted to match.
+    let row = |c: &[&str]| c.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+
+    // ROLLUP(i_category, i_class) over ss_net_profit (whole-number profits ⇒ exact):
+    // Electronics/classX = 12+8+6 = 26; Books/classY = 20+10 = 30; + subtotals + 56.
+    let mut exp_rollup = vec![
+        row(&["Electronics", "classX", "26"]),
+        row(&["Books", "classY", "30"]),
+        row(&["Electronics", "NULL", "26"]),
+        row(&["Books", "NULL", "30"]),
+        row(&["NULL", "NULL", "56"]),
+    ];
+    exp_rollup.sort();
+    assert_eq!(
+        canon_rows(&client, "select i_category, i_class, sum(ss_net_profit) as profit from store_sales, item where ss_item_sk = i_item_sk group by rollup(i_category, i_class) order by i_category, i_class").await,
+        exp_rollup,
+        "ROLLUP profit: per-class rows + category subtotals + grand total"
+    );
+
+    // CUBE(d_year, i_category) over ss_ext_sales_price: 2000/Elec=39.98+29.50=69.48,
+    // 2000/Books=49.95+42.00=91.95, 1999/Elec=19.99; all cross-margins + grand 181.42.
+    let mut exp_cube = vec![
+        row(&["2000", "Electronics", "69.48"]),
+        row(&["2000", "Books", "91.95"]),
+        row(&["1999", "Electronics", "19.99"]),
+        row(&["2000", "NULL", "161.43"]),
+        row(&["1999", "NULL", "19.99"]),
+        row(&["NULL", "Electronics", "89.47"]),
+        row(&["NULL", "Books", "91.95"]),
+        row(&["NULL", "NULL", "181.42"]),
+    ];
+    exp_cube.sort();
+    assert_eq!(
+        canon_rows(&client, "select d_year, i_category, sum(ss_ext_sales_price) as rev from store_sales, item, date_dim where ss_item_sk = i_item_sk and ss_sold_date_sk = d_date_sk group by cube(d_year, i_category) order by d_year, i_category").await,
+        exp_cube,
+        "CUBE revenue: all (year, category) margins + subtotals + grand total"
+    );
+
+    // rank() window: per-category brand revenue rank. Electronics brandA
+    // (39.98+19.99=59.97) rank 1, brandB (29.50) rank 2; Books brandC (49.95) rank 1,
+    // brandD (42.00) rank 2.
+    let mut exp_rank = vec![
+        row(&["Electronics", "brandA", "59.97", "1"]),
+        row(&["Electronics", "brandB", "29.5", "2"]),
+        row(&["Books", "brandC", "49.95", "1"]),
+        row(&["Books", "brandD", "42", "2"]),
+    ];
+    exp_rank.sort();
+    assert_eq!(
+        canon_rows(&client, "select i_category, i_brand, sum(ss_ext_sales_price) as rev, rank() over (partition by i_category order by sum(ss_ext_sales_price) desc) as rnk from store_sales, item where ss_item_sk = i_item_sk group by i_category, i_brand order by i_category, rnk").await,
+        exp_rank,
+        "rank() window: per-category brand revenue ranking"
+    );
+    eprintln!("✓ value-correctness: ROLLUP / CUBE / rank() window anchored");
 }
