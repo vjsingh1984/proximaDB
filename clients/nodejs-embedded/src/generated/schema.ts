@@ -115,6 +115,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/collections/{collection_id}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ingest documents for native server-side embedding.
+         * @description Canonical document-ingest surface (ADR-041, spec-driven-primary). Body `{records:[{id,text,metadata}]}`; the server embeds `text` natively under `X-Embed-Source=native` (default) when no per-record `vector` is supplied. `X-Tenant-ID` scopes records to a tenant; `X-Ingest-Mode` carries the billing mode.
+         */
+        post: operations["ingestDocuments"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/collections/{collection_id}/entities": {
         parameters: {
             query?: never;
@@ -1350,6 +1370,39 @@ export interface components {
             is_primary: boolean;
             ivf?: null | components["schemas"]["IvfConfigOutput"];
         };
+        /** @description A single record submitted for native embedding + indexing. */
+        IngestDocument: {
+            id: string;
+            /** @description Arbitrary metadata fields. Stored as ProximaRecord props. */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /**
+             * @description Raw text content. Required when `X-Embed-Source: native` (default);
+             *     optional when the client also supplied a vector.
+             */
+            text?: string | null;
+            /**
+             * @description Optional client-provided vector. When present, the server skips
+             *     embedding for this record. Use case: SDK that already embedded
+             *     locally (legacy path).
+             */
+            vector?: number[] | null;
+        };
+        IngestDocumentsRequest: {
+            records: components["schemas"]["IngestDocument"][];
+        };
+        IngestDocumentsResponse: {
+            mode: string;
+            records: components["schemas"]["IngestedRecord"][];
+            /** Format: int64 */
+            retry_after_ms?: number | null;
+        };
+        IngestedRecord: {
+            /** Format: int32 */
+            dim: number;
+            id: string;
+        };
         /** @description Error details for a failed record insertion */
         InsertError: {
             /** @description Error message */
@@ -2151,6 +2204,51 @@ export interface operations {
                 };
             };
             /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    ingestDocuments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Target collection name/ID. */
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IngestDocumentsRequest"];
+            };
+        };
+        responses: {
+            /** @description Ingested. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IngestDocumentsResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Collection not found. */
             404: {
                 headers: {
                     [name: string]: unknown;

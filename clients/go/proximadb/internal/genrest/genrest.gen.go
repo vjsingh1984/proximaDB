@@ -614,6 +614,41 @@ type IndexSpecOutput struct {
 	Ivf *IvfConfigOutput `json:"ivf,omitempty"`
 }
 
+// IngestDocument A single record submitted for native embedding + indexing.
+type IngestDocument struct {
+	Id string `json:"id"`
+
+	// Metadata Arbitrary metadata fields. Stored as ProximaRecord props.
+	Metadata *map[string]interface{} `json:"metadata,omitempty"`
+
+	// Text Raw text content. Required when `X-Embed-Source: native` (default);
+	// optional when the client also supplied a vector.
+	Text *string `json:"text"`
+
+	// Vector Optional client-provided vector. When present, the server skips
+	// embedding for this record. Use case: SDK that already embedded
+	// locally (legacy path).
+	Vector *[]float32 `json:"vector"`
+}
+
+// IngestDocumentsRequest defines model for IngestDocumentsRequest.
+type IngestDocumentsRequest struct {
+	Records []IngestDocument `json:"records"`
+}
+
+// IngestDocumentsResponse defines model for IngestDocumentsResponse.
+type IngestDocumentsResponse struct {
+	Mode         string           `json:"mode"`
+	Records      []IngestedRecord `json:"records"`
+	RetryAfterMs *int64           `json:"retry_after_ms"`
+}
+
+// IngestedRecord defines model for IngestedRecord.
+type IngestedRecord struct {
+	Dim int32  `json:"dim"`
+	Id  string `json:"id"`
+}
+
 // InsertError Error details for a failed record insertion
 type InsertError struct {
 	// Error Error message
@@ -1302,6 +1337,9 @@ type QueryLogsJSONBody map[string]interface{}
 
 // CreateCollectionJSONRequestBody defines body for CreateCollection for application/json ContentType.
 type CreateCollectionJSONRequestBody = CreateCollectionV2Request
+
+// IngestDocumentsJSONRequestBody defines body for IngestDocuments for application/json ContentType.
+type IngestDocumentsJSONRequestBody = IngestDocumentsRequest
 
 // UpsertEntityV2JSONRequestBody defines body for UpsertEntityV2 for application/json ContentType.
 type UpsertEntityV2JSONRequestBody = UpsertEntityRequest
@@ -2938,6 +2976,11 @@ type ClientInterface interface {
 	// GetCollection request
 	GetCollection(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// IngestDocumentsWithBody request with any body
+	IngestDocumentsWithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	IngestDocuments(ctx context.Context, collectionId string, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// UpsertEntityV2WithBody request with any body
 	UpsertEntityV2WithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3159,6 +3202,30 @@ func (c *Client) DeleteCollection(ctx context.Context, collectionId string, reqE
 
 func (c *Client) GetCollection(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCollectionRequest(c.Server, collectionId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) IngestDocumentsWithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestDocumentsRequestWithBody(c.Server, collectionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) IngestDocuments(ctx context.Context, collectionId string, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestDocumentsRequest(c.Server, collectionId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4101,6 +4168,53 @@ func NewGetCollectionRequest(server string, collectionId string) (*http.Request,
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewIngestDocumentsRequest calls the generic IngestDocuments builder with application/json body
+func NewIngestDocumentsRequest(server string, collectionId string, body IngestDocumentsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIngestDocumentsRequestWithBody(server, collectionId, "application/json", bodyReader)
+}
+
+// NewIngestDocumentsRequestWithBody generates requests for IngestDocuments with any type of body
+func NewIngestDocumentsRequestWithBody(server string, collectionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "collection_id", runtime.ParamLocationPath, collectionId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/collections/%s/documents", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -5746,6 +5860,11 @@ type ClientWithResponsesInterface interface {
 	// GetCollectionWithResponse request
 	GetCollectionWithResponse(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*GetCollectionHTTPResp, error)
 
+	// IngestDocumentsWithBodyWithResponse request with any body
+	IngestDocumentsWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error)
+
+	IngestDocumentsWithResponse(ctx context.Context, collectionId string, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error)
+
 	// UpsertEntityV2WithBodyWithResponse request with any body
 	UpsertEntityV2WithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpsertEntityV2HTTPResp, error)
 
@@ -6012,6 +6131,30 @@ func (r GetCollectionHTTPResp) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetCollectionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type IngestDocumentsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *IngestDocumentsResponse
+	JSON400      *ErrorResponse
+	JSON404      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r IngestDocumentsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IngestDocumentsHTTPResp) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -6944,6 +7087,23 @@ func (c *ClientWithResponses) GetCollectionWithResponse(ctx context.Context, col
 	return ParseGetCollectionHTTPResp(rsp)
 }
 
+// IngestDocumentsWithBodyWithResponse request with arbitrary body returning *IngestDocumentsHTTPResp
+func (c *ClientWithResponses) IngestDocumentsWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error) {
+	rsp, err := c.IngestDocumentsWithBody(ctx, collectionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestDocumentsHTTPResp(rsp)
+}
+
+func (c *ClientWithResponses) IngestDocumentsWithResponse(ctx context.Context, collectionId string, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error) {
+	rsp, err := c.IngestDocuments(ctx, collectionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestDocumentsHTTPResp(rsp)
+}
+
 // UpsertEntityV2WithBodyWithResponse request with arbitrary body returning *UpsertEntityV2HTTPResp
 func (c *ClientWithResponses) UpsertEntityV2WithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpsertEntityV2HTTPResp, error) {
 	rsp, err := c.UpsertEntityV2WithBody(ctx, collectionId, contentType, body, reqEditors...)
@@ -7600,6 +7760,46 @@ func ParseGetCollectionHTTPResp(rsp *http.Response) (*GetCollectionHTTPResp, err
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIngestDocumentsHTTPResp parses an HTTP response from a IngestDocumentsWithResponse call
+func ParseIngestDocumentsHTTPResp(rsp *http.Response) (*IngestDocumentsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IngestDocumentsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest IngestDocumentsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest ErrorResponse

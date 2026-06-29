@@ -3642,6 +3642,178 @@ pub mod types {
             Default::default()
         }
     }
+    ///A single record submitted for native embedding + indexing.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "A single record submitted for native embedding + indexing.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "id"
+    ///  ],
+    ///  "properties": {
+    ///    "id": {
+    ///      "type": "string"
+    ///    },
+    ///    "metadata": {
+    ///      "description": "Arbitrary metadata fields. Stored as ProximaRecord props.",
+    ///      "type": "object",
+    ///      "additionalProperties": {}
+    ///    },
+    ///    "text": {
+    ///      "description": "Raw text content. Required when `X-Embed-Source: native` (default);\noptional when the client also supplied a vector.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "vector": {
+    ///      "description": "Optional client-provided vector. When present, the server skips\nembedding for this record. Use case: SDK that already embedded\nlocally (legacy path).",
+    ///      "type": [
+    ///        "array",
+    ///        "null"
+    ///      ],
+    ///      "items": {
+    ///        "type": "number",
+    ///        "format": "float"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct IngestDocument {
+        pub id: ::std::string::String,
+        ///Arbitrary metadata fields. Stored as ProximaRecord props.
+        #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+        pub metadata: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+        /// Raw text content. Required when `X-Embed-Source: native` (default);
+        /// optional when the client also supplied a vector.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub text: ::std::option::Option<::std::string::String>,
+        /// Optional client-provided vector. When present, the server skips
+        /// embedding for this record. Use case: SDK that already embedded
+        /// locally (legacy path).
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub vector: ::std::option::Option<::std::vec::Vec<f32>>,
+    }
+    impl IngestDocument {
+        pub fn builder() -> builder::IngestDocument {
+            Default::default()
+        }
+    }
+    ///`IngestDocumentsRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "records"
+    ///  ],
+    ///  "properties": {
+    ///    "records": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/IngestDocument"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct IngestDocumentsRequest {
+        pub records: ::std::vec::Vec<IngestDocument>,
+    }
+    impl IngestDocumentsRequest {
+        pub fn builder() -> builder::IngestDocumentsRequest {
+            Default::default()
+        }
+    }
+    ///`IngestDocumentsResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "mode",
+    ///    "records"
+    ///  ],
+    ///  "properties": {
+    ///    "mode": {
+    ///      "type": "string"
+    ///    },
+    ///    "records": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/IngestedRecord"
+    ///      }
+    ///    },
+    ///    "retry_after_ms": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct IngestDocumentsResponse {
+        pub mode: ::std::string::String,
+        pub records: ::std::vec::Vec<IngestedRecord>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub retry_after_ms: ::std::option::Option<i64>,
+    }
+    impl IngestDocumentsResponse {
+        pub fn builder() -> builder::IngestDocumentsResponse {
+            Default::default()
+        }
+    }
+    ///`IngestedRecord`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "dim",
+    ///    "id"
+    ///  ],
+    ///  "properties": {
+    ///    "dim": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct IngestedRecord {
+        pub dim: i32,
+        pub id: ::std::string::String,
+    }
+    impl IngestedRecord {
+        pub fn builder() -> builder::IngestedRecord {
+            Default::default()
+        }
+    }
     ///Error details for a failed record insertion
     ///
     /// <details><summary>JSON schema</summary>
@@ -10158,6 +10330,268 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct IngestDocument {
+            id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            metadata: ::std::result::Result<
+                ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                ::std::string::String,
+            >,
+            text: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            vector: ::std::result::Result<
+                ::std::option::Option<::std::vec::Vec<f32>>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for IngestDocument {
+            fn default() -> Self {
+                Self {
+                    id: Err("no value supplied for id".to_string()),
+                    metadata: Ok(Default::default()),
+                    text: Ok(Default::default()),
+                    vector: Ok(Default::default()),
+                }
+            }
+        }
+        impl IngestDocument {
+            pub fn id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for id: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn text<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.text = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for text: {e}"));
+                self
+            }
+            pub fn vector<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::vec::Vec<f32>>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.vector = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for vector: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<IngestDocument> for super::IngestDocument {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: IngestDocument,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    id: value.id?,
+                    metadata: value.metadata?,
+                    text: value.text?,
+                    vector: value.vector?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::IngestDocument> for IngestDocument {
+            fn from(value: super::IngestDocument) -> Self {
+                Self {
+                    id: Ok(value.id),
+                    metadata: Ok(value.metadata),
+                    text: Ok(value.text),
+                    vector: Ok(value.vector),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct IngestDocumentsRequest {
+            records: ::std::result::Result<
+                ::std::vec::Vec<super::IngestDocument>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for IngestDocumentsRequest {
+            fn default() -> Self {
+                Self {
+                    records: Err("no value supplied for records".to_string()),
+                }
+            }
+        }
+        impl IngestDocumentsRequest {
+            pub fn records<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::IngestDocument>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.records = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for records: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<IngestDocumentsRequest> for super::IngestDocumentsRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: IngestDocumentsRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    records: value.records?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::IngestDocumentsRequest> for IngestDocumentsRequest {
+            fn from(value: super::IngestDocumentsRequest) -> Self {
+                Self {
+                    records: Ok(value.records),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct IngestDocumentsResponse {
+            mode: ::std::result::Result<::std::string::String, ::std::string::String>,
+            records: ::std::result::Result<
+                ::std::vec::Vec<super::IngestedRecord>,
+                ::std::string::String,
+            >,
+            retry_after_ms:
+                ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        }
+        impl ::std::default::Default for IngestDocumentsResponse {
+            fn default() -> Self {
+                Self {
+                    mode: Err("no value supplied for mode".to_string()),
+                    records: Err("no value supplied for records".to_string()),
+                    retry_after_ms: Ok(Default::default()),
+                }
+            }
+        }
+        impl IngestDocumentsResponse {
+            pub fn mode<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.mode = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for mode: {e}"));
+                self
+            }
+            pub fn records<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::IngestedRecord>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.records = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for records: {e}"));
+                self
+            }
+            pub fn retry_after_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.retry_after_ms = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for retry_after_ms: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<IngestDocumentsResponse> for super::IngestDocumentsResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: IngestDocumentsResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    mode: value.mode?,
+                    records: value.records?,
+                    retry_after_ms: value.retry_after_ms?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::IngestDocumentsResponse> for IngestDocumentsResponse {
+            fn from(value: super::IngestDocumentsResponse) -> Self {
+                Self {
+                    mode: Ok(value.mode),
+                    records: Ok(value.records),
+                    retry_after_ms: Ok(value.retry_after_ms),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct IngestedRecord {
+            dim: ::std::result::Result<i32, ::std::string::String>,
+            id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for IngestedRecord {
+            fn default() -> Self {
+                Self {
+                    dim: Err("no value supplied for dim".to_string()),
+                    id: Err("no value supplied for id".to_string()),
+                }
+            }
+        }
+        impl IngestedRecord {
+            pub fn dim<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.dim = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for dim: {e}"));
+                self
+            }
+            pub fn id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<IngestedRecord> for super::IngestedRecord {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: IngestedRecord,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    dim: value.dim?,
+                    id: value.id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::IngestedRecord> for IngestedRecord {
+            fn from(value: super::IngestedRecord) -> Self {
+                Self {
+                    dim: Ok(value.dim),
+                    id: Ok(value.id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct InsertError {
             error: ::std::result::Result<::std::string::String, ::std::string::String>,
             id: ::std::result::Result<
@@ -13402,6 +13836,25 @@ impl Client {
     pub fn delete_collection(&self) -> builder::DeleteCollection<'_> {
         builder::DeleteCollection::new(self)
     }
+    /// Ingest documents for native server-side embedding
+    ///
+    /// Canonical document-ingest surface (ADR-041, spec-driven-primary). Body `{records:[{id,text,metadata}]}`; the server embeds `text` natively under `X-Embed-Source=native` (default) when no per-record `vector` is supplied. `X-Tenant-ID` scopes records to a tenant; `X-Ingest-Mode` carries the billing mode.
+    ///
+    /// Sends a `POST` request to `/api/v2/collections/{collection_id}/documents`
+    ///
+    /// Arguments:
+    /// - `collection_id`: Target collection name/ID.
+    /// - `body`
+    /// ```text
+    /// let response = client.ingest_documents()
+    /// .collection_id(collection_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn ingest_documents(&self) -> builder::IngestDocuments<'_> {
+        builder::IngestDocuments::new(self)
+    }
     /// Sends a `POST` request to `/api/v2/collections/{collection_id}/entities`
     ///
     /// Arguments:
@@ -14430,6 +14883,108 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::ingest_documents`]
+    ///
+    /// [`Client::ingest_documents`]: super::Client::ingest_documents
+    #[derive(Debug, Clone)]
+    pub struct IngestDocuments<'a> {
+        client: &'a super::Client,
+        collection_id: Result<::std::string::String, String>,
+        body: Result<types::builder::IngestDocumentsRequest, String>,
+    }
+    impl<'a> IngestDocuments<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection_id: Err("collection_id was not initialized".to_string()),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::IngestDocumentsRequest>,
+            <V as std::convert::TryInto<types::IngestDocumentsRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `IngestDocumentsRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::IngestDocumentsRequest,
+                ) -> types::builder::IngestDocumentsRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/collections/{collection_id}/documents`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::IngestDocumentsResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                collection_id,
+                body,
+            } = self;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::IngestDocumentsRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/collections/{}/documents",
+                client.baseurl,
+                encode_path(&collection_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "ingest_documents",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 404u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
