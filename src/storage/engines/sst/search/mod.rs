@@ -777,6 +777,13 @@ impl SstEngine {
         // brute force on random data. Customers asking for `Exact` get
         // approximate results otherwise.
         //
+        // Reconciled + measured 2026-06-28 (TD-096 S1): the 5% was this
+        // Exact-pre-override path; with the override, Exact no longer
+        // collapses. Approximate recall at scale (sqrt pruning keeps
+        // sqrt(num_blocks) blocks — see the block-skip unit tests in
+        // block_pruning.rs) is measured in
+        // docs/_internal/status/TD_096_S1_RECALL_RECONCILIATION_2026_06_28.adoc.
+        //
         // For `SearchMode::Approximate` and `SearchMode::Adaptive` the
         // caller's `block_prune` config flows through unchanged.
         let prune_config_owned;
