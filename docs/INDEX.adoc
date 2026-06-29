@@ -37,7 +37,7 @@ ProximaDB development follows four phases:
 | **Phase 1** | Storage formats, catalog, core APIs | ✅ Core complete
 | **Phase 2** | Cross-model queries, graph, observability | ⚠ Core complete; modality projections Beta in v0.2 — see link:SUPPORTED_SURFACE.adoc[Supported Surface]
 | **Phase 3** | Ecosystem integration, streaming, SDKs | 🔄 In progress
-| **Phase 4** | Time-series, event sourcing, hybrid search, framework integrations | Planned post-v0.2
+| **Phase 4** | Time-series (TST), event sourcing, hybrid search | ⚠ Foundations Beta in v0.2 — engines complete; product packaging/at-scale validation in progress — see link:SUPPORTED_SURFACE.adoc[Supported Surface]
 |===
 
 For v0.2 release-cut scope and the canonical Supported / Beta / Experimental
@@ -142,7 +142,7 @@ link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategic Roadmap].
 
 * ProximaDB is evolving quickly; experimental features are documented in each API section.
 * Internal roadmap and archived docs live under `docs/_internal/` and are not part of the public API.
-* Phase 1 + Phase 2 complete; Phase 3 ecosystem features in progress; Phase 4 planned.
+* Phase 1 + Phase 2 complete; Phase 3 ecosystem features in progress; Phase 4 foundations are Beta (engines complete, productization in progress).
 * Anchoring artifacts: `docs/00-product/` (vision, PRD, competitive), `docs/11-usecases/` (use cases, dogfood), `docs/12-design/` (design patterns).
 
-_Version 0.2.0_ | _February 2026_
+_Version 0.2.0_ | _June 2026_

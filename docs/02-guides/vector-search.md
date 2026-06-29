@@ -341,10 +341,14 @@ for v, id in zip(vectors, ids):
 | Workload | Engine |
 |----------|--------|
 | Real-time ingest | SST |
-| Spatial queries | HELIX |
-| Analytics | VIPER |
-| Small dataset | SWIFT |
-| Unknown/RVarying | RAPTOR |
+| Spatial / locality queries | HELIX |
+| Columnar analytics | VIPER |
+| Mixed read/write | NOVA |
+
+> **SWIFT and RAPTOR are experimental** (off by default behind the `experimental-engines`
+> cargo feature) and are not v0.2-supported — don't target them for production. For small or
+> dynamic workloads use SST or NOVA. See
+> [Storage Engines](../05-concepts/storage-engines.adoc).
 
 ---
 
