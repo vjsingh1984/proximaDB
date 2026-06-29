@@ -37,6 +37,7 @@ fn create_test_db() -> (TempDir, EmbeddedProximaDB) {
         rl_policy_path: None,
         access_mode: AccessMode::Exclusive,
         node_id: None,
+        tenant_id: None,
     };
     let db = EmbeddedProximaDB::new(config).expect("Failed to create embedded database");
     (temp_dir, db)

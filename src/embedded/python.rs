@@ -1148,6 +1148,7 @@ impl PyProximaDB {
             // Multi-process coordination
             access_mode,
             node_id,
+            tenant_id: None,
         };
 
         let mut config = config;
