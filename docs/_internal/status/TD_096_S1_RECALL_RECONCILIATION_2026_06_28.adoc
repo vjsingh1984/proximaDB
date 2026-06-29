@@ -76,40 +76,51 @@ the AXIS index (HNSW), not the flat SST block-scan, so the sqrt pruning never
 gates recall in practice. The flat-scan 5% is a corner path (Exact pre-override,
 or a non-AXIS approximate scan), already documented in `BlockPruneConfig`.
 
-== Object-store GET count — MEASURED (S2 / S1.5), resolves S2's fate
+== Object-store GET count — instrumentation landed; first measurement CONFOUNDED (S2 / S1.5)
 
-The instrumentation gap S1 flagged is now closed: `CountingFileSystem` (new,
+The instrumentation gap S1 flagged is closed: `CountingFileSystem` (new,
 env-gated `PROXIMADB_COUNT_FS_IO`, default OFF) wraps the shared `FileSystem`
 seam both engines read through (`FilesystemFactory::get_filesystem`), and
-`bench_25_search_get_count` reports per-search GETs/bytes. Measured 2026-06-29,
-dim 128, 20 queries:
+`bench_25_search_get_count` reports per-search GETs/bytes. The wrapper itself is
+verified correct (an Exact flat-scan search reports ~13 GETs/query at 1K).
 
-[cols="1,1,1,1,1", options="header"]
-|===
-| Engine | Vectors | Mode | GETs / query | bytes / query
+**BUT the first Approximate measurement (0 GETs/query on both engines) is
+CONFOUNDED and does NOT support the original "in-memory AXIS / no
+differentiator" conclusion.** A root-cause trace (RUST_LOG on the search stages,
+`execute_two_stage_search_with_mode`) shows the 0-GETs result is a warm-cache
+artifact, not the production I/O profile:
 
-| SST   | 10,000  | Approximate | 0  | 0
-| SST   | 100,000 | Approximate | 0  | 0
-| HELIX | 10,000  | Approximate | 0  | 0
-| HELIX | 100,000 | Approximate | 0  | 0
-| SST   | 1,000   | Exact (flat-scan, corner path) | 13 | 0.53 MiB
-|===
+* *Stage 1 (WAL/memtable)* returns all vectors from the **in-memory WAL** —
+  `db.flush()` does not evict them, so Stage 1 serves the result set with 0 disk
+  reads.
+* *Stage 2 (AXIS)* routes to IVF and returns **0 results** — the ANN index is
+  not serving the query (a separate latent issue; see below).
+* *Stage 3 (SST engine)* runs ("need more results") but also reports 0 GETs,
+  because `EmbeddedConfig::for_benchmarks` sets `cache_size_mb: 1024` (1 GiB) and
+  the benchmark corpus (≤0.5 MiB at 1K/10K; ~51 MiB at 100K) fits entirely in
+  the **in-memory block cache**.
 
-**Finding:** the production Approximate path (AXIS/HNSW) serves queries entirely
-from the in-memory index — **0 query-time object-store GETs on both backends**.
-The data is resident in memory from index-build time; the warm query path is
-I/O-free (the co-design "warm path" model). The Exact flat-scan path *does*
-read SST blocks (~13 GETs/query at 1K), but that is a corner path (Exact /
-non-AXIS), not the production default — and it confirms the instrumentation is
-correct (Exact catches the reads; Approximate genuinely does none).
+So "0 GETs" reflects the WAL + the 1 GiB cache holding the whole corpus in
+memory — **not** that the production cold path is I/O-free. In a real
+deployment the cache would not hold a large corpus and the WAL would be drained,
+so query-time disk GETs would be > 0. The measurement as-run is therefore
+invalid for the SST-vs-HELIX comparison.
 
-**S2 decision:** there is **no SST-vs-HELIX GET-count differentiator on the
-production path** (both 0). Per the handoff's escape hatch, S2 latency/GET
-route-disclosure is **not justified** — the production Approximate path is
-already I/O-free. The `CountingFileSystem` wrapper + `bench_25` are kept as
-reusable operator tools: set `PROXIMADB_COUNT_FS_IO=1` to re-measure if the
-in-memory assumption changes at larger scale (where AXIS may spill and
-query-time GETs could reappear).
+**S2 status: INCONCLUSIVE, not "downgrade confirmed".** The
+`CountingFileSystem` wrapper + `bench_25` are kept (the tooling is sound), but
+the S2 decision must wait on a **valid cold-path measurement**: re-run with the
+cache disabled/limited and the WAL drained so reads actually hit the
+`FileSystem`, then compare SST vs HELIX. Only then can the latency/GET
+route-disclosure be justified or killed.
+
+**Latent issue surfaced (separate from S2):** AXIS (Stage 2) returns 0 on the
+bench's Approximate path — the query routes to IVF while the index was built as
+HMGI/HNSW, so the ANN index yields nothing and every search falls back to the
+Stage-3 SST scan (served from cache here). This is worth its own investigation
+(routing/index-type mismatch) — it means the "approximate" path is currently not
+getting ANN benefit in this config.
+
+== Conclusion
 
 == Conclusion
 
@@ -120,13 +131,14 @@ query-time GETs could reappear).
   at 10K and 100K** (table above). The production Approximate path routes
   through the AXIS index, so the flat-scan sqrt pruning never gates recall. The
   recall-collapse premise is **refuted** for the default production path.
-* Per the handoff's escape hatch, **TD-096 is downgraded to documented
-  guidance**: no S2 route-disclosure code retrofit. The GET-count instrumentation
-  S1 gated on (now landed: `CountingFileSystem` + `bench_25`) **measured 0
-  query-time GETs for the production Approximate path on both SST and HELIX**
-  (in-memory AXIS) — so there is no SST-vs-HELIX I/O differentiator to disclose.
-  S2 latency/GET route-disclosure is **not justified**; the production path is
-  already I/O-free at these scales.
+* The GET-count instrumentation S1 gated on has landed (`CountingFileSystem` +
+  `bench_25`), but the **first Approximate measurement (0 GETs) is confounded**
+  by the in-memory WAL + the 1 GiB block cache (`for_benchmarks`) and the AXIS
+  index returning 0 — it does **not** establish that the production path is
+  I/O-free. **S2 is INCONCLUSIVE**, pending a valid cold-path re-measure (cache
+  disabled, WAL drained). The handoff downgrade stands only on the *recall*
+  evidence (S1); the latency/GET route-disclosure is neither justified nor
+  killed yet.
 
 == Provenance
 
