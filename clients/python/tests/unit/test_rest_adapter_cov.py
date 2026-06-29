@@ -708,6 +708,29 @@ def test_create_document_collection_error(adapter):
         adapter.create_document_collection("docs")
 
 
+def test_insert_document_delegates_to_generated_document_collections_op(adapter):
+    """insert_document targets the document-collections surface via the generated op (ADR-041)."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    op = "proximadb_sdk._generated.rest.api.documents.insert_document.sync_detailed"
+    with patch(op) as mock_op:
+        mock_op.return_value = SimpleNamespace(
+            status_code=200,
+            content=b"{}",
+            parsed=SimpleNamespace(to_dict=lambda: {"id": "d1"}),
+        )
+        out = adapter.insert_document("docs", {"title": "x"}, id="d1")
+
+    mock_op.assert_called_once()
+    kwargs = mock_op.call_args.kwargs
+    assert kwargs["collection"] == "docs"
+    # The generated InsertDocumentBody carries the {id, document} document-collections payload.
+    assert kwargs["body"].to_dict() == {"id": "d1", "document": {"title": "x"}}
+    assert "testserver" in str(kwargs["client"]._base_url)
+    assert out == {"id": "d1"}
+
+
 def test_get_document(adapter):
     adapter._client._session.program("get", FakeResp({"id": "d1", "title": "x"}))
     out = adapter.get_document("docs", "d1", projection=["title"])

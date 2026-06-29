@@ -667,9 +667,9 @@ class RestProtocolAdapter(BaseProtocolAdapter):
     ) -> dict[str, Any]:
         """Ingest documents via the canonical generated client (ADR-041).
 
-        The legacy REST ``insert_document`` is intentionally absent here — it accessed
-        nonexistent ``self._client._session``/``_timeout`` and never worked. REST
-        document-collection writes fall through to the base ``NotImplementedError``.
+        Targets the **collections** vector-store document surface with server-side
+        embedding. For the separate JSON **document-collections** surface (no
+        embedding) see :meth:`insert_document`.
         """
         return self._client.ingest_documents(
             collection_id,
@@ -678,6 +678,34 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             ingest_mode=ingest_mode,
             embed_source=embed_source,
             **kwargs,
+        )
+
+    def insert_document(
+        self,
+        collection_name: str,
+        document: dict[str, Any],
+        id: str | None = None,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Insert a JSON document into a document-collection (spec-driven, ADR-041).
+
+        Targets the **document-collections** surface
+        (`POST /api/v2/document-collections/{c}/documents`) via the GENERATED client
+        op — pure JSON storage, no server-side embedding. For semantic content with
+        embedding use :meth:`ingest_documents` (the collections vector store).
+        """
+        from .._generated.rest.api.documents.insert_document import sync_detailed
+        from .._generated.rest.client import Client as GeneratedClient
+        from .._generated.rest.models.insert_document_body import InsertDocumentBody
+
+        body = InsertDocumentBody.from_dict({"id": id, "document": document})
+        client = GeneratedClient(base_url=self._url, raise_on_unexpected_status=False)
+        response = sync_detailed(collection=collection_name, client=client, body=body)
+        if response.status_code in (200, 201, 202):
+            return response.parsed.to_dict() if response.parsed is not None else {}
+        raise RuntimeError(
+            f"insert_document (document-collections) failed {response.status_code}: "
+            f"{response.content!r}"
         )
 
     def get_document(

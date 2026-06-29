@@ -28,6 +28,10 @@ flowchart TB
   style SDK fill:#9b59b6,color:#fff
 ```
 
+> **New here?** Start with the **[Client Surface Map](./client-surface-map.adoc)** —
+> a one-page orientation to every surface, its payload/response shape, and how the
+> SDK + pgwire lower to the engine. Then dive into the per-surface reference below.
+
 ---
 
 ## REST API
