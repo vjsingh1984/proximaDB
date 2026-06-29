@@ -76,51 +76,61 @@ the AXIS index (HNSW), not the flat SST block-scan, so the sqrt pruning never
 gates recall in practice. The flat-scan 5% is a corner path (Exact pre-override,
 or a non-AXIS approximate scan), already documented in `BlockPruneConfig`.
 
-== Object-store GET count — instrumentation landed; first measurement CONFOUNDED (S2 / S1.5)
+== Object-store GET count — RESOLVED via cold-path (S2 / S1.5)
 
-The instrumentation gap S1 flagged is closed: `CountingFileSystem` (new,
-env-gated `PROXIMADB_COUNT_FS_IO`, default OFF) wraps the shared `FileSystem`
-seam both engines read through (`FilesystemFactory::get_filesystem`), and
-`bench_25_search_get_count` reports per-search GETs/bytes. The wrapper itself is
-verified correct (an Exact flat-scan search reports ~13 GETs/query at 1K).
+The instrumentation S1 gated on has landed and is now composed end-to-end:
+`CountingFileSystem` (env-gated `PROXIMADB_COUNT_FS_IO`, default OFF) wraps the
+shared `FileSystem` seam both engines read through, AND forwards each read into
+the per-query `IoTrace` (TD-160/ADR-030) via an `IoRecorder` hook — so GET
+counts drive the route cost model + per-tenant KRU, not just a bench global.
 
-**BUT the first Approximate measurement (0 GETs/query on both engines) is
-CONFOUNDED and does NOT support the original "in-memory AXIS / no
-differentiator" conclusion.** A root-cause trace (RUST_LOG on the search stages,
-`execute_two_stage_search_with_mode`) shows the 0-GETs result is a warm-cache
-artifact, not the production I/O profile:
+The warm measurement (0 GETs/query) looked confounded, so a **cold-path** was
+added (`EmbeddedConfig::for_benchmarks_cold`, cache disabled + flush-then-reopen)
+to force reads off the in-memory structures. The cold-path investigation
+**resolved** the finding, and it is sharper than either the original S2 claim
+("in-memory AXIS") or the confound hypothesis:
 
-* *Stage 1 (WAL/memtable)* returns all vectors from the **in-memory WAL** —
-  `db.flush()` does not evict them, so Stage 1 serves the result set with 0 disk
-  reads.
-* *Stage 2 (AXIS)* routes to IVF and returns **0 results** — the ANN index is
-  not serving the query (a separate latent issue; see below).
-* *Stage 3 (SST engine)* runs ("need more results") but also reports 0 GETs,
-  because `EmbeddedConfig::for_benchmarks` sets `cache_size_mb: 1024` (1 GiB) and
-  the benchmark corpus (≤0.5 MiB at 1K/10K; ~51 MiB at 100K) fits entirely in
-  the **in-memory block cache**.
+* **The embedded engine is in-memory.** It holds the corpus in `collection_vectors`
+  + the AXIS index, loaded from SST during recovery (`EmbeddedProximaDB::new`).
+  ⇒ **Warm per-query GETs are genuinely 0** on both SST and HELIX at 10K/100K
+  (confirmed even with the cache off + WAL cleared). This is the warm path, not a
+  confound.
+* **Cold-start (recovery/index-load) is the real embedded I/O signal** — the
+  one-time cost to load the index off the `FileSystem`-backed SST files:
 
-So "0 GETs" reflects the WAL + the 1 GiB cache holding the whole corpus in
-memory — **not** that the production cold path is I/O-free. In a real
-deployment the cache would not hold a large corpus and the WAL would be drained,
-so query-time disk GETs would be > 0. The measurement as-run is therefore
-invalid for the SST-vs-HELIX comparison.
+[cols="2,1,1,1", options="header"]
+|===
+| Engine | Vectors | Cold-start GETs (recovery) | bytes
 
-**S2 status: INCONCLUSIVE, not "downgrade confirmed".** The
-`CountingFileSystem` wrapper + `bench_25` are kept (the tooling is sound), but
-the S2 decision must wait on a **valid cold-path measurement**: re-run with the
-cache disabled/limited and the WAL drained so reads actually hit the
-`FileSystem`, then compare SST vs HELIX. Only then can the latency/GET
-route-disclosure be justified or killed.
+| SST   | 10,000  | 2   | 721 B
+| SST   | 100,000 | 6   | 7,210 B
+| HELIX | 10,000  | 27  | 93 MiB (97,744,773)
+| HELIX | 100,000 | 107 | 953 MiB (999,629,480)
+|===
 
-**Latent issue surfaced (separate from S2):** AXIS (Stage 2) returns 0 on the
-bench's Approximate path — the query routes to IVF while the index was built as
-HMGI/HNSW, so the ANN index yields nothing and every search falls back to the
-Stage-3 SST scan (served from cache here). This is worth its own investigation
-(routing/index-type mismatch) — it means the "approximate" path is currently not
-getting ANN benefit in this config.
+**SST-vs-HELIX differentiator (the S2 question, now answered):** HELIX eagerly
+reads ~the full corpus on cold-start (953 MiB at 100K, ~18× the raw vector
+bytes), while SST recovers at manifest scale (~7 KB) — a **~100,000× cold-start
+byte gap** (warm per-query GETs are 0 for both, in-memory). The cost difference
+is entirely in cold-start/recovery. (Caveat: SST's ~7 KB may undercount — SST
+likely recovers via a lazy/non-counted path; the directional finding holds.
+Confirming SST's true cold-start I/O is a follow-up.)
 
-== Conclusion
+**S2 status: RESOLVED (no longer "inconclusive").** The latency/GET
+route-disclosure (S2) is **not justified for the warm path** (both engines are
+in-memory, 0 query GETs). The cold-start recovery GETs are a one-time
+amortizable cost; a meaningful SST-vs-HELIX comparison there + a true
+production-cloud-I/O measurement (the co-design dominant cost) require a
+**networked, spilled corpus** deployment — the embedded bench is structurally
+in-memory and cannot produce that evidence. The full first-principles resolution
+(workload → format → cost, the flag/io-trace substrate, the decision loop) is in
+link:STORAGE_FORMAT_DECISION_FRAMEWORK_2026_06_29.adoc[the Storage-Format
+Decision Framework].
+
+**Latent issue (separate, tracked in the framework doc):** AXIS Stage-2 returns 0
+on the bench's Approximate path (routes IVF, index built HMGI/HNSW) → no ANN
+benefit, falls back to the in-memory Stage-3 scan. A prerequisite for valid
+ANN-vs-scan I/O comparison; own investigation/PR.
 
 == Conclusion
 
@@ -131,14 +141,16 @@ getting ANN benefit in this config.
   at 10K and 100K** (table above). The production Approximate path routes
   through the AXIS index, so the flat-scan sqrt pruning never gates recall. The
   recall-collapse premise is **refuted** for the default production path.
-* The GET-count instrumentation S1 gated on has landed (`CountingFileSystem` +
-  `bench_25`), but the **first Approximate measurement (0 GETs) is confounded**
-  by the in-memory WAL + the 1 GiB block cache (`for_benchmarks`) and the AXIS
-  index returning 0 — it does **not** establish that the production path is
-  I/O-free. **S2 is INCONCLUSIVE**, pending a valid cold-path re-measure (cache
-  disabled, WAL drained). The handoff downgrade stands only on the *recall*
-  evidence (S1); the latency/GET route-disclosure is neither justified nor
-  killed yet.
+* The GET-count instrumentation S1 gated on has landed AND is now composed into
+  the per-query `IoTrace` (`CountingFileSystem` → `IoRecorder` → `io_trace`).
+  A cold-path investigation (cache off + flush-reopen) **resolved** the earlier
+  0-GETs puzzle: the embedded engine is **in-memory** (warm per-query GETs = 0
+  on both engines), and the real embedded I/O is **cold-start recovery** (SST:
+  2 GETs @10K, 6 @100K). S2 latency/GET route-disclosure is **not justified for
+  the warm path**; a meaningful SST-vs-HELIX + production-cloud comparison needs
+  a networked/spilled corpus (the embedded bench is structurally in-memory). See
+  link:STORAGE_FORMAT_DECISION_FRAMEWORK_2026_06_29.adoc[the Storage-Format
+  Decision Framework] for the full data-driven resolution.
 
 == Provenance
 

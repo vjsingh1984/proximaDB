@@ -1,0 +1,171 @@
+= Storage-Format Decision Framework (data-driven, io-trace-aware)
+:date: 2026-06-29
+:toc: left
+
+== Why this doc
+
+TD-096 S2 (PR #543/#545) exposed that storage format/layout decisions were
+config- and env-gated but **not driven by measured I/O** — and that the
+"GET-count" measurement was confounded (warm cache + in-memory WAL → 0). This
+doc is the first-principles + co-design resolution of the **stacked-relational
+vs custom-PAX vs SST/HELIX** tension, plus the io-trace-aware, compile-time-flag
+framework that makes the choice **data-driven** (measured, not asserted).
+
+Co-design anchor (per `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`): for
+a cloud DB the dominant cost term is **object-store GET round-trips + egress**,
+*not* CPU. Every format/layout decision below is validated against that term.
+
+== First-principles resolution: format follows workload, the scheduler routes, the choice is measured
+
+The resolution is **not "one format wins."** Each (workload × format) pair is
+chosen by the existing routing + catalog knobs, and **validated** by the
+measured per-query I/O (GETs / bytes / egress / latency) against its dominant
+cost term.
+
+[cols="2,3,3,3", options="header"]
+|===
+| Workload (shape) | Winning format/layout | Engine / read path | Dominant cost term (measure this)
+
+| Relational / warehouse (TPC-H/DS; scans/joins/aggregations over pgwire)
+| Columnar **Parquet** under **Iceberg** manifests (row-group pruning, column projection)
+| DataFusion/Polars (`ComputeBackend::DataFusionLocal`) via `ALTER TABLE … MATERIALIZE`
+| Column bytes scanned + result egress (few wide GETs)
+
+| Vector / ANN (top-k over embeddings)
+| **PAX/ProximaBlock**, quantized (SQ8/RaBitQ + f32 rerank), block-prunable
+| AXIS (HNSW/IVF) over SST/HELIX — native Stage-2
+| Warm: 0 (in-memory index). Cold-start: index-load GETs; recall@k gate
+
+| OLTP point read/write
+| **PAX Oltp** (row-directory) / ProximaDataBlock
+| Native Volcano + WAL
+| Point-lookup GETs; write amplification
+
+| HTAP (mixed, default)
+| **PAX** (row-directory + column stripes)
+| Native + projection publication to Parquet
+| Blend — route per query shape
+|===
+
+The **scheduler seam** (`ComputeScheduler::route_select`,
+`QueryShape { parquet_backed, engages_relational, cardinality }`) already picks
+the engine per query; the collection's `storage_specialization` +
+`workload_profile` (catalog) pick the layout. `force_exact` / `BlockPruneConfig`
+is the *in-format* knob — not the format-choice decision.
+
+== The io-trace-aware substrate (compose what exists; all default-OFF)
+
+* **`CountingFileSystem`** (`crates/storage/proximadb-storage-filesystem-types/src/counting.rs`)
+  — pass-through `FileSystem` wrapper tallying read/read_range/read_ranges/get_mmap + bytes.
+  Env-gated `PROXIMADB_COUNT_FS_IO` in `FilesystemFactory::get_filesystem`
+  (default OFF; both SST + HELIX read through this seam).
+* **`IoTrace`** (`src/observability/io_trace.rs`, TD-160/ADR-030) — per-query
+  task-local accumulator (`get_ops`, `bytes_read`, `range_gets`, `egress_bytes`,
+  `compute_ms`, route). `record_*` are **always-on** (no-op outside a scope); the
+  `io-trace` cargo feature gates the *emission*/observers (RouteObserver / CacheObserver / BillingObserver).
+* **Composition (this PR):** `CountingFileSystem` now forwards each read into the
+  per-query `IoTrace` via an `IoRecorder` DIP hook (`IoTraceFsRecorder`) — so GET
+  counts drive the route cost model + per-tenant KRU, not just a bench global.
+
+So: `cargo build --features io-trace` + `PROXIMADB_COUNT_FS_IO=1` = full per-query
+I/O trace (GETs/bytes/ranges/egress/compute/route).
+
+== The measurement reality (what the embedded bench CAN and CANNOT show)
+
+The TD-096 S2 cold-path investigation (`bench_25 --cold`,
+`EmbeddedConfig::for_benchmarks_cold` + flush-then-reopen) established two facts
+that any data-driven decision must respect:
+
+. **The embedded engine is in-memory.** It holds the corpus in `collection_vectors`
+  + the AXIS (HNSW) index, loaded from SST during recovery (`EmbeddedProximaDB::new`).
+  ⇒ **Warm per-query GETs are genuinely 0** on both SST and HELIX at 10K/100K
+  (confirmed). This is *not* a bug or a confound — it is the in-memory warm path.
+. **Cold-start (recovery/index-load) GETs are the real embedded I/O signal** — the
+  cost to load the index off the `FileSystem`-backed SST files on (re)start:
+
+[cols="2,1,1,1", options="header"]
+|===
+| Engine | Vectors | Cold-start GETs (recovery) | bytes
+
+| SST   | 10,000  | 2   | 721 B
+| SST   | 100,000 | 6   | 7,210 B
+| HELIX | 10,000  | 27  | 93 MiB (97,744,773)
+| HELIX | 100,000 | 107 | 953 MiB (999,629,480)
+|===
+
+**Reframe (engine → format + strategy): the static analysis confirms SST and
+HELIX are the SAME on-disk format.** Both write `ProximaDataBlock`/ProximaBlock
+bytes (`block_format.rs::BlockFormat::ProximaBlocks`; HELIX via
+`ProximaDataBlock::new_with_engine_profile(EngineProfile::Helix)`) — they differ
+**only in sort order**: SST by record key (LSM order), HELIX by Hilbert spatial
+score. So "SST vs HELIX" is *not* a format comparison; it is a **sort/index +
+recovery-strategy** comparison.
+
+The cold-start gap is a **recovery-strategy difference, not a format difference**:
+* **HELIX** eagerly reads every file's header/footer during init —
+  `helix/mod.rs::load_levels` → `read_helix_header_optimized` (2 ranged GETs per
+  file) to build the spatial-pruning index. ⇒ ~953 MiB / 107 GETs at 100K.
+* **SST** initializes **lazily** — a collection-agnostic singleton
+  (`sst/core.rs::SstEngine::new`, no `load_levels`, empty `collection_id`); it
+  defers file reads. ⇒ ~7 KB / 6 GETs at 100K (manifest scale).
+
+So the ~100,000× byte gap is **HELIX paying eager index-build I/O up-front vs SST
+deferring it**. Warm per-query GETs are 0 for both (in-memory). *Caveat:* SST's
+7 KB means its real per-collection load is deferred — and the warm 0-GETs
+puzzle (where SST serves 100K vectors with no counted reads) is not fully
+explained; SST likely serves from an in-memory index built via a path
+`CountingFileSystem` does not observe (a follow-up to confirm SST's true I/O).
+The directional finding — **HELIX front-loads recovery I/O, SST defers it** —
+holds. (NOVA is the only genuinely different *format*: columnar Parquet.)
+
+**Critical caveat — the embedded bench cannot produce production cloud-I/O
+evidence.** It is in-memory: the warm path is 0 and the cold-start is a one-time
+load. Real cloud-I/O (the co-design dominant cost) requires a **networked,
+object-store-backed deployment where the corpus spills past memory** so per-query
+reads actually cross the network. The io-trace substrate here is correct and
+reusable; the *measurement* must move to that deployment (a follow-up).
+
+== The decision loop (run on a realistic deployment)
+
+. For each (workload, format-profile) pair → build with `--features io-trace` +
+  `PROXIMADB_COUNT_FS_IO=1`.
+. Run the cold-path + warm-path benches (and, for cloud I/O, a spilled/networked run).
+. Record GETs/bytes/egress/latency in `docs/_internal/roadmap/BENCHMARK_EVIDENCE.toml`
+  (status `measured`; `validate_benchmark_evidence.py` enforces).
+. The profile minimizing the dominant cost term wins → flip its default OFF→ON
+  (mixed-read-safe, magic/version-gated, recall-gated for quantized — CLAUDE.md directive 8).
+
+== The "format profile" flag surface (existing knobs, consolidated)
+
+No new runtime behavior — these are the existing compile-time/env/config knobs a
+measurement build selects, tied to the workloads above:
+
+* **Cargo feature `io-trace`** (TD-160) — the measurement enabler (per-query
+  IoTrace emission + observers). Default OFF.
+* **Env `PROXIMADB_PAX_VECTOR_SEGMENTS` / `PROXIMADB_PAX_VECTOR_QUANT` /
+  `PROXIMADB_PAX_BLOCK_SIZE`** (`src/storage/engines/sst/flush/mod.rs`) — PAX
+  layout/quantization toggles (default OFF / Auto; `pax-recall-ratchet` gate).
+* **`BlockFormat`** enum (`ProximaBlocks` / `ArrowBlock` / `ColumnarPax`) +
+  `storage_specialization` / `workload_profile` (catalog) — the per-collection
+  layout selection.
+* **`BlockPruneConfig`** (`force_exact`, `mode`, `ratio`) — the in-format
+  block-skip knob (S1's `td096_block_skip_tests` pins the mechanism).
+* **`PROXIMADB_COUNT_FS_IO`** — opts `CountingFileSystem` in (the bench/diagnostic
+  path).
+
+== Open issue (separate PR): AXIS Stage-2 returns 0
+
+On the bench's Approximate path, the AXIS query routes to IVF and returns **0**
+results while the index is built as HMGI/HNSW — so the ANN index is not serving
+and every search falls back to the Stage-3 SST scan (served from memory here).
+This is a latent routing/index-type mismatch worth its own investigation; it is a
+*prerequisite for valid ANN-vs-scan I/O comparison* (the cold-start numbers above
+measure recovery, not ANN serving).
+
+== Provenance
+
+Measured 2026-06-29 on local macOS arm64 (Apple Silicon), offline build
+(`CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git`), develop. Cold-path via
+`EmbeddedConfig::for_benchmarks_cold` (cache disabled) + flush-then-reopen.
+Reproduce: `PROXIMADB_BENCH_COLD=1 PROXIMADB_BENCH_ENGINE=sst
+PROXIMADB_BENCH_VECTOR_COUNT=100000 cargo bench --bench bench_25_search_get_count`.

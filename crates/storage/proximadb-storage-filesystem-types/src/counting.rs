@@ -71,20 +71,56 @@ pub fn global_counters() -> Arc<GetCounters> {
         .clone()
 }
 
+/// DIP hook for forwarding GET counts into a per-query trace (the root's
+/// `IoTrace` task-local). The sub-crate cannot depend on the root's
+/// `observability::io_trace`, so `CountingFileSystem` calls this trait; the
+/// root wires an impl that records into the per-query `IoTrace` (feeding the
+/// route cost model + per-tenant KRU). `Option` so the bench path
+/// (`CountingFileSystem::new`) works without one.
+pub trait IoRecorder: Send + Sync + std::fmt::Debug {
+    /// A whole-object read (`read` / `get_mmap`).
+    fn record_full_read(&self, bytes: u64);
+    /// A single ranged read (`read_range`).
+    fn record_range_read(&self, bytes: u64);
+    /// A batched ranged read (`read_ranges` — one op, possibly many ranges).
+    fn record_batched_ranges(&self, bytes: u64);
+}
+
 /// Pass-through `FileSystem` wrapper that counts read operations. See module
 /// docs.
 #[derive(Debug)]
 pub struct CountingFileSystem {
     inner: Arc<dyn FileSystem>,
     counters: Arc<GetCounters>,
+    recorder: Option<Arc<dyn IoRecorder>>,
 }
 
 impl CountingFileSystem {
     /// Wrap `inner`, incrementing `counters` on every read. Pass
     /// [`global_counters()`] to share the process-wide counters used by the
-    /// `PROXIMADB_COUNT_FS_IO` bench path.
+    /// `PROXIMADB_COUNT_FS_IO` bench path. No per-query recorder.
     pub fn new(inner: Arc<dyn FileSystem>, counters: Arc<GetCounters>) -> Self {
-        Self { inner, counters }
+        Self {
+            inner,
+            counters,
+            recorder: None,
+        }
+    }
+
+    /// Wrap `inner` AND forward each read into `recorder` (the per-query
+    /// `IoTrace`), in addition to the global counters. Used by the production
+    /// wiring (root `FilesystemFactory`) so GET counts drive the route cost
+    /// model + per-tenant KRU.
+    pub fn new_with_recorder(
+        inner: Arc<dyn FileSystem>,
+        counters: Arc<GetCounters>,
+        recorder: Arc<dyn IoRecorder>,
+    ) -> Self {
+        Self {
+            inner,
+            counters,
+            recorder: Some(recorder),
+        }
     }
 }
 
@@ -104,19 +140,23 @@ impl FileSystem for CountingFileSystem {
 
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         let buf = self.inner.read(path).await?;
+        let bytes = buf.len() as u64;
         self.counters.full_reads.fetch_add(1, RELAXED);
-        self.counters
-            .bytes_read
-            .fetch_add(buf.len() as u64, RELAXED);
+        self.counters.bytes_read.fetch_add(bytes, RELAXED);
+        if let Some(recorder) = &self.recorder {
+            recorder.record_full_read(bytes);
+        }
         Ok(buf)
     }
 
     async fn read_range(&self, path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
         let buf = self.inner.read_range(path, offset, length).await?;
+        let bytes = buf.len() as u64;
         self.counters.range_reads.fetch_add(1, RELAXED);
-        self.counters
-            .bytes_read
-            .fetch_add(buf.len() as u64, RELAXED);
+        self.counters.bytes_read.fetch_add(bytes, RELAXED);
+        if let Some(recorder) = &self.recorder {
+            recorder.record_range_read(bytes);
+        }
         Ok(buf)
     }
 
@@ -126,9 +166,12 @@ impl FileSystem for CountingFileSystem {
         ranges: Vec<std::ops::Range<u64>>,
     ) -> FsResult<Vec<Vec<u8>>> {
         let bufs = self.inner.read_ranges(path, ranges).await?;
+        let bytes: u64 = bufs.iter().map(Vec::len).sum::<usize>() as u64;
         self.counters.batched_range_reads.fetch_add(1, RELAXED);
-        let bytes: usize = bufs.iter().map(Vec::len).sum();
-        self.counters.bytes_read.fetch_add(bytes as u64, RELAXED);
+        self.counters.bytes_read.fetch_add(bytes, RELAXED);
+        if let Some(recorder) = &self.recorder {
+            recorder.record_batched_ranges(bytes);
+        }
         Ok(bufs)
     }
 
@@ -137,6 +180,12 @@ impl FileSystem for CountingFileSystem {
         let mmap = self.inner.get_mmap(path).await?;
         if mmap.is_some() {
             self.counters.full_reads.fetch_add(1, RELAXED);
+            if let Some(recorder) = &self.recorder {
+                // mmap size is unknown here without stat; record a full-read op
+                // with 0 bytes (the op count is the cost signal; bytes are
+                // captured by the non-mmap read paths).
+                recorder.record_full_read(0);
+            }
         }
         Ok(mmap)
     }

@@ -112,11 +112,17 @@ fn main() {
     // all partitions via the FileSystem).
     let search_mode =
         std::env::var("PROXIMADB_BENCH_SEARCH_MODE").unwrap_or_else(|_| "approximate".to_string());
+    // Cold path (TD-096 S2): drop+reopen after flush with the cache disabled so
+    // searches read from disk (removes the warm-cache + WAL confound that masked
+    // the warm measurement). Set PROXIMADB_BENCH_COLD=1 to enable.
+    let cold = std::env::var("PROXIMADB_BENCH_COLD")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
     let counters = global_counters();
 
     println!("\n{}", "=".repeat(72));
     println!(
-        "  SEARCH GET-COUNT BENCHMARK — {count} vectors, dim {DIMENSION}, engine {engine}, mode {search_mode}, top_k {TOP_K}"
+        "  SEARCH GET-COUNT BENCHMARK — {count} vectors, dim {DIMENSION}, engine {engine}, mode {search_mode}, cold={cold}, top_k {TOP_K}"
     );
     println!("{}", "=".repeat(72));
 
@@ -124,7 +130,8 @@ fn main() {
     let queries = generate_vectors(NUM_QUERIES, DIMENSION, SEED ^ 0x9E37_79B9);
 
     let tmp = TempDir::new().expect("tempdir");
-    let config = EmbeddedConfig::for_benchmarks(tmp.path().to_str().expect("tmp path"));
+    let data_path = tmp.path().to_str().expect("tmp path").to_string();
+    let config = EmbeddedConfig::for_benchmarks(&data_path);
     let db = EmbeddedProximaDB::new(config).expect("embedded db");
     let collection = format!("getcount_{engine}");
     db.create_collection(&collection, DIMENSION as u32, Some(&engine))
@@ -141,17 +148,36 @@ fn main() {
         .unwrap_or_else(|e| println!("  warn: flush: {e}"));
     wait_for_search_ready(&db, &collection, &queries[0], TOP_K, &search_mode);
 
-    // Reset the counters AFTER insert/flush/probe so only the measured searches
-    // are tallied.
-    counters.reset();
+    // Cold path (TD-096 S2): drop the warm db — clearing the in-memory WAL
+    // memtable + block cache that confounded the warm measurement — and reopen
+    // from the flushed data with the cache disabled. Searches then read from the
+    // FileSystem-backed SST files so CountingFileSystem measures real disk GETs.
+    let db = if cold {
+        drop(db);
+        // Reset BEFORE reopen so the recovery/index-load reads — the real
+        // cold-start I/O; the engine is otherwise in-memory, so warm per-query
+        // GETs are ~0 — are counted.
+        counters.reset();
+        let reopen_config = EmbeddedConfig::for_benchmarks_cold(&data_path);
+        EmbeddedProximaDB::new(reopen_config).expect("reopen db (cold)")
+    } else {
+        wait_for_search_ready(&db, &collection, &queries[0], TOP_K, &search_mode);
+        // Warm: reset after the probe so only measured searches count.
+        counters.reset();
+        db
+    };
 
     let mut measured = 0usize;
+    let mut latencies_ms: Vec<f64> = Vec::with_capacity(queries.len());
     for query in &queries {
-        if db
+        let t0 = std::time::Instant::now();
+        let ok = db
             .search_with_mode(&collection, query.clone(), TOP_K, None, Some(&search_mode))
-            .is_ok()
-        {
+            .is_ok();
+        let lat_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        if ok {
             measured += 1;
+            latencies_ms.push(lat_ms);
         }
     }
 
@@ -177,5 +203,18 @@ fn main() {
         "    bytes read        {bytes}   ({bytes_per_query:.0} / query, {:.2} MiB/query)",
         bytes_per_query / (1024.0 * 1024.0)
     );
+    // Performance (TD-096 S2): per-query latency. In cold mode the FIRST query
+    // includes the index load, so it is reported separately (cold-start latency).
+    // Accuracy (recall) is NOT re-measured here — the cold path loads the SAME
+    // data as the warm path, so recall is S1's 100% (load strategy does not
+    // change result correctness); see bench_24_recall_at_k_engine for recall.
+    let avg_lat = latencies_ms.iter().sum::<f64>() / measured as f64;
+    let cold_start_lat = latencies_ms.first().copied().unwrap_or(0.0);
+    let mut sorted = latencies_ms.clone();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let p99 = sorted[((sorted.len() as f64 * 0.99) as usize).min(sorted.len().saturating_sub(1))];
+    println!("    avg latency       {avg_lat:.2} ms/query");
+    println!("    cold-start (#1)   {cold_start_lat:.2} ms");
+    println!("    p99 latency       {p99:.2} ms/query");
     println!("{}", "=".repeat(72));
 }
