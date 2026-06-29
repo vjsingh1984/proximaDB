@@ -83,40 +83,42 @@ that any data-driven decision must respect:
 . **Cold-start (recovery/index-load) GETs are the real embedded I/O signal** — the
   cost to load the index off the `FileSystem`-backed SST files on (re)start:
 
-[cols="2,1,1,1", options="header"]
+[cols="2,1,1,1,1", options="header"]
 |===
-| Engine | Vectors | Cold-start GETs (recovery) | bytes
+| Engine (format / strategy) | 100K cold-start GETs | bytes | cold-start #1 latency
 
-| SST   | 10,000  | 2   | 721 B
-| SST   | 100,000 | 6   | 7,210 B
-| HELIX | 10,000  | 27  | 93 MiB (97,744,773)
-| HELIX | 100,000 | 107 | 953 MiB (999,629,480)
+| **SST**   (ProximaBlock, key-sort, *lazy*) | 7   | 7 KB     | 24 ms
+| **HELIX** (ProximaBlock, Hilbert-sort, eager `load_levels`) | 108 | 953 MiB | 271 ms
+| **VIPER** (ProximaBlock, analytics/batch)  | 27  | 915 MiB   | 133 ms
+| **NOVA**  (columnar **Parquet**)           | 27  | 914 MiB   | 269 ms
 |===
 
-**Reframe (engine → format + strategy): the static analysis confirms SST and
-HELIX are the SAME on-disk format.** Both write `ProximaDataBlock`/ProximaBlock
-bytes (`block_format.rs::BlockFormat::ProximaBlocks`; HELIX via
-`ProximaDataBlock::new_with_engine_profile(EngineProfile::Helix)`) — they differ
-**only in sort order**: SST by record key (LSM order), HELIX by Hilbert spatial
-score. So "SST vs HELIX" is *not* a format comparison; it is a **sort/index +
-recovery-strategy** comparison.
+(10K numbers are proportionally smaller; runs are reproducible — SST 6→7 GETs,
+HELIX 107→108 across two independent runs.)
 
-The cold-start gap is a **recovery-strategy difference, not a format difference**:
-* **HELIX** eagerly reads every file's header/footer during init —
-  `helix/mod.rs::load_levels` → `read_helix_header_optimized` (2 ranged GETs per
-  file) to build the spatial-pruning index. ⇒ ~953 MiB / 107 GETs at 100K.
-* **SST** initializes **lazily** — a collection-agnostic singleton
-  (`sst/core.rs::SstEngine::new`, no `load_levels`, empty `collection_id`); it
-  defers file reads. ⇒ ~7 KB / 6 GETs at 100K (manifest scale).
+**Reframe (engine → format + strategy) — confirmed by static analysis + trace.**
+SST/VIPER/HELIX write the **same `ProximaDataBlock`/ProximaBlock bytes**, differing
+only in **sort order** (SST by record key, HELIX by Hilbert score, VIPER for
+analytics batching); **NOVA is the only genuinely different format** (columnar
+Parquet). So "engine" is a misnomer for the ProximaBlock trio.
 
-So the ~100,000× byte gap is **HELIX paying eager index-build I/O up-front vs SST
-deferring it**. Warm per-query GETs are 0 for both (in-memory). *Caveat:* SST's
-7 KB means its real per-collection load is deferred — and the warm 0-GETs
-puzzle (where SST serves 100K vectors with no counted reads) is not fully
-explained; SST likely serves from an in-memory index built via a path
-`CountingFileSystem` does not observe (a follow-up to confirm SST's true I/O).
-The directional finding — **HELIX front-loads recovery I/O, SST defers it** —
-holds. (NOVA is the only genuinely different *format*: columnar Parquet.)
+**The cold-start gap is a recovery-STRATEGY difference, not a format difference.**
+HELIX/VIPER/NOVA all **eagerly read ~the full corpus** on cold-start (~915–953 MiB
+at 100K, ~18× the 51 MiB raw vectors) — building their indexes up-front. SST
+**initializes lazily** (collection-agnostic singleton, no eager load) ⇒ 7 KB. The
+GET *count* differs by read pattern: HELIX does the most (108 — per-file
+header/footer via `helix/mod.rs::load_levels` → `read_helix_header_optimized`),
+VIPER/NOVA do fewer-but-larger reads (27). Warm per-query GETs are 0 for all four
+(in-memory). Latency tracks the GET count + bytes: HELIX slowest (271 ms), SST
+fastest (24 ms).
+
+*Crucially:* NOVA (the different *format*) is **not** dramatically different in
+cold-start bytes from the ProximaBlock trio — proving the gap is **strategy, not
+format**. *Caveat:* SST's 7 KB + warm-0 means its real per-collection load is
+deferred/unobserved by `CountingFileSystem` (likely an in-memory index built via a
+path the wrapper doesn't see) — confirming SST's true I/O is a follow-up. The
+directional finding — **3 of 4 engines front-load ~the corpus on cold-start; SST
+defers** — holds.
 
 **Critical caveat — the embedded bench cannot produce production cloud-I/O
 evidence.** It is in-memory: the warm path is 0 and the cold-start is a one-time
