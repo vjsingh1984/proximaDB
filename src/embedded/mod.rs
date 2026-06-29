@@ -3691,6 +3691,9 @@ impl EmbeddedProximaDB {
         graph_weight: f32,
         rrf: bool,
         grain: &str,
+        text_query: Option<String>,
+        document_collection: Option<String>,
+        document_weight: Option<f32>,
     ) -> Result<
         (
             Vec<crate::core::search::cross_modal_fusion::FusedItem>,
@@ -3701,7 +3704,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             use crate::core::search::cross_modal_fusion::FusionPolicy;
             use crate::services::fusion_service::{
-                FusionOidKey, FusionService, GraphFusionParams, GraphGrain,
+                DocumentFusionSpec, FusionOidKey, FusionService, GraphFusionParams, GraphGrain,
             };
 
             let service = FusionService::new(
@@ -3737,9 +3740,18 @@ impl EmbeddedProximaDB {
                     FusionPolicy::default()
                 },
                 oid_key: FusionOidKey::Canonical,
-                // TD-138 document modality is REST-only for now; embedded passes `None`
-                // (vector+graph only). The service above still shares the live index map.
-                document: None,
+                // TD-138 document modality (embedded parity with REST #508): enable iff a
+                // non-empty `text_query` was supplied. The service above shares the live
+                // full-text index map, so the DocumentExpander runs the BM25 search.
+                document: text_query
+                    .as_ref()
+                    .filter(|t| !t.trim().is_empty())
+                    .map(|t| DocumentFusionSpec {
+                        text_query: t.clone(),
+                        collection: document_collection.clone(),
+                        weight: document_weight.unwrap_or(1.0),
+                        k: None,
+                    }),
             };
             service.graph_fusion_search(params).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {

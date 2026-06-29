@@ -7008,6 +7008,18 @@ pub struct FusionSearchRequest {
     /// Graph contribution grain (default NODES).
     #[prost(enumeration = "FusionGrain", tag = "12")]
     pub grain: i32,
+    /// Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also
+    /// searches the collection's document index and merges BM25 hits by shared `oid` —
+    /// tri-modal (vector + graph + document) fusion. Absent => vector+graph only.
+    #[prost(string, optional, tag = "13")]
+    pub text_query: ::core::option::Option<::prost::alloc::string::String>,
+    /// Collection whose document index to BM25-search (default = `vector_collection`;
+    /// documents co-indexed with the vectors share the record `oid`, so they merge by `oid`).
+    #[prost(string, optional, tag = "14")]
+    pub document_collection: ::core::option::Option<::prost::alloc::string::String>,
+    /// Document modality weight (mirrors `vector_weight` / `graph_weight`; default 1.0).
+    #[prost(float, optional, tag = "15")]
+    pub document_weight: ::core::option::Option<f32>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FusionHit {

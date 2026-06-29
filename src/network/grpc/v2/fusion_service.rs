@@ -24,7 +24,9 @@ use crate::proto::proximadb_v2 as pv2;
 use crate::proto::proximadb_v2::proxima_fusion_service_server::{
     ProximaFusionService, ProximaFusionServiceServer,
 };
-use crate::services::fusion_service::{FusionOidKey, FusionService, GraphFusionParams, GraphGrain};
+use crate::services::fusion_service::{
+    DocumentFusionSpec, FusionOidKey, FusionService, GraphFusionParams, GraphGrain,
+};
 
 /// Defaults shared with the REST handler (`src/network/rest/v2/graphs.rs`).
 const DEFAULT_LIMIT: usize = 10;
@@ -37,19 +39,17 @@ pub struct ProximaFusionServiceImpl {
 }
 
 impl ProximaFusionServiceImpl {
-    /// Build from the concrete vector + graph backing services. The `FusionService`
-    /// port is constructed once here (from the vector + graph services) and shared
-    /// across requests — never per-RPC.
+    /// Build from the concrete vector + graph backing services plus the shared
+    /// full-text index map (TD-138: powers the document modality). The
+    /// `FusionService` port is constructed once here and shared across requests —
+    /// never per-RPC.
     pub fn new(
         vector: Arc<crate::services::VectorOperationsService>,
         graph: Arc<crate::graph::GraphOperationsService>,
+        fulltext_indexes: crate::network::hybrid_search::HybridFullTextIndexMap,
     ) -> Self {
         Self {
-            fusion: Arc::new(FusionService::new(
-                vector,
-                graph,
-                crate::network::hybrid_search::HybridFullTextIndexMap::default(),
-            )),
+            fusion: Arc::new(FusionService::new(vector, graph, fulltext_indexes)),
         }
     }
 
@@ -134,9 +134,19 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
             principal,
             policy,
             oid_key: FusionOidKey::Canonical,
-            // TD-138 document modality is REST-only for now; gRPC document fusion is deferred
-            // (TD-143). `None` ⇒ vector+graph only (no behavior change).
-            document: None,
+            // TD-138 document modality (gRPC parity with REST #508): enable iff a non-empty
+            // `text_query` was supplied. The shared service's DocumentExpander runs the BM25
+            // search; absent/empty ⇒ vector+graph only (unchanged).
+            document: req
+                .text_query
+                .as_ref()
+                .filter(|t| !t.trim().is_empty())
+                .map(|t| DocumentFusionSpec {
+                    text_query: t.clone(),
+                    collection: req.document_collection.clone(),
+                    weight: req.document_weight.unwrap_or(1.0),
+                    k: None,
+                }),
         };
 
         let (items, stats) = self
