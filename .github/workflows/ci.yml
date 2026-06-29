@@ -1339,7 +1339,16 @@ jobs:
             pgwire_select_or_predicate_e2e \
             sql_value_roundtrip; do
             echo "Running $test_name..."
-            cargo test --test "$test_name" -- --test-threads=1
+            # pgwire_fk_referential_actions_e2e also contains the TD-110 S1 recursive-cascade
+            # + concurrency/cycle test (pgwire_cascade_recurses_and_rejects_cycles_depth_and_concurrency),
+            # which needs a multi-pod harness not available in this single-process tier (deferred).
+            # Skip it here so the composite-FK + ON DELETE referential-integrity scenarios run;
+            # the multi-pod tier will run the full file when it lands.
+            if [ "$test_name" = "pgwire_fk_referential_actions_e2e" ]; then
+              cargo test --test "$test_name" -- --test-threads=1 --skip pgwire_cascade_recurses
+            else
+              cargo test --test "$test_name" -- --test-threads=1
+            fi
           done
 
   rust-integration-test-graph:
