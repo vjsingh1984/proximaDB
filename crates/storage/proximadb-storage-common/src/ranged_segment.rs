@@ -541,12 +541,9 @@ mod tests {
         }
     }
 
+    /// Build a PAX segment. The segment index is always v2 (zone-map summaries
+    /// inline) — v1 is retired as a write format (see `pax_block.rs`).
     fn build_segment_bytes(n: usize, dim: usize) -> Vec<u8> {
-        build_segment_bytes_z(n, dim, false)
-    }
-
-    /// Like [`build_segment_bytes`] but `zonemap` selects the v2 zone-map index.
-    fn build_segment_bytes_z(n: usize, dim: usize, zonemap: bool) -> Vec<u8> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("seg.pax");
         let mut w = PaxSegmentWriter::new(
@@ -557,8 +554,7 @@ mod tests {
             0,
             1,
             Some(16 * 1024),
-        )
-        .with_zonemap(zonemap);
+        );
         for i in 0..n {
             let v: Vec<f32> = (0..dim).map(|d| (i * dim + d) as f32 * 0.001).collect();
             w.add_record(&rec(&format!("r{i}"), 1000 + i as i64, v))
@@ -568,11 +564,39 @@ mod tests {
         std::fs::read(&meta.path).unwrap()
     }
 
+    /// Build a **legacy v1** PAX segment (no inline zone-map summaries) to exercise
+    /// the mixed-read-safe legacy path — a v1 segment on disk must still read and
+    /// prune correctly (via per-block footer reads). v1 is write-deprecated; this
+    /// is the only place it is emitted.
+    fn build_segment_bytes_v1(n: usize, dim: usize) -> Vec<u8> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        let mut w = PaxSegmentWriter::new(
+            &path,
+            proximadb_block_format::BlockMode::Pax,
+            proximadb_block_format::BlockCompression::None,
+            "c",
+            0,
+            1,
+            Some(16 * 1024),
+        );
+        for i in 0..n {
+            let v: Vec<f32> = (0..dim).map(|d| (i * dim + d) as f32 * 0.001).collect();
+            w.add_record(&rec(&format!("r{i}"), 1000 + i as i64, v))
+                .unwrap();
+        }
+        let meta = w.finish_v1().unwrap();
+        std::fs::read(&meta.path).unwrap()
+    }
+
     /// End-to-end: filter pushdown + footer cache + correctness on one path.
     /// A selective SELECT-WHERE over a multi-block segment, run twice through a
-    /// shared tenant footer cache, must (1) return exactly the matching rows,
-    /// (2) skip non-matching block bodies (pruning → < whole segment), and
-    /// (3) fetch fewer bytes the second time (footer cache hit).
+    /// shared tenant segment-index cache, must (1) return exactly the matching
+    /// rows, (2) skip non-matching block bodies (pruning → < whole segment), and
+    /// (3) fetch fewer bytes the second time. Under v2 the zone-map summaries live
+    /// inline in the segment index, so pruning touches ZERO per-block footers — the
+    /// cached-read win is the index suffix being served from the index cache, not
+    /// the footer cache (which the v2 prune path never consults).
     #[tokio::test]
     async fn e2e_filtered_pruned_cached_read() {
         use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
@@ -585,7 +609,7 @@ mod tests {
             single_calls: AtomicU64::new(0),
             batched_calls: AtomicU64::new(0),
         };
-        let footer_cache: Arc<FooterCache> = Arc::new(FooterCache::new(
+        let index_cache: Arc<SegmentIndexCache> = Arc::new(SegmentIndexCache::new(
             proximadb_cache::CacheBudget::new(1 << 30, 1 << 30),
         ));
 
@@ -601,13 +625,14 @@ mod tests {
             _ => None,
         };
 
-        // Pass 1 — populates the footer cache, prunes low blocks.
+        // Pass 1 — populates the index cache, prunes low blocks from the inline
+        // zone-map summaries.
         let r1 = RangedSegmentReader::open_with_cache(
             &bridge,
             Path::from("seg.pax"),
             Some("t"),
-            Some(footer_cache.clone()),
             None,
+            Some(index_cache.clone()),
         )
         .await
         .unwrap();
@@ -636,15 +661,15 @@ mod tests {
             after_1 < total,
             "pass 1 {after_1} not < whole segment {total}"
         );
-        footer_cache.sync().await;
+        index_cache.sync().await;
 
-        // Pass 2 — same query, footer cache hot.
+        // Pass 2 — same query, index cache hot (the suffix index read is skipped).
         let r2 = RangedSegmentReader::open_with_cache(
             &bridge,
             Path::from("seg.pax"),
             Some("t"),
-            Some(footer_cache.clone()),
             None,
+            Some(index_cache.clone()),
         )
         .await
         .unwrap();
@@ -654,7 +679,8 @@ mod tests {
             .unwrap();
         let delta_2 = bridge.ranged_bytes.load(Ordering::Relaxed) - after_1;
 
-        // (3) cache: identical results, fewer bytes (footers served from cache).
+        // (3) cache: identical results, fewer bytes (index suffix served from cache;
+        // pass 2 fetches only the surviving block bodies).
         assert_eq!(recs2.len(), recs1.len(), "cached pass must match");
         assert!(
             delta_2 < after_1,
@@ -818,9 +844,11 @@ mod tests {
             _ => None,
         };
 
-        // v1 reference path (per-block footer/col-meta reads to prune).
+        // v1 reference path (per-block footer/col-meta reads to prune) — a legacy
+        // on-disk segment, proving mixed-read-safety after v2 became the only write
+        // format.
         let v1 = InMemoryRangeBridge {
-            bytes: build_segment_bytes(2000, 32),
+            bytes: build_segment_bytes_v1(2000, 32),
             ranged_bytes: AtomicU64::new(0),
             single_calls: AtomicU64::new(0),
             batched_calls: AtomicU64::new(0),
@@ -836,7 +864,7 @@ mod tests {
 
         // v2 zone-map index path (prune from the cached index — no metadata GET).
         let v2 = InMemoryRangeBridge {
-            bytes: build_segment_bytes_z(2000, 32, true),
+            bytes: build_segment_bytes(2000, 32),
             ranged_bytes: AtomicU64::new(0),
             single_calls: AtomicU64::new(0),
             batched_calls: AtomicU64::new(0),
