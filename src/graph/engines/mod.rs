@@ -333,6 +333,13 @@ pub trait GraphEngine: Send + Sync {
     /// Get all nodes
     fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>>;
 
+    /// Get all edges. Default returns empty (mocks / engines that don't persist);
+    /// real engines override it. Used by canonical-store recovery re-population
+    /// (TD-066 Part 2) to re-drive every recovered edge into the canonical store.
+    fn get_all_edges(&self) -> Result<Vec<Arc<Edge>>> {
+        Ok(Vec::new())
+    }
+
     // ===== Performance & Benchmarking Methods =====
 
     /// Get engine performance statistics
@@ -651,6 +658,12 @@ impl GraphEngine for GraphEngineImpl {
     fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.get_all_nodes(),
+        }
+    }
+
+    fn get_all_edges(&self) -> Result<Vec<Arc<Edge>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.get_all_edges(),
         }
     }
 
