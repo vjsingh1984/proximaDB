@@ -44,7 +44,8 @@ print(results)
 [source,python]
 ----
 client.create_document_collection("events")
-client.insert_document("events", {"service": "api", "status": "warn"})
+# insert_document is deprecated (ADR-041); prefer ingest_documents
+client.ingest_documents("events", [{"id": "evt-1", "text": "service=api status=warn"}])
 ----
 
 == Graph Operations (Beta)
