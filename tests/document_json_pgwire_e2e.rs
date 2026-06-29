@@ -37,13 +37,12 @@ use proximadb::database::ProximaDB;
 use tempfile::TempDir;
 use tokio::time::sleep;
 
-/// Queries that must be verified CORRECT (anchored + differential) to count.
-/// 9 of 11 are accurate: d01/d02/d03 (no JSON path), d09 (aggregation), d04/d05/d08
-/// (projections, routing fix #480), d10 (DataFusion `json_extract_path_text` alias
-/// #486), and d07 (native predicate fix, this PR). d06 (cast-path bypass) and d11
-/// (DataFusion `Utf8 = Boolean` coercion) remain known-bad under TD-183; the ratchet
-/// rises as those land.
-const DOC_ACCURACY_RATCHET: usize = 9;
+/// All 11 document queries are verified CORRECT (anchored + differential cross-engine).
+/// The TD-183 saga is closed across ADR-043: routing (#480), DataFusion alias (#486),
+/// fail-loud predicates (Inv 1, #502), typed JSON functions + Json coercion (Inv 3), and
+/// cast unification — the frontend Cast arm + deleting the translator strip (Inv 2, this
+/// PR). Native and DataFusion now agree on every query.
+const DOC_ACCURACY_RATCHET: usize = 11;
 
 fn free_port() -> u16 {
     let l = TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -178,10 +177,12 @@ fn doc_queries() -> Vec<(&'static str, String)> {
 ///     through the same validate/evaluate fix.
 ///   * d11 — DataFusion cannot coerce `Utf8 = Boolean` for `(doc->>'in_stock')::boolean
 ///     = true`; the `::boolean` cast is dropped in lowering.
-const KNOWN_BAD_TD183: &[&str] = &[
-    "d06_filter_json_scalar", // (doc->>'price')::int > 8       filter — cast-path bypass
-    "d11_bool_field",         // (doc->>'in_stock')::boolean    filter — DF cast coercion
-];
+// All 11 document queries are now accurate. d06/d11 were fixed by ADR-043 Invariant 2
+// (the frontend Cast arm + deleting the translator strip list): `::int` now lowers and
+// native `cast_value` String→Int32 computes it; `::boolean` is preserved as a real cast
+// instead of being string-stripped, so the comparison is `cast(... AS Boolean) = true`
+// (no `Utf8 = Boolean` clash).
+const KNOWN_BAD_TD183: &[&str] = &[];
 
 /// One result row as text cells (pgwire `simple_query` form); SQL NULL → "NULL".
 type Rows = Vec<Vec<String>>;
