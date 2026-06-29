@@ -972,9 +972,11 @@ mod tests {
         assert_eq!(split_primary_key_tuple(&one), vec!["7"]);
 
         // An empty String PK-column value is preserved (leading separator).
-        let with_empty =
-            encode_primary_key_tuple(&[ProximaValue::String(String::new()), ProximaValue::Int64(1)])
-                .expect("encode empty-first");
+        let with_empty = encode_primary_key_tuple(&[
+            ProximaValue::String(String::new()),
+            ProximaValue::Int64(1),
+        ])
+        .expect("encode empty-first");
         assert_eq!(with_empty, "\u{1f}1");
         assert_eq!(split_primary_key_tuple(&with_empty), vec!["", "1"]);
     }

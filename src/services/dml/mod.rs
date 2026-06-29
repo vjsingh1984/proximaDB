@@ -4831,6 +4831,14 @@ impl DmlService {
         {
             return Ok(Vec::new());
         }
+        // The fast-path builds single-key `get_by_key` candidates, which is only
+        // sound for a single-column PK. A composite PK would yield a partial
+        // candidate (one column's value) that never matches the encoded oid, so
+        // return empty and let `resolve_matching_ids` use the predicate scan
+        // (which evaluates the full WHERE, incl. every PK column, from props).
+        if Self::primary_key_columns(table_schema).len() != 1 {
+            return Ok(Vec::new());
+        }
         let Some(primary_key_column) = Self::primary_key_column(table_schema) else {
             return Ok(Vec::new());
         };
@@ -9852,6 +9860,131 @@ mod tests {
             ),
             "ON DELETE SET NULL must clear the child FK column, got {:?}",
             child.props.get("customer_id")
+        );
+    }
+
+    /// TD-110 S2: composite (multi-column) FOREIGN KEY — a composite-PK parent
+    /// + composite-FK child; dangling composite tuple is rejected at insert, and
+    /// CASCADE removes the child when the parent (matched on the full tuple) is
+    /// deleted.
+    #[tokio::test]
+    async fn delete_enforces_composite_fk() {
+        use crate::query::table_write_executor::PlannedOnlyTableWriteExecutor;
+        use crate::services::record_store::{DirectWalTableRecordStore, TableRecordGetRequest};
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        for create in [
+            "CREATE TABLE cmpar (region TEXT NOT NULL, pid TEXT NOT NULL, name TEXT, PRIMARY KEY (region, pid));",
+            "CREATE TABLE cmchl_casc (id TEXT NOT NULL, c_region TEXT, c_pid TEXT, PRIMARY KEY (id), FOREIGN KEY (c_region, c_pid) REFERENCES cmpar (region, pid) ON DELETE CASCADE);",
+        ] {
+            let stmt = parser
+                .parse_ddl(create)
+                .expect("parse create")
+                .expect("ddl");
+            ddl.execute(stmt).await.expect("create table");
+        }
+
+        let wal_appender = Arc::new(
+            FramedTableWalAppender::open(temp_dir.path().join("composite_fk.wal"))
+                .await
+                .expect("open WAL"),
+        );
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            wal_appender,
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store.clone(),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let run = |sql: &'static str| parser.parse_dml(sql).expect("parse dml").expect("dml");
+
+        // Sanity: the composite (2-column) ON DELETE CASCADE FK survives into
+        // the catalog.
+        let (catalog, id) = manager.resolve_table("cmchl_casc").await.expect("resolve");
+        let child_table = catalog.get_table(&id).await.expect("schema");
+        assert!(
+            child_table
+                .relational_capabilities
+                .constraints
+                .iter()
+                .any(|c| matches!(
+                    c,
+                    proximadb_catalog::ColumnConstraint::ForeignKey {
+                        columns,
+                        on_delete: Some(proximadb_catalog::ReferentialAction::Cascade),
+                        ..
+                    } if columns.len() == 2
+                )),
+            "composite ON DELETE CASCADE FK must survive into the catalog"
+        );
+
+        dml.execute(run("INSERT INTO cmpar (region, pid, name) VALUES ('us', 'p1', 'Al');"))
+            .await
+            .expect("seed composite parent");
+
+        // Dangling composite tuple is rejected.
+        let err = dml
+            .execute(run(
+                "INSERT INTO cmchl_casc (id, c_region, c_pid) VALUES ('c9', 'xx', 'zz');",
+            ))
+            .await
+            .expect_err("a dangling composite FK tuple must be rejected");
+        assert!(
+            err.to_string().contains("violates reference"),
+            "unexpected error: {err}"
+        );
+
+        // Valid child, then CASCADE on the composite-PK parent removes it.
+        dml.execute(run(
+            "INSERT INTO cmchl_casc (id, c_region, c_pid) VALUES ('c1', 'us', 'p1');",
+        ))
+        .await
+        .expect("seed composite child");
+        let get = |key: &'static str| {
+            let store = record_store.clone();
+            let manager = manager.clone();
+            async move {
+                let (catalog, id) = manager.resolve_table("cmchl_casc").await.expect("resolve");
+                let schema = catalog.get_table(&id).await.expect("schema");
+                store
+                    .get_by_key(
+                        &schema,
+                        TableRecordGetRequest {
+                            table_id: id.name.clone(),
+                            key: key.to_string(),
+                            include_vector: false,
+                            include_props: true,
+                        },
+                        None,
+                    )
+                    .await
+                    .expect("get_by_key")
+            }
+        };
+        assert!(get("c1").await.is_some());
+        dml.execute(run("DELETE FROM cmpar WHERE region = 'us' AND pid = 'p1';"))
+            .await
+            .expect("composite CASCADE delete must succeed");
+        assert!(
+            get("c1").await.is_none(),
+            "composite CASCADE must remove the child row"
         );
     }
 
