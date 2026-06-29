@@ -72,8 +72,6 @@ from typing import (
     runtime_checkable,
 )
 
-from ._deprecations import warn_insert_document_deprecated
-
 # Socket file names MUST match the Rust constants in
 # crates/platform/proximadb-runtime/src/bootstrap_config.rs.
 UDS_REST_SOCKET_NAME = "rest.sock"
@@ -1441,44 +1439,6 @@ prefetch_budget = 4
         async with self._http_client() as client:
             response = await client.post(
                 f"{self.rest_url}/api/v2/document-collections",
-                json=payload,
-                timeout=30.0,
-            )
-            return response.json()
-
-    async def insert_document(
-        self,
-        collection_name: str,
-        document: dict[str, Any],
-        id: str | None = None,
-    ) -> dict[str, Any]:
-        """Insert a document into a collection.
-
-        Args:
-            collection_name: Collection name
-            document: Document data (JSON-serializable dict)
-            id: Optional document ID
-
-        Returns:
-            Insert result with document ID and version
-
-        .. deprecated:: ADR-041 (P3)
-            ``insert_document`` is deprecated and will be removed in a future
-            minor release. Use the (sync) :meth:`~ProximaDBClient.ingest_documents`
-            for document writes; an async ``ingest_documents`` variant is
-            planned. Behavior is unchanged in P3.
-        """
-        warn_insert_document_deprecated(is_async=True, stacklevel=3)
-        if not self._started:
-            await self.start()
-
-        payload = {"document": document}
-        if id:
-            payload["id"] = id
-
-        async with self._http_client() as client:
-            response = await client.post(
-                f"{self.rest_url}/api/v2/document-collections/{collection_name}/documents",
                 json=payload,
                 timeout=30.0,
             )
