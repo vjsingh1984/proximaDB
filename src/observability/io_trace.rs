@@ -421,15 +421,18 @@ pub fn record_bytes_read(bytes: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_bytes_read(bytes));
 }
 
-/// Add to the count of ranged GET requests for the active query. (TD-160:
-/// perf/geometry trace class — compile-time gated; no-op when `io-trace` is off.)
-#[cfg(feature = "io-trace")]
+/// Add to the count of ranged GET requests for the active query.
+///
+/// ADR-030 **core counter — always-on** (deliberately NOT behind `io-trace`,
+/// alongside `record_bytes_read`/`record_compute_ms`): the billing observer drains
+/// `range_gets` to compute `avg_get_size = bytes_read / range_gets`, and the route
+/// cost model prices `per_get`, so this must read real values even when the
+/// perf-emission class is compiled out. It is one task-local atomic increment per
+/// physical GET — the ~free accumulator core, never the cost the `io-trace` gate
+/// exists to remove. Silently no-ops outside an active scope.
 pub fn record_range_gets(gets: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_range_gets(gets));
 }
-#[cfg(not(feature = "io-trace"))]
-#[inline(always)]
-pub fn record_range_gets(_gets: u64) {}
 
 /// Add to bytes written to object storage for the active query.
 pub fn record_bytes_written(bytes: u64) {
