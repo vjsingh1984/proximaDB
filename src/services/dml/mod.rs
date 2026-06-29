@@ -9944,9 +9944,11 @@ mod tests {
             "composite ON DELETE CASCADE FK must survive into the catalog"
         );
 
-        dml.execute(run("INSERT INTO cmpar (region, pid, name) VALUES ('us', 'p1', 'Al');"))
-            .await
-            .expect("seed composite parent");
+        dml.execute(run(
+            "INSERT INTO cmpar (region, pid, name) VALUES ('us', 'p1', 'Al');",
+        ))
+        .await
+        .expect("seed composite parent");
 
         // Dangling composite tuple is rejected.
         let err = dml
