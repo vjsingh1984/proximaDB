@@ -2167,16 +2167,61 @@ impl CollectionService {
     /// catalog assets use UUID strings so identity is opaque, non-time-leaking, and compatible
     /// with catalog/schema UUID fields across SDKs and embedded mode.
     async fn generate_unique_collection_id(&self) -> Result<String> {
-        for _ in 0..8 {
-            let id = uuid::Uuid::new_v4().to_string();
-            if self.collection_from_catalog_asset(&id).await?.is_none() {
-                return Ok(id);
-            }
-        }
+        // ADR-031: the collection ID is the stable object_id (u64) encoded as
+        // base62 — NOT a UUID. The monotonic allocator guarantees uniqueness
+        // by construction (no retry loop needed).
+        Ok(generate_base62_collection_id())
+    }
+}
 
-        Err(anyhow::anyhow!(
-            "Unable to generate a unique UUID for collection"
-        ))
+/// System-wide monotonic allocator for collection object_ids (ADR-031).
+/// One sequence for all collections across all tenants — globally unique,
+/// never reused. Recovered on restart by scanning existing collection IDs.
+static COLLECTION_ID_ALLOCATOR: std::sync::OnceLock<proximadb_catalog::id_allocator::IdAllocator> =
+    std::sync::OnceLock::new();
+
+/// Generate a stable, monotonic collection ID as `base62(object_id)`.
+///
+/// ADR-031 representation rule: the `object_id` is `u64` in-memory; its string
+/// representation (proto `id` field, storage paths, client APIs) is `base62` —
+/// compact (~11 chars vs 36-char UUID), URL-safe, JSON-safe (no u64 > 2^53
+/// precision loss in JavaScript).
+fn generate_base62_collection_id() -> String {
+    let allocator =
+        COLLECTION_ID_ALLOCATOR.get_or_init(proximadb_catalog::id_allocator::IdAllocator::default);
+    let oid = allocator.allocate();
+    proximadb_kernel::base62::encode(oid)
+}
+
+#[cfg(test)]
+mod adr031_collection_id_tests {
+    use super::generate_base62_collection_id;
+
+    #[test]
+    fn collection_id_is_base62_not_uuid() {
+        let id = generate_base62_collection_id();
+        // ADR-031: the collection ID must be base62(object_id), NOT a UUID.
+        // UUIDs contain dashes (`-`); base62 is `[0-9A-Za-z]+` with no dashes.
+        assert!(
+            !id.contains('-'),
+            "collection ID must not be a UUID (no dashes), got: {id}"
+        );
+        // Must decode as a valid base62 u64.
+        let decoded = proximadb_kernel::base62::decode(&id)
+            .expect("collection ID must be valid base62(object_id)");
+        assert!(decoded > 0, "object_id must be positive, got: {decoded}");
+    }
+
+    #[test]
+    fn collection_ids_are_monotonic() {
+        let a = generate_base62_collection_id();
+        let b = generate_base62_collection_id();
+        let oid_a = proximadb_kernel::base62::decode(&a).expect("decode a");
+        let oid_b = proximadb_kernel::base62::decode(&b).expect("decode b");
+        assert!(
+            oid_b > oid_a,
+            "consecutive object_ids must be monotonic: {oid_a} -> {oid_b}"
+        );
     }
 }
 

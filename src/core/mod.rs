@@ -54,6 +54,9 @@ pub mod index;
 /// Metadata query parsing and execution
 pub mod metadata_query;
 
+/// Stable-ID type system + path encoding (ADR-031 completion).
+pub mod stable_id;
+
 /// Core search functionality, filters, and result types
 pub mod search;
 
