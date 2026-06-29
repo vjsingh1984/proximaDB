@@ -107,12 +107,38 @@ pub(crate) const DEFAULT_NAMESPACE_ID: &str = "ns_default";
 ///
 /// If the namespace carries an explicit owning `tenant_id` that differs from the
 /// request `tenant_id`, the materialize is refused (cross-tenant).
+/// ADR-031: master gate for keying the materialized object PATH by the stable
+/// `object_id` instead of the mutable table name (default OFF). Mixed-read-safe
+/// WITHOUT a read fallback: the materialized `location` is persisted per-table in
+/// the catalog storage layout, so tables published before the flip keep their
+/// name-path and tables (re)published after it get the oid-path — each read uses
+/// its own stored location. A re-materialize is a full atomic snapshot, so the
+/// first post-flip publish is complete at the oid-path (the old name-path files
+/// are orphaned, never read). Independent of the WAL/memtable gate (separate
+/// physical layer), mirroring the per-layer catalog gate `PROXIMADB_CATALOG_OBJECT_ID_PATHS`.
+fn materialize_object_id_paths_enabled() -> bool {
+    std::env::var("PROXIMADB_MATERIALIZE_OBJECT_ID_PATHS")
+        .ok()
+        .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "on" | "yes"))
+}
+
+/// The object-path segment for a materialized table: the stable `object_id`
+/// (decimal text) when oid paths are on AND the table carries one, else the bare
+/// name (legacy). Pure (gate passed in) so it unit-tests without the process env.
+fn materialize_path_segment(table: &str, object_id: Option<u64>, oid_paths: bool) -> String {
+    if oid_paths && let Some(oid) = object_id {
+        return oid.to_string();
+    }
+    table.to_string()
+}
+
 pub(crate) fn resolve_materialize_prefix(
     tenant_id: &str,
     namespace_id: &str,
     namespace_tenant_id: Option<&str>,
     storage_pool_class: proximadb_catalog::StoragePoolClass,
     table: &str,
+    table_object_id: Option<u64>,
 ) -> Result<String> {
     if let Some(owner) = namespace_tenant_id
         && owner != tenant_id
@@ -122,8 +148,17 @@ pub(crate) fn resolve_materialize_prefix(
                  tenant is {tenant_id:?} (cross-tenant materialize)"
         ));
     }
+    // The path segment is the stable object_id (gate on + present) or the name. Both
+    // materialize call sites route through here, so the primary snapshot and the
+    // warehouse bulk-append target always agree on the key (a divergence would write
+    // appended rows to a path the published `location` doesn't point at).
+    let segment = materialize_path_segment(
+        table,
+        table_object_id,
+        materialize_object_id_paths_enabled(),
+    );
     let resolved =
-        DrPathBuilder::build_from_parts(tenant_id, namespace_id, table, storage_pool_class)
+        DrPathBuilder::build_from_parts(tenant_id, namespace_id, &segment, storage_pool_class)
             .map_err(|e| anyhow!("refusing materialize: DrPathBuilder rejected path: {e}"))?;
     // root_prefix() carries a trailing '/'; the caller appends `/data/...`.
     Ok(resolved.root_prefix().trim_end_matches('/').to_string())
@@ -1386,6 +1421,7 @@ impl DmlService {
                 .map(|n| n.storage_pool_class)
                 .unwrap_or_default(),
             &schema.name,
+            schema.object_id,
         )?;
 
         // 4. Write the snapshot under `{prefix}/data/` — exactly where the OLAP reader
@@ -2183,6 +2219,15 @@ impl DmlService {
         // and the owning `tenant_id` (cross-tenant assertion). A miss (embedded /
         // single-tenant with no catalog namespace) uses the well-known `ns_default`.
         let ns_meta = catalog.get_namespace(&table_id.namespace).await.ok();
+        // The object_id keys the path in lockstep with the primary materialize so
+        // bulk-appended rows land under the SAME prefix the published `location`
+        // points at (a miss here would orphan them from reads). A catalog lookup
+        // failure falls back to name-keying (Ok-or-None → None object_id).
+        let table_object_id = catalog
+            .get_table(&table_id)
+            .await
+            .ok()
+            .and_then(|schema| schema.object_id);
         let prefix = resolve_materialize_prefix(
             tenant_id,
             ns_meta
@@ -2195,6 +2240,7 @@ impl DmlService {
                 .map(|n| n.storage_pool_class)
                 .unwrap_or_default(),
             &table_id.name,
+            table_object_id,
         )?;
         Ok(Some(prefix))
     }
@@ -5377,7 +5423,7 @@ mod tests {
         use proximadb_catalog::StoragePoolClass;
         let pc = StoragePoolClass::default();
         let resolve =
-            |nsid, owner| resolve_materialize_prefix("tnt_acme", nsid, owner, pc, "orders");
+            |nsid, owner| resolve_materialize_prefix("tnt_acme", nsid, owner, pc, "orders", None);
 
         // The single canonical DrPath layout (a real namespace_id).
         assert_eq!(resolve("ns_1", None).unwrap(), "data/tnt_acme/ns_1/orders");
@@ -5391,9 +5437,29 @@ mod tests {
         assert!(resolve("ns_1", Some("tnt_globex")).is_err());
         // Injection in ANY segment is refused — `build_from_parts` validates the
         // tenant, namespace_id, AND table (the guard the removed manual validator gave).
-        assert!(resolve_materialize_prefix("tnt_acme", "..", None, pc, "orders").is_err());
-        assert!(resolve_materialize_prefix("tnt_acme", "ns_1", None, pc, "bad/name").is_err());
-        assert!(resolve_materialize_prefix("..", "ns_1", None, pc, "orders").is_err());
+        assert!(resolve_materialize_prefix("tnt_acme", "..", None, pc, "orders", None).is_err());
+        assert!(
+            resolve_materialize_prefix("tnt_acme", "ns_1", None, pc, "bad/name", None).is_err()
+        );
+        assert!(resolve_materialize_prefix("..", "ns_1", None, pc, "orders", None).is_err());
+    }
+
+    /// ADR-031: the materialized object-path segment is the stable object_id when oid
+    /// paths are on AND the table carries one, else the bare name — the unit that makes
+    /// a rename a metadata-only op and keeps the path rename-safe. Pure (gate passed
+    /// in), so no process-env coupling.
+    #[test]
+    fn materialize_path_segment_prefers_object_id_when_enabled() {
+        // No object_id → always the name, regardless of the gate.
+        assert_eq!(materialize_path_segment("orders", None, false), "orders");
+        assert_eq!(materialize_path_segment("orders", None, true), "orders");
+        // With an object_id: gate off → name; gate on → the decimal id, never the
+        // mutable name (so RENAME TABLE never orphans the materialized snapshot).
+        assert_eq!(
+            materialize_path_segment("orders", Some(42), false),
+            "orders"
+        );
+        assert_eq!(materialize_path_segment("orders", Some(42), true), "42");
     }
 
     use crate::cluster::partition_lease::{
