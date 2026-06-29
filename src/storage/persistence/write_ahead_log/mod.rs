@@ -2567,13 +2567,27 @@ impl WriteAheadLogManager {
             }
         }
 
-        // Step 5: Sort by score and take top k
-        all_results.sort_by(|a, b| {
+        // Step 5: Sort the LIVE (scored) results by score and take top_k — but
+        // tombstones are suppression markers (score 0.0, `valid_to_ns == Some(0)`),
+        // NOT ranked candidates, so they must be EXEMPT from the ANN top-k cut.
+        // Otherwise (TD-188), once the unflushed live set exceeds the candidate
+        // budget (e.g. N=300 live vs the top_k-scaled candidate count) every
+        // score-0.0 tombstone ranks below the cut and is truncated away before it can
+        // suppress its deleted oid in the downstream MVCC dedup /
+        // `merge_delta_with_directory_results` — so deleted vectors leak back into
+        // results. Partition, truncate only the scored set, then re-append ALL
+        // tombstones unconditionally.
+        let (mut tombstones, mut scored): (Vec<_>, Vec<_>) = all_results
+            .into_iter()
+            .partition(|r| r.valid_to_ns == Some(0));
+        scored.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        all_results.truncate(top_k);
+        scored.truncate(top_k);
+        scored.append(&mut tombstones);
+        all_results = scored;
 
         // Ranks are handled via score field in OptimizedSearchRecord
         // They can be computed by the caller if needed

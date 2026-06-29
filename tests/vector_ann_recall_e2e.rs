@@ -410,29 +410,78 @@ async fn vector_ann_recall_under_deletes_and_compaction() {
     let (mean_b, leaks_b) = recall_and_leaks(&http, &base, &coll, &corpus, &live, &deleted).await;
     eprintln!("=== recall-under-deletes (post-compaction): mean={mean_b:.3}, leaks={leaks_b} ===");
 
-    // KNOWN-BAD (TD-188): at this scale, deleted vectors are NOT suppressed in ANN
-    // search — neither pre-flush (the WAL-delta tombstone merge does not reach the
-    // SST/ANN directory results) nor post-compaction (dead vectors are not dropped
-    // at flush). ~50 of 60 deleted vectors leak into top-k, dragging recall over the
-    // LIVE set to ~0.75. Contrast: the N=5 `release_smoke_v2` delete→search DOES
-    // suppress, so this is scale/flush-path-specific. Pinned known-bad (ADR-040
-    // pattern, cf. TD-185/187) so the fix auto-trips: when deletes are suppressed,
-    // leaks → 0 and these asserts fail → graduate to `assert_eq!(leaks_*, 0)` plus a
-    // recall-over-live floor, and close TD-188.
-    assert!(
-        leaks_a > 0 && leaks_b > 0,
-        "TD-188: deleted vectors are now suppressed in ANN search (pre={leaks_a}, post={leaks_b}) — \
-         the fix landed; graduate this test to assert_eq!(leaks, 0) + recall-over-live floor and close TD-188"
+    // TD-188 Phase A (pre-flush) — deleted vectors must be suppressed at scale.
+    // Fixed by exempting WAL tombstones from the ANN top-k truncation in
+    // `search_unflushed_vectors` (they were ranked at score 0.0 and truncated away
+    // before reaching suppression once #live ≥ candidates).
+    assert_eq!(
+        leaks_a, 0,
+        "pre-flush: {leaks_a} deleted vectors leaked into ANN top-k"
     );
-    // Index wiring sanity that holds regardless of the delete bug: search returns
-    // results and recall vs the FULL corpus is high (the engine still ranks well; it
-    // just fails to drop the dead ones).
-    let full: Vec<(String, Vec<f32>)> = corpus.clone();
-    let (mean_full, _) =
-        recall_and_leaks(&http, &base, &coll, &corpus, &full, &HashSet::new()).await;
     assert!(
-        mean_full >= RECALL_RATCHET,
-        "ANN ranking regressed even ignoring deletes: recall vs full corpus {mean_full:.3} < {RECALL_RATCHET}"
+        mean_a >= RECALL_RATCHET,
+        "pre-flush recall over the live set regressed: {mean_a:.3} < {RECALL_RATCHET}"
     );
-    let _ = (mean_a, mean_b);
+
+    // TD-188 Phase B (post flush/compaction) — deletes survive the flush: the
+    // tombstones flush in the same batch as their live copies, so they reconcile.
+    assert_eq!(
+        leaks_b, 0,
+        "post-compaction: {leaks_b} deleted vectors leaked into ANN top-k"
+    );
+    assert!(
+        mean_b >= RECALL_RATCHET,
+        "post-compaction recall over the live set regressed: {mean_b:.3} < {RECALL_RATCHET}"
+    );
+
+    // Phase C — CROSS-SEGMENT durability: delete a SECOND disjoint subset whose live
+    // copies are already in the flushed SST, then flush AGAIN so the tombstones land
+    // in a *separate* segment from the live copies (no in-batch reconcile). This is
+    // the genuine durable-deletion case the ADR-025 PR4 segment-DV targets.
+    let deleted2: HashSet<String> = (0..N)
+        .filter(|i| i % 7 == 0 && i % 5 != 0)
+        .map(|i| format!("rec-{i}"))
+        .collect();
+    for id in &deleted2 {
+        let resp = http
+            .delete(format!("{base}/api/v2/collections/{coll}/records/{id}"))
+            .send()
+            .await
+            .expect("delete2 send");
+        assert!(
+            resp.status().is_success(),
+            "delete2 {id}: {}",
+            resp.status()
+        );
+    }
+    sleep(Duration::from_millis(750)).await;
+    server
+        .db
+        .as_ref()
+        .expect("db handle")
+        .force_flush_collection(&coll)
+        .await
+        .expect("force flush 2");
+    sleep(Duration::from_millis(750)).await;
+    let mut all_deleted = deleted.clone();
+    all_deleted.extend(deleted2.iter().cloned());
+    let live2: Vec<(String, Vec<f32>)> = corpus
+        .iter()
+        .filter(|(id, _)| !all_deleted.contains(id))
+        .cloned()
+        .collect();
+    let (mean_c, leaks_c) =
+        recall_and_leaks(&http, &base, &coll, &corpus, &live2, &all_deleted).await;
+    eprintln!(
+        "=== recall-under-deletes (cross-segment, delete-after-flush + reflush): mean={mean_c:.3}, leaks={leaks_c} ==="
+    );
+    assert_eq!(
+        leaks_c, 0,
+        "cross-segment: {leaks_c} vectors deleted-after-flush leaked into ANN top-k"
+    );
+    assert!(
+        mean_c >= RECALL_RATCHET,
+        "cross-segment recall over the live set regressed: {mean_c:.3} < {RECALL_RATCHET}"
+    );
+    let _ = (mean_a, mean_b, mean_c);
 }
