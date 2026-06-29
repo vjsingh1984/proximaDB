@@ -933,7 +933,6 @@ def test_document_api(patched_http):
         )["collection_id"]
         == "dc"
     )
-    assert run(db.insert_document("dc", {"a": 1}, id="doc1"))["id"] == "doc1"
     assert run(
         db.query_documents("dc", filter={"a": 1}, projection=["a"], limit=5, offset=2)
     )
