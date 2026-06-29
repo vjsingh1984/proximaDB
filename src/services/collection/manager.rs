@@ -362,6 +362,21 @@ impl CollectionService {
         }
     }
 
+    /// TD-SC-4 (S4): provision a tenant's bare-minimum system-catalog skeleton at
+    /// signup (idempotent). A no-op unless tenant-prefixed namespaces are enabled
+    /// (a single-tenant deployment needs no per-tenant skeleton) and a catalog is
+    /// configured — so it's safe to call unconditionally from any onboarding
+    /// path. Delegates to the catalog-manager-only free function of the same name.
+    pub async fn provision_tenant_system_catalog(&self, tenant: &str) -> Result<()> {
+        if !self.tenant_namespaces_on() {
+            return Ok(());
+        }
+        let Some(catalog_manager) = &self.catalog_manager else {
+            return Ok(());
+        };
+        provision_tenant_system_catalog(catalog_manager, tenant).await
+    }
+
     /// Default corpus-version bucket for writes without a threaded tenant context
     /// (single-tenant / anonymous deployments). Reads of the same
     /// corpus-version-keyed caches use the same bucket, so invalidation stays
@@ -2258,6 +2273,36 @@ async fn read_collections_from_catalog(
     Ok(collections)
 }
 
+/// TD-SC-4 (S4): idempotently pre-create a tenant's bare-minimum system-catalog
+/// skeleton at signup — the tenant's system namespace (`[tenant, "default"]`,
+/// the same tenant-prefixed shape S3a stores collections under), recorded with
+/// its owning `tenant_id`. Pre-creating it means the first collection/list for a
+/// freshly-signed-up tenant doesn't hit a cold/missing namespace.
+///
+/// Idempotent: a re-signup (namespace already present) is a no-op, and a partial
+/// failure is safe to retry (the `namespace_exists` guard converges). Free
+/// function (catalog-manager-only) so it can be called from any onboarding path
+/// without holding the `CollectionService`. **No user tables are created.**
+async fn provision_tenant_system_catalog(
+    catalog_manager: &CatalogManager,
+    tenant: &str,
+) -> Result<()> {
+    if tenant.is_empty() {
+        return Ok(());
+    }
+    let catalog = catalog_manager.default_catalog().await?;
+    // Bare-minimum skeleton: the tenant's default namespace, tenant-prefixed to
+    // match where S3a stores this tenant's collections (no collision with other
+    // tenants' identically-named namespaces).
+    let namespace = vec![tenant.to_string(), "default".to_string()];
+    if !catalog.namespace_exists(&namespace).await? {
+        catalog
+            .create_namespace_for_tenant(&namespace, std::collections::HashMap::new(), Some(tenant))
+            .await?;
+    }
+    Ok(())
+}
+
 /// Hot-cache inner source: reads collection metadata straight from the catalog.
 /// Holds `Arc<CatalogManager>` (not the `CollectionService`), so the cache and the
 /// service do not form an `Arc` cycle.
@@ -2939,6 +2984,92 @@ mod tests {
                 .await
                 .context("bare namespace_exists")?,
             "no bare `shared` namespace ⇒ tenants did not collide on the shared key"
+        );
+
+        Ok(())
+    }
+
+    /// TD-SC-4 (S4): provisioning pre-creates the tenant's system namespace and
+    /// is idempotent — a second call is a no-op, and the namespace records its
+    /// owning tenant.
+    #[tokio::test]
+    async fn provision_tenant_system_catalog_is_idempotent() -> Result<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("temp dir")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("xcatalog")?;
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("service")?
+            .with_catalog_manager(catalog_manager.clone());
+        service.set_tenant_namespaces_for_test(true);
+
+        // Provision twice — the second call must be a safe no-op.
+        service
+            .provision_tenant_system_catalog("acme")
+            .await
+            .context("provision 1")?;
+        service
+            .provision_tenant_system_catalog("acme")
+            .await
+            .context("provision 2 (idempotent)")?;
+
+        let catalog = catalog_manager
+            .default_catalog()
+            .await
+            .context("default catalog")?;
+        let ns = catalog
+            .get_namespace(&["acme".to_string(), "default".to_string()])
+            .await
+            .context("provisioned namespace present")?;
+        assert_eq!(
+            ns.tenant_id.as_deref(),
+            Some("acme"),
+            "provisioned system namespace records its owning tenant"
+        );
+
+        Ok(())
+    }
+
+    /// TD-SC-4 (S4): with tenant namespaces off (single-tenant deployments),
+    /// provisioning is a no-op — no per-tenant skeleton is created.
+    #[tokio::test]
+    async fn provision_tenant_system_catalog_noop_when_gate_off() -> Result<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("temp dir")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("xcatalog")?;
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("service")?
+            .with_catalog_manager(catalog_manager.clone());
+        service.set_tenant_namespaces_for_test(false);
+
+        service
+            .provision_tenant_system_catalog("acme")
+            .await
+            .context("provision (gate off)")?;
+
+        let catalog = catalog_manager
+            .default_catalog()
+            .await
+            .context("default catalog")?;
+        assert!(
+            !catalog
+                .namespace_exists(&["acme".to_string(), "default".to_string()])
+                .await
+                .context("namespace_exists")?,
+            "gate off ⇒ provisioning creates nothing"
         );
 
         Ok(())
