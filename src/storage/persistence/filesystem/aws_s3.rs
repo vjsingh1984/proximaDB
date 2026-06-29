@@ -169,6 +169,10 @@ impl FileSystem for AwsS3FileSystem {
             .get_range(&ObjPath::from(key), offset..(offset + length))
             .await
             .map_err(|e| Self::net("S3 get_range", e))?;
+        // ADR-030 / TD-158: physical GET boundary — feed the per-query I/O accumulator
+        // (task-local; no-op outside a query scope). Always-on core counters.
+        crate::observability::io_trace::record_range_gets(1);
+        crate::observability::io_trace::record_bytes_read(bytes.len() as u64);
         Ok(bytes.to_vec())
     }
 
