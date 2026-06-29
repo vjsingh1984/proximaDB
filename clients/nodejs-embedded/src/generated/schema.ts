@@ -1176,6 +1176,13 @@ export interface components {
             query: string;
         };
         FusionHit: {
+            /**
+             * @description Graph node label(s) of the reached node. Exposed so cross-modal-joint
+             *     consumers can correlate a fused hit by its graph label without a separate
+             *     node lookup (#485). The expansion already reaches the node, so this is
+             *     near-free to fill. Additive + back-compat (empty until populated).
+             */
+            labels?: string[];
             oid: string;
             /** Format: float */
             score: number;

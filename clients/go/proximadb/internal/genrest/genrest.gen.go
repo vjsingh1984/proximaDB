@@ -437,9 +437,14 @@ type ExplainQueryRequest struct {
 
 // FusionHit defines model for FusionHit.
 type FusionHit struct {
-	Oid         string  `json:"oid"`
-	Score       float32 `json:"score"`
-	SourceCount int     `json:"source_count"`
+	// Labels Graph node label(s) of the reached node. Exposed so cross-modal-joint
+	// consumers can correlate a fused hit by its graph label without a separate
+	// node lookup (#485). The expansion already reaches the node, so this is
+	// near-free to fill. Additive + back-compat (empty until populated).
+	Labels      *[]string `json:"labels,omitempty"`
+	Oid         string    `json:"oid"`
+	Score       float32   `json:"score"`
+	SourceCount int       `json:"source_count"`
 }
 
 // FusionSearchRequest defines model for FusionSearchRequest.

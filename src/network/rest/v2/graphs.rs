@@ -66,6 +66,12 @@ pub struct FusionHit {
     pub oid: String,
     pub score: f32,
     pub source_count: usize,
+    /// Graph node label(s) of the reached node. Exposed so cross-modal-joint
+    /// consumers can correlate a fused hit by its graph label without a separate
+    /// node lookup (#485). The expansion already reaches the node, so this is
+    /// near-free to fill. Additive + back-compat (empty until populated).
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -186,18 +192,25 @@ pub async fn fusion_search_v2(
         oid_key: FusionOidKey::Canonical,
     };
 
-    let (items, stats) = service
-        .graph_fusion_search(params)
+    let (items, stats, node_labels) = service
+        .graph_fusion_search_with_labels(params)
         .await
         .map_err(|error| ApiError::Internal(format!("fusion search failed: {error}")))?;
 
     Ok(Json(FusionSearchResponse {
         results: items
             .into_iter()
-            .map(|item| FusionHit {
-                oid: item.oid,
-                score: item.score,
-                source_count: item.source_count,
+            .map(|item| {
+                // #485: the reached node's graph label(s), joined post-fuse by the fusion service
+                // (FusedItem stays modality-pure), so cross-modal-joint consumers read the label
+                // per fused hit without a separate node lookup. Empty for vector-only/edge hits.
+                let labels = node_labels.get(&item.oid).cloned().unwrap_or_default();
+                FusionHit {
+                    oid: item.oid,
+                    score: item.score,
+                    source_count: item.source_count,
+                    labels,
+                }
             })
             .collect(),
         stats: stats.into(),
