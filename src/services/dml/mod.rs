@@ -42,6 +42,7 @@ use proximadb_catalog::{
     CatalogColumn, CatalogStorageLayout, CatalogTableSchema, CatalogTableStatistics,
     relational::{
         CatalogRow, RelationalMutationKind, RelationalRecordOptions, RelationalWriteProfile,
+        encode_primary_key_tuple, split_primary_key_tuple,
     },
 };
 use proximadb_data_model::ProximaType;
@@ -68,7 +69,7 @@ use crate::services::record_store::{
     CatalogRoutingTableRecordStore, DirectWalTableRecordStore, ObjectStoreIcebergRecordStore,
     ObjectStoreVectorRecordStore, TableRecordGetRequest, TableRecordMutation,
     TableRecordMutationKind, TableRecordScanRequest, TableRecordStore, VectorOpsTableRecordStore,
-    proxima_value_to_unique_text, record_unique_tuple,
+    proxima_value_to_unique_text,
 };
 use crate::services::{
     WriteDurabilityRequirement, WriteIntent, WriteLane, WriteLaneDecision, WriteLaneRouter,
@@ -3742,26 +3743,39 @@ impl DmlService {
     }
 
     /// Build a canonical tombstone record for a primary-key-targeted DELETE.
+    /// Composite-PK aware (TD-110 S2): the `key_value` is the
+    /// `\u{1f}`-joined encoded PK tuple; it is split into per-column values and
+    /// each is parsed by the type-aware `primary_key_string_to_proxima_value`.
     fn build_delete_tombstone_record(
         key_value: &str,
         table_schema: &CatalogTableSchema,
         now_ns: i64,
     ) -> Result<ProximaRecord> {
-        let primary_key_column = Self::primary_key_column(table_schema).ok_or_else(|| {
-            anyhow!(
-                "Table '{}' has no single-column primary key/id column for DELETE",
+        let primary_key_columns = Self::primary_key_columns(table_schema);
+        if primary_key_columns.is_empty() {
+            return Err(anyhow!(
+                "Table '{}' has no primary key/id column for DELETE",
                 table_schema.name
-            )
-        })?;
-        let key_proxima_value = Self::primary_key_string_to_proxima_value(
-            &primary_key_column,
-            key_value,
-            table_schema,
-        )?;
-        let catalog_row = CatalogRow::validate_primary_key(
-            table_schema,
-            HashMap::from([(primary_key_column, key_proxima_value)]),
-        )?;
+            ));
+        }
+        let parts = split_primary_key_tuple(key_value);
+        if parts.len() != primary_key_columns.len() {
+            return Err(anyhow!(
+                "DELETE key '{}' for table '{}' decoded to {} part(s) but its primary key \
+                 ({}) has {} column(s)",
+                key_value,
+                table_schema.name,
+                parts.len(),
+                primary_key_columns.join(", "),
+                primary_key_columns.len()
+            ));
+        }
+        let mut key_values = HashMap::with_capacity(primary_key_columns.len());
+        for (column, part) in primary_key_columns.iter().zip(parts.iter()) {
+            let value = Self::primary_key_string_to_proxima_value(column, part, table_schema)?;
+            key_values.insert(column.clone(), value);
+        }
+        let catalog_row = CatalogRow::validate_primary_key(table_schema, key_values)?;
 
         catalog_row.to_mutation_record(
             table_schema,
@@ -4024,6 +4038,13 @@ impl DmlService {
         crate::services::record_store::schema_primary_key_column(table_schema)
     }
 
+    /// TD-110 S2: all primary-key columns (composite-aware), in catalog order.
+    /// Used by the composite-FK "references parent PK" check and the composite-PK
+    /// tombstone decode. Shared with the record-store layer for parity.
+    fn primary_key_columns(table_schema: &CatalogTableSchema) -> Vec<String> {
+        crate::services::record_store::schema_primary_key_columns(table_schema)
+    }
+
     /// TD-110: the column sets that carry a UNIQUE guarantee — cataloged unique
     /// indexes plus inline `UNIQUE (...)` column constraints. Delegates to the
     /// shared store-layer helper so DmlService candidates and the store's index
@@ -4158,11 +4179,12 @@ impl DmlService {
         Ok(guards)
     }
 
-    /// TD-110: the same-namespace/tenant child tables whose single-column FK
-    /// references `parent_id`'s primary key, with the FK column and action.
-    /// Factored out of the per-child block so both the discovery pass and the
+    /// TD-110: the same-namespace/tenant child tables whose (single- or
+    /// multi-column) FK references `parent_id`'s full primary key, with the FK
+    /// columns and action. Factored out so both the discovery pass and the
     /// recursive worker share one copy of the FK-matching logic. Self-references
-    /// and composite FKs are excluded (out of scope).
+    /// are excluded; only FKs that reference the parent's FULL PK (in order) are
+    /// returned — partial / non-PK references remain unsupported (S2 scope).
     async fn child_tables_referencing(
         &self,
         catalog: &Arc<dyn crate::catalog::Catalog>,
@@ -4173,13 +4195,14 @@ impl DmlService {
         Vec<(
             crate::catalog::TableIdentifier,
             CatalogTableSchema,
-            String,
+            Vec<String>,
             Option<proximadb_catalog::ReferentialAction>,
         )>,
     > {
-        let Some(parent_pk) = Self::primary_key_column(parent_schema) else {
+        let parent_pk_cols = Self::primary_key_columns(parent_schema);
+        if parent_pk_cols.is_empty() {
             return Ok(Vec::new());
-        };
+        }
         let sibling_ids = catalog.list_tables(&parent_id.namespace).await?;
         let mut out = Vec::new();
         for child_id in sibling_ids {
@@ -4198,8 +4221,8 @@ impl DmlService {
                 else {
                     continue;
                 };
-                if columns.len() != 1 || references_columns.len() != 1 {
-                    continue; // Composite FK: unsupported shape, skip.
+                if columns.len() != references_columns.len() {
+                    continue; // Malformed FK (mismatched arities): skip.
                 }
                 // Does this FK reference `parent_id`? Resolve under the SAME
                 // tenant scope so cross-tenant FKs never match.
@@ -4218,13 +4241,15 @@ impl DmlService {
                 {
                     continue;
                 }
-                if references_columns[0] != parent_pk {
-                    continue; // Only parent-PK references are enforced.
+                // Only FKs referencing the parent's FULL primary key (in order)
+                // are enforced; partial / non-PK references are not (S2 scope).
+                if references_columns.as_slice() != parent_pk_cols.as_slice() {
+                    continue;
                 }
                 out.push((
                     child_id.clone(),
                     child_schema.clone(),
-                    columns[0].clone(),
+                    columns.clone(),
                     *on_delete,
                 ));
             }
@@ -4379,26 +4404,33 @@ impl DmlService {
         let deleted: std::collections::HashSet<&str> =
             deleted_keys.iter().map(String::as_str).collect();
 
-        for (child_id, child_schema, fk_column, on_delete) in self
+        for (child_id, child_schema, fk_columns, on_delete) in self
             .child_tables_referencing(catalog, table_id, table_schema, tenant_context)
             .await?
         {
-            let child_pk = Self::primary_key_column(&child_schema);
-            // Find child rows referencing any deleted key.
-            let child_pk_for_pred = child_pk.clone();
-            let fk_for_pred = fk_column.clone();
+            // Find child rows referencing any deleted parent key (tuple). The FK
+            // columns' typed values are extracted from the record and encoded
+            // with the SAME encoder that built the deleted parent oids
+            // (`encode_primary_key_tuple` / `stable_value_string`), so a probe
+            // always matches the oid exactly — for both single- and multi-column
+            // FKs. MATCH SIMPLE: any NULL/absent/non-scalar FK column → exempt.
+            let fk_for_pred = fk_columns.clone();
             let deleted_ref = &deleted;
             let pred = move |record: &ProximaRecord| {
-                match record_unique_tuple(
-                    record,
-                    std::slice::from_ref(&fk_for_pred),
-                    child_pk_for_pred.as_deref(),
-                ) {
-                    Some(values) => values
-                        .first()
-                        .map(|value| deleted_ref.contains(value.as_str()))
-                        .unwrap_or(false),
-                    None => false, // NULL/absent FK never references a parent.
+                let mut values: Vec<ProximaValue> = Vec::with_capacity(fk_for_pred.len());
+                for col in &fk_for_pred {
+                    match record.props.get(col) {
+                        Some(ProximaTreeNode::Value(value))
+                            if !matches!(value, ProximaValue::Null) =>
+                        {
+                            values.push(value.clone());
+                        }
+                        _ => return false, // NULL/absent/non-scalar FK → MATCH SIMPLE exempt.
+                    }
+                }
+                match encode_primary_key_tuple(&values) {
+                    Ok(encoded) => deleted_ref.contains(encoded.as_str()),
+                    Err(_) => false,
                 }
             };
             let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> = Some(&pred);
@@ -4428,7 +4460,7 @@ impl DmlService {
                     return Err(anyhow!(
                         "DELETE on table '{}' violates FOREIGN KEY ({}) on table '{}': {} referencing row(s) remain (ON DELETE NO ACTION)",
                         table_id.name,
-                        fk_column,
+                        fk_columns.join(", "),
                         child_id.name,
                         referencing.len()
                     ));
@@ -4490,10 +4522,12 @@ impl DmlService {
                 Some(proximadb_catalog::ReferentialAction::SetNull) => {
                     let mut updated = Vec::with_capacity(referencing.len());
                     for mut record in referencing {
-                        record.props.insert(
-                            fk_column.clone(),
-                            ProximaTreeNode::Value(ProximaValue::Null),
-                        );
+                        // Null ALL FK columns (standard SET NULL on a composite FK).
+                        for fk_col in &fk_columns {
+                            record
+                                .props
+                                .insert(fk_col.clone(), ProximaTreeNode::Value(ProximaValue::Null));
+                        }
                         updated.push(record);
                     }
                     let mutations = updated
@@ -4518,7 +4552,7 @@ impl DmlService {
                     return Err(anyhow!(
                         "ON DELETE SET DEFAULT on table '{}' (FOREIGN KEY {}) is not supported",
                         child_id.name,
-                        fk_column
+                        fk_columns.join(", ")
                     ));
                 }
             }
@@ -4528,18 +4562,17 @@ impl DmlService {
 
     /// TD-110: enforce FOREIGN KEY references for `records` against parent tables
     /// in the same partition (cross-table state the row-local catalog validator
-    /// cannot check). Supported shape: a single-column FK referencing the parent
-    /// PRIMARY KEY — verified by a point `get_by_key` on the parent. NULL FK
-    /// values are exempt. Unsupported shapes (composite FK, or a referenced
-    /// column that is not the parent PK) are cleanly rejected rather than
-    /// silently accepted.
+    /// cannot check). Supported shape (S2): a single- or multi-column FK
+    /// referencing the parent's FULL primary key (in order) — verified by a point
+    /// `get_by_key` on the parent using the encoded PK tuple. MATCH SIMPLE: any
+    /// NULL/absent FK column exempts the row. Partial / non-PK-referencing FKs
+    /// are cleanly rejected rather than silently accepted.
     async fn enforce_foreign_keys(
         &self,
         table_schema: &CatalogTableSchema,
         records: &[ProximaRecord],
         tenant_context: Option<&TenantContext>,
     ) -> Result<()> {
-        let child_primary_key = Self::primary_key_column(table_schema);
         for constraint in &table_schema.relational_capabilities.constraints {
             let proximadb_catalog::ColumnConstraint::ForeignKey {
                 columns,
@@ -4550,15 +4583,16 @@ impl DmlService {
             else {
                 continue;
             };
-            if columns.len() != 1 || references_columns.len() != 1 {
+            if columns.len() != references_columns.len() {
                 return Err(anyhow!(
-                    "composite FOREIGN KEY ({}) on table '{}' is not supported yet",
+                    "FOREIGN KEY ({}) on table '{}' has mismatched column counts ({} local vs {} referenced)",
                     columns.join(", "),
-                    table_schema.name
+                    table_schema.name,
+                    columns.len(),
+                    references_columns.len()
                 ));
             }
-            let fk_column = &columns[0];
-            let referenced_column = &references_columns[0];
+            let fk_columns = columns;
 
             let (parent_catalog, parent_table_id) = self
                 .catalog_manager
@@ -4567,39 +4601,61 @@ impl DmlService {
                 .map_err(|err| {
                     anyhow!(
                         "FOREIGN KEY ({}) on table '{}' references table '{}' which cannot be resolved: {err}",
-                        fk_column, table_schema.name, references_table
+                        fk_columns.join(", "),
+                        table_schema.name,
+                        references_table
                     )
                 })?;
             if !parent_catalog.table_exists(&parent_table_id).await? {
                 return Err(anyhow!(
                     "FOREIGN KEY ({}) on table '{}' references missing table '{}'",
-                    fk_column,
+                    fk_columns.join(", "),
                     table_schema.name,
                     references_table
                 ));
             }
             let parent_schema = parent_catalog.get_table(&parent_table_id).await?;
-            if Self::primary_key_column(&parent_schema).as_deref()
-                != Some(referenced_column.as_str())
+            let parent_pk_cols = Self::primary_key_columns(&parent_schema);
+            // Only FKs referencing the parent's FULL primary key (in order) are
+            // enforced — partial / non-PK references are not (S2 scope).
+            if parent_pk_cols.is_empty()
+                || references_columns.as_slice() != parent_pk_cols.as_slice()
             {
                 return Err(anyhow!(
-                    "FOREIGN KEY ({}) REFERENCES {}({}) on table '{}' is only supported when it references the parent primary key",
-                    fk_column,
+                    "FOREIGN KEY ({}) REFERENCES {}({}) on table '{}' is only supported when it references the parent primary key ({}) in full, in order",
+                    fk_columns.join(", "),
                     references_table,
-                    referenced_column,
-                    table_schema.name
+                    references_columns.join(", "),
+                    table_schema.name,
+                    parent_pk_cols.join(", ")
                 ));
             }
 
             for record in records {
-                let Some(values) = record_unique_tuple(
-                    record,
-                    std::slice::from_ref(fk_column),
-                    child_primary_key.as_deref(),
-                ) else {
-                    continue; // NULL/absent FK → no reference required
-                };
-                let key = values.into_iter().next().unwrap_or_default();
+                // Extract the FK columns' typed values. MATCH SIMPLE: any NULL,
+                // absent, or non-scalar FK column → exempt (no reference required).
+                let mut values: Vec<ProximaValue> = Vec::with_capacity(fk_columns.len());
+                let mut exempt = false;
+                for col in fk_columns {
+                    match record.props.get(col) {
+                        Some(ProximaTreeNode::Value(value))
+                            if !matches!(value, ProximaValue::Null) =>
+                        {
+                            values.push(value.clone());
+                        }
+                        _ => {
+                            // NULL / absent / non-scalar FK column → MATCH SIMPLE exempt.
+                            exempt = true;
+                            break;
+                        }
+                    }
+                }
+                if exempt {
+                    continue;
+                }
+                // Encode with the same encoder that built the parent oids so the
+                // point lookup matches exactly (single- or multi-column).
+                let key = encode_primary_key_tuple(&values)?;
                 let referenced_exists = self
                     .record_store
                     .get_by_key(
@@ -4617,11 +4673,11 @@ impl DmlService {
                 if !referenced_exists {
                     return Err(anyhow!(
                         "FOREIGN KEY ({}) on table '{}' violates reference: '{}' is not present in {}({})",
-                        fk_column,
+                        fk_columns.join(", "),
                         table_schema.name,
                         key,
                         references_table,
-                        referenced_column
+                        references_columns.join(", ")
                     ));
                 }
             }
@@ -4782,6 +4838,14 @@ impl DmlService {
         // top-level candidate below → also scans.
         if matches!(where_clause.operator, LogicalOperator::Or) && where_clause.conditions.len() > 1
         {
+            return Ok(Vec::new());
+        }
+        // The fast-path builds single-key `get_by_key` candidates, which is only
+        // sound for a single-column PK. A composite PK would yield a partial
+        // candidate (one column's value) that never matches the encoded oid, so
+        // return empty and let `resolve_matching_ids` use the predicate scan
+        // (which evaluates the full WHERE, incl. every PK column, from props).
+        if Self::primary_key_columns(table_schema).len() != 1 {
             return Ok(Vec::new());
         }
         let Some(primary_key_column) = Self::primary_key_column(table_schema) else {
@@ -9805,6 +9869,133 @@ mod tests {
             ),
             "ON DELETE SET NULL must clear the child FK column, got {:?}",
             child.props.get("customer_id")
+        );
+    }
+
+    /// TD-110 S2: composite (multi-column) FOREIGN KEY — a composite-PK parent
+    /// + composite-FK child; dangling composite tuple is rejected at insert, and
+    /// CASCADE removes the child when the parent (matched on the full tuple) is
+    /// deleted.
+    #[tokio::test]
+    async fn delete_enforces_composite_fk() {
+        use crate::query::table_write_executor::PlannedOnlyTableWriteExecutor;
+        use crate::services::record_store::{DirectWalTableRecordStore, TableRecordGetRequest};
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        for create in [
+            "CREATE TABLE cmpar (region TEXT NOT NULL, pid TEXT NOT NULL, name TEXT, PRIMARY KEY (region, pid));",
+            "CREATE TABLE cmchl_casc (id TEXT NOT NULL, c_region TEXT, c_pid TEXT, PRIMARY KEY (id), FOREIGN KEY (c_region, c_pid) REFERENCES cmpar (region, pid) ON DELETE CASCADE);",
+        ] {
+            let stmt = parser
+                .parse_ddl(create)
+                .expect("parse create")
+                .expect("ddl");
+            ddl.execute(stmt).await.expect("create table");
+        }
+
+        let wal_appender = Arc::new(
+            FramedTableWalAppender::open(temp_dir.path().join("composite_fk.wal"))
+                .await
+                .expect("open WAL"),
+        );
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            wal_appender,
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store.clone(),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let run = |sql: &'static str| parser.parse_dml(sql).expect("parse dml").expect("dml");
+
+        // Sanity: the composite (2-column) ON DELETE CASCADE FK survives into
+        // the catalog.
+        let (catalog, id) = manager.resolve_table("cmchl_casc").await.expect("resolve");
+        let child_table = catalog.get_table(&id).await.expect("schema");
+        assert!(
+            child_table
+                .relational_capabilities
+                .constraints
+                .iter()
+                .any(|c| matches!(
+                    c,
+                    proximadb_catalog::ColumnConstraint::ForeignKey {
+                        columns,
+                        on_delete: Some(proximadb_catalog::ReferentialAction::Cascade),
+                        ..
+                    } if columns.len() == 2
+                )),
+            "composite ON DELETE CASCADE FK must survive into the catalog"
+        );
+
+        dml.execute(run(
+            "INSERT INTO cmpar (region, pid, name) VALUES ('us', 'p1', 'Al');",
+        ))
+        .await
+        .expect("seed composite parent");
+
+        // Dangling composite tuple is rejected.
+        let err = dml
+            .execute(run(
+                "INSERT INTO cmchl_casc (id, c_region, c_pid) VALUES ('c9', 'xx', 'zz');",
+            ))
+            .await
+            .expect_err("a dangling composite FK tuple must be rejected");
+        assert!(
+            err.to_string().contains("violates reference"),
+            "unexpected error: {err}"
+        );
+
+        // Valid child, then CASCADE on the composite-PK parent removes it.
+        dml.execute(run(
+            "INSERT INTO cmchl_casc (id, c_region, c_pid) VALUES ('c1', 'us', 'p1');",
+        ))
+        .await
+        .expect("seed composite child");
+        let get = |key: &'static str| {
+            let store = record_store.clone();
+            let manager = manager.clone();
+            async move {
+                let (catalog, id) = manager.resolve_table("cmchl_casc").await.expect("resolve");
+                let schema = catalog.get_table(&id).await.expect("schema");
+                store
+                    .get_by_key(
+                        &schema,
+                        TableRecordGetRequest {
+                            table_id: id.name.clone(),
+                            key: key.to_string(),
+                            include_vector: false,
+                            include_props: true,
+                        },
+                        None,
+                    )
+                    .await
+                    .expect("get_by_key")
+            }
+        };
+        assert!(get("c1").await.is_some());
+        dml.execute(run("DELETE FROM cmpar WHERE region = 'us' AND pid = 'p1';"))
+            .await
+            .expect("composite CASCADE delete must succeed");
+        assert!(
+            get("c1").await.is_none(),
+            "composite CASCADE must remove the child row"
         );
     }
 

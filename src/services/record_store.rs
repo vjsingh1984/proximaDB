@@ -837,6 +837,20 @@ pub(crate) fn schema_primary_key_column(table_schema: &CatalogTableSchema) -> Op
     })
 }
 
+/// All primary-key columns (composite-aware) — the `Vec` form of
+/// [`schema_primary_key_column`]. Declared multi-column PKs are returned in
+/// catalog order; otherwise the single id/record_id fallback is used. Shared so
+/// the DML FK-existence/cascade paths and this store agree on the parent PK.
+pub(crate) fn schema_primary_key_columns(table_schema: &CatalogTableSchema) -> Vec<String> {
+    if !table_schema.primary_key.is_empty() {
+        table_schema.primary_key.clone()
+    } else {
+        schema_primary_key_column(table_schema)
+            .into_iter()
+            .collect()
+    }
+}
+
 /// Index-eligible scalar column types for an OLTP secondary (hash-equality)
 /// index. Floats/decimals are excluded — equality on a float is semantically
 /// fragile and `f32`/`f64` shortest-round-trip text can diverge for the same

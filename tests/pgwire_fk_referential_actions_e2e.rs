@@ -633,3 +633,202 @@ async fn pgwire_cascade_recurses_and_rejects_cycles_depth_and_concurrency() {
         }
     }
 }
+
+/// TD-110 S2: composite (multi-column) FOREIGN KEY enforcement over pgwire —
+/// RESTRICT / CASCADE / SET NULL on a composite-PK parent, plus MATCH-SIMPLE
+/// NULL-exempt inserts and dangling-tuple rejection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pgwire_enforces_composite_fk_referential_actions() {
+    let server = PgwireTestServer::start().await.expect("server start");
+    let (client, connection) =
+        tokio_postgres::connect(&server.pg_connection_string(), tokio_postgres::NoTls)
+            .await
+            .expect("connect");
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("pgwire connection error: {e}");
+        }
+    });
+
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let parent = format!("cmpar_{suffix}");
+    // Composite-PK parent: PRIMARY KEY (region, pid).
+    client
+        .simple_query(&format!(
+            "CREATE TABLE {parent} (region VARCHAR NOT NULL, pid VARCHAR NOT NULL, name VARCHAR, \
+             PRIMARY KEY (region, pid))"
+        ))
+        .await
+        .expect("CREATE composite parent");
+    client
+        .simple_query(&format!(
+            "INSERT INTO {parent} (region, pid, name) VALUES \
+             ('us', 'p1', 'Al'), ('eu', 'p2', 'Bo'), ('ap', 'p3', 'Cy')"
+        ))
+        .await
+        .expect("INSERT composite parents");
+
+    // ---- RESTRICT (default NO ACTION): deleting a referenced composite-PK row is rejected. ----
+    {
+        let child = format!("cmchl_restr_{suffix}");
+        client
+            .simple_query(&format!(
+                "CREATE TABLE {child} (id VARCHAR PRIMARY KEY, c_region VARCHAR, c_pid VARCHAR, \
+                 FOREIGN KEY (c_region, c_pid) REFERENCES {parent} (region, pid))"
+            ))
+            .await
+            .expect("CREATE restrict child");
+        client
+            .simple_query(&format!(
+                "INSERT INTO {child} (id, c_region, c_pid) VALUES ('r1', 'us', 'p1')"
+            ))
+            .await
+            .expect("INSERT restrict child");
+        sleep(Duration::from_millis(300)).await;
+
+        let _ = client
+            .simple_query(&format!(
+                "DELETE FROM {parent} WHERE region = 'us' AND pid = 'p1'"
+            ))
+            .await
+            .expect_err("ON DELETE NO ACTION must reject deleting a composite-PK parent");
+
+        let parent_rows = client
+            .simple_query(&format!("SELECT COUNT(*) AS n FROM {parent}"))
+            .await
+            .expect("COUNT composite parent (restrict)");
+        assert_eq!(
+            count_star(&parent_rows),
+            3,
+            "composite parent must survive a rejected DELETE"
+        );
+        let child_rows = client
+            .simple_query(&format!("SELECT COUNT(*) AS n FROM {child}"))
+            .await
+            .expect("COUNT restrict child");
+        assert_eq!(count_star(&child_rows), 1, "restrict child must survive");
+    }
+
+    // ---- CASCADE: deleting the parent removes the referencing composite-FK child. ----
+    {
+        let child = format!("cmchl_casc_{suffix}");
+        client
+            .simple_query(&format!(
+                "CREATE TABLE {child} (id VARCHAR PRIMARY KEY, c_region VARCHAR, c_pid VARCHAR, \
+                 FOREIGN KEY (c_region, c_pid) REFERENCES {parent} (region, pid) ON DELETE CASCADE)"
+            ))
+            .await
+            .expect("CREATE cascade child");
+        client
+            .simple_query(&format!(
+                "INSERT INTO {child} (id, c_region, c_pid) VALUES ('c2', 'eu', 'p2')"
+            ))
+            .await
+            .expect("INSERT cascade child");
+        sleep(Duration::from_millis(300)).await;
+
+        client
+            .simple_query(&format!(
+                "DELETE FROM {parent} WHERE region = 'eu' AND pid = 'p2'"
+            ))
+            .await
+            .expect("composite CASCADE delete must succeed");
+
+        let child_rows = client
+            .simple_query(&format!("SELECT COUNT(*) AS n FROM {child}"))
+            .await
+            .expect("COUNT cascade child");
+        assert_eq!(
+            count_star(&child_rows),
+            0,
+            "composite CASCADE must remove the child"
+        );
+    }
+
+    // ---- SET NULL: deleting the parent nulls BOTH FK columns on the child. ----
+    {
+        let child = format!("cmchl_null_{suffix}");
+        client
+            .simple_query(&format!(
+                "CREATE TABLE {child} (id VARCHAR PRIMARY KEY, c_region VARCHAR, c_pid VARCHAR, \
+                 FOREIGN KEY (c_region, c_pid) REFERENCES {parent} (region, pid) ON DELETE SET NULL)"
+            ))
+            .await
+            .expect("CREATE set-null child");
+        client
+            .simple_query(&format!(
+                "INSERT INTO {child} (id, c_region, c_pid) VALUES ('s3', 'ap', 'p3')"
+            ))
+            .await
+            .expect("INSERT set-null child");
+        sleep(Duration::from_millis(300)).await;
+
+        client
+            .simple_query(&format!(
+                "DELETE FROM {parent} WHERE region = 'ap' AND pid = 'p3'"
+            ))
+            .await
+            .expect("composite SET NULL delete must succeed");
+
+        let child_rows = client
+            .simple_query(&format!("SELECT id, c_region, c_pid FROM {child}"))
+            .await
+            .expect("SELECT set-null child");
+        assert_eq!(
+            col_set(&child_rows, "id"),
+            ["s3".to_string()].into_iter().collect::<BTreeSet<_>>(),
+            "composite SET NULL must keep the child row"
+        );
+        // Both FK columns cleared.
+        assert_eq!(
+            scalar(&child_rows, "c_region"),
+            None,
+            "c_region must be NULL after SET NULL"
+        );
+        assert_eq!(
+            scalar(&child_rows, "c_pid"),
+            None,
+            "c_pid must be NULL after SET NULL"
+        );
+    }
+
+    // ---- MATCH SIMPLE: a NULL FK column exempts the row (insert succeeds with no parent). ----
+    {
+        let child = format!("cmchl_nullfk_{suffix}");
+        client
+            .simple_query(&format!(
+                "CREATE TABLE {child} (id VARCHAR PRIMARY KEY, c_region VARCHAR, c_pid VARCHAR, \
+                 FOREIGN KEY (c_region, c_pid) REFERENCES {parent} (region, pid))"
+            ))
+            .await
+            .expect("CREATE match-simple child");
+        // Either FK column NULL → exempt → no parent required.
+        client
+            .simple_query(&format!(
+                "INSERT INTO {child} (id, c_region, c_pid) VALUES ('n1', NULL, 'p1')"
+            ))
+            .await
+            .expect("MATCH SIMPLE: a NULL FK column exempts the row");
+    }
+
+    // ---- Dangling composite tuple: referencing a non-existent parent is rejected. ----
+    {
+        let child = format!("cmchl_dangling_{suffix}");
+        client
+            .simple_query(&format!(
+                "CREATE TABLE {child} (id VARCHAR PRIMARY KEY, c_region VARCHAR, c_pid VARCHAR, \
+                 FOREIGN KEY (c_region, c_pid) REFERENCES {parent} (region, pid))"
+            ))
+            .await
+            .expect("CREATE dangling child");
+        let _ = client
+            .simple_query(&format!(
+                "INSERT INTO {child} (id, c_region, c_pid) VALUES ('d1', 'xx', 'zz')"
+            ))
+            .await
+            .expect_err("a dangling composite FK tuple must be rejected");
+    }
+}
