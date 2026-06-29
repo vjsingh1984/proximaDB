@@ -337,3 +337,94 @@ async fn graph_ldbc_pgwire_conformance() {
         "g10 (TD-185): recursive-CTE reachability now returns rows — fix landed; update g10 to assert == vec![6] and close TD-185"
     );
 }
+
+/// ADR-025 / ADR-040 P2 (TD-182): graph DELETION-VECTOR accuracy — the gap the audit
+/// flagged HIGH (no coverage today). A graph edge table with a single-column PK (so
+/// the ADR-025 cold-path read-merge is eligible) is materialized, then edges are
+/// DELETEd / INSERTed after the snapshot; a JOIN + GROUP BY out-degree traversal
+/// (which routes to the DataFusion OLAP engine, where the merge lives) must reflect
+/// the *merged* edges, not the stale snapshot. This is the graph analog of
+/// `pgwire_olap_delta_merge_e2e`: without it, a deletion-vector bug at the graph layer
+/// passes every existing graph test (the conformance suite never mutates after
+/// MATERIALIZE). The materialized-but-unmutated `gperson` dimension exercises the
+/// empty-delta fast path in the same query.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graph_deletion_vector_reflects_edge_mutations() {
+    let server = PgServer::start().await.expect("server start");
+    let (client, conn) = tokio_postgres::connect(&server.conn_str(), tokio_postgres::NoTls)
+        .await
+        .expect("connect");
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    // Idempotent setup (the catalog can survive local re-runs). Distinct names so
+    // they never collide with the conformance test's person/knows.
+    client.simple_query("DROP TABLE IF EXISTS edge").await.ok();
+    client
+        .simple_query("DROP TABLE IF EXISTS gperson")
+        .await
+        .ok();
+    client
+        .simple_query("CREATE TABLE gperson (p_id INT PRIMARY KEY, name VARCHAR)")
+        .await
+        .unwrap_or_else(|e| panic!("create gperson: {}", explain_err(&e)));
+    client
+        .simple_query("CREATE TABLE edge (e_id INT PRIMARY KEY, src INT, dst INT)")
+        .await
+        .unwrap_or_else(|e| panic!("create edge: {}", explain_err(&e)));
+    for sql in [
+        "INSERT INTO gperson (p_id, name) VALUES (1, 'A')",
+        "INSERT INTO gperson (p_id, name) VALUES (2, 'B')",
+        "INSERT INTO gperson (p_id, name) VALUES (3, 'C')",
+        "INSERT INTO gperson (p_id, name) VALUES (4, 'D')",
+        "INSERT INTO edge (e_id, src, dst) VALUES (1, 1, 2)",
+        "INSERT INTO edge (e_id, src, dst) VALUES (2, 1, 3)",
+        "INSERT INTO edge (e_id, src, dst) VALUES (3, 2, 4)",
+    ] {
+        client
+            .simple_query(sql)
+            .await
+            .unwrap_or_else(|e| panic!("seed `{sql}`: {}", explain_err(&e)));
+    }
+    for t in ["gperson", "edge"] {
+        client
+            .simple_query(&format!("ALTER TABLE {t} MATERIALIZE"))
+            .await
+            .unwrap_or_else(|e| panic!("materialize {t}: {}", explain_err(&e)));
+    }
+
+    // Post-snapshot edge mutations: delete edge 1 (drops 1→2), insert edge 4 (2→3).
+    client
+        .simple_query("DELETE FROM edge WHERE e_id = 1")
+        .await
+        .unwrap_or_else(|e| panic!("delete edge: {}", explain_err(&e)));
+    client
+        .simple_query("INSERT INTO edge (e_id, src, dst) VALUES (4, 2, 3)")
+        .await
+        .unwrap_or_else(|e| panic!("insert edge: {}", explain_err(&e)));
+
+    // Out-degree per source = JOIN(edge, gperson) + GROUP BY → DataFusion OLAP route
+    // (where the read-merge lives). col_int_pairs sorts → order-independent.
+    let q = "select e.src as person, count(e.dst) as out_degree from edge e \
+             join gperson p on e.src = p.p_id group by e.src order by e.src";
+
+    // Kill-switch OFF → stale snapshot: src 1 has {e1,e2}=2, src 2 has {e3}=1.
+    // SAFETY: env toggled only between awaited queries; the graph CI job runs with
+    // --test-threads=1, so no in-flight request reads the env concurrently.
+    unsafe { std::env::set_var("PROXIMADB_OLAP_DELTA_MERGE", "0") };
+    assert_eq!(
+        col_int_pairs(&client, q).await,
+        vec![(1, 2), (2, 1)],
+        "kill-switch: stale out-degrees (src 1 = 2 edges, src 2 = 1 edge)"
+    );
+
+    // Default-ON → deletion-vector merge: edge 1 deleted (src 1 now {e2}=1), edge 4
+    // added (src 2 now {e3,e4}=2).
+    unsafe { std::env::remove_var("PROXIMADB_OLAP_DELTA_MERGE") };
+    assert_eq!(
+        col_int_pairs(&client, q).await,
+        vec![(1, 1), (2, 2)],
+        "DV merge: out-degree reflects post-snapshot edge delete(1) + insert(4)"
+    );
+}
