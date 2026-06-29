@@ -112,7 +112,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use tokio::sync::RwLock;
+use parking_lot::Mutex;
+use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore};
 use tracing::info;
 
 pub use self::partition_pruning::{
@@ -125,6 +126,92 @@ pub use proximadb_catalog::*;
 // (which is also pulled in via `pub use proximadb_catalog::*`).
 pub use self::traits::{Catalog, CatalogHealth};
 
+/// TD-110 S1: per-table, non-reentrant, in-process DML operation lock registry.
+///
+/// The durable DML lock (`crate::cluster::partition_lease::DmlLockService`)
+/// serializes DML *across pods* but is deliberately re-entrant within a pod: a
+/// pod re-acquiring its own table lease *renews* it, and the in-memory check
+/// skips same-pod/same-scope as compatible. Embedded and single-pod deployments
+/// therefore need a separate, *non-reentrant* in-process lock to serialize
+/// concurrent connections that touch the same table during a referential-action
+/// critical section (ON DELETE CASCADE/RESTRICT child scan → child mutation →
+/// parent tombstone). Without it, a child row inserted by connection B while
+/// connection A's parent DELETE is mid-flight can be orphaned (B's row survives
+/// referencing a now-deleted parent).
+///
+/// Each `(namespace, table)` key maps to a binary semaphore (1 permit);
+/// `acquire_owned` yields an owned permit held across the critical section and
+/// released on drop. Multi-table critical sections (a cascading DELETE) acquire
+/// the whole set in a deterministic `(namespace, name)` order to avoid
+/// self-deadlock — single-table acquirers (INSERT/UPDATE) cannot form a cycle
+/// with a sorted multi-table acquirer.
+#[derive(Default)]
+pub struct TableOpLockRegistry {
+    locks: Mutex<HashMap<TableIdentifier, Arc<Semaphore>>>,
+}
+
+impl TableOpLockRegistry {
+    /// Create an empty registry.
+    pub fn new() -> Self {
+        Self {
+            locks: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Resolve (lazily creating) the binary semaphore for a table.
+    fn semaphore_for(&self, table_id: &TableIdentifier) -> Arc<Semaphore> {
+        // Sync lock held only for the map get/insert — never across an await.
+        let mut locks = self.locks.lock();
+        locks
+            .entry(table_id.clone())
+            .or_insert_with(|| Arc::new(Semaphore::new(1)))
+            .clone()
+    }
+
+    /// Acquire the (non-reentrant) operation lock for one table, blocking until
+    /// free. The returned permit is released on drop.
+    pub async fn acquire(&self, table_id: &TableIdentifier) -> Result<OwnedSemaphorePermit> {
+        self.semaphore_for(table_id)
+            .acquire_owned()
+            .await
+            .map_err(|_| {
+                anyhow!(
+                    "operation lock for table '{}/{}' was closed unexpectedly",
+                    table_id.namespace.join("."),
+                    table_id.name
+                )
+            })
+    }
+
+    /// Acquire operation locks for a set of tables in deterministic `(namespace,
+    /// name)` order (de-duplicated), blocking until all are held. The returned
+    /// permits are released on drop, so bind them to a guard that outlives the
+    /// critical section.
+    pub async fn acquire_sorted(
+        &self,
+        mut tables: Vec<TableIdentifier>,
+    ) -> Result<Vec<OwnedSemaphorePermit>> {
+        tables.sort_by(|a, b| {
+            a.namespace
+                .cmp(&b.namespace)
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        tables.dedup();
+        let mut permits = Vec::with_capacity(tables.len());
+        for table_id in &tables {
+            permits.push(self.acquire(table_id).await?);
+        }
+        Ok(permits)
+    }
+}
+
+impl std::fmt::Debug for TableOpLockRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TableOpLockRegistry")
+            .finish_non_exhaustive()
+    }
+}
+
 /// Catalog manager - manages multiple catalog instances
 pub struct CatalogManager {
     /// Registered catalogs by name
@@ -133,6 +220,10 @@ pub struct CatalogManager {
     default_catalog: RwLock<Option<String>>,
     /// Catalog cache for metadata
     cache: Arc<CatalogCache>,
+    /// TD-110 S1: per-table, non-reentrant in-process DML operation locks used
+    /// to serialize referential-action critical sections within a single pod.
+    /// See [`TableOpLockRegistry`].
+    op_locks: TableOpLockRegistry,
 }
 
 impl CatalogManager {
@@ -142,6 +233,7 @@ impl CatalogManager {
             catalogs: RwLock::new(HashMap::new()),
             default_catalog: RwLock::new(None),
             cache: Arc::new(CatalogCache::new(10000, 300)), // 10K entries, 5min TTL
+            op_locks: TableOpLockRegistry::new(),
         }
     }
 
@@ -151,7 +243,17 @@ impl CatalogManager {
             catalogs: RwLock::new(HashMap::new()),
             default_catalog: RwLock::new(None),
             cache: Arc::new(CatalogCache::new(max_entries, ttl_seconds)),
+            op_locks: TableOpLockRegistry::new(),
         }
+    }
+
+    /// TD-110 S1: per-table, non-reentrant in-process DML operation locks.
+    /// Hosted on `CatalogManager` because it is the single object shared across
+    /// all per-connection `DmlService` instances (pgwire builds a fresh
+    /// `DmlService` per connection), so a registry here is the one place
+    /// concurrent connections actually contend.
+    pub fn op_locks(&self) -> &TableOpLockRegistry {
+        &self.op_locks
     }
 
     /// Register a pre-created catalog

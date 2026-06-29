@@ -554,15 +554,82 @@ async fn pgwire_cascade_recurses_and_rejects_cycles_depth_and_concurrency() {
         );
     }
 
-    // NOTE: a child-INSERT-vs-parent-DELETE(RESTRICT) no-orphan concurrency
-    // test is intentionally omitted from this single-server harness. The DML
-    // lock is per-pod and re-entrant within a pod
-    // (`lease.holder_pod != self.self_pod_id`, `src/cluster/partition_lease.rs`),
-    // so it serializes CROSS-POD cluster access only — not the intra-pod async
-    // race a single embedded server exhibits. The transitive write-lock
-    // acquisition added in `enforce_delete_referential_actions` closes that
-    // cross-pod TOCTOU and gives a deterministic lock order (avoids cross-pod
-    // deadlock); an intra-pod no-orphan guarantee needs a separate local
-    // per-table mutex and is out of S1 scope. The recursion / cycle / depth
-    // semantics above are the S1 correctness core.
+    // ── Section 4: concurrency — a child INSERT racing a parent DELETE
+    //    (RESTRICT) can never orphan. The DELETE holds the non-reentrant
+    //    in-process op-lock on the transitive child set for its whole critical
+    //    section (cascade scan → parent tombstone), so the INSERT serializes
+    //    behind it. The durable DML lock alone is pod-level + re-entrant and
+    //    would NOT serialize two connections on this single embedded server;
+    //    the op-lock (`TableOpLockRegistry`, shared via the CatalogManager) is
+    //    what closes the intra-pod cross-table TOCTOU. ──
+    {
+        // A second connection gives true intra-pod concurrency (a single
+        // tokio_postgres client serializes its own statements).
+        let (client_b, connection_b) =
+            tokio_postgres::connect(&server.pg_connection_string(), tokio_postgres::NoTls)
+                .await
+                .expect("connect client_b");
+        tokio::spawn(async move {
+            if let Err(e) = connection_b.await {
+                eprintln!("pgwire connection_b error: {e}");
+            }
+        });
+
+        const ITERS: usize = 8;
+        for i in 0..ITERS {
+            let parent = format!("cc_par_{suffix}_{i}");
+            let child = format!("cc_chl_{suffix}_{i}");
+            client
+                .simple_query(&format!(
+                    "CREATE TABLE {parent} (id VARCHAR PRIMARY KEY, name VARCHAR)"
+                ))
+                .await
+                .expect("CREATE concurrency parent");
+            client
+                .simple_query(&format!(
+                    "CREATE TABLE {child} (id VARCHAR PRIMARY KEY, pid VARCHAR, \
+                     FOREIGN KEY (pid) REFERENCES {parent}(id))"
+                ))
+                .await
+                .expect("CREATE concurrency child");
+            client
+                .simple_query(&format!(
+                    "INSERT INTO {parent} (id, name) VALUES ('p1', 'root')"
+                ))
+                .await
+                .expect("INSERT concurrency parent");
+            sleep(Duration::from_millis(150)).await; // let p1 become visible
+
+            // Race: A deletes the referenced parent; B inserts a child row
+            // referencing it. Either may win — A wins ⇒ parent deleted, B's
+            // INSERT then fails the FK check; B wins ⇒ child committed, A's
+            // DELETE is RESTRICT-blocked — but the result can never be an orphan
+            // (a child row whose parent was deleted underneath it). Both calls
+            // tolerate an error; the invariant is asserted below.
+            let del_sql = format!("DELETE FROM {parent} WHERE id = 'p1'");
+            let ins_sql = format!("INSERT INTO {child} (id, pid) VALUES ('c1', 'p1')");
+            let a = client.simple_query(&del_sql);
+            let b = client_b.simple_query(&ins_sql);
+            let _ = tokio::join!(a, b);
+
+            let parent_rows = client
+                .simple_query(&format!("SELECT id FROM {parent}"))
+                .await
+                .expect("SELECT concurrency parent");
+            let parent_has_p1 = col_set(&parent_rows, "id").contains("p1");
+            let child_rows = client
+                .simple_query(&format!("SELECT id FROM {child}"))
+                .await
+                .expect("SELECT concurrency child");
+            let child_has_c1 = col_set(&child_rows, "id").contains("c1");
+
+            // No orphan: if the child row committed, its parent must survive.
+            assert!(
+                !child_has_c1 || parent_has_p1,
+                "orphaned child: {child}.c1 references {parent}.p1 which was deleted \
+                 (iteration {i}); the cascade op-lock must serialize the INSERT behind \
+                 the DELETE"
+            );
+        }
+    }
 }
