@@ -465,6 +465,9 @@ docs/archive/sessions/
 /test_exists_dir/
 /test_metadata/
 /test_metadata_atomic/
+
+# Local secret/tooling audit logs (never commit — may contain access events)
+/audit/
 /test_size
 /test_filter_debug.rs
 /nohup.out
