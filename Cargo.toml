@@ -1082,6 +1082,12 @@ name = "bench_24_recall_at_k_engine"
 harness = false
 path = "benches/bench_24_recall_at_k_engine.rs"
 
+# TD-096 S2 / S1.5: per-search GET-count (SST vs HELIX) on the filesystem seam.
+[[bench]]
+name = "bench_25_search_get_count"
+harness = false
+path = "benches/bench_25_search_get_count.rs"
+
 # ============================================================================
 # BUILD OPTIMIZATION STRATEGY
 # ============================================================================

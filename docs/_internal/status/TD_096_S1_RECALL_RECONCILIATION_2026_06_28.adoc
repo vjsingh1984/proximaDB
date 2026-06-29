@@ -76,16 +76,40 @@ the AXIS index (HNSW), not the flat SST block-scan, so the sqrt pruning never
 gates recall in practice. The flat-scan 5% is a corner path (Exact pre-override,
 or a non-AXIS approximate scan), already documented in `BlockPruneConfig`.
 
-== Object-store GET count — deferred (instrumentation gap)
+== Object-store GET count — MEASURED (S2 / S1.5), resolves S2's fate
 
-The "real differentiator" the handoff names — object-store GET count (and
-block-skip *ratio* at the search path) for SST vs HELIX — is **not yet
-measurable end-to-end**: the SST engine counts `pruned_blocks` internally
-(`sst_query_engine.rs`, logged as `pruned_blocks={kept}/{total}`) but there is
-no counting/instrumented wrapper at the object-store layer to total GETs per
-search. Adding one is a small but separate instrumentation change; it is left
-as the S1.5 follow-up so this reconciliation is not blocked on it. The
-block-skip *unit* proof above covers the mechanism.
+The instrumentation gap S1 flagged is now closed: `CountingFileSystem` (new,
+env-gated `PROXIMADB_COUNT_FS_IO`, default OFF) wraps the shared `FileSystem`
+seam both engines read through (`FilesystemFactory::get_filesystem`), and
+`bench_25_search_get_count` reports per-search GETs/bytes. Measured 2026-06-29,
+dim 128, 20 queries:
+
+[cols="1,1,1,1,1", options="header"]
+|===
+| Engine | Vectors | Mode | GETs / query | bytes / query
+
+| SST   | 10,000  | Approximate | 0  | 0
+| SST   | 100,000 | Approximate | 0  | 0
+| HELIX | 10,000  | Approximate | 0  | 0
+| HELIX | 100,000 | Approximate | 0  | 0
+| SST   | 1,000   | Exact (flat-scan, corner path) | 13 | 0.53 MiB
+|===
+
+**Finding:** the production Approximate path (AXIS/HNSW) serves queries entirely
+from the in-memory index — **0 query-time object-store GETs on both backends**.
+The data is resident in memory from index-build time; the warm query path is
+I/O-free (the co-design "warm path" model). The Exact flat-scan path *does*
+read SST blocks (~13 GETs/query at 1K), but that is a corner path (Exact /
+non-AXIS), not the production default — and it confirms the instrumentation is
+correct (Exact catches the reads; Approximate genuinely does none).
+
+**S2 decision:** there is **no SST-vs-HELIX GET-count differentiator on the
+production path** (both 0). Per the handoff's escape hatch, S2 latency/GET
+route-disclosure is **not justified** — the production Approximate path is
+already I/O-free. The `CountingFileSystem` wrapper + `bench_25` are kept as
+reusable operator tools: set `PROXIMADB_COUNT_FS_IO=1` to re-measure if the
+in-memory assumption changes at larger scale (where AXIS may spill and
+query-time GETs could reappear).
 
 == Conclusion
 
@@ -97,10 +121,12 @@ block-skip *unit* proof above covers the mechanism.
   through the AXIS index, so the flat-scan sqrt pruning never gates recall. The
   recall-collapse premise is **refuted** for the default production path.
 * Per the handoff's escape hatch, **TD-096 is downgraded to documented
-  guidance**: no S2 route-disclosure code retrofit on SST. S2 (if pursued)
-  should reuse TD-064's ADR-011 disclosure envelope for *latency/GET*
-  observability, not recall — and only after the GET-count instrumentation
-  lands and shows a material SST-vs-HELIX win on diffuse data.
+  guidance**: no S2 route-disclosure code retrofit. The GET-count instrumentation
+  S1 gated on (now landed: `CountingFileSystem` + `bench_25`) **measured 0
+  query-time GETs for the production Approximate path on both SST and HELIX**
+  (in-memory AXIS) — so there is no SST-vs-HELIX I/O differentiator to disclose.
+  S2 latency/GET route-disclosure is **not justified**; the production path is
+  already I/O-free at these scales.
 
 == Provenance
 
