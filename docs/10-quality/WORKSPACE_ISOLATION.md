@@ -94,6 +94,21 @@ new feat/x  ──▶  edit · commit · push · open PR  ──▶  PR merges  
 3. Commit only files you created/changed (the worktree makes this natural; if
    ever in a shared tree, fall back to `git commit -o <file>`).
 4. Clean up (`rm`) once your PR merges.
+5. **Commit WIP to your branch early and often — never carry valuable
+   uncommitted work in a worktree.** A worktree is disposable: `clean`,
+   `rm --force`, a concurrent session, or a merge/cleanup pass can remove or
+   reset it at any time, and **uncommitted edits are lost with the directory**.
+   Committed work survives in the branch ref (recoverable even if the worktree
+   is deleted). Commit each coherent increment (it's fine to amend/rebase
+   later); treat "still in the editor, not yet committed" as fragile.
+6. **Re-verify state before resuming or acting.** After any gap — and before
+   any destructive or push step — confirm the worktree still exists
+   (`scripts/worktree.sh list`) and the branch hasn't advanced under you
+   (`git log --oneline -3`; unexpected commits you didn't author mean a
+   concurrent session is on the same task — stop and reconcile, don't blindly
+   re-edit on top). A worktree whose directory vanishes mid-session is the
+   signal that another session merged/cleaned the branch; your uncommitted WIP
+   is gone — recover from your last commit, not from memory of the edits.
 
 ## Runtime isolation (beyond git)
 
