@@ -27,7 +27,7 @@
 //! Schema resolution: callers provide a [`CatalogLookup`] so we
 //! don't depend on the runtime catalog crate from here.
 
-use proximadb_data_model::{ProximaType, ProximaValue};
+use proximadb_data_model::{ProximaType, ProximaValue, TimeUnit};
 use proximadb_relational_algebra::{
     AggregateExpr, JoinKind, JoinStrategy, LogicalNode, NamedAggregate, NamedExpr, SetOpKind,
     SortKey, TableId,
@@ -36,10 +36,11 @@ use proximadb_relational_types::{
     BinaryOp, ColumnInfo, ColumnRef, Expr, RelationalSchema, UnaryOp,
 };
 use sqlparser::ast::{
-    BinaryOperator, Distinct, Expr as SqlExpr, FunctionArg, FunctionArgExpr, FunctionArguments,
-    GroupByExpr, JoinConstraint, JoinOperator, LimitClause, ObjectName, OrderByKind,
-    Query as SqlQuery, Select as SqlSelect, SelectItem, SetExpr, SetOperator, SetQuantifier,
-    Statement, TableFactor, UnaryOperator, Value as SqlValue, ValueWithSpan,
+    BinaryOperator, DataType as SqlDataType, Distinct, Expr as SqlExpr, FunctionArg,
+    FunctionArgExpr, FunctionArguments, GroupByExpr, JoinConstraint, JoinOperator, LimitClause,
+    ObjectName, OrderByKind, Query as SqlQuery, Select as SqlSelect, SelectItem, SetExpr,
+    SetOperator, SetQuantifier, Statement, TableFactor, UnaryOperator, Value as SqlValue,
+    ValueWithSpan,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -1334,11 +1335,56 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope, ctx: &mut LoweringCtx) -> Result<Ex
         SqlExpr::Exists { .. } | SqlExpr::InSubquery { .. } => Err(FrontendError::Unsupported(
             "EXISTS / IN subquery in expression position".into(),
         )),
+        // CAST — the single, typed home for casts (ADR-043 Inv 2). The pgwire translator
+        // no longer string-strips cast suffixes, so an explicit `x::T` reaches here. Lower
+        // to one typed `Expr::Cast`, IDENTITY-FOLDED to zero-copy when the inner expression
+        // already has the target type (the redundant casts the old strip list silently
+        // dropped) — using the pure `Expr::result_type()` inference.
+        SqlExpr::Cast {
+            expr, data_type, ..
+        } => {
+            let inner = lower_expr(expr, scope, ctx)?;
+            let target = sql_type_to_proxima(data_type)?;
+            if inner.result_type() == target {
+                Ok(inner)
+            } else {
+                Ok(Expr::Cast {
+                    expr: Box::new(inner),
+                    ty: target,
+                })
+            }
+        }
         other => Err(FrontendError::Unsupported(format!(
             "expression {:?}",
             std::mem::discriminant(other)
         ))),
     }
+}
+
+/// Map a SQL `CAST` target type to the canonical [`ProximaType`]. Covers the standard
+/// scalar types (including every suffix the old translator strip list handled, so deleting
+/// it does not regress those casts). Postgres byte-width convention: `int4`/`int` →
+/// `Int32`, `int8`/`bigint` → `Int64`. Unknown targets are `Unsupported` so the query
+/// declines to the existing fallback rather than guessing.
+fn sql_type_to_proxima(dt: &SqlDataType) -> Result<ProximaType, FrontendError> {
+    use SqlDataType as D;
+    Ok(match dt {
+        D::Char(_) | D::Varchar(_) | D::Text => ProximaType::String,
+        D::TinyInt(_) => ProximaType::Int8,
+        D::SmallInt(_) => ProximaType::Int16,
+        D::Int(_) | D::Int4(_) | D::Integer(_) => ProximaType::Int32,
+        D::Int8(_) | D::BigInt(_) => ProximaType::Int64,
+        D::Float(_) | D::Float4 | D::Real => ProximaType::Float32,
+        D::Float8 | D::Double(_) => ProximaType::Float64,
+        D::Bool | D::Boolean => ProximaType::Boolean,
+        D::Date => ProximaType::Date,
+        D::Timestamp(_, _) => ProximaType::Timestamp(TimeUnit::Microsecond),
+        D::JSON => ProximaType::Json,
+        D::JSONB => ProximaType::Jsonb,
+        other => {
+            return Err(FrontendError::Unsupported(format!("CAST to {other}")));
+        }
+    })
 }
 
 fn lower_binary_op(op: &BinaryOperator) -> Result<BinaryOp, FrontendError> {
@@ -2967,6 +3013,31 @@ mod tests {
         // A bare aggregate name in scalar (non-GROUP-BY) position is still a misuse.
         let err = lower_sql("SELECT sum(age) + 1 FROM users", &catalog()).unwrap_err();
         assert!(matches!(err, FrontendError::Unsupported(_)));
+    }
+
+    #[test]
+    fn cast_lowers_typed_and_identity_folds() {
+        // ADR-043 Inv 2: a real conversion lowers to a typed `Expr::Cast`.
+        // age (Int32) AS bigint → Cast { ty: Int64 }.
+        let plan = lower("SELECT CAST(age AS bigint) FROM users");
+        let LogicalNode::Project { outputs, .. } = plan else {
+            panic!("expected Project");
+        };
+        match &outputs[0].expr {
+            Expr::Cast { ty, .. } => assert_eq!(*ty, ProximaType::Int64),
+            other => panic!("expected Cast to Int64, got {other:?}"),
+        }
+        // Identity-fold (zero-copy): name (String) AS varchar already has the target type,
+        // so it folds to the bare column — no `Cast` node emitted.
+        let plan = lower("SELECT CAST(name AS varchar) FROM users");
+        let LogicalNode::Project { outputs, .. } = plan else {
+            panic!("expected Project");
+        };
+        assert!(
+            matches!(&outputs[0].expr, Expr::Column(_)),
+            "identity cast should fold to the column (zero-copy), got {:?}",
+            outputs[0].expr
+        );
     }
 
     #[test]

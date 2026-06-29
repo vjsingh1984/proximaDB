@@ -1297,6 +1297,26 @@ pub fn cast_value(v: &ProximaValue, target: &ProximaType) -> Result<ProximaValue
                 to: PT::Int64,
             })?)
         }
+        // `::int`/`::smallint`/`::tinyint` (now reaching here, no longer string-stripped):
+        // parse to the narrower width. Postgres `int4`→Int32 is the common d06 path.
+        (PV::String(s), PT::Int32) => {
+            PV::Int32(s.parse::<i32>().map_err(|_| ExprError::UnsupportedCast {
+                from: PT::String,
+                to: PT::Int32,
+            })?)
+        }
+        (PV::String(s), PT::Int16) => {
+            PV::Int16(s.parse::<i16>().map_err(|_| ExprError::UnsupportedCast {
+                from: PT::String,
+                to: PT::Int16,
+            })?)
+        }
+        (PV::String(s), PT::Float32) => {
+            PV::Float32(s.parse::<f32>().map_err(|_| ExprError::UnsupportedCast {
+                from: PT::String,
+                to: PT::Float32,
+            })?)
+        }
         (PV::String(s), PT::Float64) => {
             PV::Float64(s.parse::<f64>().map_err(|_| ExprError::UnsupportedCast {
                 from: PT::String,

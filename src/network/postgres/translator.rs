@@ -114,8 +114,11 @@ impl QueryTranslator {
         // Translate PostgreSQL-specific functions
         translated = self.translate_functions(&translated);
 
-        // Translate data types
-        translated = self.translate_types(&translated);
+        // NOTE: casts are NO LONGER string-stripped here (ADR-043 Inv 2). Cast semantics
+        // belong to the typed relational frontend (`lower_expr`'s `SqlExpr::Cast` arm),
+        // which lowers `x::T` to a typed `Expr::Cast` (identity-folded to zero-copy when
+        // redundant). The old strip list silently dropped type information — it forgot
+        // `::int` and over-stripped `::boolean` (TD-183 d06/d11).
 
         Ok(translated)
     }
@@ -220,26 +223,6 @@ impl QueryTranslator {
 
         // array_agg -> not supported, return empty
         // string_agg -> not supported, return empty
-
-        result
-    }
-
-    /// Translate PostgreSQL data types
-    fn translate_types(&self, query: &str) -> String {
-        let mut result = query.to_string();
-
-        // Type casts
-        result = result.replace("::text", "");
-        result = result.replace("::varchar", "");
-        result = result.replace("::integer", "");
-        result = result.replace("::bigint", "");
-        result = result.replace("::float", "");
-        result = result.replace("::double precision", "");
-        result = result.replace("::boolean", "");
-        result = result.replace("::timestamp", "");
-        result = result.replace("::date", "");
-        result = result.replace("::jsonb", "");
-        result = result.replace("::json", "");
 
         result
     }

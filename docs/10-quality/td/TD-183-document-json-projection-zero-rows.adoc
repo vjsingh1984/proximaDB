@@ -7,11 +7,11 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open (uncovered by ADR-040 Phase 1 accuracy conversion)
+| Status | **Resolved** — all 11 document queries accurate (ratchet 11); root-caused into ADR-043 and fixed by its invariants
 | Severity | High — silent wrong answers (empty / divergent results), not errors
 | Component | Document modality — JSON-path SELECT-projection evaluation
-| Tracked-by | link:../../12-design/adr/ADR-040-conformance-accuracy-ratchet.adoc[ADR-040] (TD-182 umbrella)
-| Fix-in | PR2 of the ADR-040 document rollout
+| Tracked-by | link:../../12-design/adr/ADR-040-conformance-accuracy-ratchet.adoc[ADR-040] (TD-182 umbrella); link:../../12-design/adr/ADR-043-unified-relational-expression-evaluation.adoc[ADR-043] (root-cause unification, TD-186)
+| Resolution | routing (#480) → DataFusion alias (#486) → fail-loud predicates (Inv 1, #502) → typed JSON functions + Json coercion (Inv 3, #507) → cast unification (Inv 2). `DOC_ACCURACY_RATCHET = 11`, `KNOWN_BAD_TD183` empty.
 |===
 
 toc::[]
