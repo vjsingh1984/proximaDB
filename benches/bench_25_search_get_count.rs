@@ -91,6 +91,14 @@ fn wait_for_search_ready(
 }
 
 fn main() {
+    // Initialize a tracing subscriber so the search-path stage logs (Stage
+    // 1/2/3 counts, AXIS route) surface under RUST_LOG — for root-cause
+    // diagnosis of the GET count. Best-effort (no-op if a subscriber exists).
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_target(false)
+        .try_init();
+
     // Enable the GET-count instrumentation on the filesystem seam (default OFF
     // in production). Edition 2024: set_var is unsafe.
     unsafe {
