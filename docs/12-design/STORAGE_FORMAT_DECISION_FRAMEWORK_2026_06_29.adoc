@@ -89,7 +89,7 @@ that any data-driven decision must respect:
 
 | **SST**   (ProximaBlock, key-sort, *lazy*) | 7   | 7 KB     | 24 ms
 | **HELIX** (ProximaBlock, Hilbert-sort, eager `load_levels`) | 108 | 953 MiB | 271 ms
-| **VIPER** (ProximaBlock, analytics/batch)  | 27  | 915 MiB   | 133 ms
+| **VIPER** (columnar **Parquet**, analytics)  | 27  | 915 MiB   | 133 ms
 | **NOVA**  (columnar **Parquet**)           | 27  | 914 MiB   | 269 ms
 |===
 
@@ -97,28 +97,28 @@ that any data-driven decision must respect:
 HELIX 107→108 across two independent runs.)
 
 **Reframe (engine → format + strategy) — confirmed by static analysis + trace.**
-SST/VIPER/HELIX write the **same `ProximaDataBlock`/ProximaBlock bytes**, differing
-only in **sort order** (SST by record key, HELIX by Hilbert score, VIPER for
-analytics batching); **NOVA is the only genuinely different format** (columnar
-Parquet). So "engine" is a misnomer for the ProximaBlock trio.
+Only **SST + HELIX are ProximaBlock** (same `ProximaDataBlock` bytes, differ only
+in **sort order**: SST by record key, HELIX by Hilbert score). **VIPER + NOVA are
+columnar Parquet** (the columnar module). So "engine" conflates two formats ×
+several sort/recovery strategies.
 
 **The cold-start gap is a recovery-STRATEGY difference, not a format difference.**
-HELIX/VIPER/NOVA all **eagerly read ~the full corpus** on cold-start (~915–953 MiB
-at 100K, ~18× the 51 MiB raw vectors) — building their indexes up-front. SST
-**initializes lazily** (collection-agnostic singleton, no eager load) ⇒ 7 KB. The
-GET *count* differs by read pattern: HELIX does the most (108 — per-file
-header/footer via `helix/mod.rs::load_levels` → `read_helix_header_optimized`),
-VIPER/NOVA do fewer-but-larger reads (27). Warm per-query GETs are 0 for all four
-(in-memory). Latency tracks the GET count + bytes: HELIX slowest (271 ms), SST
-fastest (24 ms).
+HELIX (ProximaBlock) + VIPER/NOVA (Parquet) all **eagerly read ~the full corpus**
+on cold-start (~915–953 MiB at 100K, ~18× the 51 MiB raw vectors) — building their
+indexes up-front. SST **initializes lazily** (collection-agnostic singleton, no
+eager load) ⇒ 7 KB. The GET *count* differs by read pattern: HELIX does the most
+(108 — per-file header/footer via `helix/mod.rs::load_levels` →
+`read_helix_header_optimized`), VIPER/NOVA do fewer-but-larger reads (27). Warm
+per-query GETs are 0 for all four (in-memory). Latency tracks the GET count +
+bytes: HELIX slowest (271 ms), SST fastest (24 ms).
 
-*Crucially:* NOVA (the different *format*) is **not** dramatically different in
-cold-start bytes from the ProximaBlock trio — proving the gap is **strategy, not
-format**. *Caveat:* SST's 7 KB + warm-0 means its real per-collection load is
-deferred/unobserved by `CountingFileSystem` (likely an in-memory index built via a
-path the wrapper doesn't see) — confirming SST's true I/O is a follow-up. The
-directional finding — **3 of 4 engines front-load ~the corpus on cold-start; SST
-defers** — holds.
+*Crucially:* the Parquet engines (VIPER/NOVA) are **not** dramatically different
+in cold-start bytes from the eager ProximaBlock engine (HELIX) — proving the gap
+is **strategy (lazy vs eager recovery), not format (ProximaBlock vs Parquet)**.
+*Caveat:* SST's 7 KB + warm-0 means its real per-collection load is
+deferred/unobserved by `CountingFileSystem` — confirming SST's true I/O is a
+follow-up. The directional finding — **3 of 4 engines front-load ~the corpus on
+cold-start; SST defers** — holds.
 
 **Critical caveat — the embedded bench cannot produce production cloud-I/O
 evidence.** It is in-memory: the warm path is 0 and the cold-start is a one-time
@@ -126,6 +126,68 @@ load. Real cloud-I/O (the co-design dominant cost) requires a **networked,
 object-store-backed deployment where the corpus spills past memory** so per-query
 reads actually cross the network. The io-trace substrate here is correct and
 reusable; the *measurement* must move to that deployment (a follow-up).
+
+== Warm query vs cold-start recovery — two different numbers
+
+The cold-start table above is **recovery (index-load) latency**, *not* per-query
+latency for materialized data. These are distinct:
+
+* **Warm query** (production serving, data already in memory): 0 GETs/query for
+  all engines; this is the per-query cost users pay at steady state. Recall is
+  S1's measured **100%** (load strategy does not change correctness — same data).
+  Measured warm avg latency (`bench_25` warm mode):
+
+[cols="2,1,1", options="header"]
+|===
+| Engine (format) | 10K warm latency | 100K warm latency
+
+| SST   (ProximaBlock) | 12.9 ms | 117.2 ms
+| HELIX (ProximaBlock) | 10.6 ms | 111.9 ms
+| VIPER (Parquet)      |  9.9 ms | 113.3 ms
+| NOVA  (Parquet)      | 10.2 ms | 115.6 ms
+|===
+
+**All four engines are within ~6 ms of each other warm** (and all 0 GETs) — so at
+steady state the engine/format choice is **irrelevant to warm query latency**;
+they're all in-memory and cost about the same (the ~10× growth 10K→100K is HNSW
+traversal scaling with corpus, not I/O). The SST-vs-HELIX differentiator is
+**entirely in cold-start recovery**, not the warm path.
+* **Cold-start recovery** (restart / new replica): the one-time cost to rebuild
+  the in-memory index off the flushed SST/object-store. This is what the table
+  measures.
+
+== Why is it "recovered" at all? — the in-memory serving model
+
+The flushed SST/object-store holds the **durable** copy — the data is *not* lost.
+But the engine **serves queries from an in-memory index** (AXIS/HNSW +
+`collection_vectors`). On restart that in-memory structure is **gone** (memory
+cleared), so the engine **rebuilds it by re-reading the flushed data** — that is
+the 953 MiB. It is not recovering *data*; it is rebuilding the *in-memory serving
+index*. Durability (disk/object-store) ≠ serving (memory).
+
+This is the **in-memory vs streaming** tradeoff — the deeper form of the format
+tension:
+
+[cols="2,2,2", options="header"]
+|===
+| Serving model | Warm query (steady state) | Cold-start / restart
+
+| **In-memory** (current engine)
+| I/O-free + fast (0 GETs/query)
+| Re-reads the corpus (953 MiB @100K; scales with corpus)
+
+| **Streaming / lazy** (alternative)
+| Per-query object-store GET round-trips (slower warm)
+| Cheap restart (no full re-read; serve from object store)
+|===
+
+In **prod (cloud, object-store)** the in-memory model's restart tax is real: a
+new/restarting pod re-reads the corpus over the network before it can serve. The
+data being "already flushed" does not avoid it. **The measured cold-start numbers
+are the evidence for *when* this restart tax dominates** (large corpora, frequent
+scaling/restarts) vs when the in-memory fast-warm-path win is worth it. A
+streaming/lazy-read mode (force per-query object-store reads, no full in-memory
+load) is the natural follow-up to measure the streaming side directly.
 
 == The decision loop (run on a realistic deployment)
 
