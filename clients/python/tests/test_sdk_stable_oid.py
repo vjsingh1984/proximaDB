@@ -2,9 +2,10 @@
 line-independent canonical oid Victor's adapter mints — so a symbol gets the same
 oid wherever it is indexed (Victor / AnvaiOps / the SDK).
 
-Gated default-OFF (``VICTOR_CODEGRAPH_STABLE_OID``); off keeps the legacy line-coupled
-id, byte-identical. Guarded with ``importorskip`` so it runs only where the optional
-``victor-codegraph`` extra is installed.
+P2 cutover (2026-06-29): **default-ON** (gated behind victor-codegraph's parity ratchet),
+matching Victor's adapter. Explicit opt-out (``VICTOR_CODEGRAPH_STABLE_OID=0``) keeps the
+legacy line-coupled id, byte-identical. Guarded with ``importorskip`` so it runs only
+where the optional ``victor-codegraph`` extra is installed.
 """
 
 from __future__ import annotations
@@ -23,8 +24,18 @@ _LEGACY_META = {
 }
 
 
-def test_default_off_returns_legacy_id(monkeypatch):
+def test_default_on_returns_canonical_form(monkeypatch):
+    # P2 cutover: with the env unset, the canonical line-independent oid is the default.
     monkeypatch.delenv("VICTOR_CODEGRAPH_STABLE_OID", raising=False)
+    key = victor_codegraph.stable_symbol_oid(
+        "repo1", "python", "auth.py::login", "(user)"
+    )
+    assert record_symbol_id(_LEGACY_META, "repo1") == f"graph/repo1/node/{key}"
+
+
+def test_explicit_opt_out_returns_legacy_id(monkeypatch):
+    # Opt-out keeps existing collections byte-identical during the bake.
+    monkeypatch.setenv("VICTOR_CODEGRAPH_STABLE_OID", "0")
     assert record_symbol_id(_LEGACY_META, "repo1") == "auth.py:1:login"
 
 

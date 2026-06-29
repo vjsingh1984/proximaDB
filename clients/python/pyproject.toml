@@ -111,7 +111,9 @@ code-chunking = [
 # Published on PyPI: `pip install 'proximadb[codegraph]'` (for local source work:
 # pip install -e ../../victor/victor-codegraph).
 codegraph = [
-    "victor-codegraph>=0.1.0",
+    # >=0.1.2 ships the line-independent canonical symbol oid (ADR-044) the SDK now
+    # keys code records on by default (see _code_oid.record_symbol_id).
+    "victor-codegraph>=0.1.2",
 ]
 
 langchain = [
