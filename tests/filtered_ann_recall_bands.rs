@@ -342,3 +342,153 @@ async fn filtered_ann_recall_across_selectivity_bands() {
          exact={high_exact:?} ann={high_ann:?}"
     );
 }
+
+/// TD-064(a): a filtered search that returns fewer than `top_k` (because fewer
+/// than `top_k` records match the predicate) MUST surface a first-class,
+/// always-on `predicate_shortfall` field on the REST response — a silent
+/// `<top_k` under a tenant/RLS-style filter is fail-open. Conversely, a full
+/// top_k result (no filter) must NOT carry the field.
+///
+/// This is deliberately NOT `#[ignore]`d: the assertion depends only on `<top_k`
+/// match semantics + field presence, not on ADR-011 recall quality.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filtered_search_under_top_k_surfaces_predicate_shortfall() {
+    let server = RecallBandsServer::start().await.expect("server start");
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let coll = format!(
+        "shortfall_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let dim: usize = 32;
+    let top_k: usize = 10;
+
+    let create_resp = http
+        .post(format!("{}/api/v2/collections", server.base_url()))
+        .json(&json!({
+            "name": coll,
+            "dimension": dim,
+            "engine": "sst",
+            "distance_metric": "cosine",
+            "canonical_embedding_precision": "fp32",
+            "enable_proxima_record": false,
+        }))
+        .send()
+        .await
+        .expect("v2 create");
+    assert!(
+        create_resp.status().is_success(),
+        "v2 create: {} {}",
+        create_resp.status(),
+        create_resp.text().await.unwrap_or_default()
+    );
+
+    // 30 records: only 4 carry bucket=0 (the "rare" predicate, < top_k).
+    // The rest are bucket=1 so an unfiltered search returns a full top_k.
+    let records: Vec<Value> = (0..30)
+        .map(|i| {
+            let bucket = if i < 4 { 0 } else { 1 };
+            json!({
+                "id": format!("sf-{i}"),
+                "vector": deterministic_vec(i, dim),
+                "props": { "bucket": bucket }
+            })
+        })
+        .collect();
+    let insert_resp = http
+        .post(format!(
+            "{}/api/v2/collections/{}/records/batch",
+            server.base_url(),
+            coll
+        ))
+        .json(&json!({ "records": records }))
+        .send()
+        .await
+        .expect("v2 insert");
+    assert!(
+        insert_resp.status().is_success(),
+        "v2 insert: {} {}",
+        insert_resp.status(),
+        insert_resp.text().await.unwrap_or_default()
+    );
+    sleep(Duration::from_millis(750)).await;
+
+    let query = deterministic_vec(0, dim);
+    let base = server.base_url();
+
+    // ── Filtered search: bucket=0 has only 4 records (< top_k=10). ──
+    let filtered = http
+        .post(format!("{}/api/v2/collections/{}/search", base, coll))
+        .json(&json!({
+            "vector": query.clone(),
+            "top_k": top_k,
+            "filters": [{ "field": "bucket", "op": "eq", "value": 0 }],
+        }))
+        .send()
+        .await
+        .expect("filtered search send");
+    assert!(filtered.status().is_success(), "filtered search status");
+    let filtered_json: Value = filtered
+        .text()
+        .await
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .expect("filtered search JSON");
+    let filtered_ids = ids_from_search_body(&filtered_json);
+    assert!(
+        !filtered_ids.is_empty() && filtered_ids.len() < top_k,
+        "filtered search must return fewer than top_k matches (got {}): {filtered_json}",
+        filtered_ids.len()
+    );
+
+    // The first-class field must be present and consistent with the result.
+    let sf = filtered_json
+        .get("predicate_shortfall")
+        .expect("predicate_shortfall MUST be present on a <top_k filtered search");
+    assert_eq!(
+        sf["requested_k"].as_u64(),
+        Some(top_k as u64),
+        "requested_k must echo the requested top_k: {sf}"
+    );
+    assert_eq!(
+        sf["returned_k"].as_u64(),
+        Some(filtered_ids.len() as u64),
+        "returned_k must equal the actual returned count: {sf}"
+    );
+    let mode = sf["ann_filtering_mode"].as_str().unwrap_or("").to_string();
+    assert!(
+        matches!(mode.as_str(), "post_filter" | "inline" | "pre_filter"),
+        "ann_filtering_mode must be a known ADR-011 mode, got {mode:?}"
+    );
+
+    // ── Unfiltered search: full top_k → field MUST be absent. ──
+    let unfiltered = http
+        .post(format!("{}/api/v2/collections/{}/search", base, coll))
+        .json(&json!({ "vector": query, "top_k": top_k }))
+        .send()
+        .await
+        .expect("unfiltered search send");
+    assert!(unfiltered.status().is_success(), "unfiltered search status");
+    let unfiltered_json: Value = unfiltered
+        .text()
+        .await
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .expect("unfiltered search JSON");
+    assert_eq!(
+        ids_from_search_body(&unfiltered_json).len(),
+        top_k,
+        "unfiltered search should return a full top_k: {unfiltered_json}"
+    );
+    assert!(
+        unfiltered_json.get("predicate_shortfall").is_none(),
+        "predicate_shortfall must NOT be present when the full top_k is returned: {unfiltered_json}"
+    );
+}

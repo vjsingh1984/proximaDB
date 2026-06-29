@@ -793,6 +793,27 @@ type NodeResponse struct {
 	AdditionalProperties map[string]interface{}  `json:"-"`
 }
 
+// PredicateShortfallWire TD-064: predicate-aware recall shortfall (REST wire shape).
+//
+// Mirrors `observability::search_plan_trace::PredicateShortfall` as an
+// explicit REST/OpenAPI schema so the field is typed and documented on the
+// wire without forcing the observability type (or the slim `IndexQueryResult`
+// DTO) to derive `ToSchema`.
+type PredicateShortfallWire struct {
+	// AnnFilteringMode ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or
+	// `pre_filter`).
+	AnnFilteringMode string `json:"ann_filtering_mode"`
+
+	// OversamplePool Candidate pool size considered before the predicate (oversample budget).
+	OversamplePool int32 `json:"oversample_pool"`
+
+	// RequestedK The `top_k` value the caller asked for.
+	RequestedK int32 `json:"requested_k"`
+
+	// ReturnedK Results actually returned after predicate filtering + merge.
+	ReturnedK int32 `json:"returned_k"`
+}
+
 // ProbeResponse defines model for ProbeResponse.
 type ProbeResponse struct {
 	Status string `json:"status"`
@@ -1175,6 +1196,14 @@ type TypedSearchResponse struct {
 
 	// LatencyMs Search latency in milliseconds
 	LatencyMs int64 `json:"latency_ms"`
+
+	// PredicateShortfall TD-064: predicate-aware recall shortfall (REST wire shape).
+	//
+	// Mirrors `observability::search_plan_trace::PredicateShortfall` as an
+	// explicit REST/OpenAPI schema so the field is typed and documented on the
+	// wire without forcing the observability type (or the slim `IndexQueryResult`
+	// DTO) to derive `ToSchema`.
+	PredicateShortfall *PredicateShortfallWire `json:"predicate_shortfall,omitempty"`
 
 	// RequestId Request ID for tracing
 	RequestId string `json:"request_id"`

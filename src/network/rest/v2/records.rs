@@ -1469,6 +1469,14 @@ pub struct TypedSearchResponse {
     pub latency_ms: u64,
     /// Request ID for tracing
     pub request_id: String,
+    /// TD-064: predicate-aware shortfall — present when a filtered search
+    /// returned fewer than the requested `top_k` after the WAL+AXIS+storage
+    /// merge. **Always emitted when present (NOT `debug`-gated)**, unlike
+    /// `search_plan_trace`: a silent `<top_k` under a tenant/RLS filter is
+    /// fail-open, so the client must be able to distinguish "fewer than k
+    /// records match my filter" from "the engine returned my full top-k".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub predicate_shortfall: Option<PredicateShortfallWire>,
     /// SearchPlanTrace (LLD §10) — the per-query telemetry envelope that
     /// upstream gateways consume for metering and planner-v2 training.
     /// Phase 0 emits a stub trace populated from request_id + latency; later
@@ -1484,6 +1492,36 @@ pub struct TypedSearchResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Value>)]
     pub explain: Option<crate::observability::route_explain::RouteExplain>,
+}
+
+/// TD-064: predicate-aware recall shortfall (REST wire shape).
+///
+/// Mirrors `observability::search_plan_trace::PredicateShortfall` as an
+/// explicit REST/OpenAPI schema so the field is typed and documented on the
+/// wire without forcing the observability type (or the slim `IndexQueryResult`
+/// DTO) to derive `ToSchema`.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PredicateShortfallWire {
+    /// The `top_k` value the caller asked for.
+    pub requested_k: u32,
+    /// Results actually returned after predicate filtering + merge.
+    pub returned_k: u32,
+    /// Candidate pool size considered before the predicate (oversample budget).
+    pub oversample_pool: u32,
+    /// ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or
+    /// `pre_filter`).
+    pub ann_filtering_mode: String,
+}
+
+impl From<&crate::observability::search_plan_trace::PredicateShortfall> for PredicateShortfallWire {
+    fn from(sf: &crate::observability::search_plan_trace::PredicateShortfall) -> Self {
+        Self {
+            requested_k: sf.requested_k,
+            returned_k: sf.returned_k,
+            oversample_pool: sf.oversample_pool,
+            ann_filtering_mode: sf.ann_filtering_mode.clone(),
+        }
+    }
 }
 
 /// POST /api/v2/collections/{collection}/search
@@ -1660,7 +1698,6 @@ pub async fn search_with_typed_filters(
         }),
     )
     .await;
-    let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
 
     match search_outcome {
         Ok(resp) => {
@@ -1788,11 +1825,12 @@ pub async fn search_with_typed_filters(
                     // in-scope above → actual_egress_gb (the KEU billing quantity
                     // the control plane prices). 0 on the free same-AZ path.
                     egress_bytes,
-                    // TD-064: shortfall pulled from the task-local
-                    // diagnostics bus established above. `None` when
-                    // no AxisManager-level shortfall was recorded
-                    // during this search.
-                    predicate_shortfall: predicate_shortfall.clone(),
+                    // TD-064: shortfall is now a first-class field on the
+                    // service response (`resp.predicate_shortfall`),
+                    // recomputed authoritatively against the final merged
+                    // result. Feed the same value into the debug-gated
+                    // EXPLAIN/trace so both surfaces agree.
+                    predicate_shortfall: resp.predicate_shortfall.clone(),
                     // Phase K: TurboQuant EXPLAIN payload pulled from
                     // the same task-local bus. `None` for searches
                     // that didn't route through TurboQuant scoring;
@@ -1873,6 +1911,9 @@ pub async fn search_with_typed_filters(
                 total_matches: Some(total_matches),
                 latency_ms,
                 request_id: request_id.clone(),
+                // TD-064: typed, top-level, always-on shortfall (mapped from
+                // the service response field). `None` on the happy path.
+                predicate_shortfall: resp.predicate_shortfall.as_ref().map(Into::into),
                 search_plan_trace: trace_field,
                 explain: explain_field,
             };
@@ -3963,6 +4004,7 @@ mod tests {
             total_matches: Some(100),
             latency_ms: 5,
             request_id: "req-123".to_string(),
+            predicate_shortfall: None,
             search_plan_trace: None,
             explain: None,
         };
