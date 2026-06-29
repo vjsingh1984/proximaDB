@@ -130,6 +130,69 @@ impl CollectionIdentity {
     }
 }
 
+// ---------------------------------------------------------------------------
+// CatalogIdService (ADR-031 Phase 3): the uniqueness-guarantee service.
+// ---------------------------------------------------------------------------
+
+use std::sync::Arc;
+
+/// The per-type ID minting service (ADR-031 Phase 3).
+///
+/// Wraps a [`StableIdAllocator`](proximadb_catalog::id_allocator::StableIdAllocator)
+/// and provides typed mint methods that enforce the correct type (u16/u32/i32) at
+/// the call site. The underlying allocator is monotonic + persistent (via
+/// scan-on-startup + `raise_floor`).
+///
+/// **Collection ID mint** (`as u32`): safe — no deployment approaches 4B
+/// collections globally.
+///
+/// **Namespace/Workspace mint** (`as u16`): per-account scoping (each account
+/// gets its own counter 1, 2, 3...) is a Phase 4 refinement. Today, the global
+/// allocator is used; the per-account `HashMap<AccountId, IdAllocator>` is added
+/// when the namespace_id migration lands. Until then, namespace minting is
+/// guarded by the cardinality assumption (<65K total).
+pub struct CatalogIdService {
+    allocator: Arc<dyn proximadb_catalog::id_allocator::StableIdAllocator>,
+}
+
+impl CatalogIdService {
+    /// Create from any `StableIdAllocator` (single-pod: `IdAllocator`;
+    /// distributed: gRPC service — follow-up).
+    pub fn new(allocator: Arc<dyn proximadb_catalog::id_allocator::StableIdAllocator>) -> Self {
+        Self { allocator }
+    }
+
+    /// Mint a collection/table ID (u32, per-namespace).
+    pub fn mint_collection_id(&self) -> CollectionId {
+        self.allocator.allocate() as u32
+    }
+
+    /// Mint a namespace ID (u16, per-account). See struct doc re: per-account scoping.
+    pub fn mint_namespace_id(&self) -> NamespaceId {
+        self.allocator.allocate() as u16
+    }
+
+    /// Mint a column/field ID (i32, per-table, Iceberg-compatible).
+    pub fn mint_column_id(&self) -> ColumnId {
+        self.allocator.allocate() as i32
+    }
+
+    /// Mint an index ID (u32, per-collection).
+    pub fn mint_index_id(&self) -> IndexId {
+        self.allocator.allocate() as u32
+    }
+
+    /// Mint a segment/batch ID (u64 — high cardinality, no truncation).
+    pub fn mint_segment_id(&self) -> u64 {
+        self.allocator.allocate()
+    }
+
+    /// Recovery hook — call at startup with `max(existing ID) + 1`.
+    pub fn raise_floor(&self, floor: u64) {
+        self.allocator.raise_floor(floor);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

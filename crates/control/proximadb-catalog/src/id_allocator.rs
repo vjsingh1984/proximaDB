@@ -54,6 +54,32 @@ impl Default for IdAllocator {
     }
 }
 
+/// The trait for stable-ID allocation (ADR-031 Phase 3).
+///
+/// **Contract**: `allocate()` is monotonic, never reuses IDs, lock-free.
+/// `raise_floor()` is the recovery hook (call at startup with
+/// `max(existing) + 1` so a restart never reuses a persisted ID).
+///
+/// **Single-pod**: [`IdAllocator`] (in-memory, persistent via scan + raise).
+/// **Distributed** (follow-up): a gRPC service. Same contract — callers don't know.
+pub trait StableIdAllocator: Send + Sync {
+    fn allocate(&self) -> u64;
+    fn peek(&self) -> u64;
+    fn raise_floor(&self, floor: u64);
+}
+
+impl StableIdAllocator for IdAllocator {
+    fn allocate(&self) -> u64 {
+        IdAllocator::allocate(self)
+    }
+    fn peek(&self) -> u64 {
+        IdAllocator::peek(self)
+    }
+    fn raise_floor(&self, floor: u64) {
+        IdAllocator::raise_floor(self, floor)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
