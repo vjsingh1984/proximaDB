@@ -4,7 +4,7 @@
 :icons: font
 :sectnums:
 :author: ProximaDB Team
-:revdate: March 2026
+:revdate: June 2026
 :revnumber: 0.2.0
 
 [IMPORTANT]
@@ -691,4 +691,4 @@ Theme: Production-ready with distributed consensus and security hardening.
 
 '''
 
-_Last Updated_: February 2026
+_Last Updated_: June 2026

@@ -107,16 +107,16 @@ sequenceDiagram
 
 == Target 8-Model Architecture
 
-ProximaDB's vision extends the current 4-model architecture (vector, graph, document, observability) to 8 models:
+ProximaDB's vision extends the current 4-model architecture (vector, graph, document, observability) to 8 models. Status reflects the v0.2 support tiers in link:../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc] (Supported/Beta/Planned); the engines listed are the supported set (SWIFT/RAPTOR are experimental and omitted):
 
 [cols="1,2,2,1", options="header"]
 |===
 | Model | Engine | Use Case | Status
 
 | *Vector*
-| SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR
+| SST, VIPER, HELIX, NOVA + AXIS (HNSW/IVF) indexes
 | Similarity search, embeddings, RAG
-| Production
+| Supported
 
 | *Graph*
 | ORION graph runtime over relational/storage substrate
@@ -126,27 +126,27 @@ ProximaDB's vision extends the current 4-model architecture (vector, graph, docu
 | *Document*
 | WAL-backed JSON store
 | Structured data, metadata, state management
-| Production
+| Beta
 
 | *Observability*
 | Partitioned logs, time-series metrics, trace spans
 | Monitoring, SIEM, audit
-| Production
+| Beta
 
 | *Time-Series*
 | TST (Time-Series Tree)
 | OHLC bars, IoT sensors, metrics, streaming data
-| Planned
+| Beta (engine complete; productization in progress)
 
 | *Event Sourcing*
 | Append-only WAL with indexed queries
 | Audit trails, compliance, CDC, order history
-| Planned
+| Beta (engine complete; productization in progress)
 
 | *Relational*
 | DataFusion-backed SQL tables
 | Structured queries, joins, aggregations
-| Foundation exists
+| Foundation exists (full RDBMS parity post-MVP, TD-110)
 
 | *Media*
 | Multi-modal embeddings (CLIP, ImageBind)
@@ -205,6 +205,16 @@ flowchart TB
   OBS --> ARROW
   ARROW --> Client
 ----
+
+[NOTE]
+====
+Regardless of entry point, ranking is owned by a *single shared `FusionService`*. Vector
+`/search`, hybrid dense+BM25 retrieval, and graph `fusion-search` all delegate to one fusion
+engine (calibrated candidate-set fusion over the `oid`-keyed seam). Per-surface fusion is an
+anti-pattern — each model service above is a *source of candidates*, not a ranker. See
+link:hybrid-fusion.adoc[Hybrid Fusion] and
+link:../12-design/SEARCH_SURFACE_CONTRACT_2026_06_24.adoc[Search Surface Contract].
+====
 
 === SQL Extensions
 
@@ -302,19 +312,23 @@ flowchart TB
 
 == Current Implementation Notes
 
-* **Phase 1 Complete**: All 6 storage engines, WAL, APIs, quantization, AXIS indexes.
+* **Phase 1 Complete**: 4 supported storage engines (SST/VIPER/HELIX/NOVA; SWIFT/RAPTOR are experimental), WAL, APIs, quantization, AXIS indexes.
 * **Phase 2 Complete**: Cross-model queries, graph database (ORION), document store, observability.
 * **Phase 3 In Progress**: External catalogs, streaming/CDC, distributed operations.
-* **Phase 4 Planned**: Time-series engine, event sourcing, hybrid search (BM25), framework integrations.
+* **Phase 4 Foundations Beta**: Time-series (TST) and event-sourcing engines are complete; hybrid search (BM25) is wired. Product packaging, API parity, and at-scale validation are in progress -- these are Beta surfaces in v0.2.
 * Document and observability services use WAL‑backed recovery.
 * Unified query execution supports VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY, LOGS, METRICS.
 
 == Stability Matrix
 
+*Status* below reflects implementation stability in the working tree; the customer-facing
+support tier (Supported/Beta/Experimental) is governed by
+link:../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc] and wins for any product claim.
+
 |===
 | Area | Phase | Status | Notes
 
-| Vector engine + filters | P1 | ✅ Stable | 6 engines, AXIS indexes
+| Vector engine + filters | P1 | ✅ Stable | 4 supported engines (SST/VIPER/HELIX/NOVA), AXIS (HNSW/IVF) indexes
 | Document storage | P2 | ✅ Stable | WAL-backed, JSON path queries
 | Graph traversal | P2 | ✅ Stable | ORION, WAL persistence
 | Observability logs | P2 | ✅ Stable | WAL-backed, partitioned
@@ -322,9 +336,9 @@ flowchart TB
 | Unified query | P2 | ✅ Stable | Cross-model SQL
 | External catalogs | P3 | 🔄 In Progress | Iceberg, Delta Lake
 | Distributed ops | P3 | 🔄 In Progress | Raft, sharding
-| Hybrid search (BM25) | P4 | ✅ Stable | tantivy integration (Feb 2025)
-| Time-series engine | P4 | ✅ Stable | TST engine (Feb 2025)
-| Event sourcing | P4 | ✅ Stable | Append-only WAL (Feb 2025)
+| Hybrid search (BM25) | P4 | Beta | tantivy integration; Beta in v0.2
+| Time-series engine | P4 | Beta | TST engine complete; productization in progress
+| Event sourcing | P4 | Beta | Append-only WAL; productization in progress
 | Agentic Intelligence | P5 | 📅 Planned | Research frontier (arXiv:2604)
 |===
 
