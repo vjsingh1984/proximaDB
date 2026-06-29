@@ -58,3 +58,7 @@ fn default_is_single_tenant_unchanged() {
         "default (no configured tenant) must keep an empty tenant_id (legacy behavior)"
     );
 }
+
+// Risk-coverage scenarios (docs/10-quality/RISK_CONTRACT.toml :: tenant-isolation):
+//   scenario: tenant-stamped        — configured tenant is stamped on stored records
+//   scenario: default-single-tenant — default (no tenant) keeps empty tenant_id (non-breaking)

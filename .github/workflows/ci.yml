@@ -299,6 +299,26 @@ jobs:
       - name: Validate deterministic guard wiring
         run: python3 scripts/check_deterministic_commit_contract.py
 
+  docs-authority:
+    name: Docs Authority (no retired/engine drift)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.docs == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint customer-facing docs vs the support contract
+        run: python3 scripts/check_doc_authority.py
+
+  risk-coverage:
+    name: Risk-Coverage Contract
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate risk→test→tier contract (risk tests are wired into a required tier)
+        run: python3 scripts/check_risk_coverage.py
+
   oss-docs-decontamination:
     name: OSS Docs Decontamination
     runs-on: ubuntu-latest
@@ -1241,7 +1261,7 @@ jobs:
       - name: Run Storage Integration Tests
         run: |
           # Run only explicitly named storage test files (avoids compiling all tests)
-          for test_file in tests/*sst*.rs tests/*storage*.rs tests/*wal*.rs; do
+          for test_file in tests/*sst*.rs tests/*storage*.rs tests/*wal*.rs tests/*embedded*.rs; do
             if [ -f "$test_file" ]; then
               test_name=$(basename "$test_file" .rs)
               echo "Running $test_name..."
@@ -1273,7 +1293,7 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - name: Run Query Integration Tests
         run: |
-          for test_file in tests/*query*.rs tests/*federated*.rs tests/*cache*.rs; do
+          for test_file in tests/*query*.rs tests/*federated*.rs tests/*cache*.rs tests/*ann*.rs tests/*recall*.rs; do
             if [ -f "$test_file" ]; then
               test_name=$(basename "$test_file" .rs)
               echo "Running $test_name..."
@@ -1310,6 +1330,7 @@ jobs:
       - name: Run pgwire accuracy e2e
         run: |
           for test_name in \
+            pgwire_fk_referential_actions_e2e \
             pgwire_relational_engine_e2e \
             pgwire_olap_delta_merge_e2e \
             document_json_pgwire_e2e \
@@ -1768,6 +1789,9 @@ jobs:
       - connectors-contract-gates
       - spark-jni-smoke
       - openapi-spec-drift
+      # gates that encode load-bearing decisions as checks
+      - docs-authority
+      - risk-coverage
     if: always()
     steps:
       # HARD GATE — Rust lib + test compile (the `rust-compile` matrix) must pass

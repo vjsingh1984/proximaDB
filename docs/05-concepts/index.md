@@ -8,7 +8,7 @@ Historical or superseded concept docs live under [Archive](../_archive/README.md
 ```mermaid
 %%{init: {"theme": "neutral"}}%%
 flowchart TB
-  Client["SDKs / REST / gRPC / SQL / Arrow Flight"]
+  Client["SDKs / REST / gRPC / SQL<br/>Arrow Flight (experimental)"]
   Policy["Auth, tenant context, policy, RLS"]
   Catalog["xCatalog"]
   Planner["Planner and router"]

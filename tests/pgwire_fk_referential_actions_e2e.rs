@@ -997,3 +997,10 @@ async fn pgwire_enforces_cross_namespace_fk_referential_actions() {
         );
     }
 }
+
+// Risk-coverage scenarios (docs/10-quality/RISK_CONTRACT.toml :: referential-integrity):
+//   scenario: fk-restrict       — ON DELETE NO ACTION/RESTRICT rejects + parent survives
+//   scenario: fk-cascade        — ON DELETE CASCADE removes the child
+//   scenario: fk-set-null       — ON DELETE SET NULL clears the FK columns
+//   scenario: fk-null-exempt    — MATCH SIMPLE: a NULL FK column exempts the row
+//   scenario: fk-dangling-reject — INSERT referencing a missing parent is rejected

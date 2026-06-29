@@ -314,6 +314,63 @@ cmd_test() {
   cargo test --doc $(_pkg_args "$pkgs") -- --test-threads=4
 }
 
+# Read-only hygiene report. Collapses the branch/stash/orphan triage into one
+# command. Diagnoses only (no fixes) — pair with `rm`/`clean`/`git stash drop`.
+# Exit 0 = clean, 1 = issue(s) found. Offline-safe (no fetch; compares against
+# last-known $REMOTE refs + $REMOTE/$BASE_DEFAULT).
+cmd_doctor() {
+  local main; main="$(repo_main)"
+  local issues=0 wt br ahead behind orphans stash_count
+  echo "=== worktree doctor ==="
+
+  # Merged / diverged / detached worktrees (skip the main checkout).
+  while read -r wt; do
+    [ "$wt" = "$main" ] && continue
+    br="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [ -z "$br" ] || [ "$br" = "HEAD" ]; then
+      printf '  DETACHED: %s (not on a branch — reattach or clean up)\n' "$wt"
+      issues=$((issues+1)); continue
+    fi
+    if branch_in_develop "$br"; then
+      printf '  MERGED:   %s (%s) — safe to `worktree.sh rm %s`\n' "$wt" "$br" "$br"
+      issues=$((issues+1))
+    fi
+    if git -C "$main" rev-parse --verify --quiet "$REMOTE/$br" >/dev/null; then
+      ahead="$(git -C "$main" rev-list --count "$REMOTE/$br..$br" 2>/dev/null || echo 0)"
+      behind="$(git -C "$main" rev-list --count "$br..$REMOTE/$br" 2>/dev/null || echo 0)"
+      if [ "${ahead:-0}" != "0" ] && [ "${behind:-0}" != "0" ]; then
+        printf '  DIVERGED: %s — ahead %s / behind %s vs %s/%s (rebase, or push --force-with-lease)\n' \
+          "$br" "$ahead" "$behind" "$REMOTE" "$br"
+        issues=$((issues+1))
+      fi
+    fi
+  done < <(git -C "$main" worktree list --porcelain | sed -n 's/^worktree //p')
+
+  # Orphaned worktree metadata (admin records pointing at missing dirs).
+  orphans="$(git -C "$main" worktree prune --dry-run 2>/dev/null)"
+  if [ -n "$orphans" ]; then
+    printf '  ORPHANED: worktree metadata for missing dirs — run `git worktree prune`:\n'
+    # shellcheck disable=SC2086
+    printf '    %s\n' $orphans
+    issues=$((issues+1))
+  fi
+
+  # Stashes: any stash is a "decide: pop or drop" signal.
+  stash_count="$(git -C "$main" stash list 2>/dev/null | wc -l | tr -d ' ')"
+  if [ "${stash_count:-0}" != "0" ]; then
+    printf '  STASHES:  %s pending review (pop or drop):\n' "$stash_count"
+    git -C "$main" stash list 2>/dev/null | sed 's/^/    /'
+    issues=$((issues+1))
+  fi
+
+  if [ "$issues" -eq 0 ]; then
+    echo "no issues found"
+    return 0
+  fi
+  echo "found $issues issue(s)"
+  return 1
+}
+
 case "${1:-}" in
   new)   shift; cmd_new "$@" ;;
   list)  shift; cmd_list "$@" ;;
@@ -322,6 +379,7 @@ case "${1:-}" in
   gc)    shift; cmd_gc "$@" ;;
   guard) shift; cmd_guard "$@" ;;
   cache-env) shift; emit_cache_env ;;
+  doctor) shift; cmd_doctor "$@" ;;
   check) shift; cmd_check "$@" ;;
   test)  shift; cmd_test "$@" ;;
   *) cat >&2 <<'USAGE'
@@ -332,6 +390,7 @@ worktree: one task = one worktree = one branch (isolated by construction)
   scripts/worktree.sh clean [--dry-run]             drop worktrees merged/squashed to develop, reclaim target/
   scripts/worktree.sh gc [--all] [--dry-run]        purge target/*/incremental bloat from KEPT worktree(s)
   scripts/worktree.sh guard                         fail if run in the main checkout
+  scripts/worktree.sh doctor                        report merged/diverged/orphaned worktrees + stashes (read-only)
   scripts/worktree.sh cache-env                     print sccache env for an existing worktree (eval it)
   scripts/worktree.sh check                         cargo check ONLY the crates changed vs develop
   scripts/worktree.sh test                          cargo nextest ONLY the crates changed vs develop
