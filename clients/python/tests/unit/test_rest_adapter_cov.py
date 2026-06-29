@@ -708,18 +708,6 @@ def test_create_document_collection_error(adapter):
         adapter.create_document_collection("docs")
 
 
-def test_insert_document(adapter):
-    adapter._client._session.program("post", FakeResp({"id": "d1"}))
-    out = adapter.insert_document("docs", {"title": "x"}, id="d1")
-    assert out == {"id": "d1"}
-
-
-def test_insert_document_error(adapter):
-    adapter._client._session.program("post", FakeResp(raise_exc=RuntimeError("x")))
-    with pytest.raises(RuntimeError):
-        adapter.insert_document("docs", {"title": "x"})
-
-
 def test_get_document(adapter):
     adapter._client._session.program("get", FakeResp({"id": "d1", "title": "x"}))
     out = adapter.get_document("docs", "d1", projection=["title"])

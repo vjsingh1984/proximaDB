@@ -259,10 +259,15 @@ class EmbeddedMultiModelProvider:
                 }
             )
 
-            self._adapter.insert_document(
-                collection_name=self._document_collection,
-                document=doc_meta,
-                id=f"doc:{file_hash}",
+            self._adapter.ingest_documents(
+                collection_id=self._document_collection,
+                records=[
+                    {
+                        "id": f"doc:{file_hash}",
+                        "text": content,
+                        "metadata": doc_meta,
+                    }
+                ],
             )
             results["document"] = True
         except Exception as e:

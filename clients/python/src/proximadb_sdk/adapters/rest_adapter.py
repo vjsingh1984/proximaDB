@@ -655,26 +655,30 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             logger.error(f"Failed to create document collection: {e}")
             raise
 
-    def insert_document(
+    def ingest_documents(
         self,
-        collection_name: str,
-        document: dict[str, Any],
-        id: str | None = None,
+        collection_id: str,
+        records: list[dict[str, Any]],
+        *,
+        tenant_id: str | None = None,
+        ingest_mode: str | None = None,
+        embed_source: str = "native",
         **kwargs,
     ) -> dict[str, Any]:
-        """Insert a document via REST."""
-        try:
+        """Ingest documents via the canonical generated client (ADR-041).
 
-            response = self._client._session.post(
-                f"{self._url}/api/v2/document-collections/{collection_name}/documents",
-                json={"id": id, "document": document},
-                timeout=self._client._timeout,
-            )
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Failed to insert document: {e}")
-            raise
+        The legacy REST ``insert_document`` is intentionally absent here — it accessed
+        nonexistent ``self._client._session``/``_timeout`` and never worked. REST
+        document-collection writes fall through to the base ``NotImplementedError``.
+        """
+        return self._client.ingest_documents(
+            collection_id,
+            records,
+            tenant_id=tenant_id,
+            ingest_mode=ingest_mode,
+            embed_source=embed_source,
+            **kwargs,
+        )
 
     def get_document(
         self,
