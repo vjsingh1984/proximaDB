@@ -50,6 +50,15 @@ message FusionSearchRequest {
   optional float consensus_beta = 11;
   // Graph contribution grain (default NODES).
   FusionGrain grain = 12;
+  // Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also
+  // searches the collection's document index and merges BM25 hits by shared `oid` —
+  // tri-modal (vector + graph + document) fusion. Absent => vector+graph only.
+  optional string text_query = 13;
+  // Collection whose document index to BM25-search (default = `vector_collection`;
+  // documents co-indexed with the vectors share the record `oid`, so they merge by `oid`).
+  optional string document_collection = 14;
+  // Document modality weight (mirrors `vector_weight` / `graph_weight`; default 1.0).
+  optional float document_weight = 15;
 }
 
 message FusionHit {

@@ -129,6 +129,9 @@ fn embedded_fusion_search_seeds_and_expands() {
             1.0,   // graph_weight
             false, // calibrated (not rrf)
             "nodes",
+            None, // text_query — no document modality (vector+graph only)
+            None, // document_collection
+            None, // document_weight
         )
         .expect("embedded fusion_search");
 
@@ -142,6 +145,72 @@ fn embedded_fusion_search_seeds_and_expands() {
         oids.contains(&canonical_oid(graph_id, "parse"))
             && oids.contains(&canonical_oid(graph_id, "io")),
         "1-hop expand reaches parse + io: {oids:?}"
+    );
+}
+
+/// TD-138 document modality over embedded fusion (parity with REST #508): supplying a
+/// `text_query` makes the document source contribute. A document-ONLY oid (not in the vector or
+/// graph) surfacing in the results proves the document modality is live end-to-end; a document
+/// co-indexed with the top vector seed merges by shared `oid` (`source_count >= 2`).
+#[test]
+fn embedded_fusion_search_document_modality_contributes() {
+    use proximadb::storage::engines::core::formats::columnar::fulltext_index::{
+        FullTextIndex, TokenizerConfig,
+    };
+    let graph_id = "codegraph_fusion_doc";
+    let db = build_db(graph_id);
+
+    // Populate the co-indexed collection's full-text index with two documents whose doc_ids are
+    // oids: (a) `main`'s canonical oid (co-indexed → merges with the vector seed), and (b) a
+    // document-ONLY oid vector+graph alone could never surface.
+    let main_oid = canonical_oid(graph_id, "main");
+    let doc_solo = "doc_solo".to_string();
+    let mut index = FullTextIndex::new(TokenizerConfig::for_keyword_search());
+    index
+        .add_document(main_oid.as_str(), "machine learning model")
+        .expect("add main doc");
+    index
+        .add_document(doc_solo.as_str(), "machine learning algorithm")
+        .expect("add solo doc");
+    db.shared_services()
+        .fulltext_indexes
+        .write()
+        .expect("fulltext lock")
+        .insert(VEC_COLLECTION.to_string(), index);
+
+    let (items, _stats) = db
+        .fusion_search(
+            graph_id,
+            VEC_COLLECTION,
+            vec![1.0, 0.0, 0.0, 0.0], // == main's embedding → top vector seed
+            1,
+            vec!["CALLS".to_string()],
+            1,
+            10,
+            1.0,
+            1.0,
+            false,
+            "nodes",
+            Some("machine learning".to_string()), // text_query → document modality ON
+            None,
+            None,
+        )
+        .expect("embedded fusion_search with document modality");
+
+    let oids: HashSet<String> = items.iter().map(|i| i.oid.clone()).collect();
+    // The document-ONLY oid proves the document source contributed.
+    assert!(
+        oids.contains(&doc_solo),
+        "document-only oid must surface when text_query is set: {oids:?}"
+    );
+    // The co-indexed document merged with the vector seed by shared oid (source_count >= 2).
+    let main = items
+        .iter()
+        .find(|i| i.oid == main_oid)
+        .expect("main oid fused");
+    assert!(
+        main.source_count >= 2,
+        "vector + document merge on the shared oid: {main:?}"
     );
 }
 

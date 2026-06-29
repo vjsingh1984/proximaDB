@@ -204,6 +204,9 @@ impl MultiServer {
         crate::network::grpc::v2::ProximaFusionServiceImpl::new(
             services.vector_operations_service.clone(),
             services.request_handlers.graph_operations_service.clone(),
+            // TD-138: share the live full-text index map so the document modality is
+            // powered over gRPC (parity with REST #508).
+            services.fulltext_indexes.clone(),
         )
         .into_server()
     }

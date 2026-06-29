@@ -2889,7 +2889,7 @@ impl PyProximaDB {
     /// core as the REST endpoint in-process, so embedded results match the server path by
     /// construction (the embedded-parity guarantee). Returns `{results: [{oid, score,
     /// source_count}], stats: {...}}`.
-    #[pyo3(signature = (graph_id, vector_collection, query_vector, max_depth=1, edge_types=None, max_seeds=5, limit=10, vector_weight=1.0, graph_weight=1.0, rrf=false, grain="nodes"))]
+    #[pyo3(signature = (graph_id, vector_collection, query_vector, max_depth=1, edge_types=None, max_seeds=5, limit=10, vector_weight=1.0, graph_weight=1.0, rrf=false, grain="nodes", text_query=None, document_collection=None, document_weight=None))]
     fn fusion_search(
         &self,
         py: Python<'_>,
@@ -2904,6 +2904,9 @@ impl PyProximaDB {
         graph_weight: f32,
         rrf: bool,
         grain: &str,
+        text_query: Option<String>,
+        document_collection: Option<String>,
+        document_weight: Option<f32>,
     ) -> PyResult<Py<PyAny>> {
         let (items, stats) = self
             .db()?
@@ -2919,6 +2922,9 @@ impl PyProximaDB {
                 graph_weight,
                 rrf,
                 grain,
+                text_query,
+                document_collection,
+                document_weight,
             )
             .map_err(|e| PyRuntimeError::new_err(format!("Failed fusion search: {}", e)))?;
 
