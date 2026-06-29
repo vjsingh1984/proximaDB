@@ -3964,21 +3964,34 @@ impl DmlService {
         )
     }
 
+    /// Maximum CASCADE recursion depth (TD-110 S1). Bounds N-level cascades so a
+    /// pathological (or accidentally wide) FK graph cannot exhaust the stack or
+    /// spin; a chain this deep is almost certainly a schema error, so it trips a
+    /// typed error rather than running.
+    const MAX_CASCADE_DEPTH: u32 = 16;
+
     /// TD-110: enforce ON DELETE referential actions for the rows about to be
     /// removed from `parent_table_id`. For every sibling table in the same
     /// namespace whose single-column FK references this parent's primary key,
     /// apply the catalogued action to the referencing child rows:
     ///   * `NO ACTION` / `RESTRICT` (and absent-action default) → reject the
     ///     DELETE (error) if any referencing child rows remain.
-    ///   * `CASCADE` → delete the referencing child rows.
+    ///   * `CASCADE` → delete the referencing child rows, **recursing** into
+    ///     their children so N-level chains cascade fully (S1).
     ///   * `SET NULL` → clear the child FK column on the referencing rows.
     ///   * `SET DEFAULT` → rejected as unsupported.
     ///
-    /// v1 scope (matches the TD-110 plan-doc boundary): single-column FK on the
-    /// parent PK, same namespace/tenant, single level (no recursion). Composite
-    /// FKs and self-references are skipped; cross-namespace/recursive/deferrable
-    /// semantics are explicitly out of scope. All child resolution is scoped to
-    /// the SAME `tenant_context` as the parent DELETE (FKs are intra-tenant).
+    /// S1: before any mutation, discover the transitive child closure and acquire
+    /// DML write locks on it in deterministic `(namespace, name)` order — this
+    /// closes the TOCTOU (a concurrent child `INSERT` after the restrict-check /
+    /// cascade-scan would orphan) and avoids deadlock between concurrent DELETEs
+    /// over overlapping child sets. The parent table's lock is already held by
+    /// `execute_delete` for the duration of this call. CASCADE recursion carries
+    /// a `recursion_stack` (cycle detection — a cyclic CASCADE chain is a schema
+    /// error and is rejected) and a depth guard (`MAX_CASCADE_DEPTH`). Composite
+    /// FKs and self-references are skipped; cross-namespace/deferrable semantics
+    /// are out of scope. All child resolution is scoped to the SAME
+    /// `tenant_context` as the parent DELETE (FKs are intra-tenant).
     async fn enforce_delete_referential_actions(
         &self,
         parent_catalog: &Arc<dyn crate::catalog::Catalog>,
@@ -3987,23 +4000,104 @@ impl DmlService {
         deleted_keys: &[String],
         tenant_context: Option<&TenantContext>,
     ) -> Result<()> {
-        let Some(parent_pk) = Self::primary_key_column(parent_schema) else {
+        let Some(_parent_pk) = Self::primary_key_column(parent_schema) else {
             return Ok(()); // No PK → nothing can reference these rows.
         };
-        let deleted: std::collections::HashSet<&str> =
-            deleted_keys.iter().map(String::as_str).collect();
 
-        let sibling_ids = parent_catalog
-            .list_tables(&parent_table_id.namespace)
+        // Reject a cyclic CASCADE chain up front, before any lock or mutation,
+        // so the error leaves nothing partially deleted.
+        self.assert_no_cascade_cycle(
+            parent_catalog,
+            parent_table_id,
+            parent_schema,
+            tenant_context,
+        )
+        .await?;
+
+        // Discover the transitive child set (any FK action — RESTRICT scans and
+        // SET-NULL updates also need the lock) and acquire write locks in a
+        // deterministic order before any mutation.
+        let child_set = self
+            .discover_cascade_child_set(
+                parent_catalog,
+                parent_table_id,
+                parent_schema,
+                tenant_context,
+            )
             .await?;
-        for child_id in sibling_ids {
-            if child_id.name == parent_table_id.name
-                && child_id.namespace == parent_table_id.namespace
+        let mut sorted_children: Vec<(Vec<String>, String)> = child_set.into_iter().collect();
+        sorted_children.sort();
+        let mut child_guards: Vec<DmlLockGuard> = Vec::with_capacity(sorted_children.len());
+        for (namespace, name) in &sorted_children {
+            let lock_target = crate::catalog::TableIdentifier {
+                namespace: namespace.clone(),
+                name: name.clone(),
+            };
+            match self
+                .acquire_table_dml_lock(&lock_target, tenant_context, LockIntent::Write)
+                .await
             {
+                Ok(Some(guard)) => child_guards.push(guard),
+                Ok(None) => {} // No lock service configured → locking is a no-op.
+                Err(e) => {
+                    // Release whatever we acquired before propagating the
+                    // conflict so we never leak held child locks.
+                    for guard in child_guards {
+                        guard.release().await;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+
+        let outcome = self
+            .enforce_delete_referential_actions_inner(
+                parent_catalog,
+                parent_table_id,
+                parent_schema,
+                deleted_keys,
+                tenant_context,
+                std::collections::HashSet::new(),
+                0,
+            )
+            .await;
+
+        // Always release the child locks, whether the cascade succeeded or not.
+        for guard in child_guards {
+            guard.release().await;
+        }
+        outcome
+    }
+
+    /// TD-110: the same-namespace/tenant child tables whose single-column FK
+    /// references `parent_id`'s primary key, with the FK column and action.
+    /// Factored out of the per-child block so both the discovery pass and the
+    /// recursive worker share one copy of the FK-matching logic. Self-references
+    /// and composite FKs are excluded (out of scope).
+    async fn child_tables_referencing(
+        &self,
+        catalog: &Arc<dyn crate::catalog::Catalog>,
+        parent_id: &crate::catalog::TableIdentifier,
+        parent_schema: &CatalogTableSchema,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<
+        Vec<(
+            crate::catalog::TableIdentifier,
+            CatalogTableSchema,
+            String,
+            Option<proximadb_catalog::ReferentialAction>,
+        )>,
+    > {
+        let Some(parent_pk) = Self::primary_key_column(parent_schema) else {
+            return Ok(Vec::new());
+        };
+        let sibling_ids = catalog.list_tables(&parent_id.namespace).await?;
+        let mut out = Vec::new();
+        for child_id in sibling_ids {
+            if child_id.name == parent_id.name && child_id.namespace == parent_id.namespace {
                 continue; // Self-referencing FK on the same table: out of scope.
             }
-            let child_schema = parent_catalog.get_table(&child_id).await?;
-            let child_pk = Self::primary_key_column(&child_schema);
+            let child_schema = catalog.get_table(&child_id).await?;
             for constraint in &child_schema.relational_capabilities.constraints {
                 let proximadb_catalog::ColumnConstraint::ForeignKey {
                     columns,
@@ -4018,8 +4112,8 @@ impl DmlService {
                 if columns.len() != 1 || references_columns.len() != 1 {
                     continue; // Composite FK: unsupported shape, skip.
                 }
-                // Does this FK reference the table being deleted from? Resolve
-                // under the SAME tenant scope so cross-tenant FKs never match.
+                // Does this FK reference `parent_id`? Resolve under the SAME
+                // tenant scope so cross-tenant FKs never match.
                 let Ok((_, referenced_id)) = self
                     .catalog_manager
                     .resolve_table_scoped(
@@ -4030,132 +4124,313 @@ impl DmlService {
                 else {
                     continue;
                 };
-                if referenced_id.name != parent_table_id.name
-                    || referenced_id.namespace != parent_table_id.namespace
+                if referenced_id.name != parent_id.name
+                    || referenced_id.namespace != parent_id.namespace
                 {
                     continue;
                 }
                 if references_columns[0] != parent_pk {
                     continue; // Only parent-PK references are enforced.
                 }
-                let fk_column = columns[0].clone();
+                out.push((
+                    child_id.clone(),
+                    child_schema.clone(),
+                    columns[0].clone(),
+                    *on_delete,
+                ));
+            }
+        }
+        Ok(out)
+    }
 
-                // Find child rows referencing any deleted parent key.
-                let child_pk_for_pred = child_pk.clone();
-                let fk_for_pred = fk_column.clone();
-                let deleted_ref = &deleted;
-                let pred = move |record: &ProximaRecord| {
-                    match record_unique_tuple(
-                        record,
-                        std::slice::from_ref(&fk_for_pred),
-                        child_pk_for_pred.as_deref(),
-                    ) {
-                        Some(values) => values
-                            .first()
-                            .map(|value| deleted_ref.contains(value.as_str()))
-                            .unwrap_or(false),
-                        None => false, // NULL/absent FK never references a parent.
-                    }
-                };
-                let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> = Some(&pred);
-                let referencing = self
-                    .record_store
-                    .scan_records_filtered(
-                        &child_schema,
-                        TableRecordScanRequest {
-                            filter: None,
-                            table_id: child_id.name.clone(),
-                            limit: None,
-                            include_vector: true,
-                            include_props: true,
-                        },
-                        predicate,
-                        tenant_context,
-                    )
-                    .await?;
-                if referencing.is_empty() {
-                    continue;
+    /// TD-110 S1: the transitive closure of child tables reachable from
+    /// `parent_id` via any single-column FK on the parent PK (any action). Used
+    /// to size the DML write-lock set before the cascade. Cycle- and
+    /// diamond-safe (each table visited once); excludes the parent itself.
+    async fn discover_cascade_child_set(
+        &self,
+        catalog: &Arc<dyn crate::catalog::Catalog>,
+        parent_id: &crate::catalog::TableIdentifier,
+        parent_schema: &CatalogTableSchema,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<std::collections::BTreeSet<(Vec<String>, String)>> {
+        let mut result: std::collections::BTreeSet<(Vec<String>, String)> =
+            std::collections::BTreeSet::new();
+        let mut visited: std::collections::HashSet<(Vec<String>, String)> =
+            std::collections::HashSet::new();
+        visited.insert((parent_id.namespace.clone(), parent_id.name.clone()));
+        let mut frontier: Vec<(crate::catalog::TableIdentifier, CatalogTableSchema)> =
+            vec![(parent_id.clone(), parent_schema.clone())];
+        while let Some((tid, schema)) = frontier.pop() {
+            for (child_id, child_schema, _fk_column, _on_delete) in self
+                .child_tables_referencing(catalog, &tid, &schema, tenant_context)
+                .await?
+            {
+                let key = (child_id.namespace.clone(), child_id.name.clone());
+                if visited.insert(key.clone()) {
+                    result.insert(key);
+                    frontier.push((child_id, child_schema));
                 }
+                // Already visited (cycle / diamond) → skip; the cascade itself
+                // is guarded by the recursion stack + depth limit.
+            }
+        }
+        Ok(result)
+    }
 
-                match on_delete {
-                    None
-                    | Some(proximadb_catalog::ReferentialAction::Restrict)
-                    | Some(proximadb_catalog::ReferentialAction::NoAction) => {
+    /// TD-110 S1: detect a CASCADE cycle reachable from `parent_id` BEFORE any
+    /// lock or mutation, so a cyclic CASCADE chain (a schema error) is rejected
+    /// cleanly with no partial deletion. DFS over CASCADE edges only — RESTRICT
+    /// / SET NULL don't recurse, so they can't form a cascade cycle. `gray` =
+    /// on the current DFS path (a repeat ⇒ cycle); `black` = fully explored
+    /// (skip). The recursion-stack check in the inner worker stays as a
+    /// defense-in-depth backstop.
+    async fn assert_no_cascade_cycle(
+        &self,
+        catalog: &Arc<dyn crate::catalog::Catalog>,
+        parent_id: &crate::catalog::TableIdentifier,
+        parent_schema: &CatalogTableSchema,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<()> {
+        let mut gray: std::collections::HashSet<(Vec<String>, String)> =
+            std::collections::HashSet::new();
+        let mut black: std::collections::HashSet<(Vec<String>, String)> =
+            std::collections::HashSet::new();
+        Box::pin(self.assert_no_cascade_cycle_visit(
+            catalog,
+            parent_id,
+            parent_schema,
+            tenant_context,
+            &mut gray,
+            &mut black,
+        ))
+        .await
+    }
+
+    async fn assert_no_cascade_cycle_visit(
+        &self,
+        catalog: &Arc<dyn crate::catalog::Catalog>,
+        id: &crate::catalog::TableIdentifier,
+        schema: &CatalogTableSchema,
+        tenant_context: Option<&TenantContext>,
+        gray: &mut std::collections::HashSet<(Vec<String>, String)>,
+        black: &mut std::collections::HashSet<(Vec<String>, String)>,
+    ) -> Result<()> {
+        let key = (id.namespace.clone(), id.name.clone());
+        if black.contains(&key) {
+            return Ok(());
+        }
+        if gray.contains(&key) {
+            return Err(anyhow!(
+                "ON DELETE cascade cycle detected at table '{}.{}': cyclic CASCADE chains are not supported",
+                id.namespace.join("."),
+                id.name
+            ));
+        }
+        gray.insert(key.clone());
+        for (child_id, child_schema, _fk_column, on_delete) in self
+            .child_tables_referencing(catalog, id, schema, tenant_context)
+            .await?
+        {
+            if matches!(
+                on_delete,
+                Some(proximadb_catalog::ReferentialAction::Cascade)
+            ) {
+                Box::pin(self.assert_no_cascade_cycle_visit(
+                    catalog,
+                    &child_id,
+                    &child_schema,
+                    tenant_context,
+                    gray,
+                    black,
+                ))
+                .await?;
+            }
+        }
+        gray.remove(&key);
+        black.insert(key);
+        Ok(())
+    }
+
+    /// TD-110 S1: recursive worker that applies ON DELETE actions for one level
+    /// and, for CASCADE, descends into the deleted children. `ancestors` is the
+    /// set of `(namespace, table)` on the path from the root EXCLUDING the
+    /// current table — a repeat of the current table on the path is a cycle.
+    /// Diamond topologies (one table reached via two parents) are NOT cycles:
+    /// the first cascade tombstones the rows, so a later reach scans empty and
+    /// naturally skips (idempotent tombstones).
+    async fn enforce_delete_referential_actions_inner(
+        &self,
+        catalog: &Arc<dyn crate::catalog::Catalog>,
+        table_id: &crate::catalog::TableIdentifier,
+        table_schema: &CatalogTableSchema,
+        deleted_keys: &[String],
+        tenant_context: Option<&TenantContext>,
+        ancestors: std::collections::HashSet<(Vec<String>, String)>,
+        depth: u32,
+    ) -> Result<()> {
+        let self_key = (table_id.namespace.clone(), table_id.name.clone());
+        if ancestors.contains(&self_key) {
+            return Err(anyhow!(
+                "ON DELETE cascade cycle detected at table '{}.{}': cyclic CASCADE chains are not supported",
+                table_id.namespace.join("."),
+                table_id.name
+            ));
+        }
+        if depth >= Self::MAX_CASCADE_DEPTH {
+            return Err(anyhow!(
+                "ON DELETE cascade exceeded the maximum depth of {} at table '{}' — likely a schema error",
+                Self::MAX_CASCADE_DEPTH,
+                table_id.name
+            ));
+        }
+        let Some(_pk) = Self::primary_key_column(table_schema) else {
+            return Ok(()); // No PK → nothing can reference these rows.
+        };
+        let deleted: std::collections::HashSet<&str> =
+            deleted_keys.iter().map(String::as_str).collect();
+
+        for (child_id, child_schema, fk_column, on_delete) in self
+            .child_tables_referencing(catalog, table_id, table_schema, tenant_context)
+            .await?
+        {
+            let child_pk = Self::primary_key_column(&child_schema);
+            // Find child rows referencing any deleted key.
+            let child_pk_for_pred = child_pk.clone();
+            let fk_for_pred = fk_column.clone();
+            let deleted_ref = &deleted;
+            let pred = move |record: &ProximaRecord| {
+                match record_unique_tuple(
+                    record,
+                    std::slice::from_ref(&fk_for_pred),
+                    child_pk_for_pred.as_deref(),
+                ) {
+                    Some(values) => values
+                        .first()
+                        .map(|value| deleted_ref.contains(value.as_str()))
+                        .unwrap_or(false),
+                    None => false, // NULL/absent FK never references a parent.
+                }
+            };
+            let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> = Some(&pred);
+            let referencing = self
+                .record_store
+                .scan_records_filtered(
+                    &child_schema,
+                    TableRecordScanRequest {
+                        filter: None,
+                        table_id: child_id.name.clone(),
+                        limit: None,
+                        include_vector: true,
+                        include_props: true,
+                    },
+                    predicate,
+                    tenant_context,
+                )
+                .await?;
+            if referencing.is_empty() {
+                continue;
+            }
+
+            match on_delete {
+                None
+                | Some(proximadb_catalog::ReferentialAction::Restrict)
+                | Some(proximadb_catalog::ReferentialAction::NoAction) => {
+                    return Err(anyhow!(
+                        "DELETE on table '{}' violates FOREIGN KEY ({}) on table '{}': {} referencing row(s) remain (ON DELETE NO ACTION)",
+                        table_id.name,
+                        fk_column,
+                        child_id.name,
+                        referencing.len()
+                    ));
+                }
+                Some(proximadb_catalog::ReferentialAction::Cascade) => {
+                    let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+                    // The child OIDs being tombstoned become the deleted-key set
+                    // for the next cascade level (grandchildren, etc.).
+                    let child_deleted_keys: Vec<String> = referencing
+                        .iter()
+                        .map(|record| record.oid.clone())
+                        .collect();
+                    let tombstones = referencing
+                        .iter()
+                        .map(|record| {
+                            Self::build_delete_tombstone_record(&record.oid, &child_schema, now_ns)
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    let cascaded = tombstones.len();
+                    let mutations = tombstones
+                        .into_iter()
+                        .map(|record| {
+                            TableRecordMutation::new(TableRecordMutationKind::Delete, record)
+                        })
+                        .collect::<Vec<_>>();
+                    let result = self
+                        .record_store
+                        .write_mutations(&child_schema, mutations, tenant_context)
+                        .await?;
+                    if !result.success {
                         return Err(anyhow!(
-                            "DELETE on table '{}' violates FOREIGN KEY ({}) on table '{}': {} referencing row(s) remain (ON DELETE NO ACTION)",
-                            parent_table_id.name,
-                            fk_column,
+                            "ON DELETE CASCADE failed for child table '{}': {:?}",
                             child_id.name,
-                            referencing.len()
+                            result.errors
                         ));
                     }
-                    Some(proximadb_catalog::ReferentialAction::Cascade) => {
-                        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-                        let tombstones = referencing
-                            .iter()
-                            .map(|record| {
-                                Self::build_delete_tombstone_record(
-                                    &record.oid,
-                                    &child_schema,
-                                    now_ns,
-                                )
-                            })
-                            .collect::<Result<Vec<_>>>()?;
-                        let cascaded = tombstones.len();
-                        let mutations = tombstones
-                            .into_iter()
-                            .map(|record| {
-                                TableRecordMutation::new(TableRecordMutationKind::Delete, record)
-                            })
-                            .collect::<Vec<_>>();
-                        let result = self
-                            .record_store
-                            .write_mutations(&child_schema, mutations, tenant_context)
-                            .await?;
-                        if !result.success {
-                            return Err(anyhow!(
-                                "ON DELETE CASCADE failed for child table '{}': {:?}",
-                                child_id.name,
-                                result.errors
-                            ));
-                        }
-                        self.bump_row_count_stats(&child_id.name, -(cascaded as i64))
-                            .await;
+                    self.bump_row_count_stats(&child_id.name, -(cascaded as i64))
+                        .await;
+                    // Recurse so grandchildren (and deeper) cascade too. Locks
+                    // for the whole closure are already held by the entry. The
+                    // call is boxed because async recursion requires it (the
+                    // future's size is otherwise unbounded); the depth guard
+                    // bounds the recursion to `MAX_CASCADE_DEPTH`.
+                    if !child_deleted_keys.is_empty() {
+                        let mut child_ancestors = ancestors.clone();
+                        child_ancestors.insert(self_key.clone());
+                        Box::pin(self.enforce_delete_referential_actions_inner(
+                            catalog,
+                            &child_id,
+                            &child_schema,
+                            &child_deleted_keys,
+                            tenant_context,
+                            child_ancestors,
+                            depth + 1,
+                        ))
+                        .await?;
                     }
-                    Some(proximadb_catalog::ReferentialAction::SetNull) => {
-                        let mut updated = Vec::with_capacity(referencing.len());
-                        for mut record in referencing {
-                            record.props.insert(
-                                fk_column.clone(),
-                                ProximaTreeNode::Value(ProximaValue::Null),
-                            );
-                            updated.push(record);
-                        }
-                        let mutations = updated
-                            .into_iter()
-                            .map(|record| {
-                                TableRecordMutation::new(TableRecordMutationKind::Update, record)
-                            })
-                            .collect::<Vec<_>>();
-                        let result = self
-                            .record_store
-                            .write_mutations(&child_schema, mutations, tenant_context)
-                            .await?;
-                        if !result.success {
-                            return Err(anyhow!(
-                                "ON DELETE SET NULL failed for child table '{}': {:?}",
-                                child_id.name,
-                                result.errors
-                            ));
-                        }
+                }
+                Some(proximadb_catalog::ReferentialAction::SetNull) => {
+                    let mut updated = Vec::with_capacity(referencing.len());
+                    for mut record in referencing {
+                        record.props.insert(
+                            fk_column.clone(),
+                            ProximaTreeNode::Value(ProximaValue::Null),
+                        );
+                        updated.push(record);
                     }
-                    Some(proximadb_catalog::ReferentialAction::SetDefault) => {
+                    let mutations = updated
+                        .into_iter()
+                        .map(|record| {
+                            TableRecordMutation::new(TableRecordMutationKind::Update, record)
+                        })
+                        .collect::<Vec<_>>();
+                    let result = self
+                        .record_store
+                        .write_mutations(&child_schema, mutations, tenant_context)
+                        .await?;
+                    if !result.success {
                         return Err(anyhow!(
-                            "ON DELETE SET DEFAULT on table '{}' (FOREIGN KEY {}) is not supported",
+                            "ON DELETE SET NULL failed for child table '{}': {:?}",
                             child_id.name,
-                            fk_column
+                            result.errors
                         ));
                     }
+                }
+                Some(proximadb_catalog::ReferentialAction::SetDefault) => {
+                    return Err(anyhow!(
+                        "ON DELETE SET DEFAULT on table '{}' (FOREIGN KEY {}) is not supported",
+                        child_id.name,
+                        fk_column
+                    ));
                 }
             }
         }
@@ -9421,6 +9696,177 @@ mod tests {
             ),
             "ON DELETE SET NULL must clear the child FK column, got {:?}",
             child.props.get("customer_id")
+        );
+    }
+
+    /// TD-110 S1: N-level CASCADE recursion, cyclic-FK rejection (no partial
+    /// deletion), and the bounded-depth guard.
+    #[tokio::test]
+    async fn delete_cascade_recurses_and_rejects_cycles_and_depth() {
+        use crate::query::table_write_executor::PlannedOnlyTableWriteExecutor;
+        use crate::services::record_store::{DirectWalTableRecordStore, TableRecordGetRequest};
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+
+        // 3-level CASCADE chain: cascade_gp -> cascade_p -> cascade_c.
+        for create in [
+            "CREATE TABLE cascade_gp (id TEXT NOT NULL, PRIMARY KEY (id));",
+            "CREATE TABLE cascade_p (id TEXT NOT NULL, gp_id TEXT, PRIMARY KEY (id), FOREIGN KEY (gp_id) REFERENCES cascade_gp (id) ON DELETE CASCADE);",
+            "CREATE TABLE cascade_c (id TEXT NOT NULL, p_id TEXT, PRIMARY KEY (id), FOREIGN KEY (p_id) REFERENCES cascade_p (id) ON DELETE CASCADE);",
+            // Cyclic CASCADE: cyc_a <-> cyc_b.
+            "CREATE TABLE cyc_a (id TEXT NOT NULL, b_id TEXT, PRIMARY KEY (id), FOREIGN KEY (b_id) REFERENCES cyc_b (id) ON DELETE CASCADE);",
+            "CREATE TABLE cyc_b (id TEXT NOT NULL, a_id TEXT, PRIMARY KEY (id), FOREIGN KEY (a_id) REFERENCES cyc_a (id) ON DELETE CASCADE);",
+        ] {
+            let stmt = parser
+                .parse_ddl(create)
+                .expect("parse create")
+                .expect("ddl");
+            ddl.execute(stmt).await.expect("create table");
+        }
+        // Depth-guard chain: depth_t0 .. depth_t16 (17 tables, linear CASCADE).
+        let depth_root = "CREATE TABLE depth_t0 (id TEXT NOT NULL, PRIMARY KEY (id));";
+        let stmt = parser
+            .parse_ddl(depth_root)
+            .expect("parse depth root")
+            .expect("ddl");
+        ddl.execute(stmt).await.expect("create depth_t0");
+        for i in 1u32..=16 {
+            let create = format!(
+                "CREATE TABLE depth_t{i} (id TEXT NOT NULL, parent_id TEXT, PRIMARY KEY (id), FOREIGN KEY (parent_id) REFERENCES depth_t{} (id) ON DELETE CASCADE);",
+                i - 1
+            );
+            let stmt = parser
+                .parse_ddl(&create)
+                .expect("parse depth create")
+                .expect("ddl");
+            ddl.execute(stmt).await.expect("create depth table");
+        }
+
+        let wal_appender = Arc::new(
+            FramedTableWalAppender::open(temp_dir.path().join("td110s1.wal"))
+                .await
+                .expect("open WAL"),
+        );
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            wal_appender,
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store.clone(),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let run = |sql: &'static str| parser.parse_dml(sql).expect("parse dml").expect("dml");
+        let get = |table: String, key: String| {
+            let store = record_store.clone();
+            let manager = manager.clone();
+            async move {
+                let (catalog, id) = manager.resolve_table(&table).await.expect("resolve");
+                let schema = catalog.get_table(&id).await.expect("schema");
+                store
+                    .get_by_key(
+                        &schema,
+                        TableRecordGetRequest {
+                            table_id: id.name.clone(),
+                            key,
+                            include_vector: false,
+                            include_props: true,
+                        },
+                        None,
+                    )
+                    .await
+                    .expect("get_by_key")
+            }
+        };
+
+        // ── Section 1: 3-level CASCADE recursion (the shipped bug orphaned the
+        //    grandchild). ──
+        for sql in [
+            "INSERT INTO cascade_gp (id) VALUES ('g1');",
+            "INSERT INTO cascade_p (id, gp_id) VALUES ('p1', 'g1');",
+            "INSERT INTO cascade_c (id, p_id) VALUES ('c1', 'p1');",
+        ] {
+            dml.execute(run(sql)).await.expect("seed chain insert");
+        }
+        assert!(get("cascade_p".into(), "p1".into()).await.is_some());
+        assert!(get("cascade_c".into(), "c1".into()).await.is_some());
+        dml.execute(run("DELETE FROM cascade_gp WHERE id = 'g1';"))
+            .await
+            .expect("3-level CASCADE delete must succeed");
+        assert!(
+            get("cascade_p".into(), "p1".into()).await.is_none(),
+            "CASCADE must recurse: level-1 child removed"
+        );
+        assert!(
+            get("cascade_c".into(), "c1".into()).await.is_none(),
+            "CASCADE must recurse to depth 2: grandchild removed (orphaned pre-S1)"
+        );
+
+        // ── Section 2: cyclic CASCADE FK rejected with NO partial deletion. ──
+        // Seed with NULL FK values (exempt from the insert-time FK check) — a
+        // cyclic CASCADE is a *schema* cycle, so the pre-pass detects it from
+        // the FK graph alone; no data cycle is required to trigger it.
+        for sql in [
+            "INSERT INTO cyc_a (id) VALUES ('a1');",
+            "INSERT INTO cyc_b (id) VALUES ('b1');",
+        ] {
+            dml.execute(run(sql)).await.expect("seed cycle insert");
+        }
+        let err = dml
+            .execute(run("DELETE FROM cyc_a WHERE id = 'a1';"))
+            .await
+            .expect_err("cyclic CASCADE must be rejected");
+        assert!(
+            err.to_string().contains("cascade cycle"),
+            "expected a cycle error, got: {err}"
+        );
+        // The cycle is detected before any mutation, so neither row is touched.
+        assert!(
+            get("cyc_a".into(), "a1".into()).await.is_some(),
+            "cyclic-CASCADE rejection must not partially delete cyc_a"
+        );
+        assert!(
+            get("cyc_b".into(), "b1".into()).await.is_some(),
+            "cyclic-CASCADE rejection must not partially delete cyc_b"
+        );
+
+        // ── Section 3: bounded-depth guard trips on a 17-deep chain. ──
+        dml.execute(run("INSERT INTO depth_t0 (id) VALUES ('d0');"))
+            .await
+            .expect("seed depth_t0");
+        for i in 1u32..=16 {
+            let sql = format!(
+                "INSERT INTO depth_t{i} (id, parent_id) VALUES ('d{i}', 'd{}');",
+                i - 1
+            );
+            let stmt = parser
+                .parse_dml(&sql)
+                .expect("parse depth insert")
+                .expect("dml");
+            dml.execute(stmt).await.expect("seed depth insert");
+        }
+        let err = dml
+            .execute(run("DELETE FROM depth_t0 WHERE id = 'd0';"))
+            .await
+            .expect_err("an over-deep CASCADE chain must trip the depth guard");
+        assert!(
+            err.to_string().contains("maximum depth"),
+            "expected a depth-guard error, got: {err}"
         );
     }
 
