@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ._code_oid import record_symbol_id
 from .chunking_strategies.base import TextChunk
 from .chunking_strategies.code import (
     EXTENSION_TO_LANGUAGE,
@@ -519,7 +520,11 @@ class CodeKnowledgeBuilder:
 
             records.append(
                 {
-                    "id": metadata["symbol_id"],
+                    # ADR-044: line-independent canonical oid when gated (matches
+                    # Victor's adapter + the AnvaiOps connector for the same symbol);
+                    # legacy symbol_id otherwise. node_id below uses the same value so
+                    # the vector + graph projections correlate.
+                    "id": record_symbol_id(metadata, self.config.graph_name),
                     "vector": embedding,
                     "props": metadata,
                     "source": chunk.text,
@@ -551,7 +556,15 @@ class CodeKnowledgeBuilder:
 
             # Insert nodes for each symbol
             for chunk in chunks:
-                node_id = chunk.metadata.get("symbol_id", chunk.chunk_id)
+                # ADR-044: same id derivation as the vector record (above) so the
+                # graph node and the vector correlate on one oid.
+                node_id = record_symbol_id(
+                    {
+                        **chunk.metadata,
+                        "symbol_id": chunk.metadata.get("symbol_id", chunk.chunk_id),
+                    },
+                    self.config.graph_name,
+                )
 
                 node_properties = {
                     "symbol_type": chunk.metadata.get("symbol_type", "UNKNOWN"),
