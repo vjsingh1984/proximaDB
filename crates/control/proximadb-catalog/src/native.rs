@@ -471,11 +471,32 @@ impl NativeCatalog {
         }
     }
 
-    /// Scan the legacy name-keyed table files (the authority pre-S2) and collect
-    /// their `(object_id, namespace, name)`. Used once to rebuild the index when
-    /// the durable file is absent.
+    /// Scan the authoritative object files to rebuild the durable index when it is
+    /// absent. Scans **both** layouts and dedupes by `(namespace, name)`:
+    ///
+    /// 1. legacy name-keyed files under `metadata/tables/{ns}/` (present for legacy
+    ///    + dual-written tables), and
+    /// 2. oid-keyed files under `_syscat/objects/` — so an oid-only table with no
+    ///    legacy shadow (the no-shadow endgame, or a catalog whose legacy files
+    ///    were cleaned up) is still recovered. Both file kinds are self-describing
+    ///    (`TableMetadata` carries its own identifier + object_id), so identity is
+    ///    read straight from the file. Missing either scan would silently drop a
+    ///    table from the index — and, worse, never raise the allocator floor for
+    ///    its oid, risking a reuse.
     async fn scan_object_index_entries(&self) -> Result<Vec<ObjectIndexEntry>> {
         let mut entries = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut push = |id: &TableIdentifier, object_id: u64| {
+            if seen.insert(id.to_fqn()) {
+                entries.push(ObjectIndexEntry {
+                    object_id,
+                    namespace: id.namespace.clone(),
+                    name: id.name.clone(),
+                });
+            }
+        };
+
+        // 1) Legacy name-keyed files, namespace by namespace.
         let namespaces: Vec<Vec<String>> = {
             self.namespaces
                 .read()
@@ -490,15 +511,29 @@ impl NativeCatalog {
                 if let Some(data) = self.io_read_opt(&Self::table_metadata_rel(&id)).await? {
                     let meta: TableMetadata = serde_json::from_slice(&data)?;
                     if let Some(object_id) = meta.schema.object_id {
-                        entries.push(ObjectIndexEntry {
-                            object_id,
-                            namespace: id.namespace.clone(),
-                            name: id.name.clone(),
-                        });
+                        push(&id, object_id);
                     }
                 }
             }
         }
+
+        // 2) Oid-keyed authority files (flat, not namespace-partitioned). Recover
+        // identity from each self-describing file; dedupe against the legacy scan.
+        for stem in self.io_list_json_stems(&Self::objects_dir_rel()).await {
+            let Ok(oid) = stem.parse::<u64>() else {
+                continue; // not an oid file (e.g. _migration.json lives elsewhere)
+            };
+            if let Some(data) = self.io_read_opt(&Self::object_file_rel(oid)).await? {
+                let meta: TableMetadata = serde_json::from_slice(&data)?;
+                let id = TableIdentifier::new(
+                    meta.identifier.namespace.clone(),
+                    meta.identifier.name.clone(),
+                );
+                let object_id = meta.schema.object_id.unwrap_or(oid);
+                push(&id, object_id);
+            }
+        }
+
         Ok(entries)
     }
 
@@ -579,6 +614,12 @@ impl NativeCatalog {
     /// collide. `list_tables` resolves names through the durable index (S2b).
     fn object_file_rel(object_id: u64) -> String {
         format!("_syscat/objects/{object_id}.json")
+    }
+
+    /// TD-181 P3: directory holding the oid-keyed object files, scanned to rebuild
+    /// the durable index (so oid-only tables with no legacy shadow are recovered).
+    fn objects_dir_rel() -> String {
+        "_syscat/objects".to_string()
     }
 
     /// TD-181 P3 (S2a): relative key for the layout migration marker.
@@ -851,20 +892,22 @@ impl NativeCatalog {
         if let Some(id) = meta.schema.object_id {
             // TD-181 P1: opportunistically heal the durable index if this object
             // file isn't indexed yet (an orphan from a crash between object-write
-            // and index-persist). Re-index + persist only when missing, so the
-            // common already-indexed load stays write-free.
-            let missing = !self
+            // and index-persist). Re-index + persist ONLY when missing, so the
+            // common already-indexed load stays write-free. When already indexed
+            // we deliberately do nothing: the forward (`object_name_index`) and
+            // reverse (`object_id_index`) maps are always maintained as a pair, so
+            // an entry present in one is present in the other. (A previous version
+            // re-inserted into `object_id_index` alone here, which could race a
+            // concurrent `drop_table` — A reads "present", B removes from both, A
+            // re-inserts into the reverse map only — leaving a phantom oid→name
+            // entry until the next restart. Doing nothing keeps the pair atomic.)
+            let already_indexed = self
                 .object_name_index
                 .read()
                 .await
                 .contains_key(&identifier.to_fqn());
-            if missing {
+            if !already_indexed {
                 self.index_upsert_table(id, identifier).await?;
-            } else {
-                self.object_id_index
-                    .write()
-                    .await
-                    .insert(id, identifier.clone());
             }
         }
         // ADR-031 / TD-181: recover the floor from persisted column + index
@@ -2174,6 +2217,58 @@ mod tests {
                 .unwrap()
                 .is_some(),
             "index now present at the canonical _syscat/ location"
+        );
+    }
+
+    /// TD-181 P3 hardening: an oid-only table (no legacy shadow) is recovered by
+    /// the index rebuild scanning `_syscat/objects/`, and its oid raises the
+    /// allocator floor so a later create never reuses it. Without scanning the
+    /// oid layout, such a table would be silently lost and its oid reusable.
+    #[tokio::test]
+    async fn rebuild_recovers_oid_only_table_from_objects_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ns = vec!["db".to_string()];
+        let id = TableIdentifier::new(ns.clone(), "t");
+
+        let oid = {
+            let cat = fresh_catalog(&tmp).await;
+            cat.set_oid_paths_for_test(true);
+            cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+            let oid = cat
+                .create_table(&id, schema_with_id_col("t"))
+                .await
+                .unwrap()
+                .object_id
+                .unwrap();
+            // Reduce to a pure-oid table: drop the legacy shadow AND the durable
+            // index, leaving only `_syscat/objects/{oid}.json`.
+            cat.io_remove_file(&NativeCatalog::table_metadata_rel(&id))
+                .await;
+            cat.io_remove_file(&NativeCatalog::object_index_rel()).await;
+            oid
+        };
+
+        // Reopen: durable index absent + no legacy file ⇒ rebuild must scan the
+        // oid layout to recover the table.
+        let cat = fresh_catalog(&tmp).await;
+        cat.set_oid_paths_for_test(true);
+        assert_eq!(
+            cat.get_table_by_object_id(oid).await.unwrap(),
+            Some(id),
+            "rebuild recovers the oid-only table from _syscat/objects/"
+        );
+
+        // Floor raised past the recovered oid — a new table gets a strictly
+        // greater id (no reuse).
+        let oid2 = cat
+            .create_table(&TableIdentifier::new(ns, "t2"), schema_with_id_col("t2"))
+            .await
+            .unwrap()
+            .object_id
+            .unwrap();
+        assert!(
+            oid2 > oid,
+            "allocator floor raised past the recovered oid ({oid2} > {oid})"
         );
     }
 
