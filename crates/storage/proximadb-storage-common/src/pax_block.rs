@@ -294,18 +294,26 @@ pub struct SegmentIndex {
 }
 
 impl SegmentIndex {
-    /// Serialise to bytes. v1 (no zone summaries): `[n u32] [offset u64, size u32]
-    /// × n [crc32 u32]`. When any block carries a zone summary, emit v2 instead:
+    /// Serialise to bytes. **Writes are always v2** (TD-167 / ADR-034 P1):
     /// `[n u32] [offset, size, zone(85B)] × n [crc32 u32] [body_len u32] [PAXZ]`.
-    /// The trailing `PAXZ` marker lets the reader detect v2 without disturbing v1.
+    /// A block with no computable bounds gets an **empty** zone summary, so EVERY
+    /// new segment prunes from the cached index with **zero per-block metadata
+    /// GETs** — the legacy v1 layout (`[n][offset,size]×n[crc]`) forced a per-block
+    /// footer read for pruning (the depth the co-design exists to collapse).
+    ///
+    /// The v1 layout is **deprecated for writes** and retained for READS only
+    /// (`from_bytes` detects it via the absent `PAXZ` trailer), so existing v1
+    /// segments stay readable — mixed-read-safe, no flag-day migration. Per-block
+    /// empty-zone overhead (73 B/block) is read once and cached: a worthwhile trade
+    /// for unconditional depth-collapse (`DEPTH ≫ BYTES`).
     pub fn to_bytes(&self) -> Vec<u8> {
-        if self.blocks.iter().any(|b| b.zone.is_some()) {
-            self.to_bytes_v2()
-        } else {
-            self.to_bytes_v1()
-        }
+        self.to_bytes_v2()
     }
 
+    /// Legacy v1 segment-index encoding — **write-deprecated** (kept only to build
+    /// v1 fixtures for read mixed-read-safety tests; production writes v2 via
+    /// [`Self::to_bytes`]). Real v1 segments on disk are read by `from_bytes`.
+    #[cfg(test)]
     fn to_bytes_v1(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(4 + self.blocks.len() * 12 + 4);
         buf.extend_from_slice(&(self.blocks.len() as u32).to_le_bytes());
@@ -500,9 +508,6 @@ pub struct PaxSegmentWriter {
     block_stats: Vec<BlockStats>,
     file_buf: Vec<u8>,
     row_count: u64,
-    /// Emit a v2 zone-map segment index (per-block bounds for index-only pruning).
-    /// Gated default-OFF by `PROXIMADB_PAX_INDEX_ZONEMAP`; mixed-read-safe.
-    zonemap: bool,
 }
 
 impl PaxSegmentWriter {
@@ -546,18 +551,7 @@ impl PaxSegmentWriter {
             block_stats: Vec::new(),
             file_buf: Vec::new(),
             row_count: 0,
-            zonemap: std::env::var("PROXIMADB_PAX_INDEX_ZONEMAP")
-                .map(|v| matches!(v.as_str(), "1" | "true" | "on" | "yes"))
-                .unwrap_or(false),
         }
-    }
-
-    /// Force the v2 zone-map segment index on/off for this writer, overriding the
-    /// `PROXIMADB_PAX_INDEX_ZONEMAP` env default. Builder form (deterministic for
-    /// tests, which must not depend on a process-global env var).
-    pub fn with_zonemap(mut self, on: bool) -> Self {
-        self.zonemap = on;
-        self
     }
 
     /// Set the vector quantization strategy for this segment (P3 Phase D). Builder form
@@ -610,13 +604,17 @@ impl PaxSegmentWriter {
         let stats =
             BlockStats::from_metas(row_count, block_size, min_ts, max_ts, reader.column_metas());
 
-        // TD-167 follow-up: when the v2 zone-map index is enabled, capture each
-        // block's canonical-column bounds (already in hand via the just-opened
-        // reader) into the index, so the reader can prune from the cached index
-        // with no per-block metadata GET. Gated default-OFF (mixed-read-safe).
-        let zone = self
-            .zonemap
-            .then(|| BlockZoneSummary::from_column_metas(row_count, reader.column_metas()));
+        // TD-167 / ADR-034 P1: capture each block's canonical-column bounds (already
+        // in hand via the just-opened reader) into the **v2** segment index, so the
+        // reader prunes from the cached index with NO per-block metadata GET. Always
+        // emitted now — v1 (no zone summaries → per-block footer read to prune) is
+        // write-deprecated. A block with no canonical bounds gets an empty summary
+        // (it simply doesn't prune — never a per-block read), so the depth-collapse
+        // is unconditional.
+        let zone = Some(BlockZoneSummary::from_column_metas(
+            row_count,
+            reader.column_metas(),
+        ));
         self.index.blocks.push(BlockIndexEntry {
             offset,
             size: block_size,
@@ -662,6 +660,34 @@ impl PaxSegmentWriter {
         let mut f = std::fs::File::create(&self.path)?;
         f.write_all(&self.file_buf)?;
 
+        Ok(SegmentMeta {
+            path: self.path,
+            size_bytes: total_bytes,
+            block_count: self.index.blocks.len() as u32,
+            row_count: self.row_count,
+            block_stats: self.block_stats,
+        })
+    }
+
+    /// Test-only: finish writing a **legacy v1** segment (segment index without
+    /// inline zone-map summaries). Production always writes v2 ([`Self::finish`]);
+    /// this fixture exercises the mixed-read-safe legacy path — a v1 segment on
+    /// disk must still read correctly and prune via per-block footer reads.
+    #[cfg(test)]
+    pub fn finish_v1(mut self) -> Result<SegmentMeta> {
+        self.flush_current_block()?;
+        if self.index.blocks.is_empty() {
+            bail!("segment is empty — nothing to write");
+        }
+        let index_bytes = self.index.to_bytes_v1();
+        self.file_buf.extend_from_slice(&index_bytes);
+        self.file_buf.extend_from_slice(SEGMENT_MAGIC);
+        let total_bytes = self.file_buf.len() as u64;
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut f = std::fs::File::create(&self.path)?;
+        f.write_all(&self.file_buf)?;
         Ok(SegmentMeta {
             path: self.path,
             size_bytes: total_bytes,
@@ -932,7 +958,9 @@ mod tests {
     }
 
     #[test]
-    fn segment_index_round_trip() {
+    fn segment_index_round_trip_is_always_v2_even_without_zones() {
+        // Zone-less blocks: writes are now ALWAYS v2 (PAXZ trailer) so pruning
+        // needs zero per-block metadata GETs; the blocks get empty zone summaries.
         let idx = SegmentIndex {
             blocks: vec![
                 BlockIndexEntry {
@@ -948,10 +976,51 @@ mod tests {
             ],
         };
         let bytes = idx.to_bytes();
-        let idx2 = SegmentIndex::from_bytes(&bytes).unwrap();
+        assert_eq!(
+            &bytes[bytes.len() - 4..],
+            ZONE_INDEX_MARKER,
+            "writes are always v2 (PAXZ trailer), even with no zones"
+        );
+        // `locate` is the production read path — it dispatches v1/v2 via the
+        // self-describing trailer (the v1 `from_bytes` would mis-read v2 bytes).
+        let idx2 = SegmentIndex::locate(&bytes).unwrap();
         assert_eq!(idx2.blocks.len(), 2);
         assert_eq!(idx2.blocks[0].size, 4096);
         assert_eq!(idx2.blocks[1].offset, 4096);
+        // Every block has a zone (empty) ⇒ the reader never falls back to a
+        // per-block footer read on a v2 segment.
+        assert!(idx2.blocks.iter().all(|b| b.zone.is_some()));
+    }
+
+    #[test]
+    fn segment_index_v1_legacy_still_reads() {
+        // Mixed-read-safety: v1 segments already on disk (no PAXZ trailer) must
+        // still read correctly even though writes are now v2-only.
+        let idx = SegmentIndex {
+            blocks: vec![
+                BlockIndexEntry {
+                    offset: 0,
+                    size: 4096,
+                    zone: None,
+                },
+                BlockIndexEntry {
+                    offset: 4096,
+                    size: 8192,
+                    zone: None,
+                },
+            ],
+        };
+        let v1 = idx.to_bytes_v1(); // legacy fixture (write-deprecated)
+        assert_ne!(
+            &v1[v1.len() - 4..],
+            ZONE_INDEX_MARKER,
+            "v1 fixture has no PAXZ trailer"
+        );
+        let read = SegmentIndex::from_bytes(&v1).unwrap();
+        assert_eq!(read.blocks.len(), 2);
+        assert_eq!(read.blocks[1].offset, 4096);
+        // v1 has no zones ⇒ reader prunes via the per-block footer fallback.
+        assert!(read.blocks.iter().all(|b| b.zone.is_none()));
     }
 
     #[test]
