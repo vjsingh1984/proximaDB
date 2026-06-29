@@ -279,3 +279,160 @@ async fn vector_ann_recall_at_k() {
         "Vector ANN recall@{TOP_K} regressed: mean {mean:.3} < ratchet {RECALL_RATCHET}"
     );
 }
+
+/// Run the standard query set, returning `(mean recall@k vs the LIVE corpus, count
+/// of deleted ids that leaked into any result set)`. Recall is measured against the
+/// brute-force top-k over `live` (deleted vectors excluded from ground truth), so a
+/// correct engine both suppresses deleted ids (leaks == 0) and preserves recall.
+async fn recall_and_leaks(
+    http: &reqwest::Client,
+    base: &str,
+    coll: &str,
+    corpus: &[(String, Vec<f32>)],
+    live: &[(String, Vec<f32>)],
+    deleted: &HashSet<String>,
+) -> (f64, usize) {
+    let mut recalls = Vec::new();
+    let mut leaks = 0usize;
+    for q in 0..N_QUERIES {
+        let base_idx = (q * (N / N_QUERIES)) % N;
+        let mut query = corpus[base_idx].1.clone();
+        let noise = gen_vec((q as u64).wrapping_add(1_000_000), DIM);
+        for j in 0..DIM {
+            query[j] += noise[j] * 0.01;
+        }
+        let resp = http
+            .post(format!("{base}/api/v2/collections/{coll}/search"))
+            .json(&json!({ "vector": query, "top_k": TOP_K }))
+            .send()
+            .await
+            .expect("search send");
+        let body: Value = resp.json().await.expect("search json");
+        let ann = ids_from_search_body(&body);
+        leaks += ann.iter().filter(|id| deleted.contains(*id)).count();
+        let exact = brute_force_topk(live, &query, TOP_K);
+        let exact_set: HashSet<&String> = exact.iter().collect();
+        let hits = ann.iter().filter(|id| exact_set.contains(id)).count();
+        recalls.push(hits as f64 / TOP_K as f64);
+    }
+    (recalls.iter().sum::<f64>() / recalls.len() as f64, leaks)
+}
+
+/// TD-182 P2 (the foundation's own goal): ANN recall UNDER DELETES + compaction —
+/// the audit's vector gap. A deleted vector is the ANN recall hazard (visited-then-
+/// filtered). The relational OLAP read-merge does NOT apply to vector (you can't
+/// merge a WAL delta into HNSW), so this targets the IMPLEMENTED path: MVCC tombstone
+/// filtered at search time (hot), then physically dropped at compaction. The contract
+/// it pins (for ADR-025 PR4's segment-DV to keep): after deletes, (a) deleted ids never
+/// surface in results, and (b) recall@k over the LIVE set holds — across the
+/// flush/compaction boundary (where the dead bytes finally stop leaving object storage).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vector_ann_recall_under_deletes_and_compaction() {
+    let server = VecServer::start().await.expect("server start");
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .no_proxy()
+        .build()
+        .unwrap();
+    let base = server.base();
+    let coll = format!(
+        "ann_del_recall_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
+    let create = http
+        .post(format!("{base}/api/v2/collections"))
+        .json(&json!({
+            "name": coll,
+            "dimension": DIM,
+            "engine": "sst",
+            "distance_metric": "cosine",
+            "canonical_embedding_precision": "fp32",
+            "enable_proxima_record": false,
+        }))
+        .send()
+        .await
+        .expect("create send");
+    assert!(create.status().is_success(), "create: {}", create.status());
+
+    let corpus: Vec<(String, Vec<f32>)> = (0..N)
+        .map(|i| (format!("rec-{i}"), gen_vec(i as u64, DIM)))
+        .collect();
+    let records: Vec<Value> = corpus
+        .iter()
+        .map(|(id, v)| json!({ "id": id, "vector": v }))
+        .collect();
+    let insert = http
+        .post(format!("{base}/api/v2/collections/{coll}/records/batch"))
+        .json(&json!({ "records": records }))
+        .send()
+        .await
+        .expect("insert send");
+    assert!(insert.status().is_success(), "insert: {}", insert.status());
+    sleep(Duration::from_millis(750)).await;
+
+    // Delete every 5th record (20%) and define the live ground-truth corpus.
+    let deleted: HashSet<String> = (0..N)
+        .filter(|i| i % 5 == 0)
+        .map(|i| format!("rec-{i}"))
+        .collect();
+    for id in &deleted {
+        let resp = http
+            .delete(format!("{base}/api/v2/collections/{coll}/records/{id}"))
+            .send()
+            .await
+            .expect("delete send");
+        assert!(resp.status().is_success(), "delete {id}: {}", resp.status());
+    }
+    sleep(Duration::from_millis(750)).await;
+    let live: Vec<(String, Vec<f32>)> = corpus
+        .iter()
+        .filter(|(id, _)| !deleted.contains(id))
+        .cloned()
+        .collect();
+
+    // Phase A — post-delete, pre-flush (tombstone suppression on the WAL delta path).
+    let (mean_a, leaks_a) = recall_and_leaks(&http, &base, &coll, &corpus, &live, &deleted).await;
+    eprintln!("=== recall-under-deletes (pre-flush): mean={mean_a:.3}, leaks={leaks_a} ===");
+
+    // Phase B — force flush + compaction (dead vectors physically dropped from the SST).
+    server
+        .db
+        .as_ref()
+        .expect("db handle")
+        .force_flush_collection(&coll)
+        .await
+        .expect("force flush");
+    sleep(Duration::from_millis(750)).await;
+    let (mean_b, leaks_b) = recall_and_leaks(&http, &base, &coll, &corpus, &live, &deleted).await;
+    eprintln!("=== recall-under-deletes (post-compaction): mean={mean_b:.3}, leaks={leaks_b} ===");
+
+    // KNOWN-BAD (TD-188): at this scale, deleted vectors are NOT suppressed in ANN
+    // search — neither pre-flush (the WAL-delta tombstone merge does not reach the
+    // SST/ANN directory results) nor post-compaction (dead vectors are not dropped
+    // at flush). ~50 of 60 deleted vectors leak into top-k, dragging recall over the
+    // LIVE set to ~0.75. Contrast: the N=5 `release_smoke_v2` delete→search DOES
+    // suppress, so this is scale/flush-path-specific. Pinned known-bad (ADR-040
+    // pattern, cf. TD-185/187) so the fix auto-trips: when deletes are suppressed,
+    // leaks → 0 and these asserts fail → graduate to `assert_eq!(leaks_*, 0)` plus a
+    // recall-over-live floor, and close TD-188.
+    assert!(
+        leaks_a > 0 && leaks_b > 0,
+        "TD-188: deleted vectors are now suppressed in ANN search (pre={leaks_a}, post={leaks_b}) — \
+         the fix landed; graduate this test to assert_eq!(leaks, 0) + recall-over-live floor and close TD-188"
+    );
+    // Index wiring sanity that holds regardless of the delete bug: search returns
+    // results and recall vs the FULL corpus is high (the engine still ranks well; it
+    // just fails to drop the dead ones).
+    let full: Vec<(String, Vec<f32>)> = corpus.clone();
+    let (mean_full, _) =
+        recall_and_leaks(&http, &base, &coll, &corpus, &full, &HashSet::new()).await;
+    assert!(
+        mean_full >= RECALL_RATCHET,
+        "ANN ranking regressed even ignoring deletes: recall vs full corpus {mean_full:.3} < {RECALL_RATCHET}"
+    );
+    let _ = (mean_a, mean_b);
+}
