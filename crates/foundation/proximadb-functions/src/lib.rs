@@ -426,12 +426,76 @@ pub fn register_builtin_scalars(reg: &ProximaFunctionRegistry) {
         }),
     });
 
+    // JSON extraction — the engine-neutral counterpart of the DataFusion Arrow UDFs in
+    // src/datafusion/udf.rs, so JSON-path projections/filters answer on the native
+    // (Volcano) route too, and the frontend learns their return types (ADR-043 Inv 3).
+    //   * json_extract       (`->`)  → the sub-value AS Json (structured), so downstream
+    //                                  comparisons coerce by its natural type, cast-free.
+    //   * json_extract_text  (`->>`) → the sub-value AS plain text (strings unquoted).
+    // These names are also in datafusion::registry_udf::DATAFUSION_NATIVE_SCALARS so the
+    // F2 adapter does NOT bind them — the typed Arrow UDFs stay authoritative on OLAP.
+    reg.register_scalar(def("json_extract", ProximaType::Json, |args| {
+        json_extract_native("json_extract", args, false)
+    }));
+    reg.register_scalar(def("json_extract_text", ProximaType::String, |args| {
+        json_extract_native("json_extract_text", args, true)
+    }));
+
     // Aliases (kept consistent with the DataFusion-side lowering).
     reg.alias_scalar("ucase", "upper");
     reg.alias_scalar("lcase", "lower");
     reg.alias_scalar("char_length", "length");
     reg.alias_scalar("character_length", "length");
     reg.alias_scalar("ceiling", "ceil");
+    // Postgres `json_extract_path_text(doc, key)` is the text-extract form.
+    reg.alias_scalar("json_extract_path_text", "json_extract_text");
+}
+
+/// Extract `key` from a JSON document/array (engine-neutral; mirrors `extract_one` in
+/// `src/datafusion/udf.rs`). `arg0` arrives as a parsed `Json` value (a relational JSON
+/// column, the first extraction) or as JSON text (`String`, when chained —
+/// `doc->'a'->>'b'` lowers to `json_extract_text(json_extract(doc,'a'), 'b')`). `as_text`
+/// returns string leaves unquoted; `->` returns the sub-value AS `Json`. Any miss (bad
+/// key, non-container, unparseable, JSON null) yields `Null`.
+fn json_extract_native(
+    name: &str,
+    args: &[ProximaValue],
+    as_text: bool,
+) -> Result<ProximaValue, ExprError> {
+    check_arity(name, args, 2)?;
+    if any_null(args) {
+        return Ok(ProximaValue::Null);
+    }
+    let key = as_str(name, &args[1])?;
+    let parsed: serde_json::Value = match &args[0] {
+        ProximaValue::Json(v) | ProximaValue::Jsonb(v) => v.clone(),
+        ProximaValue::String(s) | ProximaValue::Symbol(s) => match serde_json::from_str(s) {
+            Ok(v) => v,
+            Err(_) => return Ok(ProximaValue::Null),
+        },
+        other => {
+            return Err(ExprError::Other(format!(
+                "{name}: expected a JSON or string argument, got {other:?}"
+            )));
+        }
+    };
+    let child = match &parsed {
+        serde_json::Value::Object(map) => map.get(key),
+        serde_json::Value::Array(arr) => key.parse::<usize>().ok().and_then(|i| arr.get(i)),
+        _ => None,
+    };
+    let Some(child) = child else {
+        return Ok(ProximaValue::Null);
+    };
+    if as_text {
+        Ok(match child {
+            serde_json::Value::String(s) => ProximaValue::String(s.clone()),
+            serde_json::Value::Null => ProximaValue::Null,
+            other => ProximaValue::String(other.to_string()),
+        })
+    } else {
+        Ok(ProximaValue::Json(child.clone()))
+    }
 }
 
 // =========================================================================
@@ -560,6 +624,58 @@ mod tests {
 
     fn reg() -> ProximaFunctionRegistry {
         ProximaFunctionRegistry::with_builtins()
+    }
+
+    #[test]
+    fn json_extract_native_handles_json_and_text_inputs() {
+        use ProximaValue as V;
+        let doc = V::Json(serde_json::json!({"price": 10, "title": "alpha"}));
+        // `->` returns the structured sub-value AS Json (for cast-free coercion).
+        let price = json_extract_native(
+            "json_extract",
+            &[doc.clone(), V::String("price".into())],
+            false,
+        )
+        .unwrap();
+        assert!(matches!(price, V::Json(serde_json::Value::Number(_))));
+        // `->>` returns unquoted text.
+        let title = json_extract_native(
+            "json_extract_text",
+            &[doc.clone(), V::String("title".into())],
+            true,
+        )
+        .unwrap();
+        assert_eq!(title, V::String("alpha".into()));
+        // Chained: arg0 arrives as JSON TEXT.
+        let chained = json_extract_native(
+            "json_extract_text",
+            &[V::String(r#"{"k":"v"}"#.into()), V::String("k".into())],
+            true,
+        )
+        .unwrap();
+        assert_eq!(chained, V::String("v".into()));
+        // Missing key → Null (not an error).
+        let missing =
+            json_extract_native("json_extract", &[doc, V::String("nope".into())], false).unwrap();
+        assert_eq!(missing, V::Null);
+    }
+
+    #[test]
+    fn json_functions_are_registered_with_typed_returns() {
+        let r = reg();
+        assert_eq!(
+            r.lookup_scalar("json_extract").unwrap().signature.return_ty,
+            ProximaType::Json
+        );
+        assert_eq!(
+            r.lookup_scalar("json_extract_text")
+                .unwrap()
+                .signature
+                .return_ty,
+            ProximaType::String
+        );
+        // alias resolves to the text-extract form
+        assert!(r.lookup_scalar("json_extract_path_text").is_some());
     }
 
     #[test]
