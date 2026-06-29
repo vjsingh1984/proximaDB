@@ -156,6 +156,16 @@ pub struct VectorStatistics {
     pub centroid: Vec<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cluster_occupancy: Vec<u64>,
+    /// Per-cluster centroid vectors, aligned **by index** with `cluster_occupancy`
+    /// (TD-175, #494). Lets a consumer seed `fusion-search` once per cluster to build
+    /// vector-cluster × graph-label co-statistics (the cluster partition the overall
+    /// `centroid` cannot provide). Populated by the same clustering pass that fills
+    /// `cluster_occupancy`. NOTE: `cluster_occupancy` is not yet fed from a clustering
+    /// pass (the AXIS k-means in `src/index/axis/clustering.rs` is decoupled from this
+    /// summary), so both stay empty until that wiring lands — this is the additive,
+    /// back-compat contract slot.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cluster_centroids: Vec<Vec<f64>>,
     #[serde(default)]
     pub approximate: bool,
 }
@@ -258,6 +268,45 @@ mod tests {
                 .iter()
                 .any(|m| matches!(m, ModalityStatistics::Graph(_))),
             "graph modality block must deserialize via the `kind` discriminator"
+        );
+    }
+
+    #[test]
+    fn vector_cluster_centroids_is_additive_and_back_compat() {
+        // #494 / TD-175: per-cluster centroids are an additive, back-compat slot —
+        // aligned by index with cluster_occupancy, omitted when empty, defaulted when
+        // absent from older payloads (same gating as cluster_occupancy).
+        let mut vs = VectorStatistics {
+            dimension: 2,
+            distance_metric: "cosine".into(),
+            spread: None,
+            centroid: vec![0.5, 0.5],
+            cluster_occupancy: vec![3, 1],
+            cluster_centroids: vec![vec![1.0, 0.0], vec![0.0, 1.0]],
+            approximate: true,
+        };
+
+        // Round-trips, aligned by index with occupancy.
+        let json = serde_json::to_string(&vs).expect("serialize");
+        let back: VectorStatistics = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.cluster_centroids, vs.cluster_centroids);
+        assert_eq!(back.cluster_centroids.len(), back.cluster_occupancy.len());
+
+        // Empty ⇒ omitted from the wire (skip_serializing_if), like cluster_occupancy.
+        vs.cluster_centroids = Vec::new();
+        let json_empty = serde_json::to_string(&vs).expect("serialize");
+        assert!(
+            !json_empty.contains("cluster_centroids"),
+            "empty cluster_centroids must be omitted"
+        );
+
+        // Absent from an older payload ⇒ defaults to empty (back-compat).
+        let older = r#"{"dimension":2,"distance_metric":"cosine","approximate":false}"#;
+        let parsed: VectorStatistics =
+            serde_json::from_str(older).expect("older payload without the field must parse");
+        assert!(
+            parsed.cluster_centroids.is_empty(),
+            "absent cluster_centroids defaults to empty"
         );
     }
 
