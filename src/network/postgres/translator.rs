@@ -175,8 +175,10 @@ impl QueryTranslator {
             }
         }
 
+        // `::jsonb` is outside the capture group so $2 is the bare string literal —
+        // the cast is consumed and dropped here (the @> rewrite owns the semantics).
         let re_contains =
-            regex::Regex::new(r#"([A-Za-z_][A-Za-z0-9_\.]*)\s*@>\s*('[^']+'(?:::jsonb)?)"#)?;
+            regex::Regex::new(r#"([A-Za-z_][A-Za-z0-9_\.]*)\s*@>\s*('[^']+')(?:::jsonb)?"#)?;
         result = re_contains
             .replace_all(&result, "JSON_CONTAINS($1, $2)")
             .to_string();
