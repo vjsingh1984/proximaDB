@@ -870,16 +870,14 @@ pub fn encode_primary_key_tuple(values: &[ProximaValue]) -> Result<String> {
 }
 
 /// Inverse of [`encode_primary_key_tuple`]: split an encoded primary-key string
-/// into its per-column components (in PK order). `stable_value_string` does not
+/// into its per-column components (in PK order). A single-column key (no
+/// separator) yields a one-element slice; an empty string yields `[""]` (one
+/// empty column value), matching `str::split`. `stable_value_string` does not
 /// escape `\u{1f}` within String values, so a value containing the separator is
 /// ambiguous (a pre-existing limitation for composite-PK insert; not introduced
 /// here).
 pub fn split_primary_key_tuple(encoded: &str) -> Vec<&str> {
-    if encoded.is_empty() {
-        Vec::new()
-    } else {
-        encoded.split('\u{1f}').collect()
-    }
+    encoded.split('\u{1f}').collect()
 }
 
 fn new_local_record_id(schema: &CatalogTableSchema) -> String {
