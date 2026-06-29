@@ -591,6 +591,25 @@ pub struct TypedFilterCondition {
     #[prost(enumeration = "FilterLogicOperator", optional, tag = "11")]
     pub nested_logic: ::core::option::Option<i32>,
 }
+/// TD-064: predicate-aware recall shortfall — present when a filtered search
+/// returned fewer than the requested top_k after the WAL+AXIS+storage merge.
+/// Always emitted when present (NOT debug-gated): a silent \<top_k under a
+/// tenant/RLS filter is fail-open, so the client must be told.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PredicateShortfall {
+    /// The top_k value the caller asked for.
+    #[prost(uint32, tag = "1")]
+    pub requested_k: u32,
+    /// Results actually returned after predicate filtering + merge.
+    #[prost(uint32, tag = "2")]
+    pub returned_k: u32,
+    /// Candidate pool size considered before the predicate (oversample budget).
+    #[prost(uint32, tag = "3")]
+    pub oversample_pool: u32,
+    /// ADR-011 mode that produced the shortfall (post_filter / inline / pre_filter).
+    #[prost(string, tag = "4")]
+    pub ann_filtering_mode: ::prost::alloc::string::String,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TypedSearchResponse {
     #[prost(message, repeated, tag = "1")]
@@ -606,6 +625,9 @@ pub struct TypedSearchResponse {
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
+    /// TD-064: typed, top-level, always-on predicate shortfall (None on happy path).
+    #[prost(message, optional, tag = "6")]
+    pub predicate_shortfall: ::core::option::Option<PredicateShortfall>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TypedSearchResult {

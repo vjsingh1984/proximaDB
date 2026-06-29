@@ -912,6 +912,46 @@ impl GraphOperationsService {
         Ok(())
     }
 
+    /// Re-drive every recovered node/edge through the canonical record store so a
+    /// buffered cold store (e.g. `ColdGraphSegmentStore`, whose unflushed buffer is
+    /// lost on crash) is rebuilt from the authoritative recovered engine state
+    /// (TD-066 Part 2, ADR-020). Upserts are idempotent, so this is a no-op of cost
+    /// for an already-durable store and the data-loss fix for a buffered one. No-op
+    /// when no canonical store is wired or the graph is not resident. Returns the
+    /// number of records re-driven.
+    pub(crate) async fn repopulate_canonical_store(&self, graph_id: &str) -> Result<usize> {
+        let Some(record_store) = &self.canonical_record_store else {
+            return Ok(0);
+        };
+        // Clone the Arc out of the map so no DashMap guard is held across the await.
+        let Some(engine) = self.graphs.get(graph_id).map(|e| e.value().clone()) else {
+            return Ok(0);
+        };
+        let nodes = engine.get_all_nodes()?;
+        let edges = engine.get_all_edges()?;
+        let mut records = Vec::with_capacity(nodes.len() + edges.len());
+        for node in &nodes {
+            records.push(node_to_canonical_record(graph_id, node.as_ref()));
+        }
+        for edge in &edges {
+            records.push(edge_to_canonical_record(graph_id, edge.as_ref()));
+        }
+        let count = records.len();
+        if !records.is_empty() {
+            record_store
+                .upsert_records(records)
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
+        tracing::info!(
+            graph_id,
+            nodes = nodes.len(),
+            edges = edges.len(),
+            "TD-066 Part 2: re-populated canonical store from recovered graph state"
+        );
+        Ok(count)
+    }
+
     /// Recover all graphs from persistent storage
     ///
     /// This method should be called during server startup to restore all graph state
@@ -1008,6 +1048,21 @@ impl GraphOperationsService {
         // Store in graphs map
         self.graphs
             .insert(graph_id.to_string(), Arc::new(engine_impl));
+
+        // TD-066 Part 2 (gated, default-OFF): engine-WAL replay above rebuilt the
+        // in-memory engine, but the canonical/cold record store — a buffered store
+        // for `ColdGraphSegmentStore` — is not rebuilt by that replay. Re-drive the
+        // recovered nodes/edges through the canonical store so the cold tier is
+        // rebuilt from the authoritative recovered state (the data-loss path that
+        // blocks wiring `ColdGraphSegmentStore` to production, #52).
+        if crate::storage::persistence::write_ahead_log::wal_operations::canonical_recovery_repopulate_enabled() {
+            let records = self.repopulate_canonical_store(graph_id).await?;
+            tracing::info!(
+                graph_id,
+                records,
+                "canonical store re-populated from recovered graph state"
+            );
+        }
 
         Ok(())
     }

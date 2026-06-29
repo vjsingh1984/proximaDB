@@ -195,6 +195,10 @@ struct VectorAccumulator {
     /// Sum of L2 distance to the *running* centroid — an online spread proxy.
     spread_sum: f64,
     cluster_occupancy: Vec<u64>,
+    /// Per-cluster centroid vectors, aligned by index with `cluster_occupancy`
+    /// (#494). Filled by the same (future) clustering pass that fills occupancy —
+    /// empty today (the AXIS k-means is not yet wired into this accumulator).
+    cluster_centroids: Vec<Vec<f64>>,
 }
 
 /// Resident per-collection statistics. Mergeable across segments at compaction.
@@ -469,6 +473,7 @@ impl StatisticsSummary {
             spread,
             centroid,
             cluster_occupancy: v.cluster_occupancy.clone(),
+            cluster_centroids: v.cluster_centroids.clone(),
             // Centroid/spread are running estimates over a sample → approximate.
             approximate: v.count > 0,
         }

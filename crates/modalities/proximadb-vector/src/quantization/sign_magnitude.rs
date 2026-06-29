@@ -355,4 +355,81 @@ mod tests {
         // = 0b1011_1011 = 187.
         assert_eq!(q.data[0], 0b1011_1011);
     }
+
+    /// Deterministic pseudo-random unit vector (no RNG dep) for the recall corpus.
+    fn gen_unit(seed: usize, dim: usize) -> Vec<f32> {
+        let raw: Vec<f32> = (0..dim)
+            .map(|d| {
+                let h = seed
+                    .wrapping_mul(2_654_435_761)
+                    .wrapping_add(d.wrapping_mul(40_503))
+                    % 10_007;
+                (h as f32 / 10_007.0) - 0.5
+            })
+            .collect();
+        unit_like(&raw)
+    }
+
+    /// TD-182 P2 (quantization accuracy): recall@10 of the sign-magnitude code as a
+    /// coarse filter + exact-f32 rerank — the production pattern (cf. RaBitQ). The
+    /// audit flagged sign-magnitude as having NO recall test (only distance unit
+    /// tests). This pins its operating point: at 16:1 compression (2 bits/dim) the
+    /// XOR distance must surface the true neighbors within a small rerank pool. The
+    /// threshold is a regression FLOOR set below observed (not an SLA); raise it if
+    /// the code improves.
+    #[test]
+    fn sign_magnitude_recall_at_10_with_rerank() {
+        use std::collections::HashSet;
+        let (dim, n, k, pool, n_queries) = (64usize, 256usize, 10usize, 40usize, 20usize);
+        let l2 =
+            |a: &[f32], b: &[f32]| -> f32 { a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum() };
+        let corpus: Vec<Vec<f32>> = (0..n).map(|i| gen_unit(i, dim)).collect();
+        let encoded: Vec<SignMagnitudeVector> = corpus
+            .iter()
+            .map(|v| SignMagnitudeVector::from_f32(v))
+            .collect();
+
+        let mut total_recall = 0.0f32;
+        for qi in 0..n_queries {
+            let query = gen_unit(1_000_000 + qi, dim);
+            // Exact f32 top-k (L2 on the unit hypersphere = cosine-equivalent).
+            let mut exact: Vec<(usize, f32)> = corpus
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (i, l2(&query, c)))
+                .collect();
+            exact.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            let exact_top: HashSet<usize> = exact.iter().take(k).map(|(i, _)| *i).collect();
+
+            // Coarse rank by the sign-magnitude XOR distance (lower = nearer), take a
+            // pool, then rerank the pool by exact f32 and keep the top-k.
+            let q_code = SignMagnitudeVector::from_f32(&query);
+            let mut coarse: Vec<(usize, u32)> = encoded
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (i, q_code.distance(c)))
+                .collect();
+            coarse.sort_by_key(|(_, d)| *d);
+            let mut reranked: Vec<(usize, f32)> = coarse
+                .iter()
+                .take(pool)
+                .map(|(i, _)| (*i, l2(&query, &corpus[*i])))
+                .collect();
+            reranked.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            let hits = reranked
+                .iter()
+                .take(k)
+                .filter(|(i, _)| exact_top.contains(i))
+                .count();
+            total_recall += hits as f32 / k as f32;
+        }
+        let recall = total_recall / n_queries as f32;
+        eprintln!("sign-magnitude recall@{k} (coarse + pool-{pool} rerank) = {recall:.3}");
+        // Observed 1.0 on this deterministic corpus; 0.90 is the regression floor
+        // (catches a real coarse-ranking degradation, tolerates minor drift).
+        assert!(
+            recall >= 0.90,
+            "sign-magnitude recall@10 regressed: {recall:.3} < 0.90 floor"
+        );
+    }
 }

@@ -1214,6 +1214,16 @@ export interface components {
              * @description Consensus boost added to any `oid` present in ≥2 sources.
              */
             consensus_beta?: number | null;
+            /**
+             * @description Collection whose document index to BM25-search. Defaults to `vector_collection` (documents
+             *     co-indexed with the vectors share the record `oid`, so they merge by `oid`).
+             */
+            document_collection?: string | null;
+            /**
+             * Format: float
+             * @description Document modality weight (mirrors `vector_weight` / `graph_weight`). Defaults to 1.0.
+             */
+            document_weight?: number | null;
             edge_types?: string[];
             /** @description Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`. */
             grain?: string | null;
@@ -1237,6 +1247,12 @@ export interface components {
             query_vector: number[];
             /** @description Use the rank-based RRF fallback instead of PIT-calibrated linear. */
             rrf?: boolean;
+            /**
+             * @description Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also searches the
+             *     collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
+             *     (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
+             */
+            text_query?: string | null;
             total_budget?: number | null;
             /** @description Vector collection to seed from (its records co-indexed with this graph by `oid`). */
             vector_collection: string;
@@ -1538,6 +1554,36 @@ export interface components {
             } | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * @description TD-064: predicate-aware recall shortfall (REST wire shape).
+         *
+         *     Mirrors `observability::search_plan_trace::PredicateShortfall` as an
+         *     explicit REST/OpenAPI schema so the field is typed and documented on the
+         *     wire without forcing the observability type (or the slim `IndexQueryResult`
+         *     DTO) to derive `ToSchema`.
+         */
+        PredicateShortfallWire: {
+            /**
+             * @description ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or
+             *     `pre_filter`).
+             */
+            ann_filtering_mode: string;
+            /**
+             * Format: int32
+             * @description Candidate pool size considered before the predicate (oversample budget).
+             */
+            oversample_pool: number;
+            /**
+             * Format: int32
+             * @description The `top_k` value the caller asked for.
+             */
+            requested_k: number;
+            /**
+             * Format: int32
+             * @description Results actually returned after predicate filtering + merge.
+             */
+            returned_k: number;
         };
         ProbeResponse: {
             status: string;
@@ -1932,6 +1978,7 @@ export interface components {
              * @description Search latency in milliseconds
              */
             latency_ms: number;
+            predicate_shortfall?: null | components["schemas"]["PredicateShortfallWire"];
             /** @description Request ID for tracing */
             request_id: string;
             /** @description Search results */

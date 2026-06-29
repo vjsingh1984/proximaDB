@@ -206,12 +206,18 @@ impl AppState {
         let record_ops = request_handlers.record_ops();
         let observability_service = request_handlers.observability_service.clone();
         let event_log = request_handlers.event_log.clone();
-        // Cross-modal fusion port — built once at boot from the vector + graph
-        // services (search-surface contract: one retrieval engine, shared port).
+        // Cross-modal fusion port — built once at boot from the vector + graph services and the
+        // shared full-text index map (search-surface contract: one retrieval engine, shared port).
+        // The empty default map here powers the document expander fail-closed; production replaces
+        // it via `with_fulltext_indexes`, which rebuilds this service with the LIVE index map so the
+        // document modality (TD-138) is powered for REST fusion.
+        let fulltext_indexes: FullTextIndexMap =
+            std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
         let fusion_service =
             std::sync::Arc::new(crate::services::fusion_service::FusionService::new(
                 vector_operations_service.clone(),
                 graph_operations_service.clone(),
+                fulltext_indexes.clone(),
             ));
         // TD-104 2(b): default `api_handlers` to the root handler cast to its
         // `ApiHandlersPort` impl. Production overrides via `with_api_handlers`
@@ -234,9 +240,7 @@ impl AppState {
             security_coordinator,
             data_dir,
             query_adapter,
-            fulltext_indexes: Some(Arc::new(std::sync::RwLock::new(
-                std::collections::HashMap::new(),
-            ))),
+            fulltext_indexes: Some(fulltext_indexes),
             catalog_manager: Arc::new(crate::catalog::CatalogManager::new()),
             // Default: standalone pin registry. Production wires
             // SharedServices.pin_registry via `with_pin_registry` so
@@ -324,6 +328,16 @@ impl AppState {
     /// same in-process map — an indexed document is searchable on
     /// both protocols.
     pub fn with_fulltext_indexes(mut self, indexes: FullTextIndexMap) -> Self {
+        // Rebuild the shared fusion service so its DocumentExpander (TD-138) shares this live
+        // index map. This builder runs during boot, before any request is served, so the rebuild
+        // is safe; the fusion service remains a single boot-constructed instance from the
+        // request-serving perspective. (The map type is structurally `HybridFullTextIndexMap`.)
+        self.fusion_service =
+            std::sync::Arc::new(crate::services::fusion_service::FusionService::new(
+                self.vector_operations_service.clone(),
+                self.graph_operations_service.clone(),
+                indexes.clone(),
+            ));
         self.fulltext_indexes = Some(indexes);
         self
     }

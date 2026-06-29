@@ -2503,6 +2503,21 @@ pub mod types {
     ///      ],
     ///      "format": "float"
     ///    },
+    ///    "document_collection": {
+    ///      "description": "Collection whose document index to BM25-search. Defaults to `vector_collection` (documents\nco-indexed with the vectors share the record `oid`, so they merge by `oid`).",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "document_weight": {
+    ///      "description": "Document modality weight (mirrors `vector_weight` / `graph_weight`). Defaults to 1.0.",
+    ///      "type": [
+    ///        "number",
+    ///        "null"
+    ///      ],
+    ///      "format": "float"
+    ///    },
     ///    "edge_types": {
     ///      "type": "array",
     ///      "items": {
@@ -2558,6 +2573,13 @@ pub mod types {
     ///      "description": "Use the rank-based RRF fallback instead of PIT-calibrated linear.",
     ///      "type": "boolean"
     ///    },
+    ///    "text_query": {
+    ///      "description": "Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also searches the\ncollection's document index and merges BM25 hits into the result by shared `oid` — tri-modal\n(vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
     ///    "total_budget": {
     ///      "type": [
     ///        "integer",
@@ -2585,6 +2607,13 @@ pub mod types {
         ///Consensus boost added to any `oid` present in ≥2 sources.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub consensus_beta: ::std::option::Option<f32>,
+        /// Collection whose document index to BM25-search. Defaults to `vector_collection` (documents
+        /// co-indexed with the vectors share the record `oid`, so they merge by `oid`).
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub document_collection: ::std::option::Option<::std::string::String>,
+        ///Document modality weight (mirrors `vector_weight` / `graph_weight`). Defaults to 1.0.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub document_weight: ::std::option::Option<f32>,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub edge_types: ::std::vec::Vec<::std::string::String>,
         ///Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.
@@ -2609,6 +2638,11 @@ pub mod types {
         ///Use the rank-based RRF fallback instead of PIT-calibrated linear.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub rrf: ::std::option::Option<bool>,
+        /// Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also searches the
+        /// collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
+        /// (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub text_query: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub total_budget: ::std::option::Option<u64>,
         ///Vector collection to seed from (its records co-indexed with this graph by `oid`).
@@ -4385,6 +4419,69 @@ pub mod types {
             Default::default()
         }
     }
+    /// TD-064: predicate-aware recall shortfall (REST wire shape).
+    ///
+    /// Mirrors `observability::search_plan_trace::PredicateShortfall` as an
+    /// explicit REST/OpenAPI schema so the field is typed and documented on the
+    /// wire without forcing the observability type (or the slim `IndexQueryResult`
+    /// DTO) to derive `ToSchema`.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "TD-064: predicate-aware recall shortfall (REST wire shape).\n\nMirrors `observability::search_plan_trace::PredicateShortfall` as an\nexplicit REST/OpenAPI schema so the field is typed and documented on the\nwire without forcing the observability type (or the slim `IndexQueryResult`\nDTO) to derive `ToSchema`.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "ann_filtering_mode",
+    ///    "oversample_pool",
+    ///    "requested_k",
+    ///    "returned_k"
+    ///  ],
+    ///  "properties": {
+    ///    "ann_filtering_mode": {
+    ///      "description": "ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or\n`pre_filter`).",
+    ///      "type": "string"
+    ///    },
+    ///    "oversample_pool": {
+    ///      "description": "Candidate pool size considered before the predicate (oversample budget).",
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "requested_k": {
+    ///      "description": "The `top_k` value the caller asked for.",
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "returned_k": {
+    ///      "description": "Results actually returned after predicate filtering + merge.",
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PredicateShortfallWire {
+        /// ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or
+        /// `pre_filter`).
+        pub ann_filtering_mode: ::std::string::String,
+        ///Candidate pool size considered before the predicate (oversample budget).
+        pub oversample_pool: i32,
+        ///The `top_k` value the caller asked for.
+        pub requested_k: i32,
+        ///Results actually returned after predicate filtering + merge.
+        pub returned_k: i32,
+    }
+    impl PredicateShortfallWire {
+        pub fn builder() -> builder::PredicateShortfallWire {
+            Default::default()
+        }
+    }
     ///`ProbeResponse`
     ///
     /// <details><summary>JSON schema</summary>
@@ -5958,6 +6055,9 @@ pub mod types {
     ///      "format": "int64",
     ///      "minimum": 0.0
     ///    },
+    ///    "predicate_shortfall": {
+    ///      "$ref": "#/components/schemas/PredicateShortfallWire"
+    ///    },
     ///    "request_id": {
     ///      "description": "Request ID for tracing",
     ///      "type": "string"
@@ -5995,6 +6095,8 @@ pub mod types {
         pub explain: ::std::option::Option<::serde_json::Value>,
         ///Search latency in milliseconds
         pub latency_ms: i64,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub predicate_shortfall: ::std::option::Option<PredicateShortfallWire>,
         ///Request ID for tracing
         pub request_id: ::std::string::String,
         ///Search results
@@ -8965,6 +9067,12 @@ pub mod types {
         pub struct FusionSearchRequest {
             consensus_beta:
                 ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
+            document_collection: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            document_weight:
+                ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
             edge_types: ::std::result::Result<
                 ::std::vec::Vec<::std::string::String>,
                 ::std::string::String,
@@ -8981,6 +9089,10 @@ pub mod types {
                 ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
             query_vector: ::std::result::Result<::std::vec::Vec<f32>, ::std::string::String>,
             rrf: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+            text_query: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
             total_budget: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
             vector_collection: ::std::result::Result<::std::string::String, ::std::string::String>,
             vector_weight: ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
@@ -8989,6 +9101,8 @@ pub mod types {
             fn default() -> Self {
                 Self {
                     consensus_beta: Ok(Default::default()),
+                    document_collection: Ok(Default::default()),
+                    document_weight: Ok(Default::default()),
                     edge_types: Ok(Default::default()),
                     grain: Ok(Default::default()),
                     graph_weight: Ok(Default::default()),
@@ -8998,6 +9112,7 @@ pub mod types {
                     min_weight_fraction: Ok(Default::default()),
                     query_vector: Err("no value supplied for query_vector".to_string()),
                     rrf: Ok(Default::default()),
+                    text_query: Ok(Default::default()),
                     total_budget: Ok(Default::default()),
                     vector_collection: Err("no value supplied for vector_collection".to_string()),
                     vector_weight: Ok(Default::default()),
@@ -9012,6 +9127,26 @@ pub mod types {
             {
                 self.consensus_beta = value.try_into().map_err(|e| {
                     format!("error converting supplied value for consensus_beta: {e}")
+                });
+                self
+            }
+            pub fn document_collection<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.document_collection = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for document_collection: {e}")
+                });
+                self
+            }
+            pub fn document_weight<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<f32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.document_weight = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for document_weight: {e}")
                 });
                 self
             }
@@ -9105,6 +9240,16 @@ pub mod types {
                     .map_err(|e| format!("error converting supplied value for rrf: {e}"));
                 self
             }
+            pub fn text_query<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.text_query = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for text_query: {e}"));
+                self
+            }
             pub fn total_budget<T>(mut self, value: T) -> Self
             where
                 T: ::std::convert::TryInto<::std::option::Option<u64>>,
@@ -9143,6 +9288,8 @@ pub mod types {
             ) -> ::std::result::Result<Self, super::error::ConversionError> {
                 Ok(Self {
                     consensus_beta: value.consensus_beta?,
+                    document_collection: value.document_collection?,
+                    document_weight: value.document_weight?,
                     edge_types: value.edge_types?,
                     grain: value.grain?,
                     graph_weight: value.graph_weight?,
@@ -9152,6 +9299,7 @@ pub mod types {
                     min_weight_fraction: value.min_weight_fraction?,
                     query_vector: value.query_vector?,
                     rrf: value.rrf?,
+                    text_query: value.text_query?,
                     total_budget: value.total_budget?,
                     vector_collection: value.vector_collection?,
                     vector_weight: value.vector_weight?,
@@ -9162,6 +9310,8 @@ pub mod types {
             fn from(value: super::FusionSearchRequest) -> Self {
                 Self {
                     consensus_beta: Ok(value.consensus_beta),
+                    document_collection: Ok(value.document_collection),
+                    document_weight: Ok(value.document_weight),
                     edge_types: Ok(value.edge_types),
                     grain: Ok(value.grain),
                     graph_weight: Ok(value.graph_weight),
@@ -9171,6 +9321,7 @@ pub mod types {
                     min_weight_fraction: Ok(value.min_weight_fraction),
                     query_vector: Ok(value.query_vector),
                     rrf: Ok(value.rrf),
+                    text_query: Ok(value.text_query),
                     total_budget: Ok(value.total_budget),
                     vector_collection: Ok(value.vector_collection),
                     vector_weight: Ok(value.vector_weight),
@@ -11260,6 +11411,88 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct PredicateShortfallWire {
+            ann_filtering_mode: ::std::result::Result<::std::string::String, ::std::string::String>,
+            oversample_pool: ::std::result::Result<i32, ::std::string::String>,
+            requested_k: ::std::result::Result<i32, ::std::string::String>,
+            returned_k: ::std::result::Result<i32, ::std::string::String>,
+        }
+        impl ::std::default::Default for PredicateShortfallWire {
+            fn default() -> Self {
+                Self {
+                    ann_filtering_mode: Err("no value supplied for ann_filtering_mode".to_string()),
+                    oversample_pool: Err("no value supplied for oversample_pool".to_string()),
+                    requested_k: Err("no value supplied for requested_k".to_string()),
+                    returned_k: Err("no value supplied for returned_k".to_string()),
+                }
+            }
+        }
+        impl PredicateShortfallWire {
+            pub fn ann_filtering_mode<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.ann_filtering_mode = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for ann_filtering_mode: {e}")
+                });
+                self
+            }
+            pub fn oversample_pool<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.oversample_pool = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for oversample_pool: {e}")
+                });
+                self
+            }
+            pub fn requested_k<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.requested_k = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for requested_k: {e}"));
+                self
+            }
+            pub fn returned_k<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.returned_k = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for returned_k: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<PredicateShortfallWire> for super::PredicateShortfallWire {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: PredicateShortfallWire,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    ann_filtering_mode: value.ann_filtering_mode?,
+                    oversample_pool: value.oversample_pool?,
+                    requested_k: value.requested_k?,
+                    returned_k: value.returned_k?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::PredicateShortfallWire> for PredicateShortfallWire {
+            fn from(value: super::PredicateShortfallWire) -> Self {
+                Self {
+                    ann_filtering_mode: Ok(value.ann_filtering_mode),
+                    oversample_pool: Ok(value.oversample_pool),
+                    requested_k: Ok(value.requested_k),
+                    returned_k: Ok(value.returned_k),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct ProbeResponse {
             status: ::std::result::Result<::std::string::String, ::std::string::String>,
         }
@@ -13034,6 +13267,10 @@ pub mod types {
                 ::std::string::String,
             >,
             latency_ms: ::std::result::Result<i64, ::std::string::String>,
+            predicate_shortfall: ::std::result::Result<
+                ::std::option::Option<super::PredicateShortfallWire>,
+                ::std::string::String,
+            >,
             request_id: ::std::result::Result<::std::string::String, ::std::string::String>,
             results: ::std::result::Result<
                 ::std::vec::Vec<super::TypedSearchResult>,
@@ -13050,6 +13287,7 @@ pub mod types {
                 Self {
                     explain: Ok(Default::default()),
                     latency_ms: Err("no value supplied for latency_ms".to_string()),
+                    predicate_shortfall: Ok(Default::default()),
                     request_id: Err("no value supplied for request_id".to_string()),
                     results: Err("no value supplied for results".to_string()),
                     search_plan_trace: Ok(Default::default()),
@@ -13076,6 +13314,16 @@ pub mod types {
                 self.latency_ms = value
                     .try_into()
                     .map_err(|e| format!("error converting supplied value for latency_ms: {e}"));
+                self
+            }
+            pub fn predicate_shortfall<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::PredicateShortfallWire>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.predicate_shortfall = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for predicate_shortfall: {e}")
+                });
                 self
             }
             pub fn request_id<T>(mut self, value: T) -> Self
@@ -13127,6 +13375,7 @@ pub mod types {
                 Ok(Self {
                     explain: value.explain?,
                     latency_ms: value.latency_ms?,
+                    predicate_shortfall: value.predicate_shortfall?,
                     request_id: value.request_id?,
                     results: value.results?,
                     search_plan_trace: value.search_plan_trace?,
@@ -13139,6 +13388,7 @@ pub mod types {
                 Self {
                     explain: Ok(value.explain),
                     latency_ms: Ok(value.latency_ms),
+                    predicate_shortfall: Ok(value.predicate_shortfall),
                     request_id: Ok(value.request_id),
                     results: Ok(value.results),
                     search_plan_trace: Ok(value.search_plan_trace),

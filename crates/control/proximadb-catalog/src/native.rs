@@ -123,7 +123,7 @@ pub struct NativeCatalog {
     /// by id instead of by name.
     namespace_object_id_index: RwLock<HashMap<u64, Vec<String>>>,
     /// TD-181 P1: durable forward index `table fqn → object_id`, persisted to
-    /// `metadata/object_index.json` and loaded eagerly at startup. It is the
+    /// `_syscat/index.json` and loaded eagerly at startup. It is the
     /// name→oid direction the lazy `object_id_index` (oid→name) cannot answer
     /// for a not-yet-loaded table, and the prerequisite for any oid-keyed reader
     /// (S2) and for WAL-oid resolution. Maintained paired with `object_id_index`
@@ -397,7 +397,7 @@ impl NativeCatalog {
     // ── TD-181 P1: durable table object_id index ───────────────────────────
 
     /// Persist the in-memory `object_id_index` (the authoritative set of
-    /// oid→identifier mappings) to `metadata/object_index.json`. The forward
+    /// oid→identifier mappings) to `_syscat/index.json`. The forward
     /// `object_name_index` is its inverse and is kept paired in memory, so the
     /// index file is serialized from `object_id_index` alone.
     async fn save_object_index(&self) -> Result<()> {
@@ -430,7 +430,21 @@ impl NativeCatalog {
             );
             return Ok(());
         }
-        // Absent → one-time rebuild from authoritative object files.
+        // Canonical location absent → migrate the pre-rename index in place if it
+        // exists (write it to `_syscat/index.json`; the old file becomes an inert
+        // orphan). Cheaper + exact vs a rebuild scan, and mixed-read-safe.
+        if let Some(data) = self.io_read_opt(&Self::legacy_object_index_rel()).await? {
+            let index: ObjectIndex = serde_json::from_slice(&data)?;
+            self.populate_object_index(&index.tables).await;
+            self.save_object_index().await?;
+            info!(
+                "Migrated durable object_id index ({} entries) to the canonical \
+                 _syscat/ location",
+                index.tables.len()
+            );
+            return Ok(());
+        }
+        // Both absent → one-time rebuild from authoritative object files.
         let entries = self.scan_object_index_entries().await?;
         if entries.is_empty() {
             return Ok(());
@@ -543,8 +557,19 @@ impl NativeCatalog {
         "metadata/namespaces.json".to_string()
     }
 
-    /// TD-181 P1: relative key for the durable table object_id index.
+    /// TD-181 P1: relative key for the durable table object_id index. Colocated
+    /// with the oid-keyed objects it indexes, under `_syscat/` (ADR-035 D3
+    /// `_syscat/index.json`), so all object_id-cutover artifacts live in one
+    /// subtree. See [`legacy_object_index_rel`](Self::legacy_object_index_rel)
+    /// for the pre-rename location read as a migration fallback.
     fn object_index_rel() -> String {
+        "_syscat/index.json".to_string()
+    }
+
+    /// TD-181 P1: the pre-rename index location (`metadata/object_index.json`),
+    /// read once as a fallback so an existing catalog migrates its index to the
+    /// canonical `_syscat/` location without a rebuild scan.
+    fn legacy_object_index_rel() -> String {
         "metadata/object_index.json".to_string()
     }
 
@@ -2102,6 +2127,53 @@ mod tests {
             rebuilt.tables.len(),
             2,
             "scan-rebuild recovers exactly the persisted object files"
+        );
+    }
+
+    /// TD-181 P1: a catalog whose durable index sits at the pre-rename location
+    /// (`metadata/object_index.json`) migrates it to the canonical
+    /// `_syscat/index.json` on load — exactly (no rebuild scan), mixed-read-safe.
+    #[tokio::test]
+    async fn object_index_migrates_from_legacy_location() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ns = vec!["db".to_string()];
+        let id = TableIdentifier::new(ns.clone(), "t");
+
+        let oid = {
+            let cat = fresh_catalog(&tmp).await;
+            cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+            let oid = cat
+                .create_table(&id, schema_with_id_col("t"))
+                .await
+                .unwrap()
+                .object_id
+                .unwrap();
+            // Simulate a pre-rename catalog: relocate the index to the legacy path.
+            let data = cat
+                .io_read_opt(&NativeCatalog::object_index_rel())
+                .await
+                .unwrap()
+                .expect("index at canonical location");
+            cat.io_write(&NativeCatalog::legacy_object_index_rel(), &data)
+                .await
+                .unwrap();
+            cat.io_remove_file(&NativeCatalog::object_index_rel()).await;
+            oid
+        };
+
+        // Reopen: canonical absent + legacy present ⇒ migrate (not rebuild-scan).
+        let cat = fresh_catalog(&tmp).await;
+        assert_eq!(
+            cat.get_table_by_object_id(oid).await.unwrap(),
+            Some(id),
+            "migrated index resolves the table"
+        );
+        assert!(
+            cat.io_read_opt(&NativeCatalog::object_index_rel())
+                .await
+                .unwrap()
+                .is_some(),
+            "index now present at the canonical _syscat/ location"
         );
     }
 

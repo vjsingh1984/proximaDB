@@ -6995,6 +6995,7 @@ dependencies = [
  "dashmap",
  "proximadb-data-model",
  "proximadb-relational-types",
+ "serde_json",
 ]
 
 [[package]]
