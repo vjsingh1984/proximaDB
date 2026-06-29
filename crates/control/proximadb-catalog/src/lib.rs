@@ -4420,6 +4420,41 @@ pub trait Catalog: Send + Sync {
     async fn table_exists(&self, identifier: &TableIdentifier) -> anyhow::Result<bool>;
     async fn get_table(&self, identifier: &TableIdentifier) -> anyhow::Result<CatalogTableSchema>;
 
+    /// TD-110 S3: enumerate every table in a namespace subtree (the `scope`),
+    /// for cross-namespace FOREIGN KEY child discovery on ON DELETE.
+    /// `scope = None` → all top-level namespaces; `scope = Some([tenant])` → the
+    /// tenant's subtree (keeps FK child discovery intra-tenant — cross-tenant
+    /// children are never enumerated). Default impl BFS-walks `list_namespaces`
+    /// + `list_tables`; correct for every backend (a backend-specific global
+    /// index override is possible but would miss legacy name-keyed tables, so
+    /// the recursive default is the complete path).
+    async fn list_all_tables_in_scope(
+        &self,
+        scope: Option<&[String]>,
+    ) -> anyhow::Result<Vec<TableIdentifier>> {
+        let mut tables = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut frontier: Vec<Vec<String>> = match scope {
+            Some(ns) => vec![ns.to_vec()],
+            None => self
+                .list_namespaces(None)
+                .await?
+                .into_iter()
+                .map(|ns| ns.levels)
+                .collect(),
+        };
+        while let Some(ns) = frontier.pop() {
+            if !visited.insert(ns.clone()) {
+                continue;
+            }
+            tables.extend(self.list_tables(&ns).await?);
+            for child in self.list_namespaces(Some(&ns)).await? {
+                frontier.push(child.levels);
+            }
+        }
+        Ok(tables)
+    }
+
     /// ADR-031 O1 (dual-read): resolve a table by its stable `object_id` — the
     /// inverse of `get_table(...).object_id`. Returns `None` when no table carries
     /// that id, or when the backend does not allocate object_ids (external

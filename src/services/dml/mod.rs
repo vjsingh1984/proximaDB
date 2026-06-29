@@ -4179,12 +4179,13 @@ impl DmlService {
         Ok(guards)
     }
 
-    /// TD-110: the same-namespace/tenant child tables whose (single- or
-    /// multi-column) FK references `parent_id`'s full primary key, with the FK
-    /// columns and action. Factored out so both the discovery pass and the
-    /// recursive worker share one copy of the FK-matching logic. Self-references
-    /// are excluded; only FKs that reference the parent's FULL PK (in order) are
-    /// returned — partial / non-PK references remain unsupported (S2 scope).
+    /// TD-110: the child tables (anywhere in the tenant's namespace subtree —
+    /// cross-namespace within the tenant, S3) whose (single- or multi-column) FK
+    /// references `parent_id`'s full primary key, with the FK columns and action.
+    /// Factored out so both the discovery pass and the recursive worker share one
+    /// copy of the FK-matching logic. Self-references are excluded; only FKs that
+    /// reference the parent's FULL PK (in order) are returned — partial / non-PK
+    /// references remain unsupported (S2 scope).
     async fn child_tables_referencing(
         &self,
         catalog: &Arc<dyn crate::catalog::Catalog>,
@@ -4203,7 +4204,17 @@ impl DmlService {
         if parent_pk_cols.is_empty() {
             return Ok(Vec::new());
         }
-        let sibling_ids = catalog.list_tables(&parent_id.namespace).await?;
+        // TD-110 S3: enumerate candidate children across the tenant's WHOLE
+        // namespace subtree (not just the parent's namespace), so a child living
+        // in another namespace whose FK references this parent is found. Scoped
+        // to the tenant (`Some([tenant])`) to keep child discovery intra-tenant;
+        // cross-tenant children are never enumerated. The per-child reference
+        // match below still requires the FK to resolve to THIS parent (name AND
+        // namespace), so a same-named table in another namespace never matches.
+        let tenant_scope = tenant_context.map(|t| vec![t.tenant_id.clone()]);
+        let sibling_ids = catalog
+            .list_all_tables_in_scope(tenant_scope.as_deref())
+            .await?;
         let mut out = Vec::new();
         for child_id in sibling_ids {
             if child_id.name == parent_id.name && child_id.namespace == parent_id.namespace {
