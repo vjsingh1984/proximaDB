@@ -184,7 +184,7 @@ impl CatalogIdService {
     pub fn mint_namespace_id(&self, account_id: AccountId) -> NamespaceId {
         self.namespace_allocators
             .entry(account_id)
-            .or_insert_with(IdAllocator::default)
+            .or_default()
             .allocate() as u16
     }
 
@@ -197,7 +197,7 @@ impl CatalogIdService {
     ) -> CollectionId {
         self.collection_allocators
             .entry((account_id, namespace_id))
-            .or_insert_with(IdAllocator::default)
+            .or_default()
             .allocate() as u32
     }
 
@@ -206,7 +206,7 @@ impl CatalogIdService {
     pub fn mint_column_id(&self, collection_id: CollectionId) -> ColumnId {
         self.column_allocators
             .entry(collection_id)
-            .or_insert_with(IdAllocator::default)
+            .or_default()
             .allocate() as i32
     }
 
@@ -214,7 +214,7 @@ impl CatalogIdService {
     pub fn mint_index_id(&self, collection_id: CollectionId) -> IndexId {
         self.index_allocators
             .entry(collection_id)
-            .or_insert_with(IdAllocator::default)
+            .or_default()
             .allocate() as u32
     }
 
@@ -230,7 +230,7 @@ impl CatalogIdService {
     pub fn recover_namespace_floor(&self, account_id: AccountId, max_existing: u16) {
         self.namespace_allocators
             .entry(account_id)
-            .or_insert_with(IdAllocator::default)
+            .or_default()
             .raise_floor(max_existing as u64 + 1);
     }
 
@@ -243,7 +243,7 @@ impl CatalogIdService {
     ) {
         self.collection_allocators
             .entry((account_id, namespace_id))
-            .or_insert_with(IdAllocator::default)
+            .or_default()
             .raise_floor(max_existing as u64 + 1);
     }
 
