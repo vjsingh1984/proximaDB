@@ -87,7 +87,14 @@ impl ToPathSegment for u32 {
 ///
 /// Uniquely identifies a collection globally via the composite
 /// `(account, namespace, collection)`. The workspace_id is NOT here —
-/// it's a PHYSICAL deployment context (which storage pool / region).
+/// it's a PHYSICAL deployment context (which storage pool / region), not a
+/// path segment (Phase 4 hierarchy collapse: `tenant_id` → `account_id`).
+///
+/// This is a **pure value type** — it carries the typed IDs only. Full
+/// object-store path construction (`accounts/{base62}/…/`) lives in
+/// `DrPathBuilder` / `DrResolvedPath` (the SaaS mandate: every object-store
+/// write is prefixed via DrPathBuilder, the single allowlisted path builder).
+/// DrResolvedPath consumes a `CollectionIdentity` via `build_from_identity`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CollectionIdentity {
     pub account_id: AccountId,
@@ -96,37 +103,17 @@ pub struct CollectionIdentity {
 }
 
 impl CollectionIdentity {
-    /// `accounts/{base62(acct)}/{base62(ns)}/{base62(coll)}/`
-    ///
-    /// Zero-padded base62 → lexicographic sort == numeric sort in S3 LIST.
-    /// Path width is FIXED: 9 + 6 + 1 + 3 + 1 + 6 + 1 = 27 chars for all collections.
-    pub fn data_path(&self) -> String {
-        format!(
-            "accounts/{}/{}/{}/",
+    /// The three zero-padded base62 path segments, in path order
+    /// `(account, namespace, collection)`. Composed into the full prefix by
+    /// `DrResolvedPath::typed_root_prefix` — kept here only so the encoding
+    /// (segment width / zero-pad contract) is testable at the type layer
+    /// without a `DrResolvedPath`.
+    pub fn path_segments(&self) -> (String, String, String) {
+        (
             self.account_id.to_path_segment(),
             self.namespace_id.to_path_segment(),
             self.collection_id.to_path_segment(),
         )
-    }
-
-    pub fn wal_path(&self) -> String {
-        format!("{}wal/", self.data_path())
-    }
-
-    pub fn sst_path(&self) -> String {
-        format!("{}sst/", self.data_path())
-    }
-
-    pub fn index_path(&self, index_id: IndexId) -> String {
-        format!(
-            "{}indexes/{}/",
-            self.data_path(),
-            index_id.to_path_segment()
-        )
-    }
-
-    pub fn metadata_path(&self) -> String {
-        format!("{}metadata/", self.data_path())
     }
 }
 
@@ -292,56 +279,36 @@ mod tests {
         assert_eq!(decoded as u32, id);
     }
 
-    // ── CollectionIdentity path tests ────────────────────────────────────
+    // ── CollectionIdentity segment-encoding tests ───────────────────────
+    // (Full-path construction tests live in path_resolver.rs, where
+    // DrResolvedPath::typed_root_prefix composes the canonical prefix.)
 
     #[test]
-    fn data_path_has_fixed_width_segments() {
+    fn path_segments_are_fixed_width() {
         let identity = CollectionIdentity {
             account_id: 1,
             namespace_id: 3,
             collection_id: 4,
         };
-        let path = identity.data_path();
-        let segments: Vec<&str> = path
-            .trim_end_matches('/')
-            .strip_prefix("accounts/")
-            .unwrap()
-            .split('/')
-            .collect();
-        assert_eq!(segments.len(), 3);
+        let (acct, ns, coll) = identity.path_segments();
         // account (u32) → 6 chars, namespace (u16) → 3 chars, collection (u32) → 6 chars.
         assert_eq!(
-            segments[0].len(),
+            acct.len(),
             6,
-            "account segment must be 6 chars (zero-padded u32)"
+            "account segment must be 6 chars (u32), got {acct}"
         );
         assert_eq!(
-            segments[1].len(),
+            ns.len(),
             3,
-            "namespace segment must be 3 chars (zero-padded u16)"
+            "namespace segment must be 3 chars (u16), got {ns}"
         );
         assert_eq!(
-            segments[2].len(),
+            coll.len(),
             6,
-            "collection segment must be 6 chars (zero-padded u32)"
+            "collection segment must be 6 chars (u32), got {coll}"
         );
-    }
-
-    #[test]
-    fn sub_paths_are_correct() {
-        let identity = CollectionIdentity {
-            account_id: 1,
-            namespace_id: 1,
-            collection_id: 1,
-        };
-        let base = identity.data_path();
-        assert!(identity.wal_path().starts_with(&base));
-        assert!(identity.wal_path().ends_with("wal/"));
-        assert!(identity.sst_path().starts_with(&base));
-        assert!(identity.sst_path().ends_with("sst/"));
-        assert!(identity.index_path(5).starts_with(&base));
-        assert!(identity.index_path(5).contains("indexes/"));
-        assert!(identity.metadata_path().starts_with(&base));
+        // Fixed-width → the 3 segments total exactly 15 chars always.
+        assert_eq!(acct.len() + ns.len() + coll.len(), 15);
     }
 
     // ── Per-scope typed-atomic CatalogIdService tests ────────────────────
@@ -407,20 +374,6 @@ mod tests {
         assert_eq!(svc.mint_column_id(2), 1, "different table restarts at 1");
     }
 
-    #[test]
-    fn data_path_is_fixed_width_and_compact() {
-        let identity = CollectionIdentity {
-            account_id: 1,
-            namespace_id: 2,
-            collection_id: 3,
-        };
-        let path = identity.data_path();
-        // Fixed: "accounts/" (9) + 6 + "/" + 3 + "/" + 6 + "/" = 27 chars always.
-        assert_eq!(
-            path.len(),
-            27,
-            "data_path must be exactly 27 chars (fixed-width), got {}: {path}",
-            path.len()
-        );
-    }
+    // The 27-char fixed-width full-path test (`typed_root_prefix_is_27_chars`)
+    // lives in path_resolver.rs — full path construction is DrResolvedPath's job.
 }
