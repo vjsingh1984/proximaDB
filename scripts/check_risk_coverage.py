@@ -15,7 +15,14 @@ Checks, for each [[risk]]:
   3. `must_run_in_tier` is a job listed in ci-success.needs; AND
   4. that tier's test-selection in .github/workflows/ci.yml (its `for test_file
      in <globs>` OR `for test_name in <list>`) actually includes each
-     required_tests — the honest guarantee that green ⇒ the risk test ran.
+     required_tests — the honest guarantee that green ⇒ the risk test ran; AND
+  5. each required_tests is wired via an EXPLICIT `tests/<name>.rs` token (or
+     membership in an explicit `for test_name in …` list) — NOT only via a
+     wildcard glob. A wildcard glob that matches a declared test can silently
+     sweep in other, unverified tests (the #558 → #567 regression:
+     `tests/*recall*.rs` meant to wire filtered_ann_recall_bands also pulled in
+     the known-broken td112_postflush_recall_e2e). When a wildcard glob is the
+     only path, the undeclared tests it drags in are listed.
 
 Exit 0 = clean, 1 = violation(s), 2 = usage error.
 """
@@ -101,6 +108,46 @@ def tier_runs_test(ci: str, job: str, test_name: str, errors: list[str], rclass:
     )
 
 
+def tier_wiring_precise(
+    ci: str, job: str, test_name: str, declared_files: set[str], errors: list[str], rclass: str
+) -> None:
+    """Fail if a required test is wired ONLY via a wildcard glob.
+
+    A wildcard glob that matches a declared test can silently sweep in OTHER,
+    unverified tests (the #558 → #567 regression: `tests/*recall*.rs` was meant
+    to wire filtered_ann_recall_bands but also pulled in the known-broken
+    td112_postflush_recall_e2e). Require an explicit `tests/<name>.rs` token
+    (or membership in an explicit `for test_name in …` list) for every declared
+    test, and when a wildcard glob is the only path, list the undeclared tests it
+    drags in.
+    """
+    globs, names = tier_selection(ci, job)
+    test_file = f"tests/{test_name}.rs"
+    if names:
+        return  # explicit-list tier: membership (already asserted) is precise
+    if not globs or test_file in globs:
+        return  # no selection (flagged elsewhere) or an explicit filename token
+    wildcards = [g for g in globs if "*" in g and fnmatch(test_file, g)]
+    if not wildcards:
+        return
+    swept = sorted(
+        {
+            f"tests/{p.name}"
+            for g in wildcards
+            for p in (ROOT / "tests").glob("*.rs")
+            if fnmatch(f"tests/{p.name}", g) and f"tests/{p.name}" not in declared_files
+        }
+    )
+    if swept:
+        preview = ", ".join(swept[:8]) + (" …" if len(swept) > 8 else "")
+        errors.append(
+            f"[{rclass}] {test_file} is wired only via wildcard glob(s) {wildcards} "
+            f"that ALSO match {len(swept)} undeclared test(s): {preview} — add an "
+            f"explicit `{test_file}` token to the tier to avoid sweeping in unverified "
+            f"tests (broad-glob sweep regression, cf. #558 → #567)"
+        )
+
+
 def main() -> int:
     if not CONTRACT_PATH.exists():
         print(f"ERROR: Missing risk contract: {CONTRACT_PATH}")
@@ -120,6 +167,12 @@ def main() -> int:
     needs = ci_success_needs(ci)
     errors: list[str] = []
     seen_classes: set[str] = set()
+    declared_files: set[str] = {
+        f"tests/{t}.rs"
+        for risk in risks
+        for t in (risk.get("required_tests") or [])
+        if isinstance(t, str)
+    }
 
     for idx, risk in enumerate(risks, start=1):
         rclass = risk.get("class", f"<missing-class-{idx}>")
@@ -165,6 +218,7 @@ def main() -> int:
             continue
         for t in tests:
             tier_runs_test(ci, tier, t, errors, rclass)
+            tier_wiring_precise(ci, tier, t, declared_files, errors, rclass)
 
     if errors:
         print("Risk-coverage contract validation failed:")
