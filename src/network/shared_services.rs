@@ -700,6 +700,33 @@ impl SharedServices {
         // Collection service will be injected into StorageEngine by ProximaDB::new
         info!("✅ SharedServices: Collection service created for injection into StorageEngine");
 
+        // ADR-031 allocator unification: raise the collection-id allocator floor
+        // above every existing object_id — both `collection.id` (numeric) AND
+        // `schema.object_id` — so a freshly minted collection id can never
+        // collide with a legacy (pre-unification) schema.object_id (which would
+        // corrupt the oid→name index). Best-effort: a failure logs + continues
+        // (startup must not block on this).
+        {
+            let max_coll_id = collection_service
+                .list_collections()
+                .await
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|c| c.id.parse::<u64>().ok())
+                .max();
+            let max_schema_oid = match catalog_manager.default_catalog().await {
+                Ok(cat) => cat.max_object_id().await.unwrap_or(None),
+                Err(e) => {
+                    warn!("collection-id floor recovery: default catalog unavailable: {e}");
+                    None
+                }
+            };
+            if let Some(floor) = max_coll_id.max(max_schema_oid) {
+                crate::services::collection::manager::recover_collection_id_floor(floor);
+                debug!("collection-id allocator floor raised to {floor} (max existing object_id)");
+            }
+        }
+
         // Phase P Site 2 — boot-time hydration of the TurboQuant store
         // registry. After a restart, every existing collection whose
         // proto QuantizationConfig set `enable_turboquant=true` needs

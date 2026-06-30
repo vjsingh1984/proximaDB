@@ -2080,9 +2080,22 @@ impl CollectionService {
                 .await?;
         }
 
-        let schema = crate::storage::metadata::collection_mapping::catalog_schema_from_collection(
-            collection,
-        )?;
+        let mut schema =
+            crate::storage::metadata::collection_mapping::catalog_schema_from_collection(
+                collection,
+            )?;
+        // ADR-031 allocator unification: pre-set `schema.object_id` from the
+        // collection's numeric id so `create_table` ADOPTS it
+        // (`mint_object_id(Some)` raises the floor + returns the id) instead of
+        // minting a separate one. Result: `schema.object_id == collection.id`'s
+        // oid — one identity per collection, not two divergent ones.
+        // Only the fresh-create path (`create_table(schema)` below) is affected;
+        // the existing-table path preserves its already-minted object_id. Legacy
+        // UUID collection.ids don't parse → leave None (create_table mints fresh,
+        // un-unified — mixed-read-safe).
+        if let Ok(oid) = collection.id.parse::<u64>() {
+            schema.object_id = Some(oid);
+        }
         if catalog.table_exists(&identifier).await? {
             let mut existing = catalog.get_table(&identifier).await?;
             if existing
@@ -3399,6 +3412,13 @@ mod tests {
         );
         let schema = catalog.get_table(&table_id).await?;
         assert_eq!(schema.properties.get("collection.id"), Some(&collection.id));
+        // ADR-031 allocator unification: schema.object_id must equal collection.id's
+        // oid (create_table adopted it) — one identity, not two divergent ones.
+        assert_eq!(
+            schema.object_id,
+            collection.id.parse::<u64>().ok(),
+            "schema.object_id must equal collection.id's oid (unified identity)"
+        );
         assert_eq!(
             schema.properties.get("asset.capability.vector"),
             Some(&"true".to_string())
