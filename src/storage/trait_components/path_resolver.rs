@@ -515,6 +515,19 @@ impl DrResolvedPath {
     }
 }
 
+/// ADR-031 Phase 4b: whether the typed object-store path
+/// (`accounts/{base62}/{base62}/{base62}/`, no tenant slot) is enabled. Read
+/// **once per process** (cached in a `OnceLock`, mirroring the `oid_paths`
+/// pattern) to avoid env races across the multi-threaded runtime. Default OFF
+/// → legacy string-resolved `data/…` / `accounts/{str}/…` paths (mixed-read-safe).
+pub fn typed_paths_enabled() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| match std::env::var("PROXIMADB_TYPED_PATHS") {
+        Ok(v) => v == "1" || v.eq_ignore_ascii_case("true"),
+        Err(_) => false,
+    })
+}
+
 /// Resolve the catalog-addressed index locations for a collection's vector-ANN
 /// projections — the pure core of the CATALOG_OBJECT_MODEL P1 boot adapter.
 ///
@@ -536,10 +549,19 @@ pub fn ann_index_locations(
     namespace: &CatalogNamespace,
     schema: &CatalogTableSchema,
     migrate_to_catalog_paths: bool,
+    typed_identity: Option<CollectionIdentity>,
 ) -> Vec<(String, String)> {
-    let resolved = match DrPathBuilder::build(namespace, &schema.name) {
-        Ok(resolved) => resolved,
-        Err(_) => return Vec::new(), // legacy / non-DR-addressable namespace → leave convention
+    // ADR-031 Phase 4b: when the caller resolved a typed identity (env ON +
+    // schema has stable ids + account u32 known), build the path from it — the
+    // zero-padded base62 `accounts/{a}/{ns}/{c}/` prefix with no tenant slot.
+    // Otherwise the legacy string-resolved path (byte-identical when env OFF).
+    let resolved = if let Some(identity) = typed_identity {
+        DrPathBuilder::build_from_identity(identity, namespace.storage_pool_class)
+    } else {
+        match DrPathBuilder::build(namespace, &schema.name) {
+            Ok(resolved) => resolved,
+            Err(_) => return Vec::new(), // legacy / non-DR-addressable namespace → leave convention
+        }
     };
     schema
         .projections
@@ -1294,10 +1316,10 @@ mod tests {
         ));
 
         // No explicit location + migrate off → register nothing (convention kept).
-        assert!(ann_index_locations(&ns, &schema, false).is_empty());
+        assert!(ann_index_locations(&ns, &schema, false, None).is_empty());
 
         // migrate on → DrPath default, ANN projection only.
-        let migrated = ann_index_locations(&ns, &schema, true);
+        let migrated = ann_index_locations(&ns, &schema, true, None);
         assert_eq!(
             migrated,
             vec![(
@@ -1315,13 +1337,63 @@ mod tests {
         )
         .with_location("s3://hot-tier/ann/");
         assert_eq!(
-            ann_index_locations(&ns, &schema, false),
+            ann_index_locations(&ns, &schema, false, None),
             vec![("col_orders".to_string(), "s3://hot-tier/ann/".to_string())]
         );
 
         // Non-DR-addressable namespace (legacy) → empty, leave the convention.
         let legacy = CatalogNamespace::new(vec!["legacy".into()]);
-        assert!(ann_index_locations(&legacy, &schema, true).is_empty());
+        assert!(ann_index_locations(&legacy, &schema, true, None).is_empty());
+    }
+
+    #[test]
+    fn ann_index_locations_uses_typed_identity_when_provided() {
+        // ADR-031 Phase 4b: a Some(identity) flips the index location to the
+        // typed account-rooted prefix (no tenant slot); None keeps the legacy
+        // string-resolved path. This is the dispatch the env gate controls.
+        use crate::core::stable_id::CollectionIdentity;
+        use proximadb_catalog::CatalogProjection;
+        let ns = dr_addressable_namespace();
+        let mut schema = CatalogTableSchema::new("col_orders");
+        schema.projections.push(CatalogProjection::rebuildable(
+            "vector_ann",
+            CatalogProjectionKind::VectorAnn,
+            "primary",
+        ));
+        let identity = CollectionIdentity {
+            account_id: 7,
+            namespace_id: 5,
+            collection_id: 9,
+        };
+        let typed = ann_index_locations(&ns, &schema, true, Some(identity));
+        assert_eq!(typed.len(), 1, "one ANN projection");
+        let (_coll, loc) = &typed[0];
+        assert!(
+            loc.starts_with("accounts/"),
+            "typed path is account-rooted: {loc}"
+        );
+        assert!(
+            loc.ends_with("/indexes/vector_ann/"),
+            "still under indexes/: {loc}"
+        );
+        assert!(
+            !loc.starts_with("data/"),
+            "typed path must not be the legacy flat render: {loc}"
+        );
+        // Root prefix is the fixed 27-char typed form: accounts/000007/005/000009/
+        let root = loc.strip_suffix("indexes/vector_ann/").unwrap();
+        assert_eq!(
+            root.len(),
+            27,
+            "typed root must be exactly 27 chars (zero-padded base62): {root}"
+        );
+        // None identity → legacy path (the data/ flat render), unaffected by 4b.
+        let legacy = ann_index_locations(&ns, &schema, true, None);
+        let (_, legacy_loc) = &legacy[0];
+        assert!(
+            legacy_loc.starts_with("data/") || legacy_loc.starts_with("accounts/acct"),
+            "None identity keeps the legacy string-resolved path: {legacy_loc}"
+        );
     }
 
     #[test]

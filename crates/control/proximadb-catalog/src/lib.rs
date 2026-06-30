@@ -4418,6 +4418,15 @@ pub trait Catalog: Send + Sync {
     ) -> anyhow::Result<Vec<CatalogNamespace>>;
     async fn namespace_exists(&self, namespace: &[String]) -> anyhow::Result<bool>;
     async fn get_namespace(&self, namespace: &[String]) -> anyhow::Result<CatalogNamespace>;
+    /// ADR-031 Phase 4b: resolve the numeric account u32 for an account string
+    /// (lookup in the durable account registry; mints+persists on first sight).
+    /// Returns `None` for an empty/absent account. The root path-resolver uses
+    /// this to compose a `CollectionIdentity` for the typed object-store path.
+    /// Default `None` — only the native catalog mints; federated/external
+    /// catalogs have no typed identity (legacy paths).
+    async fn account_id_u32(&self, _account: &str) -> anyhow::Result<Option<u32>> {
+        Ok(None)
+    }
     async fn update_namespace_properties(
         &self,
         namespace: &[String],
