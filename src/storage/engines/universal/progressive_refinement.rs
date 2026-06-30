@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, trace};
 
-use crate::compute::distance_computation::{
+use proximadb_distance_kernel::{
     DistanceMetric, SelectedFormat, SimilarityResult, UnifiedDistanceCompute,
 };
 
@@ -646,8 +646,8 @@ impl ProgressiveRefinementPipeline {
     fn convert_to_quantized_int8(
         &self,
         data: &[u8],
-    ) -> AdapterResult<crate::compute::distance_computation::QuantizedVectorData> {
-        use crate::compute::distance_computation::{Int8VectorData, QuantizedVectorData};
+    ) -> AdapterResult<proximadb_distance_kernel::QuantizedVectorData> {
+        use proximadb_distance_kernel::{Int8VectorData, QuantizedVectorData};
 
         // Convert to INT8 format
         let int8_data: Vec<i8> = data.iter().map(|&b| b as i8).collect();
@@ -670,8 +670,8 @@ impl ProgressiveRefinementPipeline {
         data: &[u8],
         segments: usize,
         _bits: usize,
-    ) -> AdapterResult<crate::compute::distance_computation::QuantizedVectorData> {
-        use crate::compute::distance_computation::{PQVectorData, QuantizedVectorData};
+    ) -> AdapterResult<proximadb_distance_kernel::QuantizedVectorData> {
+        use proximadb_distance_kernel::{PQVectorData, QuantizedVectorData};
 
         // Convert to PQ format - simplified implementation
         let codes: Vec<u8> = data.iter().take(segments).copied().collect();

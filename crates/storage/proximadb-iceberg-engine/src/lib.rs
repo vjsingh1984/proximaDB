@@ -352,6 +352,24 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
             .to_vec())
     }
 
+    /// TD-167 / ADR-034 P1: batched multi-range GET via `object_store::get_ranges`,
+    /// which coalesces adjacent ranges and issues the reads concurrently — so K
+    /// surviving block bodies cost ~one round-trip instead of K serial GETs.
+    async fn fetch_vector_segment_ranges(
+        &self,
+        path: &Path,
+        ranges: &[std::ops::Range<u64>],
+        _tenant_id: Option<&str>,
+    ) -> Result<Vec<Vec<u8>>, StorageError> {
+        Ok(self
+            .store
+            .get_ranges(path, ranges)
+            .await?
+            .into_iter()
+            .map(|b| b.to_vec())
+            .collect())
+    }
+
     async fn persist_vector_segment(
         &self,
         path: &Path,
@@ -892,6 +910,7 @@ mod tests {
         fn col(id: i32, name: &str, dt: ProximaType, nullable: bool) -> ProximaColumn {
             ProximaColumn {
                 id,
+                object_id: None,
                 name: name.to_string(),
                 data_type: dt,
                 nullable,

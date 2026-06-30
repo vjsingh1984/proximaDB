@@ -242,6 +242,20 @@ pub struct SharedServices {
     /// (fail-open). Default-OFF until `PROXIMADB_WRITE_FENCING=1`.
     pub storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>>,
 
+    /// Partition lease manager for per-collection write authority (Phase 7c).
+    ///
+    /// When enabled via `PROXIMADB_PARTITION_LEASE_ON` and object-store
+    /// deployment, this manager acquires/renews generation-fenced leases
+    /// over `(tenant, collection)` partitions. Protocol handlers consult
+    /// `consult_for_write_leased` before DDL writes to ensure split-brain-free
+    /// local writes. Single-pod deployments leave this `None` (pure in-memory
+    /// `primary_pod_registry` lookup).
+    ///
+    /// The lease is a latency optimization; the object-store fence in
+    /// `SystemCatalog` is the correctness authority.
+    pub partition_lease_manager:
+        Option<Arc<crate::cluster::partition_lease::PartitionLeaseManager>>,
+
     /// Shared canonical WAL appender at `<data_dir>/pgwire/canonical-records.wal`.
     ///
     /// Opened once in `SharedServices::new` (when `opt_config` is provided so
@@ -1297,6 +1311,10 @@ impl SharedServices {
                     enable_dual_use_embeddings: None,
                     canonical_embedding_precision: None,
                     permitted_principals: vec![],
+                    // Coarse recovery reconstruction (quantization etc. hardcoded);
+                    // routing policy defaults to auto (None).
+                    index_policy: None,
+                    pax_vector_quant: None,
                 };
 
                 let proto_collection = crate::proto::proximadb_v1::Collection {
@@ -1469,10 +1487,85 @@ impl SharedServices {
                 graph_service_inst.with_canonical_wal_path(appender.path().to_path_buf());
         }
         // Wire the storage root so graph engines persist under the same base path as vectors
-        if let Some(first_loc) = storage_config.storage_locations.first() {
-            graph_service_inst.set_base_storage_url(first_loc.url.clone());
-        } else {
-            graph_service_inst.set_base_storage_url(storage_config.metadata_url.clone());
+        let graph_storage_url = storage_config
+            .storage_locations
+            .first()
+            .map(|loc| loc.url.clone())
+            .unwrap_or_else(|| storage_config.metadata_url.clone());
+        graph_service_inst.set_base_storage_url(graph_storage_url.clone());
+
+        // TD-168 Phase 2: when the cold-payload tier is ON, back the graph's
+        // canonical record store with a Cool-tiered object store so node/edge
+        // payloads are durable off-RAM and the cold-fetch read path (#446) can
+        // materialize them on a cache miss. Graph-only by construction, so every
+        // object is Cool with no risk of mis-tiering hot relational data.
+        // Default-OFF: with the gate unset nothing is constructed, the canonical
+        // record store stays None, and the all-RAM path is unchanged.
+        if crate::graph::service::cold_payloads_enabled() {
+            let tier = proximadb_storage_filesystem_types::ObjectAccessTier::Cool;
+            // #52: optionally back the cold tier with the BATCHED segment store
+            // (`ColdGraphSegmentStore`) instead of the per-record store — far fewer
+            // object PUTs. It BUFFERS in RAM, so it is crash-safe only with the
+            // recovery re-population backstop (PR #520, gated separately and
+            // default-OFF) plus the checkpoint/shutdown flush hook. If that backstop
+            // is OFF we REFUSE to wire it and fall back to the durable-on-write
+            // `ColdGraphRecordStore` — fail-safe, never an unprotected buffered store.
+            //
+            // Phase-1 precondition: recovery re-population rebuilds the cold store via
+            // `engine.get_all_nodes()/get_all_edges()`, valid only while the ORION
+            // engine is FULL-RESIDENT and snapshots full payloads. True payload-offload
+            // cold-tiering (engine evicts payload) is a later phase that needs the
+            // segment store to be a durable authority (segment-tail index rebuild), not
+            // a projection.
+            let mut use_segment_store = crate::graph::service::segment_store_enabled();
+            if use_segment_store
+                && !crate::storage::persistence::write_ahead_log::wal_operations::canonical_recovery_repopulate_enabled()
+            {
+                warn!(
+                    "SharedServices: PROXIMADB_GRAPH_SEGMENT_STORE is set but PROXIMADB_GRAPH_CANONICAL_RECOVERY is OFF — the buffered segment store has no crash-recovery backstop; refusing to wire it and falling back to the durable-on-write ColdGraphRecordStore. Set PROXIMADB_GRAPH_CANONICAL_RECOVERY=1 to enable the segment store."
+                );
+                use_segment_store = false;
+            }
+
+            if use_segment_store {
+                match crate::graph::ColdGraphSegmentStore::from_storage_root(
+                    &graph_storage_url,
+                    tier,
+                )
+                .await
+                {
+                    Ok(seg_store) => {
+                        graph_service_inst =
+                            graph_service_inst.with_canonical_record_store(Arc::new(seg_store));
+                        info!(
+                            "✅ SharedServices: graph cold-payload tier ON (SEGMENT store) — canonical node/edge payloads batched → Cool object storage ({graph_storage_url}); crash-recovery backstop enabled"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "SharedServices: segment store requested (PROXIMADB_GRAPH_SEGMENT_STORE) but init failed for `{graph_storage_url}`: {e}; falling back to the all-RAM path"
+                        );
+                    }
+                }
+            } else {
+                match crate::graph::ColdGraphRecordStore::from_storage_root(
+                    &graph_storage_url,
+                    tier,
+                ) {
+                    Ok(cold_store) => {
+                        graph_service_inst =
+                            graph_service_inst.with_canonical_record_store(Arc::new(cold_store));
+                        info!(
+                            "✅ SharedServices: graph cold-payload tier ON — canonical node/edge payloads → Cool object storage ({graph_storage_url})"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "SharedServices: graph cold-payload tier requested (PROXIMADB_GRAPH_COLD_PAYLOADS) but cold store init failed for `{graph_storage_url}`: {e}; falling back to the all-RAM path"
+                        );
+                    }
+                }
+            }
         }
 
         // Create a simple file-backed metrics updater under data_root/metrics
@@ -2134,6 +2227,64 @@ impl SharedServices {
             );
         }
 
+        // Phase 7c: resolve self_pod_id for partition lease manager initialization
+        let self_pod_id_resolved = crate::cluster::primary_pod_registry::resolve_self_pod_id(None);
+
+        // Phase 7c: partition lease manager for per-collection write authority
+        let partition_lease_manager: Option<
+            std::sync::Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
+        > = {
+            // Only initialize for object-store deployments when explicitly enabled
+            let is_objstore = storage_config.metadata_url.starts_with("s3://")
+                || storage_config.metadata_url.starts_with("gs://")
+                || storage_config.metadata_url.starts_with("az://")
+                || storage_config.metadata_url.starts_with("memory://");
+            let lease_enabled = std::env::var("PROXIMADB_PARTITION_LEASE_ON")
+                .ok()
+                .and_then(|v| v.parse::<bool>().ok())
+                .unwrap_or(false);
+
+            if is_objstore && lease_enabled {
+                use crate::storage::trait_components::path_resolver::DrPathBuilder;
+                // Use DrPathBuilder for the lease prefix (under _catalog/leases)
+                let lease_prefix = DrPathBuilder::partition_lease_prefix();
+                // Lease TTL: 60 seconds by default (configurable via env)
+                let lease_ms = std::env::var("PROXIMADB_PARTITION_LEASE_SECS")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(60) as i64
+                    * 1000;
+
+                match crate::cluster::partition_lease::PartitionLeaseStore::from_url(
+                    &storage_config.metadata_url,
+                    lease_prefix,
+                ) {
+                    Ok(lease_store) => {
+                        let lease_mgr = crate::cluster::partition_lease::PartitionLeaseManager::new(
+                            std::sync::Arc::new(lease_store),
+                            primary_pod_registry.clone(),
+                            &self_pod_id_resolved,
+                            lease_ms,
+                        );
+                        info!(
+                            "✅ SharedServices: partition lease manager enabled (TTL={}ms)",
+                            lease_ms
+                        );
+                        Some(std::sync::Arc::new(lease_mgr))
+                    }
+                    Err(err) => {
+                        warn!(
+                            "⚠️ SharedServices: failed to create partition lease store, disabling: {}",
+                            err
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        };
+
         info!(
             "✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)"
         );
@@ -2218,7 +2369,10 @@ impl SharedServices {
                 // the gRPC v2 service share the identical pod
                 // identity. Pulled from `PROXIMADB_POD_ID` env var
                 // with a `"self"` fallback for single-node setups.
-                self_pod_id: crate::cluster::primary_pod_registry::resolve_self_pod_id(None),
+                self_pod_id: self_pod_id_resolved,
+                // Phase 7c: partition lease manager for per-collection
+                // write authority (initialized above).
+                partition_lease_manager,
                 // T2.3 / TD-066 production wiring: the shared canonical
                 // WAL appender opened earlier (Some when opt_config is
                 // provided). Held here so multi_server.rs can clone it

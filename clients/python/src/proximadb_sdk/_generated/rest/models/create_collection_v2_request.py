@@ -13,6 +13,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.index_config_input import IndexConfigInput
+    from ..models.index_policy_input import IndexPolicyInput
     from ..models.quantization_config_input import QuantizationConfigInput
     from ..models.schema_definition import SchemaDefinition
 
@@ -76,6 +77,7 @@ class CreateCollectionV2Request:
                 Restores v1 parity: the v1 proto create accepted `index_configs`, which
                 drive `active_algorithm_for` (e.g. an IVF index → recall-tune dispatches
                 to the IVF arm). When omitted, the engine selects a default (HNSW).
+            index_policy (Union['IndexPolicyInput', None, Unset]):
             initial_capacity (Union[None, Unset, int]): Initial capacity hint for pre-allocation
             quantization (Union['QuantizationConfigInput', None, Unset]):
             schema (Union['SchemaDefinition', None, Unset]):
@@ -91,6 +93,7 @@ class CreateCollectionV2Request:
     enable_proxima_record: Union[None, Unset, bool] = UNSET
     engine: Union[None, Unset, str] = UNSET
     index_configs: Union[None, Unset, list["IndexConfigInput"]] = UNSET
+    index_policy: Union["IndexPolicyInput", None, Unset] = UNSET
     initial_capacity: Union[None, Unset, int] = UNSET
     quantization: Union["QuantizationConfigInput", None, Unset] = UNSET
     schema: Union["SchemaDefinition", None, Unset] = UNSET
@@ -99,6 +102,7 @@ class CreateCollectionV2Request:
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.index_config_input import IndexConfigInput
+        from ..models.index_policy_input import IndexPolicyInput
         from ..models.quantization_config_input import QuantizationConfigInput
         from ..models.schema_definition import SchemaDefinition
 
@@ -141,6 +145,14 @@ class CreateCollectionV2Request:
 
         else:
             index_configs = self.index_configs
+
+        index_policy: Union[None, Unset, dict[str, Any]]
+        if isinstance(self.index_policy, Unset):
+            index_policy = UNSET
+        elif isinstance(self.index_policy, IndexPolicyInput):
+            index_policy = self.index_policy.to_dict()
+        else:
+            index_policy = self.index_policy
 
         initial_capacity: Union[None, Unset, int]
         if isinstance(self.initial_capacity, Unset):
@@ -191,6 +203,8 @@ class CreateCollectionV2Request:
             field_dict["engine"] = engine
         if index_configs is not UNSET:
             field_dict["index_configs"] = index_configs
+        if index_policy is not UNSET:
+            field_dict["index_policy"] = index_policy
         if initial_capacity is not UNSET:
             field_dict["initial_capacity"] = initial_capacity
         if quantization is not UNSET:
@@ -205,6 +219,7 @@ class CreateCollectionV2Request:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.index_config_input import IndexConfigInput
+        from ..models.index_policy_input import IndexPolicyInput
         from ..models.quantization_config_input import QuantizationConfigInput
         from ..models.schema_definition import SchemaDefinition
 
@@ -281,6 +296,23 @@ class CreateCollectionV2Request:
 
         index_configs = _parse_index_configs(d.pop("index_configs", UNSET))
 
+        def _parse_index_policy(data: object) -> Union["IndexPolicyInput", None, Unset]:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                index_policy_type_1 = IndexPolicyInput.from_dict(data)
+
+                return index_policy_type_1
+            except:  # noqa: E722
+                pass
+            return cast(Union["IndexPolicyInput", None, Unset], data)
+
+        index_policy = _parse_index_policy(d.pop("index_policy", UNSET))
+
         def _parse_initial_capacity(data: object) -> Union[None, Unset, int]:
             if data is None:
                 return data
@@ -351,6 +383,7 @@ class CreateCollectionV2Request:
             enable_proxima_record=enable_proxima_record,
             engine=engine,
             index_configs=index_configs,
+            index_policy=index_policy,
             initial_capacity=initial_capacity,
             quantization=quantization,
             schema=schema,

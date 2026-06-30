@@ -34,7 +34,7 @@ use crate::proto::proximadb_v2 as pv2;
 use crate::proto::proximadb_v2::proxima_entity_service_server::{
     ProximaEntityService, ProximaEntityServiceServer,
 };
-use crate::services::fusion_service::{FusionService, GraphFusionParams, GraphGrain};
+use crate::services::fusion_service::{FusionOidKey, FusionService, GraphFusionParams, GraphGrain};
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::document::{DocumentRecord, DocumentService};
 use proximadb_records::{
@@ -68,7 +68,11 @@ impl ProximaEntityServiceImpl {
         Self {
             graph_service: graph.clone(),
             vector_service: vector.clone(),
-            fusion_service: Arc::new(FusionService::new(vector, graph)),
+            fusion_service: Arc::new(FusionService::new(
+                vector,
+                graph,
+                crate::network::hybrid_search::HybridFullTextIndexMap::default(),
+            )),
             document_service: document,
         }
     }
@@ -111,6 +115,40 @@ impl ProximaEntityServiceImpl {
         oid.rsplit_once('/')
             .map(|(node_id, _)| node_id)
             .unwrap_or(oid)
+    }
+
+    /// Server-side embedding hop (TD-146 residual): embed a text query via the global
+    /// [`proximadb_embedding::EmbeddingService`] so `similar.text` / `similar.raw_data`
+    /// can drive the fusion path without the client pre-embedding. Routes through the
+    /// deployment's configured embedding model (tenant route).
+    ///
+    /// Correctness caveat: results are meaningful when the entity's stored embeddings
+    /// use the same model — the same multi-model caveat the `similar.vector` path
+    /// already carries for multi-model collections.
+    async fn embed_query(text: &str, tenant_id: &str) -> Result<Vec<f32>, Status> {
+        let service = proximadb_embedding::EmbeddingService::try_global().ok_or_else(|| {
+            Status::unavailable(
+                "embedding service is not configured; cannot embed similar.text/raw_data \
+                 (use similar.vector with a client-side embedding instead)",
+            )
+        })?;
+        let result = service
+            .embed_sync(proximadb_embedding::EmbedBatch {
+                records: vec![proximadb_embedding::EmbedRecord {
+                    id: "entity-search-query".to_string(),
+                    text: text.to_string(),
+                    tenant_id: tenant_id.to_string(),
+                }],
+                mode: proximadb_embedding::IngestMode::Sync,
+            })
+            .await
+            .map_err(|e| Status::internal(format!("embedding hop failed: {e}")))?;
+        result
+            .vectors
+            .into_iter()
+            .next()
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| Status::internal("embedding service returned an empty vector"))
     }
 }
 
@@ -399,6 +437,8 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
         request: Request<pv2::SearchEntitiesRequest>,
     ) -> Result<Response<pv2::SearchEntitiesResponse>, Status> {
         let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
+        let tenant_id = grpc_auth::tenant_id(&request).unwrap_or_default();
+        let principal = grpc_auth::user_id(&request);
         let req = request.into_inner();
 
         debug!(
@@ -409,17 +449,29 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
         );
 
         // Case 1: vector (`similar`) search — delegate to the fusion seam
-        // (`SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`, TD-146). The seam runs the
-        // vector seed and (gracefully) no-ops graph expansion here — entity node
-        // ids are not yet in the canonical graph-oid space, so graph-augmented
-        // fusion is deferred (TD-146 scope B). Only `similar.vector` is supported;
-        // text/raw_data need a server-side embedding hop (not yet wired).
+        // (`SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`, TD-146). Graph-augmented fusion
+        // is enabled (TD-146 scope B): the seam normalizes the auxiliary vector oid and
+        // the canonical graph oid to the entity `node_id` (TD-142) so the vector and
+        // graph sources co-rank. `similar.text`/`raw_data` are embedded server-side
+        // (TD-146 residual) via the global EmbeddingService, then run the same path.
         if let Some(similar) = req.similar.as_ref() {
             let query_vector = match similar.query.as_ref() {
                 Some(pv2::similar_query::Query::Vector(v)) => v.values.clone(),
-                _ => {
-                    return Err(Status::unimplemented(
-                        "Only `similar.vector` is supported; text/raw_data embedding is not yet wired.",
+                Some(pv2::similar_query::Query::Text(t)) => {
+                    Self::embed_query(t, &tenant_id).await?
+                }
+                Some(pv2::similar_query::Query::RawData(bytes)) => {
+                    // Treat raw_data as UTF-8 text to embed.
+                    let text = String::from_utf8(bytes.clone()).map_err(|_| {
+                        Status::invalid_argument(
+                            "similar.raw_data must be valid UTF-8 text to embed",
+                        )
+                    })?;
+                    Self::embed_query(&text, &tenant_id).await?
+                }
+                None => {
+                    return Err(Status::invalid_argument(
+                        "similar.query is required (vector | text | raw_data)",
                     ));
                 }
             };
@@ -436,21 +488,28 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
                 req.top_k as usize
             };
             let params = GraphFusionParams {
+                route_policy: None,
                 graph_id: collection.clone(),
                 vector_collection: collection.clone(),
                 query_vector,
-                max_depth: 0, // pure vector entity search; graph expand is a no-op
+                // TD-146 scope B: graph-augmented entity fusion. Entity vectors live under the
+                // auxiliary `{node_id}/{model_id}` oid; `EntityNode` keying normalizes both the
+                // vector and graph sources to the entity `node_id` so they co-rank (TD-142).
+                max_depth: 1, // expand direct entity neighbours
                 edge_types: Vec::new(),
                 max_seeds: limit,
                 limit,
                 vector_weight: 1.0,
-                graph_weight: 0.0,
+                graph_weight: 0.3, // modest graph boost; vector similarity leads (tunable)
                 grain: GraphGrain::Nodes,
-                // Entity search is metadata-only today (graph expand is a no-op); within-tenant
-                // `permitted_principals` RBAC is not threaded here. `None` ⇒ structural isolation.
-                // Threading the caller principal is a follow-up for entity RBAC.
-                principal: None,
+                // Within-tenant `permitted_principals` RBAC (TD-134): thread the caller's
+                // principal so the seam's RBAC gate filters records by `permitted_principals`.
+                // `None` (unauthenticated request) ⇒ structural isolation only.
+                principal,
                 policy: FusionPolicy::default(),
+                oid_key: FusionOidKey::EntityNode,
+                // TD-138 document modality is REST-only for now; gRPC entity fusion is deferred.
+                document: None,
             };
 
             let (items, _stats) = self
@@ -460,11 +519,22 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
                 .map_err(|e| entity_status("search entities (fusion)", e))?;
 
             // Project fused vector oids → entity nodes. The seam late-materializes
-            // (oid + score only), so fetch each node for its metadata.
+            // (oid + score only), so fetch the nodes for their metadata. Batched
+            // (`get_nodes`) so the M result lookups collapse to ~1 round-trip of
+            // latency for the cold misses (ADR-034 depth-collapse) instead of one
+            // serial GET per result.
+            let node_ids: Vec<String> = items
+                .iter()
+                .map(|item| Self::node_id_from_auxiliary_oid(&item.oid).to_owned())
+                .collect();
+            let nodes = self
+                .graph_service
+                .get_nodes(&collection, &node_ids)
+                .await
+                .map_err(|e| entity_status("materialize search entities", e))?;
             let mut results = Vec::with_capacity(items.len());
-            for item in items {
-                let node_id = Self::node_id_from_auxiliary_oid(&item.oid).to_owned();
-                if let Ok(Some(node)) = self.graph_service.get_node(&collection, &node_id).await {
+            for (item, node) in items.iter().zip(nodes) {
+                if let Some(node) = node {
                     results.push(pv2::EntityResult {
                         entity: Some(node_to_entity(&node, &collection)),
                         score: item.score,

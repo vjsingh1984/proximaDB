@@ -37,12 +37,15 @@ members = [
     "crates/foundation/proximadb-distance-kernel",
     "crates/foundation/proximadb-memory-pool",
     "crates/foundation/proximadb-kernel",
+    "crates/foundation/proximadb-bloom",
     "crates/foundation/proximadb-pipeline-operator",
     "crates/foundation/proximadb-proto",
     "crates/foundation/proximadb-quantization-types",
     "crates/foundation/proximadb-index-types",
     "crates/foundation/proximadb-index-traits",
     "crates/foundation/proximadb-records",
+    "crates/foundation/proximadb-search-types",
+    "crates/foundation/proximadb-tenant",
     "crates/foundation/proximadb-relational-types",
     "crates/foundation/proximadb-functions",
     "crates/control/proximadb-catalog",
@@ -58,6 +61,7 @@ members = [
     "crates/platform/proximadb-api",
     "crates/platform/proximadb-runtime",
     "crates/platform/proximadb-admin-ui",
+    "crates/platform/proximadb-mcp",
     "crates/modalities/proximadb-graph",
     "crates/modalities/proximadb-vector",
     "crates/modalities/proximadb-quantization-kernel",
@@ -71,6 +75,7 @@ members = [
     "crates/modalities/proximadb-rank-profile",
     "crates/modalities/proximadb-rank-onnx",
     "crates/storage/proximadb-storage-common",
+    "crates/storage/proximadb-storage-ports",
     "crates/storage/proximadb-storage-encryption",
     "crates/storage/proximadb-block-format",
     "crates/storage/proximadb-object-store",
@@ -160,6 +165,9 @@ proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
 proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
 proximadb-memory-pool = { path = "crates/foundation/proximadb-memory-pool" }
 proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
+proximadb-bloom = { path = "crates/foundation/proximadb-bloom" }
+proximadb-search-types = { path = "crates/foundation/proximadb-search-types" }
+proximadb-tenant = { path = "crates/foundation/proximadb-tenant" }
 proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-cache = { path = "crates/foundation/proximadb-cache" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
@@ -177,6 +185,7 @@ proximadb-relational-executor = { path = "crates/query/proximadb-relational-exec
 proximadb-relational-frontend = { path = "crates/query/proximadb-relational-frontend" }
 proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+arc-swap = "1.7"
 dashmap = "6.1.0"
 moka = { version = "0.12", features = ["future"] }
 parking_lot = "0.12"
@@ -216,6 +225,7 @@ proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common"
 proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
 proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
 proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
@@ -301,6 +311,7 @@ proximadb-quantization-types = { path = "crates/foundation/proximadb-quantizatio
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
+proximadb-mcp = { path = "crates/platform/proximadb-mcp" }
 proximadb-runtime = { path = "crates/platform/proximadb-runtime" }
 proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
@@ -310,6 +321,7 @@ proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
 proximadb-security = { path = "crates/horizontal/proximadb-security" }
 proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
 proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-object-store = { path = "crates/storage/proximadb-object-store" }
@@ -383,6 +395,21 @@ tower-http = { version = "0.6", features = ["cors", "trace", "fs", "compression-
 url = "2.4"
 reqwest = { version = "0.11", features = ["json"] }
 lettre = "0.11"  # Email sending for alert notifications
+
+# OTLP metering push (TD-161 dual-sink, ADR-027). OPTIONAL + default-OFF behind the
+# `otlp-metering` feature: the durable per-tenant `_metering` writer is OSS-native (no
+# deps); only the external OTLP push pulls these. Pinned to the 0.32 line, which is the
+# first to resolve against the repo's own `tonic 0.14` / `prost 0.14` with NO duplicate
+# gRPC stack (otlp <=0.30 drags in a second tonic 0.12-0.13 + prost 0.13). `grpc-tonic`
+# reuses the existing tonic transport and avoids pulling reqwest 0.12.
+opentelemetry = { version = "0.32", optional = true }
+# `rt-tokio` + `experimental_metrics_periodicreader_with_async_runtime` gate
+# `runtime::Tokio` and the async-runtime `PeriodicReader`, which drive export on the
+# tokio runtime — REQUIRED with the grpc-tonic exporter (the default thread-based
+# reader block_on's a tonic call with no reactor → runtime panic). The async-runtime
+# feature transitively enables `experimental_async_runtime`.
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio", "experimental_metrics_periodicreader_with_async_runtime", "metrics"], optional = true }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "metrics"], optional = true }
 
 # Storage & Memory Management
 memmap2 = "0.9"
@@ -484,10 +511,16 @@ toml = "0.8"
 anyhow = "1.0"
 thiserror = "1.0"
 proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
+proximadb-bloom = { path = "crates/foundation/proximadb-bloom" }
+proximadb-search-types = { path = "crates/foundation/proximadb-search-types" }
+proximadb-tenant = { path = "crates/foundation/proximadb-tenant" }
 
 # Utilities
 uuid = { version = "1.0", features = ["v4", "serde"] }  # Required for JWT token generation
-jsonwebtoken = "10"  # JWT token creation and validation
+# v10 made the crypto backend a pluggable `CryptoProvider` (like rustls), with NO provider in
+# default features — without one, every sign/verify panics at runtime (crypto/mod.rs:124). Enable
+# `aws_lc_rs` (aws-lc-rs is already in the tree via rustls; `rust_crypto` would pull new rsa/p256/p384).
+jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }  # JWT token creation and validation
 chrono = { version = "0.4.31", features = ["serde"] }  # Updated for Arrow 51 compatibility
 chrono-tz = "0.10"  # Timezone support for log parsing
 hex = "0.4"  # Hex encoding for bytea types
@@ -496,6 +529,7 @@ ring = "0.17"  # Cryptographic operations for field-level encryption
 crossbeam = "0.8"  # Lock-free ring buffers for observability ingestion
 
 parking_lot = "0.12"
+arc-swap = { workspace = true }
 async-trait = "0.1"
 futures = "0.3"
 regex = "1.10"
@@ -572,19 +606,22 @@ serde_yaml = "0.9"
 # (in-memory-map-as-durable-source) path during one minor-release migration
 # window can opt OUT via `default-features = false` + explicit feature selection.
 # Plan: remove the feature flag entirely in v0.4 once the migration window closes.
-default = ["sql_frontend", "graph-first-sks", "unified-facade-routing", "canonical-document-store", "datafusion-integration"]
+default = ["sql_frontend", "graph-first-sks", "unified-facade-routing", "canonical-document-store", "datafusion-integration", "otlp-metering"]
 # Optional surfaces; keep off by default to minimize binary size and public API surface
 ai_endpoints = []
-sales_endpoints = []
 tenant_access = []
-executive_intel = []
-revenue_surface = []
-licensing_surface = []
 # Experimental storage engines (RAPTOR, SWIFT); disabled by default to prevent
 # server panics from unimplemented code paths. Enable for development/testing only.
 experimental-engines = []
 # Experimental SIMD path; not enabled by default
 simd-experimental = []
+# TD-160 / ADR-027 / ADR-030: gate the PERF-CLASS I/O-trace *emission* (the
+# per-query structured `tracing` event in `io_trace::IoTrace::emit`). Default OFF
+# → zero perf-emission cost in normal operation. The cheap core counters
+# (range_gets/bytes_read/compute_ms) and ALL observers (route-cost, cache, and
+# the always-on BILLING observer) stay live regardless — billing is never gated
+# (ADR-027 non-entanglement; enforced by scripts/check_billing_never_gated.py).
+io-trace = []
 # TurboQuant data-oblivious quantizer + in-kernel allowlist (ADR-021).
 # Gates the QuantizationLevel::TurboQuant variant in proximadb-vector + the
 # TurboQuantVectorData struct in src/compute/distance_computation/quantized.rs.
@@ -618,6 +655,14 @@ onnx = ["proximadb-embedding/onnx"]
 aws = ["object_store/aws", "proximadb-catalog/aws"]
 azure = ["object_store/azure"]
 gcp = ["dep:google-cloud-storage"]
+
+# TD-161 external OTLP metering push (default-OFF). Compiles the OTLP exporter that
+# ships the per-tenant metering snapshot to a collector; runtime-gated additionally by
+# PROXIMADB_OTLP_ENDPOINT so the binary is inert unless explicitly configured. The
+# durable FileSystem `_metering` writer is ALWAYS compiled (OSS-native, no deps) — only
+# this push path is feature-gated to keep the opentelemetry transitive surface out of
+# default builds. Verify the server binary builds with AND without this feature (#11).
+otlp-metering = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 
 # ============================================================================
 # OPTIONAL INTEGRATION FEATURES
@@ -1036,6 +1081,12 @@ path = "benches/bench_23_recall_at_k.rs"
 name = "bench_24_recall_at_k_engine"
 harness = false
 path = "benches/bench_24_recall_at_k_engine.rs"
+
+# TD-096 S2 / S1.5: per-search GET-count (SST vs HELIX) on the filesystem seam.
+[[bench]]
+name = "bench_25_search_get_count"
+harness = false
+path = "benches/bench_25_search_get_count.rs"
 
 # ============================================================================
 # BUILD OPTIMIZATION STRATEGY

@@ -737,9 +737,8 @@ impl VectorRecordProcessor {
             schema_adapter,
             // ml_clustering, // Moved to AXIS
             quantization: {
-                let distance_compute = Arc::new(
-                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-                );
+                let distance_compute =
+                    Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
                 let codebook_store = Arc::new(
                     crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
                 );
@@ -751,8 +750,8 @@ impl VectorRecordProcessor {
                 );
                 // Create distance compute engine
                 let distance_compute = Arc::new(
-                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                        crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+                    proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(
+                        proximadb_distance_kernel::engine::DistanceMetric::Cosine,
                     ),
                 );
                 // Create quantization config
@@ -3171,9 +3170,8 @@ impl CompactionEngine {
             schema_adapter,
             // ml_clustering: Arc::new(Mutex::new(MLClusteringEngine::new(KMeansConfig::default()))), // Moved to AXIS
             quantization: {
-                let distance_compute = Arc::new(
-                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-                );
+                let distance_compute =
+                    Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
                 let codebook_store = Arc::new(
                     crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
                 );
@@ -3185,8 +3183,8 @@ impl CompactionEngine {
                 );
                 // Create distance compute engine
                 let distance_compute = Arc::new(
-                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                        crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+                    proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(
+                        proximadb_distance_kernel::engine::DistanceMetric::Cosine,
                     ),
                 );
                 // Create quantization config

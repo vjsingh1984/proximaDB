@@ -6,10 +6,10 @@
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::core::Config;
 use crate::storage::engine::StorageEngine;
 use proximadb_data_model::ProximaValue;
+use proximadb_distance_kernel::DistanceMetric;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
 fn create_test_vector(id: &str, vector: Vec<f32>) -> ProximaRecord {
@@ -74,7 +74,7 @@ async fn test_storage_engine_creation() {
 
     // Test euclidean distance calculation
     let result = distance_compute.calculate_distance(&vec1, &vec2, &DistanceMetric::Euclidean);
-    assert!((result.rank_value - 1.4142135).abs() < 0.0001); // sqrt(2)
+    assert!((result.rank_value - std::f32::consts::SQRT_2).abs() < 0.0001); // sqrt(2)
 }
 
 #[tokio::test]

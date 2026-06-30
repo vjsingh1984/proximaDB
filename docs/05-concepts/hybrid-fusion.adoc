@@ -81,48 +81,45 @@ Tunable parameters:
 | Selects between RRF and weighted-linear based on observed result overlap.
 |===
 
-== Selecting via REST Compatibility Facade
+== Selecting via REST (canonical fusion surfaces)
 
-The current REST hybrid route is a deprecated v1 compatibility facade and emits
-deprecation metadata. Prefer pgwire/SQL and record-native query routes as those
-surfaces are promoted.
+All cross-modal ranking in ProximaDB routes through one shared `FusionService`.
+The vector `/search` surface, the dense+BM25 hybrid, and the tri-modal
+`fusion-search` route are all instances of the same calibrated, `oid`-keyed
+fusion engine -- per-surface fusion is intentionally avoided (see
+link:../12-design/SEARCH_SURFACE_CONTRACT_2026_06_24.adoc[Search Surface Contract]).
 
-NOTE: The previously-documented `/api/v1/experimental/hybrid/search` route was
-mock-backed and removed 2026-05-26. Use the production endpoint
-`/api/v1/hybrid/search` below (real BM25 + vector fusion via
-`RestHybridPortImpl`). gRPC parity landed in commit `6a73ead7f` +
-`10a0ea1b2` — REST and gRPC share the same in-process index map.
+The canonical place to exercise the strategies above end-to-end is the v2 graph
+fusion-search route, which seeds from a vector ANN, expands over the graph, and
+-- when `text_query` is supplied -- merges a BM25 document leg by shared `oid`:
 
 [source,bash]
 ----
-# RRF (default)
-curl -X POST http://localhost:5678/api/v1/hybrid/search \
+# Tri-modal fusion (vector + graph + BM25), RRF fallback
+curl -X POST http://localhost:5678/api/v2/graphs/topology/fusion-search \
   -H "Content-Type: application/json" \
   -d '{
-    "collection": "products",
+    "vector_collection": "products",
+    "query_vector": [0.1, 0.2, 0.3],
     "text_query": "laptop",
-    "query_vector": [0.1, 0.2, ...],
-    "fusion_strategy": "rrf",
-    "top_k": 10
+    "limit": 10,
+    "max_depth": 1,
+    "rrf": true
   }'
 
-# Projection (speed/diversity tradeoff)
-curl -X POST http://localhost:5678/api/v1/hybrid/search \
-  -H "Content-Type: application/json" \
-  -d '{
-    "collection": "products",
-    "text_query": "laptop",
-    "query_vector": [0.1, 0.2, ...],
-    "fusion_strategy": "projection",
-    "top_k": 10
-  }'
-
-# NOTE: The `/strategies` listing endpoint that lived under the removed
-# experimental route has not been re-mounted on `/api/v1/hybrid`.
-# The supported strategy names are listed in the FusionStrategy enum at
-# `src/core/search/hybrid/strategies.rs` and reproduced below in
-# "Selecting via Python SDK".
+# Omit text_query for vector+graph-only fusion; tune vector_weight / graph_weight
+# / document_weight to bias a modality, or set rrf:false for PIT-calibrated linear.
 ----
+
+NOTE: The older `POST /api/v1/hybrid/search` route (dense+BM25 with an explicit
+`fusion_strategy` selector) is retained as a *deprecated compatibility alias*
+only -- new clients should target the v2 fusion surfaces above. The removed
+`/api/v1/experimental/hybrid/search` mock route (deleted 2026-05-26) is gone, and
+its `/strategies` listing was never re-mounted. The supported strategy names are
+the `FusionStrategy` enum at `src/core/search/hybrid/strategies.rs`, reproduced
+below in "Selecting via Python SDK". See
+link:../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE] for the current gRPC parity
+status of hybrid retrieval.
 
 == Selecting via Python SDK
 

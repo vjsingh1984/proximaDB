@@ -826,6 +826,9 @@ pub mod types {
     ///        "$ref": "#/components/schemas/IndexConfigInput"
     ///      }
     ///    },
+    ///    "index_policy": {
+    ///      "$ref": "#/components/schemas/IndexPolicyInput"
+    ///    },
     ///    "initial_capacity": {
     ///      "description": "Initial capacity hint for pre-allocation",
     ///      "type": [
@@ -902,6 +905,8 @@ pub mod types {
         /// to the IVF arm). When omitted, the engine selects a default (HNSW).
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub index_configs: ::std::option::Option<::std::vec::Vec<IndexConfigInput>>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub index_policy: ::std::option::Option<IndexPolicyInput>,
         ///Initial capacity hint for pre-allocation
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub initial_capacity: ::std::option::Option<i64>,
@@ -2439,6 +2444,13 @@ pub mod types {
     ///    "source_count"
     ///  ],
     ///  "properties": {
+    ///    "labels": {
+    ///      "description": "Graph node label(s) of the reached node. Exposed so cross-modal-joint\nconsumers can correlate a fused hit by its graph label without a separate\nnode lookup (#485). The expansion already reaches the node, so this is\nnear-free to fill. Additive + back-compat (empty until populated).",
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
     ///    "oid": {
     ///      "type": "string"
     ///    },
@@ -2456,6 +2468,12 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct FusionHit {
+        /// Graph node label(s) of the reached node. Exposed so cross-modal-joint
+        /// consumers can correlate a fused hit by its graph label without a separate
+        /// node lookup (#485). The expansion already reaches the node, so this is
+        /// near-free to fill. Additive + back-compat (empty until populated).
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub labels: ::std::vec::Vec<::std::string::String>,
         pub oid: ::std::string::String,
         pub score: f32,
         pub source_count: u64,
@@ -2479,6 +2497,21 @@ pub mod types {
     ///  "properties": {
     ///    "consensus_beta": {
     ///      "description": "Consensus boost added to any `oid` present in ≥2 sources.",
+    ///      "type": [
+    ///        "number",
+    ///        "null"
+    ///      ],
+    ///      "format": "float"
+    ///    },
+    ///    "document_collection": {
+    ///      "description": "Collection whose document index to BM25-search. Defaults to `vector_collection` (documents\nco-indexed with the vectors share the record `oid`, so they merge by `oid`).",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "document_weight": {
+    ///      "description": "Document modality weight (mirrors `vector_weight` / `graph_weight`). Defaults to 1.0.",
     ///      "type": [
     ///        "number",
     ///        "null"
@@ -2520,6 +2553,14 @@ pub mod types {
     ///      "type": "integer",
     ///      "minimum": 0.0
     ///    },
+    ///    "min_weight_fraction": {
+    ///      "description": "Cost-routing policy inputs (TD-141): drop negligible modalities (weight fraction) and budget each.\nWhen absent, fusion is unbounded.",
+    ///      "type": [
+    ///        "number",
+    ///        "null"
+    ///      ],
+    ///      "format": "float"
+    ///    },
     ///    "query_vector": {
     ///      "description": "Query embedding for the ANN seed.",
     ///      "type": "array",
@@ -2531,6 +2572,20 @@ pub mod types {
     ///    "rrf": {
     ///      "description": "Use the rank-based RRF fallback instead of PIT-calibrated linear.",
     ///      "type": "boolean"
+    ///    },
+    ///    "text_query": {
+    ///      "description": "Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also searches the\ncollection's document index and merges BM25 hits into the result by shared `oid` — tri-modal\n(vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "total_budget": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "minimum": 0.0
     ///    },
     ///    "vector_collection": {
     ///      "description": "Vector collection to seed from (its records co-indexed with this graph by `oid`).",
@@ -2552,6 +2607,13 @@ pub mod types {
         ///Consensus boost added to any `oid` present in ≥2 sources.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub consensus_beta: ::std::option::Option<f32>,
+        /// Collection whose document index to BM25-search. Defaults to `vector_collection` (documents
+        /// co-indexed with the vectors share the record `oid`, so they merge by `oid`).
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub document_collection: ::std::option::Option<::std::string::String>,
+        ///Document modality weight (mirrors `vector_weight` / `graph_weight`). Defaults to 1.0.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub document_weight: ::std::option::Option<f32>,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub edge_types: ::std::vec::Vec<::std::string::String>,
         ///Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.
@@ -2567,11 +2629,22 @@ pub mod types {
         ///How many of the top vector seeds to expand from (bounded expansion).
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub max_seeds: ::std::option::Option<u64>,
+        /// Cost-routing policy inputs (TD-141): drop negligible modalities (weight fraction) and budget each.
+        /// When absent, fusion is unbounded.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub min_weight_fraction: ::std::option::Option<f32>,
         ///Query embedding for the ANN seed.
         pub query_vector: ::std::vec::Vec<f32>,
         ///Use the rank-based RRF fallback instead of PIT-calibrated linear.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub rrf: ::std::option::Option<bool>,
+        /// Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also searches the
+        /// collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
+        /// (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub text_query: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub total_budget: ::std::option::Option<u64>,
         ///Vector collection to seed from (its records co-indexed with this graph by `oid`).
         pub vector_collection: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -3475,6 +3548,87 @@ pub mod types {
             Default::default()
         }
     }
+    /// REST input for the per-collection index routing policy (mirrors proto
+    /// `IndexPolicy`; ADR-028).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "REST input for the per-collection index routing policy (mirrors proto\n`IndexPolicy`; ADR-028).",
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "byte_budget": {
+    ///      "description": "Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default\nfor the storage class.",
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "mode": {
+    ///      "description": "Routing mode: \"auto\" (default) | \"exact\" | \"ivf\" | \"hnsw\" | \"helix\".\n\"auto\"/omitted ⇒ cost-derived. \"exact\" ⇒ always brute-force (no index).\nThe engine modes force the collection onto that engine/route.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "nprobe": {
+    ///      "description": "nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when\n`mode = \"exact\"`.",
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "rehydrate": {
+    ///      "description": "Cold-start index warming: \"auto\" (default) | \"eager\" | \"lazy\" | \"never\".\nIndex/auto modes only — rejected when `mode = \"exact\"`.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct IndexPolicyInput {
+        /// Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
+        /// for the storage class.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub byte_budget: ::std::option::Option<i64>,
+        /// Routing mode: "auto" (default) | "exact" | "ivf" | "hnsw" | "helix".
+        /// "auto"/omitted ⇒ cost-derived. "exact" ⇒ always brute-force (no index).
+        /// The engine modes force the collection onto that engine/route.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub mode: ::std::option::Option<::std::string::String>,
+        /// nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when
+        /// `mode = "exact"`.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub nprobe: ::std::option::Option<i32>,
+        /// Cold-start index warming: "auto" (default) | "eager" | "lazy" | "never".
+        /// Index/auto modes only — rejected when `mode = "exact"`.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub rehydrate: ::std::option::Option<::std::string::String>,
+    }
+    impl ::std::default::Default for IndexPolicyInput {
+        fn default() -> Self {
+            Self {
+                byte_budget: Default::default(),
+                mode: Default::default(),
+                nprobe: Default::default(),
+                rehydrate: Default::default(),
+            }
+        }
+    }
+    impl IndexPolicyInput {
+        pub fn builder() -> builder::IndexPolicyInput {
+            Default::default()
+        }
+    }
     ///REST output for a single index config (mirrors gRPC `V2IndexSpec`).
     ///
     /// <details><summary>JSON schema</summary>
@@ -3519,6 +3673,178 @@ pub mod types {
     }
     impl IndexSpecOutput {
         pub fn builder() -> builder::IndexSpecOutput {
+            Default::default()
+        }
+    }
+    ///A single record submitted for native embedding + indexing.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "A single record submitted for native embedding + indexing.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "id"
+    ///  ],
+    ///  "properties": {
+    ///    "id": {
+    ///      "type": "string"
+    ///    },
+    ///    "metadata": {
+    ///      "description": "Arbitrary metadata fields. Stored as ProximaRecord props.",
+    ///      "type": "object",
+    ///      "additionalProperties": {}
+    ///    },
+    ///    "text": {
+    ///      "description": "Raw text content. Required when `X-Embed-Source: native` (default);\noptional when the client also supplied a vector.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "vector": {
+    ///      "description": "Optional client-provided vector. When present, the server skips\nembedding for this record. Use case: SDK that already embedded\nlocally (legacy path).",
+    ///      "type": [
+    ///        "array",
+    ///        "null"
+    ///      ],
+    ///      "items": {
+    ///        "type": "number",
+    ///        "format": "float"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct IngestDocument {
+        pub id: ::std::string::String,
+        ///Arbitrary metadata fields. Stored as ProximaRecord props.
+        #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+        pub metadata: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+        /// Raw text content. Required when `X-Embed-Source: native` (default);
+        /// optional when the client also supplied a vector.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub text: ::std::option::Option<::std::string::String>,
+        /// Optional client-provided vector. When present, the server skips
+        /// embedding for this record. Use case: SDK that already embedded
+        /// locally (legacy path).
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub vector: ::std::option::Option<::std::vec::Vec<f32>>,
+    }
+    impl IngestDocument {
+        pub fn builder() -> builder::IngestDocument {
+            Default::default()
+        }
+    }
+    ///`IngestDocumentsRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "records"
+    ///  ],
+    ///  "properties": {
+    ///    "records": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/IngestDocument"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct IngestDocumentsRequest {
+        pub records: ::std::vec::Vec<IngestDocument>,
+    }
+    impl IngestDocumentsRequest {
+        pub fn builder() -> builder::IngestDocumentsRequest {
+            Default::default()
+        }
+    }
+    ///`IngestDocumentsResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "mode",
+    ///    "records"
+    ///  ],
+    ///  "properties": {
+    ///    "mode": {
+    ///      "type": "string"
+    ///    },
+    ///    "records": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/IngestedRecord"
+    ///      }
+    ///    },
+    ///    "retry_after_ms": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct IngestDocumentsResponse {
+        pub mode: ::std::string::String,
+        pub records: ::std::vec::Vec<IngestedRecord>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub retry_after_ms: ::std::option::Option<i64>,
+    }
+    impl IngestDocumentsResponse {
+        pub fn builder() -> builder::IngestDocumentsResponse {
+            Default::default()
+        }
+    }
+    ///`IngestedRecord`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "dim",
+    ///    "id"
+    ///  ],
+    ///  "properties": {
+    ///    "dim": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct IngestedRecord {
+        pub dim: i32,
+        pub id: ::std::string::String,
+    }
+    impl IngestedRecord {
+        pub fn builder() -> builder::IngestedRecord {
             Default::default()
         }
     }
@@ -4090,6 +4416,69 @@ pub mod types {
     }
     impl NodeResponse {
         pub fn builder() -> builder::NodeResponse {
+            Default::default()
+        }
+    }
+    /// TD-064: predicate-aware recall shortfall (REST wire shape).
+    ///
+    /// Mirrors `observability::search_plan_trace::PredicateShortfall` as an
+    /// explicit REST/OpenAPI schema so the field is typed and documented on the
+    /// wire without forcing the observability type (or the slim `IndexQueryResult`
+    /// DTO) to derive `ToSchema`.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "TD-064: predicate-aware recall shortfall (REST wire shape).\n\nMirrors `observability::search_plan_trace::PredicateShortfall` as an\nexplicit REST/OpenAPI schema so the field is typed and documented on the\nwire without forcing the observability type (or the slim `IndexQueryResult`\nDTO) to derive `ToSchema`.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "ann_filtering_mode",
+    ///    "oversample_pool",
+    ///    "requested_k",
+    ///    "returned_k"
+    ///  ],
+    ///  "properties": {
+    ///    "ann_filtering_mode": {
+    ///      "description": "ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or\n`pre_filter`).",
+    ///      "type": "string"
+    ///    },
+    ///    "oversample_pool": {
+    ///      "description": "Candidate pool size considered before the predicate (oversample budget).",
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "requested_k": {
+    ///      "description": "The `top_k` value the caller asked for.",
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "returned_k": {
+    ///      "description": "Results actually returned after predicate filtering + merge.",
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PredicateShortfallWire {
+        /// ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or
+        /// `pre_filter`).
+        pub ann_filtering_mode: ::std::string::String,
+        ///Candidate pool size considered before the predicate (oversample budget).
+        pub oversample_pool: i32,
+        ///The `top_k` value the caller asked for.
+        pub requested_k: i32,
+        ///Results actually returned after predicate filtering + merge.
+        pub returned_k: i32,
+    }
+    impl PredicateShortfallWire {
+        pub fn builder() -> builder::PredicateShortfallWire {
             Default::default()
         }
     }
@@ -5666,6 +6055,9 @@ pub mod types {
     ///      "format": "int64",
     ///      "minimum": 0.0
     ///    },
+    ///    "predicate_shortfall": {
+    ///      "$ref": "#/components/schemas/PredicateShortfallWire"
+    ///    },
     ///    "request_id": {
     ///      "description": "Request ID for tracing",
     ///      "type": "string"
@@ -5703,6 +6095,8 @@ pub mod types {
         pub explain: ::std::option::Option<::serde_json::Value>,
         ///Search latency in milliseconds
         pub latency_ms: i64,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub predicate_shortfall: ::std::option::Option<PredicateShortfallWire>,
         ///Request ID for tracing
         pub request_id: ::std::string::String,
         ///Search results
@@ -6919,6 +7313,10 @@ pub mod types {
                 ::std::option::Option<::std::vec::Vec<super::IndexConfigInput>>,
                 ::std::string::String,
             >,
+            index_policy: ::std::result::Result<
+                ::std::option::Option<super::IndexPolicyInput>,
+                ::std::string::String,
+            >,
             initial_capacity:
                 ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
             name:
@@ -6945,6 +7343,7 @@ pub mod types {
                     enable_proxima_record: Ok(Default::default()),
                     engine: Ok(Default::default()),
                     index_configs: Ok(Default::default()),
+                    index_policy: Ok(Default::default()),
                     initial_capacity: Ok(Default::default()),
                     name: Err("no value supplied for name".to_string()),
                     quantization: Ok(Default::default()),
@@ -7018,6 +7417,16 @@ pub mod types {
                     .map_err(|e| format!("error converting supplied value for index_configs: {e}"));
                 self
             }
+            pub fn index_policy<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::IndexPolicyInput>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.index_policy = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for index_policy: {e}"));
+                self
+            }
             pub fn initial_capacity<T>(mut self, value: T) -> Self
             where
                 T: ::std::convert::TryInto<::std::option::Option<i64>>,
@@ -7083,6 +7492,7 @@ pub mod types {
                     enable_proxima_record: value.enable_proxima_record?,
                     engine: value.engine?,
                     index_configs: value.index_configs?,
+                    index_policy: value.index_policy?,
                     initial_capacity: value.initial_capacity?,
                     name: value.name?,
                     quantization: value.quantization?,
@@ -7100,6 +7510,7 @@ pub mod types {
                     enable_proxima_record: Ok(value.enable_proxima_record),
                     engine: Ok(value.engine),
                     index_configs: Ok(value.index_configs),
+                    index_policy: Ok(value.index_policy),
                     initial_capacity: Ok(value.initial_capacity),
                     name: Ok(value.name),
                     quantization: Ok(value.quantization),
@@ -8569,6 +8980,10 @@ pub mod types {
         }
         #[derive(Clone, Debug)]
         pub struct FusionHit {
+            labels: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
             oid: ::std::result::Result<::std::string::String, ::std::string::String>,
             score: ::std::result::Result<f32, ::std::string::String>,
             source_count: ::std::result::Result<u64, ::std::string::String>,
@@ -8576,6 +8991,7 @@ pub mod types {
         impl ::std::default::Default for FusionHit {
             fn default() -> Self {
                 Self {
+                    labels: Ok(Default::default()),
                     oid: Err("no value supplied for oid".to_string()),
                     score: Err("no value supplied for score".to_string()),
                     source_count: Err("no value supplied for source_count".to_string()),
@@ -8583,6 +8999,16 @@ pub mod types {
             }
         }
         impl FusionHit {
+            pub fn labels<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.labels = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for labels: {e}"));
+                self
+            }
             pub fn oid<T>(mut self, value: T) -> Self
             where
                 T: ::std::convert::TryInto<::std::string::String>,
@@ -8620,6 +9046,7 @@ pub mod types {
                 value: FusionHit,
             ) -> ::std::result::Result<Self, super::error::ConversionError> {
                 Ok(Self {
+                    labels: value.labels?,
                     oid: value.oid?,
                     score: value.score?,
                     source_count: value.source_count?,
@@ -8629,6 +9056,7 @@ pub mod types {
         impl ::std::convert::From<super::FusionHit> for FusionHit {
             fn from(value: super::FusionHit) -> Self {
                 Self {
+                    labels: Ok(value.labels),
                     oid: Ok(value.oid),
                     score: Ok(value.score),
                     source_count: Ok(value.source_count),
@@ -8638,6 +9066,12 @@ pub mod types {
         #[derive(Clone, Debug)]
         pub struct FusionSearchRequest {
             consensus_beta:
+                ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
+            document_collection: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            document_weight:
                 ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
             edge_types: ::std::result::Result<
                 ::std::vec::Vec<::std::string::String>,
@@ -8651,8 +9085,15 @@ pub mod types {
             limit: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
             max_depth: ::std::result::Result<::std::option::Option<i32>, ::std::string::String>,
             max_seeds: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            min_weight_fraction:
+                ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
             query_vector: ::std::result::Result<::std::vec::Vec<f32>, ::std::string::String>,
             rrf: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+            text_query: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            total_budget: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
             vector_collection: ::std::result::Result<::std::string::String, ::std::string::String>,
             vector_weight: ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
         }
@@ -8660,14 +9101,19 @@ pub mod types {
             fn default() -> Self {
                 Self {
                     consensus_beta: Ok(Default::default()),
+                    document_collection: Ok(Default::default()),
+                    document_weight: Ok(Default::default()),
                     edge_types: Ok(Default::default()),
                     grain: Ok(Default::default()),
                     graph_weight: Ok(Default::default()),
                     limit: Ok(Default::default()),
                     max_depth: Ok(Default::default()),
                     max_seeds: Ok(Default::default()),
+                    min_weight_fraction: Ok(Default::default()),
                     query_vector: Err("no value supplied for query_vector".to_string()),
                     rrf: Ok(Default::default()),
+                    text_query: Ok(Default::default()),
+                    total_budget: Ok(Default::default()),
                     vector_collection: Err("no value supplied for vector_collection".to_string()),
                     vector_weight: Ok(Default::default()),
                 }
@@ -8681,6 +9127,26 @@ pub mod types {
             {
                 self.consensus_beta = value.try_into().map_err(|e| {
                     format!("error converting supplied value for consensus_beta: {e}")
+                });
+                self
+            }
+            pub fn document_collection<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.document_collection = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for document_collection: {e}")
+                });
+                self
+            }
+            pub fn document_weight<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<f32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.document_weight = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for document_weight: {e}")
                 });
                 self
             }
@@ -8744,6 +9210,16 @@ pub mod types {
                     .map_err(|e| format!("error converting supplied value for max_seeds: {e}"));
                 self
             }
+            pub fn min_weight_fraction<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<f32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.min_weight_fraction = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for min_weight_fraction: {e}")
+                });
+                self
+            }
             pub fn query_vector<T>(mut self, value: T) -> Self
             where
                 T: ::std::convert::TryInto<::std::vec::Vec<f32>>,
@@ -8762,6 +9238,26 @@ pub mod types {
                 self.rrf = value
                     .try_into()
                     .map_err(|e| format!("error converting supplied value for rrf: {e}"));
+                self
+            }
+            pub fn text_query<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.text_query = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for text_query: {e}"));
+                self
+            }
+            pub fn total_budget<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.total_budget = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for total_budget: {e}"));
                 self
             }
             pub fn vector_collection<T>(mut self, value: T) -> Self
@@ -8792,14 +9288,19 @@ pub mod types {
             ) -> ::std::result::Result<Self, super::error::ConversionError> {
                 Ok(Self {
                     consensus_beta: value.consensus_beta?,
+                    document_collection: value.document_collection?,
+                    document_weight: value.document_weight?,
                     edge_types: value.edge_types?,
                     grain: value.grain?,
                     graph_weight: value.graph_weight?,
                     limit: value.limit?,
                     max_depth: value.max_depth?,
                     max_seeds: value.max_seeds?,
+                    min_weight_fraction: value.min_weight_fraction?,
                     query_vector: value.query_vector?,
                     rrf: value.rrf?,
+                    text_query: value.text_query?,
+                    total_budget: value.total_budget?,
                     vector_collection: value.vector_collection?,
                     vector_weight: value.vector_weight?,
                 })
@@ -8809,14 +9310,19 @@ pub mod types {
             fn from(value: super::FusionSearchRequest) -> Self {
                 Self {
                     consensus_beta: Ok(value.consensus_beta),
+                    document_collection: Ok(value.document_collection),
+                    document_weight: Ok(value.document_weight),
                     edge_types: Ok(value.edge_types),
                     grain: Ok(value.grain),
                     graph_weight: Ok(value.graph_weight),
                     limit: Ok(value.limit),
                     max_depth: Ok(value.max_depth),
                     max_seeds: Ok(value.max_seeds),
+                    min_weight_fraction: Ok(value.min_weight_fraction),
                     query_vector: Ok(value.query_vector),
                     rrf: Ok(value.rrf),
+                    text_query: Ok(value.text_query),
+                    total_budget: Ok(value.total_budget),
                     vector_collection: Ok(value.vector_collection),
                     vector_weight: Ok(value.vector_weight),
                 }
@@ -9799,6 +10305,94 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct IndexPolicyInput {
+            byte_budget: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+            mode: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            nprobe: ::std::result::Result<::std::option::Option<i32>, ::std::string::String>,
+            rehydrate: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for IndexPolicyInput {
+            fn default() -> Self {
+                Self {
+                    byte_budget: Ok(Default::default()),
+                    mode: Ok(Default::default()),
+                    nprobe: Ok(Default::default()),
+                    rehydrate: Ok(Default::default()),
+                }
+            }
+        }
+        impl IndexPolicyInput {
+            pub fn byte_budget<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.byte_budget = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for byte_budget: {e}"));
+                self
+            }
+            pub fn mode<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.mode = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for mode: {e}"));
+                self
+            }
+            pub fn nprobe<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.nprobe = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for nprobe: {e}"));
+                self
+            }
+            pub fn rehydrate<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rehydrate = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for rehydrate: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<IndexPolicyInput> for super::IndexPolicyInput {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: IndexPolicyInput,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    byte_budget: value.byte_budget?,
+                    mode: value.mode?,
+                    nprobe: value.nprobe?,
+                    rehydrate: value.rehydrate?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::IndexPolicyInput> for IndexPolicyInput {
+            fn from(value: super::IndexPolicyInput) -> Self {
+                Self {
+                    byte_budget: Ok(value.byte_budget),
+                    mode: Ok(value.mode),
+                    nprobe: Ok(value.nprobe),
+                    rehydrate: Ok(value.rehydrate),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct IndexSpecOutput {
             algorithm: ::std::result::Result<::std::string::String, ::std::string::String>,
             hnsw: ::std::result::Result<
@@ -9883,6 +10477,268 @@ pub mod types {
                     hnsw: Ok(value.hnsw),
                     is_primary: Ok(value.is_primary),
                     ivf: Ok(value.ivf),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct IngestDocument {
+            id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            metadata: ::std::result::Result<
+                ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                ::std::string::String,
+            >,
+            text: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            vector: ::std::result::Result<
+                ::std::option::Option<::std::vec::Vec<f32>>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for IngestDocument {
+            fn default() -> Self {
+                Self {
+                    id: Err("no value supplied for id".to_string()),
+                    metadata: Ok(Default::default()),
+                    text: Ok(Default::default()),
+                    vector: Ok(Default::default()),
+                }
+            }
+        }
+        impl IngestDocument {
+            pub fn id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for id: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn text<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.text = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for text: {e}"));
+                self
+            }
+            pub fn vector<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::vec::Vec<f32>>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.vector = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for vector: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<IngestDocument> for super::IngestDocument {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: IngestDocument,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    id: value.id?,
+                    metadata: value.metadata?,
+                    text: value.text?,
+                    vector: value.vector?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::IngestDocument> for IngestDocument {
+            fn from(value: super::IngestDocument) -> Self {
+                Self {
+                    id: Ok(value.id),
+                    metadata: Ok(value.metadata),
+                    text: Ok(value.text),
+                    vector: Ok(value.vector),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct IngestDocumentsRequest {
+            records: ::std::result::Result<
+                ::std::vec::Vec<super::IngestDocument>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for IngestDocumentsRequest {
+            fn default() -> Self {
+                Self {
+                    records: Err("no value supplied for records".to_string()),
+                }
+            }
+        }
+        impl IngestDocumentsRequest {
+            pub fn records<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::IngestDocument>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.records = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for records: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<IngestDocumentsRequest> for super::IngestDocumentsRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: IngestDocumentsRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    records: value.records?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::IngestDocumentsRequest> for IngestDocumentsRequest {
+            fn from(value: super::IngestDocumentsRequest) -> Self {
+                Self {
+                    records: Ok(value.records),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct IngestDocumentsResponse {
+            mode: ::std::result::Result<::std::string::String, ::std::string::String>,
+            records: ::std::result::Result<
+                ::std::vec::Vec<super::IngestedRecord>,
+                ::std::string::String,
+            >,
+            retry_after_ms:
+                ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        }
+        impl ::std::default::Default for IngestDocumentsResponse {
+            fn default() -> Self {
+                Self {
+                    mode: Err("no value supplied for mode".to_string()),
+                    records: Err("no value supplied for records".to_string()),
+                    retry_after_ms: Ok(Default::default()),
+                }
+            }
+        }
+        impl IngestDocumentsResponse {
+            pub fn mode<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.mode = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for mode: {e}"));
+                self
+            }
+            pub fn records<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::IngestedRecord>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.records = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for records: {e}"));
+                self
+            }
+            pub fn retry_after_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.retry_after_ms = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for retry_after_ms: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<IngestDocumentsResponse> for super::IngestDocumentsResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: IngestDocumentsResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    mode: value.mode?,
+                    records: value.records?,
+                    retry_after_ms: value.retry_after_ms?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::IngestDocumentsResponse> for IngestDocumentsResponse {
+            fn from(value: super::IngestDocumentsResponse) -> Self {
+                Self {
+                    mode: Ok(value.mode),
+                    records: Ok(value.records),
+                    retry_after_ms: Ok(value.retry_after_ms),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct IngestedRecord {
+            dim: ::std::result::Result<i32, ::std::string::String>,
+            id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for IngestedRecord {
+            fn default() -> Self {
+                Self {
+                    dim: Err("no value supplied for dim".to_string()),
+                    id: Err("no value supplied for id".to_string()),
+                }
+            }
+        }
+        impl IngestedRecord {
+            pub fn dim<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.dim = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for dim: {e}"));
+                self
+            }
+            pub fn id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<IngestedRecord> for super::IngestedRecord {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: IngestedRecord,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    dim: value.dim?,
+                    id: value.id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::IngestedRecord> for IngestedRecord {
+            fn from(value: super::IngestedRecord) -> Self {
+                Self {
+                    dim: Ok(value.dim),
+                    id: Ok(value.id),
                 }
             }
         }
@@ -10551,6 +11407,88 @@ pub mod types {
                     id: Ok(value.id),
                     labels: Ok(value.labels),
                     properties: Ok(value.properties),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct PredicateShortfallWire {
+            ann_filtering_mode: ::std::result::Result<::std::string::String, ::std::string::String>,
+            oversample_pool: ::std::result::Result<i32, ::std::string::String>,
+            requested_k: ::std::result::Result<i32, ::std::string::String>,
+            returned_k: ::std::result::Result<i32, ::std::string::String>,
+        }
+        impl ::std::default::Default for PredicateShortfallWire {
+            fn default() -> Self {
+                Self {
+                    ann_filtering_mode: Err("no value supplied for ann_filtering_mode".to_string()),
+                    oversample_pool: Err("no value supplied for oversample_pool".to_string()),
+                    requested_k: Err("no value supplied for requested_k".to_string()),
+                    returned_k: Err("no value supplied for returned_k".to_string()),
+                }
+            }
+        }
+        impl PredicateShortfallWire {
+            pub fn ann_filtering_mode<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.ann_filtering_mode = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for ann_filtering_mode: {e}")
+                });
+                self
+            }
+            pub fn oversample_pool<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.oversample_pool = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for oversample_pool: {e}")
+                });
+                self
+            }
+            pub fn requested_k<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.requested_k = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for requested_k: {e}"));
+                self
+            }
+            pub fn returned_k<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.returned_k = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for returned_k: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<PredicateShortfallWire> for super::PredicateShortfallWire {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: PredicateShortfallWire,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    ann_filtering_mode: value.ann_filtering_mode?,
+                    oversample_pool: value.oversample_pool?,
+                    requested_k: value.requested_k?,
+                    returned_k: value.returned_k?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::PredicateShortfallWire> for PredicateShortfallWire {
+            fn from(value: super::PredicateShortfallWire) -> Self {
+                Self {
+                    ann_filtering_mode: Ok(value.ann_filtering_mode),
+                    oversample_pool: Ok(value.oversample_pool),
+                    requested_k: Ok(value.requested_k),
+                    returned_k: Ok(value.returned_k),
                 }
             }
         }
@@ -12329,6 +13267,10 @@ pub mod types {
                 ::std::string::String,
             >,
             latency_ms: ::std::result::Result<i64, ::std::string::String>,
+            predicate_shortfall: ::std::result::Result<
+                ::std::option::Option<super::PredicateShortfallWire>,
+                ::std::string::String,
+            >,
             request_id: ::std::result::Result<::std::string::String, ::std::string::String>,
             results: ::std::result::Result<
                 ::std::vec::Vec<super::TypedSearchResult>,
@@ -12345,6 +13287,7 @@ pub mod types {
                 Self {
                     explain: Ok(Default::default()),
                     latency_ms: Err("no value supplied for latency_ms".to_string()),
+                    predicate_shortfall: Ok(Default::default()),
                     request_id: Err("no value supplied for request_id".to_string()),
                     results: Err("no value supplied for results".to_string()),
                     search_plan_trace: Ok(Default::default()),
@@ -12371,6 +13314,16 @@ pub mod types {
                 self.latency_ms = value
                     .try_into()
                     .map_err(|e| format!("error converting supplied value for latency_ms: {e}"));
+                self
+            }
+            pub fn predicate_shortfall<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::PredicateShortfallWire>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.predicate_shortfall = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for predicate_shortfall: {e}")
+                });
                 self
             }
             pub fn request_id<T>(mut self, value: T) -> Self
@@ -12422,6 +13375,7 @@ pub mod types {
                 Ok(Self {
                     explain: value.explain?,
                     latency_ms: value.latency_ms?,
+                    predicate_shortfall: value.predicate_shortfall?,
                     request_id: value.request_id?,
                     results: value.results?,
                     search_plan_trace: value.search_plan_trace?,
@@ -12434,6 +13388,7 @@ pub mod types {
                 Self {
                     explain: Ok(value.explain),
                     latency_ms: Ok(value.latency_ms),
+                    predicate_shortfall: Ok(value.predicate_shortfall),
                     request_id: Ok(value.request_id),
                     results: Ok(value.results),
                     search_plan_trace: Ok(value.search_plan_trace),
@@ -13130,6 +14085,25 @@ impl Client {
     /// ```
     pub fn delete_collection(&self) -> builder::DeleteCollection<'_> {
         builder::DeleteCollection::new(self)
+    }
+    /// Ingest documents for native server-side embedding
+    ///
+    /// Canonical document-ingest surface (ADR-041, spec-driven-primary). Body `{records:[{id,text,metadata}]}`; the server embeds `text` natively under `X-Embed-Source=native` (default) when no per-record `vector` is supplied. `X-Tenant-ID` scopes records to a tenant; `X-Ingest-Mode` carries the billing mode.
+    ///
+    /// Sends a `POST` request to `/api/v2/collections/{collection_id}/documents`
+    ///
+    /// Arguments:
+    /// - `collection_id`: Target collection name/ID.
+    /// - `body`
+    /// ```text
+    /// let response = client.ingest_documents()
+    /// .collection_id(collection_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn ingest_documents(&self) -> builder::IngestDocuments<'_> {
+        builder::IngestDocuments::new(self)
     }
     /// Sends a `POST` request to `/api/v2/collections/{collection_id}/entities`
     ///
@@ -14159,6 +15133,108 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::ingest_documents`]
+    ///
+    /// [`Client::ingest_documents`]: super::Client::ingest_documents
+    #[derive(Debug, Clone)]
+    pub struct IngestDocuments<'a> {
+        client: &'a super::Client,
+        collection_id: Result<::std::string::String, String>,
+        body: Result<types::builder::IngestDocumentsRequest, String>,
+    }
+    impl<'a> IngestDocuments<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection_id: Err("collection_id was not initialized".to_string()),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::IngestDocumentsRequest>,
+            <V as std::convert::TryInto<types::IngestDocumentsRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `IngestDocumentsRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::IngestDocumentsRequest,
+                ) -> types::builder::IngestDocumentsRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/collections/{collection_id}/documents`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::IngestDocumentsResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                collection_id,
+                body,
+            } = self;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::IngestDocumentsRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/collections/{}/documents",
+                client.baseurl,
+                encode_path(&collection_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "ingest_documents",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 404u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),

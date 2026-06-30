@@ -2830,6 +2830,45 @@ impl AxisManager {
         Ok(())
     }
 
+    /// Clear the in-memory `collection_vectors` projection for a collection after a
+    /// successful storage flush (TD-FLUSH-1).
+    ///
+    /// Inserted vectors are kept in two in-memory places until they are flushed: the
+    /// WAL/memtable batches (reaped by `write_buffer.clear_flushed`) and this
+    /// `collection_vectors` map (the AxisManager's `ProximaRecord` projection used to
+    /// serve warm reads + hydrate cold indexes). Before this method, only the WAL was
+    /// reaped on flush — every inserted vector stayed resident in `collection_vectors`
+    /// forever, so large workloads OOM'd and warm GETs served from the stale in-memory
+    /// copy instead of exercising the materialized segment (masking cold-read bugs).
+    ///
+    /// This is the in-memory projection only — it does NOT drop the persistent indexes
+    /// (HNSW/IVF/metadata), which were built from the flushed vectors and must remain
+    /// servable. Use [`drop_collection`] for full teardown. The durable record now lives
+    /// in the materialized storage segment that the flush just wrote.
+    pub async fn clear_collection_vectors(&self, collection_id: &str) -> Result<()> {
+        let removed_count = {
+            let mut collection_vectors = self.collection_vectors.write().await;
+            collection_vectors
+                .remove(collection_id)
+                .map(|vectors| vectors.len())
+                .unwrap_or(0)
+        };
+
+        // Defense-in-depth: drop the collection's entries from the global ID index
+        // (currently a placeholder, but the call mirrors `drop_collection` so the
+        // behavior stays correct the moment it is implemented).
+        self.global_id_index
+            .remove_collection(collection_id)
+            .await?;
+
+        tracing::info!(
+            "🧹 AXIS: Cleared {} in-memory collection_vectors for collection '{}' after flush",
+            removed_count,
+            collection_id
+        );
+        Ok(())
+    }
+
     /// Get collection statistics
     pub async fn get_collection_stats(&self, collection_id: &str) -> Result<IndexCollectionStats> {
         let search_strategy = self.get_collection_strategy(collection_id).await?;
@@ -3086,6 +3125,7 @@ impl AxisManager {
         for vector in vectors {
             self.insert(collection_id, &vector).await?;
         }
+
         let duration = start_time.elapsed();
 
         tracing::info!(
@@ -3287,10 +3327,34 @@ impl AxisManager {
 
         index.train(training_vectors).await?;
 
+        // TD-165 Defect B: populate the trained index's posting lists with the
+        // batch vectors. `train` only fits centroids — posting lists are created
+        // empty — and the incremental `insert` path routes vectors to the HNSW
+        // index, never this batch-trained IVF. Without this the persisted `ivf.bin`
+        // (written below) would hold 0 vectors and every cold reload would serve an
+        // empty index (the cheap cold-load path the cost model wants returns
+        // nothing). Add ALL vectors (not just the training sample).
+        let mut added = 0usize;
+        for record in vectors {
+            if record.oid.is_empty() {
+                continue;
+            }
+            let Some(emb) = record.embeddings.first() else {
+                continue;
+            };
+            let fp32 = emb.values.to_fp32_owned();
+            if fp32.is_empty() {
+                continue;
+            }
+            index.add_vector(record.oid.clone(), fp32, None).await?;
+            added += 1;
+        }
+
         tracing::info!(
-            "✅ AXIS: Batch IVF training complete for collection {} with {} clusters",
+            "✅ AXIS: Batch IVF training complete for collection {} with {} clusters, {} vectors populated",
             collection_id,
-            n_clusters
+            n_clusters,
+            added
         );
 
         // Store the trained index
@@ -5683,6 +5747,85 @@ mod recluster_apply_tests {
     }
 
     #[tokio::test]
+    async fn ivf_batch_path_persists_populated_index_td165_defect_b() {
+        // TD-165 Defect B regression: the batch-index path
+        // (`index_vectors_synchronously` ≥ 500 vectors) trains + persists the IVF
+        // index BEFORE the insert loop populates its posting lists. Without the
+        // post-insert re-persist, the on-disk `ivf.bin` would hold 0 vectors and a
+        // cold reload would serve an empty index. Drive the real batch path, then
+        // cold-load the persisted index and assert it actually contains the vectors.
+        let dir = tempfile::TempDir::new().unwrap();
+        let dim = 8;
+        // 600 ≥ 500 (batch-train threshold) and ≤ 1000 (sync, fully awaited →
+        // deterministic). batch() yields valid dense ProximaRecords.
+        let recs = batch("v", 600, dim, 1);
+
+        let mut m1 = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m1.set_index_persist_dir(dir.path().to_path_buf());
+        m1.index_vectors_hybrid(
+            "colb",
+            recs,
+            Vec::new(),
+            &crate::index::config::RuntimeIndexConfig::default(),
+        )
+        .await
+        .unwrap();
+
+        let path = dir.path().join("colb").join("ivf.bin");
+        assert!(
+            path.exists(),
+            "batch indexing must persist the IVF index to disk"
+        );
+
+        let mut qv = vec![0.0f32; dim];
+        qv[3] = 1.0;
+        let mk_query = || AxisHybridQuery {
+            collection_id: "colb".to_string(),
+            vector_query: Some(VectorQuery::Dense {
+                vector: qv.clone(),
+                similarity_threshold: 0.0,
+            }),
+            top_k: 5,
+            ..AxisHybridQuery::default()
+        };
+        let want: Vec<String> = m1
+            .query(mk_query())
+            .await
+            .unwrap()
+            .results
+            .iter()
+            .map(|r| r.vector_id.clone())
+            .collect();
+        assert!(
+            !want.is_empty(),
+            "warm batch-trained index must return results"
+        );
+
+        // Cold manager: the first query warm-loads the persisted ivf.bin and serves
+        // from it. Pre-fix, ivf.bin was persisted with 0 vectors (posting lists were
+        // never populated — `train` only fits centroids and `insert` feeds HNSW), so
+        // the cold IVF query returned EMPTY. Populating the posting lists before the
+        // persist is what makes the cold-loaded index serve real vectors. (We assert
+        // non-empty rather than top-k equality because the warm path serves from
+        // HNSW while the cold path serves from the IVF.)
+        let mut m2 = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m2.set_index_persist_dir(dir.path().to_path_buf());
+        assert!(!m2.has_ivf_index("colb").await, "fresh manager starts cold");
+        let got: Vec<String> = m2
+            .query(mk_query())
+            .await
+            .unwrap()
+            .results
+            .iter()
+            .map(|r| r.vector_id.clone())
+            .collect();
+        assert!(
+            !got.is_empty(),
+            "TD-165 Defect B: cold-loaded IVF must serve real vectors (an empty persisted index returns nothing)"
+        );
+    }
+
+    #[tokio::test]
     async fn ranged_cold_load_eager_and_pure_lazy_through_the_manager() {
         // ADR-023 R3 (b)/(c): exercise the RANGED manager load path end-to-end
         // with a persisted BINARY (v3) index — the default rebuild is non-binary,
@@ -6442,5 +6585,136 @@ mod hot_swap_ef_tests {
 
         let outcome = manager.apply_hnsw_ef_hot_swap("c1", 400).await.unwrap();
         assert!(matches!(outcome, HotSwapOutcome::NotApplicable { .. }));
+    }
+}
+
+#[cfg(test)]
+mod clear_collection_vectors_tests {
+    //! Tests for `AxisManager::clear_collection_vectors` — the in-memory reaping
+    //! step that must run after a successful storage flush (TD-FLUSH-1). Before the
+    //! fix, `db.flush()` cleared the WAL memtable batches but left the AxisManager's
+    //! `collection_vectors` projection fully resident → OOM for large workloads and
+    //! warm GETs serving from the unreaped copy (cold-read bugs masked).
+    use super::*;
+    use chrono::Utc;
+    use proximadb_records::{EmbeddingCell, LabelSet, ProximaRecord, ProximaTree};
+
+    async fn make_manager() -> AxisManager {
+        AxisManager::new(AxisConfig::default())
+            .await
+            .expect("AxisManager::new")
+    }
+
+    fn make_record(oid: &str) -> ProximaRecord {
+        let now_ns = Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        ProximaRecord {
+            oid: oid.to_string(),
+            local_id: None,
+            tid: None,
+            variation_id: None,
+            record_version: 1,
+            spec_version: 1,
+            tenant_id: String::new(),
+            permitted_principals: Vec::new(),
+            rls_policy_id: None,
+            created_at_ns: now_ns,
+            updated_at_ns: now_ns,
+            valid_from_ns: None,
+            valid_to_ns: None,
+            origin: None,
+            actor: None,
+            method: None,
+            memory_type: None,
+            props: ProximaTree::new(),
+            refs: Vec::new(),
+            edge: None,
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "dense_vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0]),
+                dim: 3,
+                ..Default::default()
+            }],
+            sequence: None,
+            labels: LabelSet::new(),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn clear_collection_vectors_empties_the_in_memory_projection() {
+        // The core TD-FLUSH-1 regression: after flush, the in-memory projection must
+        // be gone. Before the fix this map was never cleared → unbounded memory +
+        // warm reads served from the stale copy.
+        let manager = make_manager().await;
+
+        // Insert two records into collection "c1" + one into "c2".
+        manager
+            .insert_record("c1", &make_record("v1"))
+            .await
+            .unwrap();
+        manager
+            .insert_record("c1", &make_record("v2"))
+            .await
+            .unwrap();
+        manager
+            .insert_record("c2", &make_record("v3"))
+            .await
+            .unwrap();
+
+        assert_eq!(manager.registered_vector_count("c1").await, 2);
+        assert_eq!(manager.registered_vector_count("c2").await, 1);
+
+        // Simulate the flush callback reaping c1's in-memory projection.
+        manager.clear_collection_vectors("c1").await.unwrap();
+
+        assert_eq!(
+            manager.registered_vector_count("c1").await,
+            0,
+            "c1's collection_vectors must be reaped after flush"
+        );
+        // c2 is untouched (clear is per-collection, not global).
+        assert_eq!(
+            manager.registered_vector_count("c2").await,
+            1,
+            "clear_collection_vectors must not touch other collections"
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_collection_vectors_is_idempotent_on_unknown_collection() {
+        // Flush iterates collections-with-unflushed-data; a collection that had no
+        // WAL batches (or was already reaped) must not error when cleared again.
+        let manager = make_manager().await;
+        // No inserts — collection "ghost" has never been seen.
+        manager.clear_collection_vectors("ghost").await.unwrap();
+        assert_eq!(manager.registered_vector_count("ghost").await, 0);
+    }
+
+    #[tokio::test]
+    async fn clear_collection_vectors_allows_repopulation_after_flush() {
+        // After a flush reaps the projection, subsequent inserts (a new write batch
+        // landed between flush and reap, or a fresh post-flush insert) must repopulate
+        // the map cleanly — the projection is a cache, not the durable store.
+        let manager = make_manager().await;
+        manager
+            .insert_record("c1", &make_record("v1"))
+            .await
+            .unwrap();
+        assert_eq!(manager.registered_vector_count("c1").await, 1);
+
+        manager.clear_collection_vectors("c1").await.unwrap();
+        assert_eq!(manager.registered_vector_count("c1").await, 0);
+
+        // A fresh insert after the reap must land back in the projection.
+        manager
+            .insert_record("c1", &make_record("v2"))
+            .await
+            .unwrap();
+        assert_eq!(
+            manager.registered_vector_count("c1").await,
+            1,
+            "post-flush insert must repopulate the projection"
+        );
     }
 }

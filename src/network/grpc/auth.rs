@@ -144,6 +144,19 @@ pub fn tenant_id<T>(request: &Request<T>) -> Option<String> {
         .or_else(|| tenant_id_from_metadata(request.metadata()))
 }
 
+/// Acting principal (user id) for within-tenant row-level RBAC
+/// (`permitted_principals`, TD-134). Extracted from the authenticated
+/// [`GrpcAuthContext`]; `None` when the request is unauthenticated (e.g. dev /
+/// embedded with no auth layer) ⇒ structural isolation only (no per-record
+/// filtering) — the same default the fusion seam applies for `principal: None`.
+pub fn user_id<T>(request: &Request<T>) -> Option<String> {
+    request
+        .extensions()
+        .get::<GrpcAuthContext>()
+        .map(|context| context.user_context.user_id.clone())
+        .filter(|id| !id.is_empty())
+}
+
 pub fn enforce_data_plane_request<T>(
     request: &Request<T>,
     operation: &str,

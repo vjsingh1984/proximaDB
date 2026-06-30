@@ -115,6 +115,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/collections/{collection_id}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ingest documents for native server-side embedding.
+         * @description Canonical document-ingest surface (ADR-041, spec-driven-primary). Body `{records:[{id,text,metadata}]}`; the server embeds `text` natively under `X-Embed-Source=native` (default) when no per-record `vector` is supplied. `X-Tenant-ID` scopes records to a tenant; `X-Ingest-Mode` carries the billing mode.
+         */
+        post: operations["ingestDocuments"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/collections/{collection_id}/entities": {
         parameters: {
             query?: never;
@@ -984,6 +1004,7 @@ export interface components {
              *     to the IVF arm). When omitted, the engine selects a default (HNSW).
              */
             index_configs?: components["schemas"]["IndexConfigInput"][] | null;
+            index_policy?: null | components["schemas"]["IndexPolicyInput"];
             /**
              * Format: int64
              * @description Initial capacity hint for pre-allocation
@@ -1175,6 +1196,13 @@ export interface components {
             query: string;
         };
         FusionHit: {
+            /**
+             * @description Graph node label(s) of the reached node. Exposed so cross-modal-joint
+             *     consumers can correlate a fused hit by its graph label without a separate
+             *     node lookup (#485). The expansion already reaches the node, so this is
+             *     near-free to fill. Additive + back-compat (empty until populated).
+             */
+            labels?: string[];
             oid: string;
             /** Format: float */
             score: number;
@@ -1186,6 +1214,16 @@ export interface components {
              * @description Consensus boost added to any `oid` present in ≥2 sources.
              */
             consensus_beta?: number | null;
+            /**
+             * @description Collection whose document index to BM25-search. Defaults to `vector_collection` (documents
+             *     co-indexed with the vectors share the record `oid`, so they merge by `oid`).
+             */
+            document_collection?: string | null;
+            /**
+             * Format: float
+             * @description Document modality weight (mirrors `vector_weight` / `graph_weight`). Defaults to 1.0.
+             */
+            document_weight?: number | null;
             edge_types?: string[];
             /** @description Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`. */
             grain?: string | null;
@@ -1199,10 +1237,23 @@ export interface components {
             max_depth?: number;
             /** @description How many of the top vector seeds to expand from (bounded expansion). */
             max_seeds?: number;
+            /**
+             * Format: float
+             * @description Cost-routing policy inputs (TD-141): drop negligible modalities (weight fraction) and budget each.
+             *     When absent, fusion is unbounded.
+             */
+            min_weight_fraction?: number | null;
             /** @description Query embedding for the ANN seed. */
             query_vector: number[];
             /** @description Use the rank-based RRF fallback instead of PIT-calibrated linear. */
             rrf?: boolean;
+            /**
+             * @description Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also searches the
+             *     collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
+             *     (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
+             */
+            text_query?: string | null;
+            total_budget?: number | null;
             /** @description Vector collection to seed from (its records co-indexed with this graph by `oid`). */
             vector_collection: string;
             /** Format: float */
@@ -1297,6 +1348,35 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /**
+         * @description REST input for the per-collection index routing policy (mirrors proto
+         *     `IndexPolicy`; ADR-028).
+         */
+        IndexPolicyInput: {
+            /**
+             * Format: int64
+             * @description Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
+             *     for the storage class.
+             */
+            byte_budget?: number | null;
+            /**
+             * @description Routing mode: "auto" (default) | "exact" | "ivf" | "hnsw" | "helix".
+             *     "auto"/omitted ⇒ cost-derived. "exact" ⇒ always brute-force (no index).
+             *     The engine modes force the collection onto that engine/route.
+             */
+            mode?: string | null;
+            /**
+             * Format: int32
+             * @description nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when
+             *     `mode = "exact"`.
+             */
+            nprobe?: number | null;
+            /**
+             * @description Cold-start index warming: "auto" (default) | "eager" | "lazy" | "never".
+             *     Index/auto modes only — rejected when `mode = "exact"`.
+             */
+            rehydrate?: string | null;
+        };
         /** @description REST output for a single index config (mirrors gRPC `V2IndexSpec`). */
         IndexSpecOutput: {
             /** @description Algorithm: "hnsw" | "ivf" | "pq" | "flat" | "annoy" | "lsh". */
@@ -1305,6 +1385,39 @@ export interface components {
             /** @description Whether this is the collection's primary ANN index. */
             is_primary: boolean;
             ivf?: null | components["schemas"]["IvfConfigOutput"];
+        };
+        /** @description A single record submitted for native embedding + indexing. */
+        IngestDocument: {
+            id: string;
+            /** @description Arbitrary metadata fields. Stored as ProximaRecord props. */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /**
+             * @description Raw text content. Required when `X-Embed-Source: native` (default);
+             *     optional when the client also supplied a vector.
+             */
+            text?: string | null;
+            /**
+             * @description Optional client-provided vector. When present, the server skips
+             *     embedding for this record. Use case: SDK that already embedded
+             *     locally (legacy path).
+             */
+            vector?: number[] | null;
+        };
+        IngestDocumentsRequest: {
+            records: components["schemas"]["IngestDocument"][];
+        };
+        IngestDocumentsResponse: {
+            mode: string;
+            records: components["schemas"]["IngestedRecord"][];
+            /** Format: int64 */
+            retry_after_ms?: number | null;
+        };
+        IngestedRecord: {
+            /** Format: int32 */
+            dim: number;
+            id: string;
         };
         /** @description Error details for a failed record insertion */
         InsertError: {
@@ -1441,6 +1554,36 @@ export interface components {
             } | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * @description TD-064: predicate-aware recall shortfall (REST wire shape).
+         *
+         *     Mirrors `observability::search_plan_trace::PredicateShortfall` as an
+         *     explicit REST/OpenAPI schema so the field is typed and documented on the
+         *     wire without forcing the observability type (or the slim `IndexQueryResult`
+         *     DTO) to derive `ToSchema`.
+         */
+        PredicateShortfallWire: {
+            /**
+             * @description ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or
+             *     `pre_filter`).
+             */
+            ann_filtering_mode: string;
+            /**
+             * Format: int32
+             * @description Candidate pool size considered before the predicate (oversample budget).
+             */
+            oversample_pool: number;
+            /**
+             * Format: int32
+             * @description The `top_k` value the caller asked for.
+             */
+            requested_k: number;
+            /**
+             * Format: int32
+             * @description Results actually returned after predicate filtering + merge.
+             */
+            returned_k: number;
         };
         ProbeResponse: {
             status: string;
@@ -1835,6 +1978,7 @@ export interface components {
              * @description Search latency in milliseconds
              */
             latency_ms: number;
+            predicate_shortfall?: null | components["schemas"]["PredicateShortfallWire"];
             /** @description Request ID for tracing */
             request_id: string;
             /** @description Search results */
@@ -2107,6 +2251,51 @@ export interface operations {
                 };
             };
             /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    ingestDocuments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Target collection name/ID. */
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IngestDocumentsRequest"];
+            };
+        };
+        responses: {
+            /** @description Ingested. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IngestDocumentsResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Collection not found. */
             404: {
                 headers: {
                     [name: string]: unknown;

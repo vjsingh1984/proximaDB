@@ -12,9 +12,9 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::proto::proximadb_v1::FilterableColumnSpec;
-use crate::services::collection::manager::CollectionService;
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_storage_ports::CollectionMetadataPort;
 
 /// Storage engine types supported by ProximaDB
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -235,7 +235,7 @@ impl BackgroundFlushContext {
 
     /// Create context from collection service (eliminates future service calls)
     pub async fn from_collection_service(
-        service: &CollectionService,
+        service: &dyn CollectionMetadataPort,
         collection_id: &str,
     ) -> Result<Self> {
         // Single collection service call - all subsequent operations use this context
@@ -316,10 +316,7 @@ impl BackgroundFlushContext {
         // Resolve the owning tenant once, here, from the same collection proto we
         // already fetched (D3: one amortized lookup, never per row). Reuses the
         // canonical resolver so tag/owner precedence matches the network gates.
-        let tenant_id =
-            crate::services::collection::manager::CollectionService::collection_tenant_id(
-                &collection,
-            );
+        let tenant_id = proximadb_tenant::tenant_id_of(&collection);
 
         Ok(Self {
             collection_id: collection_id.to_string(),

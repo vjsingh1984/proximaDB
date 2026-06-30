@@ -606,6 +606,14 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn read_range(&self, path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
+        // ADR-030 / TD-158: this is the leaf physical-GET boundary. Feed the per-query
+        // I/O accumulator once per successful ranged read — `UnifiedCachingFilesystem`
+        // serves cache hits without delegating here, so `range_gets` reflects TRUE
+        // physical GETs (the `avg_get_size` the route cost model prices == the bytes the
+        // KRU read-meter charges, by construction). The counters are task-local: they
+        // no-op outside an active `io_trace` scope, and the core counters are always-on
+        // (not behind `io-trace`) so the billing observer reads real values at drain.
+        let result: FsResult<Vec<u8>> = async {
         use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
         // Extract path from URL
@@ -725,6 +733,13 @@ impl FileSystem for LocalFileSystem {
         }
 
         Ok(buffer)
+        }
+        .await;
+        if let Ok(ref bytes) = result {
+            crate::observability::io_trace::record_range_gets(1);
+            crate::observability::io_trace::record_bytes_read(bytes.len() as u64);
+        }
+        result
     }
 
     async fn metadata(&self, path: &str) -> FsResult<FileMetadata> {
@@ -1123,6 +1138,60 @@ mod tests {
         // The URL should be properly formatted without duplications
         assert!(entry_url.contains("test_metadata/current/test.txt"));
         assert!(!entry_url.contains("test_metadata/test_metadata_info"));
+    }
+
+    /// ADR-030 / TD-158: the leaf `read_range` feeds the per-query I/O accumulator.
+    /// A ranged read inside an `io_trace` scope records one physical GET plus the exact
+    /// bytes returned, so `range_gets > 0` and `avg_get_bytes()` (the read-granularity
+    /// signal the route cost model prices and the KRU meter charges) is populated.
+    /// The core counters are always-on, so this holds in the default build (no
+    /// `io-trace` feature). Outside any scope the same call is a silent no-op.
+    #[tokio::test]
+    async fn read_range_feeds_io_trace_accumulator_td158() {
+        use crate::observability::io_trace;
+
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("seg.bin");
+        let payload = vec![7u8; 4096];
+        std::fs::write(&file_path, &payload).unwrap();
+
+        let fs = LocalFileSystem::new(LocalConfig::default()).await.unwrap();
+        let url = format!("file://{}", file_path.display());
+
+        // Inside an active scope: both physical reads are accounted to the per-query trace.
+        let snap = io_trace::scope(async {
+            let first = fs.read_range(&url, 0, payload.len() as u64).await.unwrap();
+            assert_eq!(first.len(), payload.len());
+            // A second, smaller ranged read proves GETs accumulate (this is the bare
+            // leaf FS — no caching wrapper, so every read is a physical GET).
+            let second = fs.read_range(&url, 0, 1024).await.unwrap();
+            assert_eq!(second.len(), 1024);
+            io_trace::snapshot().expect("snapshot must exist inside an active scope")
+        })
+        .await;
+
+        assert!(
+            snap.range_gets >= 2,
+            "each physical ranged read counts one GET (got {})",
+            snap.range_gets
+        );
+        assert_eq!(
+            snap.bytes_read,
+            (payload.len() + 1024) as u64,
+            "bytes_read must equal the exact bytes returned across both GETs"
+        );
+        assert!(
+            snap.avg_get_bytes().is_some(),
+            "avg_get_bytes (read-granularity signal) must be populated once GETs are recorded"
+        );
+
+        // Outside any scope the same call is a silent no-op — task-local, no global state.
+        let outside = fs.read_range(&url, 0, 16).await.unwrap();
+        assert_eq!(outside.len(), 16);
+        assert!(
+            io_trace::snapshot().is_none(),
+            "no active scope ⇒ no trace recorded"
+        );
     }
 
     #[tokio::test]

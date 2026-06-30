@@ -12,6 +12,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use proximadb_storage_ports::CollectionMetadataPort;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -78,12 +79,10 @@ pub struct WALFlushCoordinator {
     next_flush_id: Arc<tokio::sync::Mutex<u64>>,
     /// Storage engine registry for polymorphic flush delegation
     storage_engines: Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
-    /// AXIS manager for IndexConfig-based indexing after flush
-    axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
     /// Optimized flush coordinator for high-performance flushing
     optimized_coordinator: Option<Arc<OptimizedFlushCoordinator>>,
     /// Collection service for fetching metadata
-    collection_service: Option<Arc<crate::services::collection::manager::CollectionService>>,
+    collection_service: Option<Arc<dyn CollectionMetadataPort>>,
     /// Metrics updater for tracking flush operations
     metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater>>,
     /// Memtable manager for cleanup after flush
@@ -102,7 +101,6 @@ impl WALFlushCoordinator {
             flush_states: Arc::new(RwLock::new(HashMap::new())),
             next_flush_id: Arc::new(tokio::sync::Mutex::new(1)),
             storage_engines: Arc::new(RwLock::new(HashMap::new())),
-            axis_manager: None,
             optimized_coordinator: None,
             collection_service: None,
             metrics_updater: None,
@@ -149,9 +147,7 @@ impl WALFlushCoordinator {
         if let Some(service) = &self.collection_service
             && let Ok(Some(collection)) = service.collection(collection_id).await
         {
-            return crate::services::collection::manager::CollectionService::collection_tenant_id(
-                &collection,
-            );
+            return proximadb_tenant::tenant_id_of(&collection);
         }
         None
     }
@@ -163,10 +159,7 @@ impl WALFlushCoordinator {
     }
 
     /// Set collection service for metadata fetching
-    pub fn set_collection_service(
-        &mut self,
-        service: Arc<crate::services::collection::manager::CollectionService>,
-    ) {
+    pub fn set_collection_service(&mut self, service: Arc<dyn CollectionMetadataPort>) {
         self.collection_service = Some(service);
     }
 
@@ -195,15 +188,6 @@ impl WALFlushCoordinator {
             "🚀 FlushCoordinator: Optimized flush enabled with batch_size={}, workers={}",
             batch_size, worker_count
         );
-    }
-
-    /// Set the AXIS manager for IndexConfig-based indexing
-    pub fn set_axis_manager(
-        &mut self,
-        axis_manager: Arc<crate::index::axis::management::manager::AxisManager>,
-    ) {
-        self.axis_manager = Some(axis_manager);
-        info!("🔗 FlushCoordinator: AXIS manager registered for IndexConfig-based indexing");
     }
 
     /// Initialize flush state for a collection

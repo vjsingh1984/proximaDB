@@ -80,6 +80,8 @@ async fn test_create_collection() -> Result<()> {
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
         permitted_principals: vec![],
+        index_policy: None,
+        pax_vector_quant: None,
     };
 
     let response = service.create_collection(&config).await?;
@@ -117,6 +119,8 @@ async fn test_get_collection() -> Result<()> {
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
         permitted_principals: vec![],
+        index_policy: None,
+        pax_vector_quant: None,
     };
 
     let create_response = service.create_collection(&config).await?;
@@ -162,6 +166,8 @@ async fn test_list_collections() -> Result<()> {
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
             permitted_principals: vec![],
+            index_policy: None,
+            pax_vector_quant: None,
         };
 
         let response = service.create_collection(&config).await?;
@@ -202,6 +208,8 @@ async fn test_delete_collection() -> Result<()> {
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
         permitted_principals: vec![],
+        index_policy: None,
+        pax_vector_quant: None,
     };
 
     let create_response = service.create_collection(&config).await?;
@@ -247,6 +255,8 @@ async fn test_tenant_scoped_collection_access_and_delete() -> Result<()> {
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
         permitted_principals: vec![],
+        index_policy: None,
+        pax_vector_quant: None,
     };
 
     let create_response = service
@@ -326,6 +336,8 @@ async fn test_collection_port_get_collection_is_tenant_scoped() -> Result<()> {
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
         permitted_principals: vec![],
+        index_policy: None,
+        pax_vector_quant: None,
     };
 
     service
@@ -393,6 +405,8 @@ async fn test_tenant_collection_limit_enforced() -> Result<()> {
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
         permitted_principals: vec![],
+        index_policy: None,
+        pax_vector_quant: None,
     };
 
     let config_two = CollectionConfig {
@@ -447,6 +461,8 @@ async fn test_tenant_scoped_collection_listing() -> Result<()> {
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
         permitted_principals: vec![],
+        index_policy: None,
+        pax_vector_quant: None,
     };
 
     let config_b = CollectionConfig {

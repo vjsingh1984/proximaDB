@@ -331,6 +331,15 @@ components:
           type:
           - array
           - 'null'
+        index_policy:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/IndexPolicyInput'
+            description: |-
+              Per-collection cold/warm search routing policy (ADR-028). When omitted,
+              the system decides cost-derived (`mode = "auto"`). Owners with hard SLAs
+              override here; query-time precedence is per-query `search_mode` > this
+              policy > cost-model auto-default.
         initial_capacity:
           description: Initial capacity hint for pre-allocation
           format: int64
@@ -699,6 +708,15 @@ components:
       type: object
     FusionHit:
       properties:
+        labels:
+          description: |-
+            Graph node label(s) of the reached node. Exposed so cross-modal-joint
+            consumers can correlate a fused hit by its graph label without a separate
+            node lookup (#485). The expansion already reaches the node, so this is
+            near-free to fill. Additive + back-compat (empty until populated).
+          items:
+            type: string
+          type: array
         oid:
           type: string
         score:
@@ -716,6 +734,19 @@ components:
       properties:
         consensus_beta:
           description: Consensus boost added to any `oid` present in ≥2 sources.
+          format: float
+          type:
+          - number
+          - 'null'
+        document_collection:
+          description: |-
+            Collection whose document index to BM25-search. Defaults to `vector_collection` (documents
+            co-indexed with the vectors share the record `oid`, so they merge by `oid`).
+          type:
+          - string
+          - 'null'
+        document_weight:
+          description: Document modality weight (mirrors `vector_weight` / `graph_weight`). Defaults to 1.0.
           format: float
           type:
           - number
@@ -746,6 +777,14 @@ components:
           description: How many of the top vector seeds to expand from (bounded expansion).
           minimum: 0
           type: integer
+        min_weight_fraction:
+          description: |-
+            Cost-routing policy inputs (TD-141): drop negligible modalities (weight fraction) and budget each.
+            When absent, fusion is unbounded.
+          format: float
+          type:
+          - number
+          - 'null'
         query_vector:
           description: Query embedding for the ANN seed.
           items:
@@ -755,6 +794,19 @@ components:
         rrf:
           description: Use the rank-based RRF fallback instead of PIT-calibrated linear.
           type: boolean
+        text_query:
+          description: |-
+            Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also searches the
+            collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
+            (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
+          type:
+          - string
+          - 'null'
+        total_budget:
+          minimum: 0
+          type:
+          - integer
+          - 'null'
         vector_collection:
           description: Vector collection to seed from (its records co-indexed with this graph by `oid`).
           type: string
@@ -966,6 +1018,45 @@ components:
       required:
       - algorithm
       type: object
+    IndexPolicyInput:
+      description: |-
+        REST input for the per-collection index routing policy (mirrors proto
+        `IndexPolicy`; ADR-028).
+      properties:
+        byte_budget:
+          description: |-
+            Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
+            for the storage class.
+          format: int64
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        mode:
+          description: |-
+            Routing mode: "auto" (default) | "exact" | "ivf" | "hnsw" | "helix".
+            "auto"/omitted ⇒ cost-derived. "exact" ⇒ always brute-force (no index).
+            The engine modes force the collection onto that engine/route.
+          type:
+          - string
+          - 'null'
+        nprobe:
+          description: |-
+            nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when
+            `mode = "exact"`.
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        rehydrate:
+          description: |-
+            Cold-start index warming: "auto" (default) | "eager" | "lazy" | "never".
+            Index/auto modes only — rejected when `mode = "exact"`.
+          type:
+          - string
+          - 'null'
+      type: object
     IndexSpecOutput:
       description: REST output for a single index config (mirrors gRPC `V2IndexSpec`).
       properties:
@@ -988,6 +1079,77 @@ components:
       required:
       - algorithm
       - is_primary
+      type: object
+    IngestDocument:
+      description: A single record submitted for native embedding + indexing.
+      properties:
+        id:
+          type: string
+        metadata:
+          additionalProperties: {}
+          description: Arbitrary metadata fields. Stored as ProximaRecord props.
+          propertyNames:
+            type: string
+          type: object
+        text:
+          description: |-
+            Raw text content. Required when `X-Embed-Source: native` (default);
+            optional when the client also supplied a vector.
+          type:
+          - string
+          - 'null'
+        vector:
+          description: |-
+            Optional client-provided vector. When present, the server skips
+            embedding for this record. Use case: SDK that already embedded
+            locally (legacy path).
+          items:
+            format: float
+            type: number
+          type:
+          - array
+          - 'null'
+      required:
+      - id
+      type: object
+    IngestDocumentsRequest:
+      properties:
+        records:
+          items:
+            $ref: '#/components/schemas/IngestDocument'
+          type: array
+      required:
+      - records
+      type: object
+    IngestDocumentsResponse:
+      properties:
+        mode:
+          type: string
+        records:
+          items:
+            $ref: '#/components/schemas/IngestedRecord'
+          type: array
+        retry_after_ms:
+          format: int64
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+      required:
+      - mode
+      - records
+      type: object
+    IngestedRecord:
+      properties:
+        dim:
+          format: int32
+          minimum: 0
+          type: integer
+        id:
+          type: string
+      required:
+      - id
+      - dim
       type: object
     InsertError:
       description: Error details for a failed record insertion
@@ -1209,6 +1371,41 @@ components:
           type: object
       required:
       - id
+      type: object
+    PredicateShortfallWire:
+      description: |-
+        TD-064: predicate-aware recall shortfall (REST wire shape).
+
+        Mirrors `observability::search_plan_trace::PredicateShortfall` as an
+        explicit REST/OpenAPI schema so the field is typed and documented on the
+        wire without forcing the observability type (or the slim `IndexQueryResult`
+        DTO) to derive `ToSchema`.
+      properties:
+        ann_filtering_mode:
+          description: |-
+            ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or
+            `pre_filter`).
+          type: string
+        oversample_pool:
+          description: Candidate pool size considered before the predicate (oversample budget).
+          format: int32
+          minimum: 0
+          type: integer
+        requested_k:
+          description: The `top_k` value the caller asked for.
+          format: int32
+          minimum: 0
+          type: integer
+        returned_k:
+          description: Results actually returned after predicate filtering + merge.
+          format: int32
+          minimum: 0
+          type: integer
+      required:
+      - requested_k
+      - returned_k
+      - oversample_pool
+      - ann_filtering_mode
       type: object
     ProbeResponse:
       properties:
@@ -1846,6 +2043,17 @@ components:
           format: int64
           minimum: 0
           type: integer
+        predicate_shortfall:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/PredicateShortfallWire'
+            description: |-
+              TD-064: predicate-aware shortfall — present when a filtered search
+              returned fewer than the requested `top_k` after the WAL+AXIS+storage
+              merge. **Always emitted when present (NOT `debug`-gated)**, unlike
+              `search_plan_trace`: a silent `<top_k` under a tenant/RLS filter is
+              fail-open, so the client must be able to distinguish "fewer than k
+              records match my filter" from "the engine returned my full top-k".
         request_id:
           description: Request ID for tracing
           type: string
@@ -2210,6 +2418,45 @@ paths:
       summary: Get collection details.
       tags:
       - Collections
+  /api/v2/collections/{collection_id}/documents:
+    post:
+      description: Canonical document-ingest surface (ADR-041, spec-driven-primary). Body `{records:[{id,text,metadata}]}`; the server embeds `text` natively under `X-Embed-Source=native` (default) when no per-record `vector` is supplied. `X-Tenant-ID` scopes records to a tenant; `X-Ingest-Mode` carries the billing mode.
+      operationId: ingestDocuments
+      parameters:
+      - description: Target collection name/ID.
+        in: path
+        name: collection_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestDocumentsRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestDocumentsResponse'
+          description: Ingested.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid request.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Collection not found.
+      summary: Ingest documents for native server-side embedding.
+      tags:
+      - Documents
   /api/v2/collections/{collection_id}/entities:
     post:
       operationId: upsert_entity_v2
@@ -3313,3 +3560,5 @@ tags:
   name: Query
 - description: Entity orchestration (graph node + embeddings + provenance).
   name: Entities
+- description: Native-embedding document ingest.
+  name: Documents

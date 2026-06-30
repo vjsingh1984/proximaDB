@@ -16,11 +16,9 @@ use std::sync::Arc;
 use tracing::{debug, info, trace, warn};
 
 // Use unified components instead of custom implementations
-use crate::compute::distance_computation::engine::{
-    DistanceMetric, SimilarityResult, UnifiedDistanceCompute,
-};
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
+use proximadb_distance_kernel::engine::{DistanceMetric, SimilarityResult, UnifiedDistanceCompute};
 
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, types::ProximaScheme};
@@ -2789,7 +2787,7 @@ impl RaptorReader {
                     .calculate_distance(
                         &target_vector,
                         &centroid,
-                        &crate::compute::distance_computation::DistanceMetric::Cosine,
+                        &proximadb_distance_kernel::DistanceMetric::Cosine,
                     )
                     .raw_value;
                 cluster_distances.push((rg_id, distance));

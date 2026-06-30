@@ -42,7 +42,7 @@ use crate::proto::proximadb_v2 as pv2;
 use crate::proto::proximadb_v2::proxima_document_service_server::{
     ProximaDocumentService, ProximaDocumentServiceServer,
 };
-use crate::storage::document::{DocumentRecord, DocumentService};
+use crate::storage::document::{DocumentQueryParams, DocumentRecord, DocumentService};
 
 /// gRPC V2 native document service.
 pub struct ProximaDocumentServiceImpl {
@@ -89,7 +89,9 @@ mod conv {
     use proximadb_records::{ProximaTree, ProximaTreeNode};
 
     use crate::core::search::sql_value_filter::proxima_tree_to_value_map;
+    use crate::proto::proximadb_v1 as pv1;
     use crate::storage::document::DocumentRecord;
+    use crate::storage::document::canonical_adapter::tree_node_to_sql_value;
 
     /// v2 wire props (`TypedValue` map) -> neutral [`ProximaTree`]. Each field
     /// becomes a `Value` node; nested objects ride inside the `ProximaValue`
@@ -125,6 +127,116 @@ mod conv {
             schema_id: record.schema_id.clone(),
             document_type: record.document_type.clone(),
             updated_at_ms: record.updated_at_ns / 1_000_000,
+        }
+    }
+
+    /// v2 sort fields -> v1 proto `SortField`. Value-free (path + order only), so
+    /// no `SqlValue` is involved; the enum discriminants line up 1:1.
+    pub fn sort_to_v1(sort: &[pv2::DocumentSortField]) -> Vec<pv1::SortField> {
+        sort.iter()
+            .map(|s| pv1::SortField {
+                path: s.path.clone(),
+                order: s.order,
+            })
+            .collect()
+    }
+
+    /// v2 `DocumentFieldUpdate` -> v1 `DocumentUpdate`. The discriminants line up
+    /// 1:1; the value is lifted from TypedValue -> ProximaValue -> SqlValue at the
+    /// handler boundary, then passed to the backing DocumentService::update_document.
+    /// This is a transitional path until DocumentService accepts ProximaValue directly.
+    pub fn field_updates_to_v1(
+        updates: &[pv2::DocumentFieldUpdate],
+    ) -> Result<Vec<pv1::DocumentUpdate>, Status> {
+        updates
+            .iter()
+            .map(|u| {
+                let value = match &u.value {
+                    None => None,
+                    Some(tv) => {
+                        let pv = typed_value_to_proxima(tv).map_err(|e| {
+                            Status::invalid_argument(format!("update value for '{}': {e}", u.path))
+                        })?;
+                        // Transitional bridge: ProximaValue -> SqlValue (the backing
+                        // service apply_update expects SqlValue). This is the only place
+                        // v2 touches SqlValue — a follow-up can lift DocumentService to
+                        // accept ProximaValue directly.
+                        Some(tree_node_to_sql_value(&ProximaTreeNode::Value(pv)))
+                    }
+                };
+                Ok(pv1::DocumentUpdate {
+                    operation: u.operation - 1, // v2 discriminants are offset by 1
+                    path: u.path.clone(),
+                    value,
+                })
+            })
+            .collect()
+    }
+
+    /// v2 `AggregationStage` -> v1 `AggregationStage`. Both carry a `stage` oneof
+    /// with parallel variants (Group/Project/Sort/Limit/Skip); v2's discriminants
+    /// and field shapes mirror v1, so this is a structural 1:1 copy. v1 also has
+    /// Match/Unwind/Lookup which v2 defers — they are not produced here.
+    pub fn aggregation_stage_to_v1(stage: &pv2::AggregationStage) -> pv1::AggregationStage {
+        use pv1::aggregation_stage::Stage as V1Stage;
+        use pv2::aggregation_stage::Stage as V2Stage;
+
+        match &stage.stage {
+            None => pv1::AggregationStage::default(),
+            Some(V2Stage::Group(group)) => {
+                let aggregations = group
+                    .aggregations
+                    .iter()
+                    .map(|a| pv1::Aggregation {
+                        output_field: a.output_field.clone(),
+                        r#type: a.r#type,
+                        input_path: a.input_path.clone(),
+                    })
+                    .collect();
+                pv1::AggregationStage {
+                    stage: Some(V1Stage::Group(pv1::GroupStage {
+                        key: group.key.clone(),
+                        aggregations,
+                    })),
+                }
+            }
+            Some(V2Stage::Project(project)) => pv1::AggregationStage {
+                stage: Some(V1Stage::Project(pv1::ProjectStage {
+                    fields: project.fields.clone(),
+                    computed: project.computed.clone(),
+                })),
+            },
+            Some(V2Stage::Sort(sort)) => {
+                let fields = sort
+                    .sort
+                    .iter()
+                    .map(|s| pv1::SortField {
+                        path: s.path.clone(),
+                        order: s.order,
+                    })
+                    .collect();
+                pv1::AggregationStage {
+                    stage: Some(V1Stage::Sort(pv1::SortStage { fields })),
+                }
+            }
+            Some(V2Stage::Limit(limit)) => pv1::AggregationStage {
+                stage: Some(V1Stage::Limit(pv1::LimitStage { limit: limit.limit })),
+            },
+            Some(V2Stage::Skip(skip)) => pv1::AggregationStage {
+                stage: Some(V1Stage::Skip(pv1::SkipStage { skip: skip.skip })),
+            },
+        }
+    }
+
+    /// v1 `SqlObject` result -> v2 `AggregationResult` (ProximaValue-native). The
+    /// aggregation executor returns SqlObject (v1 legacy surface); we convert to
+    /// ProximaTree via sql_object_to_proxima_tree, then to TypedValue map.
+    pub fn sql_object_to_aggregation_result(
+        obj: &crate::proto::proximadb_v1::SqlObject,
+    ) -> pv2::AggregationResult {
+        let tree = crate::storage::document::canonical_adapter::sql_object_to_proxima_tree(obj);
+        pv2::AggregationResult {
+            fields: tree_to_props(&tree),
         }
     }
 }
@@ -227,6 +339,112 @@ impl ProximaDocumentService for ProximaDocumentServiceImpl {
             Err(e) => {
                 error!("v2 gRPC DeleteDocument failed: {e}");
                 Err(doc_status("delete document", e))
+            }
+        }
+    }
+
+    async fn update_document(
+        &self,
+        request: Request<pv2::UpdateDocumentRequest>,
+    ) -> Result<Response<pv2::DocumentResponse>, Status> {
+        let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
+        let req = request.into_inner();
+        debug!(
+            "v2 gRPC UpdateDocument collection={collection} id={} updates={}",
+            req.id,
+            req.updates.len()
+        );
+
+        let updates = conv::field_updates_to_v1(&req.updates)?;
+        match self
+            .documents
+            .update_document(&collection, &req.id, updates, req.expected_version)
+            .await
+        {
+            Ok(updated) => Ok(Response::new(pv2::DocumentResponse {
+                document: Some(conv::record_to_v2(&updated)),
+            })),
+            Err(e) => {
+                error!("v2 gRPC UpdateDocument failed: {e}");
+                Err(doc_status("update document", e))
+            }
+        }
+    }
+
+    async fn query_documents(
+        &self,
+        request: Request<pv2::QueryDocumentsRequest>,
+    ) -> Result<Response<pv2::QueryDocumentsResponse>, Status> {
+        let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
+        let req = request.into_inner();
+        debug!(
+            "v2 gRPC QueryDocuments collection={collection} limit={} offset={}",
+            req.limit, req.offset
+        );
+
+        // First slice: a value-free scan (projection + sort + pagination). A
+        // predicate filter is deferred until it can be ProximaValue-native, so
+        // none is set here.
+        let params = DocumentQueryParams {
+            filter: None,
+            projection: req.projection,
+            sort: conv::sort_to_v1(&req.sort),
+            limit: req.limit,
+            offset: req.offset,
+            include_count: req.include_count,
+        };
+
+        match self.documents.query_documents(&collection, params).await {
+            Ok(result) => Ok(Response::new(pv2::QueryDocumentsResponse {
+                documents: result.documents.iter().map(conv::record_to_v2).collect(),
+                total_count: result.total_count,
+                query_time_ms: result.query_time_ms,
+            })),
+            Err(e) => {
+                error!("v2 gRPC QueryDocuments failed: {e}");
+                Err(doc_status("query documents", e))
+            }
+        }
+    }
+
+    async fn aggregate_documents(
+        &self,
+        request: Request<pv2::AggregateDocumentsRequest>,
+    ) -> Result<Response<pv2::AggregateDocumentsResponse>, Status> {
+        let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
+        let req = request.into_inner();
+        debug!(
+            "v2 gRPC AggregateDocuments collection={} pipeline_len={}",
+            collection,
+            req.pipeline.len()
+        );
+
+        // Convert v2 pipeline to v1 (discriminants line up 1:1)
+        let v1_pipeline: Vec<crate::proto::proximadb_v1::AggregationStage> = req
+            .pipeline
+            .iter()
+            .map(conv::aggregation_stage_to_v1)
+            .collect();
+
+        match self
+            .documents
+            .aggregate_documents(&collection, None, v1_pipeline)
+            .await
+        {
+            Ok(result) => {
+                let results = result
+                    .results
+                    .iter()
+                    .map(conv::sql_object_to_aggregation_result)
+                    .collect();
+                Ok(Response::new(pv2::AggregateDocumentsResponse {
+                    results,
+                    query_time_ms: result.query_time_ms,
+                }))
+            }
+            Err(e) => {
+                error!("v2 gRPC AggregateDocuments failed: {e}");
+                Err(doc_status("aggregate documents", e))
             }
         }
     }

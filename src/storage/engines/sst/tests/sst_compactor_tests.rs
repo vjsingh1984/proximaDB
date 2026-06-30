@@ -22,8 +22,8 @@ mod tests {
     use std::collections::HashMap;
 
     // Import test utilities from sst_test_config
-    use crate::compute::distance_computation::DistanceMetric;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+    use proximadb_distance_kernel::DistanceMetric;
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
     use proximadb_storage_common::storage_path::StoragePath;
     use std::path::Path;
     use std::sync::Arc;

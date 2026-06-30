@@ -116,6 +116,24 @@ impl PredicateDiagnostics {
             .take()
     }
 
+    /// **Overwrite** the captured shortfall (TD-064(a)).
+    ///
+    /// Unlike [`Self::record_shortfall`] (first-writer-wins, used by the AXIS
+    /// stage the moment it detects a shortfall), this unconditionally replaces
+    /// the value. It is the seam the *service* layer uses to be the explicit
+    /// carrier of the AXIS-stage shortfall onto the bus — and to let the
+    /// post-merge recompute at the response boundary clear a stale value by
+    /// passing `None`.
+    ///
+    /// Safe to overwrite here because a single search request runs at most one
+    /// AXIS query through the WAL+AXIS+storage merge, and the response boundary
+    /// (`search_records_with_tenant_context`) is the final authority on the
+    /// `returned_k`/`requested_k` counts (it recomputes from the true merged
+    /// result, so a wrong bus value can never reach the client).
+    pub fn set_shortfall(&self, sf: Option<PredicateShortfall>) {
+        *self.shortfall.lock().unwrap_or_else(|p| p.into_inner()) = sf;
+    }
+
     /// Mark that the quantized route was downgraded to exact (gate closed).
     /// Idempotent — repeated calls within a request keep the flag set.
     pub fn record_quantized_downgrade(&self) {
@@ -229,6 +247,16 @@ pub fn take_shortfall() -> Option<PredicateShortfall> {
     PREDICATE_DIAGNOSTICS
         .try_with(|d| d.take_shortfall())
         .unwrap_or(None)
+}
+
+/// Overwrite the captured shortfall in the active diagnostics container
+/// (TD-064(a)). Silently no-ops outside an active [`scope`] — same contract as
+/// [`take_shortfall`]. Pass `None` to clear a stale (post-merge false-positive)
+/// value. See [`PredicateDiagnostics::set_shortfall`] for the rationale.
+pub fn set_shortfall(sf: Option<PredicateShortfall>) {
+    let _ = PREDICATE_DIAGNOSTICS.try_with(|d| {
+        d.set_shortfall(sf);
+    });
 }
 
 /// Record a quantized-route downgrade (gate closed → exact) into the active
@@ -361,6 +389,23 @@ mod tests {
         .await;
         assert!(first.is_some());
         assert!(second.is_none());
+    }
+
+    #[tokio::test]
+    async fn set_shortfall_overwrites_and_clears() {
+        // TD-064(a): the service layer carries the AXIS shortfall via set_shortfall
+        // (overwrite) and the response boundary clears a post-merge false positive
+        // with set_shortfall(None).
+        let (after_overwrite, after_clear) = scope(async {
+            record_shortfall(sample_shortfall(3)); // first-writer
+            set_shortfall(Some(sample_shortfall(7))); // overwrite wins
+            let o = take_shortfall();
+            set_shortfall(None); // explicit clear
+            (o, take_shortfall())
+        })
+        .await;
+        assert_eq!(after_overwrite.expect("overwrite").returned_k, 7);
+        assert!(after_clear.is_none(), "set_shortfall(None) must clear");
     }
 
     #[tokio::test]

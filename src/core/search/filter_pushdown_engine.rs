@@ -618,7 +618,7 @@ mod tests {
         let result = planner.convert_value(&int_value).unwrap();
         assert!(matches!(result, FilterValue::Integer(42)));
 
-        let float_value = json!(3.14);
+        let float_value = json!(3.5);
         let result = planner.convert_value(&float_value).unwrap();
         assert!(matches!(result, FilterValue::Float(_)));
     }

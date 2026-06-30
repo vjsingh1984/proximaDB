@@ -50,6 +50,7 @@ use serde_json::Value;
 use utoipa::OpenApi;
 
 use crate::network::rest::v2::{collections, entities, graphs, query, records, schema};
+use crate::network::rest::v3::documents;
 
 /// Canonical ProximaDB error envelope (`{ error: { type, message, code } }`).
 ///
@@ -108,6 +109,11 @@ part of this publishable SDK surface.",
         collections::create_collection_v2,
         collections::list_collections_v2,
         collections::get_collection_v2,
+        // NOTE: get_collection_statistics_v2 is intentionally NOT in the
+        // published OpenAPI spec — it lives under `/api/v2/_diagnostics/...`,
+        // and `_diagnostics` routes (route-health / recall-tune / recluster) are
+        // excluded by convention. The route stays registered (rest/v2/mod.rs);
+        // the agent-facing stats surface is the reference MCP `stats` tool.
         collections::delete_collection_v2,
         schema::get_schema,
         schema::update_schema,
@@ -124,6 +130,8 @@ part of this publishable SDK surface.",
         entities::get_entity_v2,
         entities::delete_entity_v2,
         entities::search_entities_v2,
+        // Canonical document-ingest surface (ADR-041). Native server-side embedding.
+        documents::ingest_documents,
     ),
     components(
         schemas(
@@ -136,6 +144,11 @@ part of this publishable SDK surface.",
             entities::SearchEntitiesRequest,
             entities::SearchEntitiesResponse,
             entities::EntitySearchResult,
+            // Canonical document-ingest surface (ADR-041).
+            documents::IngestDocument,
+            documents::IngestDocumentsRequest,
+            documents::IngestedRecord,
+            documents::IngestDocumentsResponse,
         ),
     ),
     tags(
@@ -145,6 +158,7 @@ part of this publishable SDK surface.",
         (name = "Search", description = "Vector similarity + typed-filter search."),
         (name = "Query", description = "AQL / UQL query facade."),
         (name = "Entities", description = "Entity orchestration (graph node + embeddings + provenance)."),
+        (name = "Documents", description = "Native-embedding document ingest."),
     ),
 )]
 pub struct ApiDoc;

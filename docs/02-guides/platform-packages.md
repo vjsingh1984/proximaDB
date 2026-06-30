@@ -209,7 +209,7 @@ The default configuration file is installed at:
 
 ### Default Ports
 
-- **Unified Port**: `5678` (REST, gRPC, Arrow Flight)
+- **Unified Port**: `5678` (REST, gRPC; Arrow Flight experimental)
 - **PostgreSQL Wire Protocol**: `5433` (if enabled)
 
 ### Default Data Directory

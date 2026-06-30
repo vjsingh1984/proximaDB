@@ -68,6 +68,12 @@ class FakeAdapter:
     def insert_document(self, collection_name, document, id):
         self.inserted_documents.append((collection_name, document, id))
 
+    def ingest_documents(self, collection_id, records, **kwargs):
+        for rec in records:
+            self.inserted_documents.append(
+                (collection_id, rec.get("metadata") or rec, rec.get("id"))
+            )
+
     def create_node(self, graph, node_id, labels, properties):
         if self.raise_on_create_node:
             raise RuntimeError("node exists")
@@ -398,7 +404,7 @@ async def test_index_code_file_error_branches():
         def insert_records(self, *a, **k):
             raise RuntimeError("vec fail")
 
-        def insert_document(self, *a, **k):
+        def ingest_documents(self, *a, **k):
             raise RuntimeError("doc fail")
 
     adapter = BrokenAdapter()

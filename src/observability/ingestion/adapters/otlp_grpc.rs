@@ -898,7 +898,7 @@ mod tests {
             string_value: None,
             bool_value: None,
             int_value: None,
-            double_value: Some(3.14),
+            double_value: Some(3.5),
             array_value: None,
             kvlist_value: None,
             bytes_value: None,
@@ -908,7 +908,7 @@ mod tests {
         let sql_val = result.unwrap();
         assert!(matches!(
             sql_val.value,
-            Some(sql_value::Value::NumberValue(f)) if (f - 3.14).abs() < f64::EPSILON
+            Some(sql_value::Value::NumberValue(f)) if (f - 3.5).abs() < f64::EPSILON
         ));
     }
 

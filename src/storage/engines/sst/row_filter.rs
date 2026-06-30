@@ -7,8 +7,8 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::core::search::FilterExpression;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
+use proximadb_filter_expression::FilterExpression;
 use proximadb_records::ProximaRecord;
 
 /// Fast in-memory filter evaluator for row-oriented SST data

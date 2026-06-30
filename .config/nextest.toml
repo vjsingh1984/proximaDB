@@ -59,5 +59,23 @@ slow-timeout = { period = "120s", terminate-after = 3 }
 filter = 'test(/_e2e$/) | test(/_integration_test$/) | binary(integration)'
 test-group = 'serial-network'
 
+# Heavy DataFusion / Volcano execution tests each spin up an all-core DataFusion
+# runtime. Running several at once oversubscribes the constrained CI runner
+# (--test-threads=2), starving them — and the lightweight tests scheduled beside
+# them — past the slow-timeout kill (240s). That is the root cause of the
+# intermittent 240s timeouts on `datafusion::*`, `datafusion_engine::tests`, and
+# `query::execution::engine::tests::native_volcano_*` (CLAUDE.md §11's known
+# `native_volcano_stream_*` flake). Serialize them so at most one runs at a time;
+# the other test-thread keeps draining fast tests, so wall-clock barely changes
+# while the oversubscription (and the flake) is eliminated.
+[[profile.default.overrides]]
+filter = 'test(/datafusion/) | test(/native_volcano/)'
+test-group = 'datafusion-heavy'
+
+[[profile.unit.overrides]]
+filter = 'test(/datafusion/) | test(/native_volcano/)'
+test-group = 'datafusion-heavy'
+
 [test-groups]
 serial-network = { max-threads = 1 }
+datafusion-heavy = { max-threads = 1 }

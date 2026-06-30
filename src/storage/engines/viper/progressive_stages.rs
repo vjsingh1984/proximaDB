@@ -13,11 +13,11 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 use crate::storage::engines::core::progressive::{
     ProgressiveSearchStage, QuantizationLevel, ScoredCandidate,
 };
+use proximadb_distance_kernel::engine::{DistanceMetric, UnifiedDistanceCompute};
 
 /// VIPER-specific Binary stage adapter
 ///
@@ -229,8 +229,8 @@ pub fn create_viper_pipeline(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::distance_computation::DistanceMetric;
     use crate::compute::quantization::quantization_engine::InMemoryCodebookStore;
+    use proximadb_distance_kernel::DistanceMetric;
 
     fn create_test_engines() -> (Arc<UnifiedQuantizationEngine>, Arc<UnifiedDistanceCompute>) {
         let dist_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));

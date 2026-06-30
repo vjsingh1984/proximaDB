@@ -61,10 +61,19 @@ impl super::GraphOperationsService {
             }
         };
 
-        let proto_nodes: Vec<crate::graph::Node> = traversal_result
-            .nodes
-            .iter()
-            .map(|n| (**n).clone())
+        // Materialize the result node payloads COLD-AWARE: the engine returns the
+        // visited `node_ids` (topology), but under the cold-payload tier (TD-168)
+        // its `nodes` is only the RAM-resident subset (empty after a topology-only
+        // load). Fetch the full set from `node_ids` via the cold-aware batch —
+        // engine-hot nodes stay in RAM, cold misses collapse to ~1 round-trip
+        // (#487). In the all-RAM path (gate OFF) this resolves entirely from the
+        // engine, so the result set is unchanged.
+        let proto_nodes: Vec<crate::graph::Node> = self
+            .get_nodes(graph_id, &traversal_result.node_ids)
+            .await?
+            .into_iter()
+            .flatten()
+            .map(|n| (*n).clone())
             .collect();
         let proto_edges: Vec<crate::graph::Edge> = traversal_result
             .edges
@@ -409,7 +418,9 @@ impl super::GraphOperationsService {
         }
 
         // Backward = BFS over incoming edges (predecessors), level by level.
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        // Materialization goes through the cold-aware service methods
+        // (`get_node`/`get_nodes`), so a graph larger than RAM is served here too
+        // (TD-168); the engine handle is no longer needed directly.
         use std::collections::HashSet;
 
         let mut visited: HashSet<String> = HashSet::new();
@@ -418,7 +429,7 @@ impl super::GraphOperationsService {
 
         let mut nodes: Vec<crate::graph::Node> = Vec::new();
         let start_id = start_node_id.to_string();
-        if let Some(start) = engine.get_node(&start_id)? {
+        if let Some(start) = self.get_node(graph_id, &start_id).await? {
             nodes.push((*start).clone());
         }
         let mut edges: Vec<crate::graph::Edge> = Vec::new();
@@ -450,13 +461,19 @@ impl super::GraphOperationsService {
                     }
                 }
             }
-            for node_id in &next_frontier {
+            // Batched, cold-aware materialization of the next frontier: engine-hot
+            // nodes stay in RAM, cold misses collapse to ~1 round-trip (#487)
+            // instead of one serial GET per node.
+            for n in self
+                .get_nodes(graph_id, &next_frontier)
+                .await?
+                .into_iter()
+                .flatten()
+            {
                 if nodes.len() >= limit {
                     break;
                 }
-                if let Some(n) = engine.get_node(node_id)? {
-                    nodes.push((*n).clone());
-                }
+                nodes.push((*n).clone());
             }
             frontier = next_frontier;
         }

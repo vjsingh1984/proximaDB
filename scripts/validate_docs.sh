@@ -79,7 +79,7 @@ CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
 echo "Cargo.toml version: $CARGO_VERSION"
 
 # Check for inconsistent version references in docs
-inconsistent=$(grep -r "version.*0\.[0-9]\.[0-9]" docs/ README.adoc CLAUDE.md \
+inconsistent=$(grep -r "version.*0\.[0-9]\.[0-9]" docs/ README.adoc \
     --include="*.adoc" --include="*.md" 2>/dev/null | \
     grep -v "$CARGO_VERSION" | \
     grep -v "Last updated" | \
@@ -88,7 +88,7 @@ inconsistent=$(grep -r "version.*0\.[0-9]\.[0-9]" docs/ README.adoc CLAUDE.md \
 
 if [ "$inconsistent" -gt 0 ]; then
     warning "Found $inconsistent potential version inconsistencies"
-    grep -r "version.*0\.[0-9]\.[0-9]" docs/ README.adoc CLAUDE.md \
+    grep -r "version.*0\.[0-9]\.[0-9]" docs/ README.adoc \
         --include="*.adoc" --include="*.md" 2>/dev/null | \
         grep -v "$CARGO_VERSION" | \
         head -5

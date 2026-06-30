@@ -288,6 +288,24 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "PK point lookup feeds the aggregate with the correct single row"
     );
 
+    // (2c-batch) TD-128: discrete multi-key `PK IN (...)` under an aggregate →
+    // the planner rewrites the IN-list into ScanAccess::PkLookupBatch (one probe
+    // per key, predicate dropped) over real data, exercising the relational
+    // reader's lookup_pk_batch. i1+i2 are both active → {(active, 2)}.
+    let rows = client
+        .simple_query(&format!(
+            "SELECT status, COUNT(*) AS n FROM {inv} WHERE id IN ('i1', 'i2') GROUP BY status"
+        ))
+        .await
+        .expect("SELECT PK-IN-list aggregate");
+    assert_eq!(
+        pair_set(&rows, "status", "n"),
+        [("active".to_string(), "2".to_string())]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        "PK IN-list batch lookup feeds the aggregate with both matched rows"
+    );
+
     // (2d) Stage 2 — uncorrelated scalar subquery in a WHERE comparison. The
     // subquery `(SELECT avg(qty) FROM inv)` over [5,15,25,35] = 20 is hoisted to
     // a LEFT JOIN ON TRUE (AssertMaxOneRow-guarded) and the predicate becomes
@@ -555,6 +573,50 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
             && !plan.contains("actual rows=")
             && !plan.contains("self="),
         "plain EXPLAIN omits ANALYZE execution metrics: {plan}"
+    );
+
+    // (3h-batch) TD-128: EXPLAIN discloses a `PK IN (...)` rewrite as a
+    // PkLookupBatch scan access path (the EXPLAIN-access-path evidence, not a
+    // microbenchmark). Under an aggregate so the query engages PATH B.
+    let rows = client
+        .simple_query(&format!(
+            "EXPLAIN SELECT status, COUNT(*) FROM {inv} WHERE id IN ('i1', 'i2') GROUP BY status"
+        ))
+        .await
+        .expect("EXPLAIN PK IN-list aggregate");
+    let plan = query_plan_cell(&rows);
+    assert!(
+        plan.contains("access=PkLookupBatch"),
+        "PK IN-list disclosed as a PkLookupBatch scan: {plan}"
+    );
+
+    // (3h-secondary-fallback) TD-127: an equality on a NON-indexed, non-PK column
+    // must NOT rewrite to SecondaryLookup (no secondary index is declared via DDL
+    // yet — that path stays dormant). It stays a FullScan with the predicate
+    // pushed, and still returns correct rows. (active = i1,i2 → count 2.)
+    let rows = client
+        .simple_query(&format!(
+            "EXPLAIN SELECT status, COUNT(*) FROM {inv} WHERE status = 'active' GROUP BY status"
+        ))
+        .await
+        .expect("EXPLAIN non-indexed equality aggregate");
+    let plan = query_plan_cell(&rows);
+    assert!(
+        plan.contains("access=FullScan") && !plan.contains("access=SecondaryLookup"),
+        "non-indexed equality stays a FullScan (secondary path dormant): {plan}"
+    );
+    let rows = client
+        .simple_query(&format!(
+            "SELECT status, COUNT(*) AS n FROM {inv} WHERE status = 'active' GROUP BY status"
+        ))
+        .await
+        .expect("SELECT non-indexed equality aggregate");
+    assert_eq!(
+        pair_set(&rows, "status", "n"),
+        [("active".to_string(), "2".to_string())]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        "non-indexed equality returns correct rows on the scan+filter path"
     );
 
     // (3h-analyze) EXPLAIN ANALYZE additionally EXECUTES the (read-only) plan and

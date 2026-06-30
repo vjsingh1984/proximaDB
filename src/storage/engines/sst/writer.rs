@@ -218,9 +218,8 @@ impl SstableWriter {
         let compression_provider = StandardCompression;
 
         // Initialize unified quantization engine from compute module
-        let distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-        );
+        let distance_compute =
+            Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
         let codebook_store = Arc::new(
             crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
         );
@@ -246,17 +245,17 @@ impl SstableWriter {
                 distance_metric: if let Some(collection) = collection_config {
                     // Get distance metric from collection config
                     collection.config.as_ref()
-                    .map_or(crate::compute::distance_computation::engine::DistanceMetric::Cosine, |cfg| match cfg.distance_metric() {
+                    .map_or(proximadb_distance_kernel::engine::DistanceMetric::Cosine, |cfg| match cfg.distance_metric() {
                         crate::proto::proximadb_v1::DistanceMetric::Cosine =>
-                            crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+                            proximadb_distance_kernel::engine::DistanceMetric::Cosine,
                         crate::proto::proximadb_v1::DistanceMetric::Euclidean =>
-                            crate::compute::distance_computation::engine::DistanceMetric::Euclidean,
+                            proximadb_distance_kernel::engine::DistanceMetric::Euclidean,
                         crate::proto::proximadb_v1::DistanceMetric::DotProduct =>
-                            crate::compute::distance_computation::engine::DistanceMetric::DotProduct,
-                        _ => crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+                            proximadb_distance_kernel::engine::DistanceMetric::DotProduct,
+                        _ => proximadb_distance_kernel::engine::DistanceMetric::Cosine,
                     })
                 } else {
-                    crate::compute::distance_computation::engine::DistanceMetric::Cosine
+                    proximadb_distance_kernel::engine::DistanceMetric::Cosine
                 },
                 enable_progressive: true,
                 filter_threshold: 100.0,
@@ -355,9 +354,8 @@ impl SstableWriter {
         let compression_provider = StandardCompression;
 
         // Initialize unified quantization engine from compute module
-        let distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-        );
+        let distance_compute =
+            Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
         let codebook_store = Arc::new(
             crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
         );
@@ -381,7 +379,7 @@ impl SstableWriter {
                     crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
                 ),
                 distance_metric:
-                    crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+                    proximadb_distance_kernel::engine::DistanceMetric::Cosine,
                 enable_progressive: true,
                 filter_threshold: 100.0,
                 candidate_multiplier: 10,

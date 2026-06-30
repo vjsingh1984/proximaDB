@@ -70,6 +70,7 @@ pub use crate::storage::transaction_coordinator;
 pub mod atomic;
 pub mod backends;
 pub mod catalog_config;
+pub mod collection_mapping;
 pub mod single_index;
 pub mod store;
 pub mod write_ahead_log;

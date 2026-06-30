@@ -36,13 +36,13 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info, trace, warn};
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::storage::engines::core::formats::arrow_block::ArrowBlockReader;
 use crate::storage::engines::sst::{SstEngine, SstError};
 use crate::storage::traits::StorageQueryContext;
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 use proximadb_index_traits::{
     IndexFilterOperator, IndexHybridQuery, IndexMetadataFilter, IndexSearchEffort, IndexVectorQuery,
 };
@@ -90,7 +90,144 @@ fn try_begin_axis_rebuild(collection_id: &str) -> Option<AxisRebuildPermit> {
     })
 }
 
+/// ADR-030 / TD-158: attribute an SST vector-search query's compute time to KRU
+/// on **any** exit path (the search has several early returns — exact-scan,
+/// orchestrated, direct). On drop it records the elapsed millis to the active
+/// per-query I/O trace under the given engine label; `record_compute_ms` no-ops
+/// outside an `io_trace` scope, so internal/test callers are unaffected.
+struct ComputeMsGuard {
+    engine: &'static str,
+    started: std::time::Instant,
+}
+
+impl ComputeMsGuard {
+    fn new(engine: &'static str) -> Self {
+        Self {
+            engine,
+            started: std::time::Instant::now(),
+        }
+    }
+}
+
+impl Drop for ComputeMsGuard {
+    fn drop(&mut self) {
+        crate::observability::io_trace::record_compute_ms(
+            self.engine,
+            self.started.elapsed().as_millis() as u64,
+        );
+    }
+}
+
+/// TD-165: the exact-vs-approximate route is a *cost* decision, and for a cloud DB
+/// the dominant term is bytes read from object storage, not vectors or CPU. An
+/// `Adaptive` search takes the exact brute-force segment scan when the whole scan
+/// fits one efficient ranged GET (`N · dim · 4 bytes ≤` this budget) — cheaper than
+/// rebuilding a cold in-memory index, which would read the same bytes anyway, and
+/// 100% recall. Above the budget the persisted/approximate index is used. 64 MiB is
+/// a conservative single-ranged-read size; full storage-class-aware tuning (object
+/// store round-trips vs local NVMe bandwidth) is config-driven follow-up. See
+/// `docs/12-design/EXACT_VS_ANN_ROUTING_COST_MODEL_2026_06_26.adoc`.
+// TODO(serverless follow-up): source this from config per storage class.
+const EXACT_SCAN_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+/// ADR-028: resolve the collection's `index_policy` into the exact-scan decision
+/// inputs for the SST adaptive route. Returns `(byte_budget, pin_exact)`:
+///
+/// * `pin_exact` — the owner set `mode = "exact"`, so the adaptive route must
+///   scan exactly at any N (the 100%-recall SLA).
+/// * `byte_budget` — a non-zero `byte_budget` override, else the storage-class
+///   default `EXACT_SCAN_MAX_BYTES`.
+///
+/// Pure + total so it is unit-testable without a live collection. Query-time
+/// precedence (per-query `SearchMode` over policy) is enforced by the caller: this
+/// only refines the `Adaptive` (no explicit per-query intent) arm.
+fn resolve_exact_budget(policy: Option<&crate::proto::proximadb_v1::IndexPolicy>) -> (usize, bool) {
+    match policy {
+        Some(p) => {
+            let pin_exact = p.mode.trim().eq_ignore_ascii_case("exact");
+            let budget = if p.byte_budget > 0 {
+                p.byte_budget as usize
+            } else {
+                EXACT_SCAN_MAX_BYTES
+            };
+            (budget, pin_exact)
+        }
+        None => (EXACT_SCAN_MAX_BYTES, false),
+    }
+}
+
 impl SstEngine {
+    /// TD-165: best-effort total vector count across a collection's segments, read
+    /// cheaply from each segment header (8-byte prefix + the bincode header — no
+    /// data blocks). Feeds the small-collection exact-recall gate. Returns 0 on any
+    /// error or for non-`SST1` segments (Arrow/PAX), so the gate then falls through
+    /// to the normal approximate/orchestrated path.
+    async fn segment_vector_count(&self, storage_url: &str) -> usize {
+        use crate::storage::engines::sst::SstableHeader;
+        let files = match self.discover_sstable_files(storage_url).await {
+            Ok(files) => files,
+            Err(_) => return 0,
+        };
+        let mut total = 0usize;
+        for file_path in &files {
+            let Ok(fs) = self.filesystem().get_filesystem(file_path) else {
+                continue;
+            };
+            let Ok(prefix) = fs.read_range(file_path, 0, 8).await else {
+                continue;
+            };
+            if prefix.len() < 8 || &prefix[0..4] != b"SST1" {
+                continue;
+            }
+            let header_len =
+                u32::from_le_bytes([prefix[4], prefix[5], prefix[6], prefix[7]]) as u64;
+            let Ok(header_data) = fs.read_range(file_path, 8, header_len).await else {
+                continue;
+            };
+            if let Ok(header) = bincode::deserialize::<SstableHeader>(&header_data) {
+                total += header.entry_count as usize;
+            }
+        }
+        total
+    }
+
+    /// TD-165: exact brute-force search over the collection's segment(s), bypassing
+    /// any approximate index. Forces `block_prune.force_exact` so neither the
+    /// centroid file-pruning nor the Z-order block-pruning can drop the true NN —
+    /// the same guarantee the index-less embedded path already provides.
+    async fn execute_exact_segment_scan(
+        &self,
+        ctx: &StorageQueryContext,
+        collection_id: &str,
+        storage_url: &str,
+        query_vector: &[f32],
+        k: usize,
+        distance_metric: DistanceMetric,
+        filter_expression: Option<&FilterExpression>,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        let mut exact_params = (*ctx.search_params).clone();
+        exact_params.block_prune.force_exact = true;
+        let exact_ctx = StorageQueryContext {
+            search_params: std::sync::Arc::new(exact_params),
+            collection: ctx.collection.clone(),
+            metadata: ctx.metadata.clone(),
+            user_context: ctx.user_context.clone(),
+            tenant_context: ctx.tenant_context.clone(),
+        };
+        self.fallback_to_direct_search(
+            &exact_ctx,
+            collection_id,
+            storage_url,
+            query_vector,
+            k,
+            distance_metric,
+            filter_expression,
+            true, // include_vectors
+            true, // include_metadata
+        )
+        .await
+    }
+
     /// Main unified search implementation with orchestration
     ///
     /// This is the primary search entry point that implements intelligent
@@ -100,6 +237,9 @@ impl SstEngine {
         ctx: &StorageQueryContext,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let _search_start = std::time::Instant::now();
+        // ADR-030 / TD-158: attribute this query's SST compute to KRU on any exit
+        // path (records the elapsed time to the active io_trace on drop).
+        let _compute_guard = ComputeMsGuard::new("sst");
 
         // Track metadata access for cache optimization
         if let Some(orch) = self.orchestrator() {
@@ -126,6 +266,65 @@ impl SstEngine {
             collection_id,
             query_vector.len()
         );
+
+        // TD-165: route exact-vs-approximate by the query's `SearchMode` intent —
+        // the orchestrated index path below otherwise ignores it, so an `Exact`
+        // query (the default) silently received approximate results, and a cold
+        // HNSW rebuild was observed excluding the true NN from its candidate pool
+        // entirely (f32-rerank cannot recover a candidate that was never surfaced).
+        //   - `Exact`        → exact segment scan (honor the 100% contract).
+        //   - `Approximate`  → orchestrated index (caller accepted the recall trade).
+        //   - `Adaptive{t}`  → exact when the scan fits one ranged GET (cost gate)
+        //                      and within the per-query count cap `t`, else index.
+        // The cost gate is dim-aware (bytes = N·dim·4), not a flat vector count.
+        // `segment_vector_count` is read only for `Adaptive`, and only the exact arm
+        // is taken here — which also skips the multi-second cold AXIS rebuild below.
+        // See `docs/12-design/EXACT_VS_ANN_ROUTING_COST_MODEL_2026_06_26.adoc`.
+        // ADR-028 precedence: an explicit per-query `SearchMode` (Exact/Approximate)
+        // wins outright; the default `Adaptive` arm defers to the collection
+        // `index_policy` (mode=exact pin, or a byte_budget override) and then the
+        // cost-derived auto-default.
+        let want_exact = {
+            use crate::core::search::SearchMode;
+            match &ctx.search_params.search_mode {
+                SearchMode::Approximate { .. } => false,
+                SearchMode::Exact => true,
+                SearchMode::Adaptive { threshold } => {
+                    let policy = ctx
+                        .collection
+                        .config
+                        .as_ref()
+                        .and_then(|c| c.index_policy.as_ref());
+                    let (byte_budget, pin_exact) = resolve_exact_budget(policy);
+                    if pin_exact {
+                        // Owner pinned exact — always brute-force, any N.
+                        true
+                    } else {
+                        let count = self.segment_vector_count(&storage_url).await;
+                        let dim = query_vector.len().max(1);
+                        let scan_bytes = count.saturating_mul(dim).saturating_mul(4);
+                        count > 0 && scan_bytes <= byte_budget && count <= *threshold
+                    }
+                }
+            }
+        };
+        if want_exact {
+            info!(
+                "🎯 SST: exact segment scan for collection {} (SearchMode honored; cost-gated) — guaranteed recall (TD-165)",
+                collection_id
+            );
+            return self
+                .execute_exact_segment_scan(
+                    ctx,
+                    collection_id,
+                    &storage_url,
+                    query_vector,
+                    k,
+                    distance_metric,
+                    filter_expression,
+                )
+                .await;
+        }
 
         // Determine search strategy based on context
         // Use orchestration if:
@@ -578,6 +777,13 @@ impl SstEngine {
         // brute force on random data. Customers asking for `Exact` get
         // approximate results otherwise.
         //
+        // Reconciled + measured 2026-06-28 (TD-096 S1): the 5% was this
+        // Exact-pre-override path; with the override, Exact no longer
+        // collapses. Approximate recall at scale (sqrt pruning keeps
+        // sqrt(num_blocks) blocks — see the block-skip unit tests in
+        // block_pruning.rs) is measured in
+        // docs/_internal/status/TD_096_S1_RECALL_RECONCILIATION_2026_06_28.adoc.
+        //
         // For `SearchMode::Approximate` and `SearchMode::Adaptive` the
         // caller's `block_prune` config flows through unchanged.
         let prune_config_owned;
@@ -799,7 +1005,7 @@ impl SstEngine {
         &self,
         storage_url: &str,
         query_vector: &[f32],
-        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        distance_metric: proximadb_distance_kernel::DistanceMetric,
         search_mode: &crate::core::search::SearchMode,
         prune_config: &crate::core::search::BlockPruneConfig, // [AGENT_FIX] New parameter
     ) -> Result<Vec<String>> {
@@ -963,9 +1169,9 @@ impl SstEngine {
         &self,
         query: &[f32],
         centroid: &[f32],
-        metric: crate::compute::distance_computation::DistanceMetric,
+        metric: proximadb_distance_kernel::DistanceMetric,
     ) -> f32 {
-        use crate::compute::distance_computation::DistanceMetric;
+        use proximadb_distance_kernel::DistanceMetric;
 
         match metric {
             DistanceMetric::Euclidean => {
@@ -1142,9 +1348,7 @@ impl SstEngine {
         limit: usize,
         distance_metric: DistanceMetric,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        use crate::compute::distance_computation::engine::{
-            SimilarityResult, UnifiedDistanceCompute,
-        };
+        use proximadb_distance_kernel::engine::{SimilarityResult, UnifiedDistanceCompute};
         use std::sync::Arc;
 
         debug!("🏹 Searching Arrow file: {}", arrow_path);
@@ -1217,11 +1421,38 @@ impl SstEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use proximadb_data_model::ProximaValue;
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
     use std::sync::Arc;
+
+    /// ADR-030 / TD-158: the SST `ComputeMsGuard` records elapsed compute to the
+    /// active per-query I/O trace on drop, under the engine label — so the
+    /// billing observer can attribute KRU to "sst". No-op outside a scope.
+    #[tokio::test]
+    async fn compute_ms_guard_records_to_active_io_trace() {
+        use crate::observability::io_trace;
+        let snap = io_trace::scope(async {
+            {
+                let _g = ComputeMsGuard::new("sst");
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            } // guard drops here → records elapsed into the active trace
+            io_trace::snapshot()
+        })
+        .await
+        .expect("snapshot inside an active io_trace scope");
+        assert!(
+            snap.compute_ms.contains_key("sst"),
+            "guard must record compute under the 'sst' engine label, got {:?}",
+            snap.compute_ms
+        );
+        assert!(
+            snap.total_compute_ms() >= 1,
+            "elapsed compute must be >= 1ms after a 2ms sleep, got {}",
+            snap.total_compute_ms()
+        );
+    }
 
     #[tokio::test]
     async fn test_parse_storage_url() {
@@ -1283,5 +1514,49 @@ mod tests {
             metadata
         };
         record
+    }
+
+    // ---- ADR-028 index_policy → exact-scan budget resolution ----
+
+    use crate::proto::proximadb_v1::IndexPolicy;
+
+    #[test]
+    fn resolve_budget_none_uses_storage_class_default() {
+        let (budget, pin_exact) = resolve_exact_budget(None);
+        assert_eq!(budget, EXACT_SCAN_MAX_BYTES);
+        assert!(!pin_exact);
+    }
+
+    #[test]
+    fn resolve_budget_mode_exact_pins_exact() {
+        let p = IndexPolicy {
+            mode: "Exact".to_string(),
+            ..Default::default()
+        };
+        let (_, pin_exact) = resolve_exact_budget(Some(&p));
+        assert!(pin_exact, "mode=exact must pin exact regardless of N");
+    }
+
+    #[test]
+    fn resolve_budget_nonzero_override_wins() {
+        let p = IndexPolicy {
+            mode: "auto".to_string(),
+            byte_budget: 8 * 1024 * 1024,
+            ..Default::default()
+        };
+        let (budget, pin_exact) = resolve_exact_budget(Some(&p));
+        assert_eq!(budget, 8 * 1024 * 1024);
+        assert!(!pin_exact);
+    }
+
+    #[test]
+    fn resolve_budget_zero_override_falls_back_to_default() {
+        let p = IndexPolicy {
+            mode: "auto".to_string(),
+            byte_budget: 0,
+            ..Default::default()
+        };
+        let (budget, _) = resolve_exact_budget(Some(&p));
+        assert_eq!(budget, EXACT_SCAN_MAX_BYTES);
     }
 }

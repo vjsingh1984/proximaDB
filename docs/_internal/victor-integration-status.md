@@ -60,7 +60,7 @@ def check_proto_version():
     except ImportError as e:
         raise ImportError(
             f"ProximaDB SDK protobuf mismatch: {e}\n"
-            f"Please reinstall: pip install --no-cache-dir proximadb-python"
+            f"Please reinstall: pip install --no-cache-dir proximadb"
         )
 ```
 
@@ -356,7 +356,7 @@ def check_proto_version():
     if not _proto_available:
         raise ImportError(
             f"ProximaDB SDK protobuf bindings not available: {_proto_error}\n"
-            f"Please reinstall: pip install --no-cache-dir proximadb-python"
+            f"Please reinstall: pip install --no-cache-dir proximadb"
         )
     return True
 ```

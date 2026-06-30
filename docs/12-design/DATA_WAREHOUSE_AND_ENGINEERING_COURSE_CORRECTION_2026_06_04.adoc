@@ -296,10 +296,6 @@ To sustain development and fund the complex, fully distributed MPP roadmap, Prox
 * **Multi-Tenancy:** Hardened tenant isolation via `xCatalog` policy boundaries, RLS (Row-Level Security), and tenant-aware metrics.
 * **Billing/Quota:** Built-in budget guards, rate limiting, and exact request/byte-level metering.
 
-### 9.2. Commercial Go-to-Market
-* **Primary Wedge:** Position ProximaDB as a **Postgres-compatible AI Database**. It functions as a drop-in replacement for standard analytics and vector search, eliminating the need to sync data between Postgres and a standalone Vector DB like Pinecone or Qdrant.
-* **Revenue Engine:** The MVP provides the core capabilities needed for Agentic Intelligence (RAG, memory) and data warehousing on a consumption-based pricing model. The revenue generated will fund Phase 6 (Active Memory & Collective Reasoning) and the fully distributed cluster consensus mechanisms (Raft, distributed sharding) required for petabyte-scale MPP.
-
 == 10. Operational SaaS Mandates (The Non-Negotiables)
 
 To execute the SaaS MVP securely and profitably, the codebase must adhere to three strict operational mandates. These bridge the gap between "it works locally" and "it is a secure, billable SaaS platform".

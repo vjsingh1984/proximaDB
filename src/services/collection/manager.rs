@@ -69,18 +69,10 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 // Using String directly instead of String alias for proto-first architecture
-use crate::catalog::{
-    CatalogColumn, CatalogIndex, CatalogIndexType, CatalogManager, CatalogPhysicalFormat,
-    CatalogProjection, CatalogProjectionKind, CatalogStorageLayout, CatalogStorageLayoutKind,
-    CatalogTableSchema, ProjectionFreshness, TableIdentifier,
-};
+use crate::catalog::CatalogManager;
 use crate::core::config::StorageConfig;
-use crate::proto::proximadb_v1::{
-    Collection, CollectionConfig, CollectionStats, FilterableColumnSpec, FilterableDataType,
-    IndexConfig, IndexingAlgorithm, StorageAssignment, StorageEngine,
-};
+use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageEngine};
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use proximadb_data_model::ProximaType;
 use proximadb_storage_common::storage_path::StoragePath;
 
 // Proto-first architecture - use crate::proto::proximadb_v1::Collection directly
@@ -109,6 +101,27 @@ pub struct CollectionService {
     /// xCatalog manager — the sole authoritative store for collection lifecycle
     /// metadata. When wired, collection reads/writes resolve through xCatalog.
     catalog_manager: Option<Arc<CatalogManager>>,
+    /// ADR-035 D2 / TD-SC-1b: hot read cache fronting `collection()` so repeated
+    /// metadata reads avoid the catalog's 1+N+M object-store round-trips. Built
+    /// when the catalog manager is wired; entries are corpus-version-stamped so a
+    /// write self-invalidates them. Active only for the single-tenant,
+    /// name-keyed read path (see `collection()`).
+    syscat_cache: Option<Arc<crate::catalog::syscat_cache::HotSysCatCache>>,
+    /// ADR-035 D2 / TD-SC-2b: local directory for the on-disk warm tier. When set
+    /// (explicitly, or from `PROXIMADB_SYSCAT_WARM_DIR`), the hot cache reads
+    /// through a [`WarmDiskStore`](crate::catalog::syscat_warm::WarmDiskStore)
+    /// before the canonical catalog, so a hot miss is served from the OS page
+    /// cache instead of object-store round-trips. Must be set before
+    /// `with_catalog_manager` (which builds the cache). `None` ⇒ hot → canonical.
+    syscat_warm_dir: Option<std::path::PathBuf>,
+
+    /// TD-CAT-2b (S3a): whether collection catalog assets are stored under a
+    /// tenant-prefixed namespace (`[tenant, ...levels]`, the convention the
+    /// DDL/DML path already uses via `resolve_table_scoped`). Read once from
+    /// `PROXIMADB_CATALOG_TENANT_NAMESPACES` at construction (default-OFF);
+    /// interior mutability so tests toggle it deterministically without env
+    /// races. Off ⇒ today's bare-namespace behavior.
+    tenant_namespaces: std::sync::atomic::AtomicBool,
 
     // NEW: Multi-tenant integration
     /// Optional tenant manager for multi-tenant isolation
@@ -157,6 +170,9 @@ impl CollectionService {
             index_config_cache: Arc::new(dashmap::DashMap::new()),
             storage_config,
             catalog_manager: None,
+            syscat_cache: None,    // Built in `with_catalog_manager`.
+            syscat_warm_dir: None, // Set via `with_syscat_warm_dir` / env.
+            tenant_namespaces: std::sync::atomic::AtomicBool::new(Self::tenant_namespaces_enabled()),
             tenant_manager: None, // Will be set via with_tenant_manager()
             rbac_enforcer: None,  // Will be set via with_rbac_enforcer()
             #[cfg(feature = "experimental-turboquant")]
@@ -191,7 +207,47 @@ impl CollectionService {
     /// During migration, xCatalog is the lifecycle metadata authority when configured while the
     /// legacy metadata backend is kept in sync for storage-engine callers that still read it.
     pub fn with_catalog_manager(mut self, catalog_manager: Arc<CatalogManager>) -> Self {
+        // Build the hot read cache over a catalog-manager-only inner source (no
+        // `Arc` cycle back to this service). Usage is gated at read time on
+        // single-tenant mode + a name (non-UUID) key — see `collection()`.
+        let canonical: Arc<dyn crate::catalog::syscat_cache::CatalogMetadataSource> =
+            Arc::new(CatalogAssetSource {
+                catalog_manager: catalog_manager.clone(),
+            });
+
+        // TD-SC-2b: insert the on-disk warm tier between hot and canonical when a
+        // cache dir is configured (explicit builder, else `PROXIMADB_SYSCAT_WARM_DIR`).
+        // Unset ⇒ hot → canonical, unchanged. The warm tier is corpus-version
+        // stamped, so it stays coherent with no write-path coupling.
+        let warm_dir = self.syscat_warm_dir.clone().or_else(|| {
+            std::env::var("PROXIMADB_SYSCAT_WARM_DIR")
+                .ok()
+                .filter(|dir| !dir.is_empty())
+                .map(std::path::PathBuf::from)
+        });
+        let inner: Arc<dyn crate::catalog::syscat_cache::CatalogMetadataSource> = match warm_dir {
+            Some(dir) => Arc::new(crate::catalog::syscat_warm::WarmDiskStore::new(
+                dir, canonical,
+            )),
+            None => canonical,
+        };
+
+        self.syscat_cache = Some(Arc::new(
+            crate::catalog::syscat_cache::HotSysCatCache::with_defaults(
+                SYSCAT_CACHE_POOL_BYTES,
+                inner,
+            ),
+        ));
         self.catalog_manager = Some(catalog_manager);
+        self
+    }
+
+    /// ADR-035 D2 / TD-SC-2b: enable the on-disk warm tier rooted at `dir`. Call
+    /// **before** [`with_catalog_manager`](Self::with_catalog_manager) (which
+    /// builds the cache). Production wires this from `PROXIMADB_SYSCAT_WARM_DIR`;
+    /// the explicit builder keeps it testable without mutating process env.
+    pub fn with_syscat_warm_dir(mut self, dir: std::path::PathBuf) -> Self {
+        self.syscat_warm_dir = Some(dir);
         self
     }
 
@@ -251,28 +307,93 @@ impl CollectionService {
         }
     }
 
+    /// Resolve the owning tenant for a collection.
+    ///
+    /// Thin alias over the canonical [`proximadb_tenant::tenant_id_of`] resolver
+    /// (foundation tier) so service-internal callers keep a local name while the
+    /// tag/owner precedence stays identical to the storage paths and network
+    /// gates that share that one primitive.
     pub(crate) fn collection_tenant_id(collection: &Collection) -> Option<String> {
-        let config = collection.config.as_ref()?;
+        proximadb_tenant::tenant_id_of(collection)
+    }
 
-        if let Some(tag_tenant) = config
-            .tags
-            .iter()
-            .find_map(|tag| tag.strip_prefix("tenant:"))
-            .filter(|tenant_id| !tenant_id.is_empty())
-        {
-            return Some(tag_tenant.to_string());
+    /// TD-CAT-2b (S3a): presence-based, default-OFF gate for storing collection
+    /// catalog assets under a tenant-prefixed namespace. Read once at
+    /// construction into [`tenant_namespaces`](Self::tenant_namespaces); call
+    /// sites consult [`tenant_namespaces_on`](Self::tenant_namespaces_on).
+    fn tenant_namespaces_enabled() -> bool {
+        std::env::var_os("PROXIMADB_CATALOG_TENANT_NAMESPACES").is_some()
+    }
+
+    /// Whether collection assets are written under a tenant-prefixed namespace.
+    fn tenant_namespaces_on(&self) -> bool {
+        self.tenant_namespaces
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Test-only deterministic toggle for the tenant-namespaces gate, avoiding
+    /// the process-global env races a parallel test suite would otherwise hit.
+    #[cfg(test)]
+    fn set_tenant_namespaces_for_test(&self, on: bool) {
+        self.tenant_namespaces
+            .store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// TD-CAT-2b (S3a): tenant-scope a collection's catalog identifier by
+    /// prepending the tenant as namespace level 0 — the same convention the
+    /// DDL/DML path uses via `CatalogManager::resolve_table_scoped`. This keeps
+    /// two tenants' identically-named namespaces (`default`, …) structurally
+    /// distinct in the single multi-tenant catalog instead of colliding on the
+    /// bare `levels.join(".")` key. A no-op when the gate is off or the
+    /// collection is not tenant-scoped, so legacy bare assets are unchanged.
+    fn tenant_scoped_identifier(
+        enabled: bool,
+        tenant: Option<&str>,
+        identifier: crate::catalog::TableIdentifier,
+    ) -> crate::catalog::TableIdentifier {
+        match tenant {
+            Some(tenant) if enabled && !tenant.is_empty() => {
+                let mut namespace = Vec::with_capacity(identifier.namespace.len() + 1);
+                namespace.push(tenant.to_string());
+                namespace.extend(identifier.namespace.iter().cloned());
+                crate::catalog::TableIdentifier::new(namespace, identifier.name)
+            }
+            _ => identifier,
         }
+    }
 
-        let tenant_isolated = config.tags.iter().any(|tag| tag == "tenant_isolated:true");
-        if tenant_isolated {
-            return config
-                .owner
-                .as_ref()
-                .filter(|owner| !owner.is_empty())
-                .cloned();
+    /// TD-SC-4 (S4): provision a tenant's bare-minimum system-catalog skeleton at
+    /// signup (idempotent). A no-op unless tenant-prefixed namespaces are enabled
+    /// (a single-tenant deployment needs no per-tenant skeleton) and a catalog is
+    /// configured — so it's safe to call unconditionally from any onboarding
+    /// path. Delegates to the catalog-manager-only free function of the same name.
+    pub async fn provision_tenant_system_catalog(&self, tenant: &str) -> Result<()> {
+        if !self.tenant_namespaces_on() {
+            return Ok(());
         }
+        let Some(catalog_manager) = &self.catalog_manager else {
+            return Ok(());
+        };
+        provision_tenant_system_catalog(catalog_manager, tenant).await
+    }
 
-        None
+    /// Default corpus-version bucket for writes without a threaded tenant context
+    /// (single-tenant / anonymous deployments). Reads of the same
+    /// corpus-version-keyed caches use the same bucket, so invalidation stays
+    /// consistent regardless of whether a tenant context is present.
+    pub(crate) const DEFAULT_VERSION_TENANT: &str = "default";
+
+    /// The tenant id to key corpus-version (cache-invalidation) bumps by. Falls
+    /// back to [`DEFAULT_VERSION_TENANT`](Self::DEFAULT_VERSION_TENANT) so the
+    /// bump — and therefore cache invalidation — fires **unconditionally** on
+    /// writes. Previously the bump was gated on a tenant context being present,
+    /// so in single-tenant/anonymous deployments (the common case today) writes
+    /// never bumped the version, leaving corpus-version-keyed caches stale.
+    fn version_tenant(tenant_context: Option<&crate::storage::tenant::TenantContext>) -> &str {
+        tenant_context
+            .map(|ctx| ctx.tenant_id.as_str())
+            .filter(|id| !id.is_empty())
+            .unwrap_or(Self::DEFAULT_VERSION_TENANT)
     }
 
     async fn count_tenant_collections(&self, tenant_id: &str) -> Result<usize> {
@@ -430,20 +551,20 @@ impl CollectionService {
 
         let response = self.delete_collection(collection_name).await?;
 
-        // Bump the corpus_version for (tenant, collection) so the
-        // process-wide PlanCache invalidates on the next planner
-        // lookup. Deleting a collection definitionally invalidates
-        // any cached plans for it. Only fires when we have a tenant
-        // context — anonymous deletions can't be keyed.
-        if let Some(tenant_ctx) = tenant_context
-            && response.success
-        {
+        // Bump the corpus_version for (tenant, collection) so corpus-version-keyed
+        // caches (PlanCache, the per-tenant system-catalog cache) invalidate on
+        // the next lookup. A delete definitionally invalidates any cached
+        // metadata/plans. Bumped **unconditionally** via the effective tenant —
+        // anonymous/single-tenant deletes (no threaded context) must invalidate
+        // too, keyed by the default bucket reads use.
+        if response.success {
+            let tenant = Self::version_tenant(tenant_context);
             let version = crate::catalog::CorpusVersionRegistry::global()
-                .bump(&tenant_ctx.tenant_id, collection_name)
+                .bump(tenant, collection_name)
                 .await;
             debug!(
                 "🔄 corpus_version bumped after delete: tenant={} collection={} version={}",
-                tenant_ctx.tenant_id, collection_name, version
+                tenant, collection_name, version
             );
         }
 
@@ -965,13 +1086,14 @@ impl CollectionService {
         // entry that ended up in the cache during a race condition
         // — e.g. a search that arrived between catalog upsert and
         // this bump — gets superseded immediately.
-        if let Some(tenant_ctx) = tenant_context {
+        {
+            let tenant = Self::version_tenant(tenant_context);
             let version = crate::catalog::CorpusVersionRegistry::global()
-                .bump(&tenant_ctx.tenant_id, &config.name)
+                .bump(tenant, &config.name)
                 .await;
             debug!(
                 "🔄 corpus_version bumped after create: tenant={} collection={} version={}",
-                tenant_ctx.tenant_id, config.name, version
+                tenant, config.name, version
             );
         }
 
@@ -987,6 +1109,20 @@ impl CollectionService {
 
     /// Get the full proto collection with all metadata - direct access to deserialized object
     pub async fn collection(&self, identifier: &str) -> Result<Option<Collection>> {
+        // Serve through the hot cache only on the path where invalidation is
+        // provably coherent: single-tenant mode (writes bump corpus_version under
+        // the `"default"` bucket, #435) AND a NAME key (not a UUID). A UUID lookup
+        // is keyed in a version space the name-keyed write bump never touches, so
+        // it would never invalidate — bypass it. Multi-tenant reads also bypass
+        // until a tenant-aware caching slice lands. Bypass ⇒ today's direct read.
+        if let Some(cache) = &self.syscat_cache
+            && self.tenant_manager.is_none()
+            && uuid::Uuid::parse_str(identifier).is_err()
+        {
+            return cache
+                .resolve(Self::DEFAULT_VERSION_TENANT, identifier)
+                .await;
+        }
         self.get_native_proto(identifier).await
     }
 
@@ -1566,6 +1702,26 @@ impl CollectionService {
             start_time.elapsed().as_micros()
         );
 
+        // Bump the corpus_version so corpus-version-keyed caches invalidate after
+        // the schema change. `update_collection` carries no tenant context, so it
+        // keys by the default bucket (consistent with reads). A rename bumps both
+        // the new and the previous name so a read of either key reloads.
+        let new_name = record
+            .config
+            .as_ref()
+            .map(|c| c.name.as_str())
+            .unwrap_or(identifier);
+        let _ = crate::catalog::CorpusVersionRegistry::global()
+            .bump(Self::DEFAULT_VERSION_TENANT, new_name)
+            .await;
+        if let Some(prev_name) = previous_record.config.as_ref().map(|c| c.name.as_str())
+            && prev_name != new_name
+        {
+            let _ = crate::catalog::CorpusVersionRegistry::global()
+                .bump(Self::DEFAULT_VERSION_TENANT, prev_name)
+                .await;
+        }
+
         // Record is already a proto Collection, no conversion needed
         let collection = record;
 
@@ -1893,15 +2049,40 @@ impl CollectionService {
         };
 
         let catalog = catalog_manager.default_catalog().await?;
-        let identifier = Self::collection_table_identifier(config);
+        // TD-CAT-2b (S3a): scope the asset under a tenant-prefixed namespace when
+        // the gate is on, so two tenants' identically-named namespaces don't
+        // collide on the bare key. Done once here, then every op below
+        // (namespace_exists / create / table_exists / get / drop / create_table)
+        // is consistently tenant-scoped.
+        let identifier = Self::tenant_scoped_identifier(
+            self.tenant_namespaces_on(),
+            Self::collection_tenant_id(collection).as_deref(),
+            crate::storage::metadata::collection_mapping::collection_table_identifier(config),
+        );
 
         if !catalog.namespace_exists(&identifier.namespace).await? {
+            // TD-CAT-2a (audit gap G6): record the owning tenant on the persisted
+            // namespace via the tenant-aware constructor, instead of the
+            // tenant-less `create_namespace` that left `CatalogNamespace.tenant_id`
+            // = None. The tenant is derived the same way every storage/network
+            // boundary derives it (`collection_tenant_id`: `tenant:` tag / owner).
+            // Additive + inert until consumed: the only behavior-shifting reader,
+            // DrPathBuilder index-location resolution, is gated default-OFF
+            // (`PROXIMADB_INDEX_CATALOG_PATHS`), and catalog asset paths are still
+            // flat/name-keyed — so this records identity now for the
+            // tenant-prefixed-paths slice (TD-CAT-2b) without shifting any path.
             catalog
-                .create_namespace(&identifier.namespace, std::collections::HashMap::new())
+                .create_namespace_for_tenant(
+                    &identifier.namespace,
+                    std::collections::HashMap::new(),
+                    Self::collection_tenant_id(collection).as_deref(),
+                )
                 .await?;
         }
 
-        let schema = Self::catalog_schema_from_collection(collection)?;
+        let schema = crate::storage::metadata::collection_mapping::catalog_schema_from_collection(
+            collection,
+        )?;
         if catalog.table_exists(&identifier).await? {
             let mut existing = catalog.get_table(&identifier).await?;
             if existing
@@ -1909,6 +2090,9 @@ impl CollectionService {
                 .get("asset.kind")
                 .is_none_or(|kind| kind != "collection")
             {
+                existing
+                    .properties
+                    .insert("asset.kind".to_string(), "collection".to_string());
                 existing
                     .properties
                     .insert("asset.capability.vector".to_string(), "true".to_string());
@@ -1950,7 +2134,13 @@ impl CollectionService {
         };
 
         let catalog = catalog_manager.default_catalog().await?;
-        let identifier = Self::collection_table_identifier(config);
+        // TD-CAT-2b (S3a): mirror the write-side scoping so a drop targets the
+        // same tenant-prefixed asset the upsert created.
+        let identifier = Self::tenant_scoped_identifier(
+            self.tenant_namespaces_on(),
+            Self::collection_tenant_id(collection).as_deref(),
+            crate::storage::metadata::collection_mapping::collection_table_identifier(config),
+        );
         if catalog.table_exists(&identifier).await? {
             let _ = catalog.drop_table(&identifier, false).await?;
         }
@@ -1961,594 +2151,14 @@ impl CollectionService {
         let Some(catalog_manager) = &self.catalog_manager else {
             return Ok(None);
         };
-
-        if let Ok((catalog, table_id)) = catalog_manager.resolve_table(identifier).await
-            && catalog.table_exists(&table_id).await.unwrap_or(false)
-        {
-            let schema = catalog.get_table(&table_id).await?;
-            if let Some(collection) = Self::collection_from_catalog_schema(&table_id, &schema)? {
-                return Ok(Some(collection));
-            }
-        }
-
-        for collection in self.list_collections_from_catalog().await? {
-            if collection.id == identifier {
-                return Ok(Some(collection));
-            }
-            if let Some(config) = &collection.config
-                && config.name == identifier
-            {
-                return Ok(Some(collection));
-            }
-        }
-
-        Ok(None)
+        read_collection_asset(catalog_manager, identifier).await
     }
 
     async fn list_collections_from_catalog(&self) -> Result<Vec<Collection>> {
         let Some(catalog_manager) = &self.catalog_manager else {
             return Ok(Vec::new());
         };
-
-        let catalog = match catalog_manager.default_catalog().await {
-            Ok(catalog) => catalog,
-            Err(_) => return Ok(Vec::new()),
-        };
-
-        let mut namespaces: Vec<Vec<String>> = catalog
-            .list_namespaces(None)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|namespace| namespace.levels)
-            .collect();
-        if !namespaces.iter().any(|namespace| namespace == &["default"]) {
-            namespaces.push(vec!["default".to_string()]);
-        }
-
-        let mut collections = Vec::new();
-        let mut seen_ids = HashSet::new();
-        for namespace in namespaces {
-            let table_ids = match catalog.list_tables(&namespace).await {
-                Ok(table_ids) => table_ids,
-                Err(_) => continue,
-            };
-
-            for table_id in table_ids {
-                let schema = match catalog.get_table(&table_id).await {
-                    Ok(schema) => schema,
-                    Err(_) => continue,
-                };
-                let Some(collection) = Self::collection_from_catalog_schema(&table_id, &schema)?
-                else {
-                    continue;
-                };
-                if seen_ids.insert(collection.id.clone()) {
-                    collections.push(collection);
-                }
-            }
-        }
-
-        Ok(collections)
-    }
-
-    pub(crate) fn collection_from_catalog_schema(
-        table_id: &TableIdentifier,
-        schema: &CatalogTableSchema,
-    ) -> Result<Option<Collection>> {
-        if schema
-            .properties
-            .get("asset.kind")
-            .is_none_or(|kind| kind != "collection")
-        {
-            return Ok(None);
-        }
-
-        let Some(id) = schema.properties.get("collection.id").cloned() else {
-            return Ok(None);
-        };
-
-        let name = schema
-            .properties
-            .get("collection.name")
-            .cloned()
-            .unwrap_or_else(|| table_id.to_fqn());
-        let dimension = schema
-            .properties
-            .get("vector.dimension")
-            .and_then(|dimension| dimension.parse::<u32>().ok())
-            .or_else(|| {
-                schema
-                    .columns
-                    .iter()
-                    .find(|column| column.name == "embedding")
-                    .and_then(|column| column.properties.get("dimension"))
-                    .and_then(|dimension| dimension.parse::<u32>().ok())
-            })
-            .unwrap_or_default();
-
-        let storage_engine = schema
-            .storage_layouts
-            .first()
-            .and_then(|layout| layout.properties.get("storage_engine"))
-            .map(|engine| Self::storage_engine_from_catalog(engine))
-            .unwrap_or(StorageEngine::Sst as i32);
-
-        // Round-trip canonical_embedding_precision from the catalog
-        // schema. Mirror of the forward mapping in
-        // `catalog_schema_from_collection`. Unset / Fp32 maps back to
-        // None so legacy collections keep their existing serialized
-        // shape (no behavior change for fp32 callers).
-        let canonical_embedding_precision = {
-            use crate::proto::proximadb_v1::EmbeddingPrecision;
-            match schema.canonical_embedding_precision {
-                proximadb_records::EmbeddingScalarType::Fp32 => None,
-                proximadb_records::EmbeddingScalarType::Fp16 => {
-                    Some(EmbeddingPrecision::Fp16 as i32)
-                }
-                proximadb_records::EmbeddingScalarType::Bf16 => {
-                    Some(EmbeddingPrecision::Bf16 as i32)
-                }
-                proximadb_records::EmbeddingScalarType::Int8Scalar => {
-                    Some(EmbeddingPrecision::Int8 as i32)
-                }
-                proximadb_records::EmbeddingScalarType::UInt8Scalar => {
-                    Some(EmbeddingPrecision::Uint8 as i32)
-                }
-            }
-        };
-
-        let mut config = CollectionConfig {
-            name,
-            dimension,
-            storage_engine: Some(storage_engine),
-            owner: schema.properties.get("owner").cloned(),
-            tags: schema
-                .properties
-                .get("tags")
-                .map(|tags| {
-                    tags.split(',')
-                        .map(str::trim)
-                        .filter(|tag| !tag.is_empty())
-                        .map(ToString::to_string)
-                        .collect()
-                })
-                .unwrap_or_default(),
-            canonical_embedding_precision,
-            ..Default::default()
-        };
-
-        config.filterable_columns = schema
-            .columns
-            .iter()
-            .filter(|column| column.id >= 100)
-            .map(|column| {
-                let indexed = schema
-                    .indexes
-                    .iter()
-                    .any(|index| index.columns.iter().any(|name| name == &column.name));
-                let supports_range = schema.indexes.iter().any(|index| {
-                    index.columns.iter().any(|name| name == &column.name)
-                        && index.index_type == CatalogIndexType::BTree
-                });
-                FilterableColumnSpec {
-                    name: column.name.clone(),
-                    data_type: Self::filterable_data_type(&column.data_type),
-                    indexed,
-                    supports_range,
-                    estimated_cardinality: None,
-                }
-            })
-            .collect();
-
-        config.distance_metric = schema
-            .properties
-            .get("vector.distance_metric")
-            .and_then(|metric| metric.parse::<i32>().ok());
-
-        config.index_configs = schema
-            .indexes
-            .iter()
-            .filter(|index| index.columns.iter().any(|column| column == "embedding"))
-            .map(|index| IndexConfig {
-                index_name: index.name.clone(),
-                algorithm: Self::indexing_algorithm(index.index_type),
-                parameters: index.properties.clone(),
-                enabled: Some(true),
-                ..Default::default()
-            })
-            .collect();
-
-        // TD-122: prefer the neutral per-index/quant blob when present so the
-        // detailed HNSW/IVF params, is_primary, and quantization survive the
-        // round-trip. Legacy collections persisted before this lack the blob and
-        // keep the coarse reconstruction above (mixed-read-safe).
-        if let Some(json) = schema.properties.get("collection.index_config") {
-            let restored = crate::storage::metadata::catalog_config::index_configs_from_json(json);
-            if !restored.is_empty() {
-                config.index_configs = restored;
-            }
-        }
-        if let Some(json) = schema.properties.get("collection.quantization") {
-            config.quantization =
-                crate::storage::metadata::catalog_config::quantization_from_json(json);
-        }
-        // TD-122: restore the ProximaRecord schema config (enable flag, enforcement,
-        // text columns) so the v2 get surface can reconstruct the schema/flags.
-        if let Some(json) = schema.properties.get("collection.record_schema") {
-            crate::storage::metadata::catalog_config::apply_record_schema_from_json(
-                &mut config,
-                json,
-            );
-        }
-        // Lossless round-trip: if the asset carries the full serialized config it
-        // is authoritative — it captures every field (including ones not mapped to
-        // a typed catalog property), so no collection config is ever silently
-        // dropped on read. The per-field properties above remain for pg_catalog
-        // introspection.
-        if let Some(json) = schema.properties.get("collection.config_json")
-            && let Ok(full) = serde_json::from_str::<CollectionConfig>(json)
-        {
-            config = full;
-        }
-
-        let location = schema
-            .storage_layouts
-            .first()
-            .and_then(|layout| layout.location.clone())
-            .or_else(|| schema.location.clone())
-            .unwrap_or_default();
-        let storage_assignment = if location.is_empty() {
-            None
-        } else {
-            Some(StorageAssignment {
-                primary_path: location.clone(),
-                engine: storage_engine,
-                base_location: location,
-                ..Default::default()
-            })
-        };
-
-        Ok(Some(Collection {
-            id,
-            config: Some(config),
-            stats: Some(CollectionStats {
-                vector_count: schema
-                    .properties
-                    .get("stats.row_count")
-                    .and_then(|value| value.parse().ok())
-                    .unwrap_or_default(),
-                data_size_bytes: schema
-                    .properties
-                    .get("stats.data_size_bytes")
-                    .and_then(|value| value.parse().ok())
-                    .unwrap_or_default(),
-                index_size_bytes: schema
-                    .properties
-                    .get("stats.index_size_bytes")
-                    .and_then(|value| value.parse().ok())
-                    .unwrap_or_default(),
-            }),
-            created_at: schema.created_at_ms * 1000,
-            updated_at: schema.updated_at_ms * 1000,
-            storage_assignment,
-        }))
-    }
-
-    fn collection_table_identifier(config: &CollectionConfig) -> TableIdentifier {
-        let parsed = TableIdentifier::parse(&config.name);
-        if parsed.namespace.is_empty() {
-            TableIdentifier::new(vec!["default".to_string()], parsed.name)
-        } else {
-            parsed
-        }
-    }
-
-    fn catalog_schema_from_collection(collection: &Collection) -> Result<CatalogTableSchema> {
-        let config = collection
-            .config
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Collection has no config"))?;
-        let identifier = Self::collection_table_identifier(config);
-        let mut embedding_column = CatalogColumn::new(
-            20,
-            "embedding",
-            ProximaType::DenseVector {
-                element: proximadb_data_model::VectorElement::Float32,
-                dim: 0,
-            },
-        );
-        embedding_column
-            .properties
-            .insert("dimension".to_string(), config.dimension.to_string());
-
-        let mut schema = CatalogTableSchema::new(identifier.name.clone())
-            .with_column(CatalogColumn::new(0, "oid", ProximaType::String).nullable(false))
-            .with_column(CatalogColumn::new(1, "tenant_id", ProximaType::String))
-            .with_column(CatalogColumn::new(
-                2,
-                "created_at_ns",
-                ProximaType::TimestampTz(proximadb_data_model::TimeUnit::Nanosecond),
-            ))
-            .with_column(CatalogColumn::new(
-                3,
-                "updated_at_ns",
-                ProximaType::TimestampTz(proximadb_data_model::TimeUnit::Nanosecond),
-            ))
-            .with_column(CatalogColumn::new(8, "props", ProximaType::Json))
-            .with_column(embedding_column)
-            .with_primary_key(vec!["oid".to_string()]);
-
-        for (idx, column) in config.filterable_columns.iter().enumerate() {
-            if column.name.is_empty() {
-                continue;
-            }
-            schema = schema.with_column(CatalogColumn::new(
-                100 + idx as i32,
-                column.name.clone(),
-                Self::catalog_data_type(column.data_type),
-            ));
-
-            if column.indexed {
-                let index_type = if column.supports_range {
-                    CatalogIndexType::BTree
-                } else {
-                    CatalogIndexType::Hash
-                };
-                schema = schema.with_index(CatalogIndex::new(
-                    format!("idx_{}_{}", identifier.name, column.name),
-                    vec![column.name.clone()],
-                    index_type,
-                ));
-            }
-        }
-
-        for index in &config.index_configs {
-            let index_type = Self::catalog_index_type(index.algorithm);
-            schema = schema.with_index(CatalogIndex::new(
-                if index.index_name.is_empty() {
-                    format!("idx_{}_embedding", identifier.name)
-                } else {
-                    index.index_name.clone()
-                },
-                vec!["embedding".to_string()],
-                index_type,
-            ));
-
-            let mut projection = CatalogProjection::rebuildable(
-                if index.index_name.is_empty() {
-                    format!("{}_ann", identifier.name)
-                } else {
-                    index.index_name.clone()
-                },
-                CatalogProjectionKind::VectorAnn,
-                "primary",
-            );
-            projection.physical_format = CatalogPhysicalFormat::ProximaBlock;
-            projection.freshness = ProjectionFreshness::Lazy;
-            schema = schema.with_projection(projection);
-        }
-
-        let mut layout = CatalogStorageLayout::internal(
-            "primary",
-            match config.storage_engine.unwrap_or(StorageEngine::Sst as i32) {
-                value if value == StorageEngine::Viper as i32 => CatalogStorageLayoutKind::Columnar,
-                value if value == StorageEngine::Nova as i32 => CatalogStorageLayoutKind::Columnar,
-                value if value == StorageEngine::Helix as i32 => {
-                    CatalogStorageLayoutKind::LsmRecord
-                }
-                _ => CatalogStorageLayoutKind::RowRecord,
-            },
-        );
-        layout.location = collection
-            .storage_assignment
-            .as_ref()
-            .map(|assignment| assignment.base_location.clone())
-            .filter(|location| !location.is_empty());
-        layout
-            .properties
-            .insert("collection_id".to_string(), collection.id.clone());
-        layout.properties.insert(
-            "storage_engine".to_string(),
-            config
-                .storage_engine
-                .and_then(|engine| StorageEngine::try_from(engine).ok())
-                .map(|engine| format!("{:?}", engine))
-                .unwrap_or_else(|| "Sst".to_string()),
-        );
-
-        schema.storage_layouts = vec![layout];
-        schema.location = collection
-            .storage_assignment
-            .as_ref()
-            .map(|assignment| assignment.base_location.clone())
-            .filter(|location| !location.is_empty());
-        schema.created_at_ms = collection.created_at / 1000;
-        schema.updated_at_ms = collection.updated_at / 1000;
-        schema
-            .properties
-            .insert("asset.kind".to_string(), "collection".to_string());
-        schema
-            .properties
-            .insert("asset.capability.vector".to_string(), "true".to_string());
-        schema
-            .properties
-            .insert("collection.id".to_string(), collection.id.clone());
-        schema
-            .properties
-            .insert("collection.name".to_string(), config.name.clone());
-        schema
-            .properties
-            .insert("vector.dimension".to_string(), config.dimension.to_string());
-        if let Some(metric) = config.distance_metric {
-            schema
-                .properties
-                .insert("vector.distance_metric".to_string(), metric.to_string());
-        }
-        if let Some(owner) = &config.owner {
-            schema.properties.insert("owner".to_string(), owner.clone());
-        }
-        if !config.tags.is_empty() {
-            schema
-                .properties
-                .insert("tags".to_string(), config.tags.join(","));
-        }
-        if let Some(stats) = &collection.stats {
-            schema.properties.insert(
-                "stats.row_count".to_string(),
-                stats.vector_count.to_string(),
-            );
-            schema.properties.insert(
-                "stats.data_size_bytes".to_string(),
-                stats.data_size_bytes.to_string(),
-            );
-            schema.properties.insert(
-                "stats.index_size_bytes".to_string(),
-                stats.index_size_bytes.to_string(),
-            );
-        }
-
-        // Map the proto EmbeddingPrecision discriminant to the catalog's
-        // EmbeddingScalarType so the canonical_embedding_precision field
-        // (read by CanonicalPrecisionResolver) reflects whatever the
-        // create-collection request asked for. Unspecified / Fp32 stays
-        // on the legacy default.
-        if let Some(precision_value) = config.canonical_embedding_precision {
-            use crate::proto::proximadb_v1::EmbeddingPrecision;
-            schema.canonical_embedding_precision =
-                match EmbeddingPrecision::try_from(precision_value) {
-                    Ok(EmbeddingPrecision::Fp16) => proximadb_records::EmbeddingScalarType::Fp16,
-                    Ok(EmbeddingPrecision::Bf16) => proximadb_records::EmbeddingScalarType::Bf16,
-                    Ok(EmbeddingPrecision::Int8) => {
-                        proximadb_records::EmbeddingScalarType::Int8Scalar
-                    }
-                    Ok(EmbeddingPrecision::Uint8) => {
-                        proximadb_records::EmbeddingScalarType::UInt8Scalar
-                    }
-                    // Unspecified / Fp32 / unknown all map to the legacy default
-                    _ => proximadb_records::EmbeddingScalarType::Fp32,
-                };
-        }
-
-        // TD-122: persist the detailed per-index (HNSW m/ef, IVF n_lists/n_probe,
-        // is_primary) and quantization (enabled, strategy) config in a neutral,
-        // wire-independent form so GetCollection echoes back what CreateCollection
-        // set. The CatalogIndex entries above only carry the index identity/type;
-        // these JSON blobs carry the tuning knobs the catalog schema can't model.
-        if let Some(json) = crate::storage::metadata::catalog_config::index_configs_to_json(config)?
-        {
-            schema
-                .properties
-                .insert("collection.index_config".to_string(), json);
-        }
-        if let Some(json) = crate::storage::metadata::catalog_config::quantization_to_json(config)?
-        {
-            schema
-                .properties
-                .insert("collection.quantization".to_string(), json);
-        }
-        // TD-122: persist the ProximaRecord schema config (enable flag, enforcement,
-        // text columns) neutrally so get_collection_v2 echoes the schema/flags set
-        // at create time.
-        if let Some(json) = crate::storage::metadata::catalog_config::record_schema_to_json(config)?
-        {
-            schema
-                .properties
-                .insert("collection.record_schema".to_string(), json);
-        }
-        // Lossless round-trip: store the full serialized config so the catalog
-        // asset never drops any collection field (the typed properties above stay
-        // for pg_catalog introspection). This makes the catalog a complete,
-        // sole-authority store for collection metadata.
-        schema.properties.insert(
-            "collection.config_json".to_string(),
-            serde_json::to_string(config)
-                .context("serializing collection config for catalog asset")?,
-        );
-
-        Ok(schema)
-    }
-
-    fn catalog_data_type(data_type: i32) -> ProximaType {
-        use proximadb_data_model::TimeUnit;
-        match FilterableDataType::try_from(data_type).ok() {
-            Some(FilterableDataType::FilterableInteger) => ProximaType::Int64,
-            Some(FilterableDataType::FilterableFloat) => ProximaType::Float64,
-            Some(FilterableDataType::FilterableBoolean) => ProximaType::Boolean,
-            Some(FilterableDataType::FilterableDatetime) => {
-                ProximaType::Timestamp(TimeUnit::Nanosecond)
-            }
-            Some(FilterableDataType::FilterableDecimal) => ProximaType::Decimal {
-                precision: 38,
-                scale: 10,
-            },
-            Some(FilterableDataType::FilterableTimestampTz) => {
-                ProximaType::TimestampTz(TimeUnit::Nanosecond)
-            }
-            Some(FilterableDataType::FilterableDate) => ProximaType::Date,
-            Some(FilterableDataType::FilterableTime) => ProximaType::Time(TimeUnit::Nanosecond),
-            Some(FilterableDataType::FilterableUuid) => ProximaType::Uuid,
-            Some(FilterableDataType::FilterableBinary) => ProximaType::Binary,
-            Some(FilterableDataType::FilterableJson)
-            | Some(FilterableDataType::FilterableMapStringAny) => ProximaType::Json,
-            _ => ProximaType::String,
-        }
-    }
-
-    fn catalog_index_type(algorithm: i32) -> CatalogIndexType {
-        match IndexingAlgorithm::try_from(algorithm).ok() {
-            Some(IndexingAlgorithm::Hnsw) => CatalogIndexType::Hnsw,
-            Some(IndexingAlgorithm::Ivf) => CatalogIndexType::Ivf,
-            Some(IndexingAlgorithm::Pq) => CatalogIndexType::Pq,
-            _ => CatalogIndexType::Hnsw,
-        }
-    }
-
-    fn filterable_data_type(data_type: &ProximaType) -> i32 {
-        match data_type {
-            ProximaType::Int8 | ProximaType::Int16 | ProximaType::Int32 | ProximaType::Int64 => {
-                FilterableDataType::FilterableInteger as i32
-            }
-            ProximaType::Float32 | ProximaType::Float64 => {
-                FilterableDataType::FilterableFloat as i32
-            }
-            ProximaType::Boolean => FilterableDataType::FilterableBoolean as i32,
-            ProximaType::Timestamp(_) => FilterableDataType::FilterableDatetime as i32,
-            ProximaType::TimestampTz(_) => FilterableDataType::FilterableTimestampTz as i32,
-            ProximaType::Decimal { .. } => FilterableDataType::FilterableDecimal as i32,
-            ProximaType::Date => FilterableDataType::FilterableDate as i32,
-            ProximaType::Time(_) => FilterableDataType::FilterableTime as i32,
-            ProximaType::Uuid => FilterableDataType::FilterableUuid as i32,
-            ProximaType::Binary => FilterableDataType::FilterableBinary as i32,
-            ProximaType::Json => FilterableDataType::FilterableJson as i32,
-            _ => FilterableDataType::FilterableString as i32,
-        }
-    }
-
-    fn indexing_algorithm(index_type: CatalogIndexType) -> i32 {
-        match index_type {
-            CatalogIndexType::Ivf => IndexingAlgorithm::Ivf as i32,
-            CatalogIndexType::Pq => IndexingAlgorithm::Pq as i32,
-            CatalogIndexType::Hnsw => IndexingAlgorithm::Hnsw as i32,
-            _ => IndexingAlgorithm::Hnsw as i32,
-        }
-    }
-
-    fn storage_engine_from_catalog(engine: &str) -> i32 {
-        match engine.to_ascii_uppercase().as_str() {
-            "VIPER" => StorageEngine::Viper as i32,
-            "NOVA" => StorageEngine::Nova as i32,
-            "HELIX" => StorageEngine::Helix as i32,
-            "SWIFT" => StorageEngine::Swift as i32,
-            "RAPTOR" => StorageEngine::Raptor as i32,
-            "MMAP" => StorageEngine::Mmap as i32,
-            "HYBRID" => StorageEngine::Hybrid as i32,
-            "TST" => StorageEngine::Tst as i32,
-            "CEDAR" => StorageEngine::Cedar as i32,
-            "TITAN" => StorageEngine::Titan as i32,
-            "CHRONO" => StorageEngine::Chrono as i32,
-            _ => StorageEngine::Sst as i32,
-        }
+        read_collections_from_catalog(catalog_manager).await
     }
 
     /// Generate unique collection ID using UUIDs.
@@ -2557,16 +2167,238 @@ impl CollectionService {
     /// catalog assets use UUID strings so identity is opaque, non-time-leaking, and compatible
     /// with catalog/schema UUID fields across SDKs and embedded mode.
     async fn generate_unique_collection_id(&self) -> Result<String> {
-        for _ in 0..8 {
-            let id = uuid::Uuid::new_v4().to_string();
-            if self.collection_from_catalog_asset(&id).await?.is_none() {
-                return Ok(id);
+        // ADR-031: the collection ID is the stable object_id (u64) as a decimal
+        // string — NOT a UUID. The monotonic allocator guarantees uniqueness by
+        // construction (no retry loop needed). base62 is reserved for path
+        // segments only (DrResolvedPath), not the collection.id variable.
+        Ok(generate_numeric_collection_id())
+    }
+}
+
+/// System-wide monotonic allocator for collection object_ids (ADR-031).
+/// One sequence for all collections across all tenants — globally unique,
+/// never reused. Recovered on restart by scanning existing collection IDs.
+static COLLECTION_ID_ALLOCATOR: std::sync::OnceLock<proximadb_catalog::id_allocator::IdAllocator> =
+    std::sync::OnceLock::new();
+
+/// Generate a stable, monotonic collection ID as the **decimal** `object_id`.
+///
+/// ADR-031 representation rule: the `object_id` is `u64` in-memory (numeric —
+/// the canonical identity, never stringified for keying/lookup). Its
+/// client-facing string form (the `collection.id` API field) is the **decimal**
+/// `object_id` — numeric, opaque, JSON-safe. The **base62** encoding is reserved
+/// strictly for object-store *path segments* (`DrResolvedPath`), where
+/// zero-padded base62 gives lexicographic S3 LIST order; it is NOT used for the
+/// `collection.id` variable.
+fn generate_numeric_collection_id() -> String {
+    let allocator =
+        COLLECTION_ID_ALLOCATOR.get_or_init(proximadb_catalog::id_allocator::IdAllocator::default);
+    allocator.allocate().to_string()
+}
+
+/// ADR-031: recover the collection ID allocator floor from existing collections.
+///
+/// Call at startup (after scanning existing collection IDs) with
+/// `max(existing decimal object_id)` to prevent ID reuse after restart.
+/// The `OnceLock` allocator is initialized (if not already) and its floor raised
+/// so subsequent `generate_numeric_collection_id` calls never produce an ID
+/// that's already on disk.
+///
+/// **Usage** (in server/embedded startup):
+/// ```ignore
+/// let max_existing = collections.iter()
+///     .filter_map(|c| c.id.parse::<u64>().ok())
+///     .max()
+///     .unwrap_or(0);
+/// recover_collection_id_floor(max_existing);
+/// ```
+pub fn recover_collection_id_floor(max_existing: u64) {
+    let allocator =
+        COLLECTION_ID_ALLOCATOR.get_or_init(proximadb_catalog::id_allocator::IdAllocator::default);
+    allocator.raise_floor(max_existing + 1);
+}
+
+#[cfg(test)]
+mod adr031_collection_id_tests {
+    use super::{generate_numeric_collection_id, recover_collection_id_floor};
+
+    #[test]
+    fn collection_id_is_numeric_not_uuid() {
+        let id = generate_numeric_collection_id();
+        // ADR-031: collection.id is the decimal object_id (u64) — NOT a UUID.
+        // UUIDs contain dashes (`-`); a decimal u64 is `[0-9]+` with no dashes.
+        assert!(
+            !id.contains('-'),
+            "collection ID must not be a UUID (no dashes), got: {id}"
+        );
+        // Must parse as a valid decimal u64.
+        let parsed: u64 = id
+            .parse()
+            .expect("collection ID must be a valid decimal object_id");
+        assert!(parsed > 0, "object_id must be positive, got: {parsed}");
+    }
+
+    #[test]
+    fn collection_ids_are_monotonic() {
+        let a = generate_numeric_collection_id();
+        let b = generate_numeric_collection_id();
+        let oid_a: u64 = a.parse().expect("parse a");
+        let oid_b: u64 = b.parse().expect("parse b");
+        assert!(
+            oid_b > oid_a,
+            "consecutive object_ids must be monotonic: {oid_a} -> {oid_b}"
+        );
+    }
+
+    #[test]
+    fn recover_collection_id_floor_prevents_reuse() {
+        // ADR-031: after restart, the allocator must not reuse IDs below the
+        // recovered floor. Simulate: raise floor to 100000, then allocate —
+        // the result must parse to > 100000.
+        recover_collection_id_floor(100_000);
+        let id = generate_numeric_collection_id();
+        let oid: u64 = id.parse().expect("parse");
+        assert!(
+            oid > 100_000,
+            "after recovery to floor=100001, allocated ID must be > 100000, got {oid}"
+        );
+    }
+}
+
+/// Per-tenant system-catalog hot-cache pool (ADR-035 D2 / TD-SC-1b): a shared
+/// byte budget across tenants with a 1 MB/tenant ceiling. 256 MB ⇒ ~256
+/// concurrently-active tenants at the ceiling; a single-tenant deployment uses
+/// only the one `"default"` bucket (≤1 MB).
+const SYSCAT_CACHE_POOL_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Read a single collection asset from the catalog by name-or-UUID. Free function
+/// (depends only on the catalog manager) so it can back BOTH the
+/// `CollectionService` method and the hot-cache's inner source **without a
+/// self-referential `Arc` cycle** (the cache must not hold the service that holds
+/// the cache).
+async fn read_collection_asset(
+    catalog_manager: &CatalogManager,
+    identifier: &str,
+) -> Result<Option<Collection>> {
+    if let Ok((catalog, table_id)) = catalog_manager.resolve_table(identifier).await
+        && catalog.table_exists(&table_id).await.unwrap_or(false)
+    {
+        let schema = catalog.get_table(&table_id).await?;
+        if let Some(collection) =
+            crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
+                &table_id, &schema,
+            )?
+        {
+            return Ok(Some(collection));
+        }
+    }
+
+    for collection in read_collections_from_catalog(catalog_manager).await? {
+        if collection.id == identifier {
+            return Ok(Some(collection));
+        }
+        if let Some(config) = &collection.config
+            && config.name == identifier
+        {
+            return Ok(Some(collection));
+        }
+    }
+
+    Ok(None)
+}
+
+/// List every collection asset across namespaces (the expensive 1+N+M path the
+/// hot cache amortises). Free function — catalog-manager-only, see
+/// [`read_collection_asset`].
+async fn read_collections_from_catalog(
+    catalog_manager: &CatalogManager,
+) -> Result<Vec<Collection>> {
+    let catalog = match catalog_manager.default_catalog().await {
+        Ok(catalog) => catalog,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    let mut namespaces: Vec<Vec<String>> = catalog
+        .list_namespaces(None)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|namespace| namespace.levels)
+        .collect();
+    if !namespaces.iter().any(|namespace| namespace == &["default"]) {
+        namespaces.push(vec!["default".to_string()]);
+    }
+
+    let mut collections = Vec::new();
+    let mut seen_ids = HashSet::new();
+    for namespace in namespaces {
+        let table_ids = match catalog.list_tables(&namespace).await {
+            Ok(table_ids) => table_ids,
+            Err(_) => continue,
+        };
+
+        for table_id in table_ids {
+            let schema = match catalog.get_table(&table_id).await {
+                Ok(schema) => schema,
+                Err(_) => continue,
+            };
+            let Some(collection) =
+                crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
+                    &table_id, &schema,
+                )?
+            else {
+                continue;
+            };
+            if seen_ids.insert(collection.id.clone()) {
+                collections.push(collection);
             }
         }
+    }
 
-        Err(anyhow::anyhow!(
-            "Unable to generate a unique UUID for collection"
-        ))
+    Ok(collections)
+}
+
+/// TD-SC-4 (S4): idempotently pre-create a tenant's bare-minimum system-catalog
+/// skeleton at signup — the tenant's system namespace (`[tenant, "default"]`,
+/// the same tenant-prefixed shape S3a stores collections under), recorded with
+/// its owning `tenant_id`. Pre-creating it means the first collection/list for a
+/// freshly-signed-up tenant doesn't hit a cold/missing namespace.
+///
+/// Idempotent: a re-signup (namespace already present) is a no-op, and a partial
+/// failure is safe to retry (the `namespace_exists` guard converges). Free
+/// function (catalog-manager-only) so it can be called from any onboarding path
+/// without holding the `CollectionService`. **No user tables are created.**
+async fn provision_tenant_system_catalog(
+    catalog_manager: &CatalogManager,
+    tenant: &str,
+) -> Result<()> {
+    if tenant.is_empty() {
+        return Ok(());
+    }
+    let catalog = catalog_manager.default_catalog().await?;
+    // Bare-minimum skeleton: the tenant's default namespace, tenant-prefixed to
+    // match where S3a stores this tenant's collections (no collision with other
+    // tenants' identically-named namespaces).
+    let namespace = vec![tenant.to_string(), "default".to_string()];
+    if !catalog.namespace_exists(&namespace).await? {
+        catalog
+            .create_namespace_for_tenant(&namespace, std::collections::HashMap::new(), Some(tenant))
+            .await?;
+    }
+    Ok(())
+}
+
+/// Hot-cache inner source: reads collection metadata straight from the catalog.
+/// Holds `Arc<CatalogManager>` (not the `CollectionService`), so the cache and the
+/// service do not form an `Arc` cycle.
+struct CatalogAssetSource {
+    catalog_manager: Arc<CatalogManager>,
+}
+
+#[async_trait::async_trait]
+impl crate::catalog::syscat_cache::CatalogMetadataSource for CatalogAssetSource {
+    async fn fetch(&self, _tenant_id: &str, name: &str) -> Result<Option<Collection>> {
+        read_collection_asset(&self.catalog_manager, name).await
     }
 }
 
@@ -2672,10 +2504,23 @@ impl Default for CollectionServiceBuilder {
     }
 }
 
+/// Dependency-inversion seam (Slice D): storage holds an
+/// `Arc<dyn CollectionMetadataPort>` and never references this service crate.
+/// `CollectionService` is the concrete implementor; the composition root
+/// injects it. Delegates to the inherent metadata-fetch path.
+#[async_trait::async_trait]
+impl proximadb_storage_ports::CollectionMetadataPort for CollectionService {
+    async fn collection(&self, identifier: &str) -> Result<Option<Collection>> {
+        self.get_native_proto(identifier).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::TableIdentifier;
     use crate::proto::proximadb_v1::CollectionConfig;
+    use crate::proto::proximadb_v1::{FilterableDataType, IndexingAlgorithm};
 
     #[tokio::test]
     async fn test_collection_validation() -> Result<()> {
@@ -2706,6 +2551,8 @@ mod tests {
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
             permitted_principals: vec![],
+            index_policy: None,
+            pax_vector_quant: None,
         };
 
         // Test create with valid config
@@ -2828,6 +2675,8 @@ mod tests {
                 enable_dual_use_embeddings: None,
                 canonical_embedding_precision: None,
                 permitted_principals: vec![],
+                index_policy: None,
+                pax_vector_quant: None,
             };
 
             let result = service
@@ -2864,6 +2713,453 @@ mod tests {
     /// name<->id. Proves the redesign: name and id are separate, unambiguous
     /// namespaces with NO length dependence (the old 8-char floor is gone), and
     /// resolution is name-authoritative.
+    /// Coherence (invariant #16b): create / update / delete must bump the
+    /// corpus version **even without a threaded tenant context** (the common
+    /// single-tenant/anonymous case), so corpus-version-keyed caches invalidate.
+    /// Previously the bump was tenant-context-gated and thus inert in production.
+    #[tokio::test]
+    async fn writes_bump_corpus_version_without_tenant_context() -> Result<()> {
+        use crate::catalog::CorpusVersionRegistry;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("temp dir")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("Failed to create test xCatalog")?;
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("collection service")?
+            .with_catalog_manager(catalog_manager.clone());
+
+        // Unique name isolates the process-global CorpusVersionRegistry.
+        let name = "cv_bump_probe";
+        let tenant = CollectionService::DEFAULT_VERSION_TENANT;
+        let v0 = CorpusVersionRegistry::global().current(tenant, name).await;
+
+        // create (inherent, tenant-less → effective tenant "default")
+        let config = CollectionConfig {
+            name: name.to_string(),
+            dimension: 8,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
+            ..Default::default()
+        };
+        assert!(
+            service
+                .create_collection(&config)
+                .await
+                .context("create")?
+                .success
+        );
+        let v_create = CorpusVersionRegistry::global().current(tenant, name).await;
+        assert!(
+            v_create > v0,
+            "create must bump corpus version without a tenant context ({v0} -> {v_create})"
+        );
+
+        // update (tenant-less)
+        let update = CollectionConfig {
+            description: Some("updated".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            service
+                .update_collection(name, Some(update))
+                .await
+                .context("update")?
+                .success
+        );
+        let v_update = CorpusVersionRegistry::global().current(tenant, name).await;
+        assert!(
+            v_update > v_create,
+            "update must bump ({v_create} -> {v_update})"
+        );
+
+        // delete (tenant-less)
+        service
+            .delete_collection_with_tenant_context(name, None)
+            .await
+            .context("delete")?;
+        let v_delete = CorpusVersionRegistry::global().current(tenant, name).await;
+        assert!(
+            v_delete > v_update,
+            "delete must bump ({v_update} -> {v_delete})"
+        );
+
+        Ok(())
+    }
+
+    /// TD-SC-1b: `collection()` is fronted by the hot cache, and a write
+    /// invalidates it (no stale read). After caching a live collection, deleting
+    /// it must make the next `collection()` return `None` — proving the
+    /// corpus-version stamp on the cached entry self-invalidates on the write's
+    /// bump (#435). Also exercises the UUID bypass path.
+    #[tokio::test]
+    async fn collection_cache_serves_then_invalidates_on_write() -> Result<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("temp dir")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("xcatalog")?;
+        // No tenant manager → single-tenant → the cache path is active.
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("service")?
+            .with_catalog_manager(catalog_manager.clone());
+
+        let name = "sc1b_cache_probe";
+        let config = CollectionConfig {
+            name: name.to_string(),
+            dimension: 8,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
+            ..Default::default()
+        };
+        assert!(
+            service
+                .create_collection(&config)
+                .await
+                .context("create")?
+                .success
+        );
+
+        // Read through the cache (name key) — present, and a second read still
+        // present (served from cache or catalog; both correct).
+        let first = service.collection(name).await.context("read1")?;
+        assert!(first.is_some(), "collection must be found after create");
+        assert!(service.collection(name).await.context("read2")?.is_some());
+
+        // UUID identifier bypasses the cache and reads through (non-existent id).
+        assert!(
+            service
+                .collection("00000000-0000-0000-0000-000000000000")
+                .await
+                .context("uuid read")?
+                .is_none()
+        );
+
+        // Delete bumps corpus_version("default", name); the cached entry's stamp
+        // no longer matches → the next read must reflect the delete (None), not a
+        // stale hit.
+        service
+            .delete_collection_with_tenant_context(name, None)
+            .await
+            .context("delete")?;
+        assert!(
+            service
+                .collection(name)
+                .await
+                .context("read after delete")?
+                .is_none(),
+            "cache must invalidate on write — a deleted collection must not be served stale"
+        );
+
+        Ok(())
+    }
+
+    /// TD-SC-2b: with a warm dir configured, the hot cache reads through the
+    /// on-disk warm tier — a `collection()` read materializes a warm file on
+    /// local disk (proving the `WarmDiskStore` is wired into the chain), and the
+    /// result is correct.
+    #[tokio::test]
+    async fn warm_tier_wired_materializes_disk_entry() -> Result<()> {
+        use tempfile::TempDir;
+
+        let cat_dir = TempDir::new().context("cat dir")?;
+        let warm_dir = TempDir::new().context("warm dir")?;
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &format!("file://{}", cat_dir.path().display()))
+            .await
+            .context("xcatalog")?;
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("service")?
+            .with_syscat_warm_dir(warm_dir.path().to_path_buf())
+            .with_catalog_manager(catalog_manager.clone());
+
+        let name = "sc2b_warm_wire_probe";
+        let config = CollectionConfig {
+            name: name.to_string(),
+            dimension: 8,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
+            ..Default::default()
+        };
+        assert!(
+            service
+                .create_collection(&config)
+                .await
+                .context("create")?
+                .success
+        );
+
+        // Read through hot → warm → canonical; the warm tier writes a file.
+        assert!(service.collection(name).await.context("read")?.is_some());
+        let warm_file = warm_dir
+            .path()
+            .join(CollectionService::DEFAULT_VERSION_TENANT)
+            .join(format!("{name}.bin"));
+        assert!(
+            warm_file.exists(),
+            "warm tier must materialize {warm_file:?} on a read (proves it's in the chain)"
+        );
+
+        Ok(())
+    }
+
+    /// TD-CAT-2a (audit gap G6): creating a `tenant:`-tagged collection records
+    /// the owning tenant on the freshly-created namespace. The upsert routes
+    /// through `create_namespace_for_tenant`, so the persisted
+    /// `CatalogNamespace.tenant_id` carries the tenant derived by
+    /// `collection_tenant_id` (the `tenant:` tag) — instead of the `None` the
+    /// old tenant-less `create_namespace` left behind.
+    #[tokio::test]
+    async fn tenant_tagged_collection_records_namespace_tenant() -> Result<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("temp dir")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("xcatalog")?;
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("service")?
+            .with_catalog_manager(catalog_manager.clone());
+
+        // A namespaced name → the upsert creates a brand-new namespace
+        // `tdc2a_ns` (the tenant is recorded only on namespace creation, so the
+        // namespace must be fresh for the tenant-aware constructor to fire).
+        let config = CollectionConfig {
+            name: "tdc2a_ns.tbl".to_string(),
+            dimension: 8,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
+            tags: vec!["tenant:acme".to_string()],
+            ..Default::default()
+        };
+        assert!(
+            service
+                .create_collection(&config)
+                .await
+                .context("create")?
+                .success
+        );
+
+        let catalog = catalog_manager
+            .default_catalog()
+            .await
+            .context("default catalog")?;
+        let ns = catalog
+            .get_namespace(&["tdc2a_ns".to_string()])
+            .await
+            .context("get_namespace")?;
+        assert_eq!(
+            ns.tenant_id.as_deref(),
+            Some("acme"),
+            "the freshly-created namespace must record the owning tenant (TD-CAT-2a)"
+        );
+
+        Ok(())
+    }
+
+    /// TD-CAT-2b (S3a): the pure scoping function prepends the tenant as
+    /// namespace level 0 only when enabled and a non-empty tenant is present.
+    #[test]
+    fn tenant_scoped_identifier_prepends_tenant_when_enabled() {
+        let base = TableIdentifier::new(vec!["default".to_string()], "t".to_string());
+
+        let scoped = CollectionService::tenant_scoped_identifier(true, Some("acme"), base.clone());
+        assert_eq!(
+            scoped.namespace,
+            vec!["acme".to_string(), "default".to_string()]
+        );
+        assert_eq!(scoped.name, "t");
+
+        // Off ⇒ unchanged; no tenant ⇒ unchanged; empty tenant ⇒ unchanged.
+        assert_eq!(
+            CollectionService::tenant_scoped_identifier(false, Some("acme"), base.clone())
+                .namespace,
+            vec!["default".to_string()]
+        );
+        assert_eq!(
+            CollectionService::tenant_scoped_identifier(true, None, base.clone()).namespace,
+            vec!["default".to_string()]
+        );
+        assert_eq!(
+            CollectionService::tenant_scoped_identifier(true, Some(""), base).namespace,
+            vec!["default".to_string()]
+        );
+    }
+
+    /// TD-CAT-2b (S3a): with the gate ON, two tenants creating an
+    /// identically-named namespace land under DISTINCT tenant-prefixed
+    /// namespaces — no collision on the bare key — each recording its own tenant.
+    #[tokio::test]
+    async fn tenant_namespaces_isolate_same_named_namespace() -> Result<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("temp dir")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("xcatalog")?;
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("service")?
+            .with_catalog_manager(catalog_manager.clone());
+        service.set_tenant_namespaces_for_test(true);
+
+        // Two collections in the SAME bare namespace `shared`, different tenants
+        // (distinct collection names — the service dedupes by name; it's the
+        // shared NAMESPACE that must not collide across tenants).
+        for tenant in ["acme", "globex"] {
+            let config = CollectionConfig {
+                name: format!("shared.{tenant}_tbl"),
+                dimension: 8,
+                primary_index: Some("default".to_string()),
+                auto_index_selection: Some(false),
+                tags: vec![format!("tenant:{tenant}")],
+                ..Default::default()
+            };
+            assert!(
+                service
+                    .create_collection(&config)
+                    .await
+                    .with_context(|| format!("create for {tenant}"))?
+                    .success
+            );
+        }
+
+        let catalog = catalog_manager
+            .default_catalog()
+            .await
+            .context("default catalog")?;
+
+        // Each tenant has its OWN `shared` namespace, recording its own tenant.
+        for tenant in ["acme", "globex"] {
+            let ns = catalog
+                .get_namespace(&[tenant.to_string(), "shared".to_string()])
+                .await
+                .with_context(|| format!("get_namespace for {tenant}"))?;
+            assert_eq!(
+                ns.tenant_id.as_deref(),
+                Some(tenant),
+                "tenant-prefixed namespace records its owning tenant"
+            );
+        }
+
+        // The bare `shared` namespace was never created — no cross-tenant
+        // collision on the shared key.
+        assert!(
+            !catalog
+                .namespace_exists(&["shared".to_string()])
+                .await
+                .context("bare namespace_exists")?,
+            "no bare `shared` namespace ⇒ tenants did not collide on the shared key"
+        );
+
+        Ok(())
+    }
+
+    /// TD-SC-4 (S4): provisioning pre-creates the tenant's system namespace and
+    /// is idempotent — a second call is a no-op, and the namespace records its
+    /// owning tenant.
+    #[tokio::test]
+    async fn provision_tenant_system_catalog_is_idempotent() -> Result<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("temp dir")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("xcatalog")?;
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("service")?
+            .with_catalog_manager(catalog_manager.clone());
+        service.set_tenant_namespaces_for_test(true);
+
+        // Provision twice — the second call must be a safe no-op.
+        service
+            .provision_tenant_system_catalog("acme")
+            .await
+            .context("provision 1")?;
+        service
+            .provision_tenant_system_catalog("acme")
+            .await
+            .context("provision 2 (idempotent)")?;
+
+        let catalog = catalog_manager
+            .default_catalog()
+            .await
+            .context("default catalog")?;
+        let ns = catalog
+            .get_namespace(&["acme".to_string(), "default".to_string()])
+            .await
+            .context("provisioned namespace present")?;
+        assert_eq!(
+            ns.tenant_id.as_deref(),
+            Some("acme"),
+            "provisioned system namespace records its owning tenant"
+        );
+
+        Ok(())
+    }
+
+    /// TD-SC-4 (S4): with tenant namespaces off (single-tenant deployments),
+    /// provisioning is a no-op — no per-tenant skeleton is created.
+    #[tokio::test]
+    async fn provision_tenant_system_catalog_noop_when_gate_off() -> Result<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("temp dir")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("xcatalog")?;
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("service")?
+            .with_catalog_manager(catalog_manager.clone());
+        service.set_tenant_namespaces_for_test(false);
+
+        service
+            .provision_tenant_system_catalog("acme")
+            .await
+            .context("provision (gate off)")?;
+
+        let catalog = catalog_manager
+            .default_catalog()
+            .await
+            .context("default catalog")?;
+        assert!(
+            !catalog
+                .namespace_exists(&["acme".to_string(), "default".to_string()])
+                .await
+                .context("namespace_exists")?,
+            "gate off ⇒ provisioning creates nothing"
+        );
+
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_short_name_resolves_name_authoritative() -> Result<()> {
         use tempfile::TempDir;
@@ -2905,6 +3201,8 @@ mod tests {
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
             permitted_principals: vec![],
+            index_policy: None,
+            pax_vector_quant: None,
         };
         let created = service.create_collection(&config).await.context("create")?;
         assert!(
@@ -2971,6 +3269,8 @@ mod tests {
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
             permitted_principals: vec![],
+            index_policy: None,
+            pax_vector_quant: None,
         };
 
         let result = service.create_collection(&config).await?;
@@ -3040,7 +3340,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_collection_lifecycle_mirrors_to_xcatalog_with_uuid_id() -> Result<()> {
+    async fn test_collection_lifecycle_mirrors_to_xcatalog_with_numeric_id() -> Result<()> {
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
@@ -3085,7 +3385,12 @@ mod tests {
             result.error_code
         );
         let collection = result.collection.expect("collection should be returned");
-        assert!(uuid::Uuid::parse_str(&collection.id).is_ok());
+        // ADR-031: collection.id is the decimal object_id (u64), not a UUID.
+        assert!(
+            collection.id.parse::<u64>().is_ok(),
+            "collection.id must be a numeric object_id, got: {}",
+            collection.id
+        );
 
         let catalog = catalog_manager.default_catalog().await?;
         let table_id = TableIdentifier::new(
@@ -3209,12 +3514,18 @@ mod tests {
             ..Default::default()
         };
 
-        let schema = CollectionService::catalog_schema_from_collection(&collection)
-            .expect("schema from collection");
-        let identifier = CollectionService::collection_table_identifier(
+        let schema = crate::storage::metadata::collection_mapping::catalog_schema_from_collection(
+            &collection,
+        )
+        .expect("schema from collection");
+        let identifier = crate::storage::metadata::collection_mapping::collection_table_identifier(
             collection.config.as_ref().expect("config"),
         );
-        let restored = CollectionService::collection_from_catalog_schema(&identifier, &schema)
+        let restored =
+            crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
+                &identifier,
+                &schema,
+            )
             .expect("collection from schema")
             .expect("collection present");
 

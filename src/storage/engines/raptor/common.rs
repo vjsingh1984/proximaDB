@@ -1187,15 +1187,15 @@ impl InterCentroidMatrix {
         use crate::compute::QuantizedVector;
         use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
         use crate::compute::quantization::types::UnifiedQuantizationLevel;
-        use crate::core::hardware_capabilities::get_hardware_capabilities;
+        use proximadb_hardware_caps::get_hardware_capabilities;
 
         let hw = get_hardware_capabilities();
 
         // Create required components for StorageQuantizationEngine
-        use crate::compute::distance_computation::DistanceMetric;
-        use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
         use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
         use crate::compute::quantization::storage_engine::StorageQuantizationConfig;
+        use proximadb_distance_kernel::DistanceMetric;
+        use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
         use crate::compute::quantization::quantization_engine::InMemoryCodebookStore;
         let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
@@ -1577,7 +1577,7 @@ impl VectorCentroidMatrix {
 
     /// Hardware-optimized batch distance retrieval using unified modules
     pub fn get_distances_batch_optimized(&self, queries: &[(usize, usize)]) -> Vec<f32> {
-        use crate::core::hardware_capabilities::get_hardware_capabilities;
+        use proximadb_hardware_caps::get_hardware_capabilities;
 
         match self.storage_strategy {
             VectorCentroidStorageStrategy::Full => {
@@ -1906,7 +1906,7 @@ impl RowGroupBloomFilter {
         footer: &RaptorFooter,
         vector_ids: &[String],
     ) -> Vec<Vec<u16>> {
-        use crate::core::hardware_capabilities::get_hardware_capabilities;
+        use proximadb_hardware_caps::get_hardware_capabilities;
 
         let hw = get_hardware_capabilities();
         let batch_size = if hw.has_avx512() {

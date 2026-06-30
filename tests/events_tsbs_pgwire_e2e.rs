@@ -101,6 +101,39 @@ fn explain_err(e: &tokio_postgres::Error) -> String {
     }
 }
 
+/// Normalize a result cell for value comparison: numeric cells are reparsed to a
+/// canonical form (whole numbers without a decimal, fractions minimal) so engine
+/// rendering (`95` vs `95.0` vs `95.000`) doesn't matter; other text passes through.
+fn norm_cell(s: &str) -> String {
+    match s.parse::<f64>() {
+        Ok(f) if f.fract() == 0.0 => format!("{}", f as i64),
+        Ok(f) => format!("{f}"),
+        Err(_) => s.to_string(),
+    }
+}
+
+/// Run a query and return its rows as normalized text cells, **sorted** for
+/// order-independent set comparison (ADR-040 `canon()` style; row order across
+/// routes is a separate concern — see TD-185).
+async fn canon_rows(client: &tokio_postgres::Client, sql: &str) -> Vec<Vec<String>> {
+    let mut rows: Vec<Vec<String>> = client
+        .simple_query(sql)
+        .await
+        .unwrap_or_else(|e| panic!("query `{sql}`: {}", explain_err(&e)))
+        .into_iter()
+        .filter_map(|m| match m {
+            tokio_postgres::SimpleQueryMessage::Row(r) => Some(
+                (0..r.len())
+                    .map(|i| norm_cell(r.get(i).unwrap_or("NULL")))
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .collect();
+    rows.sort();
+    rows
+}
+
 const SCHEMA: &[(&str, &str)] = &[(
     "cpu",
     "CREATE TABLE cpu (ts TIMESTAMP, hostname VARCHAR, region VARCHAR, datacenter VARCHAR, usage_user DOUBLE PRECISION, usage_system DOUBLE PRECISION, usage_idle DOUBLE PRECISION)",
@@ -321,4 +354,119 @@ async fn events_tsbs_pgwire_conformance() {
         "second high-cpu host"
     );
     eprintln!("✓ value-correctness: high-cpu = host_0(95), host_1(92)");
+
+    // ADR-040 P1 (TD-182): VALUE-correctness for the time-series shapes the ratchet
+    // only EXECUTES. Expected values hand-derived from the 8-row seed (host_0/us-east
+    // usage_user 25,35,95,40; host_1/us-west 50,92,60,70 at 00:00/00:10/00:20/01:00).
+    // Order-independent (rows sorted, normalized) — see TD-185 for the materialized
+    // ORDER BY quirk.
+    let row = |cols: &[&str]| cols.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+    // max_all: per-host maximum of each metric.
+    assert_eq!(
+        canon_rows(
+            &client,
+            "select hostname, max(usage_user), max(usage_system), max(usage_idle) from cpu group by hostname order by hostname"
+        )
+        .await,
+        vec![
+            row(&["host_0", "95", "20", "65"]),
+            row(&["host_1", "92", "35", "20"]),
+        ],
+        "max_all: per-host metric maxima"
+    );
+
+    // high_cpu_by_region: count of usage_user > 90 per region (one each).
+    assert_eq!(
+        canon_rows(
+            &client,
+            "select region, count(*) as n from cpu where usage_user > 90.0 group by region order by region"
+        )
+        .await,
+        vec![row(&["us-east", "1"]), row(&["us-west", "1"])],
+        "high_cpu_by_region: one >90 reading per region"
+    );
+
+    // region_having: avg(usage_user) per region, HAVING avg > 40 (both qualify).
+    assert_eq!(
+        canon_rows(
+            &client,
+            "select region, avg(usage_user) as au from cpu group by region having avg(usage_user) > 40.0 order by region"
+        )
+        .await,
+        vec![
+            row(&["us-east", "48.75"]),
+            row(&["us-west", "68"]),
+        ],
+        "region_having: us-east avg 48.75, us-west avg 68"
+    );
+
+    // last_point: window row_number() — the latest reading per host.
+    assert_eq!(
+        canon_rows(
+            &client,
+            "select hostname, usage_user from (select hostname, ts, usage_user, row_number() over (partition by hostname order by ts desc) as rn from cpu) t where rn = 1 order by hostname"
+        )
+        .await,
+        vec![row(&["host_0", "40"]), row(&["host_1", "70"])],
+        "last_point: latest usage_user per host (window row_number)"
+    );
+
+    // windowed_avg: moving average over (1 preceding, current) per host by ts.
+    assert_eq!(
+        canon_rows(
+            &client,
+            "select hostname, avg(usage_user) over (partition by hostname order by ts rows between 1 preceding and current row) as moving_avg from cpu"
+        )
+        .await,
+        vec![
+            row(&["host_0", "25"]),
+            row(&["host_0", "30"]),
+            row(&["host_0", "65"]),
+            row(&["host_0", "67.5"]),
+            row(&["host_1", "50"]),
+            row(&["host_1", "65"]),
+            row(&["host_1", "71"]),
+            row(&["host_1", "76"]),
+        ],
+        "windowed_avg: per-host moving average (1 preceding + current)"
+    );
+
+    // rate/delta (TD-182 P1c): the audit flagged time-series derivatives as wholly
+    // uncovered. `range` is a plain max-min aggregate; `lag_delta` is the period-over-
+    // period change via the LAG window (first row per host has no predecessor → NULL).
+    // Keyed by (hostname, usage_user) — usage values are distinct within a host — so
+    // the row-order quirk (TD-185) doesn't matter.
+    assert_eq!(
+        canon_rows(
+            &client,
+            "select hostname, max(usage_user) - min(usage_user) as rng from cpu group by hostname order by hostname"
+        )
+        .await,
+        vec![row(&["host_0", "70"]), row(&["host_1", "42"])],
+        "range: per-host max-min usage_user (host_0 95-25=70, host_1 92-50=42)"
+    );
+    // lag_delta KNOWN-BAD (TD-187): the LAG window currently evaluates to 0 (not the
+    // previous row's value, nor NULL for the first row), so `usage_user - lag(...)`
+    // returns usage_user unchanged. Pinned known-bad (ADR-040 pattern, cf. TD-185)
+    // so the fix auto-trips this; when LAG works, replace with the real deltas
+    // (host_0: NULL/10/-55/60, host_1: NULL/-32/10/42) and close TD-187.
+    assert_eq!(
+        canon_rows(
+            &client,
+            "select hostname, usage_user, usage_user - lag(usage_user) over (partition by hostname order by ts) as delta from cpu"
+        )
+        .await,
+        vec![
+            row(&["host_0", "25", "25"]),
+            row(&["host_0", "35", "35"]),
+            row(&["host_0", "40", "40"]),
+            row(&["host_0", "95", "95"]),
+            row(&["host_1", "50", "50"]),
+            row(&["host_1", "60", "60"]),
+            row(&["host_1", "70", "70"]),
+            row(&["host_1", "92", "92"]),
+        ],
+        "lag_delta (TD-187): LAG now returns the previous value — fix landed; replace with real deltas and close TD-187"
+    );
 }

@@ -364,3 +364,154 @@ fn test_large_k_search_returns_correct_count() {
 
     eprintln!("✅ Large k test passed - no hidden limits!");
 }
+
+/// Cold-read recall gate for TD-163 / TD-165.
+///
+/// `sst_block_serialization_roundtrip` above asserts recall only on `vec_0` — a
+/// trivial, well-separated corner case whose top-1 stays correct even when the cold
+/// SST read path misranks every other query. That weak assertion is exactly why a
+/// real cold-read ranking regression slipped through and TD-165 was marked Resolved
+/// prematurely (the runtime RCA showed post-restart top-1 jumping from `vec_0` to
+/// `vec_8` for a mid-range query, while `vec_0` alone still looked correct).
+///
+/// This test closes that gap. It uses well-separated, deterministic, seeded-random
+/// **unit** vectors so every inserted vector is its own unambiguous exact nearest
+/// neighbour (cosine ≈ 1.0 for self, ≈ 0 for the rest — no near-tie ambiguity), then
+/// measures recall@k on the **hot** path (memtable, pre-reopen) and the **cold**
+/// path (post-reopen, vector WAL freed by the shared `materialize_collection` helper
+/// → recall served from the SST segment). The gate is that cold recall must not
+/// regress hot recall — the precise failure mode of a broken cold read, and the one
+/// `free_wal=true` (TD-163) would expose if TD-165's fix were incomplete.
+#[test]
+fn cold_read_recall_survives_flush_and_reopen() {
+    use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+
+    // Deterministic splitmix64 PRNG (no `rand` dev-dep) → reproducible unit vectors.
+    fn next_u64(seed: &mut u64) -> u64 {
+        *seed = seed.wrapping_add(0x9E3779B97F4A7C15);
+        let mut z = *seed;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        z ^ (z >> 31)
+    }
+    fn unit_vec(seed: &mut u64, dim: usize) -> Vec<f32> {
+        let v: Vec<f64> = (0..dim)
+            .map(|_| {
+                let bits = next_u64(seed);
+                (bits as f64 / u64::MAX as f64) * 2.0 - 1.0
+            })
+            .collect();
+        let norm = v.iter().map(|x| x * x).sum::<f64>().sqrt().max(1e-12);
+        v.iter().map(|x| (x / norm) as f32).collect()
+    }
+    fn cosine(a: &[f32], b: &[f32]) -> f32 {
+        a.iter()
+            .zip(b)
+            .map(|(x, y)| (*x as f64) * (*y as f64))
+            .sum::<f64>() as f32
+    }
+    // recall@k + exact-self-match-top-1 check over a spread of query vectors.
+    fn recall_at_k(
+        db: &EmbeddedProximaDB,
+        vectors: &[Vec<f32>],
+        query_idxs: &[usize],
+        truth: &[Vec<usize>],
+        top_k: usize,
+    ) -> f32 {
+        let mut sum = 0f32;
+        for (qi, &q) in query_idxs.iter().enumerate() {
+            let res = db
+                .search("cold_recall", vectors[q].clone(), top_k, None)
+                .expect("search");
+            // Well-separated ⇒ the exact self-match must be top-1 (cosine 1.0).
+            assert_eq!(
+                res.first().map(|r| r.id.as_str()).unwrap_or(""),
+                format!("v{q}"),
+                "query v{q}: exact self-match is not top-1 (got {:?})",
+                res.first().map(|r| r.id.clone())
+            );
+            let returned: std::collections::HashSet<String> =
+                res.iter().map(|r| r.id.clone()).collect();
+            let hits = truth[qi]
+                .iter()
+                .filter(|i| returned.contains(&format!("v{i}")))
+                .count();
+            sum += hits as f32 / top_k as f32;
+        }
+        sum / query_idxs.len() as f32
+    }
+
+    let dim = 64usize;
+    let n = 1000usize;
+    let top_k = 10usize;
+
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let data_path = temp_dir.path().join("data");
+    std::fs::create_dir_all(&data_path).expect("create data dir");
+
+    let mut seed: u64 = 0xC0FFEE_1234_5678;
+    let vectors: Vec<Vec<f32>> = (0..n).map(|_| unit_vec(&mut seed, dim)).collect();
+
+    let mut config = EmbeddedConfig::for_low_memory(data_path.to_string_lossy().to_string());
+    config.enable_wal = true;
+    let db = EmbeddedProximaDB::new(config).expect("create db");
+    db.create_collection("cold_recall", dim as u32, Some("sst"))
+        .expect("create collection");
+
+    // Insert in batches (~500/block → multiple SST blocks, exercises block boundaries).
+    let batch = 500usize;
+    let mut global = 0usize;
+    while global < n {
+        let end = (global + batch).min(n);
+        let ids: Vec<String> = (global..end).map(|i| format!("v{i}")).collect();
+        let vecs: Vec<Vec<f32>> = vectors[global..end].to_vec();
+        db.insert("cold_recall", ids, vecs, None)
+            .expect("insert batch");
+        global = end;
+    }
+    db.flush()
+        .expect("flush — materialize_collection frees the vector WAL (free_wal=true)");
+
+    // Brute-force ground-truth top-k by cosine for a spread of query vectors.
+    let query_idxs: Vec<usize> = vec![0, 200, 500, 799, 999];
+    let truth: Vec<Vec<usize>> = query_idxs
+        .iter()
+        .map(|&q| {
+            let mut ranked: Vec<(usize, f32)> = (0..n)
+                .map(|i| (i, cosine(&vectors[q], &vectors[i])))
+                .collect();
+            ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            ranked.iter().take(top_k).map(|(i, _)| *i).collect()
+        })
+        .collect();
+
+    let hot_recall = recall_at_k(&db, &vectors, &query_idxs, &truth, top_k);
+    eprintln!("📊 hot (memtable) recall@{top_k} = {hot_recall:.3}");
+    drop(db);
+
+    // Reopen: the vector WAL was freed on flush, so recall is now served from the
+    // cold SST read path — the path TD-165 fixed and TD-163 (free_wal=true) relies on.
+    let mut reopen = EmbeddedConfig::for_low_memory(data_path.to_string_lossy().to_string());
+    reopen.enable_wal = true;
+    let reopened = EmbeddedProximaDB::new(reopen).expect("reopen db");
+    let cold_recall = recall_at_k(&reopened, &vectors, &query_idxs, &truth, top_k);
+    eprintln!("📊 cold (SST, post-reopen) recall@{top_k} = {cold_recall:.3}");
+
+    // The cold path must not regress the hot path — this is the gate that catches a
+    // broken cold read (hot correct, cold wrong), the TD-165 failure mode.
+    assert!(
+        cold_recall + 0.05 >= hot_recall,
+        "cold recall ({cold_recall:.3}) regressed hot recall ({hot_recall:.3}) — \
+         the SST cold-read path is misranking"
+    );
+    // Absolute floor: well-separated unit vectors ⇒ recall must be high on both paths.
+    let floor = 0.80f32;
+    assert!(
+        cold_recall >= floor,
+        "cold recall@{top_k} = {cold_recall:.3} below floor {floor}"
+    );
+
+    eprintln!(
+        "✅ Cold-read recall survives flush+reopen (hot={hot_recall:.3}, cold={cold_recall:.3})"
+    );
+}

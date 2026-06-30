@@ -84,6 +84,19 @@ lazy_static! {
         "Embedding units (Kilo-Embedding-Units, KEU, Dimension 5) per tenant by provider, model, and operation",
         &["tenant_id", "provider", "model", "operation"]
     );
+    /// Bytes written to object storage per tenant **by access tier** — write-time
+    /// visibility into the cold-tier cost lever (ADR-036/TD-173; TD-168 graph cold
+    /// payloads). `tier` is the canonical name (`hot`/`cool`/`cold`/`archive`),
+    /// known at the `put_with_tier` call site. This is a *written-bytes* counter,
+    /// distinct from the periodic *resident-bytes* `STORAGE_BYTES_SECONDS` gauge
+    /// (whose Cool-vs-Hot split needs collection-level tier metadata — a separate
+    /// metering change). Neutral telemetry; the per-tier $ weight is control-plane
+    /// (anvaiops) policy.
+    pub static ref OBJECT_STORE_WRITE_BYTES_BY_TIER: CounterVec = registered_counter_vec(
+        "proximadb_object_store_write_bytes_by_tier_total",
+        "Bytes written to object storage per tenant by access tier (write-time; the cold-tier cost lever)",
+        &["tenant_id", "tier"]
+    );
 }
 
 /// Cloud provider hosting the object store — the multi-cloud axis for egress
@@ -561,12 +574,91 @@ pub fn record_storage_bytes(tenant_id: Option<&str>, storage_type: &str, bytes: 
         .set(bytes);
 }
 
+/// ADR-030 **KSU**: snapshot per-tenant *resident* storage bytes from the live
+/// collection set and `.set()` the `STORAGE_BYTES_SECONDS` **level** gauge
+/// (Prometheus integrates the level to byte-seconds downstream — KSU is an
+/// accrual, not a per-flush byte count, so this is a periodic snapshot rather
+/// than a write-path event). Groups collections by owner (tenant) and sums
+/// `stats.data_size_bytes`; an absent/empty owner is attributed to `"default"`
+/// (fail-closed, never dropped). Pure aggregation + the gauge set — the caller
+/// drives it on an interval (the storage-snapshot daemon in `database.rs`).
+pub fn record_storage_snapshot(
+    collections: &[crate::proto::proximadb_v1::Collection],
+) -> Vec<TenantStorageUsage> {
+    let usage = aggregate_tenant_storage(collections);
+    for u in &usage {
+        record_storage_bytes(Some(&u.tenant_id), "sst", u.resident_bytes as f64);
+    }
+    usage
+}
+
+/// One tenant's aggregated **resident** storage at snapshot time — the unit the
+/// durable per-tenant `_metering` writer (TD-161) persists and the OTLP push
+/// emitter ships. Serializable so it is the on-disk record shape under
+/// `DrResolvedPath::metering_subprefix()`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TenantStorageUsage {
+    pub tenant_id: String,
+    pub resident_bytes: u64,
+}
+
+/// Pure aggregation backing [`record_storage_snapshot`]: sum
+/// `stats.data_size_bytes` per owning tenant across the live collection set.
+/// An absent/empty `config.owner` is attributed to `"default"` (fail-closed,
+/// never dropped — KSU must account for every resident byte). No side effects:
+/// callers drive the Prometheus level gauge ([`record_storage_snapshot`]) and/or
+/// the durable metering sink (TD-161) from the returned rows. Ordered by
+/// `tenant_id` (`BTreeMap`) so the persisted record + tests are deterministic.
+pub fn aggregate_tenant_storage(
+    collections: &[crate::proto::proximadb_v1::Collection],
+) -> Vec<TenantStorageUsage> {
+    use std::collections::BTreeMap;
+    let mut by_tenant: BTreeMap<&str, u64> = BTreeMap::new();
+    for c in collections {
+        let tenant = c
+            .config
+            .as_ref()
+            .and_then(|cfg| cfg.owner.as_deref())
+            .filter(|o| !o.is_empty())
+            .unwrap_or("default");
+        let bytes = c.stats.as_ref().map_or(0i64, |s| s.data_size_bytes).max(0) as u64;
+        *by_tenant.entry(tenant).or_insert(0) += bytes;
+    }
+    by_tenant
+        .into_iter()
+        .map(|(tenant_id, resident_bytes)| TenantStorageUsage {
+            tenant_id: tenant_id.to_string(),
+            resident_bytes,
+        })
+        .collect()
+}
+
 /// Helper to record compute execution time.
 pub fn record_task_execution_time(tenant_id: Option<&str>, engine: &str, duration_ms: f64) {
     let t_id = tenant_id.unwrap_or("default");
     TASK_EXECUTION_TIME_MS
         .with_label_values(&[t_id, engine])
         .inc_by(duration_ms);
+}
+
+/// ADR-030: install the always-on **billing** observer on the per-query I/O trace.
+///
+/// At each query's trace flush this reads the *same* `IoTraceSnapshot` the perf
+/// observers read and emits the per-tenant **KRU** read-compute meter from the
+/// snapshot's per-engine `compute_ms` map — closing the verified-unwired
+/// `record_task_execution_time` gap. Always-on (never behind the perf `io-trace`
+/// feature gate; ADR-027 non-entanglement). Called once at startup, after the
+/// route-cost observer. Idempotent / replaceable in tests.
+pub fn install_billing_observer() {
+    crate::observability::io_trace::set_billing_observer(Some(Box::new(|snap, tenant_id| {
+        // KRU (read-compute): per-(tenant, engine), straight from the engine-keyed
+        // compute_ms map — no extra attribution needed.
+        for (engine, ms) in &snap.compute_ms {
+            if *ms > 0 {
+                record_task_execution_time(tenant_id, engine, *ms as f64);
+            }
+        }
+    })));
 }
 
 /// Record outgress bytes for one tenant — the single convergent **KOU** meter
@@ -583,6 +675,24 @@ pub fn record_task_execution_time(tenant_id: Option<&str>, engine: &str, duratio
 ///
 /// Free-path bytes are metered (for visibility) but deliberately do NOT enter the
 /// cost model, so the egress cost term stays inert on the free path.
+/// Record `bytes` written to object storage for one tenant at access `tier` — the
+/// write-time half of the cold-tier cost lever (TD-168/TD-173). `tier` is the
+/// canonical name from `ObjectAccessTier::as_str` (`hot`/`cool`/`cold`/`archive`).
+/// Empty `tenant_id` is attributed to `default` (single-tenant). No-ops on zero.
+pub fn record_object_store_write_bytes_by_tier(tenant_id: &str, tier: &str, bytes: u64) {
+    if bytes == 0 {
+        return;
+    }
+    let t_id = if tenant_id.is_empty() {
+        "default"
+    } else {
+        tenant_id
+    };
+    OBJECT_STORE_WRITE_BYTES_BY_TIER
+        .with_label_values(&[t_id, tier])
+        .inc_by(bytes as f64);
+}
+
 pub fn record_kou_bytes(
     tenant_id: Option<&str>,
     locality: KouLocality,
@@ -660,6 +770,52 @@ pub fn record_cache_tenant_stats(cache: &str, stats: &[proximadb_cache::TenantCa
 mod tests {
     use super::*;
     use crate::observability::io_trace;
+
+    /// ADR-030 KSU: the storage snapshot groups collections by owner (tenant) and
+    /// sets the per-tenant resident-bytes level gauge; absent owner → "default".
+    #[test]
+    fn storage_snapshot_groups_by_tenant_and_sets_gauge() {
+        use crate::proto::proximadb_v1::{Collection, CollectionConfig, CollectionStats};
+        let mk = |owner: Option<&str>, bytes: i64| Collection {
+            config: Some(CollectionConfig {
+                owner: owner.map(str::to_string),
+                ..Default::default()
+            }),
+            stats: Some(CollectionStats {
+                data_size_bytes: bytes,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        // Unique tenant labels so the global gauge assertion is isolated.
+        let cols = vec![
+            mk(Some("ksu_acme"), 100),
+            mk(Some("ksu_acme"), 200),
+            mk(Some("ksu_globex"), 50),
+            mk(None, 7), // unowned → "ksu_default" bucket is "default"
+        ];
+        record_storage_snapshot(&cols);
+        assert_eq!(
+            STORAGE_BYTES_SECONDS
+                .with_label_values(&["ksu_acme", "sst"])
+                .get(),
+            300.0,
+            "acme's two collections must sum"
+        );
+        assert_eq!(
+            STORAGE_BYTES_SECONDS
+                .with_label_values(&["ksu_globex", "sst"])
+                .get(),
+            50.0
+        );
+        assert_eq!(
+            STORAGE_BYTES_SECONDS
+                .with_label_values(&["default", "sst"])
+                .get(),
+            7.0,
+            "unowned bytes attributed to default (fail-closed)"
+        );
+    }
 
     #[test]
     fn provider_inferred_from_url_scheme() {

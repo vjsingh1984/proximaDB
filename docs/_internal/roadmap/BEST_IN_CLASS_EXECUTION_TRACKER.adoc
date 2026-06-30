@@ -17,7 +17,7 @@ reconciliation is recorded in link:./RECONCILIATION_2026_06_24.adoc[RECONCILIATI
 ====
 
 [.lead]
-Operational execution tracker for closing foundation gaps and achieving best-in-class product quality (UX, robustness, and product-market fit).
+Operational execution tracker for closing foundation gaps and achieving best-in-class product quality.
 
 [IMPORTANT]
 ====
@@ -117,11 +117,6 @@ Primary objective:
 | Not Started
 | 5-minute quickstart validated in CI; canonical examples for core use cases. *2026-06-24:* SDK breadth grew (Python/Rust/Go + JVM/Node embedded; TD-005/126 spec-driven codegen) but no CI-validated quickstart yet.
 
-| WS-7
-| PMF Layer (ICP-Focused Packaging)
-| Clear differentiation for target customer segments.
-| Not Started
-| Two reference architectures with measurable outcomes and adoption feedback loop. *2026-06-24:* ibkrtrading dogfood evidence still open (TD-030).
 |===
 
 == Milestone Gates

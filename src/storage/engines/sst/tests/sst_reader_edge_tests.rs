@@ -4,10 +4,9 @@
 
 #[cfg(test)]
 mod edge_tests {
-    use crate::compute::distance_computation::DistanceMetric;
     use crate::core::bloom::BloomFilterConfig;
     use crate::core::config::SstConfig;
-    use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
+    use crate::core::search::SearchParams;
     use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
     use crate::storage::engines::sst::readers::sst_query_engine::{
         CollectionContext, ReaderConfig, UnifiedSstableReader,
@@ -15,6 +14,8 @@ mod edge_tests {
     use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use chrono::Utc;
+    use proximadb_distance_kernel::DistanceMetric;
+    use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Arc;

@@ -12,12 +12,15 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::core::search::cross_modal_fusion::{FusionPolicy, FusionStats};
+use crate::core::search::fusion_route::RoutePolicy;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::openapi::ErrorResponse;
 use crate::network::rest::v1::handlers::AppState;
 use crate::security::rbac_service::UnifiedUserContext;
-use crate::services::fusion_service::{GraphFusionParams, GraphGrain};
+use crate::services::fusion_service::{
+    DocumentFusionSpec, FusionOidKey, GraphFusionParams, GraphGrain,
+};
 
 fn default_limit() -> usize {
     10
@@ -54,6 +57,19 @@ pub struct FusionSearchRequest {
     pub consensus_beta: Option<f32>,
     /// Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.
     pub grain: Option<String>,
+    /// Cost-routing policy inputs (TD-141): drop negligible modalities (weight fraction) and budget each.
+    /// When absent, fusion is unbounded.
+    pub min_weight_fraction: Option<f32>,
+    pub total_budget: Option<usize>,
+    /// Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also searches the
+    /// collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
+    /// (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
+    pub text_query: Option<String>,
+    /// Collection whose document index to BM25-search. Defaults to `vector_collection` (documents
+    /// co-indexed with the vectors share the record `oid`, so they merge by `oid`).
+    pub document_collection: Option<String>,
+    /// Document modality weight (mirrors `vector_weight` / `graph_weight`). Defaults to 1.0.
+    pub document_weight: Option<f32>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -61,6 +77,12 @@ pub struct FusionHit {
     pub oid: String,
     pub score: f32,
     pub source_count: usize,
+    /// Graph node label(s) of the reached node. Exposed so cross-modal-joint
+    /// consumers can correlate a fused hit by its graph label without a separate
+    /// node lookup (#485). The expansion already reaches the node, so this is
+    /// near-free to fill. Additive + back-compat (empty until populated).
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -162,21 +184,56 @@ pub async fn fusion_search_v2(
             _ => GraphGrain::Nodes,
         },
         principal: user_context.as_ref().map(|ctx| ctx.user_id.clone()),
+        route_policy: match (request.min_weight_fraction, request.total_budget) {
+            (Some(frac), Some(budget)) => Some(RoutePolicy {
+                min_weight_fraction: frac,
+                total_budget: budget,
+            }),
+            (Some(frac), None) => Some(RoutePolicy {
+                min_weight_fraction: frac,
+                total_budget: usize::MAX,
+            }),
+            (None, Some(budget)) => Some(RoutePolicy {
+                min_weight_fraction: 0.0,
+                total_budget: budget,
+            }),
+            (None, None) => None,
+        },
         policy,
+        oid_key: FusionOidKey::Canonical,
+        // TD-138 document modality: enable iff a non-empty `text_query` was supplied. Built from the
+        // request fields; the shared service's DocumentExpander runs the BM25 search.
+        document: request
+            .text_query
+            .as_ref()
+            .filter(|t| !t.trim().is_empty())
+            .map(|t| DocumentFusionSpec {
+                text_query: t.clone(),
+                collection: request.document_collection.clone(),
+                weight: request.document_weight.unwrap_or(1.0),
+                k: None,
+            }),
     };
 
-    let (items, stats) = service
-        .graph_fusion_search(params)
+    let (items, stats, node_labels) = service
+        .graph_fusion_search_with_labels(params)
         .await
         .map_err(|error| ApiError::Internal(format!("fusion search failed: {error}")))?;
 
     Ok(Json(FusionSearchResponse {
         results: items
             .into_iter()
-            .map(|item| FusionHit {
-                oid: item.oid,
-                score: item.score,
-                source_count: item.source_count,
+            .map(|item| {
+                // #485: the reached node's graph label(s), joined post-fuse by the fusion service
+                // (FusedItem stays modality-pure), so cross-modal-joint consumers read the label
+                // per fused hit without a separate node lookup. Empty for vector-only/edge hits.
+                let labels = node_labels.get(&item.oid).cloned().unwrap_or_default();
+                FusionHit {
+                    oid: item.oid,
+                    score: item.score,
+                    source_count: item.source_count,
+                    labels,
+                }
             })
             .collect(),
         stats: stats.into(),

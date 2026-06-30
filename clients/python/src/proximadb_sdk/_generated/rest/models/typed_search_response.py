@@ -12,6 +12,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.predicate_shortfall_wire import PredicateShortfallWire
     from ..models.typed_search_result import TypedSearchResult
 
 
@@ -30,6 +31,7 @@ class TypedSearchResponse:
             Only emitted when the request sets `debug=true` — gives an on-call
             operator a one-glance view of the plan, cache result, and any
             actionable hints (high scan fraction, repair triggered, ...).
+        predicate_shortfall (Union['PredicateShortfallWire', None, Unset]):
         search_plan_trace (Union[Unset, Any]): SearchPlanTrace (LLD §10) — the per-query telemetry envelope that
             upstream gateways consume for metering and planner-v2 training.
             Phase 0 emits a stub trace populated from request_id + latency; later
@@ -42,11 +44,13 @@ class TypedSearchResponse:
     request_id: str
     results: list["TypedSearchResult"]
     explain: Union[Unset, Any] = UNSET
+    predicate_shortfall: Union["PredicateShortfallWire", None, Unset] = UNSET
     search_plan_trace: Union[Unset, Any] = UNSET
     total_matches: Union[None, Unset, int] = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.predicate_shortfall_wire import PredicateShortfallWire
         from ..models.typed_search_result import TypedSearchResult
 
         latency_ms = self.latency_ms
@@ -59,6 +63,14 @@ class TypedSearchResponse:
             results.append(results_item)
 
         explain = self.explain
+
+        predicate_shortfall: Union[None, Unset, dict[str, Any]]
+        if isinstance(self.predicate_shortfall, Unset):
+            predicate_shortfall = UNSET
+        elif isinstance(self.predicate_shortfall, PredicateShortfallWire):
+            predicate_shortfall = self.predicate_shortfall.to_dict()
+        else:
+            predicate_shortfall = self.predicate_shortfall
 
         search_plan_trace = self.search_plan_trace
 
@@ -79,6 +91,8 @@ class TypedSearchResponse:
         )
         if explain is not UNSET:
             field_dict["explain"] = explain
+        if predicate_shortfall is not UNSET:
+            field_dict["predicate_shortfall"] = predicate_shortfall
         if search_plan_trace is not UNSET:
             field_dict["search_plan_trace"] = search_plan_trace
         if total_matches is not UNSET:
@@ -88,6 +102,7 @@ class TypedSearchResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.predicate_shortfall_wire import PredicateShortfallWire
         from ..models.typed_search_result import TypedSearchResult
 
         d = dict(src_dict)
@@ -103,6 +118,27 @@ class TypedSearchResponse:
             results.append(results_item)
 
         explain = d.pop("explain", UNSET)
+
+        def _parse_predicate_shortfall(
+            data: object,
+        ) -> Union["PredicateShortfallWire", None, Unset]:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                predicate_shortfall_type_1 = PredicateShortfallWire.from_dict(data)
+
+                return predicate_shortfall_type_1
+            except:  # noqa: E722
+                pass
+            return cast(Union["PredicateShortfallWire", None, Unset], data)
+
+        predicate_shortfall = _parse_predicate_shortfall(
+            d.pop("predicate_shortfall", UNSET)
+        )
 
         search_plan_trace = d.pop("search_plan_trace", UNSET)
 
@@ -120,6 +156,7 @@ class TypedSearchResponse:
             request_id=request_id,
             results=results,
             explain=explain,
+            predicate_shortfall=predicate_shortfall,
             search_plan_trace=search_plan_trace,
             total_matches=total_matches,
         )

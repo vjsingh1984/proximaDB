@@ -552,6 +552,7 @@ mod tests {
         let ops = vec![SchemaEvolutionOp::AddColumn {
             column: ProximaColumn {
                 id: 0, // Will be assigned
+                object_id: None,
                 name: "category".to_string(),
                 data_type: ProximaType::String,
                 nullable: true,
@@ -582,6 +583,7 @@ mod tests {
         let ops = vec![SchemaEvolutionOp::AddColumn {
             column: ProximaColumn {
                 id: 0,
+                object_id: None,
                 name: "required_field".to_string(),
                 data_type: ProximaType::String,
                 nullable: false,

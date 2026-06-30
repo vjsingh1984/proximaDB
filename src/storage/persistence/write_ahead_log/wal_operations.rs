@@ -102,6 +102,35 @@ pub fn canonical_replay_scope_enabled() -> bool {
     std::env::var("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE").as_deref() == Ok("1")
 }
 
+/// TD-066 (c) Part 2 — canonical-store recovery re-population (default OFF).
+/// Graph recovery replays the engine WAL into the in-memory engine only; the
+/// canonical/cold record store (a write-time projection, and a *buffered* one for
+/// `ColdGraphSegmentStore`) is NOT rebuilt — an unflushed buffer is lost on crash.
+/// When enabled, recovery re-drives every recovered node/edge through the
+/// canonical store (idempotent upsert) so the cold store is rebuilt from the
+/// authoritative recovered state — closing the data-loss path that blocks wiring
+/// `ColdGraphSegmentStore` to production. Aligns graph durability to ADR-020
+/// (canonical store rebuildable from recovery). Flip fleet-wide after baking.
+pub fn canonical_recovery_repopulate_enabled() -> bool {
+    std::env::var("PROXIMADB_GRAPH_CANONICAL_RECOVERY").as_deref() == Ok("1")
+}
+
+/// Parse the segment index out of a `wal_{:08}.log` segment filename. Accepts
+/// either a bare filename or a full path (takes the last path component).
+/// Returns `None` for anything that isn't a WAL segment file.
+///
+/// TD-066 (d): segment discovery (writer resume, reader replay, and LSN-bounded
+/// truncation) keys off this so the three paths agree on which files are
+/// segments and what their indices are — the basis for surviving a
+/// non-contiguous (post-truncation) segment layout.
+fn parse_wal_segment_index(name: &str) -> Option<u32> {
+    let file = name.rsplit('/').next()?;
+    file.strip_prefix("wal_")?
+        .strip_suffix(".log")?
+        .parse::<u32>()
+        .ok()
+}
+
 /// Time-series operations for WAL
 //
 // `InsertRecord` carries a full ProximaRecord; the other variants are
@@ -428,17 +457,29 @@ impl UnifiedWALWriter {
         let fs = filesystem.get_filesystem(&base_url)?;
         fs.create_dir_all(&base_url).await?;
 
-        // Discover existing WAL files to resume from max sequence number
+        // Discover existing WAL files to resume from max sequence number and
+        // the highest existing segment index.
         let mut max_seq: u64 = 0;
         let mut segment_count: u64 = 0;
+        // TD-066 (d): track the HIGHEST existing segment index, not just the
+        // count. After an LSN-bounded prefix truncation the surviving segments
+        // are non-contiguous (e.g. [3, 4]); resuming from `count` (= 2) would
+        // make the next rotation reopen and clobber a kept segment. `max + 1`
+        // is collision-free for both the contiguous and post-truncation layouts.
+        let mut max_segment_index: Option<u32> = None;
         if let Ok(files) = fs.list(&base_url).await {
             for file_info in &files {
-                // WAL filenames: wal_YYYYMMDD_HHMMSS_{min_seq}_{max_seq}_{uuid}.{ext}
                 if let Some(name) = file_info.name.split('/').next_back()
                     && name.starts_with("wal_")
                 {
                     segment_count += 1;
-                    // Extract max sequence from filename (field 3, 0-indexed)
+                    // Resume the segment index from the `wal_{:08}.log` layout
+                    // actually written by `open_new_segment`.
+                    if let Some(idx) = parse_wal_segment_index(name) {
+                        max_segment_index = Some(max_segment_index.map_or(idx, |cur| cur.max(idx)));
+                    }
+                    // Legacy `wal_YYYYMMDD_HHMMSS_{min_seq}_{max_seq}_{uuid}`
+                    // layout: extract max sequence (field 3, 0-indexed).
                     let parts: Vec<&str> = name.split('_').collect();
                     if parts.len() >= 4
                         && let Ok(seq) = parts[3].parse::<u64>()
@@ -449,10 +490,14 @@ impl UnifiedWALWriter {
             }
         }
 
-        if max_seq > 0 {
+        // Next segment to open: one past the highest existing index (0 when fresh).
+        let segment_counter = max_segment_index.map_or(0, |idx| idx + 1);
+
+        if segment_count > 0 {
             tracing::info!(
-                "WAL recovery: found {} segments, resuming from sequence {}",
+                "WAL recovery: found {} segments (next index {}), resuming from sequence {}",
                 segment_count,
+                segment_counter,
                 max_seq
             );
         } else {
@@ -466,7 +511,7 @@ impl UnifiedWALWriter {
             current_segment_path: None,
             current_segment_data: Vec::new(),
             max_segment_size: 64 * 1024 * 1024, // 64MB segments
-            segment_counter: segment_count as u32,
+            segment_counter,
         })
     }
 
@@ -577,6 +622,97 @@ impl UnifiedWALWriter {
         // Flush any pending data to disk
         self.flush_current_segment().await?;
         Ok(())
+    }
+
+    /// TD-066 (d): reclaim WAL segments fully covered by a durable canonical
+    /// snapshot. Deletes every whole segment whose frames all precede the
+    /// `CanonicalEmission(lsn)` marker; KEEPS the marker's own segment and all
+    /// later segments (they carry the marker that `replay_wal` searches for plus
+    /// every post-checkpoint frame). Returns the number of segments reclaimed.
+    ///
+    /// Crash-safe by construction:
+    ///  * Callers MUST invoke this only AFTER the snapshot at `lsn` is durable
+    ///    (see `GraphOperationsService::flush_wal`), so every deleted frame is
+    ///    already covered by a durable snapshot — a crash after this point still
+    ///    recovers `snapshot + surviving post-marker frames`.
+    ///  * Segments are deleted LOWEST-index first, so a crash mid-truncation
+    ///    always leaves a contiguous suffix `[k..=N]` with the marker segment
+    ///    intact — recovery still finds the marker and replays only post-marker
+    ///    frames. Each segment is one file and `delete` is atomic, so there is
+    ///    no torn-segment state.
+    ///
+    /// No-op (returns 0) when the marker for `lsn` isn't found, so a stale or
+    /// not-yet-written checkpoint can never delete live frames.
+    pub async fn truncate_through_canonical_marker(&mut self, lsn: u64) -> anyhow::Result<u64> {
+        // Ensure the marker frame itself (appended just before the snapshot) is
+        // durable on disk before we scan for it or delete anything.
+        self.flush().await?;
+
+        let base_url = if self.base_path.contains("://") {
+            self.base_path.clone()
+        } else {
+            format!("file://{}", self.base_path)
+        };
+        let fs = self.filesystem.get_filesystem(&base_url)?;
+
+        // Enumerate surviving segments in ascending index order.
+        let mut indices: Vec<u32> = Vec::new();
+        if let Ok(files) = fs.list(&base_url).await {
+            for file_info in &files {
+                if let Some(idx) = parse_wal_segment_index(&file_info.name) {
+                    indices.push(idx);
+                }
+            }
+        }
+        indices.sort_unstable();
+
+        // Find the segment that contains `CanonicalEmission(lsn)`. There is at
+        // most one such marker (one per checkpoint), so any scan order is
+        // correct; ascending keeps it simple and the lower segments are read
+        // exactly once before they are deleted.
+        let reader = UnifiedWALReader::new(self.base_path.clone()).await?;
+        let mut marker_segment: Option<u32> = None;
+        for &seg in &indices {
+            let entries = reader.read_segment(seg).await?;
+            let has_marker = entries.iter().any(|entry| {
+                matches!(
+                    &entry.operation,
+                    UnifiedWALOperation::GraphMarker(MarkerKind::CanonicalEmission(marker_lsn))
+                        if *marker_lsn == lsn
+                )
+            });
+            if has_marker {
+                marker_segment = Some(seg);
+                break;
+            }
+        }
+
+        let Some(marker_segment) = marker_segment else {
+            tracing::debug!(
+                lsn,
+                "TD-066 (d): no CanonicalEmission marker found; WAL truncation skipped"
+            );
+            return Ok(0);
+        };
+
+        // Delete every segment strictly below the marker's segment, lowest
+        // first. The marker's segment and everything above it are kept.
+        let mut reclaimed = 0u64;
+        for seg in indices.into_iter().filter(|&s| s < marker_segment) {
+            let url = format!("file://{}/wal_{:08}.log", self.base_path, seg);
+            fs.delete(&url).await?;
+            reclaimed += 1;
+            tracing::debug!(segment = seg, lsn, "TD-066 (d): reclaimed WAL segment");
+        }
+
+        Ok(reclaimed)
+    }
+
+    /// Lower the per-segment size cap so tests can force segment rotation
+    /// without writing 64 MB of data.
+    #[cfg(test)]
+    pub fn set_max_segment_size_for_test(&mut self, bytes: usize) {
+        self.max_segment_size = bytes;
     }
 }
 
@@ -699,18 +835,39 @@ impl UnifiedWALReader {
     /// Read all WAL entries for recovery
     pub async fn read_all(&self) -> anyhow::Result<Vec<UnifiedWALEntry>> {
         let mut all_entries = Vec::new();
-        let mut segment = 0;
 
-        tracing::debug!("WAL reader starting to read from path: {}", self.base_path);
+        // TD-066 (d): enumerate segments by listing the directory and reading
+        // them in ascending index order, tolerating a missing LOW prefix. The
+        // old `0, 1, 2… break-on-empty` scan assumed segments are contiguous
+        // from 0; after an LSN-bounded prefix truncation the surviving segments
+        // start at S > 0, and that scan would stop at segment 0's gap and
+        // silently drop every surviving (post-checkpoint) frame.
+        let base_url = if self.base_path.contains("://") {
+            self.base_path.clone()
+        } else {
+            format!("file://{}", self.base_path)
+        };
+        let fs = self.filesystem.get_filesystem(&base_url)?;
+        let mut indices: Vec<u32> = Vec::new();
+        if let Ok(files) = fs.list(&base_url).await {
+            for file_info in &files {
+                if let Some(idx) = parse_wal_segment_index(&file_info.name) {
+                    indices.push(idx);
+                }
+            }
+        }
+        indices.sort_unstable();
 
-        loop {
+        tracing::debug!(
+            "WAL reader reading {} segments from path: {}",
+            indices.len(),
+            self.base_path
+        );
+
+        for segment in indices {
             let entries = self.read_segment(segment).await?;
             tracing::debug!("Read segment {}: {} entries", segment, entries.len());
-            if entries.is_empty() {
-                break;
-            }
             all_entries.extend(entries);
-            segment += 1;
         }
 
         tracing::debug!("WAL reader total entries read: {}", all_entries.len());
@@ -824,6 +981,257 @@ mod tests {
             bincode::deserialize(&encoded).expect("deserialize wal entry");
 
         assert!(decoded.verify_checksum());
+    }
+
+    // ----- TD-066 (d): WAL truncation + non-contiguous-segment recovery -----
+
+    fn node_op(graph: &str, id: &str) -> UnifiedWALOperation {
+        UnifiedWALOperation::GraphOp(GraphOperation::CreateNode {
+            graph_id: graph.to_string(),
+            node: Node {
+                id: id.to_string(),
+                labels: vec!["N".to_string()],
+                properties: Default::default(),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        })
+    }
+
+    fn seqs(entries: &[UnifiedWALEntry]) -> Vec<u64> {
+        entries.iter().map(|e| e.sequence_number).collect()
+    }
+
+    /// Actual on-disk segment indices, ascending. Under a tiny test segment cap
+    /// the first append can exceed the cap and rotate before segment 0 is ever
+    /// opened, so segments are NOT guaranteed dense-from-zero — tests must read
+    /// the real layout rather than assume it.
+    fn list_segment_files(path: &str) -> Vec<u32> {
+        let mut v: Vec<u32> = std::fs::read_dir(path)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().into_string().ok()?;
+                name.strip_prefix("wal_")?
+                    .strip_suffix(".log")?
+                    .parse::<u32>()
+                    .ok()
+            })
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Write enough rotating segments to place a `CanonicalEmission` marker in a
+    /// known non-zero segment, then truncate. The segments below the marker must
+    /// be reclaimed, and recovery must return exactly the post-marker frames
+    /// (crash-after-truncate). This is the core size-bounding + no-loss proof.
+    #[tokio::test]
+    async fn truncate_reclaims_prefix_and_recovery_reads_post_marker() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().to_str().unwrap().to_string();
+
+        let mut writer = UnifiedWALWriter::new(path.clone()).await.unwrap();
+        // Tiny cap → roughly one entry per segment.
+        writer.set_max_segment_size_for_test(64);
+
+        for id in ["a", "b", "c"] {
+            writer.append(node_op("g", id)).await.unwrap();
+        }
+        writer
+            .append(UnifiedWALOperation::GraphMarker(
+                MarkerKind::CanonicalEmission(100),
+            ))
+            .await
+            .unwrap();
+        for id in ["d", "e"] {
+            writer.append(node_op("g", id)).await.unwrap();
+        }
+        writer.flush().await.unwrap();
+
+        // Locate the marker's segment and compute the expected survivors
+        // (everything from the marker's segment onward).
+        let reader = UnifiedWALReader::new(path.clone()).await.unwrap();
+        let mut marker_segment = None;
+        let mut seg = 0u32;
+        let mut expected_after: Vec<UnifiedWALEntry> = Vec::new();
+        // Read a generous range; missing segments just yield empty.
+        for s in 0..32u32 {
+            let entries = reader.read_segment(s).await.unwrap();
+            if entries.iter().any(|e| {
+                matches!(
+                    &e.operation,
+                    UnifiedWALOperation::GraphMarker(MarkerKind::CanonicalEmission(100))
+                )
+            }) {
+                marker_segment = Some(s);
+            }
+            if marker_segment.is_some() {
+                expected_after.extend(entries);
+            }
+            seg = s;
+        }
+        let _ = seg;
+        let marker_segment = marker_segment.expect("marker must land in some segment");
+        // Count the segments that actually exist below the marker's segment
+        // (the layout is not dense-from-zero under the tiny test cap).
+        let expected_reclaim = list_segment_files(&path)
+            .into_iter()
+            .filter(|&s| s < marker_segment)
+            .count() as u64;
+        assert!(
+            expected_reclaim > 0,
+            "test needs segments below the marker to exercise prefix deletion"
+        );
+
+        let reclaimed = writer.truncate_through_canonical_marker(100).await.unwrap();
+        assert_eq!(
+            reclaimed, expected_reclaim,
+            "every existing segment below the marker's segment should be reclaimed"
+        );
+
+        // crash-after-truncate: recovery returns exactly the post-marker frames.
+        let after = UnifiedWALReader::new(path.clone())
+            .await
+            .unwrap()
+            .read_all()
+            .await
+            .unwrap();
+        assert_eq!(
+            seqs(&after),
+            seqs(&expected_after),
+            "recovery must read the kept marker segment + all later frames, nothing below"
+        );
+        // The marker and the post-marker nodes survive; the pre-marker nodes do not.
+        assert!(after.iter().any(|e| matches!(
+            &e.operation,
+            UnifiedWALOperation::GraphMarker(MarkerKind::CanonicalEmission(100))
+        )));
+    }
+
+    /// A missing LOW segment prefix (as produced by truncation, or simulated by
+    /// deleting `wal_00000000.log` mid-truncate) must not stop recovery — it
+    /// reads the surviving suffix. Guards the `read_all` precursor fix.
+    #[tokio::test]
+    async fn read_all_tolerates_missing_low_segment_prefix() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().to_str().unwrap().to_string();
+
+        let mut writer = UnifiedWALWriter::new(path.clone()).await.unwrap();
+        writer.set_max_segment_size_for_test(64);
+        for id in ["a", "b", "c", "d"] {
+            writer.append(node_op("g", id)).await.unwrap();
+        }
+        writer.flush().await.unwrap();
+
+        // Simulate a crash mid-truncation: the LOWEST existing segment is gone.
+        let segments = list_segment_files(&path);
+        assert!(segments.len() >= 2, "need multiple segments for this test");
+        let lowest = segments[0];
+        std::fs::remove_file(format!("{}/wal_{:08}.log", path, lowest)).unwrap();
+
+        let reader = UnifiedWALReader::new(path.clone()).await.unwrap();
+        let expected: Vec<UnifiedWALEntry> = {
+            let mut acc = Vec::new();
+            for &s in &segments[1..] {
+                acc.extend(reader.read_segment(s).await.unwrap());
+            }
+            acc
+        };
+        let all = reader.read_all().await.unwrap();
+        assert_eq!(
+            seqs(&all),
+            seqs(&expected),
+            "read_all must skip the missing prefix and return the surviving suffix"
+        );
+        assert!(!all.is_empty(), "surviving segments must still be read");
+    }
+
+    /// After a prefix delete, reopening the writer must resume at `max_index + 1`
+    /// and never reopen/clobber a kept higher segment. Guards the `new`
+    /// segment-numbering precursor fix.
+    #[tokio::test]
+    async fn writer_resumes_past_highest_segment_after_prefix_delete() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().to_str().unwrap().to_string();
+
+        let mut writer = UnifiedWALWriter::new(path.clone()).await.unwrap();
+        writer.set_max_segment_size_for_test(64);
+        for id in ["a", "b", "c"] {
+            writer.append(node_op("g", id)).await.unwrap();
+        }
+        writer.flush().await.unwrap();
+        drop(writer);
+
+        // Capture the highest surviving segment's content, then delete segment 0.
+        let reader = UnifiedWALReader::new(path.clone()).await.unwrap();
+        let mut highest = 0u32;
+        for s in 0..32u32 {
+            if !reader.read_segment(s).await.unwrap().is_empty() {
+                highest = s;
+            }
+        }
+        let segments = list_segment_files(&path);
+        assert!(segments.len() >= 2, "need multiple segments for this test");
+        let highest_before = reader.read_segment(highest).await.unwrap();
+        // Delete the lowest existing segment, leaving a non-contiguous layout.
+        std::fs::remove_file(format!("{}/wal_{:08}.log", path, segments[0])).unwrap();
+
+        // Reopen: file COUNT is now below the kept top index; only `max + 1`
+        // avoids clobbering the kept top segment.
+        let mut writer2 = UnifiedWALWriter::new(path.clone()).await.unwrap();
+        writer2.append(node_op("g", "z")).await.unwrap();
+        writer2.flush().await.unwrap();
+
+        // The kept top segment is untouched...
+        let highest_after = reader.read_segment(highest).await.unwrap();
+        assert_eq!(
+            seqs(&highest_before),
+            seqs(&highest_after),
+            "the kept top segment must not be reopened/clobbered"
+        );
+        // ...and the new frame landed in a brand-new higher segment.
+        let new_seg = reader.read_segment(highest + 1).await.unwrap();
+        assert_eq!(
+            new_seg.len(),
+            1,
+            "new append must open a fresh segment past the max"
+        );
+    }
+
+    /// A stale/missing checkpoint marker must never delete live frames: truncate
+    /// is a strict no-op when the marker for `lsn` is absent.
+    #[tokio::test]
+    async fn truncate_is_noop_when_marker_absent() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().to_str().unwrap().to_string();
+
+        let mut writer = UnifiedWALWriter::new(path.clone()).await.unwrap();
+        writer.set_max_segment_size_for_test(64);
+        for id in ["a", "b", "c"] {
+            writer.append(node_op("g", id)).await.unwrap();
+        }
+        writer.flush().await.unwrap();
+
+        let before = UnifiedWALReader::new(path.clone())
+            .await
+            .unwrap()
+            .read_all()
+            .await
+            .unwrap();
+
+        // No CanonicalEmission(999) marker was ever written.
+        let reclaimed = writer.truncate_through_canonical_marker(999).await.unwrap();
+        assert_eq!(reclaimed, 0, "absent marker must reclaim nothing");
+
+        let after = UnifiedWALReader::new(path.clone())
+            .await
+            .unwrap()
+            .read_all()
+            .await
+            .unwrap();
+        assert_eq!(seqs(&before), seqs(&after), "no frames may be lost");
     }
 
     fn test_record(id: &str, vector: Vec<f32>) -> ProximaRecord {

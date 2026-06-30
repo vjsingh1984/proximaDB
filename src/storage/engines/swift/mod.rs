@@ -1359,9 +1359,9 @@ impl SwiftFile {
     /// Uses columnar layout for maximum SIMD efficiency and optimized I/O
     #[allow(dead_code)]
     fn finalize_superblock_encoding(&mut self) {
-        // use crate::core::hardware_capabilities::HardwareCapabilities; // Unused import
+        // use proximadb_hardware_caps::HardwareCapabilities; // Unused import
 
-        let hw_caps = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hw_caps = proximadb_hardware_caps::get_hardware_capabilities();
 
         for superblock in &mut self.superblocks {
             // Columnar analysis: transpose vectors to analyze dimension-wise

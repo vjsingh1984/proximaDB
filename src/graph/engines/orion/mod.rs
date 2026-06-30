@@ -345,6 +345,22 @@ impl OrionGraphEngine {
         Arc::clone(&self.memory_pool)
     }
 
+    /// Existence check that is correct when payloads are cold — `true` if the node
+    /// is known to the engine regardless of whether its payload is RAM-resident.
+    /// The cold-payload tier (TD-168) keeps topology (`node_to_index`) resident
+    /// while payloads may be cold, so traversal **liveness** must be checked here,
+    /// NOT via [`get_node`] (which is `None` for a cold payload and would make a
+    /// live node look "deleted" and halt expansion).
+    ///
+    /// Checks BOTH: the CSR index (every edge-participating node, resident even
+    /// when cold) AND the payload pool (an **isolated**, edge-less node only exists
+    /// there). An edge-less node whose payload is also cold is the one case this
+    /// can't see without a cold-fetch — a degenerate input (an isolated node has no
+    /// traversal), accepted as a known limitation.
+    pub fn contains_node(&self, id: &NodeId) -> bool {
+        self.node_to_index.contains_key(id) || self.memory_pool.get_node(id).is_some()
+    }
+
     /// Get or create CSR index for a node
     async fn get_or_create_node_index(&self, node_id: &NodeId) -> Result<usize> {
         // Check if node index already exists
@@ -1313,6 +1329,14 @@ impl GraphEngine for OrionGraphEngine {
         }
         Ok(nodes)
     }
+
+    fn get_all_edges(&self) -> Result<Vec<Arc<Edge>>> {
+        let mut edges = Vec::new();
+        for entry in self.memory_pool.edges.iter() {
+            edges.push(Arc::clone(&*entry));
+        }
+        Ok(edges)
+    }
 }
 
 impl Default for OrionGraphEngine {
@@ -1564,6 +1588,101 @@ mod td066_replay_scope_tests {
         );
 
         // SAFETY: see the matching `set_var` above (test-local feature flag).
+        unsafe {
+            std::env::remove_var("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE");
+        }
+    }
+
+    /// TD-066 (d): wiring `truncate_wal_through_checkpoint` after the durable
+    /// snapshot must never disturb recovery. In the common small-graph regime
+    /// every frame fits one 64 MB segment, so the marker shares segment 0 and
+    /// nothing is reclaimed — but recovery must still yield all nodes with
+    /// scoped replay. This guards the `flush_wal` Step-2 ordering
+    /// (marker → flush → snapshot → truncate) as an end-to-end no-op-safe path.
+    #[tokio::test]
+    async fn truncate_after_snapshot_preserves_recovery() {
+        // SAFETY: process-local feature flag; nextest isolates processes.
+        unsafe {
+            std::env::set_var("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE", "1");
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base_url = format!("file://{}", tmp.path().display());
+        let canonical_wal = tmp.path().join("canonical.wal");
+        let gid = "td066_truncate".to_string();
+        const CHECKPOINT_LSN: u64 = 100;
+
+        {
+            let engine = OrionGraphEngine::with_persistence_for_graph_and_canonical_wal(
+                gid.clone(),
+                base_url.clone(),
+                true,
+                Some(canonical_wal.clone()),
+            )
+            .await
+            .expect("engine");
+            for i in 0..3u32 {
+                engine
+                    .create_node(node(&format!("pre_{i}")))
+                    .await
+                    .expect("create pre");
+            }
+            let persistence = engine
+                .persistence()
+                .expect("persistence configured")
+                .clone();
+            persistence
+                .append_canonical_emission_marker(CHECKPOINT_LSN)
+                .await
+                .expect("marker");
+            engine.flush_wal().await.expect("flush engine wal");
+            persistence
+                .save_snapshot(&engine, CHECKPOINT_LSN)
+                .await
+                .expect("snapshot");
+            // The new Step-2 tail: truncate strictly after the durable snapshot.
+            let reclaimed = persistence
+                .truncate_wal_through_checkpoint(CHECKPOINT_LSN)
+                .await
+                .expect("truncate");
+            // Single 64 MB segment holds everything → marker is in segment 0 →
+            // nothing below it → safe no-op.
+            assert_eq!(reclaimed, 0, "single-segment WAL reclaims nothing");
+            assert_eq!(persistence.last_truncate_reclaimed(), 0);
+            for i in 0..2u32 {
+                engine
+                    .create_node(node(&format!("post_{i}")))
+                    .await
+                    .expect("create post");
+            }
+            engine.flush_wal().await.expect("flush post frames");
+        }
+
+        // Recover — truncation must not have removed anything needed.
+        let engine = OrionGraphEngine::with_persistence_for_graph_and_canonical_wal(
+            gid.clone(),
+            base_url.clone(),
+            true,
+            Some(canonical_wal.clone()),
+        )
+        .await
+        .expect("recovery engine");
+        engine.recover().await.expect("recover");
+
+        assert_eq!(
+            engine.memory_pool.nodes.len(),
+            5,
+            "all 5 nodes must survive recovery after a post-snapshot truncate"
+        );
+        let replayed = engine
+            .persistence()
+            .expect("persistence configured")
+            .last_replay_applied();
+        assert_eq!(
+            replayed, 2,
+            "scoped replay must still apply exactly the 2 post-checkpoint frames"
+        );
+
+        // SAFETY: see the matching `set_var` above.
         unsafe {
             std::env::remove_var("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE");
         }

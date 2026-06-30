@@ -443,6 +443,40 @@ pub struct ChangeRow {
     pub props: Option<serde_json::Value>,
 }
 
+/// Build a [`ChangeRow`] for `collection_id` from a canonical WAL entry, or `None`
+/// if the entry is not an upsert/delete for that collection. Shared by the
+/// tenant-agnostic and tenant-scoped change-feeds so they stay in lock-step.
+fn change_row_from_entry(
+    entry: &proximadb_storage_common::wal_entry::CanonicalWalEntry,
+    collection_id: &str,
+) -> Option<ChangeRow> {
+    match &entry.operation {
+        CanonicalOperation::RecordUpsert {
+            collection_id: c,
+            record,
+            ..
+        } if c == collection_id => Some(ChangeRow {
+            lsn: entry.sequence_number,
+            op: "upsert".to_string(),
+            collection: c.clone(),
+            key: record.oid.clone(),
+            props: serde_json::to_value(&record.props).ok(),
+        }),
+        CanonicalOperation::RecordDelete {
+            collection_id: c,
+            oid,
+            ..
+        } if c == collection_id => Some(ChangeRow {
+            lsn: entry.sequence_number,
+            op: "delete".to_string(),
+            collection: c.clone(),
+            key: oid.clone(),
+            props: None,
+        }),
+        _ => None,
+    }
+}
+
 #[async_trait]
 pub trait TableRecordStore: Send + Sync {
     /// Write catalog-validated record mutations.
@@ -601,6 +635,23 @@ pub trait TableRecordStore: Send + Sync {
         let _ = (collection_id, since_lsn);
         Ok(Vec::new())
     }
+
+    /// Tenant-scoped CDC change-feed: like [`read_changes_since`] but returns only
+    /// changes belonging to `tenant` (matched against the WAL entry's `tenant_id`,
+    /// with `None`/empty treated as the unscoped/default tenant). Required for the
+    /// OLAP read-merge because the WAL `collection_id` is the bare table name (not
+    /// tenant-unique), so two tenants sharing a table name would otherwise share
+    /// the feed. The default delegates to the tenant-agnostic [`read_changes_since`];
+    /// the WAL-backed store overrides it to enforce isolation.
+    async fn read_changes_since_scoped(
+        &self,
+        collection_id: &str,
+        tenant: Option<&str>,
+        since_lsn: u64,
+    ) -> Result<Vec<ChangeRow>> {
+        let _ = tenant;
+        self.read_changes_since(collection_id, since_lsn).await
+    }
 }
 
 /// One unique column set plus the candidate tuples a write intends to insert
@@ -627,6 +678,70 @@ pub struct UniqueConflict {
 /// tuple comparison and predicate evaluation. Shared by the record store and
 /// `DmlService` so the value seen at write time (index maintenance) matches the
 /// value seen at check time.
+///
+/// ADR-031 O2: master gate for keying the WAL `collection_id` by the stable
+/// `object_id` (default OFF). Mixed-read-safe — readers dual-read (name OR id), so
+/// this rolls out per-writer/per-deployment without a flag-day cutover.
+fn wal_object_id_keying_enabled() -> bool {
+    std::env::var("PROXIMADB_WAL_OBJECT_ID_KEY")
+        .ok()
+        .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "on" | "yes"))
+}
+
+/// The WAL `collection_id` for a table: the stable `object_id` (decimal text) when
+/// `object_id_keying` is on and the table carries one, else the bare name (legacy).
+/// Pure (gate passed in) so it unit-tests without touching the process env.
+fn wal_collection_id(table_schema: &CatalogTableSchema, object_id_keying: bool) -> String {
+    if object_id_keying && let Some(oid) = table_schema.object_id {
+        return oid.to_string();
+    }
+    table_schema.name.clone()
+}
+
+/// ADR-031 O3: the in-memory record partition / index key(s) for a table, kept in
+/// LOCKSTEP with the WAL `collection_id` (same gate) so recovery — which routes
+/// replayed entries by their stamped `collection_id` — lands records in the same
+/// partition the live path reads. Returns `(primary, legacy)`:
+/// - gate ON and the table carries an `object_id` ⇒ `primary` = the oid (decimal,
+///   == [`wal_collection_id`]), `legacy` = `Some(name)`. Records written before the
+///   flip live under the name key; the read path dual-reads and writes
+///   migrate-on-touch (memtable deletes don't tombstone, so a stale legacy copy
+///   would otherwise resurrect). Mixed-read-safe across the flip.
+/// - otherwise ⇒ `(name, None)` — today's behavior, byte-identical, zero overhead.
+///
+/// `primary` always equals `wal_collection_id(table_schema, gate)`, so the memtable,
+/// its indexes, and the WAL are keyed identically within a gate state.
+fn memtable_partition_keys(table_schema: &CatalogTableSchema) -> (String, Option<String>) {
+    let keying = wal_object_id_keying_enabled();
+    let primary = wal_collection_id(table_schema, keying);
+    let legacy = if keying && primary != table_schema.name {
+        Some(table_schema.name.clone())
+    } else {
+        None
+    };
+    (primary, legacy)
+}
+
+/// Merge a primary + legacy partition scan during an oid cutover: the primary
+/// (post-flip) partition wins on `oid` collisions, then the union is truncated to
+/// `limit`. With the gate off there is no legacy partition and this is never called.
+fn merge_scan_primary_wins(
+    mut primary: Vec<ProximaRecord>,
+    legacy: Vec<ProximaRecord>,
+    limit: Option<usize>,
+) -> Vec<ProximaRecord> {
+    let seen: std::collections::HashSet<String> = primary.iter().map(|r| r.oid.clone()).collect();
+    for record in legacy {
+        if !seen.contains(&record.oid) {
+            primary.push(record);
+        }
+    }
+    if let Some(limit) = limit {
+        primary.truncate(limit);
+    }
+    primary
+}
+
 pub(crate) fn proxima_value_to_unique_text(value: &proximadb_data_model::ProximaValue) -> String {
     use proximadb_data_model::ProximaValue;
     match value {
@@ -720,6 +835,20 @@ pub(crate) fn schema_primary_key_column(table_schema: &CatalogTableSchema) -> Op
             .find(|column| column.name == "id" || column.name == "record_id")
             .map(|column| column.name.clone())
     })
+}
+
+/// All primary-key columns (composite-aware) — the `Vec` form of
+/// [`schema_primary_key_column`]. Declared multi-column PKs are returned in
+/// catalog order; otherwise the single id/record_id fallback is used. Shared so
+/// the DML FK-existence/cascade paths and this store agree on the parent PK.
+pub(crate) fn schema_primary_key_columns(table_schema: &CatalogTableSchema) -> Vec<String> {
+    if !table_schema.primary_key.is_empty() {
+        table_schema.primary_key.clone()
+    } else {
+        schema_primary_key_column(table_schema)
+            .into_iter()
+            .collect()
+    }
 }
 
 /// Index-eligible scalar column types for an OLTP secondary (hash-equality)
@@ -1478,6 +1607,26 @@ impl DirectWalTableRecordStore {
             .clone()
     }
 
+    /// ADR-031 O3: the primary record partition for a table, plus — during an oid
+    /// cutover with pre-flip data resident — the legacy name-keyed partition, so the
+    /// hot path is mixed-read-safe (dual-read + migrate-on-write). With the gate off,
+    /// `legacy` is `None` and this is exactly [`Self::partition`] by name.
+    fn partitions_for(
+        &self,
+        tenant_id: &str,
+        table_schema: &CatalogTableSchema,
+    ) -> (Arc<dyn RecordStorage>, Option<Arc<dyn RecordStorage>>) {
+        let (primary, legacy) = memtable_partition_keys(table_schema);
+        let primary_partition = self.partition(tenant_id, &primary);
+        let legacy_partition = legacy
+            .map(|key| self.partition(tenant_id, &key))
+            // A shared-storage store (`new`) routes every key to the same backing
+            // Arc; there is then no distinct legacy partition to dual-read/migrate
+            // (and migrate-on-write would otherwise delete what we just wrote).
+            .filter(|legacy| !Arc::ptr_eq(legacy, &primary_partition));
+        (primary_partition, legacy_partition)
+    }
+
     /// Replay canonical WAL entries into the correct `(tenant, table)` partitions
     /// on recovery, routing by the entry's `tenant_id` + the operation's
     /// `collection_id`. Reuses the per-store `RecordStore` point ops.
@@ -1528,7 +1677,8 @@ impl DirectWalTableRecordStore {
         table_schema: &CatalogTableSchema,
         tenant_id: &str,
     ) -> Result<()> {
-        let index_key = (tenant_id.to_string(), table_schema.name.clone());
+        let (collection_id, legacy_key) = memtable_partition_keys(table_schema);
+        let index_key = (tenant_id.to_string(), collection_id.clone());
         if self.unique_index.read().contains_key(&index_key) {
             return Ok(());
         }
@@ -1537,20 +1687,25 @@ impl DirectWalTableRecordStore {
             return Ok(());
         }
         let primary_key = schema_primary_key_column(table_schema);
-        let existing =
-            RecordStorageTableRecordStore::new(self.partition(tenant_id, &table_schema.name))
-                .scan_records(
-                    table_schema,
-                    TableRecordScanRequest {
-                        filter: None,
-                        table_id: table_schema.name.clone(),
-                        limit: None,
-                        include_vector: false,
-                        include_props: true,
-                    },
-                    None,
-                )
+        let scan_request = TableRecordScanRequest {
+            filter: None,
+            table_id: collection_id.clone(),
+            limit: None,
+            include_vector: false,
+            include_props: true,
+        };
+        let mut existing =
+            RecordStorageTableRecordStore::new(self.partition(tenant_id, &collection_id))
+                .scan_records(table_schema, scan_request.clone(), None)
                 .await?;
+        // O3: include any pre-flip records still in the legacy name-keyed partition
+        // so the index reflects current visible state across the cutover window.
+        if let Some(legacy) = &legacy_key {
+            let legacy_recs = RecordStorageTableRecordStore::new(self.partition(tenant_id, legacy))
+                .scan_records(table_schema, scan_request, None)
+                .await?;
+            existing = merge_scan_primary_wins(existing, legacy_recs, None);
+        }
         let mut index = TableUniqueIndex::with_sets(&set_columns);
         for record in &existing {
             index.upsert(record, primary_key.as_deref());
@@ -1572,7 +1727,8 @@ impl DirectWalTableRecordStore {
         if secondary_index_disabled() {
             return Ok(());
         }
-        let index_key = (tenant_id.to_string(), table_schema.name.clone());
+        let (collection_id, legacy_key) = memtable_partition_keys(table_schema);
+        let index_key = (tenant_id.to_string(), collection_id.clone());
         if self.secondary_index.read().contains_key(&index_key) {
             return Ok(());
         }
@@ -1580,20 +1736,24 @@ impl DirectWalTableRecordStore {
         if columns.is_empty() {
             return Ok(());
         }
-        let existing =
-            RecordStorageTableRecordStore::new(self.partition(tenant_id, &table_schema.name))
-                .scan_records(
-                    table_schema,
-                    TableRecordScanRequest {
-                        filter: None,
-                        table_id: table_schema.name.clone(),
-                        limit: None,
-                        include_vector: false,
-                        include_props: true,
-                    },
-                    None,
-                )
+        let scan_request = TableRecordScanRequest {
+            filter: None,
+            table_id: collection_id.clone(),
+            limit: None,
+            include_vector: false,
+            include_props: true,
+        };
+        let mut existing =
+            RecordStorageTableRecordStore::new(self.partition(tenant_id, &collection_id))
+                .scan_records(table_schema, scan_request.clone(), None)
                 .await?;
+        // O3: include any pre-flip records still in the legacy name-keyed partition.
+        if let Some(legacy) = &legacy_key {
+            let legacy_recs = RecordStorageTableRecordStore::new(self.partition(tenant_id, legacy))
+                .scan_records(table_schema, scan_request, None)
+                .await?;
+            existing = merge_scan_primary_wins(existing, legacy_recs, None);
+        }
         let mut index = TableSecondaryIndex::with_columns(&columns);
         for record in &existing {
             index.upsert(record);
@@ -1611,47 +1771,41 @@ impl DirectWalTableRecordStore {
 impl TableRecordStore for DirectWalTableRecordStore {
     /// CDC change-feed over the canonical WAL: surface every RecordUpsert/RecordDelete for
     /// `collection_id` (the table name) with sequence number > `since_lsn`, oldest first.
+    /// Tenant-agnostic (all tenants) — see [`read_changes_since_scoped`] for the
+    /// tenant-isolated feed the OLAP read-merge uses.
     async fn read_changes_since(
         &self,
         collection_id: &str,
         since_lsn: u64,
     ) -> Result<Vec<ChangeRow>> {
         let entries = self.wal_appender.read_all_entries().await?;
-        let mut out = Vec::new();
-        for e in entries {
-            if e.sequence_number <= since_lsn {
-                continue;
-            }
-            match e.operation {
-                CanonicalOperation::RecordUpsert {
-                    collection_id: c,
-                    record,
-                    ..
-                } if c == collection_id => {
-                    out.push(ChangeRow {
-                        lsn: e.sequence_number,
-                        op: "upsert".to_string(),
-                        collection: c,
-                        key: record.oid.clone(),
-                        props: serde_json::to_value(&record.props).ok(),
-                    });
-                }
-                CanonicalOperation::RecordDelete {
-                    collection_id: c,
-                    oid,
-                    ..
-                } if c == collection_id => {
-                    out.push(ChangeRow {
-                        lsn: e.sequence_number,
-                        op: "delete".to_string(),
-                        collection: c,
-                        key: oid,
-                        props: None,
-                    });
-                }
-                _ => {}
-            }
-        }
+        let mut out: Vec<ChangeRow> = entries
+            .iter()
+            .filter(|e| e.sequence_number > since_lsn)
+            .filter_map(|e| change_row_from_entry(e, collection_id))
+            .collect();
+        out.sort_by_key(|r| r.lsn);
+        Ok(out)
+    }
+
+    /// Tenant-isolated change-feed: like [`read_changes_since`] but keeps only
+    /// entries whose `tenant_id` matches `tenant` (None/"" = the unscoped tenant).
+    /// The WAL `collection_id` is the bare table name (not tenant-unique), so this
+    /// match is what isolates two tenants that share a table name.
+    async fn read_changes_since_scoped(
+        &self,
+        collection_id: &str,
+        tenant: Option<&str>,
+        since_lsn: u64,
+    ) -> Result<Vec<ChangeRow>> {
+        let entries = self.wal_appender.read_all_entries().await?;
+        let want = tenant.filter(|t| !t.is_empty());
+        let mut out: Vec<ChangeRow> = entries
+            .iter()
+            .filter(|e| e.sequence_number > since_lsn)
+            .filter(|e| e.tenant_id.as_deref().filter(|t| !t.is_empty()) == want)
+            .filter_map(|e| change_row_from_entry(e, collection_id))
+            .collect();
         out.sort_by_key(|r| r.lsn);
         Ok(out)
     }
@@ -1667,8 +1821,21 @@ impl TableRecordStore for DirectWalTableRecordStore {
         let projections = projection_directives_for_schema(table_schema);
         // TD-064: structural per-(tenant, collection) partition selection.
         let tenant_scope = Self::tenant_key(tenant_context);
-        let partition = self.partition(&tenant_scope, &table_schema.name);
-        let index_key = (tenant_scope.clone(), table_schema.name.clone());
+        // ADR-031 O2/O3: the WAL `collection_id` is the stable `object_id` (decimal)
+        // once the cutover gate is on and the table carries one; otherwise the bare
+        // name (legacy). The memtable partition + indexes key by the SAME id
+        // (lockstep), and during the mixed window writes also touch the legacy
+        // name-keyed partition (migrate-on-write) so a pre-flip copy can't resurrect
+        // (memtable deletes don't tombstone). Readers dual-read — mixed-read-safe.
+        let (collection_id, legacy_key) = memtable_partition_keys(table_schema);
+        let partition = self.partition(&tenant_scope, &collection_id);
+        let legacy_partition = legacy_key
+            .as_ref()
+            .map(|key| self.partition(&tenant_scope, key))
+            // Shared-storage stores route every key to one Arc — no distinct legacy
+            // partition, and migrate-on-write must NOT delete what we just wrote.
+            .filter(|legacy| !Arc::ptr_eq(legacy, &partition));
+        let index_key = (tenant_scope.clone(), collection_id.clone());
 
         for mutation in mutations {
             let kind = mutation.kind;
@@ -1677,7 +1844,12 @@ impl TableRecordStore for DirectWalTableRecordStore {
 
             match kind {
                 TableRecordMutationKind::Insert => {
-                    if partition.get_record(&key).await?.is_some() {
+                    let exists = partition.get_record(&key).await?.is_some()
+                        || match &legacy_partition {
+                            Some(legacy) => legacy.get_record(&key).await?.is_some(),
+                            None => false,
+                        };
+                    if exists {
                         return Ok(TableRecordWriteResult::failure(
                             format!(
                                 "Record '{}' already exists in table '{}'",
@@ -1687,14 +1859,19 @@ impl TableRecordStore for DirectWalTableRecordStore {
                         ));
                     }
                     operations.push(CanonicalOperation::RecordUpsert {
-                        collection_id: table_schema.name.clone(),
+                        collection_id: collection_id.clone(),
                         record: Box::new(record.clone()),
                         projections: projections.clone(),
                     });
                     storage_actions.push((kind, record));
                 }
                 TableRecordMutationKind::Update => {
-                    if partition.get_record(&key).await?.is_none() {
+                    let exists = partition.get_record(&key).await?.is_some()
+                        || match &legacy_partition {
+                            Some(legacy) => legacy.get_record(&key).await?.is_some(),
+                            None => false,
+                        };
+                    if !exists {
                         return Ok(TableRecordWriteResult::failure(
                             format!(
                                 "Record '{}' does not exist in table '{}'",
@@ -1704,7 +1881,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
                         ));
                     }
                     operations.push(CanonicalOperation::RecordUpsert {
-                        collection_id: table_schema.name.clone(),
+                        collection_id: collection_id.clone(),
                         record: Box::new(record.clone()),
                         projections: projections.clone(),
                     });
@@ -1712,7 +1889,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
                 }
                 TableRecordMutationKind::Upsert => {
                     operations.push(CanonicalOperation::RecordUpsert {
-                        collection_id: table_schema.name.clone(),
+                        collection_id: collection_id.clone(),
                         record: Box::new(record.clone()),
                         projections: projections.clone(),
                     });
@@ -1720,7 +1897,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
                 }
                 TableRecordMutationKind::Delete => {
                     operations.push(CanonicalOperation::RecordDelete {
-                        collection_id: table_schema.name.clone(),
+                        collection_id: collection_id.clone(),
                         oid: record.oid.clone(),
                         projections: projections.clone(),
                     });
@@ -1760,6 +1937,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
 
         let mut record_ids = Vec::with_capacity(storage_actions.len());
         for (kind, record) in storage_actions {
+            let key = RecordKey::from(&record);
             match kind {
                 TableRecordMutationKind::Insert
                 | TableRecordMutationKind::Upsert
@@ -1781,9 +1959,19 @@ impl TableRecordStore for DirectWalTableRecordStore {
                         let written = partition.upsert_record(record).await?;
                         record_ids.push(written.oid);
                     }
+                    // ADR-031 O3 migrate-on-write: drain any pre-flip copy from the
+                    // legacy name-keyed partition so it can't resurrect on a later
+                    // dual-read (memtable deletes don't tombstone). No-op when absent.
+                    if let Some(legacy) = &legacy_partition {
+                        legacy.delete_record(&key).await?;
+                    }
                 }
                 TableRecordMutationKind::Delete => {
-                    partition.delete_record(&RecordKey::from(&record)).await?;
+                    partition.delete_record(&key).await?;
+                    // Delete from BOTH partitions during the cutover window.
+                    if let Some(legacy) = &legacy_partition {
+                        legacy.delete_record(&key).await?;
+                    }
                     if maintain_index
                         && let Some(index) = self.unique_index.write().get_mut(&index_key)
                     {
@@ -1813,10 +2001,24 @@ impl TableRecordStore for DirectWalTableRecordStore {
         request: TableRecordGetRequest,
         tenant_context: Option<&TenantContext>,
     ) -> Result<TableRecordGetResponse> {
-        let partition = self.partition(&Self::tenant_key(tenant_context), &table_schema.name);
         // Pass `None`: the partition already scopes the tenant structurally, so
         // no per-record tenant filter is needed (TD-064).
-        RecordStorageTableRecordStore::new(partition)
+        let tenant = Self::tenant_key(tenant_context);
+        let (primary, legacy) = self.partitions_for(&tenant, table_schema);
+        let Some(legacy) = legacy else {
+            return RecordStorageTableRecordStore::new(primary)
+                .get_by_key(table_schema, request, None)
+                .await;
+        };
+        // O3 cutover window: the primary (post-flip) partition wins; fall back to
+        // the legacy name-keyed partition for records not yet migrated-on-write.
+        let primary_res = RecordStorageTableRecordStore::new(primary)
+            .get_by_key(table_schema, request.clone(), None)
+            .await?;
+        if primary_res.is_some() {
+            return Ok(primary_res);
+        }
+        RecordStorageTableRecordStore::new(legacy)
             .get_by_key(table_schema, request, None)
             .await
     }
@@ -1827,10 +2029,21 @@ impl TableRecordStore for DirectWalTableRecordStore {
         request: TableRecordScanRequest,
         tenant_context: Option<&TenantContext>,
     ) -> Result<TableRecordScanResponse> {
-        let partition = self.partition(&Self::tenant_key(tenant_context), &table_schema.name);
-        RecordStorageTableRecordStore::new(partition)
+        let tenant = Self::tenant_key(tenant_context);
+        let (primary, legacy) = self.partitions_for(&tenant, table_schema);
+        let Some(legacy) = legacy else {
+            return RecordStorageTableRecordStore::new(primary)
+                .scan_records(table_schema, request, None)
+                .await;
+        };
+        let limit = request.limit;
+        let primary_recs = RecordStorageTableRecordStore::new(primary)
+            .scan_records(table_schema, request.clone(), None)
+            .await?;
+        let legacy_recs = RecordStorageTableRecordStore::new(legacy)
             .scan_records(table_schema, request, None)
-            .await
+            .await?;
+        Ok(merge_scan_primary_wins(primary_recs, legacy_recs, limit))
     }
 
     async fn scan_records_filtered(
@@ -1840,10 +2053,21 @@ impl TableRecordStore for DirectWalTableRecordStore {
         predicate: Option<&RecordScanPredicate<'_>>,
         tenant_context: Option<&TenantContext>,
     ) -> Result<TableRecordScanResponse> {
-        let partition = self.partition(&Self::tenant_key(tenant_context), &table_schema.name);
-        RecordStorageTableRecordStore::new(partition)
+        let tenant = Self::tenant_key(tenant_context);
+        let (primary, legacy) = self.partitions_for(&tenant, table_schema);
+        let Some(legacy) = legacy else {
+            return RecordStorageTableRecordStore::new(primary)
+                .scan_records_filtered(table_schema, request, predicate, None)
+                .await;
+        };
+        let limit = request.limit;
+        let primary_recs = RecordStorageTableRecordStore::new(primary)
+            .scan_records_filtered(table_schema, request.clone(), predicate, None)
+            .await?;
+        let legacy_recs = RecordStorageTableRecordStore::new(legacy)
             .scan_records_filtered(table_schema, request, predicate, None)
-            .await
+            .await?;
+        Ok(merge_scan_primary_wins(primary_recs, legacy_recs, limit))
     }
 
     /// TD-110 Slice C: O(1) index-backed override of the default scan. Builds the
@@ -1861,7 +2085,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
         let tenant_scope = Self::tenant_key(tenant_context);
         self.ensure_unique_index_built(table_schema, &tenant_scope)
             .await?;
-        let index_key = (tenant_scope, table_schema.name.clone());
+        let index_key = (tenant_scope, memtable_partition_keys(table_schema).0);
         let index = self.unique_index.read();
         let Some(table_index) = index.get(&index_key) else {
             return Ok(None); // table has no UNIQUE/PK sets
@@ -1900,7 +2124,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
         let tenant_scope = Self::tenant_key(tenant_context);
         self.ensure_secondary_index_built(table_schema, &tenant_scope)
             .await?;
-        let index_key = (tenant_scope, table_schema.name.clone());
+        let index_key = (tenant_scope, memtable_partition_keys(table_schema).0);
         let index = self.secondary_index.read();
         let Some(table_index) = index.get(&index_key) else {
             return Ok(None);
@@ -2050,6 +2274,151 @@ mod tests {
     use futures::stream::BoxStream;
     use proximadb_catalog::{CatalogColumn, CatalogStorageLayout};
     use proximadb_data_model::ProximaValue;
+
+    /// ADR-031 O2: the WAL `collection_id` is the stable `object_id` (decimal) when
+    /// keying is on AND the table carries one, else the bare name (legacy). This is
+    /// what makes the cutover mixed-read-safe + rename-safe.
+    #[test]
+    fn wal_collection_id_prefers_object_id_when_keying_on() {
+        let mut schema = CatalogTableSchema::new("orders");
+        // No object_id yet → always the name, regardless of the gate.
+        assert_eq!(wal_collection_id(&schema, false), "orders");
+        assert_eq!(
+            wal_collection_id(&schema, true),
+            "orders",
+            "no object_id → name even when keying is on"
+        );
+        // With an object_id: keying off → name; keying on → the decimal id.
+        schema.object_id = Some(42);
+        assert_eq!(
+            wal_collection_id(&schema, false),
+            "orders",
+            "keying off → name"
+        );
+        assert_eq!(
+            wal_collection_id(&schema, true),
+            "42",
+            "keying on + object_id → stable id, never the mutable name"
+        );
+    }
+
+    /// ADR-031 O3: with the WAL/memtable oid gate ON, the in-memory partition is
+    /// keyed by the stable object_id, but a pre-flip record recovered into the
+    /// legacy name-keyed partition stays visible (dual-read), migrates to the oid
+    /// partition on write, and is deleted from BOTH partitions on delete (memtable
+    /// deletes don't tombstone, so a stale legacy copy must not resurrect).
+    /// Process-isolated under nextest, so the env gate does not leak across tests.
+    #[tokio::test]
+    async fn memtable_oid_cutover_dual_reads_and_migrates_legacy_partition() {
+        unsafe { std::env::set_var("PROXIMADB_WAL_OBJECT_ID_KEY", "1") };
+
+        let wal = Arc::new(RecordingWalAppender::default());
+        let store = DirectWalTableRecordStore::new_partitioned(wal);
+        let mut schema = CatalogTableSchema::new("orders");
+        schema.object_id = Some(123);
+
+        let get = |oid: &str| TableRecordGetRequest {
+            table_id: "orders".to_string(),
+            key: oid.to_string(),
+            include_vector: false,
+            include_props: true,
+        };
+        let scan = || TableRecordScanRequest {
+            filter: None,
+            table_id: "orders".to_string(),
+            limit: None,
+            include_vector: false,
+            include_props: true,
+        };
+
+        // Seed a PRE-FLIP record into the legacy name-keyed partition via WAL replay
+        // (a name-stamped entry written before the gate flip).
+        let legacy_rec = ProximaRecord {
+            oid: "r1".to_string(),
+            variation_id: Some("orders".to_string()),
+            ..Default::default()
+        };
+        store
+            .replay_wal_entries(vec![CanonicalWalEntry::new(
+                1,
+                CanonicalOperation::RecordUpsert {
+                    collection_id: "orders".to_string(),
+                    record: Box::new(legacy_rec),
+                    projections: vec![],
+                },
+                None,
+            )])
+            .await
+            .unwrap();
+
+        // Dual-read: under the oid gate, get + scan still see the legacy record.
+        assert!(
+            store
+                .get_by_key(&schema, get("r1"), None)
+                .await
+                .unwrap()
+                .is_some(),
+            "legacy-partition record visible via dual-read"
+        );
+        assert_eq!(
+            store
+                .scan_records(&schema, scan(), None)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // Migrate-on-write: an Update moves r1 into the oid partition and drains the
+        // legacy copy — exactly one visible record, the migrated (v2) version.
+        let updated = ProximaRecord {
+            oid: "r1".to_string(),
+            variation_id: Some("orders".to_string()),
+            record_version: 2,
+            ..Default::default()
+        };
+        store
+            .write_mutations(
+                &schema,
+                vec![TableRecordMutation::new(
+                    TableRecordMutationKind::Update,
+                    updated,
+                )],
+                None,
+            )
+            .await
+            .unwrap();
+        let after = store.scan_records(&schema, scan(), None).await.unwrap();
+        assert_eq!(
+            after.len(),
+            1,
+            "no duplicate across legacy + oid partitions"
+        );
+        assert_eq!(after[0].record_version, 2, "migrated primary copy wins");
+
+        // Delete drains BOTH partitions — no legacy resurrection on the next read.
+        store
+            .write_mutations(
+                &schema,
+                vec![TableRecordMutation::new(
+                    TableRecordMutationKind::Delete,
+                    after[0].clone(),
+                )],
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(
+            store
+                .get_by_key(&schema, get("r1"), None)
+                .await
+                .unwrap()
+                .is_none(),
+            "deleted from both partitions — legacy copy did not resurrect"
+        );
+
+        unsafe { std::env::remove_var("PROXIMADB_WAL_OBJECT_ID_KEY") };
+    }
     use proximadb_data_model::{ProximaType, VectorElement};
     use proximadb_kernel::error::StorageError;
     use proximadb_records::{EmbeddingCell, EmbeddingValues, RecordScan, RecordStore};

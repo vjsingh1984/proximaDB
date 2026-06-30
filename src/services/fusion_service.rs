@@ -25,6 +25,7 @@ use proximadb_records::{ProximaRecord, RecordKey};
 use crate::core::search::cross_modal_fusion::{
     FusedItem, Fuser, FusionPolicy, FusionStats, SourceCandidates, SourceId,
 };
+use crate::core::search::fusion_route::{RoutePolicy, plan_route};
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::graph::GraphOperationsService;
 use crate::graph::model::{Edge, Node};
@@ -179,6 +180,28 @@ pub(crate) fn traversal_nodes_to_source(
     SourceCandidates::new(SourceId::Graph, weight, scores)
 }
 
+/// Map each reached node's fused `oid` → its graph label(s) (#485). The graph expansion already
+/// visits every node (with `Node.labels` in hand), so this is near-free and lets the cross-modal
+/// fusion service attach the label to a fused hit *post-fuse* without a separate node lookup —
+/// keeping [`FusedItem`] modality-pure. Unlabeled nodes are skipped (no entry ⇒ empty labels);
+/// vector-only and edge-grain hits never appear here. Keyed by the same `fusion_key` the sources
+/// use, so it joins on the `FusedItem.oid` for both `Canonical` and `EntityNode` keying.
+pub(crate) fn node_labels_by_oid(
+    graph_id: &str,
+    nodes: &[Node],
+    oid_key: FusionOidKey,
+) -> HashMap<String, Vec<String>> {
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    for node in nodes {
+        if node.labels.is_empty() {
+            continue;
+        }
+        let oid = oid_key.fusion_key(&GraphNodeKey::new(graph_id, node.id.clone()).canonical_oid());
+        map.entry(oid).or_insert_with(|| node.labels.clone());
+    }
+    map
+}
+
 /// Graph traversal **edges** → an `oid`-keyed graph source at *edge grain* (the relationship is the
 /// fusion unit). `oid` is the canonical `graph/{graph_id}/edge/{edge_id}` — distinct from node `oid`s,
 /// so edges rank as their own items. Score = `1/(rank+1)` from traversal order; an edge seen more than
@@ -252,25 +275,93 @@ impl DocumentExpander {
     }
 }
 
-/// Recover the graph `node_id` to seed traversal from each vector hit. When the vector collection is
-/// co-indexed with the graph the record `id` is the canonical `oid` (`graph/{graph_id}/node/{node_id}`),
-/// so strip the prefix; otherwise fall back to the raw `id`. Bounded by `max_seeds` (D8 — conservative
-/// expansion).
+/// How source record `oid`s map to the fusion key (what the [`Fuser`] merges by).
+///
+/// Co-indexed collections (graph fusion) share one canonical oid space, so keying is identity.
+/// Entities keep their vectors under an *auxiliary* oid and their graph nodes under the canonical
+/// oid; [`FusionOidKey::EntityNode`] reduces both to the entity `node_id` so the vector and graph
+/// sources co-rank (TD-142 / TD-146 scope B — graph-augmented entity fusion).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FusionOidKey {
+    /// Vector + graph share the canonical oid `graph/{graph_id}/node/{node_id}`. Identity keying.
+    #[default]
+    Canonical,
+    /// Entity keying: vector oids are `{node_id}/{model_id}`, graph oids are
+    /// `graph/{graph_id}/node/{node_id}`. Both normalize to the entity `node_id`.
+    EntityNode,
+}
+
+impl FusionOidKey {
+    /// Fusion key for a source oid (the value the Fuser merges by).
+    pub(crate) fn fusion_key(&self, oid: &str) -> String {
+        match self {
+            Self::Canonical => oid.to_string(),
+            Self::EntityNode => entity_node_id_from_oid(oid).to_string(),
+        }
+    }
+
+    /// Graph `node_id` to seed traversal, recovered from a vector-hit oid.
+    pub(crate) fn seed_node_id(&self, graph_id: &str, hit_id: &str) -> String {
+        match self {
+            // Co-indexed: the hit id is the canonical oid; strip the prefix.
+            Self::Canonical => {
+                let prefix = format!("graph/{graph_id}/node/");
+                hit_id
+                    .strip_prefix(&prefix)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| hit_id.to_string())
+            }
+            // Entity: the hit id is the auxiliary `{node_id}/{model_id}`; drop the model suffix.
+            Self::EntityNode => entity_node_id_from_oid(hit_id).to_string(),
+        }
+    }
+}
+
+/// Recover the entity `node_id` from either oid form: the canonical graph oid
+/// `graph/{graph_id}/node/{node_id}` or the auxiliary vector oid `{node_id}/{model_id}`.
+/// (`entity_node_id` itself contains no `/`, so stripping the last path segment of the auxiliary
+/// form or the `graph/…/node/` prefix of the canonical form both yield the bare `node_id`.)
+fn entity_node_id_from_oid(oid: &str) -> &str {
+    if let Some(rest) = oid.strip_prefix("graph/")
+        && let Some((_gid, node_id)) = rest.split_once("/node/")
+    {
+        return node_id;
+    }
+    oid.rsplit_once('/')
+        .map(|(node_id, _)| node_id)
+        .unwrap_or(oid)
+}
+
+/// Recover the graph `node_id`(s) to seed traversal from the vector hits, bounded by `max_seeds`
+/// (D8 — conservative expansion). Keying follows [`FusionOidKey`].
 pub(crate) fn seed_node_ids(
     graph_id: &str,
     hits: &[OptimizedSearchRecord],
     max_seeds: usize,
+    oid_key: FusionOidKey,
 ) -> Vec<String> {
-    let prefix = format!("graph/{graph_id}/node/");
     hits.iter()
         .take(max_seeds)
-        .map(|hit| {
-            hit.id
-                .strip_prefix(&prefix)
-                .map(str::to_string)
-                .unwrap_or_else(|| hit.id.clone())
-        })
+        .map(|hit| oid_key.seed_node_id(graph_id, &hit.id))
         .collect()
+}
+
+/// Re-key a source's oids to the fusion key. Identity (no allocation) for
+/// [`FusionOidKey::Canonical`]; remaps every oid for [`FusionOidKey::EntityNode`].
+pub(crate) fn normalize_source_keys(
+    mut src: SourceCandidates,
+    oid_key: FusionOidKey,
+) -> SourceCandidates {
+    if oid_key == FusionOidKey::Canonical {
+        return src;
+    }
+    let remapped = src
+        .scores
+        .into_iter()
+        .map(|(oid, score)| (oid_key.fusion_key(&oid), score))
+        .collect();
+    src.scores = remapped;
+    src
 }
 
 /// Whether graph expansion contributes node candidates, edge (relationship) candidates, or both.
@@ -282,6 +373,25 @@ pub enum GraphGrain {
     Nodes,
     Edges,
     Both,
+}
+
+/// Optional document-modality contribution to a fusion query (TD-138). When present, the shared
+/// [`FusionService`] runs BM25/full-text search over the collection's in-memory index (via
+/// [`DocumentExpander`]) and emits an `oid`-keyed [`SourceId::Document`] source that merges with the
+/// vector + graph sources by shared `oid`. Absent ⇒ no document contribution (the default, preserving
+/// plain vector+graph fusion). The expander fails closed on a missing/poisoned index, so fusion
+/// proceeds on the other modalities rather than erroring (D5/D6).
+#[derive(Debug, Clone)]
+pub struct DocumentFusionSpec {
+    /// The BM25/full-text query. Its presence is what enables the document source.
+    pub text_query: String,
+    /// Collection whose full-text index to search. `None` ⇒ the vector collection (documents
+    /// co-indexed with the vectors share the record `oid`, so they merge by `oid`).
+    pub collection: Option<String>,
+    /// Document modality weight (mirrors `vector_weight` / `graph_weight`).
+    pub weight: f32,
+    /// Top-k documents to take from the index. `None` ⇒ reuse the query `limit`.
+    pub k: Option<usize>,
 }
 
 /// Parameters for one graph-modality fusion query.
@@ -306,18 +416,44 @@ pub struct GraphFusionParams {
     /// canonical record store is unwired or a record cannot be resolved (within-tenant RBAC only bites
     /// on records carrying explicit `permitted_principals`); the tenant boundary stays structural.
     pub principal: Option<String>,
+    /// Optional cost-routing policy (TD-141): budget each modality by weight and drop negligible ones.
+    /// When absent, fusion is unbounded (each source keeps its full candidate pool).
+    pub route_policy: Option<RoutePolicy>,
     pub policy: FusionPolicy,
+    /// How source oids map to the fusion key (TD-142 / TD-146 scope B). Defaults to
+    /// [`FusionOidKey::Canonical`] (co-indexed graph fusion). Entity search uses
+    /// [`FusionOidKey::EntityNode`] so its auxiliary vector oids and canonical graph oids
+    /// co-rank under the entity `node_id`.
+    pub oid_key: FusionOidKey,
+    /// Optional document-modality contribution (TD-138). `None` ⇒ vector+graph only (the default).
+    pub document: Option<DocumentFusionSpec>,
 }
 
 /// Orchestrates the graph instance of the fusion seam over the live vector + graph engines.
 pub struct FusionService {
     vector: Arc<VectorOperationsService>,
     graph: Arc<GraphOperationsService>,
+    /// Document modality expander (TD-138). Holds the shared full-text index map; fail-closed when
+    /// the map is empty (surfaces that don't wire live documents pass `HybridFullTextIndexMap::default()`).
+    document: DocumentExpander,
 }
 
 impl FusionService {
-    pub fn new(vector: Arc<VectorOperationsService>, graph: Arc<GraphOperationsService>) -> Self {
-        Self { vector, graph }
+    /// Construct the shared fusion service. `fulltext_indexes` powers the optional document modality
+    /// (via [`DocumentExpander`]); an empty map ([`HybridFullTextIndexMap::default`]) leaves the
+    /// document expander fail-closed so fusion is vector+graph only — used by surfaces (gRPC/embedded)
+    /// that don't wire live documents yet. Constructed ONCE at boot and shared via `Arc`, per the
+    /// search-surface contract (never per-handler).
+    pub fn new(
+        vector: Arc<VectorOperationsService>,
+        graph: Arc<GraphOperationsService>,
+        fulltext_indexes: HybridFullTextIndexMap,
+    ) -> Self {
+        Self {
+            vector,
+            graph,
+            document: DocumentExpander::new(fulltext_indexes),
+        }
     }
 
     /// Vector-seed → graph-expand → fuse-by-`oid`. Tenant isolation is structural (the collection and
@@ -333,10 +469,10 @@ impl FusionService {
     /// T1.2: Implements graceful degradation — if graph traversal fails for a seed, the search
     /// continues with the remaining seeds and the vector source alone. Only total failure (vector
     /// search exhausts retries) returns an error.
-    pub async fn graph_fusion_search(
+    pub async fn graph_fusion_search_with_labels(
         &self,
         params: GraphFusionParams,
-    ) -> Result<(Vec<FusedItem>, FusionStats)> {
+    ) -> Result<(Vec<FusedItem>, FusionStats, HashMap<String, Vec<String>>)> {
         use std::time::Instant;
 
         let started = Instant::now();
@@ -372,12 +508,15 @@ impl FusionService {
             hits = accessible;
         }
 
-        let vector_source = vector_hits_to_source(&hits, params.vector_weight);
+        let vector_source = normalize_source_keys(
+            vector_hits_to_source(&hits, params.vector_weight),
+            params.oid_key,
+        );
 
         // 2. Graph expand from the top seeds (bounded). A seed that is not a node in this graph simply
         //    contributes nothing (its traverse errors are skipped) rather than failing the query.
         // T1.2: Graceful degradation — individual seed failures are logged but don't abort fusion.
-        let seeds = seed_node_ids(&params.graph_id, &hits, params.max_seeds);
+        let seeds = seed_node_ids(&params.graph_id, &hits, params.max_seeds, params.oid_key);
         let mut nodes: Vec<Node> = Vec::new();
         let mut edges: Vec<Edge> = Vec::new();
         let mut failed_seeds = 0;
@@ -453,19 +592,59 @@ impl FusionService {
         //    `Both` simply adds two graph sources.
         let mut sources = vec![vector_source];
         if matches!(params.grain, GraphGrain::Nodes | GraphGrain::Both) {
-            sources.push(traversal_nodes_to_source(
-                &params.graph_id,
-                &nodes,
-                params.graph_weight,
+            sources.push(normalize_source_keys(
+                traversal_nodes_to_source(&params.graph_id, &nodes, params.graph_weight),
+                params.oid_key,
             ));
         }
         if matches!(params.grain, GraphGrain::Edges | GraphGrain::Both) {
-            sources.push(traversal_edges_to_source(
-                &params.graph_id,
-                &edges,
-                params.graph_weight,
+            sources.push(normalize_source_keys(
+                traversal_edges_to_source(&params.graph_id, &edges, params.graph_weight),
+                params.oid_key,
             ));
         }
+
+        // 3b. Optional document modality (TD-138): BM25 over the collection's full-text index → an
+        //     `oid`-keyed [`SourceId::Document`] source that merges with vector + graph by shared `oid`.
+        //     Pushed BEFORE cost routing so TD-141 budgets it like any other source, and key-normalized
+        //     so it lands in the same fusion-key space as the vector + graph sources. Fail-closed on a
+        //     missing/poisoned index (empty source → no contribution, no error).
+        if let Some(spec) = params.document.as_ref()
+            && !spec.text_query.is_empty()
+        {
+            let collection = spec
+                .collection
+                .as_deref()
+                .unwrap_or(&params.vector_collection);
+            let doc_source = self.document.expand(
+                collection,
+                &spec.text_query,
+                spec.k.unwrap_or(params.limit),
+                spec.weight,
+            );
+            sources.push(normalize_source_keys(doc_source, params.oid_key));
+        }
+
+        // 3c. Optional cost routing (TD-141): budget each modality by weight and drop negligible ones.
+        //     When a route policy is present, truncate each source to its allocated budget (top-k by
+        //     score), pre-fusion, so the calibrated blend works on the routed pool.
+        if let Some(ref policy) = params.route_policy {
+            let route = plan_route(&sources, policy);
+            for (source_id, budget) in route.budgets {
+                if let Some(source) = sources.iter_mut().find(|s| s.source == source_id) {
+                    truncate_source_to_budget(source, budget);
+                }
+            }
+        }
+
+        // #485: capture the reached node labels (node-grain only) before fusing, keyed by the same
+        // fused oid, so we can attach the graph label to each hit post-fuse without re-touching the
+        // node store and without polluting the modality-pure FusedItem.
+        let node_labels = if matches!(params.grain, GraphGrain::Nodes | GraphGrain::Both) {
+            node_labels_by_oid(&params.graph_id, &nodes, params.oid_key)
+        } else {
+            HashMap::new()
+        };
 
         // 4. Calibrate + fuse-by-oid + rank, OR the raw-union kill-switch fallback (TD-131). The OID
         //    set is identical between the two when `limit ≥ candidate count` — calibration only re-ranks.
@@ -489,7 +668,19 @@ impl FusionService {
             started.elapsed(),
         );
 
-        Ok(result)
+        Ok((result.0, result.1, node_labels))
+    }
+
+    /// Vector → graph expand → calibrated fuse-by-oid (the back-compat surface used by the
+    /// gRPC / embedded / entity-orchestrator callers that do not need per-hit graph labels).
+    /// Delegates to [`graph_fusion_search_with_labels`](Self::graph_fusion_search_with_labels)
+    /// and drops the `oid → labels` join.
+    pub async fn graph_fusion_search(
+        &self,
+        params: GraphFusionParams,
+    ) -> Result<(Vec<FusedItem>, FusionStats)> {
+        let (items, stats, _labels) = self.graph_fusion_search_with_labels(params).await?;
+        Ok((items, stats))
     }
 
     /// Resolve `oid` → backing `ProximaRecord` via the graph service's canonical store and apply the
@@ -507,6 +698,20 @@ impl FusionService {
                 true
             }
         }
+    }
+}
+
+/// Truncate a source's candidate pool to the top `budget` entries by score (D9 per-modality budget).
+/// Scores are kept as-is; the fuser's PIT calibration will normalize them. In-place.
+fn truncate_source_to_budget(source: &mut SourceCandidates, budget: usize) {
+    if source.scores.len() <= budget {
+        return; // already within budget
+    }
+    // Collect into (oid, score) pairs, sort by score descending, keep top budget, rebuild.
+    let mut pairs: Vec<(String, f32)> = source.scores.drain().collect();
+    pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    for (oid, score) in pairs.into_iter().take(budget) {
+        source.scores.insert(oid, score);
     }
 }
 
@@ -557,13 +762,13 @@ mod tests {
             hit("graph/g1/node/n2", 0.8),
             hit("raw_id", 0.7), // not in canonical form → used as-is
         ];
-        let seeds = seed_node_ids("g1", &hits, 2);
+        let seeds = seed_node_ids("g1", &hits, 2, FusionOidKey::Canonical);
         assert_eq!(
             seeds,
             vec!["n1".to_string(), "n2".to_string()],
             "prefix stripped, bounded to 2"
         );
-        let all = seed_node_ids("g1", &hits, 10);
+        let all = seed_node_ids("g1", &hits, 10, FusionOidKey::Canonical);
         assert_eq!(all[2], "raw_id", "non-canonical id falls through");
     }
 
@@ -583,6 +788,99 @@ mod tests {
         assert_eq!(
             fused.source_count, 2,
             "vector + graph hit on the same oid merge"
+        );
+    }
+
+    /// #485: the reached node's labels join onto the fused hit by `oid`, and a fused hit from a
+    /// labeled node carries them while unlabeled / vector-only hits carry none.
+    #[test]
+    fn fused_hit_carries_reached_node_labels() {
+        let labeled = Node {
+            id: "fn_login".to_string(),
+            labels: vec!["Function".to_string()],
+            ..Default::default()
+        };
+        let nodes = [labeled.clone(), node("fn_anon")]; // fn_anon has no labels
+
+        let labels_by_oid = node_labels_by_oid("g1", &nodes, FusionOidKey::Canonical);
+        assert_eq!(
+            labels_by_oid.get("graph/g1/node/fn_login"),
+            Some(&vec!["Function".to_string()]),
+            "labeled node's canonical oid carries its labels"
+        );
+        assert!(
+            !labels_by_oid.contains_key("graph/g1/node/fn_anon"),
+            "unlabeled node has no entry → empty labels downstream"
+        );
+
+        // Join onto a fused hit: the labeled node fuses with a vector hit on the shared oid; the
+        // post-fuse join surfaces the label, while a vector-only oid stays unlabeled.
+        let oid = "graph/g1/node/fn_login";
+        let vector = vector_hits_to_source(&[hit(oid, 0.9), hit("graph/g1/node/other", 0.5)], 1.0);
+        let graph = traversal_nodes_to_source("g1", &[labeled], 1.0);
+        let (items, _stats) = Fuser::new(FusionPolicy::default()).fuse(vec![vector, graph], 10);
+
+        let fused = items
+            .iter()
+            .find(|i| i.oid == oid)
+            .expect("shared oid fused");
+        assert_eq!(
+            labels_by_oid.get(&fused.oid).cloned().unwrap_or_default(),
+            vec!["Function".to_string()],
+            "fused hit from the labeled node carries its label"
+        );
+        let other = items
+            .iter()
+            .find(|i| i.oid == "graph/g1/node/other")
+            .expect("vector-only oid present");
+        assert!(
+            labels_by_oid
+                .get(&other.oid)
+                .cloned()
+                .unwrap_or_default()
+                .is_empty(),
+            "vector-only hit carries no label"
+        );
+    }
+
+    /// TD-146 scope B / TD-142: entity vectors are keyed by an auxiliary oid (`{node_id}/{model_id}`)
+    /// while the entity graph uses the canonical oid (`graph/{g}/node/{node_id}`). `EntityNode` keying
+    /// normalizes both to the entity `node_id` so a vector hit and a graph-expanded node for the SAME
+    /// entity fuse into one item (source_count == 2) — without re-keying the vectors.
+    #[test]
+    fn entity_vector_and_graph_sources_fuse_under_entity_node_key() {
+        let entity_node = "entity:coll:e1";
+        let auxiliary = format!("{entity_node}/bge-small"); // vector oid (multi-model suffix)
+        let canonical = format!("graph/coll/node/{entity_node}"); // graph oid
+
+        // Both oid forms recover the same entity node id, and seed recovery drops the model suffix.
+        assert_eq!(FusionOidKey::EntityNode.fusion_key(&auxiliary), entity_node);
+        assert_eq!(FusionOidKey::EntityNode.fusion_key(&canonical), entity_node);
+        assert_eq!(
+            FusionOidKey::EntityNode.seed_node_id("coll", &auxiliary),
+            entity_node,
+        );
+
+        let vector = normalize_source_keys(
+            vector_hits_to_source(&[hit(&auxiliary, 0.9)], 1.0),
+            FusionOidKey::EntityNode,
+        );
+        let graph = normalize_source_keys(
+            traversal_nodes_to_source("coll", &[node(entity_node)], 1.0),
+            FusionOidKey::EntityNode,
+        );
+        let (items, stats) = Fuser::new(FusionPolicy::default()).fuse(vec![vector, graph], 10);
+        assert_eq!(stats.sources_fused, 2);
+        // The entity should fuse once (vector leg + graph leg) with source_count == 2.
+        // Assert via filter+collect so a missing fuse fails the assert cleanly — no
+        // panic-prone `.expect`/`.unwrap` (keeps this test off the panic-policy count).
+        let fused = items
+            .iter()
+            .find(|i| i.oid == entity_node)
+            .expect("entity node id fused across auxiliary + canonical oids");
+        assert_eq!(
+            fused.source_count, 2,
+            "vector (auxiliary) + graph (canonical) for the same entity merge under EntityNode keying"
         );
     }
 
@@ -649,6 +947,28 @@ mod tests {
             .find(|i| i.oid == oid)
             .expect("shared oid fused");
         assert_eq!(fused.source_count, 2, "vector + document merge by oid");
+    }
+
+    /// TD-138 end-state: a vector hit, a graph-expanded node, and a BM25 document hit that are the
+    /// SAME entity (same canonical `oid`) fuse into one item with `source_count == 3` — all three
+    /// modalities converge onto the seam by shared `oid`, calibrated by the Fuser.
+    #[test]
+    fn vector_graph_document_sources_tri_modal_fuse_by_shared_oid() {
+        let oid = "graph/g1/node/n1";
+        let vector = vector_hits_to_source(&[hit(oid, 0.9)], 1.0);
+        let graph = traversal_nodes_to_source("g1", &[node("n1")], 1.0);
+        let document = bm25_hits_to_source(&[doc_hit(oid, 3.2)], 1.0);
+        let (items, stats) =
+            Fuser::new(FusionPolicy::default()).fuse(vec![vector, graph, document], 10);
+        assert_eq!(stats.sources_fused, 3);
+        let fused = items
+            .iter()
+            .find(|i| i.oid == oid)
+            .expect("shared oid fused across all three modalities");
+        assert_eq!(
+            fused.source_count, 3,
+            "vector + graph + document merge by oid"
+        );
     }
 
     fn edge(id: &str) -> Edge {
@@ -758,5 +1078,46 @@ mod tests {
             1,
         );
         assert_eq!(truncated.len(), 1, "limit truncates the raw union");
+    }
+
+    /// Cost routing truncates each source to its allocated budget (top-k by score), preserving the
+    /// highest-scoring candidates.
+    #[test]
+    fn truncate_source_to_budget_keeps_top_k_by_score() {
+        use crate::core::search::cross_modal_fusion::SourceId;
+
+        let mut source = SourceCandidates::new(
+            SourceId::Vector,
+            1.0,
+            HashMap::from([
+                ("a".to_string(), 0.9),
+                ("b".to_string(), 0.5),
+                ("c".to_string(), 0.7),
+                ("d".to_string(), 0.3),
+            ]),
+        );
+        truncate_source_to_budget(&mut source, 2);
+        assert_eq!(source.scores.len(), 2);
+        assert!(source.scores.contains_key("a"));
+        assert!(source.scores.contains_key("c"));
+        assert!(!source.scores.contains_key("d"));
+    }
+
+    /// When budget >= source size, truncation is a no-op.
+    #[test]
+    fn truncate_source_within_budget_is_noop() {
+        use crate::core::search::cross_modal_fusion::SourceId;
+
+        let mut source = SourceCandidates::new(
+            SourceId::Vector,
+            1.0,
+            HashMap::from([("a".to_string(), 0.9), ("b".to_string(), 0.5)]),
+        );
+        let original = source.scores.clone();
+        truncate_source_to_budget(&mut source, 10);
+        assert_eq!(
+            source.scores, original,
+            "no change when budget exceeds size"
+        );
     }
 }

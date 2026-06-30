@@ -39,6 +39,7 @@ pub mod embedding_precision_policy;
 pub mod glue;
 pub mod hive;
 pub mod iceberg;
+pub mod id_allocator;
 pub mod native;
 pub mod oltp;
 #[cfg(feature = "polaris-catalog")]
@@ -158,6 +159,18 @@ pub struct CatalogNamespace {
     pub updated_at_ms: i64,
 
     // --- Engine multi-tenant authority fields (stable identifiers) ---
+    /// ADR-031 / TD-181 P0: stable, immutable `u64` **catalog object identity**,
+    /// minted from the single system-wide catalog sequence (globally unique
+    /// across all tenants, never reused). This is the catalog-object surrogate
+    /// the planner/FK/path layers will key on; it is distinct from
+    /// `namespace_id` (the legacy `ns_<uuid>` path token, retired in a later
+    /// phase) and from `tenant_id`/`account_id` (externally assigned, **not**
+    /// catalog surrogates — ADR-031 reconciliation amendment 2). Additive +
+    /// `#[serde(default)]`, so legacy rows and federated (external-catalog)
+    /// namespaces load as `None` (mixed-read-safe; only native-minted
+    /// namespaces carry one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_id: Option<u64>,
     /// Opaque, stable, server-issued ULID. Never reused, never changes on
     /// rename. Drives physical paths and provider rule filters. `None`
     /// for legacy rows pending P0.5 migration backfill.
@@ -211,6 +224,7 @@ impl CatalogNamespace {
             location: None,
             created_at_ms: now,
             updated_at_ms: now,
+            object_id: None,
             namespace_id: None,
             tenant_id: None,
             account_id: None,
@@ -223,6 +237,12 @@ impl CatalogNamespace {
     /// Get fully qualified name
     pub fn fqn(&self) -> String {
         self.levels.join(".")
+    }
+
+    /// Set the stable `u64` catalog object identity (ADR-031 / TD-181 P0).
+    pub fn with_object_id(mut self, object_id: u64) -> Self {
+        self.object_id = Some(object_id);
+        self
     }
 
     /// Add a property
@@ -292,8 +312,19 @@ impl CatalogNamespace {
 /// Column definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogColumn {
-    /// Column ID (stable across renames)
+    /// Column ID — the **physical** field identity: stable across renames and
+    /// mapped 1:1 to the Iceberg/Parquet field-id (ADR-010). This is the on-disk
+    /// column mapping, NOT the catalog surrogate; see `object_id`.
     pub id: i32,
+    /// ADR-031 / TD-181: the **catalog** surrogate identity — a stable, immutable
+    /// `u64` `object_id` from the one system-wide catalog sequence (globally
+    /// unique, never reused). Distinct role from `id` (the physical field-id):
+    /// `object_id` is what catalog→catalog references and the path migration key
+    /// on; `id` is the Parquet/PAX field mapping. Both coexist by role (ADR-031
+    /// reconciliation amendment 4). Additive + `#[serde(default)]`, so legacy
+    /// rows and not-yet-persisted columns load as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_id: Option<u64>,
     /// Column name
     pub name: String,
     /// Data type (canonical logical type — ADR-024).
@@ -331,6 +362,7 @@ impl CatalogColumn {
     pub fn new(id: i32, name: impl Into<String>, data_type: ProximaType) -> Self {
         Self {
             id,
+            object_id: None,
             name: name.into(),
             data_type,
             nullable: true,
@@ -340,6 +372,12 @@ impl CatalogColumn {
             is_deleted: false,
             original_id: None,
         }
+    }
+
+    /// Set the stable `u64` catalog object identity (ADR-031 / TD-181).
+    pub fn with_object_id(mut self, object_id: u64) -> Self {
+        self.object_id = Some(object_id);
+        self
     }
 
     /// Set nullable
@@ -391,6 +429,7 @@ impl CatalogColumn {
     pub fn from_arrow_field(field: &arrow_schema::Field, id: i32) -> Self {
         Self {
             id,
+            object_id: None,
             name: field.name().clone(),
             data_type: ProximaType::from_arrow_type(field.data_type()),
             nullable: field.is_nullable(),
@@ -543,6 +582,15 @@ pub struct CatalogStorageConfig {
 pub struct CatalogTableSchema {
     /// Table name
     pub name: String,
+    /// ADR-031 stable, immutable internal object id (per-type `u64`, globally unique
+    /// across tenants, never reused) — the rename-safe physical key for the WAL
+    /// `collection_id`, memtable partition, and object-store paths. `None` = legacy /
+    /// not-yet-allocated; `create_table` assigns it, `rename_table` preserves it.
+    /// Additive + `#[serde(default)]` so old persisted schemas deserialize to `None`
+    /// (mixed-read-safe). Physical layers still key on `name` until the migration
+    /// cuts over (ADR-031 O2).
+    #[serde(default)]
+    pub object_id: Option<u64>,
     /// Table columns
     pub columns: Vec<CatalogColumn>,
     /// Primary key columns (by name)
@@ -700,6 +748,7 @@ impl Default for CatalogTableSchema {
 
         Self {
             name: String::new(),
+            object_id: None,
             columns: Vec::new(),
             primary_key: Vec::new(),
             indexes: Vec::new(),
@@ -1357,6 +1406,13 @@ fn measured_ratio(raw_bytes: u64, encoded_bytes: u64) -> f64 {
 /// Index definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogIndex {
+    /// ADR-031 / TD-181 P0: stable, immutable `u64` catalog object identity,
+    /// minted from the single system-wide catalog sequence (globally unique,
+    /// never reused) — the same sequence that mints table and namespace oids.
+    /// Additive + `#[serde(default)]`, so legacy persisted indexes load as
+    /// `None` (mixed-read-safe; backfilled on first allocation pass).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_id: Option<u64>,
     /// Index name
     pub name: String,
     /// Indexed columns
@@ -1377,6 +1433,7 @@ impl CatalogIndex {
         index_type: CatalogIndexType,
     ) -> Self {
         Self {
+            object_id: None,
             name: name.into(),
             columns,
             index_type,
@@ -1388,6 +1445,12 @@ impl CatalogIndex {
     /// Set unique
     pub fn unique(mut self) -> Self {
         self.is_unique = true;
+        self
+    }
+
+    /// Set the stable `u64` catalog object identity (ADR-031 / TD-181 P0).
+    pub fn with_object_id(mut self, object_id: u64) -> Self {
+        self.object_id = Some(object_id);
         self
     }
 }
@@ -4356,6 +4419,67 @@ pub trait Catalog: Send + Sync {
     async fn list_tables(&self, namespace: &[String]) -> anyhow::Result<Vec<TableIdentifier>>;
     async fn table_exists(&self, identifier: &TableIdentifier) -> anyhow::Result<bool>;
     async fn get_table(&self, identifier: &TableIdentifier) -> anyhow::Result<CatalogTableSchema>;
+
+    /// TD-110 S3: enumerate every table in a namespace subtree (the `scope`),
+    /// for cross-namespace FOREIGN KEY child discovery on ON DELETE.
+    /// `scope = None` → all top-level namespaces; `scope = Some([tenant])` → the
+    /// tenant's subtree (keeps FK child discovery intra-tenant — cross-tenant
+    /// children are never enumerated). Default impl BFS-walks `list_namespaces`
+    /// + `list_tables`; correct for every backend (a backend-specific global
+    /// index override is possible but would miss legacy name-keyed tables, so
+    /// the recursive default is the complete path).
+    async fn list_all_tables_in_scope(
+        &self,
+        scope: Option<&[String]>,
+    ) -> anyhow::Result<Vec<TableIdentifier>> {
+        let mut tables = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut frontier: Vec<Vec<String>> = match scope {
+            Some(ns) => vec![ns.to_vec()],
+            None => self
+                .list_namespaces(None)
+                .await?
+                .into_iter()
+                .map(|ns| ns.levels)
+                .collect(),
+        };
+        while let Some(ns) = frontier.pop() {
+            if !visited.insert(ns.clone()) {
+                continue;
+            }
+            tables.extend(self.list_tables(&ns).await?);
+            for child in self.list_namespaces(Some(&ns)).await? {
+                frontier.push(child.levels);
+            }
+        }
+        Ok(tables)
+    }
+
+    /// ADR-031 O1 (dual-read): resolve a table by its stable `object_id` — the
+    /// inverse of `get_table(...).object_id`. Returns `None` when no table carries
+    /// that id, or when the backend does not allocate object_ids (external
+    /// catalogs). Lets `dyn Catalog` consumers (change-feed, recovery, planner)
+    /// key on the global id rather than the mutable name. Default: `None`.
+    async fn get_table_by_object_id(
+        &self,
+        object_id: u64,
+    ) -> anyhow::Result<Option<TableIdentifier>> {
+        let _ = object_id;
+        Ok(None)
+    }
+
+    /// Resolve a namespace's levels from its stable catalog `object_id`
+    /// (ADR-031 / TD-181) — the namespace analogue of `get_table_by_object_id`.
+    /// Default `Ok(None)` for external/federated catalogs that don't mint
+    /// ProximaDB object_ids.
+    async fn get_namespace_by_object_id(
+        &self,
+        object_id: u64,
+    ) -> anyhow::Result<Option<Vec<String>>> {
+        let _ = object_id;
+        Ok(None)
+    }
+
     async fn rename_table(
         &self,
         from: &TableIdentifier,

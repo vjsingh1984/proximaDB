@@ -82,12 +82,65 @@ jobs:
         run: |
           cargo test --test tpch_pgwire_e2e --test tpcds_pgwire_e2e --no-run
           cargo test -p proximadb-block-format --lib --no-run
+          cargo test --test embedded_flush_recovery --no-run
+          # TD-182 P0b: previously-orphaned vector recall ratchets (gate them here).
+          cargo test --test vector_ann_recall_e2e --test nova_cold_search_recall_test \
+            --test td112_postflush_recall_e2e --test raptor_recall_test \
+            --test helix_cold_search_recall_test --no-run
       - name: Run TPC-H over pgwire
         run: cargo test --test tpch_pgwire_e2e -- --nocapture
       - name: Run TPC-DS over pgwire
         run: cargo test --test tpcds_pgwire_e2e -- --nocapture
       - name: Run PAX recall ratchets
         run: cargo test -p proximadb-block-format --lib recall -- --nocapture
+      - name: Run cold-read recall ratchet (TD-163/TD-165)
+        # Guards the SST cold-read path TD-163 now relies on (free_wal=true): after a
+        # flush+reopen, recall@k must not regress the hot memtable path. Catches the
+        # cold-read ranking regression the vec_0-only assertion in
+        # sst_block_serialization_roundtrip missed (why TD-165 was marked Resolved
+        # prematurely). Well-separated seeded vectors → recall@10 = 1.0 on both paths.
+        run: cargo test --test embedded_flush_recovery recall -- --nocapture
+      # TD-182 P0b: vector-recall ratchets that previously ran in NO CI tier
+      # (orphaned). Each asserts recall@k / exact-match vs an f32 baseline. The
+      # td112 suite runs only its `recall` test here; its `axis_index_rebuilt_*`
+      # test is a separate pre-existing AXIS-rebuild regression tracked as TD-184.
+      - name: Run vector ANN recall ratchet (TD-182 P0b)
+        run: cargo test --test vector_ann_recall_e2e -- --nocapture
+      - name: Run NOVA bounds-prune recall ratchet (TD-182 P0b)
+        run: cargo test --test nova_cold_search_recall_test -- --nocapture
+      - name: Run HELIX cold-search recall ratchet (TD-182 P0b)
+        run: cargo test --test helix_cold_search_recall_test -- --nocapture
+      - name: Run RAPTOR recall-after-reopen ratchet (TD-182 P0b)
+        run: cargo test --test raptor_recall_test -- --nocapture
+      - name: Run TD-112 post-flush recall ratchet (TD-182 P0b)
+        run: cargo test --test td112_postflush_recall_e2e recall -- --nocapture
+
+  # Validate the object-store access-tier cost lever (TD-168/TD-173) against REAL
+  # cloud APIs via emulators — Azurite (Azure), MinIO (S3), fake-gcs (GCP) — the
+  # "develop→qa upfront validation" for the cold-payload tier. The default CI only
+  # exercises put_with_tier on memory:// (where the tier degrades to a plain put),
+  # so a native-class mapping regression that a real cloud API would 4xx is
+  # invisible there; this job runs the tier path end-to-end. Azure + S3 are strict
+  # (PUT-with-tier accepted + round-trip); GCS is best-effort (the test self-skips
+  # on a fake-gcs/object_store incompatibility). All orchestration lives in
+  # scripts/run_cloud_emulator_tests.sh so the CI path == `make cloud-emulator-test`.
+  cloud-emulator-object-store:
+    name: Cloud object-store emulators (Azurite/MinIO/fake-gcs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-qa-cloud-emulator"
+      - name: Validate Cool tier against Azure/S3/GCS emulators
+        # docker + aws/az CLIs are preinstalled on ubuntu-latest runners.
+        run: bash scripts/run_cloud_emulator_tests.sh
 
   sdk-coverage-ratchet:
     name: SDK Coverage Ratchet
@@ -132,10 +185,14 @@ jobs:
   rust-coverage-ratchet:
     name: Rust Coverage Ratchet
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    # FIRST CUT: cargo-llvm-cov over the full workspace is heavy and has OOM'd
-    # CI before; kept non-blocking until the baseline is seeded from a clean run
-    # and memory is tamed. Flip to required (remove this line) once stable.
+    timeout-minutes: 90
+    # FIRST CUT: cargo-llvm-cov over the full workspace is heavy. 60m was too
+    # tight — it timed out mid-lib-test-run (deep into the graph/index tests),
+    # so the seed artifact was never produced. 90m lets it complete + emit the
+    # seed (rust-coverage-seed.json), the prerequisite to baseline rust:* in
+    # COVERAGE_BASELINE.json. Still non-blocking (continue-on-error); flip to
+    # required (remove continue-on-error) only AFTER a clean run seeds the
+    # baseline AND it stays green.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -154,7 +211,7 @@ jobs:
         env:
           CARGO_BUILD_JOBS: "1"
         run: |
-          cargo llvm-cov --lib --no-report --workspace
+          cargo llvm-cov --lib --no-report -p proximadb
           cargo llvm-cov report --json --output-path /tmp/llvm-cov.json
           python3 scripts/coverage_ratchet.py normalize --rust /tmp/llvm-cov.json -o /tmp/rust-current.json
           # Seed the baseline if absent (first run), else ratchet-check.

@@ -122,6 +122,14 @@ pub struct RichSearchResponse {
     pub results: Vec<RichSearchResult>,
     pub total_found: i64,
     pub collection_id: Option<String>,
+    /// TD-064(a): predicate-aware shortfall — `Some(...)` when a filtered
+    /// search returned fewer than the requested `top_k` after the
+    /// WAL+AXIS+storage merge. First-class and always-on (NOT debug-gated):
+    /// a silent `<top_k` under a tenant/RLS filter is fail-open, so the
+    /// client must be able to tell "fewer than k match my filter" from "the
+    /// engine returned my full top-k". Recomputed authoritatively against
+    /// the final merged result so an AXIS-stage false positive is cleared.
+    pub predicate_shortfall: Option<crate::observability::search_plan_trace::PredicateShortfall>,
 }
 
 #[derive(Debug, Clone)]
@@ -267,6 +275,49 @@ fn proxima_value_to_json(value: &proximadb_data_model::ProximaValue) -> serde_js
     crate::core::search::sql_value_filter::proxima_value_to_json(value)
 }
 
+/// TD-064(a): Authoritative predicate-shortfall **after** the
+/// WAL+AXIS+storage merge.
+///
+/// `final_returned_k` / `requested_k` are the TRUE final merged counts (the
+/// caller passes the post-truncate result length and the user's `top_k`), so an
+/// AXIS-stage false positive — AXIS underflowed its oversample budget, but the
+/// merge with WAL + storage filled the top-k — is cleared (`final_returned_k >=
+/// requested_k` ⇒ `None`). `axis_context` carries only the mode label and
+/// oversample pool from the AXIS stage (read off the diagnostics bus); the
+/// counts always come from the final merge, never from the AXIS value.
+///
+/// `has_filter` gates emission: a `<top_k` result with no predicate just means
+/// the collection has fewer than `k` records — not a security/correctness
+/// shortfall. A tenant/RLS-only shortfall (no *user* filter, but AXIS still
+/// recorded one) is covered by the caller OR-ing `axis_context.is_some()` into
+/// `has_filter`.
+fn recompute_merged_shortfall(
+    requested_k: u32,
+    final_returned_k: u32,
+    has_filter: bool,
+    axis_context: Option<&crate::observability::search_plan_trace::PredicateShortfall>,
+) -> Option<crate::observability::search_plan_trace::PredicateShortfall> {
+    use crate::observability::search_plan_trace::PredicateShortfall;
+    if !has_filter || final_returned_k >= requested_k {
+        return None;
+    }
+    Some(PredicateShortfall {
+        requested_k,
+        returned_k: final_returned_k,
+        // Oversample pool is AXIS-stage context only — fall back to the
+        // requested budget when this shortfall was synthesized at the response
+        // boundary (no AXIS stage ran, e.g. a query-cache hit).
+        oversample_pool: axis_context
+            .map(|c| c.oversample_pool)
+            .filter(|&p| p > 0)
+            .unwrap_or(requested_k),
+        ann_filtering_mode: axis_context
+            .filter(|c| !c.ann_filtering_mode.is_empty())
+            .map(|c| c.ann_filtering_mode.clone())
+            .unwrap_or_else(|| "post_filter".to_string()),
+    })
+}
+
 fn v1_search_result_to_rich(
     result: crate::proto::proximadb_v1::SearchResult,
 ) -> RichSearchResponse {
@@ -291,6 +342,7 @@ fn v1_search_result_to_rich(
             .collect(),
         total_found: result.total_found,
         collection_id: result.collection_id,
+        predicate_shortfall: None,
     }
 }
 
@@ -596,10 +648,33 @@ impl VectorOperationsService {
                 results: Vec::new(),
                 total_found: 0,
                 collection_id: Some(collection_id),
+                predicate_shortfall: None,
             });
         };
 
-        Ok(v1_search_result_to_rich(search_result))
+        let mut resp = v1_search_result_to_rich(search_result);
+
+        // TD-064(a): authoritative shortfall recompute at the response
+        // boundary — the TRUE final merged counts vs the user's `top_k`.
+        // This runs inside the caller's `predicate_diagnostics::scope`, so the
+        // bus still carries AXIS-stage context (mode label + oversample pool)
+        // from the search above; `take_shortfall()` retrieves it and clears the
+        // slot. Recomputing here (rather than trusting the AXIS-stage value)
+        // clears post-merge false positives and also covers paths the AXIS
+        // shortfall never sees (query-cache hits, non-AXIS engines).
+        let axis_context = crate::observability::predicate_diagnostics::take_shortfall();
+        // A tenant/RLS-only shortfall has no *user* filter in `request.filters`
+        // but AXIS still recorded one — so `axis_context.is_some()` is OR'd in
+        // to keep disclosing the <top_k result.
+        let has_filter = !request.filters.is_empty() || axis_context.is_some();
+        resp.predicate_shortfall = recompute_merged_shortfall(
+            request.top_k,
+            resp.results.len() as u32,
+            has_filter,
+            axis_context.as_ref(),
+        );
+
+        Ok(resp)
     }
 
     /// Execute canonical rich-record get.
@@ -3208,7 +3283,14 @@ impl VectorOperationsService {
             collection_id
         );
         let axis_optimized_results = match build_axis_hybrid_query_with_policy(
-            collection_id,
+            // TD-AXIS-1: use the collection's canonical id (UUID) — NOT the
+            // caller's collection_id (which may be the human-readable NAME).
+            // enable_hmgi registered the UUID in hmgi_enabled_collections;
+            // passing the name caused is_hmgi_enabled to return false → HMGI
+            // skipped → IVF fallback → 0 results (ANN index not serving).
+            // ADR-031 follow-up: migrate hmgi_enabled_collections to the stable
+            // object_id (base62) and use that here instead of the UUID.
+            &collection.id,
             &axis_search_params,
             ann_filtering_mode,
             ann_filtering_selectivity.map(|_| proximadb_catalog::AnnFilteringPolicy::default()),
@@ -3216,6 +3298,19 @@ impl VectorOperationsService {
         ) {
             Ok(hybrid_query) => match self.axis_index_manager.query(hybrid_query).await {
                 Ok(result) => {
+                    // TD-064(a): stop dropping `predicate_shortfall` /
+                    // `selected_filtering_mode`. Carry the AXIS-stage shortfall
+                    // onto the per-request diagnostics bus here (explicit
+                    // carrier — the value is then recomputed against the FINAL
+                    // WAL+AXIS+storage merge at the response boundary in
+                    // `search_records_with_tenant_context`, which clears any
+                    // post-merge false positive). `selected_filtering_mode` is
+                    // already reflected in the shortfall's `ann_filtering_mode`
+                    // label, so bind it to document it is captured, not
+                    // silently discarded.
+                    let axis_shortfall = result.predicate_shortfall;
+                    let _selected_filtering_mode = result.selected_filtering_mode;
+                    crate::observability::predicate_diagnostics::set_shortfall(axis_shortfall);
                     let records: Vec<crate::core::search::results::OptimizedSearchRecord> = result
                         .results
                         .into_iter()
@@ -3537,6 +3632,16 @@ impl VectorOperationsService {
 
         // Perform index lookup using axis_index_manager
         let query_result = self.axis_index_manager.query(hybrid_query).await?;
+
+        // TD-064(a): stop dropping `predicate_shortfall` /
+        // `selected_filtering_mode` on this path too. Carry a real shortfall
+        // onto the diagnostics bus (only when present, so this step never
+        // clears a shortfall a prior step recorded). `selected_filtering_mode`
+        // is reflected in the shortfall's mode label — captured, not discarded.
+        let _selected_filtering_mode = query_result.selected_filtering_mode;
+        if let Some(sf) = query_result.predicate_shortfall {
+            crate::observability::predicate_diagnostics::set_shortfall(Some(sf));
+        }
 
         // Convert QueryResult to Vec<OptimizedSearchRecord>
         let results: Vec<crate::core::search::results::OptimizedSearchRecord> = query_result
@@ -5497,4 +5602,76 @@ async fn observe_advisor_for_search(collection_id: &str, top_k: u32, observed_la
         observed_latency_us,
     );
     crate::services::advisor_observations::record_observation(&obs);
+}
+
+#[cfg(test)]
+mod recompute_merged_shortfall_tests {
+    //! TD-064(a): unit tests for the authoritative post-merge shortfall
+    //! recompute. The AXIS-stage value can be a post-merge false positive
+    //! (WAL+storage fill the top-k); the recompute against the FINAL merged
+    //! count clears it, while a genuine shortfall survives.
+    use super::recompute_merged_shortfall;
+    use crate::observability::search_plan_trace::PredicateShortfall;
+
+    fn axis_ctx(returned_k: u32, mode: &str, pool: u32) -> PredicateShortfall {
+        PredicateShortfall {
+            requested_k: 10,
+            returned_k,
+            oversample_pool: pool,
+            ann_filtering_mode: mode.to_string(),
+        }
+    }
+
+    #[test]
+    fn axis_false_positive_is_cleared_when_merge_fills_top_k() {
+        // AXIS underflowed its oversample budget (returned 3), but the
+        // WAL+storage merge brought the final count to the full top_k → no
+        // shortfall must be reported (the post-merge false positive).
+        let ctx = axis_ctx(3, "inline", 50);
+        assert!(recompute_merged_shortfall(10, 10, true, Some(&ctx)).is_none());
+    }
+
+    #[test]
+    fn genuine_shortfall_survives_the_merge() {
+        // AXIS returned 3, the merge did NOT recover more → the shortfall is
+        // real and must survive, with the FINAL merged count as returned_k
+        // (not the AXIS-stage value) and the AXIS mode label preserved.
+        let ctx = axis_ctx(3, "inline", 50);
+        let sf = recompute_merged_shortfall(10, 3, true, Some(&ctx)).expect("shortfall");
+        assert_eq!(sf.requested_k, 10);
+        assert_eq!(
+            sf.returned_k, 3,
+            "returned_k must be the FINAL merged count"
+        );
+        assert_eq!(sf.oversample_pool, 50, "oversample pool carried from AXIS");
+        assert_eq!(sf.ann_filtering_mode, "inline");
+    }
+
+    #[test]
+    fn synthesized_when_no_axis_context_but_filtered_underflow() {
+        // Cache-hit / non-AXIS path: no AXIS context, but a user filter still
+        // underflowed → synthesize with the post_filter fallback label and the
+        // requested budget as the oversample pool.
+        let sf = recompute_merged_shortfall(10, 4, true, None).expect("synthesized shortfall");
+        assert_eq!(sf.requested_k, 10);
+        assert_eq!(sf.returned_k, 4);
+        assert_eq!(sf.ann_filtering_mode, "post_filter");
+        assert_eq!(sf.oversample_pool, 10, "falls back to requested budget");
+    }
+
+    #[test]
+    fn no_filter_means_no_shortfall_even_when_underflowed() {
+        // A <top_k result with no predicate just means the collection has
+        // fewer than k records — not a security/correctness shortfall.
+        let ctx = axis_ctx(3, "inline", 50);
+        assert!(recompute_merged_shortfall(10, 3, false, Some(&ctx)).is_none());
+    }
+
+    #[test]
+    fn full_top_k_is_never_a_shortfall() {
+        let ctx = axis_ctx(3, "post_filter", 20);
+        assert!(recompute_merged_shortfall(10, 10, true, Some(&ctx)).is_none());
+        // also: more than requested (cap) is not a shortfall
+        assert!(recompute_merged_shortfall(10, 12, true, Some(&ctx)).is_none());
+    }
 }

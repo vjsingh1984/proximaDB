@@ -25,11 +25,11 @@ use std::sync::Arc;
 use tracing::trace;
 
 use super::vectorized_executor::{DataChunk, vectorized_filter_batch};
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::engines::core::formats::columnar::FilterCondition;
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
 /// Default morsel size matching L2 cache line efficiency.
 /// DuckDB uses 2048; we match that for comparable behavior.

@@ -3,6 +3,16 @@
 :toclevels: 2
 :icons: font
 
+[IMPORTANT]
+====
+This concept-level vision is **superseded** by the canonical product vision at
+link:../00-product/VISION.adoc[`docs/00-product/VISION.adoc`] ("The Context Database"). This
+document is retained as historical context for the earlier "format-first multi-model platform"
+framing. For current vision, strategy, the 3-year horizon, and the near-term wedge, read the
+canonical VISION; for the supported/beta/experimental surface, read
+link:../SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`].
+====
+
 [.lead]
 ProximaDB aims to be a modular, multi-model database where storage formats and catalogs form the
 stable contract, and multiple compute engines can operate across vectors, graphs, documents,

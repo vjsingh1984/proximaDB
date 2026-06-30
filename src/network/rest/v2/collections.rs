@@ -171,6 +171,93 @@ pub struct CreateCollectionV2Request {
     /// Quantization config (gRPC-v2 parity). When omitted, quantization is
     /// left unset (engine default).
     pub quantization: Option<QuantizationConfigInput>,
+    /// Per-collection cold/warm search routing policy (ADR-028). When omitted,
+    /// the system decides cost-derived (`mode = "auto"`). Owners with hard SLAs
+    /// override here; query-time precedence is per-query `search_mode` > this
+    /// policy > cost-model auto-default.
+    pub index_policy: Option<IndexPolicyInput>,
+}
+
+/// REST input for the per-collection index routing policy (mirrors proto
+/// `IndexPolicy`; ADR-028).
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct IndexPolicyInput {
+    /// Routing mode: "auto" (default) | "exact" | "ivf" | "hnsw" | "helix".
+    /// "auto"/omitted ⇒ cost-derived. "exact" ⇒ always brute-force (no index).
+    /// The engine modes force the collection onto that engine/route.
+    pub mode: Option<String>,
+    /// Cold-start index warming: "auto" (default) | "eager" | "lazy" | "never".
+    /// Index/auto modes only — rejected when `mode = "exact"`.
+    pub rehydrate: Option<String>,
+    /// Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
+    /// for the storage class.
+    pub byte_budget: Option<u64>,
+    /// nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when
+    /// `mode = "exact"`.
+    pub nprobe: Option<u32>,
+}
+
+/// ADR-028: validate a REST `IndexPolicyInput` and map it onto the proto
+/// `IndexPolicy`, fail-closed. Modes and rehydrate strings are checked against
+/// allowlists, and the validity matrix is enforced: `rehydrate`/`nprobe` are
+/// index/auto concepts and are rejected when `mode = "exact"` (exact builds no
+/// index). Strings are normalized to lowercase so downstream consumers match
+/// case-insensitively.
+fn build_index_policy(
+    input: IndexPolicyInput,
+) -> Result<crate::proto::proximadb_v1::IndexPolicy, ApiError> {
+    let mode = input
+        .mode
+        .as_deref()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "auto".to_string());
+    let valid_modes = ["auto", "exact", "ivf", "hnsw", "helix"];
+    if !valid_modes.contains(&mode.as_str()) {
+        return Err(ApiError::InvalidArgument(format!(
+            "Invalid index_policy.mode '{}'. Valid modes: {:?}",
+            mode, valid_modes
+        )));
+    }
+
+    let rehydrate = input
+        .rehydrate
+        .as_deref()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "auto".to_string());
+    let valid_rehydrate = ["auto", "eager", "lazy", "never"];
+    if !valid_rehydrate.contains(&rehydrate.as_str()) {
+        return Err(ApiError::InvalidArgument(format!(
+            "Invalid index_policy.rehydrate '{}'. Valid values: {:?}",
+            rehydrate, valid_rehydrate
+        )));
+    }
+
+    let nprobe = input.nprobe.unwrap_or(0);
+
+    // Validity matrix (fail-closed): exact builds no index, so index-only knobs
+    // are contradictory with it.
+    if mode == "exact" {
+        if rehydrate != "auto" {
+            return Err(ApiError::InvalidArgument(
+                "index_policy.rehydrate is invalid with mode='exact' (exact builds no index to rehydrate)".to_string(),
+            ));
+        }
+        if nprobe != 0 {
+            return Err(ApiError::InvalidArgument(
+                "index_policy.nprobe is invalid with mode='exact' (exact builds no index)"
+                    .to_string(),
+            ));
+        }
+    }
+
+    Ok(crate::proto::proximadb_v1::IndexPolicy {
+        mode,
+        rehydrate,
+        byte_budget: input.byte_budget.unwrap_or(0),
+        nprobe,
+    })
 }
 
 /// REST input for a single index config (mirrors proto `IndexConfig`).
@@ -614,6 +701,14 @@ pub async fn create_collection_v2(
         }
     });
 
+    // ADR-028: validate + map the optional index routing policy. Fail-closed on
+    // nonsensical combinations (the mode×rehydrate/nprobe validity matrix) so a
+    // bad policy is rejected at create rather than silently ignored at query time.
+    let index_policy = match request.index_policy.take() {
+        None => None,
+        Some(p) => Some(build_index_policy(p)?),
+    };
+
     let mut collection_config = CollectionConfig {
         name: request.name.clone(),
         dimension: request.dimension,
@@ -622,6 +717,7 @@ pub async fn create_collection_v2(
         canonical_embedding_precision,
         index_configs,
         quantization,
+        index_policy,
         tags: request.tags.take().unwrap_or_default(),
         enable_proxima_record: Some(proxima_record_enabled),
         ..Default::default()
@@ -2009,6 +2105,182 @@ fn object_economy_status_label(
         DirectoryLoadStatus::Corrupt(_) => "corrupt",
         DirectoryLoadStatus::Mismatch { .. } => "mismatch",
     }
+}
+
+/// Map a proto `FilterableDataType` to the canonical `ProximaType` (ADR-024)
+/// serde label the statistics envelope's `data_type` field carries. Unit
+/// variants only — parametrized temporal/decimal types degrade to their base
+/// label (still a schema-valid string under the frozen contract's
+/// `oneOf[string,object]`).
+fn filterable_type_to_proxima(v: i32) -> &'static str {
+    use crate::proto::proximadb_v1::FilterableDataType as F;
+    match F::try_from(v) {
+        Ok(F::FilterableInteger) => "Int64",
+        Ok(F::FilterableFloat) => "Float64",
+        Ok(F::FilterableDecimal) => "Decimal",
+        Ok(F::FilterableBoolean) => "Boolean",
+        Ok(F::FilterableDatetime) => "Timestamp",
+        Ok(F::FilterableTimestampTz) => "TimestampTz",
+        Ok(F::FilterableDate) => "Date",
+        Ok(F::FilterableTime) => "Time",
+        Ok(F::FilterableUuid) => "Uuid",
+        _ => "String",
+    }
+}
+
+/// Map the engine's maintained `GraphStats` to the envelope's graph modality
+/// block (ADR-037 TD-175). Reuses `GraphOperationsService::get_stats` — the
+/// canonical accessor for the engine's incrementally-maintained node/edge/label
+/// counters — rather than recomputing topology.
+fn graph_stats_to_modality(
+    g: crate::graph::GraphStats,
+) -> crate::core::statistics::GraphStatistics {
+    use crate::core::statistics::{EdgeTypeCount, GraphStatistics, LabelCount};
+    GraphStatistics {
+        total_nodes: g.total_nodes,
+        total_edges: g.total_edges,
+        average_degree: Some(g.average_degree),
+        max_degree: Some(g.max_degree),
+        connected_components: Some(g.connected_components),
+        label_counts: g
+            .label_stats
+            .into_iter()
+            .map(|l| LabelCount {
+                label: l.label,
+                count: l.count,
+            })
+            .collect(),
+        edge_type_counts: g
+            .edge_type_stats
+            .into_iter()
+            .map(|e| EdgeTypeCount {
+                edge_type: e.edge_type,
+                count: e.count,
+            })
+            .collect(),
+    }
+}
+
+/// GET /api/v2/_diagnostics/collections/{collection_id}/statistics
+///
+/// ADR-037 (TD-174): emit the v1 [`StatisticsEnvelope`] — the modality-neutral,
+/// **units-only** boundary object the agent-facing catalog consumes (AnvaiOps
+/// ADR-0021 reads *this*, never the underlying data). It is projected from the
+/// resident per-collection summary maintained at the flush/compaction write
+/// boundary (the sibling of the KSU meter), overlaid with the authoritative
+/// live record/size counts. It is **never a corpus scan** — an agent reads the
+/// tiny envelope instead of the data.
+///
+/// Carries units and distributions only: no pricing, descriptions, quality
+/// grade, PII, or per-account scope (those are AnvaiOps policy). Freshness is a
+/// FACT (a flush/compaction watermark), never an SLA. Tenant-scoped.
+///
+/// ## Errors
+///
+/// - `404 Not Found`: Collection does not exist
+/// - `500 Internal Server Error`: Lookup failed
+#[utoipa::path(
+    get,
+    path = "/api/v2/_diagnostics/collections/{collection_id}/statistics",
+    tag = "Collections",
+    operation_id = "getCollectionStatistics",
+    summary = "Agent-facing statistics envelope (ADR-037 statistics-envelope.v1).",
+    params(
+        ("collection_id" = String, Path, description = "Collection name/ID."),
+    ),
+    responses(
+        (status = 200, description = "Statistics envelope (statistics-envelope.v1; canonical schema in docs/12-design/contracts)."),
+        (status = 404, description = "Resource not found.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
+pub async fn get_collection_statistics_v2(
+    Path(collection_id): Path<String>,
+    Extension(tenant): Extension<TenantContext>,
+    State(state): State<AppState>,
+) -> ApiResult<Json<crate::core::statistics::StatisticsEnvelope>> {
+    if collection_id.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
+    }
+
+    let request = CollectionRequest {
+        operation: CollectionOperation::CollectionGet as i32,
+        collection_id: Some(collection_id.clone()),
+        collection_config: None,
+        query_params: Default::default(),
+        options: Default::default(),
+        migration_config: Default::default(),
+    };
+
+    let resp = state
+        .api_handlers
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                ApiError::CollectionNotFound(collection_id.clone())
+            } else {
+                ApiError::Internal(format!("Failed to get collection: {}", e))
+            }
+        })?;
+
+    let collection = resp.collection.unwrap_or_default();
+    let config = collection.config.unwrap_or_default();
+    let stats = collection.stats.unwrap_or_default();
+    let canonical_id = if collection.id.is_empty() {
+        collection_id.clone()
+    } else {
+        collection.id.clone()
+    };
+
+    // TD-175: best-effort graph modality block from the engine's maintained
+    // graph counters (the `get_stats` accessor); skipped when the collection has
+    // no graph topology so vector-only collections carry no spurious graph block.
+    let graph_modality = state
+        .graph_operations_service
+        .get_stats(&canonical_id)
+        .await
+        .ok()
+        .map(graph_stats_to_modality)
+        .filter(|g| g.total_nodes > 0 || g.total_edges > 0);
+
+    let registry = crate::core::statistics::statistics_registry();
+    // Overlay the authoritative live counts/sizes + schema-level field facts onto
+    // the resident summary (creating it if no flush has populated one yet — then
+    // freshness honestly reads as the epoch "no snapshot" watermark). Per-field
+    // distributions and modality sketches fill in as flush/compaction observes
+    // records (TD-174); this read never scans the corpus.
+    registry.update(&canonical_id, move |summary| {
+        summary.set_record_count(non_negative_stat(stats.vector_count));
+        summary.set_sizes(
+            non_negative_stat(stats.data_size_bytes),
+            Some(non_negative_stat(stats.index_size_bytes)),
+        );
+        for col in &config.filterable_columns {
+            summary.set_field_schema(
+                &col.name,
+                serde_json::Value::String(filterable_type_to_proxima(col.data_type).to_string()),
+                Some(col.indexed),
+                Some(true),
+            );
+        }
+        if config.dimension > 0 {
+            summary.set_vector_meta(
+                config.dimension,
+                collection_distance_metric_label(config.distance_metric),
+            );
+        }
+        if let Some(g) = graph_modality {
+            summary.set_graph_stats(g);
+        }
+    });
+
+    let envelope = registry.envelope(&canonical_id).unwrap_or_else(|| {
+        crate::core::statistics::StatisticsSummary::new(&canonical_id).to_envelope()
+    });
+
+    Ok(Json(envelope))
 }
 
 /// GET /api/v2/_diagnostics/collections/{collection_id}/route-health
@@ -4672,5 +4944,101 @@ mod tests {
         assert_eq!(v["index_specs"][0]["is_primary"], true);
         assert_eq!(v["quantization"]["enabled"], true);
         assert_eq!(v["quantization"]["strategy"], "aggressive");
+    }
+
+    // ---- ADR-028 index_policy validation ----
+
+    fn policy_input(mode: &str) -> IndexPolicyInput {
+        IndexPolicyInput {
+            mode: Some(mode.to_string()),
+            rehydrate: None,
+            byte_budget: None,
+            nprobe: None,
+        }
+    }
+
+    #[test]
+    fn index_policy_defaults_to_auto() {
+        let p = build_index_policy(IndexPolicyInput {
+            mode: None,
+            rehydrate: None,
+            byte_budget: None,
+            nprobe: None,
+        })
+        .expect("auto policy is valid");
+        assert_eq!(p.mode, "auto");
+        assert_eq!(p.rehydrate, "auto");
+        assert_eq!(p.byte_budget, 0);
+        assert_eq!(p.nprobe, 0);
+    }
+
+    #[test]
+    fn index_policy_normalizes_and_accepts_valid_modes() {
+        for (raw, expect) in [
+            ("Exact", "exact"),
+            (" HELIX ", "helix"),
+            ("ivf", "ivf"),
+            ("HNSW", "hnsw"),
+        ] {
+            let p = build_index_policy(policy_input(raw)).expect("valid mode");
+            assert_eq!(p.mode, expect);
+        }
+    }
+
+    #[test]
+    fn index_policy_rejects_unknown_mode() {
+        let err = build_index_policy(policy_input("magic")).unwrap_err();
+        assert!(matches!(err, ApiError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn index_policy_rejects_rehydrate_with_exact() {
+        let err = build_index_policy(IndexPolicyInput {
+            mode: Some("exact".into()),
+            rehydrate: Some("eager".into()),
+            byte_budget: None,
+            nprobe: None,
+        })
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn index_policy_rejects_nprobe_with_exact() {
+        let err = build_index_policy(IndexPolicyInput {
+            mode: Some("exact".into()),
+            rehydrate: None,
+            byte_budget: None,
+            nprobe: Some(16),
+        })
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn index_policy_exact_with_byte_budget_is_allowed() {
+        // byte_budget is meaningful for exact (it caps the auto brute-force gate),
+        // so it must NOT be rejected.
+        let p = build_index_policy(IndexPolicyInput {
+            mode: Some("exact".into()),
+            rehydrate: None,
+            byte_budget: Some(8 * 1024 * 1024),
+            nprobe: None,
+        })
+        .expect("exact + byte_budget is valid");
+        assert_eq!(p.mode, "exact");
+        assert_eq!(p.byte_budget, 8 * 1024 * 1024);
+    }
+
+    #[test]
+    fn index_policy_rejects_unknown_rehydrate() {
+        let err = build_index_policy(IndexPolicyInput {
+            mode: Some("ivf".into()),
+            rehydrate: Some("whenever".into()),
+            byte_budget: None,
+            nprobe: None,
+        })
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidArgument(_)));
     }
 }

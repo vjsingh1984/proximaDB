@@ -114,6 +114,15 @@ pub struct ApiConfig {
     #[serde(default)]
     pub pg_port: Option<u16>,
 
+    /// Optional port for the reference MCP (Model Context Protocol) surface
+    /// (ADR-037 Decision 5). When `None` (the default) the MCP transport is
+    /// **off** — it is bound only when a port is configured here (or via the
+    /// `[api]` TOML / env-var precedence). In-process: the MCP server projects
+    /// the engine's existing surfaces (stats/describe/explain/search) by calling
+    /// the services directly, so there is no separate process.
+    #[serde(default)]
+    pub mcp_port: Option<u16>,
+
     /// Network transport for the REST / gRPC / Arrow Flight surfaces.
     ///
     /// - `"tcp"` (default): bind TCP ports (`rest_port` / `grpc_port` /
@@ -182,6 +191,7 @@ impl Default for ApiConfig {
             http2_max_concurrent_streams: 1000,
             max_connections: 10000,
             pg_port: None,
+            mcp_port: None,
             transport: default_transport(),
             socket_dir: None,
         }

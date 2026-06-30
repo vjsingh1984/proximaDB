@@ -48,6 +48,7 @@ impl HybridSearchServiceImpl {
 
 #[tonic::async_trait]
 impl HybridSearchService for HybridSearchServiceImpl {
+    #[allow(deprecated)] // forwards to the deprecated v1 HybridPort::hybrid_search (TD-138 phase 1)
     async fn hybrid_search(
         &self,
         request: Request<HybridFusionSearchRequest>,

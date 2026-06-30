@@ -7,7 +7,6 @@ use crate::query::ast::{BinaryOp, Expr, Literal, ProjectionItem, Query, TableRef
 mod tests {
     use super::*;
     use crate::query::sql_frontend::lowering::QueryLowering;
-    use crate::storage::FilesystemFactory;
 
     #[test]
     fn test_parse_simple_select() {

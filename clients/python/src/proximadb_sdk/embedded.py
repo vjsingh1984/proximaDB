@@ -1444,37 +1444,6 @@ prefetch_budget = 4
             )
             return response.json()
 
-    async def insert_document(
-        self,
-        collection_name: str,
-        document: dict[str, Any],
-        id: str | None = None,
-    ) -> dict[str, Any]:
-        """Insert a document into a collection.
-
-        Args:
-            collection_name: Collection name
-            document: Document data (JSON-serializable dict)
-            id: Optional document ID
-
-        Returns:
-            Insert result with document ID and version
-        """
-        if not self._started:
-            await self.start()
-
-        payload = {"document": document}
-        if id:
-            payload["id"] = id
-
-        async with self._http_client() as client:
-            response = await client.post(
-                f"{self.rest_url}/api/v2/document-collections/{collection_name}/documents",
-                json=payload,
-                timeout=30.0,
-            )
-            return response.json()
-
     async def get_document(
         self,
         collection_name: str,

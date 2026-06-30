@@ -40,6 +40,7 @@
 //! - `ConfigFallbackResolver`: Uses WAL config paths (for testing)
 //! - `CachedResolver`: Caches resolved paths (for performance)
 
+use crate::core::stable_id::CollectionIdentity;
 use anyhow::Result;
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -361,6 +362,13 @@ pub struct DrResolvedPath {
     pub namespace_id: String,
     pub collection_id: String,
     pub storage_pool_class: StoragePoolClass,
+    /// ADR-031 typed identity (account/namespace/collection as compact numeric
+    /// IDs). When present, [`typed_root_prefix`](Self::typed_root_prefix) emits
+    /// the **zero-padded base62** account-rooted path with NO `tenant_id`
+    /// (Phase 4 hierarchy collapse). `None` for all string-resolved paths —
+    /// the typed path is additive and env-gated (`PROXIMADB_TYPED_PATHS=1`),
+    /// so existing data resolves byte-identically (mixed-read-safe).
+    pub typed_identity: Option<CollectionIdentity>,
 }
 
 impl DrResolvedPath {
@@ -371,6 +379,14 @@ impl DrResolvedPath {
     /// passed as the provider replication rule filter and the only prefix the
     /// path resolver guard accepts.
     pub fn root_prefix(&self) -> String {
+        // ADR-031: prefer the compact typed path when a typed identity is set.
+        // Every subprefix method (`wal_subprefix`, `segments_subprefix`, …)
+        // flows through here, so they all become typed-aware with this one
+        // short-circuit. Legacy string-resolved paths (`typed_identity == None`)
+        // are byte-identical to the pre-typed contract (mixed-read-safe).
+        if let Some(typed) = self.typed_root_prefix() {
+            return typed;
+        }
         match &self.account_id {
             Some(account_id) => format!(
                 "accounts/{}/{}/{}/{}/",
@@ -381,6 +397,24 @@ impl DrResolvedPath {
                 self.tenant_id, self.namespace_id, self.collection_id
             ),
         }
+    }
+
+    /// ADR-031 typed root prefix: `accounts/{base62(u32)}/{base62(u16)}/
+    /// {base62(u32)}/` — **zero-padded** base62 so lexicographic S3 LIST order
+    /// == numeric order. There is **no `tenant_id` segment**: the Phase 4
+    /// hierarchy collapse folds tenant into `account_id` (account is the
+    /// billing/isolation boundary). Fixed width: exactly 27 chars for every
+    /// collection (9 + 6 + 1 + 3 + 1 + 6 + 1).
+    ///
+    /// Returns `None` when no [`typed_identity`](Self::typed_identity) is set
+    /// (legacy string-resolved path). This is the **single place** the typed
+    /// `accounts/{…}/{…}/{…}/` literal is constructed — the path-resolver guard
+    /// allowlists this file for it.
+    pub fn typed_root_prefix(&self) -> Option<String> {
+        self.typed_identity.map(|id| {
+            let (acct, ns, coll) = id.path_segments();
+            format!("accounts/{}/{}/{}/", acct, ns, coll)
+        })
     }
 
     /// WAL subprefix `<root>wal/`.
@@ -445,6 +479,39 @@ impl DrResolvedPath {
     /// subprefixes (`segments/`, `wal/`, …) in a `list`.
     pub fn branches_subprefix(&self) -> String {
         format!("{}_branches/", self.root_prefix())
+    }
+
+    /// Per-**tenant** root prefix (account/legacy split) — `accounts/{account}/
+    /// {tenant}/` or legacy `data/{tenant}/`. Stops *above* the namespace and
+    /// collection so per-tenant system subtrees (`_metering`, `_trace`) hang off
+    /// the tenant, not off a single collection. (TD-164)
+    ///
+    /// For an ADR-031 typed path the tenant tier is collapsed into the account,
+    /// so this returns the typed account root `accounts/{base62(account)}/`.
+    pub fn tenant_root(&self) -> String {
+        if let Some(id) = self.typed_identity {
+            let (acct, _, _) = id.path_segments();
+            return format!("accounts/{}/", acct);
+        }
+        match &self.account_id {
+            Some(account_id) => format!("accounts/{}/{}/", account_id, self.tenant_id),
+            None => format!("data/{}/", self.tenant_id),
+        }
+    }
+
+    /// Per-tenant **metering** subtree `<tenant_root>_metering/` — the durable,
+    /// tenant-owned billing-meter sink (ADR-027 dual-sink; the differentiator;
+    /// written by TD-161's coalesced writer). The leading underscore keeps it
+    /// lexically separate from namespace/collection ids, which `validate_id`
+    /// reserves so a user object can never collide (structural isolation #3).
+    pub fn metering_subprefix(&self) -> String {
+        format!("{}_metering/", self.tenant_root())
+    }
+
+    /// Per-tenant **perf/geometry trace** subtree `<tenant_root>_trace/` — the
+    /// gateable perf class (ADR-027), written by TD-161's coalesced writer.
+    pub fn trace_subprefix(&self) -> String {
+        format!("{}_trace/", self.tenant_root())
     }
 }
 
@@ -702,6 +769,7 @@ impl DrPathBuilder {
             namespace_id: namespace_id.to_string(),
             collection_id: collection_id.to_string(),
             storage_pool_class: namespace.storage_pool_class,
+            typed_identity: None,
         })
     }
 
@@ -777,6 +845,71 @@ impl DrPathBuilder {
             namespace_id: namespace_id.to_string(),
             collection_id: collection_id.to_string(),
             storage_pool_class,
+            typed_identity: None,
+        })
+    }
+
+    /// Build a [`DrResolvedPath`] from an ADR-031 typed
+    /// [`CollectionIdentity`] — the compact-numeric identity (account u32 /
+    /// namespace u16 / collection u32) that retires UUID collection IDs.
+    ///
+    /// The string mirror fields (`account_id`/`namespace_id`/`collection_id`)
+    /// are populated from the base62 segment encodings so that the **legacy**
+    /// [`root_prefix`](DrResolvedPath::root_prefix) still resolves a valid path,
+    /// and [`typed_root_prefix`](DrResolvedPath::typed_root_prefix) emits the
+    /// canonical zero-padded base62 prefix (no `tenant_id` — Phase 4 hierarchy
+    /// collapse). `tenant_id` is left empty: the typed model has no tenant tier.
+    ///
+    /// This is the **wiring surface** for the stable-ID type system into
+    /// DrPathBuilder. Production use is env-gated (`PROXIMADB_TYPED_PATHS=1`);
+    /// until then the typed path is additive and inert (mixed-read-safe).
+    pub fn build_from_identity(
+        identity: CollectionIdentity,
+        storage_pool_class: StoragePoolClass,
+    ) -> DrResolvedPath {
+        let (acct_seg, ns_seg, coll_seg) = identity.path_segments();
+        DrResolvedPath {
+            // String mirror populated from the base62 segments so legacy
+            // root_prefix() stays valid for mixed reads.
+            account_id: Some(acct_seg),
+            tenant_id: String::new(),
+            namespace_id: ns_seg,
+            collection_id: coll_seg,
+            storage_pool_class,
+            typed_identity: Some(identity),
+        }
+    }
+
+    /// Resolve a **per-tenant system path** — the `_metering/` and `_trace/`
+    /// subtrees that hang off the tenant root, *independent of any namespace or
+    /// collection* (TD-161 / TD-164). Unlike [`build_from_parts`], it validates
+    /// only `account_id` + `tenant_id` (the only ids `tenant_root()` renders) and
+    /// leaves `namespace_id`/`collection_id` empty, so callers that hold just a
+    /// tenant — e.g. the storage-snapshot metering daemon, which keys off
+    /// `Collection.config.owner` — can build the durable sink path without
+    /// fabricating placeholder ids (which `validate_id` would reject for the
+    /// reserved `_`-prefixed system segments). Only `tenant_root()` /
+    /// `metering_subprefix()` / `trace_subprefix()` are meaningful on the result;
+    /// `root_prefix()` and the collection-scoped subprefixes are not.
+    pub fn build_tenant_system(
+        account_id: Option<&str>,
+        tenant_id: &str,
+    ) -> Result<DrResolvedPath, PathResolverError> {
+        let account_id = match account_id {
+            Some(account_id) => {
+                Self::validate_id("account_id", account_id)?;
+                Some(account_id.to_string())
+            }
+            None => None,
+        };
+        Self::validate_id("tenant_id", tenant_id)?;
+        Ok(DrResolvedPath {
+            account_id,
+            tenant_id: tenant_id.to_string(),
+            namespace_id: String::new(),
+            collection_id: String::new(),
+            storage_pool_class: StoragePoolClass::default(),
+            typed_identity: None,
         })
     }
 
@@ -826,6 +959,19 @@ impl DrPathBuilder {
                 reason: "must not contain traversal sequence",
             });
         }
+        // TD-164: reserve the underscore-prefixed system segments so a
+        // user-supplied id (tenant / namespace / collection / operator subpath)
+        // can never collide with a control-plane or per-tenant system subtree
+        // (structural isolation #3). The subtrees themselves are built from
+        // constants, never from validated user input, so this only rejects user
+        // input that would shadow them.
+        if Self::RESERVED_SYSTEM_SEGMENTS.contains(&value) {
+            return Err(PathResolverError::InvalidId {
+                field,
+                value: value.to_string(),
+                reason: "must not use a reserved system segment (_operator/_branches/_metering/_trace/_manifests)",
+            });
+        }
         Ok(())
     }
 }
@@ -842,6 +988,26 @@ impl DrPathBuilder {
     /// leading underscore keeps the control plane lexically separate from the
     /// per-account `accounts/…` data tree in a top-level `list`.
     pub const OPERATOR_ROOT: &'static str = "_operator/";
+
+    /// System-reserved path segments (underscore-prefixed) that user-supplied ids
+    /// must never equal, so a user object cannot shadow a control-plane or
+    /// per-tenant system subtree (TD-164; structural isolation #3). Enforced by
+    /// [`validate_id`](Self::validate_id). These name the *segment* (no trailing
+    /// `/`); the subtrees are built from constants like [`OPERATOR_ROOT`](Self::OPERATOR_ROOT)
+    /// and the per-tenant `_metering/`/`_trace/`/`_branches/` subprefixes.
+    pub const RESERVED_SYSTEM_SEGMENTS: &'static [&'static str] = &[
+        "_operator",
+        "_branches",
+        "_metering",
+        "_trace",
+        "_manifests",
+        // TD-181 P3 (S2a): per-tenant system catalog subtree holding the
+        // object_id-keyed metadata (`_syscat/objects/{oid}.json`) + index +
+        // migration marker. Reserved before anything is written under it so a
+        // user object can never shadow the segment (the structural half of the
+        // system-only `_syscat/*` write guard).
+        "_syscat",
+    ];
 
     /// Default account ID for deployments that have not provisioned an explicit
     /// account tier (single-account / OSS). Callers that want the
@@ -880,6 +1046,17 @@ impl DrPathBuilder {
     pub fn system_catalog_subprefix() -> String {
         // Constants are pre-validated single segments — infallible.
         format!("{}{}/", Self::OPERATOR_ROOT, Self::SYSTEM_CATALOG_SUBPATH)
+    }
+
+    /// Partition lease manifest **base** prefix `_catalog/leases/` — the storage
+    /// location (under the metadata object store) where per-`(tenant, collection)`
+    /// generation-fenced lease manifests live for Phase 7c (per-collection write
+    /// authority). Structural base; the `PartitionLeaseStore` nests per-partition
+    /// manifest logs beneath it. Used at boot by `SharedServices` to construct the
+    /// lease store. NOTE: exact co-location (vs the system catalog) is a design
+    /// TBD when `PROXIMADB_PARTITION_LEASE_ON` ships default-on.
+    pub fn partition_lease_prefix() -> String {
+        "_catalog/leases/".to_string()
     }
 
     /// Relative object key of the system catalog WAL under
@@ -1039,6 +1216,35 @@ mod tests {
             "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/restore-checkpoints/"
         );
         assert_eq!(path.storage_pool_class, StoragePoolClass::Standard);
+    }
+
+    #[test]
+    fn per_tenant_metering_and_trace_subprefixes_hang_off_tenant_root() {
+        // TD-164: _metering / _trace are per-TENANT (above namespace/collection),
+        // unlike the per-collection data subprefixes (segments/, wal/, …).
+        let ns = dr_addressable_namespace();
+        let path = DrPathBuilder::build(&ns, "col_orders").unwrap();
+
+        assert_eq!(path.tenant_root(), "data/tnt_acme/");
+        assert_eq!(path.metering_subprefix(), "data/tnt_acme/_metering/");
+        assert_eq!(path.trace_subprefix(), "data/tnt_acme/_trace/");
+        // Lexically separate from (and a strict prefix-parent of) the collection
+        // tree, never nested under a single collection.
+        assert!(path.root_prefix().starts_with(&path.tenant_root()));
+        assert!(!path.metering_subprefix().contains("col_orders"));
+    }
+
+    #[test]
+    fn validate_id_reserves_system_segments() {
+        for seg in DrPathBuilder::RESERVED_SYSTEM_SEGMENTS {
+            assert!(
+                DrPathBuilder::validate_id("collection_id", seg).is_err(),
+                "reserved system segment {seg} must be rejected as a user id"
+            );
+        }
+        // Ordinary ids still pass; a name that merely *contains* an underscore is fine.
+        assert!(DrPathBuilder::validate_id("collection_id", "orders").is_ok());
+        assert!(DrPathBuilder::validate_id("collection_id", "my_orders").is_ok());
     }
 
     #[test]
@@ -1375,5 +1581,132 @@ mod tests {
         let err =
             DrPathBuilder::build_for_pool(&ns, "col_x", StoragePoolClass::Pooled).unwrap_err();
         assert!(matches!(err, PathResolverError::MissingTenantId { .. }));
+    }
+
+    // ── ADR-031 typed identity path (Phase 2 wiring + Phase 4 hierarchy collapse) ──
+
+    #[test]
+    fn typed_root_prefix_is_27_chars_and_account_rooted() {
+        use crate::core::stable_id::CollectionIdentity;
+        let resolved = DrPathBuilder::build_from_identity(
+            CollectionIdentity {
+                account_id: 1,
+                namespace_id: 2,
+                collection_id: 3,
+            },
+            StoragePoolClass::Standard,
+        );
+        let prefix = resolved.typed_root_prefix().expect("typed identity set");
+        // Fixed: "accounts/" (9) + 6 + "/" + 3 + "/" + 6 + "/" = 27 chars always.
+        assert_eq!(
+            prefix.len(),
+            27,
+            "typed root must be exactly 27 chars, got {prefix}"
+        );
+        assert!(
+            prefix.starts_with("accounts/"),
+            "must be account-rooted: {prefix}"
+        );
+        assert!(
+            !prefix.contains("//"),
+            "no empty segments (no tenant slot): {prefix}"
+        );
+    }
+
+    #[test]
+    fn typed_root_prefix_collapses_tenant_into_account() {
+        use crate::core::stable_id::CollectionIdentity;
+        let resolved = DrPathBuilder::build_from_identity(
+            CollectionIdentity {
+                account_id: 7,
+                namespace_id: 5,
+                collection_id: 9,
+            },
+            StoragePoolClass::Pooled,
+        );
+        // The typed path has exactly 3 segments after `accounts/` (account, ns,
+        // collection) — NO tenant slot. The Phase 4 hierarchy collapse.
+        let prefix = resolved.typed_root_prefix().unwrap();
+        let after = prefix
+            .trim_end_matches('/')
+            .strip_prefix("accounts/")
+            .unwrap();
+        assert_eq!(
+            after.split('/').count(),
+            3,
+            "3 segments, no tenant: {after}"
+        );
+    }
+
+    #[test]
+    fn root_prefix_short_circuits_to_typed_when_identity_set() {
+        use crate::core::stable_id::CollectionIdentity;
+        let identity = CollectionIdentity {
+            account_id: 1,
+            namespace_id: 2,
+            collection_id: 3,
+        };
+        let resolved = DrPathBuilder::build_from_identity(identity, StoragePoolClass::Standard);
+        // root_prefix() must agree with typed_root_prefix() for a typed path,
+        // so the whole subprefix API (wal_subprefix, segments_subprefix, …)
+        // is typed-aware with no parallel methods.
+        assert_eq!(
+            resolved.root_prefix(),
+            resolved.typed_root_prefix().unwrap()
+        );
+        // Subprefixes flow through root_prefix() → typed automatically.
+        assert!(resolved.wal_subprefix().ends_with("/wal/"));
+        assert!(resolved.segments_subprefix().ends_with("/segments/"));
+        assert!(resolved.indexes_subprefix().ends_with("/indexes/"));
+    }
+
+    #[test]
+    fn legacy_path_is_byte_identical_when_no_typed_identity() {
+        // A string-resolved path (typed_identity == None) is unchanged by the
+        // typed short-circuit — the mixed-read-safety guarantee.
+        let resolved = DrPathBuilder::build_from_parts_with_account(
+            Some("acct_1"),
+            "tnt_acme",
+            "ns_1",
+            "col_orders",
+            StoragePoolClass::Standard,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.root_prefix(),
+            "accounts/acct_1/tnt_acme/ns_1/col_orders/"
+        );
+        assert!(resolved.typed_root_prefix().is_none());
+    }
+
+    #[test]
+    fn typed_paths_sort_lexicographically_like_numeric() {
+        // Zero-padded base62 ⇒ S3 LIST lexicographic order == numeric order.
+        use crate::core::stable_id::CollectionIdentity;
+        let ids: Vec<u32> = vec![1, 2, 3, 10, 11, 100];
+        let mut prefixes: Vec<String> = ids
+            .iter()
+            .map(|&c| {
+                DrPathBuilder::build_from_identity(
+                    CollectionIdentity {
+                        account_id: 1,
+                        namespace_id: 1,
+                        collection_id: c,
+                    },
+                    StoragePoolClass::Standard,
+                )
+                .typed_root_prefix()
+                .unwrap()
+            })
+            .collect();
+        let sorted = {
+            let mut s = prefixes.clone();
+            s.sort();
+            s
+        };
+        assert_eq!(
+            prefixes, sorted,
+            "typed collection prefixes must be pre-sorted lexicographically"
+        );
     }
 }

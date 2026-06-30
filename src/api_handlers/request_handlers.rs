@@ -3010,11 +3010,11 @@ mod tests {
     fn test_sql_value_to_json_number() {
         use crate::proto::proximadb_v1::sql_value::Value;
         let sql_value = crate::proto::proximadb_v1::SqlValue {
-            value: Some(Value::NumberValue(3.14)),
+            value: Some(Value::NumberValue(3.5)),
         };
 
         let json = UnifiedHandlers::sql_value_to_json(&sql_value);
-        assert_eq!(json, serde_json::json!(3.14));
+        assert_eq!(json, serde_json::json!(3.5));
     }
 
     #[test]
@@ -3370,6 +3370,8 @@ mod tests {
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
             permitted_principals: vec![],
+            index_policy: None,
+            pax_vector_quant: None,
         };
 
         assert_eq!(config.dimension, 768);

@@ -79,13 +79,11 @@ use tracing::{debug, info, trace, warn};
 
 use crate::core::bloom::BloomFilterStrategy;
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::{
-    DistanceComputeProvider, UnifiedDistanceCompute,
-};
 use crate::core::{String, VectorId};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::traits::{FlushResult, UnifiedStorageFormat};
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_distance_kernel::engine::{DistanceComputeProvider, UnifiedDistanceCompute};
 use proximadb_records::{
     EmbeddingCell, ProximaRecord, ProximaTreeNode, conversions::sql_value_to_proxima,
 };
@@ -1059,7 +1057,7 @@ pub(crate) async fn resolve_collection_from_catalog(
         && catalog.table_exists(&table_id).await.unwrap_or(false)
         && let Ok(schema) = catalog.get_table(&table_id).await
         && let Ok(Some(collection)) =
-            crate::services::collection::manager::CollectionService::collection_from_catalog_schema(
+            crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
                 &table_id, &schema,
             )
     {
@@ -1078,7 +1076,7 @@ pub(crate) async fn resolve_collection_from_catalog(
                 continue;
             };
             if let Ok(Some(collection)) =
-                crate::services::collection::manager::CollectionService::collection_from_catalog_schema(
+                crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
                     &table_id, &schema,
                 )
                 && (collection.id == collection_id
@@ -1119,7 +1117,7 @@ pub(crate) async fn list_collections_from_catalog() -> Vec<crate::proto::proxima
                 continue;
             };
             if let Ok(Some(collection)) =
-                crate::services::collection::manager::CollectionService::collection_from_catalog_schema(
+                crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
                     &table_id, &schema,
                 )
             {
@@ -2344,13 +2342,13 @@ impl WriteAheadLogManager {
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
-        distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
+        distance_metric: Option<proximadb_distance_kernel::DistanceMetric>,
     ) -> Result<Vec<(VectorId, f32, ProximaRecord)>> {
         {
             let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
             let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-            let metric = distance_metric
-                .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
+            let metric =
+                distance_metric.unwrap_or(proximadb_distance_kernel::DistanceMetric::Cosine);
             let results = wal_behavior
                 .search_unflushed_vectors(
                     collection_id,
@@ -2401,11 +2399,11 @@ impl WriteAheadLogManager {
         query_vector: &[f32],
         top_k: usize,
         distance_metric: DistanceMetric,
-        metadata_filters: Option<&crate::core::search::FilterExpression>,
+        metadata_filters: Option<&proximadb_filter_expression::FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+        use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
         tracing::debug!(
             "🔍 WAL: Enhanced search for collection {} with top_k={}, metric={:?}, filters={}",
@@ -2569,13 +2567,27 @@ impl WriteAheadLogManager {
             }
         }
 
-        // Step 5: Sort by score and take top k
-        all_results.sort_by(|a, b| {
+        // Step 5: Sort the LIVE (scored) results by score and take top_k — but
+        // tombstones are suppression markers (score 0.0, `valid_to_ns == Some(0)`),
+        // NOT ranked candidates, so they must be EXEMPT from the ANN top-k cut.
+        // Otherwise (TD-188), once the unflushed live set exceeds the candidate
+        // budget (e.g. N=300 live vs the top_k-scaled candidate count) every
+        // score-0.0 tombstone ranks below the cut and is truncated away before it can
+        // suppress its deleted oid in the downstream MVCC dedup /
+        // `merge_delta_with_directory_results` — so deleted vectors leak back into
+        // results. Partition, truncate only the scored set, then re-append ALL
+        // tombstones unconditionally.
+        let (mut tombstones, mut scored): (Vec<_>, Vec<_>) = all_results
+            .into_iter()
+            .partition(|r| r.valid_to_ns == Some(0));
+        scored.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        all_results.truncate(top_k);
+        scored.truncate(top_k);
+        scored.append(&mut tombstones);
+        all_results = scored;
 
         // Ranks are handled via score field in OptimizedSearchRecord
         // They can be computed by the caller if needed
@@ -2593,7 +2605,7 @@ impl WriteAheadLogManager {
     async fn filter_batches_with_bloom(
         &self,
         batches: Vec<crate::storage::memtable::specialized::wal_behavior::WALVectorBatch>,
-        metadata_filters: &crate::core::search::FilterExpression,
+        metadata_filters: &proximadb_filter_expression::FilterExpression,
     ) -> Result<Vec<crate::storage::memtable::specialized::wal_behavior::WALVectorBatch>> {
         let mut filtered_batches = Vec::new();
         let mut bloom_hits = 0;
@@ -2668,9 +2680,9 @@ impl WriteAheadLogManager {
     /// must still satisfy those `Equals` legs.
     fn extract_filter_conditions(
         &self,
-        filter: &crate::core::search::FilterExpression,
+        filter: &proximadb_filter_expression::FilterExpression,
     ) -> Vec<(String, String)> {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 
         match filter {
             FilterExpression::Comparison {
@@ -3134,10 +3146,10 @@ impl std::fmt::Debug for WriteAheadLogManager {
 #[cfg(test)]
 mod simple_context_tests {
     use super::*;
-    use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
+    use proximadb_distance_kernel::DistanceMetric;
     use std::collections::HashMap;
 
     #[tokio::test]
@@ -3363,10 +3375,10 @@ mod wal_manager_infra_tests {
 #[cfg(test)]
 mod optimization_validation_tests {
     use super::*;
-    use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
+    use proximadb_distance_kernel::DistanceMetric;
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};

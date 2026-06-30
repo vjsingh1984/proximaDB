@@ -847,6 +847,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5ec2f1fc3ec205783a5da9a7e6c1509cc69dedf09a1949e412c1e18469326d00"
 dependencies = [
  "aws-lc-sys",
+ "untrusted 0.7.1",
  "zeroize",
 ]
 
@@ -4651,6 +4652,7 @@ version = "10.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eba32bfb4ffdeaca3e34431072faf01745c9b26d25504aa7a6cf5684334fc4fc"
 dependencies = [
+ "aws-lc-rs",
  "base64 0.22.1",
  "getrandom 0.2.17",
  "js-sys",
@@ -5779,6 +5781,68 @@ dependencies = [
 ]
 
 [[package]]
+name = "opentelemetry"
+version = "0.32.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0142c63252a9e054e68a4c61a5778f7b14f576274d593f8ce883d191a099682"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "js-sys",
+ "pin-project-lite",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "opentelemetry-otlp"
+version = "0.32.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9966929966d17620d7c316c643ba62631826e10021409357772d5eea84f62c35"
+dependencies = [
+ "http 1.4.2",
+ "opentelemetry",
+ "opentelemetry-proto",
+ "opentelemetry_sdk",
+ "prost",
+ "thiserror 2.0.18",
+ "tokio",
+ "tonic",
+ "tonic-types",
+]
+
+[[package]]
+name = "opentelemetry-proto"
+version = "0.32.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56d658ba1faf63f7b9c492cfbe6e0ec365440a16132d3270c1065f7b33f1b638"
+dependencies = [
+ "opentelemetry",
+ "opentelemetry_sdk",
+ "prost",
+ "tonic",
+ "tonic-prost",
+]
+
+[[package]]
+name = "opentelemetry_sdk"
+version = "0.32.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b59f80e1ac4d5ff7a2db8fb6c80badb7f0f3f858211fba08dd9aaec750894f9"
+dependencies = [
+ "futures-channel",
+ "futures-executor",
+ "futures-util",
+ "opentelemetry",
+ "percent-encoding",
+ "portable-atomic",
+ "rand 0.9.4",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "ordered-float"
 version = "2.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6426,6 +6490,7 @@ dependencies = [
  "aes-gcm",
  "anyhow",
  "apache-avro",
+ "arc-swap",
  "arrow",
  "arrow-array",
  "arrow-buffer",
@@ -6490,6 +6555,9 @@ dependencies = [
  "numpy",
  "object_store",
  "once_cell",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
  "parking_lot",
  "parquet",
  "pgwire",
@@ -6500,6 +6568,7 @@ dependencies = [
  "proximadb-admin-ui",
  "proximadb-api",
  "proximadb-block-format",
+ "proximadb-bloom",
  "proximadb-cache",
  "proximadb-catalog",
  "proximadb-codec",
@@ -6525,6 +6594,7 @@ dependencies = [
  "proximadb-index-traits",
  "proximadb-index-types",
  "proximadb-kernel",
+ "proximadb-mcp",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
  "proximadb-object-store",
@@ -6556,6 +6626,7 @@ dependencies = [
  "proximadb-runtime",
  "proximadb-runtime-common",
  "proximadb-sdk",
+ "proximadb-search-types",
  "proximadb-security",
  "proximadb-serialization",
  "proximadb-storage-common",
@@ -6564,10 +6635,12 @@ dependencies = [
  "proximadb-storage-kv",
  "proximadb-storage-operations",
  "proximadb-storage-optimization",
+ "proximadb-storage-ports",
  "proximadb-storage-strategy",
  "proximadb-storage-tenant",
  "proximadb-storage-transaction",
  "proximadb-telemetry",
+ "proximadb-tenant",
  "proximadb-tls",
  "proximadb-uql",
  "proximadb-vector",
@@ -6704,6 +6777,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-bloom"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "proximadb-cache"
 version = "0.2.0"
 dependencies = [
@@ -6729,6 +6815,7 @@ dependencies = [
  "proximadb-distance-types",
  "proximadb-quantization-types",
  "proximadb-records",
+ "proximadb-storage-filesystem-types",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -6908,6 +6995,7 @@ dependencies = [
  "dashmap",
  "proximadb-data-model",
  "proximadb-relational-types",
+ "serde_json",
 ]
 
 [[package]]
@@ -7017,6 +7105,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "proximadb-index-types",
  "proximadb-records",
  "serde",
  "serde_json",
@@ -7042,6 +7131,16 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-mcp"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -7101,6 +7200,7 @@ dependencies = [
  "futures",
  "object_store",
  "proximadb-kernel",
+ "proximadb-storage-filesystem-types",
  "tempfile",
  "tokio",
  "url",
@@ -7520,6 +7620,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-search-types"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "proximadb-data-model",
+ "proximadb-distance-kernel",
+ "proximadb-filter-expression",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "proximadb-records",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "proximadb-security"
 version = "0.2.0"
 dependencies = [
@@ -7686,6 +7801,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-storage-ports"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "proximadb-proto",
+]
+
+[[package]]
 name = "proximadb-storage-strategy"
 version = "0.2.0"
 dependencies = [
@@ -7728,6 +7852,13 @@ version = "0.2.0"
 dependencies = [
  "proximadb-kernel",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-tenant"
+version = "0.2.0"
+dependencies = [
+ "proximadb-proto",
 ]
 
 [[package]]
@@ -8411,7 +8542,7 @@ dependencies = [
  "cfg-if",
  "getrandom 0.2.17",
  "libc",
- "untrusted",
+ "untrusted 0.9.0",
  "windows-sys 0.52.0",
 ]
 
@@ -8642,7 +8773,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b6275d1ee7a1cd780b64aca7726599a1dbc893b1e64144529e55c3c2f745765"
 dependencies = [
  "ring",
- "untrusted",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -8654,7 +8785,7 @@ dependencies = [
  "aws-lc-rs",
  "ring",
  "rustls-pki-types",
- "untrusted",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -8721,7 +8852,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da046153aa2352493d6cb7da4b6e5c0c057d8a1d0a9aa8560baffdd945acd414"
 dependencies = [
  "ring",
- "untrusted",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -10196,6 +10327,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tonic-types"
+version = "0.14.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73ab1b02061f83d519bba3caa167f88f261ef05720ab8ebc954ade70de3348e8"
+dependencies = [
+ "prost",
+ "prost-types",
+ "tonic",
+]
+
+[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10500,6 +10642,12 @@ name = "unsafe-libyaml-norway"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39abd59bf32521c7f2301b52d05a6a2c975b6003521cbd0c6dc1582f0a22104"
+
+[[package]]
+name = "untrusted"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "untrusted"

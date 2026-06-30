@@ -195,6 +195,9 @@ pub mod background_flush_context;
 // A6 storage-write fence seam (default-OFF; `PROXIMADB_WRITE_FENCING=1`)
 pub mod write_fence;
 
+// Shared per-collection flush materialization (server shutdown + embedded)
+pub mod flush_materializer;
+
 // Engine capabilities and supportability checks
 pub mod engine_capabilities;
 

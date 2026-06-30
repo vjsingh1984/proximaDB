@@ -1062,7 +1062,7 @@ def test_event_store_append_first():
     rec = store.append("s1", "created", {"x": 1}, expected_version=0)
     assert rec.version == 1
     assert rec.global_position == 1
-    adapter.insert_document.assert_called_once()
+    adapter.ingest_documents.assert_called_once()
 
 
 def test_event_store_append_version_conflict():
@@ -1177,7 +1177,7 @@ def test_session_upsert_dataclass():
     session, adapter = make_session()
     doc_id = session.upsert(_Sample(id="i1", name="x"))
     assert doc_id == "i1"
-    adapter.insert_document.assert_called_once()
+    adapter.ingest_documents.assert_called_once()
 
 
 def test_session_upsert_generates_id_and_deletes_existing():

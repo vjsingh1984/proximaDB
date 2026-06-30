@@ -23,14 +23,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::proto::proximadb_v1::{
-    CollectionConfig, HnswConfig, IndexConfig, IvfConfig, QuantizationConfig, RecordSchemaConfig,
-    TextStorageConfig,
+    CollectionConfig, HnswConfig, IndexConfig, IndexPolicy, IvfConfig, QuantizationConfig,
+    RecordSchemaConfig, TextStorageConfig,
 };
 
 /// Catalog-bag key holding the neutral per-index config array.
 pub const INDEX_CONFIGS_KEY: &str = "index_configs";
 /// Catalog-bag key holding the neutral quantization config.
 pub const QUANTIZATION_KEY: &str = "quantization";
+/// Catalog-bag key holding the neutral index routing policy (ADR-028).
+pub const INDEX_POLICY_KEY: &str = "index_policy";
 
 /// Neutral HNSW parameters retained across a catalog round-trip.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -74,6 +76,26 @@ struct StoredQuant {
     /// v1 `QuantizationConfig.Strategy` enum value (a stable scalar).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     strategy: Option<i32>,
+}
+
+/// Neutral index routing policy retained across a catalog round-trip (ADR-028).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct StoredIndexPolicy {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    mode: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    rehydrate: String,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    byte_budget: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    nprobe: u32,
+}
+
+fn is_zero_u64(v: &u64) -> bool {
+    *v == 0
+}
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
 }
 
 // --- wire <-> neutral conversions (the only place the v1 proto is touched) ---
@@ -134,6 +156,24 @@ fn from_stored_quant(s: StoredQuant) -> QuantizationConfig {
     }
 }
 
+fn to_stored_index_policy(config: &CollectionConfig) -> Option<StoredIndexPolicy> {
+    config.index_policy.as_ref().map(|p| StoredIndexPolicy {
+        mode: p.mode.clone(),
+        rehydrate: p.rehydrate.clone(),
+        byte_budget: p.byte_budget,
+        nprobe: p.nprobe,
+    })
+}
+
+fn from_stored_index_policy(s: StoredIndexPolicy) -> IndexPolicy {
+    IndexPolicy {
+        mode: s.mode,
+        rehydrate: s.rehydrate,
+        byte_budget: s.byte_budget,
+        nprobe: s.nprobe,
+    }
+}
+
 // --- JSON `Value` bag API (MetadataStore WAL) ---
 
 /// Serialize the per-index and quantization config into the neutral `Value`
@@ -155,6 +195,13 @@ pub(crate) fn write_index_and_quant(
             QUANTIZATION_KEY.to_string(),
             serde_json::to_value(&stored)
                 .map_err(|e| anyhow::anyhow!("serialize quantization for catalog: {e}"))?,
+        );
+    }
+    if let Some(stored) = to_stored_index_policy(config) {
+        map.insert(
+            INDEX_POLICY_KEY.to_string(),
+            serde_json::to_value(&stored)
+                .map_err(|e| anyhow::anyhow!("serialize index_policy for catalog: {e}"))?,
         );
     }
     Ok(())
@@ -183,6 +230,20 @@ pub(crate) fn read_quantization(map: &HashMap<String, Value>) -> Option<Quantiza
         Ok(stored) => Some(from_stored_quant(stored)),
         Err(e) => {
             tracing::warn!("⚠️ catalog quantization decode failed, ignoring: {e}");
+            None
+        }
+    }
+}
+
+/// Reconstruct the index routing policy (as wire `IndexPolicy`) from the neutral
+/// `Value` bag, or `None` when nothing was persisted (ADR-028). A corrupt entry
+/// is ignored (defaults to mode=auto downstream).
+pub(crate) fn read_index_policy(map: &HashMap<String, Value>) -> Option<IndexPolicy> {
+    let value = map.get(INDEX_POLICY_KEY)?;
+    match serde_json::from_value::<StoredIndexPolicy>(value.clone()) {
+        Ok(stored) => Some(from_stored_index_policy(stored)),
+        Err(e) => {
+            tracing::warn!("⚠️ catalog index_policy decode failed, ignoring: {e}");
             None
         }
     }
@@ -230,6 +291,29 @@ pub(crate) fn quantization_from_json(json: &str) -> Option<QuantizationConfig> {
         Ok(stored) => Some(from_stored_quant(stored)),
         Err(e) => {
             tracing::warn!("⚠️ catalog-asset quantization decode failed, ignoring: {e}");
+            None
+        }
+    }
+}
+
+/// Serialize the index routing policy to a neutral JSON string, or `None`
+/// (ADR-028).
+pub(crate) fn index_policy_to_json(config: &CollectionConfig) -> Result<Option<String>> {
+    match to_stored_index_policy(config) {
+        Some(stored) => serde_json::to_string(&stored)
+            .map(Some)
+            .map_err(|e| anyhow::anyhow!("serialize index_policy for catalog asset: {e}")),
+        None => Ok(None),
+    }
+}
+
+/// Reconstruct the index routing policy from a neutral JSON string, or `None`
+/// (ADR-028).
+pub(crate) fn index_policy_from_json(json: &str) -> Option<IndexPolicy> {
+    match serde_json::from_str::<StoredIndexPolicy>(json) {
+        Ok(stored) => Some(from_stored_index_policy(stored)),
+        Err(e) => {
+            tracing::warn!("⚠️ catalog-asset index_policy decode failed, ignoring: {e}");
             None
         }
     }

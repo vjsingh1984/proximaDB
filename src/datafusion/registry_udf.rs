@@ -50,6 +50,14 @@ pub(crate) const DATAFUSION_NATIVE_SCALARS: &[&str] = &[
     "floor",
     "sqrt",
     "concat",
+    // JSON extraction is now ALSO an engine-neutral registry function (for the native
+    // Volcano engine + frontend typing), but DataFusion keeps its dedicated
+    // Arrow-vectorized UDFs (`udf.rs`, registered explicitly in `mod.rs`). Skip F2
+    // binding so the untyped registry wrapper does not shadow the typed (Utf8,Utf8)
+    // Arrow UDFs and break coercion (ADR-043 Inv 3; the regression seen in PR3).
+    "json_extract",
+    "json_extract_text",
+    "json_extract_path_text",
 ];
 
 /// Convert a DataFusion [`ScalarValue`] (one Arrow cell) to a [`ProximaValue`] for kernel

@@ -21,6 +21,7 @@ mod schema_tests {
     fn make_column(id: i32, name: &str, data_type: ProximaType, nullable: bool) -> ProximaColumn {
         ProximaColumn {
             id,
+            object_id: None,
             name: name.to_string(),
             data_type,
             nullable,
@@ -269,6 +270,7 @@ mod spark_tests {
     fn make_column(id: i32, name: &str, data_type: ProximaType) -> ProximaColumn {
         ProximaColumn {
             id,
+            object_id: None,
             name: name.to_string(),
             data_type,
             nullable: false,
@@ -743,9 +745,9 @@ mod hadoop_tests {
         assert_eq!(long_w.to_json(), serde_json::json!(9999999999i64));
 
         // Float
-        let float_w = HadoopWritable::FloatWritable(3.14);
+        let float_w = HadoopWritable::FloatWritable(3.5);
         let json = float_w.to_json();
-        assert!((json.as_f64().unwrap() - 3.14).abs() < 0.001);
+        assert!((json.as_f64().unwrap() - 3.5).abs() < 0.001);
 
         // Text
         let text_w = HadoopWritable::Text("hello".to_string());

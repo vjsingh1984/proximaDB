@@ -18,7 +18,7 @@
 #   scripts/worktree.sh rm    <type/topic> [--force] # remove (guards dirty)
 #   scripts/worktree.sh clean [--dry-run]            # reclaim merged/squashed worktrees
 #   scripts/worktree.sh gc    [--all] [--dry-run]    # purge incremental/ bloat (kept worktrees)
-#   scripts/worktree.sh guard                        # fail if in main checkout
+#   scripts/worktree.sh guard                        # fail if in main checkout (ff-syncs it first)
 #
 # Typical flow (also the agent mandate — see CLAUDE.md):
 #   eval "$(scripts/worktree.sh new feat/my-thing)"  # cd's you into it
@@ -226,9 +226,36 @@ cmd_gc() {
     "$verb" "$(awk -v k="$freed_kb" 'BEGIN{printf "%.1f", k/1024/1024}')" >&2
 }
 
+# Keep the MAIN checkout current: fetch the default branch and fast-forward the
+# main checkout's branch when it IS the default, is behind origin, and has a
+# clean tree — so merges landed remotely (by other sessions / CI) propagate to
+# the main checkout before you start work. Non-fatal: a network failure, a dirty
+# tree, or a non-default branch just prints a note and continues. Never force or
+# rebase (a ff-only on a clean default branch cannot lose work).
+_sync_main_if_behind() {
+  local main; main="$(repo_main)"
+  [ -n "$main" ] || return 0
+  git -C "$main" fetch --quiet "$REMOTE" "$BASE_DEFAULT" 2>/dev/null \
+    || { printf 'worktree: (main) fetch %s failed — main may be stale\n' "$REMOTE/$BASE_DEFAULT" >&2; return 0; }
+  local br; br="$(git -C "$main" rev-parse --abbrev-ref HEAD 2>/dev/null || echo)"
+  [ "$br" = "$BASE_DEFAULT" ] \
+    || { printf 'worktree: (main) on branch %s, not %s — left as-is\n' "$br" "$BASE_DEFAULT" >&2; return 0; }
+  git -C "$main" diff-index --quiet HEAD -- 2>/dev/null \
+    || { printf 'worktree: (main) %s has uncommitted changes — skipped ff to avoid losing them\n' "$br" >&2; return 0; }
+  # origin/<base> NOT an ancestor of <br>  ⇒  local is behind origin.
+  if ! git -C "$main" merge-base --is-ancestor "$REMOTE/$BASE_DEFAULT" "$br" 2>/dev/null; then
+    git -C "$main" merge --ff-only "$REMOTE/$BASE_DEFAULT" >/dev/null 2>&1 \
+      && printf 'worktree: (main) fast-forwarded %s to %s\n' "$br" "$REMOTE/$BASE_DEFAULT" >&2 \
+      || printf 'worktree: (main) ff to %s failed (diverged?) — main left as-is\n' "$REMOTE/$BASE_DEFAULT" >&2
+  fi
+  return 0
+}
+
 # Guardrail: refuse if the CWD is the MAIN checkout (agents call this before
-# editing). A worktree's toplevel != the main checkout's toplevel.
+# editing), after first keeping the main checkout current. A worktree's toplevel
+# != the main checkout's toplevel.
 cmd_guard() {
+  _sync_main_if_behind   # pull-after-merge: keep the main checkout current
   local here; here="$(git rev-parse --show-toplevel 2>/dev/null || echo)"
   [ -n "$here" ] || die "not in a git repo"
   if [ "$here" = "$(repo_main)" ]; then
@@ -247,17 +274,101 @@ _pkg_args() { local a=""; for p in $1; do a="$a -p $p"; done; printf '%s' "$a"; 
 cmd_check() {
   local pkgs; pkgs="$(_affected)"
   [ -n "$pkgs" ] || { printf 'worktree: no crate source changed vs %s — nothing to check\n' "$BASE_DEFAULT" >&2; return 0; }
-  printf 'worktree: cargo check%s\n' "$(_pkg_args "$pkgs")" >&2
+  # Two complementary checks that together match CI without false reds:
+  #  1. `cargo check --tests` COMPILES the lib/bin `#[cfg(test)]` code + integration
+  #     tests — the "green local, red CI" trap fix: a plain `cargo check` or
+  #     `clippy --lib --bins` never compiles the test cfg, so a broken/changed
+  #     import inside a test module sails through locally and only fails in CI's
+  #     "Rust Tests" job. Scoped to `--tests` (NOT `--all-targets`): CI's Rust
+  #     Tests job runs `--lib` + doctests and never builds benches/examples, which
+  #     have bit-rotted on the root crate; `--all-targets` would flag that
+  #     pre-existing rot as a false red. (No `-D warnings` on test code — the root
+  #     crate's tests carry many pre-existing clippy warnings CI does not gate.)
+  #  2. `clippy --lib --bins -- -D warnings` lints exactly what CI's clippy gate
+  #     lints (lib+bins only), so the lint posture matches CI precisely.
+  printf 'worktree: cargo check --tests%s (compiles #[cfg(test)] — CI Rust Tests gap)\n' "$(_pkg_args "$pkgs")" >&2
   # shellcheck disable=SC2046
-  cargo check $(_pkg_args "$pkgs")
+  cargo check $(_pkg_args "$pkgs") --tests
+  printf 'worktree: cargo clippy --lib --bins -D warnings%s (matches CI clippy gate)\n' "$(_pkg_args "$pkgs")" >&2
+  # shellcheck disable=SC2046
+  cargo clippy $(_pkg_args "$pkgs") --lib --bins -- -D warnings
 }
 
 cmd_test() {
   local pkgs; pkgs="$(_affected)"
   [ -n "$pkgs" ] || { printf 'worktree: no crate source changed vs %s — nothing to test\n' "$BASE_DEFAULT" >&2; return 0; }
-  printf 'worktree: cargo nextest run%s (affected crates)\n' "$(_pkg_args "$pkgs")" >&2
+  # Mirror CI's "Rust Tests" job EXACTLY so green-local == green-CI:
+  #   unit: cargo nextest run --lib --profile unit --test-threads=2
+  #   doc : cargo test --doc -- --test-threads=4
+  # `--test-threads` bounds the global-statics races the root suite is known to
+  # have (WAL registry / metadata provider / request-id counter) — running
+  # unbounded locally drifts from CI and hides (or invents) flakes. `--profile
+  # unit` applies the nextest retry/config CI uses. `--lib` scopes to unit tests
+  # like CI. (CARGO_BUILD_JOBS stays at the local default — JOBS=1 is a 16GB-CI
+  # OOM workaround, not needed on a dev box.)
+  printf 'worktree: cargo nextest run --lib --profile unit --test-threads=2%s (matches CI)\n' "$(_pkg_args "$pkgs")" >&2
   # shellcheck disable=SC2046
-  cargo nextest run $(_pkg_args "$pkgs") || cargo test $(_pkg_args "$pkgs")
+  cargo nextest run --lib --profile unit --test-threads=2 $(_pkg_args "$pkgs")
+  printf 'worktree: cargo test --doc --test-threads=4%s (matches CI doc tests)\n' "$(_pkg_args "$pkgs")" >&2
+  # shellcheck disable=SC2046
+  cargo test --doc $(_pkg_args "$pkgs") -- --test-threads=4
+}
+
+# Read-only hygiene report. Collapses the branch/stash/orphan triage into one
+# command. Diagnoses only (no fixes) — pair with `rm`/`clean`/`git stash drop`.
+# Exit 0 = clean, 1 = issue(s) found. Offline-safe (no fetch; compares against
+# last-known $REMOTE refs + $REMOTE/$BASE_DEFAULT).
+cmd_doctor() {
+  local main; main="$(repo_main)"
+  local issues=0 wt br ahead behind orphans stash_count
+  echo "=== worktree doctor ==="
+
+  # Merged / diverged / detached worktrees (skip the main checkout).
+  while read -r wt; do
+    [ "$wt" = "$main" ] && continue
+    br="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [ -z "$br" ] || [ "$br" = "HEAD" ]; then
+      printf '  DETACHED: %s (not on a branch — reattach or clean up)\n' "$wt"
+      issues=$((issues+1)); continue
+    fi
+    if branch_in_develop "$br"; then
+      printf '  MERGED:   %s (%s) — safe to `worktree.sh rm %s`\n' "$wt" "$br" "$br"
+      issues=$((issues+1))
+    fi
+    if git -C "$main" rev-parse --verify --quiet "$REMOTE/$br" >/dev/null; then
+      ahead="$(git -C "$main" rev-list --count "$REMOTE/$br..$br" 2>/dev/null || echo 0)"
+      behind="$(git -C "$main" rev-list --count "$br..$REMOTE/$br" 2>/dev/null || echo 0)"
+      if [ "${ahead:-0}" != "0" ] && [ "${behind:-0}" != "0" ]; then
+        printf '  DIVERGED: %s — ahead %s / behind %s vs %s/%s (rebase, or push --force-with-lease)\n' \
+          "$br" "$ahead" "$behind" "$REMOTE" "$br"
+        issues=$((issues+1))
+      fi
+    fi
+  done < <(git -C "$main" worktree list --porcelain | sed -n 's/^worktree //p')
+
+  # Orphaned worktree metadata (admin records pointing at missing dirs).
+  orphans="$(git -C "$main" worktree prune --dry-run 2>/dev/null)"
+  if [ -n "$orphans" ]; then
+    printf '  ORPHANED: worktree metadata for missing dirs — run `git worktree prune`:\n'
+    # shellcheck disable=SC2086
+    printf '    %s\n' $orphans
+    issues=$((issues+1))
+  fi
+
+  # Stashes: any stash is a "decide: pop or drop" signal.
+  stash_count="$(git -C "$main" stash list 2>/dev/null | wc -l | tr -d ' ')"
+  if [ "${stash_count:-0}" != "0" ]; then
+    printf '  STASHES:  %s pending review (pop or drop):\n' "$stash_count"
+    git -C "$main" stash list 2>/dev/null | sed 's/^/    /'
+    issues=$((issues+1))
+  fi
+
+  if [ "$issues" -eq 0 ]; then
+    echo "no issues found"
+    return 0
+  fi
+  echo "found $issues issue(s)"
+  return 1
 }
 
 case "${1:-}" in
@@ -268,6 +379,7 @@ case "${1:-}" in
   gc)    shift; cmd_gc "$@" ;;
   guard) shift; cmd_guard "$@" ;;
   cache-env) shift; emit_cache_env ;;
+  doctor) shift; cmd_doctor "$@" ;;
   check) shift; cmd_check "$@" ;;
   test)  shift; cmd_test "$@" ;;
   *) cat >&2 <<'USAGE'
@@ -278,6 +390,7 @@ worktree: one task = one worktree = one branch (isolated by construction)
   scripts/worktree.sh clean [--dry-run]             drop worktrees merged/squashed to develop, reclaim target/
   scripts/worktree.sh gc [--all] [--dry-run]        purge target/*/incremental bloat from KEPT worktree(s)
   scripts/worktree.sh guard                         fail if run in the main checkout
+  scripts/worktree.sh doctor                        report merged/diverged/orphaned worktrees + stashes (read-only)
   scripts/worktree.sh cache-env                     print sccache env for an existing worktree (eval it)
   scripts/worktree.sh check                         cargo check ONLY the crates changed vs develop
   scripts/worktree.sh test                          cargo nextest ONLY the crates changed vs develop

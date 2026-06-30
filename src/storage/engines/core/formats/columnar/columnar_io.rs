@@ -269,7 +269,7 @@ impl UnifiedColumnarReader {
     async fn read_parquet_filtered(
         &self,
         file_path: &str,
-        _predicates: Option<&crate::core::search::FilterExpression>,
+        _predicates: Option<&proximadb_filter_expression::FilterExpression>,
     ) -> Result<Box<dyn ScanIterator>> {
         let metadata = self.get_or_load_parquet_metadata(file_path).await?;
 
@@ -314,7 +314,7 @@ impl UnifiedColumnarReader {
     fn apply_predicate_pushdown(
         &self,
         metadata: &parquet::file::metadata::ParquetMetaData,
-        _predicate: &crate::core::search::FilterExpression,
+        _predicate: &proximadb_filter_expression::FilterExpression,
     ) -> Result<Vec<usize>> {
         let mut qualified = Vec::new();
 
@@ -341,7 +341,7 @@ impl UnifiedColumnarReader {
         _file_path: &str,
         _metadata: &parquet::file::metadata::ParquetMetaData,
         row_groups: Vec<usize>,
-        _predicates: Option<&crate::core::search::FilterExpression>,
+        _predicates: Option<&proximadb_filter_expression::FilterExpression>,
     ) -> Result<Vec<usize>> {
         // Deferred: Implement bloom filter checking
         // For now, return all row groups

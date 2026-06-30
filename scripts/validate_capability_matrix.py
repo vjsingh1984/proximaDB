@@ -22,14 +22,10 @@ MATRIX_PATH = ROOT / "docs" / "_internal" / "roadmap" / "CAPABILITY_MATRIX.toml"
 # Minimal high-signal drift checks between capability state and strategic narrative.
 # These checks are intentionally narrow to avoid noisy false positives.
 DRIFT_RULES = {
-    "hybrid_search_bm25_vector": {
-        "path": "docs/10-quality/proximadb-strategic-analysis.adoc",
-        "forbidden_substrings": ["No hybrid search (BM25)"],
-    },
-    "framework_integrations_python": {
-        "path": "docs/10-quality/proximadb-strategic-analysis.adoc",
-        "forbidden_substrings": ["No framework integrations"],
-    },
+    # NOTE: hybrid_search_bm25_vector + framework_integrations_python drift-rules
+    # removed — they checked docs/10-quality/proximadb-strategic-analysis.adoc,
+    # which was relocated to anvaiops (commercial content) in the OSS
+    # decontamination. The strategic-narrative drift-check is commercial-side now.
     "distributed_consensus_runtime": {
         "doc_rules": [
             {

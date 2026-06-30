@@ -13,7 +13,6 @@ use tracing::{debug, info, warn};
 
 use super::batch_strategy::WALBatchStrategy;
 use super::{BatchId, FlushResult, WALConfig, WALStats};
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
@@ -21,6 +20,7 @@ use crate::storage::persistence::write_ahead_log::{
     serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer},
 };
 use crate::storage::traits::UnifiedStorageFormat;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
 /// Bincode WAL batch strategy using serialization-first architecture
 pub struct BincodeSerializationStrategy {
@@ -332,7 +332,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
-        distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
+        distance_metric: Option<proximadb_distance_kernel::DistanceMetric>,
     ) -> Result<Vec<(String, f32, proximadb_records::ProximaRecord)>> {
         // For tests, we can do a simple search in memtable
         let vectors = self
@@ -348,8 +348,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         let distance_compute = UnifiedDistanceCompute::default();
 
         // Use the unified distance compute to calculate distances
-        let metric =
-            distance_metric.unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
+        let metric = distance_metric.unwrap_or(proximadb_distance_kernel::DistanceMetric::Cosine);
         let mut results: Vec<(String, f32, proximadb_records::ProximaRecord)> = Vec::new();
 
         for vector in vectors {

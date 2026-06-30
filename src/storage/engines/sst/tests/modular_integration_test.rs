@@ -29,7 +29,6 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::Arc;
 
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::sst::{
         SstConfig,
         blocks::SstRecord,
@@ -40,6 +39,7 @@ mod tests {
     };
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::traits::{StorageQueryContext, UnifiedStorageFormat};
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
     use proximadb_records::{EmbeddingCell, ProximaRecord};
 
     /// Test that the core module properly initializes the engine

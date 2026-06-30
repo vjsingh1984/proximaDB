@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use super::{ProgressiveSearchCoordinator, ProgressiveSearchStage};
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
 /// Engine type for progressive pipeline creation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -307,8 +307,8 @@ impl ProgressivePipelineFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::distance_computation::DistanceMetric;
     use crate::compute::quantization::quantization_engine::{CodebookStore, InMemoryCodebookStore};
+    use proximadb_distance_kernel::DistanceMetric;
 
     fn create_test_factory() -> ProgressivePipelineFactory {
         let dist_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));

@@ -821,10 +821,10 @@ pub async fn search_helix_sstable(
     query_vector: &[f32],
     query_hilbert_key: Option<u64>,
     k: usize,
-    distance_metric: &crate::compute::distance_computation::DistanceMetric,
-    distance_compute: &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+    distance_metric: &proximadb_distance_kernel::DistanceMetric,
+    distance_compute: &Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
     collection: Option<&crate::proto::proximadb_v1::Collection>,
-    filter_expression: Option<&crate::core::search::FilterExpression>,
+    filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
     prune: &crate::core::search::BlockPruneConfig,
 ) -> Result<
     Vec<(
@@ -960,7 +960,7 @@ pub async fn search_helix_sstable(
 fn select_blocks_by_centroid(
     query_vector: &[f32],
     metas: &[HelixBlockMetadata],
-    metric: &crate::compute::distance_computation::DistanceMetric,
+    metric: &proximadb_distance_kernel::DistanceMetric,
     prune: &crate::core::search::BlockPruneConfig,
 ) -> Vec<usize> {
     use crate::storage::engines::core::formats::proximablocks::spatial_pruning::{
@@ -1107,10 +1107,9 @@ fn _l2_distance(a: &[f32], b: &[f32]) -> f32 {
 fn metric_distance(
     a: &[f32],
     b: &[f32],
-    metric: &crate::compute::distance_computation::DistanceMetric,
+    metric: &proximadb_distance_kernel::DistanceMetric,
 ) -> f32 {
-    let distance_compute =
-        crate::compute::distance_computation::engine::UnifiedDistanceCompute::default();
+    let distance_compute = proximadb_distance_kernel::engine::UnifiedDistanceCompute::default();
     distance_compute.distance_with_metric(a, b, metric)
 }
 
@@ -1155,7 +1154,7 @@ mod tests {
         let selected = select_blocks_by_centroid(
             &query,
             &metas,
-            &crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &proximadb_distance_kernel::DistanceMetric::Euclidean,
             &crate::core::search::BlockPruneConfig::for_testing(),
         );
         // max(3, sqrt(4)) = 3 -> expect the three closest indices 0, 2, 1

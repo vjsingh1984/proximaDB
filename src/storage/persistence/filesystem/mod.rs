@@ -273,6 +273,37 @@ impl std::fmt::Debug for FilesystemFactory {
     }
 }
 
+/// Forwards `CountingFileSystem` GET reads into the per-query `IoTrace`
+/// (TD-096 S2). The record fns are ADR-030 always-on accumulators: they no-op
+/// outside an active `io_trace` scope and when the `io-trace` perf-emission
+/// feature is compiled out, so this impl is unconditional and zero-cost when no
+/// query is being traced.
+#[derive(Debug, Default)]
+struct IoTraceFsRecorder;
+
+impl proximadb_storage_filesystem_types::counting::IoRecorder for IoTraceFsRecorder {
+    fn record_full_read(&self, bytes: u64) {
+        crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+        if bytes > 0 {
+            crate::observability::io_trace::record_bytes_read(bytes);
+        }
+    }
+    fn record_range_read(&self, bytes: u64) {
+        crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+        crate::observability::io_trace::record_range_gets(1);
+        if bytes > 0 {
+            crate::observability::io_trace::record_bytes_read(bytes);
+        }
+    }
+    fn record_batched_ranges(&self, bytes: u64) {
+        crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+        crate::observability::io_trace::record_range_gets(1);
+        if bytes > 0 {
+            crate::observability::io_trace::record_bytes_read(bytes);
+        }
+    }
+}
+
 impl FilesystemFactory {
     fn maybe_wrap_with_encryption(
         &self,
@@ -424,9 +455,28 @@ impl FilesystemFactory {
             Ok(backend) => {
                 let fs =
                     self.maybe_wrap_with_encryption(Arc::new(backend) as Arc<dyn FileSystem>)?;
-                for scheme in ["adls", "abfs", "az", "azure"] {
+                // Scheme honesty (ADR-036): all four schemes resolve to the SAME
+                // Azure backend, which talks to the **Blob endpoint**
+                // (`*.blob.core.windows.net`, flat object keys) via `object_store`'s
+                // `MicrosoftAzureBuilder`. `az`/`azure` are the canonical schemes.
+                // `adls`/`abfs` are accepted **aliases** for ergonomics — but they
+                // do NOT engage the ADLS Gen2 DFS endpoint, the ABFS Hadoop driver,
+                // or Hierarchical Namespace; they are a Blob-endpoint write under a
+                // familiar name. We deliberately run flat Blob (HNS-off) + access-tier
+                // as the cost lever; HNS buys nothing for our flat-key, immutable,
+                // ranged-read workload. The one-time log makes the aliasing explicit
+                // so an operator never assumes DFS/HNS semantics from the scheme.
+                for scheme in ["az", "azure", "adls", "abfs"] {
                     self.filesystems.insert(scheme.to_string(), fs.clone());
                 }
+                tracing::info!(
+                    canonical = "az://, azure://",
+                    aliases = "adls://, abfs://",
+                    endpoint = "blob.core.windows.net (flat, HNS-off)",
+                    "Azure FileSystem registered: all schemes route to the Blob \
+                     endpoint; adls/abfs are aliases and do NOT use the DFS/ABFS \
+                     endpoint or Hierarchical Namespace. Cost lever = access tier."
+                );
             }
             Err(e) => tracing::warn!("Azure FileSystem not registered: {e}"),
         }
@@ -511,10 +561,32 @@ impl FilesystemFactory {
         let scheme = extract_scheme(url)?;
         let scheme_str = scheme.as_str();
 
-        self.filesystems
+        let fs = self
+            .filesystems
             .get(scheme_str)
             .cloned()
-            .ok_or_else(|| FilesystemError::UnsupportedScheme(scheme_str.to_string()))
+            .ok_or_else(|| FilesystemError::UnsupportedScheme(scheme_str.to_string()))?;
+
+        // TD-096 S2: when the GET-count instrumentation env gate is set, wrap the
+        // filesystem so (a) a bench can tally per-search read operations via the
+        // global counters, AND (b) each read is forwarded into the per-query
+        // `IoTrace` (via `IoTraceFsRecorder`) so GET counts drive the route cost
+        // model + per-tenant KRU. Default OFF — one `env::var_os` check per
+        // cached factory lookup — so there is zero behavior change otherwise.
+        // The recorder calls `io_trace::record_*`, which are ADR-030 always-on
+        // accumulators that no-op outside an active query scope (and when the
+        // `io-trace` perf-emission feature is compiled out).
+        if std::env::var_os("PROXIMADB_COUNT_FS_IO").is_some() {
+            Ok(Arc::new(
+                proximadb_storage_filesystem_types::counting::CountingFileSystem::new_with_recorder(
+                    fs,
+                    proximadb_storage_filesystem_types::counting::global_counters(),
+                    std::sync::Arc::new(IoTraceFsRecorder),
+                ),
+            ))
+        } else {
+            Ok(fs)
+        }
     }
 
     /// Get an IntelligentFilesystem with automatic scheme-specific filesystem selection.
@@ -727,8 +799,13 @@ impl FilesystemFactory {
         let parsed_url = Url::parse(&normalized_url)?;
 
         match parsed_url.scheme() {
-            "s3" | "gcs" | "gs" => {
-                // Bucket is the hostname
+            // Flat object stores (and the canonical Azure Blob schemes): the
+            // container/bucket is the URL host. `az://container/blob` matches the
+            // backend's flat parse — the Blob endpoint, no account/HNS segment
+            // (ADR-036). `adls`/`abfs` keep their legacy account-in-path/host@account
+            // shapes below for backward compatibility.
+            "s3" | "gcs" | "gs" | "az" | "azure" => {
+                // Bucket/container is the hostname
                 Ok(parsed_url.host_str().map(|s| s.to_string()))
             }
             "adls" => {

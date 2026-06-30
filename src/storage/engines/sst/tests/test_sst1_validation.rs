@@ -11,13 +11,13 @@ use std::sync::Arc;
 use tempfile::NamedTempFile;
 use tokio::fs;
 
-use crate::core::hardware_capabilities;
 use crate::core::search::SearchParams;
 use crate::storage::engines::sst::readers::sst_query_engine::{
     CollectionContext, UnifiedSstableReader,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
+use proximadb_hardware_caps;
 
 /// Helper to create a test reader
 async fn create_test_reader() -> Arc<UnifiedSstableReader> {

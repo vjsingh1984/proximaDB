@@ -3,8 +3,6 @@
 //! This module provides the UnifiedParquetReader that other parts of the
 //! codebase expect, delegating to the appropriate modular components.
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::search_interface::SearchPlan;
 use crate::proto::proximadb_v1::MetadataFilter;
@@ -13,6 +11,8 @@ use anyhow::Result;
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 use proximadb_data_model::ProximaValue;
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -708,7 +708,7 @@ impl UnifiedParquetReader {
         file_path: &str,
         needs_vectors: bool,
         needs_metadata: bool,
-        filter_expression: Option<&crate::core::search::FilterExpression>,
+        filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
         quantization_enabled: bool,
     ) -> Result<(Vec<ProximaRecord>, usize)> {
         use bytes::Bytes;
@@ -1114,7 +1114,7 @@ impl UnifiedParquetReader {
         file_path: &str,
         needs_vectors: bool,
         needs_metadata: bool,
-        filter_expression: Option<&crate::core::search::FilterExpression>,
+        filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
         quantization_enabled: bool,
     ) -> Result<(Vec<arrow::record_batch::RecordBatch>, usize)> {
         use bytes::Bytes;
@@ -1468,7 +1468,7 @@ impl UnifiedParquetReader {
         &self,
         metadata: &parquet::file::metadata::ParquetMetaData,
         total_row_groups: usize,
-        filter_expression: Option<&crate::core::search::FilterExpression>,
+        filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
     ) -> Vec<usize> {
         let filter_expr = match filter_expression {
             Some(fe) => fe,
@@ -2525,7 +2525,7 @@ impl UnifiedParquetReader {
     fn matches_filter_expression(
         &self,
         record: &ProximaRecord,
-        filter_expr: &crate::core::search::FilterExpression,
+        filter_expr: &proximadb_filter_expression::FilterExpression,
     ) -> bool {
         // Use centralized type-safe SqlValue filtering from core::search::sql_value_filter
         // ProximaRecord.metadata is map<string, SqlValue> per proto definition
@@ -2541,7 +2541,7 @@ impl UnifiedParquetReader {
     fn filter_batch_row_at_a_time(
         &self,
         batch: &arrow::record_batch::RecordBatch,
-        filter_expr: &crate::core::search::FilterExpression,
+        filter_expr: &proximadb_filter_expression::FilterExpression,
     ) -> Result<arrow::record_batch::RecordBatch> {
         let records = self.extract_records_from_batch(batch, false, true)?;
         let mask: arrow::array::BooleanArray = records
@@ -2566,8 +2566,8 @@ impl UnifiedParquetReader {
     fn convert_metadata_filter_to_expression(
         &self,
         filter: &MetadataFilter,
-    ) -> crate::core::search::FilterExpression {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
+    ) -> proximadb_filter_expression::FilterExpression {
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 
         if filter.clauses.is_empty() {
             // Empty filter matches everything - return a trivial true condition

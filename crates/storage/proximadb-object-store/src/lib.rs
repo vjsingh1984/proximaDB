@@ -23,9 +23,55 @@ use std::sync::Arc;
 use bytes::Bytes;
 use futures::StreamExt;
 use object_store::path::Path;
-use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt, PutMode, PutOptions};
+use object_store::{
+    Attribute, Attributes, ObjectMeta, ObjectStore, ObjectStoreExt, PutMode, PutOptions,
+};
 use proximadb_kernel::error::StorageError;
+use proximadb_storage_filesystem_types::ObjectAccessTier;
 use url::Url;
+
+/// Which cloud backend an [`ObjectStore`] handle is, detected from its `Display`
+/// type name (stable `object_store` store names: `MicrosoftAzure`, `AmazonS3`,
+/// `GoogleCloudStorage`, `LocalFileSystem`, `InMemory`). Substring-matched so it
+/// survives middleware wrappers (prefix/limit/throttle). Drives the
+/// canonical-tier → provider-native-class mapping in [`ProximaObjectStore::put_with_tier`],
+/// because `object_store`'s `Attribute::StorageClass` forwards the value verbatim
+/// into the provider header (`x-ms-access-tier` / `x-amz-storage-class`) and each
+/// cloud expects its own spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectBackendKind {
+    Azure,
+    S3,
+    Gcs,
+    /// Local file / in-memory / unrecognized — no per-object access tier applies.
+    Untiered,
+}
+
+impl ObjectBackendKind {
+    fn detect(store: &dyn ObjectStore) -> Self {
+        let name = store.to_string();
+        if name.contains("MicrosoftAzure") {
+            Self::Azure
+        } else if name.contains("AmazonS3") {
+            Self::S3
+        } else if name.contains("GoogleCloudStorage") {
+            Self::Gcs
+        } else {
+            Self::Untiered
+        }
+    }
+
+    /// The provider-native storage-class string for `tier`, or `None` for an
+    /// untiered backend (local/memory) where the access tier is meaningless.
+    fn native_tier(self, tier: ObjectAccessTier) -> Option<&'static str> {
+        match self {
+            Self::Azure => Some(tier.as_azure_access_tier()),
+            Self::S3 => Some(tier.as_s3_storage_class()),
+            Self::Gcs => Some(tier.as_gcs_storage_class()),
+            Self::Untiered => None,
+        }
+    }
+}
 
 /// Map an `object_store`/url failure to the canonical `StorageError` (the same error the
 /// `ObjectStoreBridge` seam returns), preserving NotFound/AlreadyExists where possible.
@@ -74,22 +120,38 @@ pub fn store_for_url(url: &str) -> Result<(Arc<dyn ObjectStore>, Path), StorageE
 pub struct ProximaObjectStore {
     store: Arc<dyn ObjectStore>,
     base: Path,
+    /// Backend kind, captured once at construction so [`Self::put_with_tier`] can
+    /// map a canonical tier to the provider-native class without re-inspecting the
+    /// store per write.
+    backend: ObjectBackendKind,
 }
 
 impl ProximaObjectStore {
     /// Open a store from a URL (see [`store_for_url`]).
     pub fn from_url(url: &str) -> Result<Self, StorageError> {
         let (store, base) = store_for_url(url)?;
-        Ok(Self { store, base })
+        let backend = ObjectBackendKind::detect(store.as_ref());
+        Ok(Self {
+            store,
+            base,
+            backend,
+        })
     }
 
     /// Wrap an existing `object_store` handle (base = root). Useful when the store is built
     /// elsewhere (e.g. a shared `Arc<dyn ObjectStore>` from the bridge).
     pub fn new(store: Arc<dyn ObjectStore>) -> Self {
+        let backend = ObjectBackendKind::detect(store.as_ref());
         Self {
             store,
             base: Path::default(),
+            backend,
         }
+    }
+
+    /// The detected cloud backend kind (drives [`Self::put_with_tier`]).
+    pub fn backend(&self) -> ObjectBackendKind {
+        self.backend
     }
 
     /// The underlying object store (for `ObjectStoreBridge::inner_store()` and direct use).
@@ -119,6 +181,43 @@ impl ProximaObjectStore {
             .await
             .map(|_| ())
             .map_err(|e| os_err("put", e))
+    }
+
+    /// Write `bytes` to `path` at a per-object **access tier** — the object-storage
+    /// cost lever (ADR-035/036, TD-173): a colder tier trades retrieval latency/cost
+    /// for a far lower at-rest GB-month price. The canonical [`ObjectAccessTier`] is
+    /// mapped to the backend's native class (Azure `x-ms-access-tier` / S3
+    /// `x-amz-storage-class` / GCS storage class) and set via `object_store`'s
+    /// `Attribute::StorageClass` on the PUT. On an untiered backend (local/memory)
+    /// the tier is meaningless, so this degrades to a plain overwrite [`Self::put`].
+    ///
+    /// This closes the TD-173 `ProximaObjectStore` tier gap (the FileSystem Azure/S3
+    /// backends already do this); it is the prerequisite for tiering cold
+    /// graph/warehouse payloads written through the object-store path. It is a
+    /// **capability only** — callers opt in per write, so no data is tiered until a
+    /// caller asks for it.
+    pub async fn put_with_tier(
+        &self,
+        path: &Path,
+        bytes: Bytes,
+        tier: ObjectAccessTier,
+    ) -> Result<(), StorageError> {
+        let native = match self.backend.native_tier(tier) {
+            Some(native) => native,
+            // Untiered backend: the access tier has no meaning — write normally.
+            None => return self.put(path, bytes).await,
+        };
+        let mut attributes = Attributes::new();
+        attributes.insert(Attribute::StorageClass, native.into());
+        let opts = PutOptions {
+            attributes,
+            ..Default::default()
+        };
+        self.store
+            .put_opts(&self.full_path(path), bytes.into(), opts)
+            .await
+            .map(|_| ())
+            .map_err(|e| os_err("put_with_tier", e))
     }
 
     /// Atomically write `bytes` to `path` ONLY if no object already exists there
@@ -160,6 +259,21 @@ impl ProximaObjectStore {
             .get_range(&self.full_path(path), range)
             .await
             .map_err(|e| os_err("get_range", e))
+    }
+
+    /// Read **multiple** byte ranges of the object at `path` in one batched call.
+    /// `object_store::get_ranges` coalesces adjacent ranges and issues them
+    /// concurrently, so K block-body reads cost ~one round-trip instead of K
+    /// serial GETs — the depth-collapse primitive for TD-167 / ADR-034 P1.
+    pub async fn get_ranges(
+        &self,
+        path: &Path,
+        ranges: &[Range<u64>],
+    ) -> Result<Vec<Bytes>, StorageError> {
+        self.store
+            .get_ranges(&self.full_path(path), ranges)
+            .await
+            .map_err(|e| os_err("get_ranges", e))
     }
 
     /// Fetch object metadata (size, last-modified, e-tag) for `path` WITHOUT
@@ -341,6 +455,38 @@ mod tests {
         );
     }
 
+    /// The canonical tier maps to each cloud's native storage-class spelling; an
+    /// untiered backend yields `None` (the tier is meaningless there).
+    #[test]
+    fn tier_native_mapping_per_backend() {
+        use ObjectBackendKind::*;
+        assert_eq!(Azure.native_tier(ObjectAccessTier::Cool), Some("Cool"));
+        assert_eq!(Azure.native_tier(ObjectAccessTier::Cold), Some("Cold"));
+        assert_eq!(S3.native_tier(ObjectAccessTier::Cool), Some("STANDARD_IA"));
+        assert_eq!(Gcs.native_tier(ObjectAccessTier::Cool), Some("NEARLINE"));
+        assert_eq!(Untiered.native_tier(ObjectAccessTier::Cool), None);
+    }
+
+    /// A memory/local store is detected as untiered.
+    #[test]
+    fn memory_store_is_untiered() {
+        let os = ProximaObjectStore::new(Arc::new(object_store::memory::InMemory::new()));
+        assert_eq!(os.backend(), ObjectBackendKind::Untiered);
+    }
+
+    /// `put_with_tier` on an untiered backend degrades to a plain write (the tier is a
+    /// no-op there) — so callers can request a tier unconditionally and it only takes
+    /// effect on a cloud backend. Asserting the bytes land verifies the degrade path.
+    #[tokio::test]
+    async fn put_with_tier_degrades_to_put_on_untiered_backend() {
+        let os = ProximaObjectStore::new(Arc::new(object_store::memory::InMemory::new()));
+        let p = Path::from("cold/seg.pax");
+        os.put_with_tier(&p, Bytes::from_static(b"payload"), ObjectAccessTier::Cool)
+            .await
+            .unwrap();
+        assert_eq!(&os.get(&p).await.unwrap()[..], b"payload");
+    }
+
     #[test]
     fn memory_scheme_dispatches() {
         assert!(store_for_url("memory:///").is_ok());
@@ -353,5 +499,143 @@ mod tests {
         #[cfg(not(feature = "aws"))]
         assert!(result.is_err());
         let _ = result;
+    }
+
+    // ── Cloud-emulator integration: put_with_tier against real Azure/S3/GCS APIs ──
+    //
+    // The memory-degrade unit test cannot catch a native-class mapping regression
+    // (an invalid storage-class string a real cloud API would 4xx). These run the
+    // tier path against emulators — Azurite (Azure), MinIO (S3), fake-gcs (GCP) —
+    // so the `x-ms-access-tier` / `x-amz-storage-class` / `x-goog-storage-class`
+    // header is exercised end-to-end. Azure + S3 go through the PRODUCTION
+    // `store_for_url` + forwarded-env path (highest fidelity); GCS uses the builder
+    // (object_store has no clean emulator env key for GCS) and is best-effort.
+    //
+    // `object_store` 0.13 does not surface the tier on read (GET/HEAD attributes
+    // omit it; see `client::get::get_attributes`), so these assert *acceptance* +
+    // round-trip, not the resident tier value. The CI job (qa-gate) adds an
+    // out-of-band Azurite tier read-back (`az ... --query blobTier`) for the strong
+    // proof; a strong in-test read-back needs the Azure SDK (deferred, TD-168).
+    //
+    // Gated `#[ignore]` + per-cloud env presence, so they compile under
+    // `--features aws,azure,gcp`/`cloud-full` (CI-drift-safe) but run only when the
+    // matching emulator env is set. See `.github/workflows/qa-gate.yml` (the
+    // develop→qa gate) and `make cloud-emulator-test` (local) /
+    // `docs/12-design/runtime-evidence/TD168_COOL_TIER_AZURITE_VALIDATION_2026_06_28.md`.
+
+    /// Azure (Azurite) via the production `from_url` + env path. Azurite accepts AND
+    /// persists `x-ms-access-tier: Cool` (the CI job verifies the resident tier
+    /// out-of-band). Set by CI: `AZURE_STORAGE_USE_EMULATOR=true`, `AZURE_ALLOW_HTTP=true`.
+    #[cfg(feature = "azure")]
+    #[tokio::test]
+    #[ignore = "needs Azurite — set AZURE_STORAGE_USE_EMULATOR=true with Azurite running"]
+    async fn put_with_tier_accepted_by_azurite() {
+        if std::env::var("AZURE_STORAGE_USE_EMULATOR").is_err() {
+            eprintln!("skip: set AZURE_STORAGE_USE_EMULATOR=true with Azurite running");
+            return;
+        }
+        let os = ProximaObjectStore::from_url("az://proximadb-test/cold/probe-azure.bin")
+            .or_else(|_| ProximaObjectStore::from_url("az://proximadb-test"))
+            .expect("open Azurite store via from_url");
+        assert_eq!(os.backend(), ObjectBackendKind::Azure);
+        let p = Path::from("cold/probe-azure.bin");
+        os.put_with_tier(
+            &p,
+            Bytes::from_static(b"cool-azure"),
+            ObjectAccessTier::Cool,
+        )
+        .await
+        .expect("Azurite must accept x-ms-access-tier: Cool");
+        assert_eq!(&os.get(&p).await.expect("get")[..], b"cool-azure");
+        // NOTE: intentionally NOT deleted — the qa-gate job reads this blob's
+        // resident tier back out-of-band (`az ... --query blobTier`) for the strong
+        // Cool-tier proof object_store cannot surface. The emulator is ephemeral.
+    }
+
+    /// AWS S3 (MinIO) via the production `from_url` + env path. Default MinIO
+    /// *rejects* `x-amz-storage-class: STANDARD_IA` (InvalidStorageClass) unless
+    /// object tiering/ILM is configured — impractical for a CI emulator — so this
+    /// best-effort-skips on that rejection (real AWS S3 accepts it; the header
+    /// mapping is unit-tested via `native_tier`). It still hard-fails on a
+    /// non-storage-class error. Set by CI: `AWS_ENDPOINT`, `AWS_ALLOW_HTTP=true`,
+    /// `AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false`, `AWS_ACCESS_KEY_ID/SECRET/REGION`.
+    #[cfg(feature = "aws")]
+    #[tokio::test]
+    #[ignore = "needs MinIO/S3 — set AWS_ENDPOINT with the emulator running"]
+    async fn put_with_tier_accepted_by_minio() {
+        if std::env::var("AWS_ENDPOINT").is_err() && std::env::var("AWS_ENDPOINT_URL").is_err() {
+            eprintln!("skip: set AWS_ENDPOINT to the MinIO/S3 emulator");
+            return;
+        }
+        let os = ProximaObjectStore::from_url("s3://proximadb-test/cold/probe-s3.bin")
+            .or_else(|_| ProximaObjectStore::from_url("s3://proximadb-test"))
+            .expect("open MinIO/S3 store via from_url");
+        assert_eq!(os.backend(), ObjectBackendKind::S3);
+        let p = Path::from("cold/probe-s3.bin");
+        // Best-effort: skip on the emulator's STANDARD_IA rejection (mirrors the
+        // GCS pattern); fail on other errors. The header mapping itself is
+        // unit-tested (`native_tier(ObjectAccessTier::Cool) == "STANDARD_IA"`).
+        match os
+            .put_with_tier(&p, Bytes::from_static(b"cool-s3"), ObjectAccessTier::Cool)
+            .await
+        {
+            Ok(()) => {}
+            Err(e) => {
+                let msg = format!("{e:?}");
+                if msg.contains("InvalidStorageClass") {
+                    eprintln!(
+                        "skip (best-effort): MinIO emulator rejected STANDARD_IA \
+                         (InvalidStorageClass) — real AWS S3 accepts it; the \
+                         put_with_tier mapping is unit-tested separately. err: {msg}"
+                    );
+                    return;
+                }
+                panic!("MinIO/S3 put_with_tier failed (non-storage-class error): {msg}");
+            }
+        }
+        assert_eq!(&os.get(&p).await.expect("get")[..], b"cool-s3");
+        let _ = os.delete(&p).await;
+    }
+
+    /// GCP (fake-gcs-server) via the builder (`object_store` has no emulator env key
+    /// for GCS). Best-effort ("to extent feasible"): fake-gcs may not honor the
+    /// `x-goog-storage-class` header, and object_store's GCS builder may reject an
+    /// anonymous/emulator build — so a connect/build failure SKIPS rather than fails
+    /// (this is the known-fragile backend; tracked in TD-168). Set by CI:
+    /// `PROXIMADB_GCS_TEST_ENDPOINT=http://localhost:4443`.
+    #[cfg(feature = "gcp")]
+    #[tokio::test]
+    #[ignore = "needs fake-gcs — set PROXIMADB_GCS_TEST_ENDPOINT with the emulator running"]
+    async fn put_with_tier_against_fake_gcs() {
+        let endpoint = match std::env::var("PROXIMADB_GCS_TEST_ENDPOINT") {
+            Ok(e) => e,
+            Err(_) => {
+                eprintln!("skip: set PROXIMADB_GCS_TEST_ENDPOINT to the fake-gcs emulator");
+                return;
+            }
+        };
+        let built = object_store::gcp::GoogleCloudStorageBuilder::new()
+            .with_base_url(&endpoint)
+            .with_bucket_name("proximadb-test")
+            .build();
+        let store = match built {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("skip (best-effort): fake-gcs build unsupported by object_store: {e}");
+                return;
+            }
+        };
+        let os = ProximaObjectStore::new(Arc::new(store));
+        assert_eq!(os.backend(), ObjectBackendKind::Gcs);
+        let p = Path::from("cold/probe-gcs.bin");
+        if let Err(e) = os
+            .put_with_tier(&p, Bytes::from_static(b"cool-gcs"), ObjectAccessTier::Cool)
+            .await
+        {
+            eprintln!("skip (best-effort): fake-gcs rejected the tiered PUT: {e}");
+            return;
+        }
+        assert_eq!(&os.get(&p).await.expect("get")[..], b"cool-gcs");
+        let _ = os.delete(&p).await;
     }
 }

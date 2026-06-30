@@ -10,7 +10,7 @@
 #[cfg(test)]
 mod benchmarks {
     use super::super::*;
-    use crate::compute::distance_computation::DistanceMetric;
+    use proximadb_distance_kernel::DistanceMetric;
     use crate::core::search::SearchParams;
     use crate::proto::proximadb_v1::VectorRecord;
     use crate::proto::proximadb_v1::{

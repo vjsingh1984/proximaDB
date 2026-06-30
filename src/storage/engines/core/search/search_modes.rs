@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use crate::compute::distance_computation::DistanceMetric;
+use proximadb_distance_kernel::DistanceMetric;
 
 /// Backwards-compat alias for [`SearchModeMetadataFilter`].
 pub type MetadataFilter = SearchModeMetadataFilter;

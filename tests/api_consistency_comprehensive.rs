@@ -39,6 +39,8 @@ mod comprehensive_api_tests {
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
             permitted_principals: vec![],
+            index_policy: None,
+            pax_vector_quant: None,
         }
     }
 

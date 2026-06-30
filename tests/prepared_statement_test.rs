@@ -874,8 +874,8 @@ fn test_parameter_value_from_conversions() {
     assert!(matches!(pv, ParameterValue::Int(42)));
 
     // From f64
-    let pv: ParameterValue = 3.14f64.into();
-    assert!(matches!(pv, ParameterValue::Float(f) if (f - 3.14).abs() < 0.001));
+    let pv: ParameterValue = 3.5f64.into();
+    assert!(matches!(pv, ParameterValue::Float(f) if (f - 3.5).abs() < 0.001));
 
     // From bool
     let pv: ParameterValue = true.into();

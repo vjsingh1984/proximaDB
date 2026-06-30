@@ -14,11 +14,11 @@ use std::sync::Arc;
 use tracing::{info, trace, warn};
 
 use super::QuantizationConfig;
-use crate::compute::distance_computation::SelectedFormat;
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine, StorageQuantizedData,
 };
 use proximadb_compression::CompressionAlgorithm;
+use proximadb_distance_kernel::SelectedFormat;
 use proximadb_records::{EmbeddingCell, ProximaRecord};
 
 /// Serialization configuration for columnar storage
@@ -359,9 +359,8 @@ impl ColumnarSerializer {
     pub fn new(config: ColumnarSerializationConfig) -> Result<Self> {
         let quantization_engine = if config.quantization.is_some() {
             let quant_config = StorageQuantizationConfig::default(); // Deferred: Convert from QuantizationConfig
-            let distance_compute = Arc::new(
-                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-            );
+            let distance_compute =
+                Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
             let codebook_store = Arc::new(crate::compute::InMemoryCodebookStore::new());
             let unified_engine = Arc::new(
                 crate::compute::quantization::UnifiedQuantizationEngine::new(
@@ -1112,7 +1111,7 @@ impl From<FormatPreference> for SelectedFormat {
     }
 }
 
-// NOTE: SelectedFormat has been moved to crate::compute::distance_computation::quantized
+// NOTE: SelectedFormat has been moved to proximadb_distance_kernel::quantized
 // This eliminates code duplication and allows all engines to use the same format definitions
 
 #[cfg(test)]

@@ -778,7 +778,13 @@ class DocumentRepository:
         document: dict[str, Any],
         id: str | None = None,
     ) -> Document:
-        """Insert a document.
+        """Insert a document into the LOCAL in-memory store.
+
+        This repository is local-only — it never calls the server. Server writes
+        go through ``ProximaDBClient.ingest_documents`` (which uses this repo
+        only as its ``allow_local_fallback`` target). Keeping this local-only
+        also breaks the prior ``self._client.insert_document`` -> repo ->
+        client recursion.
 
         Args:
             collection_id: Collection identifier
@@ -787,45 +793,27 @@ class DocumentRepository:
 
         Returns:
             Created document
-
-        Raises:
-            ProximaDBError: If insert fails
         """
         import uuid
 
         doc_id = id or f"doc:{uuid.uuid4()}"
+        doc = Document(
+            id=doc_id,
+            content=document,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
 
-        # Call the server to insert the document
-        try:
-            result = self._client.insert_document(
-                collection_name=collection_id, document=document, id=doc_id
-            )
+        # Local cache for fast access
+        self._ensure_collection(collection_id)
+        self._documents[collection_id][doc_id] = doc
+        self._batch_buffer[collection_id].append(doc)
 
-            # Server may return a different ID, use it if provided
-            server_id = result.get("id", doc_id)
+        # Update cache (write-through)
+        if self._enable_cache:
+            self._update_cache(f"{collection_id}:{doc_id}", doc)
 
-            doc = Document(
-                id=server_id,
-                content=document,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-            )
-
-            # Update local cache for fast access
-            self._ensure_collection(collection_id)
-            self._documents[collection_id][server_id] = doc
-            self._batch_buffer[collection_id].append(doc)
-
-            # Update cache (write-through)
-            if self._enable_cache:
-                self._update_cache(f"{collection_id}:{server_id}", doc)
-
-            return doc
-
-        except Exception as e:
-            raise ProximaDBError(
-                f"Failed to insert document into '{collection_id}': {e}"
-            )
+        return doc
 
     def insert_batch(
         self,
@@ -1539,19 +1527,6 @@ class ProximaDBDocument:
             Flush result
         """
         return self._repository.flush_batch(collection_id)
-
-    def insert_document(
-        self,
-        collection_id: str,
-        document: dict[str, Any],
-        id: str | None = None,
-    ) -> dict[str, Any]:
-        created = self._repository.insert(collection_id, document, id)
-        return {
-            "id": created.id,
-            "version": created.version,
-            "document": created.content,
-        }
 
     def get_document(
         self,

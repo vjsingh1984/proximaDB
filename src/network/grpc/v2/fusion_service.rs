@@ -24,7 +24,9 @@ use crate::proto::proximadb_v2 as pv2;
 use crate::proto::proximadb_v2::proxima_fusion_service_server::{
     ProximaFusionService, ProximaFusionServiceServer,
 };
-use crate::services::fusion_service::{FusionService, GraphFusionParams, GraphGrain};
+use crate::services::fusion_service::{
+    DocumentFusionSpec, FusionOidKey, FusionService, GraphFusionParams, GraphGrain,
+};
 
 /// Defaults shared with the REST handler (`src/network/rest/v2/graphs.rs`).
 const DEFAULT_LIMIT: usize = 10;
@@ -37,15 +39,17 @@ pub struct ProximaFusionServiceImpl {
 }
 
 impl ProximaFusionServiceImpl {
-    /// Build from the concrete vector + graph backing services. The `FusionService`
-    /// port is constructed once here (from the vector + graph services) and shared
-    /// across requests — never per-RPC.
+    /// Build from the concrete vector + graph backing services plus the shared
+    /// full-text index map (TD-138: powers the document modality). The
+    /// `FusionService` port is constructed once here and shared across requests —
+    /// never per-RPC.
     pub fn new(
         vector: Arc<crate::services::VectorOperationsService>,
         graph: Arc<crate::graph::GraphOperationsService>,
+        fulltext_indexes: crate::network::hybrid_search::HybridFullTextIndexMap,
     ) -> Self {
         Self {
-            fusion: Arc::new(FusionService::new(vector, graph)),
+            fusion: Arc::new(FusionService::new(vector, graph, fulltext_indexes)),
         }
     }
 
@@ -64,6 +68,7 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
         // Tenant isolation is structural: the backing vector/graph collections are
         // tenant-namespaced via `x-tenant-id`. We read it here only for logging.
         let tenant_id = grpc_auth::tenant_id(&request);
+        let principal = grpc_auth::user_id(&request);
         let req = request.into_inner();
 
         if req.query_vector.is_empty() {
@@ -100,6 +105,7 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
         };
 
         let params = GraphFusionParams {
+            route_policy: None,
             graph_id: req.graph_id.clone(),
             vector_collection: req.vector_collection.clone(),
             query_vector: req.query_vector.clone(),
@@ -122,11 +128,25 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
             vector_weight: req.vector_weight.unwrap_or(1.0),
             graph_weight: req.graph_weight.unwrap_or(1.0),
             grain,
-            // gRPC fusion relies on structural tenant isolation today; the within-tenant
-            // `permitted_principals` RBAC principal is not yet threaded over gRPC (REST-only in
-            // this TD-131 cut). `None` ⇒ the gate fails open (structural isolation preserved).
-            principal: None,
+            // Within-tenant `permitted_principals` RBAC (TD-134): thread the caller's principal
+            // so the seam's RBAC gate filters records. `None` (unauthenticated) ⇒ fails open
+            // (structural isolation preserved).
+            principal,
             policy,
+            oid_key: FusionOidKey::Canonical,
+            // TD-138 document modality (gRPC parity with REST #508): enable iff a non-empty
+            // `text_query` was supplied. The shared service's DocumentExpander runs the BM25
+            // search; absent/empty ⇒ vector+graph only (unchanged).
+            document: req
+                .text_query
+                .as_ref()
+                .filter(|t| !t.trim().is_empty())
+                .map(|t| DocumentFusionSpec {
+                    text_query: t.clone(),
+                    collection: req.document_collection.clone(),
+                    weight: req.document_weight.unwrap_or(1.0),
+                    k: None,
+                }),
         };
 
         let (items, stats) = self

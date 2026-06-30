@@ -360,10 +360,18 @@ impl IoTraceSnapshot {
     /// Emit this snapshot as a structured `tracing` event under [`TARGET`].
     /// No-op when empty. `tenant_id` and `route` label the query; all physical
     /// quantities become event fields the OTLP layer (§4.4) maps to a span.
+    /// Emit the per-query I/O trace as a structured `tracing` event.
+    ///
+    /// TD-160: this is the **perf-class emission** — gated behind the `io-trace`
+    /// cargo feature (default OFF) so it costs nothing in normal operation. When
+    /// the feature is off this is a near-no-op; the cheap core counters and the
+    /// route/cache/**billing** observers in [`instrument`] are unaffected and stay
+    /// always-on (billing is never gated — ADR-027 non-entanglement).
     pub fn emit(&self, tenant_id: Option<&str>, route: &str) {
         if self.is_empty() {
             return;
         }
+        #[cfg(feature = "io-trace")]
         tracing::info!(
             target: TARGET,
             tenant_id = tenant_id.unwrap_or("default"),
@@ -388,6 +396,10 @@ impl IoTraceSnapshot {
             compute_ms_by_engine = ?self.compute_ms,
             "per-query I/O trace"
         );
+        // Perf emission compiled out (default): consume the args so the signature
+        // is stable and no unused-var warning fires in the feature-off build.
+        #[cfg(not(feature = "io-trace"))]
+        let _ = (tenant_id, route);
     }
 }
 
@@ -410,6 +422,14 @@ pub fn record_bytes_read(bytes: u64) {
 }
 
 /// Add to the count of ranged GET requests for the active query.
+///
+/// ADR-030 **core counter — always-on** (deliberately NOT behind `io-trace`,
+/// alongside `record_bytes_read`/`record_compute_ms`): the billing observer drains
+/// `range_gets` to compute `avg_get_size = bytes_read / range_gets`, and the route
+/// cost model prices `per_get`, so this must read real values even when the
+/// perf-emission class is compiled out. It is one task-local atomic increment per
+/// physical GET — the ~free accumulator core, never the cost the `io-trace` gate
+/// exists to remove. Silently no-ops outside an active scope.
 pub fn record_range_gets(gets: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_range_gets(gets));
 }
@@ -419,15 +439,25 @@ pub fn record_bytes_written(bytes: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_bytes_written(bytes));
 }
 
-/// Record a footer/metadata cache outcome for the active query.
+/// Record a footer/metadata cache outcome for the active query. (TD-160:
+/// perf/geometry trace class — compile-time gated.)
+#[cfg(feature = "io-trace")]
 pub fn record_footer(hit: bool) {
     let _ = IO_TRACE.try_with(|t| t.record_footer(hit));
 }
+#[cfg(not(feature = "io-trace"))]
+#[inline(always)]
+pub fn record_footer(_hit: bool) {}
 
 /// Record a batch of footer/metadata cache outcomes for the active query.
+/// (TD-160: perf/geometry trace class — compile-time gated.)
+#[cfg(feature = "io-trace")]
 pub fn record_footers(hits: u64, misses: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_footers(hits, misses));
 }
+#[cfg(not(feature = "io-trace"))]
+#[inline(always)]
+pub fn record_footers(_hits: u64, _misses: u64) {}
 
 /// Record chargeable egress bytes (cross-region / internet — KEU) for the
 /// active query.
@@ -522,6 +552,38 @@ fn notify_cache_observer(snap: &IoTraceSnapshot) {
     }
 }
 
+/// Observer invoked at trace flush with `snapshot` + `tenant_id` for **billing**
+/// (ADR-030). The metering layer registers a sink that emits the always-on
+/// per-tenant consumption meters (KRU read-compute, from `compute_ms`) from the
+/// same measured snapshot the perf observers read — so cost-model bytes and
+/// billed bytes cannot diverge. Dependency-inversion seam: io_trace feeds billing
+/// *without depending on it*.
+///
+/// Unlike the route/cache observers this is the **billing class** — always-on,
+/// never wrapped in the perf `io-trace` feature gate (ADR-027 non-entanglement;
+/// CI-guarded).
+type BillingObserver = dyn Fn(&IoTraceSnapshot, Option<&str>) + Send + Sync;
+
+static BILLING_OBSERVER: Mutex<Option<Box<BillingObserver>>> = Mutex::new(None);
+
+/// Install (or clear with `None`) the billing-trace observer. Called once at
+/// startup by the metering layer; replaceable in tests.
+pub fn set_billing_observer(observer: Option<Box<BillingObserver>>) {
+    *BILLING_OBSERVER.lock().unwrap_or_else(|p| p.into_inner()) = observer;
+}
+
+/// Feed the registered billing observer, if any, with a completed query's trace
+/// and the owning tenant. Called after the route + cache observers at scope close.
+fn notify_billing_observer(snap: &IoTraceSnapshot, tenant_id: Option<&str>) {
+    if let Some(obs) = BILLING_OBSERVER
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+    {
+        obs(snap, tenant_id);
+    }
+}
+
 /// Bind a fresh [`IoTrace`] to `future` and await it. Lower-level than
 /// [`instrument`]; use when the caller wants to read the snapshot itself before
 /// the scope ends.
@@ -560,15 +622,55 @@ where
                 if !snap.is_empty() {
                     notify_cache_observer(&snap);
                 }
+                // ADR-030 billing fan-out (always-on): emit the per-tenant
+                // consumption meters (KRU) from the same snapshot. Tenant + the
+                // per-engine compute_ms are both in hand here.
+                if !snap.is_empty() {
+                    notify_billing_observer(&snap, tenant_id.as_deref());
+                }
             }
             out
         })
         .await
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "io-trace"))]
 mod tests {
     use super::*;
+
+    /// ADR-030: the always-on billing observer fires at scope close with the
+    /// owning tenant and the same accumulated snapshot the perf observers see —
+    /// so KRU is emitted from `compute_ms` and cannot diverge from the cost
+    /// model's view. Drives the real `instrument` drain path end to end.
+    #[tokio::test]
+    async fn billing_observer_receives_tenant_and_accumulated_compute_ms() {
+        use std::sync::{Arc, Mutex};
+        let captured: Arc<Mutex<Option<(Option<String>, u64, u64)>>> = Arc::new(Mutex::new(None));
+        let sink = captured.clone();
+        set_billing_observer(Some(Box::new(move |snap, tenant| {
+            *sink.lock().unwrap_or_else(|p| p.into_inner()) = Some((
+                tenant.map(String::from),
+                snap.total_compute_ms(),
+                snap.bytes_read,
+            ));
+        })));
+
+        instrument(Some("acme".to_string()), "test-route", async {
+            record_compute_ms("native", 4);
+            record_compute_ms("native", 3);
+            record_bytes_read(100);
+        })
+        .await;
+
+        set_billing_observer(None); // restore global state for other tests
+
+        let got = captured.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        assert_eq!(
+            got,
+            Some((Some("acme".to_string()), 7, 100)),
+            "billing observer must receive the tenant + summed compute_ms (4+3) + bytes_read from the same snapshot"
+        );
+    }
 
     #[test]
     fn classify_maps_known_verbs() {
