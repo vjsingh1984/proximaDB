@@ -4427,6 +4427,15 @@ pub trait Catalog: Send + Sync {
     async fn account_id_u32(&self, _account: &str) -> anyhow::Result<Option<u32>> {
         Ok(None)
     }
+    /// ADR-031 allocator unification: the highest persisted `object_id` across
+    /// all tables (from the durable `object_name_index`). The root startup path
+    /// uses this to raise the collection-id allocator floor above every existing
+    /// object_id, so a freshly minted collection id can never collide with a
+    /// legacy (pre-unification) `schema.object_id` → no oid-index corruption.
+    /// Default `None` (federated catalogs have no native object_ids).
+    async fn max_object_id(&self) -> anyhow::Result<Option<u64>> {
+        Ok(None)
+    }
     async fn update_namespace_properties(
         &self,
         namespace: &[String],

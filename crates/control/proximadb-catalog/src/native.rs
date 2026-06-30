@@ -1357,6 +1357,13 @@ impl Catalog for NativeCatalog {
         Ok(self.account_u32(account).await)
     }
 
+    async fn max_object_id(&self) -> Result<Option<u64>> {
+        // Max persisted object_id from the durable forward index (name→oid),
+        // loaded eagerly at startup. Used by the root to raise the collection-id
+        // allocator floor above every existing object_id (collision safety).
+        Ok(self.object_name_index.read().await.values().copied().max())
+    }
+
     async fn update_namespace_properties(
         &self,
         namespace: &[String],
