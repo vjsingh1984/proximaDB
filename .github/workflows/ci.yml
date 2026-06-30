@@ -1263,7 +1263,7 @@ jobs:
       - name: Run Storage Integration Tests
         run: |
           # Run only explicitly named storage test files (avoids compiling all tests)
-          for test_file in tests/*sst*.rs tests/*storage*.rs tests/*wal*.rs tests/embedded_tenant_context.rs; do
+          for test_file in tests/*sst*.rs tests/*storage*.rs tests/*wal*.rs tests/embedded_tenant_context.rs tests/td112_postflush_recall_e2e.rs; do
             if [ -f "$test_file" ]; then
               test_name=$(basename "$test_file" .rs)
               echo "Running $test_name..."
@@ -1295,7 +1295,7 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - name: Run Query Integration Tests
         run: |
-          for test_file in tests/*query*.rs tests/*federated*.rs tests/*cache*.rs tests/filtered_ann_recall_bands.rs tests/query_cache_test.rs; do
+          for test_file in tests/*query*.rs tests/*federated*.rs tests/*cache*.rs tests/filtered_ann_recall_bands.rs tests/query_cache_test.rs tests/vector_ann_recall_e2e.rs; do
             if [ -f "$test_file" ]; then
               test_name=$(basename "$test_file" .rs)
               echo "Running $test_name..."

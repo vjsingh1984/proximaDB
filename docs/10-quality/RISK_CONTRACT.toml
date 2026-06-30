@@ -54,10 +54,19 @@ surface = ["src/**/cache*", "src/**/query_cache*", "src/core/cache/**"]
 required_tests = ["query_cache_test"]
 required_scenarios = ["write-invalidates-cache"]
 must_run_in_tier = "rust-integration-test-query"
-# NOTE: dead-record-filtering and cold-read-recall risk classes are NOT yet here:
-#  - dead-record: the candidate tests (v2_metadata_filter_enforcement_test,
-#    mem0_pgwire_filter_e2e, test_record_store_route) are orphaned (run in no CI
-#    tier) — wire one explicitly (per the v1.1 precise-wiring rule) before declaring.
-#  - cold-read-recall: td112_postflush_recall_e2e co-locates the TD-184 broken
-#    axis_index_rebuilt_from_sst_after_loss test, so the file can't be wired until
-#    TD-184 is fixed (same co-located-broken-test trap as the FK file pre-#567).
+# cold-read-recall was blocked by TD-184 (AXIS rebuild-from-SST); now FIXED.
+# dead-record-filtering's candidate test was orphaned; now wired explicitly.
+
+[[risk]]
+class = "cold-read-recall"          # post-flush recall + AXIS rebuild from SST (TD-184 fixed)
+surface = ["src/storage/engines/sst/**", "src/index/axis/**"]
+required_tests = ["td112_postflush_recall_e2e"]
+required_scenarios = ["postflush-recall-band"]
+must_run_in_tier = "rust-integration-test-storage"
+
+[[risk]]
+class = "dead-record-filtering"     # deleted/expired records excluded from ANN search
+surface = ["src/storage/**", "src/core/search/**"]
+required_tests = ["vector_ann_recall_e2e"]
+required_scenarios = ["tombstone-suppression"]
+must_run_in_tier = "rust-integration-test-query"
