@@ -242,6 +242,10 @@ async fn tpch_pgwire_conformance() {
     let mut passed = Vec::new();
     let mut failed = Vec::new();
     for (id, sql) in &queries {
+        // Trace BEFORE execution: a stack overflow / panic during simple_query
+        // aborts the process (the match below never runs), so the LAST line
+        // printed identifies the culprit query + its SQL. Run with --nocapture.
+        eprintln!("  ▶ {id}: {sql}");
         match client.simple_query(sql).await {
             Ok(_) => {
                 eprintln!("  ✓ {id}");
