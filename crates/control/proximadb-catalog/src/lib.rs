@@ -4436,6 +4436,20 @@ pub trait Catalog: Send + Sync {
     async fn max_object_id(&self) -> anyhow::Result<Option<u64>> {
         Ok(None)
     }
+    /// ADR-031 Phase 4c: pre-mint the typed identity triple
+    /// `(account_u32, namespace_u16, collection_u32)` for a collection being
+    /// created under `account`/`namespace_key`, BEFORE storage-dir creation.
+    /// The root composes a `CollectionIdentity` from it for the typed DATA path.
+    /// `None` when no account is known (legacy, mixed-safe). Idempotent with the
+    /// later `create_table`→`mint_stable_identity` (preserves pre-stamped values
+    /// via the shared `resolve_typed_triple`). Default `None`.
+    async fn mint_collection_typed_identity(
+        &self,
+        _account: &str,
+        _namespace_key: &str,
+    ) -> anyhow::Result<Option<(u32, u16, u32)>> {
+        Ok(None)
+    }
     async fn update_namespace_properties(
         &self,
         namespace: &[String],

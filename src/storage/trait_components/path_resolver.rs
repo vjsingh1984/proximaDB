@@ -47,6 +47,7 @@ use dashmap::DashMap;
 use proximadb_catalog::{
     CatalogNamespace, CatalogProjectionKind, CatalogTableSchema, StoragePoolClass,
 };
+use proximadb_storage_common::StoragePath;
 use std::sync::Arc;
 
 /// Storage location assignment for a collection
@@ -526,6 +527,82 @@ pub fn typed_paths_enabled() -> bool {
         Ok(v) => v == "1" || v.eq_ignore_ascii_case("true"),
         Err(_) => false,
     })
+}
+
+// ---------------------------------------------------------------------------
+// ADR-031 Phase 4c: typed collection DATA subpaths.
+// ---------------------------------------------------------------------------
+//
+// `CollectionIdentity` is a ROOT type (`crate::core::stable_id`); `StoragePath`
+// lives in `proximadb-storage-common`, which CANNOT import root types (workspace
+// boundary). So the typed variants live HERE — a root helper that wraps the
+// legacy `StoragePath` calls for the `None` (legacy) branch and composes the
+// account-rooted zero-padded base62 path for the `Some(identity)` branch.
+//
+// Both branches share the SAME trailing subpath suffix as the legacy
+// `StoragePath::collection_*_path` (`/data`, `/wal`, `/indexes` — NO trailing
+// slash), so the `None` branch is **byte-identical** to the pre-4c path and the
+// `Some` branch differs only in the prefix (mixed-read-safe per-collection).
+
+/// ADR-031 Phase 4c: typed collection **data** directory path.
+///
+/// * `Some(identity)` → `{base}/accounts/{acct}/{ns}/{coll}/data`
+///   (zero-padded base62, no tenant slot — Phase 4 hierarchy collapse).
+/// * `None`           → byte-identical legacy
+///   [`StoragePath::collection_data_path`] (`{base}/{collection_id}/data`).
+///
+/// The trailing suffix (`/data`, no slash) matches the legacy contract exactly
+/// so reads/writes against a legacy collection (`None`) resolve unchanged.
+pub fn collection_data_path_typed(
+    base: &str,
+    collection_id: &str,
+    identity: Option<CollectionIdentity>,
+) -> String {
+    match identity {
+        Some(id) => {
+            let (acct, ns, coll) = id.path_segments();
+            format!("{base}/accounts/{acct}/{ns}/{coll}/data")
+        }
+        None => StoragePath::collection_data_path(base, collection_id),
+    }
+}
+
+/// ADR-031 Phase 4c: typed collection **WAL** directory path.
+///
+/// * `Some(identity)` → `{base}/accounts/{acct}/{ns}/{coll}/wal`.
+/// * `None`           → byte-identical legacy
+///   [`StoragePath::collection_wal_path`] (`{base}/{collection_id}/wal`).
+pub fn collection_wal_path_typed(
+    base: &str,
+    collection_id: &str,
+    identity: Option<CollectionIdentity>,
+) -> String {
+    match identity {
+        Some(id) => {
+            let (acct, ns, coll) = id.path_segments();
+            format!("{base}/accounts/{acct}/{ns}/{coll}/wal")
+        }
+        None => StoragePath::collection_wal_path(base, collection_id),
+    }
+}
+
+/// ADR-031 Phase 4c: typed collection **indexes** directory path.
+///
+/// * `Some(identity)` → `{base}/accounts/{acct}/{ns}/{coll}/indexes`.
+/// * `None`           → byte-identical legacy
+///   [`StoragePath::collection_index_path`] (`{base}/{collection_id}/indexes`).
+pub fn collection_index_path_typed(
+    base: &str,
+    collection_id: &str,
+    identity: Option<CollectionIdentity>,
+) -> String {
+    match identity {
+        Some(id) => {
+            let (acct, ns, coll) = id.path_segments();
+            format!("{base}/accounts/{acct}/{ns}/{coll}/indexes")
+        }
+        None => StoragePath::collection_index_path(base, collection_id),
+    }
 }
 
 /// Resolve the catalog-addressed index locations for a collection's vector-ANN
@@ -1779,6 +1856,72 @@ mod tests {
         assert_eq!(
             prefixes, sorted,
             "typed collection prefixes must be pre-sorted lexicographically"
+        );
+    }
+
+    // ── ADR-031 Phase 4c: typed collection DATA subpath helpers ──────────
+
+    #[test]
+    fn typed_data_path_is_account_rooted_with_legacy_suffix() {
+        // Some(identity) → {base}/accounts/{acct}/{ns}/{coll}/data
+        // (zero-padded base62, no tenant slot). Trailing suffix `/data` (NO
+        // trailing slash) matches the legacy StoragePath contract.
+        let identity = CollectionIdentity {
+            account_id: 7,
+            namespace_id: 5,
+            collection_id: 9,
+        };
+        let p = collection_data_path_typed("/base", "coll_x", Some(identity));
+        assert_eq!(
+            p, "/base/accounts/000007/005/000009/data",
+            "typed data path"
+        );
+        assert!(
+            !p.ends_with('/'),
+            "no trailing slash (matches legacy /data suffix): {p}"
+        );
+    }
+
+    #[test]
+    fn typed_wal_and_index_paths_match_legacy_suffix_shape() {
+        let identity = CollectionIdentity {
+            account_id: 1,
+            namespace_id: 2,
+            collection_id: 3,
+        };
+        let wal = collection_wal_path_typed("/b", "c", Some(identity));
+        let idx = collection_index_path_typed("/b", "c", Some(identity));
+        assert_eq!(wal, "/b/accounts/000001/002/000003/wal");
+        assert_eq!(idx, "/b/accounts/000001/002/000003/indexes");
+    }
+
+    #[test]
+    fn typed_data_path_none_is_byte_identical_to_legacy_storage_path() {
+        // None → byte-identical legacy StoragePath::collection_data_path
+        // (the mixed-read-safety guarantee for legacy collections).
+        let base = "/data/store";
+        let cid = "my_collection";
+        let typed_none = collection_data_path_typed(base, cid, None);
+        let legacy = StoragePath::collection_data_path(base, cid);
+        assert_eq!(
+            typed_none, legacy,
+            "None branch must be byte-identical to legacy StoragePath"
+        );
+        // And it has the legacy shape {base}/{cid}/data (no trailing slash).
+        assert_eq!(typed_none, "/data/store/my_collection/data");
+    }
+
+    #[test]
+    fn typed_wal_and_index_paths_none_match_legacy() {
+        let base = "s3://bucket/path";
+        let cid = "col_1";
+        assert_eq!(
+            collection_wal_path_typed(base, cid, None),
+            StoragePath::collection_wal_path(base, cid)
+        );
+        assert_eq!(
+            collection_index_path_typed(base, cid, None),
+            StoragePath::collection_index_path(base, cid)
         );
     }
 }
