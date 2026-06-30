@@ -131,65 +131,125 @@ impl CollectionIdentity {
 }
 
 // ---------------------------------------------------------------------------
-// CatalogIdService (ADR-031 Phase 3): the uniqueness-guarantee service.
+// CatalogIdService (ADR-031): per-scope uniqueness-guarantee service.
 // ---------------------------------------------------------------------------
 
-use std::sync::Arc;
+use dashmap::DashMap;
+use proximadb_catalog::id_allocator::IdAllocator;
 
-/// The per-type ID minting service (ADR-031 Phase 3).
+/// Per-scope stable-ID allocation (ADR-031).
 ///
-/// Wraps a [`StableIdAllocator`](proximadb_catalog::id_allocator::StableIdAllocator)
-/// and provides typed mint methods that enforce the correct type (u16/u32/i32) at
-/// the call site. The underlying allocator is monotonic + persistent (via
-/// scan-on-startup + `raise_floor`).
+/// Each scoped type (namespace, collection, column, index) has a **per-parent**
+/// allocator — the parent's ID selects the counter, producing compact, monotonic,
+/// per-scope IDs (1, 2, 3 within the parent). Global uniqueness is via the
+/// **composite** `(account, namespace, collection)`.
 ///
-/// **Collection ID mint** (`as u32`): safe — no deployment approaches 4B
-/// collections globally.
+/// Unscoped IDs (segment/batch) use a single global counter (high cardinality).
 ///
-/// **Namespace/Workspace mint** (`as u16`): per-account scoping (each account
-/// gets its own counter 1, 2, 3...) is a Phase 4 refinement. Today, the global
-/// allocator is used; the per-account `HashMap<AccountId, IdAllocator>` is added
-/// when the namespace_id migration lands. Until then, namespace minting is
-/// guarded by the cardinality assumption (<65K total).
+/// **Per-scope path benefit**: IDs are tiny (1, 2, 3 → base62 `1`, `2`, `3`).
+/// Path: `accounts/1/2/3/` vs global-sparse `accounts/g8/4n/7bK/`.
 pub struct CatalogIdService {
-    allocator: Arc<dyn proximadb_catalog::id_allocator::StableIdAllocator>,
+    /// Per-account namespace counters.
+    namespace_allocators: DashMap<AccountId, IdAllocator>,
+    /// Per-namespace collection/table counters.
+    collection_allocators: DashMap<(AccountId, NamespaceId), IdAllocator>,
+    /// Per-table column counters.
+    column_allocators: DashMap<CollectionId, IdAllocator>,
+    /// Per-collection index counters.
+    index_allocators: DashMap<CollectionId, IdAllocator>,
+    /// Global segment/batch counter (no scope).
+    segment_allocator: IdAllocator,
+}
+
+impl Default for CatalogIdService {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CatalogIdService {
-    /// Create from any `StableIdAllocator` (single-pod: `IdAllocator`;
-    /// distributed: gRPC service — follow-up).
-    pub fn new(allocator: Arc<dyn proximadb_catalog::id_allocator::StableIdAllocator>) -> Self {
-        Self { allocator }
+    /// Create a new per-scope ID service with fresh allocators.
+    pub fn new() -> Self {
+        Self {
+            namespace_allocators: DashMap::new(),
+            collection_allocators: DashMap::new(),
+            column_allocators: DashMap::new(),
+            index_allocators: DashMap::new(),
+            segment_allocator: IdAllocator::default(),
+        }
     }
 
-    /// Mint a collection/table ID (u32, per-namespace).
-    pub fn mint_collection_id(&self) -> CollectionId {
-        self.allocator.allocate() as u32
+    /// Mint a namespace ID (u16) scoped to `account_id`.
+    /// Produces 1, 2, 3... within this account. Different accounts restart at 1.
+    pub fn mint_namespace_id(&self, account_id: AccountId) -> NamespaceId {
+        self.namespace_allocators
+            .entry(account_id)
+            .or_insert_with(IdAllocator::default)
+            .allocate() as u16
     }
 
-    /// Mint a namespace ID (u16, per-account). See struct doc re: per-account scoping.
-    pub fn mint_namespace_id(&self) -> NamespaceId {
-        self.allocator.allocate() as u16
+    /// Mint a collection/table ID (u32) scoped to `(account_id, namespace_id)`.
+    /// Produces 1, 2, 3... within this namespace.
+    pub fn mint_collection_id(
+        &self,
+        account_id: AccountId,
+        namespace_id: NamespaceId,
+    ) -> CollectionId {
+        self.collection_allocators
+            .entry((account_id, namespace_id))
+            .or_insert_with(IdAllocator::default)
+            .allocate() as u32
     }
 
-    /// Mint a column/field ID (i32, per-table, Iceberg-compatible).
-    pub fn mint_column_id(&self) -> ColumnId {
-        self.allocator.allocate() as i32
+    /// Mint a column/field ID (i32) scoped to `collection_id`.
+    /// Produces 1, 2, 3... within this table (Iceberg field ID semantics).
+    pub fn mint_column_id(&self, collection_id: CollectionId) -> ColumnId {
+        self.column_allocators
+            .entry(collection_id)
+            .or_insert_with(IdAllocator::default)
+            .allocate() as i32
     }
 
-    /// Mint an index ID (u32, per-collection).
-    pub fn mint_index_id(&self) -> IndexId {
-        self.allocator.allocate() as u32
+    /// Mint an index ID (u32) scoped to `collection_id`.
+    pub fn mint_index_id(&self, collection_id: CollectionId) -> IndexId {
+        self.index_allocators
+            .entry(collection_id)
+            .or_insert_with(IdAllocator::default)
+            .allocate() as u32
     }
 
-    /// Mint a segment/batch ID (u64 — high cardinality, no truncation).
+    /// Mint a segment/batch ID (u64) — globally unique, no scope.
     pub fn mint_segment_id(&self) -> u64 {
-        self.allocator.allocate()
+        self.segment_allocator.allocate()
     }
 
-    /// Recovery hook — call at startup with `max(existing ID) + 1`.
-    pub fn raise_floor(&self, floor: u64) {
-        self.allocator.raise_floor(floor);
+    // ── Per-scope recovery (call at startup) ──────────────────────────────
+
+    /// Recover the namespace allocator floor for `account_id`.
+    /// Call with `max(existing namespace_id in this account)`.
+    pub fn recover_namespace_floor(&self, account_id: AccountId, max_existing: u16) {
+        self.namespace_allocators
+            .entry(account_id)
+            .or_insert_with(IdAllocator::default)
+            .raise_floor(max_existing as u64 + 1);
+    }
+
+    /// Recover the collection allocator floor for `(account_id, namespace_id)`.
+    pub fn recover_collection_floor(
+        &self,
+        account_id: AccountId,
+        namespace_id: NamespaceId,
+        max_existing: u32,
+    ) {
+        self.collection_allocators
+            .entry((account_id, namespace_id))
+            .or_insert_with(IdAllocator::default)
+            .raise_floor(max_existing as u64 + 1);
+    }
+
+    /// Recover the segment allocator floor (global).
+    pub fn recover_segment_floor(&self, max_existing: u64) {
+        self.segment_allocator.raise_floor(max_existing + 1);
     }
 }
 
@@ -279,11 +339,81 @@ mod tests {
 
     #[test]
     fn collection_identity_is_compact() {
-        // 3 × u32 = 12 bytes (no workspace — it's the pool selector, not identity).
         let size = std::mem::size_of::<CollectionIdentity>();
         assert!(
             size <= 12,
-            "CollectionIdentity must be ≤12 bytes (3 × u32), got {size}"
+            "CollectionIdentity must be ≤12 bytes, got {size}"
+        );
+    }
+
+    // ── Per-scope CatalogIdService tests ──────────────────────────────────
+
+    #[test]
+    fn namespace_ids_are_compact_per_account() {
+        let svc = CatalogIdService::new();
+        // Account 1 gets namespace 1, 2, 3 (compact, per-scope).
+        assert_eq!(svc.mint_namespace_id(1), 1);
+        assert_eq!(svc.mint_namespace_id(1), 2);
+        assert_eq!(svc.mint_namespace_id(1), 3);
+    }
+
+    #[test]
+    fn different_accounts_restart_namespace_at_one() {
+        let svc = CatalogIdService::new();
+        assert_eq!(svc.mint_namespace_id(1), 1);
+        assert_eq!(svc.mint_namespace_id(2), 1, "account 2 restarts at 1");
+        assert_eq!(svc.mint_namespace_id(1), 2, "account 1 continues at 2");
+        assert_eq!(svc.mint_namespace_id(2), 2, "account 2 continues at 2");
+    }
+
+    #[test]
+    fn collection_ids_are_compact_per_namespace() {
+        let svc = CatalogIdService::new();
+        // Namespace (1, 1) gets collection 1, 2, 3.
+        assert_eq!(svc.mint_collection_id(1, 1), 1);
+        assert_eq!(svc.mint_collection_id(1, 1), 2);
+        // Namespace (1, 2) restarts at 1.
+        assert_eq!(
+            svc.mint_collection_id(1, 2),
+            1,
+            "different namespace restarts at 1"
+        );
+    }
+
+    #[test]
+    fn segment_ids_are_globally_unique() {
+        let svc = CatalogIdService::new();
+        let a = svc.mint_segment_id();
+        let b = svc.mint_segment_id();
+        assert!(b > a, "segment IDs must be globally monotonic: {a} -> {b}");
+    }
+
+    #[test]
+    fn per_scope_recovery_prevents_reuse() {
+        let svc = CatalogIdService::new();
+        svc.mint_namespace_id(1); // namespace 1
+        svc.mint_namespace_id(1); // namespace 2
+        // Simulate restart: recover floor to 100.
+        svc.recover_namespace_floor(1, 100);
+        // Next namespace must be > 100.
+        let next = svc.mint_namespace_id(1);
+        assert!(next > 100, "after recovery, next must be >100, got {next}");
+    }
+
+    #[test]
+    fn data_path_with_compact_per_scope_ids() {
+        // Per-scope IDs produce ultra-compact paths (1, 2, 3 → base62 1, 2, 3).
+        let identity = CollectionIdentity {
+            account_id: 1,
+            namespace_id: 2,
+            collection_id: 3,
+        };
+        let path = identity.data_path();
+        // Path should be very short with per-scope small IDs.
+        assert!(
+            path.len() < 25,
+            "compact per-scope path < 25 chars, got {}: {path}",
+            path.len()
         );
     }
 }
