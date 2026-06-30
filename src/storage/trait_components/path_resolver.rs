@@ -31,22 +31,23 @@
 //! // At construction, inject the resolver
 //! let wal_manager = WriteAheadLogManager::new(
 //!     config,
-//!     Arc::new(MetadataProviderResolver::new(metadata_backend)),
+//!     Arc::new(ConfigFallbackResolver::default()),
 //! )?;
 //! ```
 //!
 //! ## Available Implementations:
 //!
-//! - `MetadataProviderResolver`: Uses InternalCollectionProvider (default)
 //! - `ConfigFallbackResolver`: Uses WAL config paths (for testing)
 //! - `CachedResolver`: Caches resolved paths (for performance)
 
+use crate::core::stable_id::CollectionIdentity;
 use anyhow::Result;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use proximadb_catalog::{
     CatalogNamespace, CatalogProjectionKind, CatalogTableSchema, StoragePoolClass,
 };
+use proximadb_storage_common::StoragePath;
 use std::sync::Arc;
 
 /// Storage location assignment for a collection
@@ -131,90 +132,6 @@ pub trait CollectionPathResolver: Send + Sync {
 // ============================================================================
 // Standard Implementations
 // ============================================================================
-
-/// Resolver using InternalCollectionProvider (production default)
-///
-/// Uses the metadata backend to resolve collection paths based on
-/// stored collection configuration.
-pub struct MetadataProviderResolver {
-    provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>,
-}
-
-impl MetadataProviderResolver {
-    /// Create a new resolver with the given metadata provider
-    pub fn new(provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>) -> Self {
-        Self { provider }
-    }
-}
-
-#[async_trait]
-impl CollectionPathResolver for MetadataProviderResolver {
-    fn name(&self) -> &'static str {
-        "MetadataProvider"
-    }
-
-    async fn resolve_base_location(&self, collection_id: &str) -> Result<String> {
-        let collection = self
-            .provider
-            .get_collection(collection_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))?;
-
-        // Use storage_assignment's base_location if available
-        if let Some(ref assignment) = collection.storage_assignment {
-            if !assignment.base_location.is_empty() {
-                return Ok(assignment.base_location.clone());
-            }
-            if !assignment.primary_path.is_empty() {
-                return Ok(assignment.primary_path.clone());
-            }
-        }
-
-        // Fall back to constructing path from collection ID
-        Ok(format!(
-            "file:///tmp/proximadb/collections/{}",
-            collection_id
-        ))
-    }
-
-    async fn resolve_storage_assignment(&self, collection_id: &str) -> Result<StorageAssignment> {
-        let collection = self
-            .provider
-            .get_collection(collection_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))?;
-
-        // Extract from proto StorageAssignment if available
-        let primary_url = if let Some(ref proto_assignment) = collection.storage_assignment {
-            if !proto_assignment.base_location.is_empty() {
-                proto_assignment.base_location.clone()
-            } else if !proto_assignment.primary_path.is_empty() {
-                proto_assignment.primary_path.clone()
-            } else {
-                format!("file:///tmp/proximadb/collections/{}", collection_id)
-            }
-        } else {
-            format!("file:///tmp/proximadb/collections/{}", collection_id)
-        };
-
-        let replica_urls = collection
-            .storage_assignment
-            .as_ref()
-            .map(|a| a.backup_paths.clone())
-            .unwrap_or_default();
-
-        Ok(StorageAssignment {
-            primary_url,
-            weight: 1,
-            available: true,
-            replica_urls,
-        })
-    }
-
-    async fn collection_exists(&self, collection_id: &str) -> Result<bool> {
-        self.provider.collection_exists(collection_id).await
-    }
-}
 
 /// Config-based fallback resolver (for testing or simple deployments)
 ///
@@ -425,28 +342,80 @@ impl CollectionPathResolver for CompositeResolver {
 /// `namespace_id`, refuses invalid ID characters, and surfaces pool-class
 /// information so the caller can route writes to the correct bucket.
 ///
-/// The render is `data/{tenant_id}/{namespace_id}/{collection_id}/`. The
-/// helper methods append the contract's well-known subprefixes.
+/// The render is account-aware (Phase 5, two-tier operator/account model):
+/// * with an `account_id`: `accounts/{account_id}/{tenant_id}/{namespace_id}/{collection_id}/`
+///   — the SaaS isolation tree where the customer **account** is the top
+///   billing/silo boundary and `tenant_id` is a workspace/sub-org inside it.
+/// * without one (legacy / single-account): `data/{tenant_id}/{namespace_id}/{collection_id}/`
+///   — byte-identical to the pre-Phase-5 contract, so existing data resolves
+///   unchanged (mixed-safe; the account tier is inert until provisioned).
+///
+/// The helper methods append the contract's well-known subprefixes.
 ///
 /// See `docs/12-design/COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc` "LLD: Physical
 /// Path Contract".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DrResolvedPath {
+    /// Owning customer account — the billing/isolation boundary above
+    /// `tenant_id`. `None` keeps the legacy flat `data/...` render.
+    pub account_id: Option<String>,
     pub tenant_id: String,
     pub namespace_id: String,
     pub collection_id: String,
     pub storage_pool_class: StoragePoolClass,
+    /// ADR-031 typed identity (account/namespace/collection as compact numeric
+    /// IDs). When present, [`typed_root_prefix`](Self::typed_root_prefix) emits
+    /// the **zero-padded base62** account-rooted path with NO `tenant_id`
+    /// (Phase 4 hierarchy collapse). `None` for all string-resolved paths —
+    /// the typed path is additive and env-gated (`PROXIMADB_TYPED_PATHS=1`),
+    /// so existing data resolves byte-identically (mixed-read-safe).
+    pub typed_identity: Option<CollectionIdentity>,
 }
 
 impl DrResolvedPath {
-    /// Root prefix `data/<tenant_id>/<namespace_id>/<collection_id>/`.
-    /// This is the value passed as the provider replication rule filter
-    /// and the only prefix the path resolver guard accepts.
+    /// Root prefix. Account-rooted
+    /// (`accounts/<account_id>/<tenant_id>/<namespace_id>/<collection_id>/`)
+    /// when an account is set, else the legacy flat
+    /// `data/<tenant_id>/<namespace_id>/<collection_id>/`. This is the value
+    /// passed as the provider replication rule filter and the only prefix the
+    /// path resolver guard accepts.
     pub fn root_prefix(&self) -> String {
-        format!(
-            "data/{}/{}/{}/",
-            self.tenant_id, self.namespace_id, self.collection_id
-        )
+        // ADR-031: prefer the compact typed path when a typed identity is set.
+        // Every subprefix method (`wal_subprefix`, `segments_subprefix`, …)
+        // flows through here, so they all become typed-aware with this one
+        // short-circuit. Legacy string-resolved paths (`typed_identity == None`)
+        // are byte-identical to the pre-typed contract (mixed-read-safe).
+        if let Some(typed) = self.typed_root_prefix() {
+            return typed;
+        }
+        match &self.account_id {
+            Some(account_id) => format!(
+                "accounts/{}/{}/{}/{}/",
+                account_id, self.tenant_id, self.namespace_id, self.collection_id
+            ),
+            None => format!(
+                "data/{}/{}/{}/",
+                self.tenant_id, self.namespace_id, self.collection_id
+            ),
+        }
+    }
+
+    /// ADR-031 typed root prefix: `accounts/{base62(u32)}/{base62(u16)}/
+    /// {base62(u32)}/` — **zero-padded** base62 so lexicographic S3 LIST order
+    /// == numeric order. There is **no `tenant_id` segment**: the Phase 4
+    /// hierarchy collapse folds tenant into `account_id` (account is the
+    /// billing/isolation boundary). Fixed width: exactly 27 chars for every
+    /// collection (9 + 6 + 1 + 3 + 1 + 6 + 1).
+    ///
+    /// Returns `None` when no [`typed_identity`](Self::typed_identity) is set
+    /// (legacy string-resolved path). This is the **single place** the typed
+    /// `accounts/{…}/{…}/{…}/` literal is constructed — the path-resolver guard
+    /// allowlists this file for it.
+    pub fn typed_root_prefix(&self) -> Option<String> {
+        self.typed_identity.map(|id| {
+            let (acct, ns, coll) = id.path_segments();
+            format!("accounts/{}/{}/{}/", acct, ns, coll)
+        })
     }
 
     /// WAL subprefix `<root>wal/`.
@@ -512,6 +481,128 @@ impl DrResolvedPath {
     pub fn branches_subprefix(&self) -> String {
         format!("{}_branches/", self.root_prefix())
     }
+
+    /// Per-**tenant** root prefix (account/legacy split) — `accounts/{account}/
+    /// {tenant}/` or legacy `data/{tenant}/`. Stops *above* the namespace and
+    /// collection so per-tenant system subtrees (`_metering`, `_trace`) hang off
+    /// the tenant, not off a single collection. (TD-164)
+    ///
+    /// For an ADR-031 typed path the tenant tier is collapsed into the account,
+    /// so this returns the typed account root `accounts/{base62(account)}/`.
+    pub fn tenant_root(&self) -> String {
+        if let Some(id) = self.typed_identity {
+            let (acct, _, _) = id.path_segments();
+            return format!("accounts/{}/", acct);
+        }
+        match &self.account_id {
+            Some(account_id) => format!("accounts/{}/{}/", account_id, self.tenant_id),
+            None => format!("data/{}/", self.tenant_id),
+        }
+    }
+
+    /// Per-tenant **metering** subtree `<tenant_root>_metering/` — the durable,
+    /// tenant-owned billing-meter sink (ADR-027 dual-sink; the differentiator;
+    /// written by TD-161's coalesced writer). The leading underscore keeps it
+    /// lexically separate from namespace/collection ids, which `validate_id`
+    /// reserves so a user object can never collide (structural isolation #3).
+    pub fn metering_subprefix(&self) -> String {
+        format!("{}_metering/", self.tenant_root())
+    }
+
+    /// Per-tenant **perf/geometry trace** subtree `<tenant_root>_trace/` — the
+    /// gateable perf class (ADR-027), written by TD-161's coalesced writer.
+    pub fn trace_subprefix(&self) -> String {
+        format!("{}_trace/", self.tenant_root())
+    }
+}
+
+/// ADR-031 Phase 4b: whether the typed object-store path
+/// (`accounts/{base62}/{base62}/{base62}/`, no tenant slot) is enabled. Read
+/// **once per process** (cached in a `OnceLock`, mirroring the `oid_paths`
+/// pattern) to avoid env races across the multi-threaded runtime. Default OFF
+/// → legacy string-resolved `data/…` / `accounts/{str}/…` paths (mixed-read-safe).
+pub fn typed_paths_enabled() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| match std::env::var("PROXIMADB_TYPED_PATHS") {
+        Ok(v) => v == "1" || v.eq_ignore_ascii_case("true"),
+        Err(_) => false,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// ADR-031 Phase 4c: typed collection DATA subpaths.
+// ---------------------------------------------------------------------------
+//
+// `CollectionIdentity` is a ROOT type (`crate::core::stable_id`); `StoragePath`
+// lives in `proximadb-storage-common`, which CANNOT import root types (workspace
+// boundary). So the typed variants live HERE — a root helper that wraps the
+// legacy `StoragePath` calls for the `None` (legacy) branch and composes the
+// account-rooted zero-padded base62 path for the `Some(identity)` branch.
+//
+// Both branches share the SAME trailing subpath suffix as the legacy
+// `StoragePath::collection_*_path` (`/data`, `/wal`, `/indexes` — NO trailing
+// slash), so the `None` branch is **byte-identical** to the pre-4c path and the
+// `Some` branch differs only in the prefix (mixed-read-safe per-collection).
+
+/// ADR-031 Phase 4c: typed collection **data** directory path.
+///
+/// * `Some(identity)` → `{base}/accounts/{acct}/{ns}/{coll}/data`
+///   (zero-padded base62, no tenant slot — Phase 4 hierarchy collapse).
+/// * `None`           → byte-identical legacy
+///   [`StoragePath::collection_data_path`] (`{base}/{collection_id}/data`).
+///
+/// The trailing suffix (`/data`, no slash) matches the legacy contract exactly
+/// so reads/writes against a legacy collection (`None`) resolve unchanged.
+pub fn collection_data_path_typed(
+    base: &str,
+    collection_id: &str,
+    identity: Option<CollectionIdentity>,
+) -> String {
+    match identity {
+        Some(id) => {
+            let (acct, ns, coll) = id.path_segments();
+            format!("{base}/accounts/{acct}/{ns}/{coll}/data")
+        }
+        None => StoragePath::collection_data_path(base, collection_id),
+    }
+}
+
+/// ADR-031 Phase 4c: typed collection **WAL** directory path.
+///
+/// * `Some(identity)` → `{base}/accounts/{acct}/{ns}/{coll}/wal`.
+/// * `None`           → byte-identical legacy
+///   [`StoragePath::collection_wal_path`] (`{base}/{collection_id}/wal`).
+pub fn collection_wal_path_typed(
+    base: &str,
+    collection_id: &str,
+    identity: Option<CollectionIdentity>,
+) -> String {
+    match identity {
+        Some(id) => {
+            let (acct, ns, coll) = id.path_segments();
+            format!("{base}/accounts/{acct}/{ns}/{coll}/wal")
+        }
+        None => StoragePath::collection_wal_path(base, collection_id),
+    }
+}
+
+/// ADR-031 Phase 4c: typed collection **indexes** directory path.
+///
+/// * `Some(identity)` → `{base}/accounts/{acct}/{ns}/{coll}/indexes`.
+/// * `None`           → byte-identical legacy
+///   [`StoragePath::collection_index_path`] (`{base}/{collection_id}/indexes`).
+pub fn collection_index_path_typed(
+    base: &str,
+    collection_id: &str,
+    identity: Option<CollectionIdentity>,
+) -> String {
+    match identity {
+        Some(id) => {
+            let (acct, ns, coll) = id.path_segments();
+            format!("{base}/accounts/{acct}/{ns}/{coll}/indexes")
+        }
+        None => StoragePath::collection_index_path(base, collection_id),
+    }
 }
 
 /// Resolve the catalog-addressed index locations for a collection's vector-ANN
@@ -535,10 +626,19 @@ pub fn ann_index_locations(
     namespace: &CatalogNamespace,
     schema: &CatalogTableSchema,
     migrate_to_catalog_paths: bool,
+    typed_identity: Option<CollectionIdentity>,
 ) -> Vec<(String, String)> {
-    let resolved = match DrPathBuilder::build(namespace, &schema.name) {
-        Ok(resolved) => resolved,
-        Err(_) => return Vec::new(), // legacy / non-DR-addressable namespace → leave convention
+    // ADR-031 Phase 4b: when the caller resolved a typed identity (env ON +
+    // schema has stable ids + account u32 known), build the path from it — the
+    // zero-padded base62 `accounts/{a}/{ns}/{c}/` prefix with no tenant slot.
+    // Otherwise the legacy string-resolved path (byte-identical when env OFF).
+    let resolved = if let Some(identity) = typed_identity {
+        DrPathBuilder::build_from_identity(identity, namespace.storage_pool_class)
+    } else {
+        match DrPathBuilder::build(namespace, &schema.name) {
+            Ok(resolved) => resolved,
+            Err(_) => return Vec::new(), // legacy / non-DR-addressable namespace → leave convention
+        }
     };
     schema
         .projections
@@ -604,6 +704,129 @@ pub enum PathResolverError {
 /// trait wraps it once the rest of the storage layer is consolidated.
 pub struct DrPathBuilder;
 
+/// T2.3: Version-aware cache for `DrPathBuilder` results.
+///
+/// Caches `DrResolvedPath` by `(tenant_id, namespace_id, collection_id, pool_class)`
+/// with corpus version tracking for automatic invalidation on catalog changes.
+/// When the corpus version bumps, cached entries are considered stale and
+/// re-resolved on next access.
+pub struct DrPathCache {
+    /// Cache entries: key → (version, path)
+    cache: DashMap<CacheKey, (u64, DrResolvedPath)>,
+}
+
+/// Cache key for path resolution results.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CacheKey {
+    tenant_id: String,
+    namespace_id: String,
+    collection_id: String,
+    pool_class: String,
+}
+
+impl DrPathCache {
+    /// Create a new empty path cache.
+    pub fn new() -> Self {
+        Self {
+            cache: DashMap::new(),
+        }
+    }
+
+    /// Get or resolve a path, checking corpus version for staleness.
+    ///
+    /// Returns the cached path if valid (version matches current corpus version),
+    /// or resolves a new path via `resolve_fn` and caches it.
+    pub async fn get_or_resolve<F, R, Fut>(
+        &self,
+        tenant_id: &str,
+        namespace_id: &str,
+        collection_id: &str,
+        pool_class: StoragePoolClass,
+        resolve_fn: F,
+    ) -> Result<DrResolvedPath, PathResolverError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<R, PathResolverError>>,
+        R: std::borrow::Borrow<DrResolvedPath>,
+    {
+        let key = CacheKey {
+            tenant_id: tenant_id.to_string(),
+            namespace_id: namespace_id.to_string(),
+            collection_id: collection_id.to_string(),
+            pool_class: format!("{:?}", pool_class),
+        };
+
+        // Get current corpus version for this (tenant, collection)
+        let current_version = crate::catalog::CorpusVersionRegistry::global()
+            .current(tenant_id, collection_id)
+            .await;
+
+        // Check cache with version validation
+        if let Some(entry) = self.cache.get(&key) {
+            let (cached_version, path) = entry.value();
+            if *cached_version == current_version {
+                // Cache hit with valid version
+                return Ok(path.clone());
+            }
+            // Stale entry — remove and fall through to resolve
+            self.cache.remove(&key);
+        }
+
+        // Cache miss or stale — resolve and cache
+        let resolved = resolve_fn().await?.borrow().clone();
+        self.cache.insert(key, (current_version, resolved.clone()));
+        Ok(resolved)
+    }
+
+    /// Invalidate a specific cache entry.
+    ///
+    /// Called when a collection's schema or metadata changes outside of
+    /// corpus version bumps (e.g., direct catalog updates).
+    pub fn invalidate(&self, tenant_id: &str, collection_id: &str) {
+        self.cache.retain(|key, _| {
+            // Keep entries that don't match the tenant/collection
+            key.tenant_id != tenant_id || key.collection_id != collection_id
+        });
+    }
+
+    /// Clear all cached entries.
+    ///
+    /// Called on major catalog changes or configuration reloads.
+    pub fn clear(&self) {
+        self.cache.clear();
+    }
+
+    /// Get cache statistics for observability.
+    pub fn stats(&self) -> (usize, usize) {
+        let total = self.cache.len();
+        // Count unique (tenant, collection) pairs
+        let unique_pairs = self
+            .cache
+            .iter()
+            .map(|entry| {
+                let key = entry.key();
+                (key.tenant_id.clone(), key.collection_id.clone())
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        (total, unique_pairs)
+    }
+}
+
+impl Default for DrPathCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Global path cache singleton.
+static GLOBAL_PATH_CACHE: std::sync::OnceLock<DrPathCache> = std::sync::OnceLock::new();
+
+/// Get the global path cache.
+pub fn global_path_cache() -> &'static DrPathCache {
+    GLOBAL_PATH_CACHE.get_or_init(DrPathCache::new)
+}
+
 impl DrPathBuilder {
     /// Build the authoritative DR path for `collection_id` under
     /// `namespace`. Returns an error if either ID is missing or invalid,
@@ -629,11 +852,23 @@ impl DrPathBuilder {
         Self::validate_id("namespace_id", namespace_id)?;
         Self::validate_id("collection_id", collection_id)?;
 
+        // Account tier is optional + inert until provisioned. When set it is
+        // validated identically and roots the path under `accounts/{id}/…`.
+        let account_id = match namespace.account_id.as_deref() {
+            Some(account_id) => {
+                Self::validate_id("account_id", account_id)?;
+                Some(account_id.to_string())
+            }
+            None => None,
+        };
+
         Ok(DrResolvedPath {
+            account_id,
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.to_string(),
             collection_id: collection_id.to_string(),
             storage_pool_class: namespace.storage_pool_class,
+            typed_identity: None,
         })
     }
 
@@ -671,14 +906,109 @@ impl DrPathBuilder {
         collection_id: &str,
         storage_pool_class: StoragePoolClass,
     ) -> Result<DrResolvedPath, PathResolverError> {
+        Self::build_from_parts_with_account(
+            None,
+            tenant_id,
+            namespace_id,
+            collection_id,
+            storage_pool_class,
+        )
+    }
+
+    /// Same as [`build_from_parts`](Self::build_from_parts) but with the
+    /// optional customer-account tier (Phase 5). `Some(account_id)` roots the
+    /// path under `accounts/{account_id}/…` (the SaaS isolation tree);
+    /// `None` is identical to `build_from_parts` (legacy flat `data/…`).
+    /// Every present segment — account included — passes the same
+    /// [`validate_id`](Self::validate_id) injection/traversal guard.
+    pub fn build_from_parts_with_account(
+        account_id: Option<&str>,
+        tenant_id: &str,
+        namespace_id: &str,
+        collection_id: &str,
+        storage_pool_class: StoragePoolClass,
+    ) -> Result<DrResolvedPath, PathResolverError> {
+        let account_id = match account_id {
+            Some(account_id) => {
+                Self::validate_id("account_id", account_id)?;
+                Some(account_id.to_string())
+            }
+            None => None,
+        };
         Self::validate_id("tenant_id", tenant_id)?;
         Self::validate_id("namespace_id", namespace_id)?;
         Self::validate_id("collection_id", collection_id)?;
         Ok(DrResolvedPath {
+            account_id,
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.to_string(),
             collection_id: collection_id.to_string(),
             storage_pool_class,
+            typed_identity: None,
+        })
+    }
+
+    /// Build a [`DrResolvedPath`] from an ADR-031 typed
+    /// [`CollectionIdentity`] — the compact-numeric identity (account u32 /
+    /// namespace u16 / collection u32) that retires UUID collection IDs.
+    ///
+    /// The string mirror fields (`account_id`/`namespace_id`/`collection_id`)
+    /// are populated from the base62 segment encodings so that the **legacy**
+    /// [`root_prefix`](DrResolvedPath::root_prefix) still resolves a valid path,
+    /// and [`typed_root_prefix`](DrResolvedPath::typed_root_prefix) emits the
+    /// canonical zero-padded base62 prefix (no `tenant_id` — Phase 4 hierarchy
+    /// collapse). `tenant_id` is left empty: the typed model has no tenant tier.
+    ///
+    /// This is the **wiring surface** for the stable-ID type system into
+    /// DrPathBuilder. Production use is env-gated (`PROXIMADB_TYPED_PATHS=1`);
+    /// until then the typed path is additive and inert (mixed-read-safe).
+    pub fn build_from_identity(
+        identity: CollectionIdentity,
+        storage_pool_class: StoragePoolClass,
+    ) -> DrResolvedPath {
+        let (acct_seg, ns_seg, coll_seg) = identity.path_segments();
+        DrResolvedPath {
+            // String mirror populated from the base62 segments so legacy
+            // root_prefix() stays valid for mixed reads.
+            account_id: Some(acct_seg),
+            tenant_id: String::new(),
+            namespace_id: ns_seg,
+            collection_id: coll_seg,
+            storage_pool_class,
+            typed_identity: Some(identity),
+        }
+    }
+
+    /// Resolve a **per-tenant system path** — the `_metering/` and `_trace/`
+    /// subtrees that hang off the tenant root, *independent of any namespace or
+    /// collection* (TD-161 / TD-164). Unlike [`build_from_parts`], it validates
+    /// only `account_id` + `tenant_id` (the only ids `tenant_root()` renders) and
+    /// leaves `namespace_id`/`collection_id` empty, so callers that hold just a
+    /// tenant — e.g. the storage-snapshot metering daemon, which keys off
+    /// `Collection.config.owner` — can build the durable sink path without
+    /// fabricating placeholder ids (which `validate_id` would reject for the
+    /// reserved `_`-prefixed system segments). Only `tenant_root()` /
+    /// `metering_subprefix()` / `trace_subprefix()` are meaningful on the result;
+    /// `root_prefix()` and the collection-scoped subprefixes are not.
+    pub fn build_tenant_system(
+        account_id: Option<&str>,
+        tenant_id: &str,
+    ) -> Result<DrResolvedPath, PathResolverError> {
+        let account_id = match account_id {
+            Some(account_id) => {
+                Self::validate_id("account_id", account_id)?;
+                Some(account_id.to_string())
+            }
+            None => None,
+        };
+        Self::validate_id("tenant_id", tenant_id)?;
+        Ok(DrResolvedPath {
+            account_id,
+            tenant_id: tenant_id.to_string(),
+            namespace_id: String::new(),
+            collection_id: String::new(),
+            storage_pool_class: StoragePoolClass::default(),
+            typed_identity: None,
         })
     }
 
@@ -728,7 +1058,139 @@ impl DrPathBuilder {
                 reason: "must not contain traversal sequence",
             });
         }
+        // TD-164: reserve the underscore-prefixed system segments so a
+        // user-supplied id (tenant / namespace / collection / operator subpath)
+        // can never collide with a control-plane or per-tenant system subtree
+        // (structural isolation #3). The subtrees themselves are built from
+        // constants, never from validated user input, so this only rejects user
+        // input that would shadow them.
+        if Self::RESERVED_SYSTEM_SEGMENTS.contains(&value) {
+            return Err(PathResolverError::InvalidId {
+                field,
+                value: value.to_string(),
+                reason: "must not use a reserved system segment (_operator/_branches/_metering/_trace/_manifests)",
+            });
+        }
         Ok(())
+    }
+}
+
+/// Reserved roots + identity constants for the two-tier operator/account
+/// isolation model (Phase 5). The **operator** (control) plane lives under
+/// [`OPERATOR_ROOT`](Self::OPERATOR_ROOT) and holds the SaaS provider's
+/// registry of accounts; the **account** (data) plane lives under
+/// `accounts/{account_id}/…` (rendered by [`DrResolvedPath::root_prefix`]).
+impl DrPathBuilder {
+    /// Control-plane root prefix for the **operator** catalog — the SaaS
+    /// provider's registry of all accounts (entitlements, storage bindings,
+    /// billing). It holds metadata-about-accounts, never tenant data. The
+    /// leading underscore keeps the control plane lexically separate from the
+    /// per-account `accounts/…` data tree in a top-level `list`.
+    pub const OPERATOR_ROOT: &'static str = "_operator/";
+
+    /// System-reserved path segments (underscore-prefixed) that user-supplied ids
+    /// must never equal, so a user object cannot shadow a control-plane or
+    /// per-tenant system subtree (TD-164; structural isolation #3). Enforced by
+    /// [`validate_id`](Self::validate_id). These name the *segment* (no trailing
+    /// `/`); the subtrees are built from constants like [`OPERATOR_ROOT`](Self::OPERATOR_ROOT)
+    /// and the per-tenant `_metering/`/`_trace/`/`_branches/` subprefixes.
+    pub const RESERVED_SYSTEM_SEGMENTS: &'static [&'static str] = &[
+        "_operator",
+        "_branches",
+        "_metering",
+        "_trace",
+        "_manifests",
+        // TD-181 P3 (S2a): per-tenant system catalog subtree holding the
+        // object_id-keyed metadata (`_syscat/objects/{oid}.json`) + index +
+        // migration marker. Reserved before anything is written under it so a
+        // user object can never shadow the segment (the structural half of the
+        // system-only `_syscat/*` write guard).
+        "_syscat",
+    ];
+
+    /// Default account ID for deployments that have not provisioned an explicit
+    /// account tier (single-account / OSS). Callers that want the
+    /// account-rooted layout for the default account pass this explicitly; a
+    /// `None` account keeps the legacy flat `data/…` render instead.
+    pub const DEFAULT_ACCOUNT_ID: &'static str = "default";
+
+    /// Reserved subpath under [`OPERATOR_ROOT`](Self::OPERATOR_ROOT) that holds
+    /// the deployment's system catalog (WAL + snapshot). Single canonical
+    /// constant so boot and any tooling agree on the location.
+    pub const SYSTEM_CATALOG_SUBPATH: &'static str = "catalog";
+
+    /// File name of the system catalog's canonical WAL within
+    /// [`system_catalog_subprefix`](Self::system_catalog_subprefix).
+    pub const SYSTEM_CATALOG_WAL_FILE: &'static str = "system-catalog.wal";
+
+    /// File name of the system catalog's snapshot blob within
+    /// [`system_catalog_subprefix`](Self::system_catalog_subprefix). For
+    /// object-store deployments this is the relative object key the snapshot is
+    /// PUT under (the per-DDL WAL stays local — Phase 6).
+    pub const SYSTEM_CATALOG_SNAPSHOT_FILE: &'static str = "system-catalog.snapshot";
+
+    /// Build a validated control-plane (operator) subprefix
+    /// `_operator/<subpath>/`. `subpath` runs through the same
+    /// [`validate_id`](Self::validate_id) guard as a path segment (e.g.
+    /// `"catalog"`, `"accounts"`), so it cannot escape the operator root.
+    pub fn operator_subprefix(subpath: &str) -> Result<String, PathResolverError> {
+        Self::validate_id("operator_subpath", subpath)?;
+        Ok(format!("{}{}/", Self::OPERATOR_ROOT, subpath))
+    }
+
+    /// Control-plane subprefix for the deployment's **system catalog**:
+    /// `_operator/catalog/`. The system catalog is the (currently single)
+    /// `Operator`-roled catalog holding the deployment's objects until
+    /// multi-account provisioning splits data-plane catalogs out per account.
+    pub fn system_catalog_subprefix() -> String {
+        // Constants are pre-validated single segments — infallible.
+        format!("{}{}/", Self::OPERATOR_ROOT, Self::SYSTEM_CATALOG_SUBPATH)
+    }
+
+    /// Partition lease manifest **base** prefix `_catalog/leases/` — the storage
+    /// location (under the metadata object store) where per-`(tenant, collection)`
+    /// generation-fenced lease manifests live for Phase 7c (per-collection write
+    /// authority). Structural base; the `PartitionLeaseStore` nests per-partition
+    /// manifest logs beneath it. Used at boot by `SharedServices` to construct the
+    /// lease store. NOTE: exact co-location (vs the system catalog) is a design
+    /// TBD when `PROXIMADB_PARTITION_LEASE_ON` ships default-on.
+    pub fn partition_lease_prefix() -> String {
+        "_catalog/leases/".to_string()
+    }
+
+    /// Relative object key of the system catalog WAL under
+    /// [`system_catalog_subprefix`](Self::system_catalog_subprefix):
+    /// `_operator/catalog/system-catalog.wal`. The snapshot blob is derived
+    /// from this by the catalog (`.with_extension("snapshot")`).
+    pub fn system_catalog_wal_relpath() -> String {
+        format!(
+            "{}{}",
+            Self::system_catalog_subprefix(),
+            Self::SYSTEM_CATALOG_WAL_FILE
+        )
+    }
+
+    /// Relative object key of the system catalog **snapshot** under
+    /// [`system_catalog_subprefix`](Self::system_catalog_subprefix):
+    /// `_operator/catalog/system-catalog.snapshot`. For object-store
+    /// deployments this is the key the snapshot blob is PUT under (relative to
+    /// the object-store base prefix).
+    pub fn system_catalog_snapshot_relpath() -> String {
+        format!(
+            "{}{}",
+            Self::system_catalog_subprefix(),
+            Self::SYSTEM_CATALOG_SNAPSHOT_FILE
+        )
+    }
+
+    /// Relative prefix of the system catalog's **generation-fenced snapshot
+    /// manifest log** under [`system_catalog_subprefix`](Self::system_catalog_subprefix):
+    /// `_operator/catalog/_manifests/`. For object-store deployments the catalog
+    /// snapshot is published as a fenced versioned manifest under this prefix
+    /// (Phase 6a), so a stale pod cannot clobber a newer pod's snapshot. The
+    /// leading underscore keeps it lexically separate from data subprefixes.
+    pub fn system_catalog_manifests_subprefix() -> String {
+        format!("{}_manifests/", Self::system_catalog_subprefix())
     }
 }
 
@@ -856,6 +1318,35 @@ mod tests {
     }
 
     #[test]
+    fn per_tenant_metering_and_trace_subprefixes_hang_off_tenant_root() {
+        // TD-164: _metering / _trace are per-TENANT (above namespace/collection),
+        // unlike the per-collection data subprefixes (segments/, wal/, …).
+        let ns = dr_addressable_namespace();
+        let path = DrPathBuilder::build(&ns, "col_orders").unwrap();
+
+        assert_eq!(path.tenant_root(), "data/tnt_acme/");
+        assert_eq!(path.metering_subprefix(), "data/tnt_acme/_metering/");
+        assert_eq!(path.trace_subprefix(), "data/tnt_acme/_trace/");
+        // Lexically separate from (and a strict prefix-parent of) the collection
+        // tree, never nested under a single collection.
+        assert!(path.root_prefix().starts_with(&path.tenant_root()));
+        assert!(!path.metering_subprefix().contains("col_orders"));
+    }
+
+    #[test]
+    fn validate_id_reserves_system_segments() {
+        for seg in DrPathBuilder::RESERVED_SYSTEM_SEGMENTS {
+            assert!(
+                DrPathBuilder::validate_id("collection_id", seg).is_err(),
+                "reserved system segment {seg} must be rejected as a user id"
+            );
+        }
+        // Ordinary ids still pass; a name that merely *contains* an underscore is fine.
+        assert!(DrPathBuilder::validate_id("collection_id", "orders").is_ok());
+        assert!(DrPathBuilder::validate_id("collection_id", "my_orders").is_ok());
+    }
+
+    #[test]
     fn per_projection_index_path_and_location_precedence() {
         let ns = dr_addressable_namespace();
         let path = DrPathBuilder::build(&ns, "col_orders").unwrap();
@@ -902,10 +1393,10 @@ mod tests {
         ));
 
         // No explicit location + migrate off → register nothing (convention kept).
-        assert!(ann_index_locations(&ns, &schema, false).is_empty());
+        assert!(ann_index_locations(&ns, &schema, false, None).is_empty());
 
         // migrate on → DrPath default, ANN projection only.
-        let migrated = ann_index_locations(&ns, &schema, true);
+        let migrated = ann_index_locations(&ns, &schema, true, None);
         assert_eq!(
             migrated,
             vec![(
@@ -923,13 +1414,63 @@ mod tests {
         )
         .with_location("s3://hot-tier/ann/");
         assert_eq!(
-            ann_index_locations(&ns, &schema, false),
+            ann_index_locations(&ns, &schema, false, None),
             vec![("col_orders".to_string(), "s3://hot-tier/ann/".to_string())]
         );
 
         // Non-DR-addressable namespace (legacy) → empty, leave the convention.
         let legacy = CatalogNamespace::new(vec!["legacy".into()]);
-        assert!(ann_index_locations(&legacy, &schema, true).is_empty());
+        assert!(ann_index_locations(&legacy, &schema, true, None).is_empty());
+    }
+
+    #[test]
+    fn ann_index_locations_uses_typed_identity_when_provided() {
+        // ADR-031 Phase 4b: a Some(identity) flips the index location to the
+        // typed account-rooted prefix (no tenant slot); None keeps the legacy
+        // string-resolved path. This is the dispatch the env gate controls.
+        use crate::core::stable_id::CollectionIdentity;
+        use proximadb_catalog::CatalogProjection;
+        let ns = dr_addressable_namespace();
+        let mut schema = CatalogTableSchema::new("col_orders");
+        schema.projections.push(CatalogProjection::rebuildable(
+            "vector_ann",
+            CatalogProjectionKind::VectorAnn,
+            "primary",
+        ));
+        let identity = CollectionIdentity {
+            account_id: 7,
+            namespace_id: 5,
+            collection_id: 9,
+        };
+        let typed = ann_index_locations(&ns, &schema, true, Some(identity));
+        assert_eq!(typed.len(), 1, "one ANN projection");
+        let (_coll, loc) = &typed[0];
+        assert!(
+            loc.starts_with("accounts/"),
+            "typed path is account-rooted: {loc}"
+        );
+        assert!(
+            loc.ends_with("/indexes/vector_ann/"),
+            "still under indexes/: {loc}"
+        );
+        assert!(
+            !loc.starts_with("data/"),
+            "typed path must not be the legacy flat render: {loc}"
+        );
+        // Root prefix is the fixed 27-char typed form: accounts/000007/005/000009/
+        let root = loc.strip_suffix("indexes/vector_ann/").unwrap();
+        assert_eq!(
+            root.len(),
+            27,
+            "typed root must be exactly 27 chars (zero-padded base62): {root}"
+        );
+        // None identity → legacy path (the data/ flat render), unaffected by 4b.
+        let legacy = ann_index_locations(&ns, &schema, true, None);
+        let (_, legacy_loc) = &legacy[0];
+        assert!(
+            legacy_loc.starts_with("data/") || legacy_loc.starts_with("accounts/acct"),
+            "None identity keeps the legacy string-resolved path: {legacy_loc}"
+        );
     }
 
     #[test]
@@ -992,6 +1533,127 @@ mod tests {
         assert!(DrPathBuilder::build_from_parts("..", "ns_42", "orders", pc).is_err());
         assert!(DrPathBuilder::build_from_parts("tnt_acme", "a/b", "orders", pc).is_err());
         assert!(DrPathBuilder::build_from_parts("tnt_acme", "ns_42", "", pc).is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 5 — two-tier operator/account isolation model
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn account_rooted_render_when_account_set() {
+        // A provisioned account roots the whole subtree under
+        // `accounts/{account}/{tenant}/{namespace}/{object}/`.
+        let ns = dr_addressable_namespace().with_account("acct_acme");
+        let path = DrPathBuilder::build(&ns, "col_orders").unwrap();
+
+        assert_eq!(
+            path.root_prefix(),
+            "accounts/acct_acme/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/"
+        );
+        // Subprefixes hang off the account-rooted prefix unchanged.
+        assert_eq!(
+            path.wal_subprefix(),
+            "accounts/acct_acme/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/wal/"
+        );
+        assert_eq!(
+            path.snapshots_subprefix(),
+            "accounts/acct_acme/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/snapshots/"
+        );
+    }
+
+    #[test]
+    fn legacy_flat_render_when_account_absent() {
+        // No account → byte-identical to the pre-Phase-5 contract (mixed-safe).
+        let ns = dr_addressable_namespace();
+        assert!(ns.account_id.is_none());
+        let path = DrPathBuilder::build(&ns, "col_orders").unwrap();
+        assert_eq!(
+            path.root_prefix(),
+            "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/"
+        );
+    }
+
+    #[test]
+    fn account_id_is_validated_like_any_segment() {
+        // A malformed account is rejected with the same guard as tenant/ns/id.
+        let ns = dr_addressable_namespace().with_account("../escape");
+        let err = DrPathBuilder::build(&ns, "col_orders").unwrap_err();
+        assert!(matches!(
+            err,
+            PathResolverError::InvalidId {
+                field: "account_id",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn build_from_parts_with_account_round_trips() {
+        let pc = StoragePoolClass::default();
+        let ok = DrPathBuilder::build_from_parts_with_account(
+            Some("acct_acme"),
+            "tnt_acme",
+            "ns_42",
+            "orders",
+            pc,
+        )
+        .unwrap();
+        assert_eq!(
+            ok.root_prefix(),
+            "accounts/acct_acme/tnt_acme/ns_42/orders/"
+        );
+        // None is identical to the plain build_from_parts (legacy flat render).
+        let flat =
+            DrPathBuilder::build_from_parts_with_account(None, "tnt_acme", "ns_42", "orders", pc)
+                .unwrap();
+        assert_eq!(flat.root_prefix(), "data/tnt_acme/ns_42/orders/");
+        // The account segment is guarded too.
+        assert!(
+            DrPathBuilder::build_from_parts_with_account(
+                Some(".."),
+                "tnt_acme",
+                "ns_42",
+                "orders",
+                pc
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn operator_subprefix_is_rooted_and_validated() {
+        // Control-plane (operator) paths live under the reserved `_operator/`
+        // root, lexically separate from the per-account `accounts/…` tree.
+        assert_eq!(
+            DrPathBuilder::operator_subprefix("catalog").unwrap(),
+            "_operator/catalog/"
+        );
+        assert_eq!(DrPathBuilder::OPERATOR_ROOT, "_operator/");
+        // The subpath cannot escape the operator root.
+        assert!(DrPathBuilder::operator_subprefix("../etc").is_err());
+        assert!(DrPathBuilder::operator_subprefix("a/b").is_err());
+    }
+
+    #[test]
+    fn system_catalog_path_is_under_operator_root() {
+        // The deployment's system catalog lives under the control-plane root.
+        assert_eq!(
+            DrPathBuilder::system_catalog_subprefix(),
+            "_operator/catalog/"
+        );
+        assert_eq!(
+            DrPathBuilder::system_catalog_wal_relpath(),
+            "_operator/catalog/system-catalog.wal"
+        );
+        assert_eq!(
+            DrPathBuilder::system_catalog_snapshot_relpath(),
+            "_operator/catalog/system-catalog.snapshot"
+        );
+        // It is exactly the validated operator subprefix for "catalog".
+        assert_eq!(
+            DrPathBuilder::system_catalog_subprefix(),
+            DrPathBuilder::operator_subprefix(DrPathBuilder::SYSTEM_CATALOG_SUBPATH).unwrap()
+        );
     }
 
     #[test]
@@ -1068,5 +1730,198 @@ mod tests {
         let err =
             DrPathBuilder::build_for_pool(&ns, "col_x", StoragePoolClass::Pooled).unwrap_err();
         assert!(matches!(err, PathResolverError::MissingTenantId { .. }));
+    }
+
+    // ── ADR-031 typed identity path (Phase 2 wiring + Phase 4 hierarchy collapse) ──
+
+    #[test]
+    fn typed_root_prefix_is_27_chars_and_account_rooted() {
+        use crate::core::stable_id::CollectionIdentity;
+        let resolved = DrPathBuilder::build_from_identity(
+            CollectionIdentity {
+                account_id: 1,
+                namespace_id: 2,
+                collection_id: 3,
+            },
+            StoragePoolClass::Standard,
+        );
+        let prefix = resolved.typed_root_prefix().expect("typed identity set");
+        // Fixed: "accounts/" (9) + 6 + "/" + 3 + "/" + 6 + "/" = 27 chars always.
+        assert_eq!(
+            prefix.len(),
+            27,
+            "typed root must be exactly 27 chars, got {prefix}"
+        );
+        assert!(
+            prefix.starts_with("accounts/"),
+            "must be account-rooted: {prefix}"
+        );
+        assert!(
+            !prefix.contains("//"),
+            "no empty segments (no tenant slot): {prefix}"
+        );
+    }
+
+    #[test]
+    fn typed_root_prefix_collapses_tenant_into_account() {
+        use crate::core::stable_id::CollectionIdentity;
+        let resolved = DrPathBuilder::build_from_identity(
+            CollectionIdentity {
+                account_id: 7,
+                namespace_id: 5,
+                collection_id: 9,
+            },
+            StoragePoolClass::Pooled,
+        );
+        // The typed path has exactly 3 segments after `accounts/` (account, ns,
+        // collection) — NO tenant slot. The Phase 4 hierarchy collapse.
+        let prefix = resolved.typed_root_prefix().unwrap();
+        let after = prefix
+            .trim_end_matches('/')
+            .strip_prefix("accounts/")
+            .unwrap();
+        assert_eq!(
+            after.split('/').count(),
+            3,
+            "3 segments, no tenant: {after}"
+        );
+    }
+
+    #[test]
+    fn root_prefix_short_circuits_to_typed_when_identity_set() {
+        use crate::core::stable_id::CollectionIdentity;
+        let identity = CollectionIdentity {
+            account_id: 1,
+            namespace_id: 2,
+            collection_id: 3,
+        };
+        let resolved = DrPathBuilder::build_from_identity(identity, StoragePoolClass::Standard);
+        // root_prefix() must agree with typed_root_prefix() for a typed path,
+        // so the whole subprefix API (wal_subprefix, segments_subprefix, …)
+        // is typed-aware with no parallel methods.
+        assert_eq!(
+            resolved.root_prefix(),
+            resolved.typed_root_prefix().unwrap()
+        );
+        // Subprefixes flow through root_prefix() → typed automatically.
+        assert!(resolved.wal_subprefix().ends_with("/wal/"));
+        assert!(resolved.segments_subprefix().ends_with("/segments/"));
+        assert!(resolved.indexes_subprefix().ends_with("/indexes/"));
+    }
+
+    #[test]
+    fn legacy_path_is_byte_identical_when_no_typed_identity() {
+        // A string-resolved path (typed_identity == None) is unchanged by the
+        // typed short-circuit — the mixed-read-safety guarantee.
+        let resolved = DrPathBuilder::build_from_parts_with_account(
+            Some("acct_1"),
+            "tnt_acme",
+            "ns_1",
+            "col_orders",
+            StoragePoolClass::Standard,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.root_prefix(),
+            "accounts/acct_1/tnt_acme/ns_1/col_orders/"
+        );
+        assert!(resolved.typed_root_prefix().is_none());
+    }
+
+    #[test]
+    fn typed_paths_sort_lexicographically_like_numeric() {
+        // Zero-padded base62 ⇒ S3 LIST lexicographic order == numeric order.
+        use crate::core::stable_id::CollectionIdentity;
+        let ids: Vec<u32> = vec![1, 2, 3, 10, 11, 100];
+        let mut prefixes: Vec<String> = ids
+            .iter()
+            .map(|&c| {
+                DrPathBuilder::build_from_identity(
+                    CollectionIdentity {
+                        account_id: 1,
+                        namespace_id: 1,
+                        collection_id: c,
+                    },
+                    StoragePoolClass::Standard,
+                )
+                .typed_root_prefix()
+                .unwrap()
+            })
+            .collect();
+        let sorted = {
+            let mut s = prefixes.clone();
+            s.sort();
+            s
+        };
+        assert_eq!(
+            prefixes, sorted,
+            "typed collection prefixes must be pre-sorted lexicographically"
+        );
+    }
+
+    // ── ADR-031 Phase 4c: typed collection DATA subpath helpers ──────────
+
+    #[test]
+    fn typed_data_path_is_account_rooted_with_legacy_suffix() {
+        // Some(identity) → {base}/accounts/{acct}/{ns}/{coll}/data
+        // (zero-padded base62, no tenant slot). Trailing suffix `/data` (NO
+        // trailing slash) matches the legacy StoragePath contract.
+        let identity = CollectionIdentity {
+            account_id: 7,
+            namespace_id: 5,
+            collection_id: 9,
+        };
+        let p = collection_data_path_typed("/base", "coll_x", Some(identity));
+        assert_eq!(
+            p, "/base/accounts/000007/005/000009/data",
+            "typed data path"
+        );
+        assert!(
+            !p.ends_with('/'),
+            "no trailing slash (matches legacy /data suffix): {p}"
+        );
+    }
+
+    #[test]
+    fn typed_wal_and_index_paths_match_legacy_suffix_shape() {
+        let identity = CollectionIdentity {
+            account_id: 1,
+            namespace_id: 2,
+            collection_id: 3,
+        };
+        let wal = collection_wal_path_typed("/b", "c", Some(identity));
+        let idx = collection_index_path_typed("/b", "c", Some(identity));
+        assert_eq!(wal, "/b/accounts/000001/002/000003/wal");
+        assert_eq!(idx, "/b/accounts/000001/002/000003/indexes");
+    }
+
+    #[test]
+    fn typed_data_path_none_is_byte_identical_to_legacy_storage_path() {
+        // None → byte-identical legacy StoragePath::collection_data_path
+        // (the mixed-read-safety guarantee for legacy collections).
+        let base = "/data/store";
+        let cid = "my_collection";
+        let typed_none = collection_data_path_typed(base, cid, None);
+        let legacy = StoragePath::collection_data_path(base, cid);
+        assert_eq!(
+            typed_none, legacy,
+            "None branch must be byte-identical to legacy StoragePath"
+        );
+        // And it has the legacy shape {base}/{cid}/data (no trailing slash).
+        assert_eq!(typed_none, "/data/store/my_collection/data");
+    }
+
+    #[test]
+    fn typed_wal_and_index_paths_none_match_legacy() {
+        let base = "s3://bucket/path";
+        let cid = "col_1";
+        assert_eq!(
+            collection_wal_path_typed(base, cid, None),
+            StoragePath::collection_wal_path(base, cid)
+        );
+        assert_eq!(
+            collection_index_path_typed(base, cid, None),
+            StoragePath::collection_index_path(base, cid)
+        );
     }
 }

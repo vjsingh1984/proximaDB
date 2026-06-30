@@ -17,6 +17,7 @@
 
 pub mod codec;
 pub mod file_export;
+pub mod graph_codec;
 pub mod multimodal_codec;
 pub mod multimodel_codec;
 /// `rank_features_export` Flight action (R-7c.4b) — streams the rank

@@ -67,8 +67,11 @@ pub mod vector;
 // Semantic distance integration tests - NEW unified system
 pub mod semantic_distance_integration;
 
-// Filestore path handling integration tests
-pub mod filestore_path_test;
+// Filestore path handling integration tests - REMOVED (exercised the deleted
+// UniversalMetadataBackend / UniversalMetadataConfig / MetadataProvider API,
+// whose internal current/__staging/archive path layout no longer exists under
+// the catalog-based metadata system; no current-API analog to port to).
+// pub mod filestore_path_test;
 
 // Unified search integration tests - NEW unified search interface
 pub mod unified_search_integration;

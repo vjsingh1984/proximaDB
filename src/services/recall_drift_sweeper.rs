@@ -217,28 +217,39 @@ impl RecallDriftSweeper {
                     .apply_hnsw_ef_hot_swap(&config.name, new_ef)
                     .await
                 {
-                    Ok(crate::index::axis::management::HotSwapOutcome::Applied { changes }) => {
-                        crate::metrics::recall_drift_metrics::record_recall_drift_hot_swap_applied(
-                            &config.name,
-                            crate::metrics::recall_drift_metrics::HOT_SWAP_TRIGGER_SWEEPER,
-                        );
-                        info!(
-                            target: "recall_drift_sweeper",
-                            collection = %config.name,
-                            new_ef_search = new_ef,
-                            specs_touched = changes.len(),
-                            "auto-applied EfSearchOnly hot-swap"
-                        );
-                    }
-                    Ok(crate::index::axis::management::HotSwapOutcome::NotApplicable {
-                        reason,
-                    }) => {
-                        debug!(
-                            target: "recall_drift_sweeper",
-                            collection = %config.name,
-                            reason = %reason,
-                            "hot-swap not applicable (likely no strategy yet)"
-                        );
+                    Ok(value) => {
+                        use crate::index::axis::management::HotSwapOutcome;
+                        match serde_json::from_value::<HotSwapOutcome>(value) {
+                            Ok(HotSwapOutcome::Applied { changes }) => {
+                                crate::metrics::recall_drift_metrics::record_recall_drift_hot_swap_applied(
+                                    &config.name,
+                                    crate::metrics::recall_drift_metrics::HOT_SWAP_TRIGGER_SWEEPER,
+                                );
+                                info!(
+                                    target: "recall_drift_sweeper",
+                                    collection = %config.name,
+                                    new_ef_search = new_ef,
+                                    specs_touched = changes.len(),
+                                    "auto-applied EfSearchOnly hot-swap"
+                                );
+                            }
+                            Ok(HotSwapOutcome::NotApplicable { reason }) => {
+                                debug!(
+                                    target: "recall_drift_sweeper",
+                                    collection = %config.name,
+                                    reason = %reason,
+                                    "hot-swap not applicable (likely no strategy yet)"
+                                );
+                            }
+                            Err(err) => {
+                                warn!(
+                                    target: "recall_drift_sweeper",
+                                    collection = %config.name,
+                                    error = %err,
+                                    "hot-swap response parse failed"
+                                );
+                            }
+                        }
                     }
                     Err(err) => {
                         warn!(

@@ -291,6 +291,7 @@ impl ApiHandlersPort for UnifiedHandlers {
         query: String,
         _parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
+        _tenant_id: Option<&str>,
     ) -> Result<ExecuteQueryResponse> {
         let adapter = self
             .query_adapter
@@ -735,6 +736,7 @@ mod tests {
                 "select * from docs".to_string(),
                 None,
                 Some("docs".to_string()),
+                None,
             )
             .await
             .unwrap();
@@ -789,7 +791,7 @@ mod tests {
         );
         assert!(
             handlers
-                .execute_sql_v1("select 1".to_string(), None, None)
+                .execute_sql_v1("select 1".to_string(), None, None, None)
                 .await
                 .unwrap_err()
                 .to_string()
@@ -829,7 +831,7 @@ mod tests {
             Some(Arc::new(ArrayQueryAdapter)),
         );
         let sql = handlers
-            .execute_sql_v1("select values".to_string(), None, None)
+            .execute_sql_v1("select values".to_string(), None, None, None)
             .await
             .unwrap();
         assert_eq!(sql.rows_returned, 5);

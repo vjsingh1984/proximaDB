@@ -81,6 +81,32 @@ pub struct OrionSnapshot {
 
     /// Timestamp of snapshot creation
     timestamp: i64,
+
+    /// TD-066 (c) Part 2: the canonical checkpoint LSN (edge-epoch) this
+    /// snapshot covers. Recovery finds the matching `CanonicalEmission` marker
+    /// in the engine WAL and replays only frames after it (those frames have
+    /// edge-epoch > this LSN, so they are NOT already in the snapshot → no
+    /// over-replay). v1 snapshots (written before this field existed; see
+    /// [`OrionSnapshotLegacy`]) decode with `0`, which recovery treats as
+    /// "uncorrelated → full replay."
+    checkpoint_lsn: u64,
+}
+
+/// Legacy v1 on-disk snapshot shape (no `checkpoint_lsn`). Used only to
+/// mixed-read-safely decode snapshots written before TD-066 Part 2 — the v2
+/// [`OrionSnapshot`] deserializer fails on v1 bytes (missing trailing field),
+/// so `load_snapshot` falls back to this shape and maps `checkpoint_lsn = 0`.
+#[derive(Serialize, Deserialize)]
+struct OrionSnapshotLegacy {
+    version: u32,
+    nodes: Vec<Node>,
+    edges: Vec<Edge>,
+    csr_outgoing_offsets: Vec<usize>,
+    csr_outgoing_targets: Vec<usize>,
+    csr_incoming_offsets: Vec<usize>,
+    csr_incoming_sources: Vec<usize>,
+    node_to_index: HashMap<NodeId, usize>,
+    timestamp: i64,
 }
 
 // Use the unified GraphOperation from graph_memtable
@@ -90,6 +116,18 @@ use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
 pub struct OrionPersistence {
     /// Graph ID for multi-graph support
     graph_id: String,
+
+    /// TD-066 (c) Part 2: number of graph-op frames applied by the most recent
+    /// `replay_wal` call. Observable (`last_replay_applied`) so recovery-scoping
+    /// tests can prove only post-checkpoint frames were replayed (and so
+    /// operators/metrics can see the truncation working).
+    last_replay_applied: std::sync::atomic::AtomicU64,
+
+    /// TD-066 (d): number of engine-WAL segments reclaimed by the most recent
+    /// `truncate_wal_through_checkpoint` call. Observable
+    /// (`last_truncate_reclaimed`) so size-bounding/crash-safety tests can prove
+    /// segments were actually reclaimed (and operators can see truncation work).
+    last_truncate_reclaimed: std::sync::atomic::AtomicU64,
 
     /// Base URL for storage (e.g., "file:///data", "s3://bucket", etc.)
     base_url: String,
@@ -266,6 +304,8 @@ impl OrionPersistence {
             compression_level: 3,
             max_snapshots: 10,
             incremental_snapshots: false,
+            last_replay_applied: std::sync::atomic::AtomicU64::new(0),
+            last_truncate_reclaimed: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -385,23 +425,43 @@ impl OrionPersistence {
     }
 
     /// Save a snapshot of the engine state
-    pub async fn save_snapshot(&self, engine: &OrionGraphEngine) -> Result<PathBuf> {
+    pub async fn save_snapshot(
+        &self,
+        engine: &OrionGraphEngine,
+        checkpoint_lsn: u64,
+    ) -> Result<PathBuf> {
         info!("Creating ORION snapshot");
 
-        // Collect all nodes
-        let nodes = engine
-            .memory_pool
-            .nodes
-            .iter()
-            .map(|entry| (*entry.value()).clone())
-            .collect::<Vec<_>>();
+        // TD-168 Phase 1b: when the cold-payload tier is ON, write a **topology-only**
+        // (v3) snapshot — CSR + node_to_index only, NO node/edge payloads — so a graph
+        // whose payloads exceed RAM need not materialize every payload to snapshot, and
+        // cold-start loads topology only (payloads are served lazily from the canonical
+        // record store via the service cold-fetch path). When OFF (default), the full
+        // v2 snapshot is written exactly as before. The same `OrionSnapshot` struct
+        // carries both; a v3 is simply a v2 with empty `nodes`/`edges` + `version = 3`.
+        let topology_only = crate::graph::service::cold_payloads_enabled();
 
-        // Collect all edges
-        let edges = engine
-            .edge_metadata
-            .iter()
-            .map(|entry| (*entry.value()).clone())
-            .collect::<Vec<_>>();
+        // Collect node/edge payloads ONLY for the full (v2) snapshot. The clones are the
+        // expensive part a huge graph wants to avoid, so they are skipped entirely for v3.
+        let nodes: Vec<Node> = if topology_only {
+            Vec::new()
+        } else {
+            engine
+                .memory_pool
+                .nodes
+                .iter()
+                .map(|entry| entry.value().as_ref().clone())
+                .collect()
+        };
+        let edges: Vec<Edge> = if topology_only {
+            Vec::new()
+        } else {
+            engine
+                .edge_metadata
+                .iter()
+                .map(|entry| entry.value().as_ref().clone())
+                .collect()
+        };
 
         // Build node_to_index mapping
         let node_to_index = engine
@@ -432,17 +492,22 @@ impl OrionPersistence {
             ))
         }?;
 
-        // Create snapshot
+        // Create snapshot. Same v2 shape either way (nothing is released, so no new
+        // on-disk version is warranted): a topology-only snapshot is simply a v2 with
+        // empty `nodes`/`edges`. Load detects it from that shape — a full snapshot
+        // always has `nodes.len() == node_to_index.len()`, so empty payloads + non-empty
+        // topology is unambiguously topology-only.
         let snapshot = OrionSnapshot {
-            version: 1,
-            nodes: nodes.into_iter().map(|n| (*n).clone()).collect(),
-            edges: edges.into_iter().map(|e| (*e).clone()).collect(),
+            version: 2,
+            nodes,
+            edges,
             csr_outgoing_offsets,
             csr_outgoing_targets,
             csr_incoming_offsets,
             csr_incoming_sources, // Note: 'targets' stores sources for incoming
             node_to_index,
             timestamp: chrono::Utc::now().timestamp(),
+            checkpoint_lsn,
         };
 
         // Serialize snapshot
@@ -508,7 +573,7 @@ impl OrionPersistence {
         &self,
         engine: &OrionGraphEngine,
         snapshot_path: impl AsRef<Path>,
-    ) -> Result<()> {
+    ) -> Result<u64> {
         info!("Loading ORION snapshot from {:?}", snapshot_path.as_ref());
 
         // Read compressed snapshot
@@ -524,12 +589,58 @@ impl OrionPersistence {
         // Decompress data
         let decompressed = self.decompress_data(&compressed)?;
 
-        // Deserialize
-        let snapshot: OrionSnapshot = bincode::deserialize(&decompressed).map_err(|e| {
-            ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
-                e.to_string(),
-            ))
-        })?;
+        // Deserialize. Mixed-read-safe: v2 snapshots carry `checkpoint_lsn`;
+        // v1 (legacy) snapshots lack the field and fail to deserialize as the
+        // v2 struct, so fall back to the legacy shape with checkpoint_lsn = 0
+        // (recovery treats 0 as "uncorrelated → full replay").
+        let snapshot: OrionSnapshot = match bincode::deserialize::<OrionSnapshot>(&decompressed) {
+            Ok(s) => s,
+            Err(_) => {
+                let legacy =
+                    bincode::deserialize::<OrionSnapshotLegacy>(&decompressed).map_err(|e| {
+                        ProximaDBError::Storage(
+                            proximadb_kernel::error::StorageError::SerializationError(
+                                e.to_string(),
+                            ),
+                        )
+                    })?;
+                OrionSnapshot {
+                    version: legacy.version,
+                    nodes: legacy.nodes,
+                    edges: legacy.edges,
+                    csr_outgoing_offsets: legacy.csr_outgoing_offsets,
+                    csr_outgoing_targets: legacy.csr_outgoing_targets,
+                    csr_incoming_offsets: legacy.csr_incoming_offsets,
+                    csr_incoming_sources: legacy.csr_incoming_sources,
+                    node_to_index: legacy.node_to_index,
+                    timestamp: legacy.timestamp,
+                    checkpoint_lsn: 0,
+                }
+            }
+        };
+        // Capture the watermark before the restore loops move out of `snapshot`.
+        let checkpoint_lsn = snapshot.checkpoint_lsn;
+        // A topology-only (TD-168) snapshot is a v2 snapshot written with the cold-payload
+        // gate ON: it carries the full topology but EMPTY payloads. A full snapshot always
+        // has `nodes.len() == node_to_index.len()`, so empty payloads alongside a non-empty
+        // topology is unambiguous — no on-disk version bump needed.
+        let topology_only_snapshot =
+            snapshot.nodes.is_empty() && !snapshot.node_to_index.is_empty();
+
+        // Mixed-read-safety (fail-closed): a topology-only snapshot's reads depend on the
+        // cold-fetch path, which is the SAME `PROXIMADB_GRAPH_COLD_PAYLOADS` gate. Loading
+        // one with the gate OFF would leave the engine with topology but no payloads AND no
+        // cold-fetch, so get_node/get_edge would silently return None (apparent data loss).
+        // Refuse the load loudly instead, so flipping the gate off after enabling it yields
+        // a clear error, not silent corruption.
+        if topology_only_snapshot && !crate::graph::service::cold_payloads_enabled() {
+            return Err(ProximaDBError::InvalidInput(format!(
+                "graph '{}': snapshot is topology-only (empty payloads) but the cold-payload \
+                 tier (PROXIMADB_GRAPH_COLD_PAYLOADS) is OFF — enable it to load this snapshot, \
+                 otherwise node/edge payloads are unreachable",
+                self.graph_id
+            )));
+        }
 
         // Clear existing data
         engine.memory_pool.nodes.clear();
@@ -583,23 +694,156 @@ impl OrionPersistence {
             }
         }
 
+        // Counts come from the TOPOLOGY (node_to_index + CSR), not the payload maps:
+        // for a topology-only (v3) load the payload maps are empty by design, so reading
+        // their lengths would report 0. node_to_index has every node; the outgoing CSR
+        // `targets` has one entry per directed edge — both correct for v2 and v3.
+        let node_count = engine.node_to_index.len() as u64;
+        let edge_count = {
+            let csr_out = Self::read_lock(&engine.csr_outgoing, "CSR outgoing")?;
+            csr_out.targets.len() as u64
+        };
+
         // Update stats
         {
             let mut stats = engine
                 .stats
                 .write()
                 .map_err(|_| ProximaDBError::Internal("stats write lock poisoned".to_string()))?;
-            stats.nodes_created = engine.memory_pool.nodes.len() as u64;
-            stats.edges_created = engine.edge_metadata.len() as u64;
+            stats.nodes_created = node_count;
+            stats.edges_created = edge_count;
         }
 
         info!(
-            "ORION snapshot loaded: {} nodes, {} edges",
-            engine.memory_pool.nodes.len(),
-            engine.edge_metadata.len()
+            "ORION snapshot loaded ({}): {} nodes, {} edges{}",
+            if topology_only_snapshot {
+                "topology-only / cold payloads"
+            } else {
+                "full payloads"
+            },
+            node_count,
+            edge_count,
+            if topology_only_snapshot {
+                " (payloads served lazily from the record store)"
+            } else {
+                ""
+            }
         );
 
+        Ok(checkpoint_lsn)
+    }
+
+    /// TD-066 (c) Part 2: discover the newest on-disk snapshot for this graph,
+    /// if any. Snapshot files are named `graph_{id}_snapshot_{YYYYMMDD_HHMMSS}.bin.zst`,
+    /// so a lexical sort by URL yields chronological order. Returns `None` when
+    /// the snapshots directory is absent or empty (recovery then falls back to a
+    /// full engine-WAL replay).
+    pub async fn latest_snapshot_path(&self) -> Result<Option<String>> {
+        let snapshots_dir = format!(
+            "{}/graphs/{}/snapshots",
+            self.base_url.trim_end_matches('/'),
+            self.graph_id
+        );
+        let entries = match self.filesystem_factory.list(&snapshots_dir).await {
+            Ok(e) => e,
+            Err(_) => return Ok(None),
+        };
+        let mut paths: Vec<String> = entries
+            .into_iter()
+            .map(|e| e.url)
+            .filter(|u| u.ends_with(".bin.zst"))
+            .collect();
+        paths.sort();
+        Ok(paths.into_iter().last())
+    }
+
+    /// TD-066 (c) Part 2: number of graph-op frames the most recent
+    /// `replay_wal` applied (0 when no WAL is configured, or when scoping
+    /// skipped everything). Lets tests and observers confirm the truncation.
+    pub fn last_replay_applied(&self) -> u64 {
+        self.last_replay_applied
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// TD-066 (c) Part 2: append a non-data `CanonicalEmission(lsn)` marker
+    /// frame to the engine WAL. Called by `GraphOperationsService::flush_wal`
+    /// right after the canonical checkpoint at `lsn` is persisted, so recovery
+    /// can truncate engine-WAL replay at the latest marker whose LSN ≤ the
+    /// recovered canonical checkpoint LSN (frames at/before it are already
+    /// covered by the durable canonical snapshot). No-op when no WAL writer is
+    /// configured.
+    pub async fn append_canonical_emission_marker(&self, lsn: u64) -> Result<()> {
+        if let Some(ref wal_writer) = self.wal_writer {
+            use crate::storage::persistence::write_ahead_log::wal_operations::{
+                MarkerKind, UnifiedWALOperation,
+            };
+
+            let unified_op = UnifiedWALOperation::GraphMarker(MarkerKind::CanonicalEmission(lsn));
+            wal_writer
+                .lock()
+                .await
+                .append(unified_op)
+                .await
+                .map_err(|e| {
+                    tracing::error!(
+                        lsn, error = ?e,
+                        "canonical-emission marker WAL append failed"
+                    );
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
+                })?;
+            tracing::debug!(lsn, "canonical-emission marker appended to engine WAL");
+        }
         Ok(())
+    }
+
+    /// TD-066 (d): number of engine-WAL segments reclaimed by the most recent
+    /// `truncate_wal_through_checkpoint` call. Lets tests and observers confirm
+    /// the WAL is actually being bounded.
+    pub fn last_truncate_reclaimed(&self) -> u64 {
+        self.last_truncate_reclaimed
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// TD-066 (d): after a durable snapshot at `checkpoint_lsn`, reclaim engine
+    /// WAL segments fully covered by it (every segment whose frames all precede
+    /// the `CanonicalEmission(checkpoint_lsn)` marker).
+    ///
+    /// CRASH-SAFETY CONTRACT: callers MUST invoke this only AFTER
+    /// `save_snapshot` returns, so the deleted frames are already covered by a
+    /// durable snapshot. The underlying primitive deletes lowest-segment-first,
+    /// so a crash mid-truncation still leaves a recoverable contiguous suffix.
+    /// No-op (returns 0) when no WAL writer is configured or the marker is
+    /// absent.
+    pub async fn truncate_wal_through_checkpoint(&self, checkpoint_lsn: u64) -> Result<u64> {
+        if let Some(ref wal_writer) = self.wal_writer {
+            let reclaimed = wal_writer
+                .lock()
+                .await
+                .truncate_through_canonical_marker(checkpoint_lsn)
+                .await
+                .map_err(|e| {
+                    tracing::error!(
+                        checkpoint_lsn, error = ?e,
+                        "engine WAL truncation through checkpoint failed"
+                    );
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
+                })?;
+            self.last_truncate_reclaimed
+                .store(reclaimed, std::sync::atomic::Ordering::Relaxed);
+            if reclaimed > 0 {
+                tracing::debug!(
+                    checkpoint_lsn,
+                    reclaimed,
+                    "TD-066 (d): engine WAL truncated to checkpoint LSN"
+                );
+            }
+            return Ok(reclaimed);
+        }
+        Ok(0)
     }
 
     /// Write node operation to WAL
@@ -914,8 +1158,17 @@ impl OrionPersistence {
         Ok(())
     }
 
-    /// Replay WAL operations from all segments
-    pub async fn replay_wal(&self, engine: &OrionGraphEngine) -> Result<()> {
+    /// Replay WAL operations from all segments.
+    ///
+    /// `snapshot_lsn`: when recovery has loaded a snapshot tagged with canonical
+    /// checkpoint LSN X (TD-066 (c) Part 2), pass `Some(X)` to scope replay to
+    /// frames after the matching `CanonicalEmission(X)` marker (those frames are
+    /// NOT in the snapshot → no over-replay). Pass `None` for full replay.
+    pub async fn replay_wal(
+        &self,
+        engine: &OrionGraphEngine,
+        snapshot_lsn: Option<u64>,
+    ) -> Result<()> {
         if let Some(ref wal_path) = self.wal_path {
             use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALReader;
 
@@ -941,14 +1194,66 @@ impl OrionPersistence {
                 self.graph_id
             );
 
-            for entry in entries {
+            // TD-066 (c) Part 2: if recovery loaded a snapshot tagged with
+            // checkpoint_lsn X (`snapshot_lsn = Some(X)`), find the matching
+            // `CanonicalEmission(X)` marker and replay only frames AFTER it —
+            // those frames have edge-epoch > X, so they are NOT in the snapshot,
+            // so there is no over-replay (and therefore no need for replay
+            // idempotency). The marker-before-snapshot write order in `flush_wal`
+            // guarantees "snapshot(X) exists ⟹ marker(X) is durable". Fallback
+            // (no snapshot / snapshot_lsn == 0 [v1, uncorrelated] / marker not
+            // found in the WAL) is full replay — today's behavior.
+            let mut start_index = 0usize;
+            if let Some(snapshot_lsn) = snapshot_lsn
+                && snapshot_lsn > 0
+            {
+                use crate::storage::persistence::write_ahead_log::wal_operations::{
+                    MarkerKind, UnifiedWALOperation,
+                };
+                let mut marker_idx: Option<usize> = None;
+                for (i, entry) in entries.iter().enumerate() {
+                    if let UnifiedWALOperation::GraphMarker(MarkerKind::CanonicalEmission(lsn)) =
+                        &entry.operation
+                        && *lsn == snapshot_lsn
+                    {
+                        marker_idx = Some(i);
+                    }
+                }
+                if let Some(idx) = marker_idx {
+                    start_index = idx + 1;
+                    tracing::info!(
+                        graph_id = %self.graph_id,
+                        snapshot_lsn,
+                        marker_index = idx,
+                        total_entries = entries.len(),
+                        replay_from = start_index,
+                        "TD-066 Part 2: truncating engine-WAL replay at snapshot's canonical-emission marker"
+                    );
+                } else {
+                    tracing::warn!(
+                        graph_id = %self.graph_id,
+                        snapshot_lsn,
+                        "snapshot loaded but its canonical-emission marker not found in engine WAL; full replay"
+                    );
+                }
+            }
+
+            let mut replayed: u64 = 0;
+            for entry in entries.into_iter().skip(start_index) {
                 if entry.is_graph_operation()
                     && let crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation::GraphOp(graph_op) = entry.operation {
                         self.apply_graph_operation(engine, graph_op).await?;
+                        replayed += 1;
                     }
             }
-
-            tracing::info!("WAL replay completed for graph {}", self.graph_id);
+            tracing::info!(
+                graph_id = %self.graph_id,
+                skipped = start_index,
+                replayed,
+                "WAL replay completed for graph"
+            );
+            self.last_replay_applied
+                .store(replayed, std::sync::atomic::Ordering::Relaxed);
         }
 
         Ok(())
@@ -1064,7 +1369,7 @@ impl OrionPersistence {
     /// Saves a full snapshot, then truncates the WAL directory so that
     /// replay after a restart starts from this checkpoint.
     pub async fn checkpoint(&self, engine: &OrionGraphEngine) -> Result<PathBuf> {
-        let snapshot_path = self.save_snapshot(engine).await?;
+        let snapshot_path = self.save_snapshot(engine, 0).await?;
 
         // Truncate WAL: remove all segment files so replay is a no-op after
         // a clean checkpoint.  The next write re-creates segment files.
@@ -1317,5 +1622,116 @@ impl OrionPersistence {
     }
 }
 
-// Tests temporarily removed due to compilation issues
-// Deferred: Fix tests once OrionGraphEngine methods are properly implemented
+#[cfg(test)]
+mod topology_only_snapshot_tests {
+    use super::*;
+    use crate::graph::engines::GraphEngine;
+    use crate::graph::engines::orion::OrionGraphEngine;
+
+    async fn engine(graph_id: &str, base: &std::path::Path) -> OrionGraphEngine {
+        let base_url = format!("file://{}", base.display());
+        OrionGraphEngine::with_persistence_for_graph(graph_id.to_string(), base_url, false)
+            .await
+            .expect("engine with persistence")
+    }
+
+    fn node(id: &str) -> Node {
+        Node {
+            id: id.to_string(),
+            labels: vec!["N".to_string()],
+            ..Default::default()
+        }
+    }
+
+    /// TD-168 Phase 1b: a topology-only snapshot (gate ON) carries CSR + node_to_index
+    /// but NO payloads; it round-trips the topology, leaves payloads cold, and is
+    /// fail-closed when loaded with the gate OFF. The full (gate OFF) snapshot is
+    /// unchanged. Process-isolated under nextest, so the env gate doesn't leak.
+    #[tokio::test]
+    async fn topology_only_snapshot_round_trips_payloads_cold_and_fails_closed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base = tmp.path().join("orion");
+        std::fs::create_dir_all(&base).expect("mkdir");
+
+        // Build a 2-node, 1-edge graph in the source engine (full, in-RAM).
+        let src = engine("g1", &base).await;
+        src.insert_node(node("a")).await.expect("node a");
+        src.insert_node(node("b")).await.expect("node b");
+        src.insert_edge(Edge {
+            id: "e".to_string(),
+            from_node_id: "a".to_string(),
+            to_node_id: "b".to_string(),
+            edge_type: "R".to_string(),
+            ..Default::default()
+        })
+        .await
+        .expect("edge");
+        assert_eq!(src.node_to_index.len(), 2);
+
+        // (1) Gate ON → topology-only snapshot; load into a fresh engine.
+        unsafe { std::env::set_var("PROXIMADB_GRAPH_COLD_PAYLOADS", "1") };
+        let topo_path = src
+            .persistence()
+            .expect("persistence")
+            .save_snapshot(&src, 0)
+            .await
+            .expect("save topology-only");
+
+        let warm = engine("g1", &base).await;
+        warm.persistence()
+            .expect("persistence")
+            .load_snapshot(&warm, &topo_path)
+            .await
+            .expect("load topology-only");
+        // Topology restored, payloads NOT resident (served cold via the service path).
+        assert_eq!(warm.node_to_index.len(), 2, "topology (nodes) restored");
+        assert!(
+            warm.memory_pool.nodes.is_empty(),
+            "node payloads stay cold after topology-only load"
+        );
+        assert!(
+            warm.edge_metadata.is_empty(),
+            "edge payloads stay cold after topology-only load"
+        );
+        // Edge TOPOLOGY survives in the CSR (one directed out-edge), even though no edge
+        // payload is resident.
+        let out_edges = OrionPersistence::read_lock(&warm.csr_outgoing, "csr")
+            .expect("csr read")
+            .targets
+            .len();
+        assert_eq!(out_edges, 1, "edge topology restored in CSR");
+
+        // (2) Fail-closed: same topology-only snapshot, gate OFF → error (no silent
+        // data-invisibility).
+        unsafe { std::env::remove_var("PROXIMADB_GRAPH_COLD_PAYLOADS") };
+        let blocked = engine("g1", &base).await;
+        let result = blocked
+            .persistence()
+            .expect("persistence")
+            .load_snapshot(&blocked, &topo_path)
+            .await;
+        assert!(
+            result.is_err(),
+            "topology-only snapshot must fail-closed when the cold-payload gate is OFF"
+        );
+
+        // (3) Gate OFF → full snapshot round-trips with payloads resident (today's path).
+        let full_path = src
+            .persistence()
+            .expect("persistence")
+            .save_snapshot(&src, 0)
+            .await
+            .expect("save full");
+        let full = engine("g1", &base).await;
+        full.persistence()
+            .expect("persistence")
+            .load_snapshot(&full, &full_path)
+            .await
+            .expect("load full");
+        assert_eq!(
+            full.memory_pool.nodes.len(),
+            2,
+            "full snapshot loads payloads"
+        );
+    }
+}

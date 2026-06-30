@@ -21,6 +21,9 @@ bytes = "1.5"
 futures.workspace = true
 url = "2"
 proximadb-kernel.workspace = true
+# For the canonical, cloud-neutral access-tier enum (`ObjectAccessTier`) + its
+# per-cloud native mappings, reused by `put_with_tier`. Leaf type crate; no cycle.
+proximadb-storage-filesystem-types.workspace = true
 
 [features]
 default = []

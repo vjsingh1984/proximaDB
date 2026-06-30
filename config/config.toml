@@ -7,6 +7,12 @@ bind_address = "127.0.0.1"
 port = 5678
 data_dir = "/tmp/proximadb/data"
 
+# Read-only embedded admin dashboard at /admin. Off by default; enable only for
+# local standalone instances (not Kubernetes pods or embedded/UDS deployments).
+# See docs/04-operations/admin-dashboard.adoc.
+[server.admin_ui]
+enabled = false
+
 [storage]
 # Metadata storage (collection definitions, schemas)
 metadata_url = "file:///tmp/proximadb/metadata"

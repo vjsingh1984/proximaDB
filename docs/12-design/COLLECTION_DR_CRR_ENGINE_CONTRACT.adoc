@@ -619,6 +619,28 @@ All DR-eligible collection data uses this root:
 data/{tenant_id}/{namespace_id}/{collection_id}/
 ----
 
+[NOTE]
+====
+*Two-tier operator/account model (Phase 5).* When a collection's owning
+namespace carries an `account_id` (the SaaS customer = billing/isolation
+boundary that sits *above* `tenant_id`, where a tenant is a workspace/sub-org
+inside the account), `DrResolvedPath::root_prefix()` renders the account-rooted
+form instead, and every subprefix below hangs off it unchanged:
+
+[source]
+----
+accounts/{account_id}/{tenant_id}/{namespace_id}/{collection_id}/
+----
+
+A namespace with no `account_id` keeps the legacy flat `data/...` render
+byte-for-byte (mixed-safe; the account tier is inert until provisioned). The
+SaaS provider's own *control plane* — the **operator catalog** registering all
+accounts (entitlements, storage bindings, billing; metadata-about-accounts,
+never tenant data) — lives under the reserved `_operator/` root, lexically
+separate from the per-account `accounts/...` data tree. `DrPathBuilder` is the
+single validated emitter of all three roots (`data/`, `accounts/`, `_operator/`).
+====
+
 Subprefixes:
 
 [source]

@@ -54,11 +54,22 @@ pub mod index;
 /// Metadata query parsing and execution
 pub mod metadata_query;
 
+/// Stable-ID type system + path encoding (ADR-031 completion).
+pub mod stable_id;
+
 /// Core search functionality, filters, and result types
 pub mod search;
 
+/// Statistics substrate — the agent-facing catalog producer (ADR-037).
+/// Aggregates PAX zone maps + streaming sketches at the flush/compaction
+/// boundary into the versioned, modality-neutral `StatisticsEnvelope` (frozen
+/// v1 contract). Units only — no pricing/semantics (those are AnvaiOps ADR-0021).
+pub mod statistics;
+
 /// Serialization utilities for various formats
-pub mod serialization;
+/// Extracted to the `proximadb-serialization` crate; re-exported here for source
+/// compatibility (root-crate decomposition).
+pub use proximadb_serialization as serialization;
 
 /// Unified compression module with 13 algorithm support
 pub mod compression;
@@ -82,7 +93,9 @@ pub mod memory;
 pub mod proto_metadata_helper;
 
 /// Bloom filter implementations for fast lookups
-pub mod bloom;
+/// Extracted to the `proximadb-bloom` crate; re-exported here for source
+/// compatibility (root-crate decomposition, Slice D / D1).
+pub use proximadb_bloom as bloom;
 
 /// Unified error types with thiserror
 pub mod errors;

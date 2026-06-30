@@ -4,8 +4,9 @@
 
 #[cfg(test)]
 mod edge_tests {
-    use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
+    use proximadb_distance_kernel::DistanceMetric;
+    use crate::core::search::SearchParams;
+    use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
     use crate::storage::engines::viper::readers::unified_parquet_reader::{
         CollectionContext, UnifiedParquetReader,
     };

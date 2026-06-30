@@ -151,7 +151,7 @@ pub struct BatchOperationStats {
 impl RowBasedBatchOperations {
     /// Create new batch operations handler
     pub fn new(
-        _hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
+        _hardware: Arc<proximadb_hardware_caps::HardwareCapabilities>,
         memory_pool: Arc<VectorMemoryPool>,
         config: BlockBatchConfig,
     ) -> Self {
@@ -771,7 +771,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_operations_creation() {
-        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hardware = proximadb_hardware_caps::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new());
 
         let config = BlockBatchConfig::default();
@@ -783,7 +783,7 @@ mod tests {
 
     #[test]
     fn test_batch_size_calculation() {
-        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hardware = proximadb_hardware_caps::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new());
 
         let config = BlockBatchConfig::default();
@@ -797,7 +797,7 @@ mod tests {
     // Deferred: Re-enable test after row_based module is implemented
     // #[test]
     // fn test_batch_splitting() {
-    //     let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+    //     let hardware = proximadb_hardware_caps::get_hardware_capabilities();
     //     let memory_pool = Arc::new(VectorMemoryPool::new(1024 * 1024 * 1024));
     //     let quantization_engine = Arc::new(
     //         crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(

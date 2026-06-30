@@ -16,7 +16,6 @@
 //!
 //! - `StorageEngineStrategy`: Enum for selecting the appropriate storage engine
 //! - `UnifiedStorageFormat`: Main trait that all storage engines must implement
-//! - `InternalCollectionProvider`: Trait for accessing collection metadata without circular dependencies
 //! - `PerformanceTier`: Data temperature hints for intelligent tiering
 //!
 //! ## Storage Engine Types
@@ -99,66 +98,6 @@ use crate::storage::trait_components::capabilities::CapabilityFactory;
 use crate::core::types::StorageEngineType;
 
 // Core types imported as needed in implementations
-
-/// Core metadata provider trait for collection metadata operations
-///
-/// ## Design Philosophy:
-///
-/// MetadataProvider separates metadata management from storage operations,
-/// preventing circular dependencies between storage engines and collection service.
-///
-/// ## Implementation Requirements:
-///
-/// Implementors must provide thread-safe, async metadata operations.
-/// Typically backed by a metadata store (PostgreSQL, etcd, etc.).
-///
-/// ## Caching Strategy:
-///
-/// Implementations should cache frequently accessed metadata:
-/// - Collection UUID mappings (immutable, cache forever)
-/// - Collection configs (cache with TTL)
-/// - Existence checks (cache negative results briefly)
-///
-/// This trait focuses solely on metadata CRUD operations
-#[async_trait]
-pub trait MetadataProvider: Send + Sync {
-    /// Get collection UUID by name or ID
-    async fn get_uuid(&self, collection_id: &str) -> Result<Option<String>>;
-
-    /// Get full collection metadata
-    async fn collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>>;
-
-    /// Get collection as unified type
-    async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>>;
-
-    /// List all collections
-    async fn list_collections(&self) -> Result<Vec<Collection>>;
-
-    /// Check if collection exists
-    async fn collection_exists(&self, collection_id: &str) -> Result<bool> {
-        Ok(self.get_uuid(collection_id).await?.is_some())
-    }
-
-    /// Fast check if collection ID exists (for collision detection)
-    /// This should be optimized for speed, returning just bool
-    async fn collection_id_exists(&self, collection_id: &str) -> Result<bool> {
-        // Default implementation delegates to collection_exists
-        // Backends can override with more efficient implementation
-        self.collection_exists(collection_id).await
-    }
-
-    /// Create or update a collection from protobuf
-    async fn upsert_collection_proto(&self, collection: &Collection) -> Result<()>;
-
-    /// Delete a collection by ID  
-    async fn delete_collection(&self, collection_id: &str) -> Result<()>;
-
-    /// Find collection by name or ID (sync convenience method)
-    fn find_collection(&self, _collection_id: &str) -> Option<Collection> {
-        // Default sync implementation - backends can override
-        None
-    }
-}
 
 /// Unified metrics collector that can be shared across backends
 ///
@@ -462,18 +401,6 @@ pub struct StorageTraitCacheStats {
     pub hit_rate: f64,
 }
 
-/// Marker trait for internal collection metadata providers.
-/// This trait exists solely to break circular dependencies between StorageEngine and CollectionService.
-/// It adds no new methods - all functionality comes from MetadataProvider.
-///
-/// Implementations: LocalRocksDbBackend, UniversalMetadataBackend
-/// Consumers: CollectionService (via metadata_backend field)
-#[async_trait]
-pub trait InternalCollectionProvider: MetadataProvider + Send + Sync {
-    // This is intentionally a marker trait with no methods.
-    // All methods are inherited from MetadataProvider.
-}
-
 /// Canonical statistics for cost-based query optimization
 ///
 /// This is the **single source of truth** for collection statistics across
@@ -485,7 +412,15 @@ pub trait InternalCollectionProvider: MetadataProvider + Send + Sync {
 /// and select optimal join/fusion strategies.
 #[derive(Debug, Clone, Default)]
 pub struct CollectionStats {
-    /// Number of rows/vectors in the collection
+    /// Approximate number of rows/vectors in the collection.
+    ///
+    /// This is **not** an exact live count (TD-148). Engines derive it two ways, both
+    /// approximate: VIPER/HELIX use an insert-only atomic counter that is never
+    /// decremented on delete/tombstone (so it includes dead/expired records), and
+    /// SST/NOVA estimate it from bytes-on-disk. Treat it as a cost-planning hint,
+    /// never as a source of truth — the record-returning read paths (#305/#313)
+    /// are the authoritative live view. The accurate live count (= total positions
+    /// − deletion-vector bits) arrives with ADR-025 deletion vectors (N2/N3).
     pub row_count: u64,
     /// Average vector size in bytes
     pub avg_vector_bytes: u64,
@@ -853,6 +788,11 @@ pub trait UnifiedStorageFormat: Send + Sync {
     /// `CostModel` to estimate operation costs and select optimal join/fusion
     /// strategies. Default implementation returns basic stats; engines should
     /// override for accurate cardinality data.
+    ///
+    /// **Caveat (TD-148):** [`CollectionStats::row_count`] is approximate — an
+    /// insert-only counter (includes dead records) or a byte-based estimate, never a
+    /// precise live count. Use it only for cost estimation, not as an authoritative
+    /// record count. The accurate count arrives with ADR-025 deletion vectors.
     async fn collection_stats(&self, _collection_id: &str) -> Result<CollectionStats> {
         Ok(CollectionStats {
             engine_strategy: self.strategy(),
@@ -1261,8 +1201,15 @@ pub trait UnifiedStorageFormat: Send + Sync {
         // Delegate to engine-specific implementation
         let mut result = self.do_flush(&params).await?;
 
-        // Common post-flush processing
-        result.duration_ms = Some(start_time.elapsed().as_millis() as u64);
+        // Common post-flush processing.
+        // Prefer the engine's self-reported duration (do_flush knows its own work);
+        // only fall back to the funnel's wall-clock measurement when the engine
+        // didn't report one. Previously this unconditionally overwrote the engine's
+        // value, so a fast engine (e.g. the test mock, or any sub-millisecond
+        // flush) recorded duration_ms=0 even when do_flush reported a real value.
+        result.duration_ms = result
+            .duration_ms
+            .or_else(|| Some(start_time.elapsed().as_millis() as u64));
         result.completed_at = Utc::now();
 
         // Log operation completion

@@ -84,6 +84,28 @@ pub enum ScanAccess {
         /// declared primary key.
         key: Vec<Expr>,
     },
+    /// Discrete multi-key point lookup (TD-128): `PK IN (...)` or a
+    /// pure `PK = a OR PK = b OR …` disjunction. Each inner `Vec`
+    /// is one full primary-key tuple (single-component in v1). The
+    /// predicate is fully captured by these keys, so the planner
+    /// DROPS it (like single-key `PkLookup`). Gated on
+    /// [`ReaderCapabilities::pk_lookup_batch`] + a declared PK.
+    PkLookupBatch {
+        keys: Vec<Vec<Expr>>,
+    },
+    /// OLTP secondary-index lookup (TD-127): an equality / `IN`-list
+    /// on a non-PK column that the table declares as a single-column
+    /// secondary index. `values` are the constant probe expressions
+    /// (one for `=`, many for `IN`). Unlike PK access this only
+    /// NARROWS, so the planner KEEPS the residual `Filter` above the
+    /// scan, and the executor falls back to a full scan when the
+    /// reader answers `Ok(None)` (index unbuilt / disabled). Gated
+    /// on [`ReaderCapabilities::secondary_lookup`] +
+    /// [`CapabilityResolver::secondary_index_columns`].
+    SecondaryLookup {
+        column: String,
+        values: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -295,6 +317,8 @@ fn render_explain_node(plan: &PhysicalPlan, depth: usize, lines: &mut Vec<String
             let access = match access {
                 ScanAccess::FullScan => "FullScan",
                 ScanAccess::PkLookup { .. } => "PkLookup",
+                ScanAccess::PkLookupBatch { .. } => "PkLookupBatch",
+                ScanAccess::SecondaryLookup { .. } => "SecondaryLookup",
             };
             let predicate = if predicate.is_some() { "yes" } else { "no" };
             let projection = match projection {
@@ -430,6 +454,16 @@ pub trait CapabilityResolver: Send + Sync {
         let _ = table;
         Vec::new()
     }
+
+    /// Names of `table`'s single-column non-PK secondary indexes
+    /// (TD-127). Used by the `SecondaryLookup` rewrite to gate which
+    /// columns an equality / `IN`-list may probe. Empty (the
+    /// default) means no secondary index is known, so the rewrite is
+    /// skipped and the predicate stays a scan + filter.
+    fn secondary_index_columns(&self, table: &TableId) -> Vec<String> {
+        let _ = table;
+        Vec::new()
+    }
 }
 
 /// Reference resolver that always returns the same capabilities
@@ -437,6 +471,9 @@ pub trait CapabilityResolver: Send + Sync {
 pub struct StaticCapabilities {
     pub caps: ReaderCapabilities,
     pub pk_columns: Vec<usize>,
+    /// Names of the table's non-PK secondary-indexed columns
+    /// (TD-127). Empty = none.
+    pub secondary_columns: Vec<String>,
 }
 
 impl CapabilityResolver for StaticCapabilities {
@@ -445,6 +482,9 @@ impl CapabilityResolver for StaticCapabilities {
     }
     fn primary_key(&self, _table: &TableId) -> Vec<usize> {
         self.pk_columns.clone()
+    }
+    fn secondary_index_columns(&self, _table: &TableId) -> Vec<String> {
+        self.secondary_columns.clone()
     }
 }
 
@@ -903,6 +943,62 @@ pub fn push_predicates<R: CapabilityResolver>(plan: PhysicalPlan, resolver: &R) 
                             access: ScanAccess::PkLookup { key },
                         };
                     }
+                    // TD-128: discrete multi-key batch — `PK IN (...)`
+                    // or a pure `PK = a OR PK = b …`. Fully captured by
+                    // the keys, so (like single-key PkLookup) DROP the
+                    // predicate.
+                    if caps.pk_lookup_batch
+                        && !pk_cols.is_empty()
+                        && matches!(access, ScanAccess::FullScan)
+                        && let Some(keys) = try_pk_lookup_batch(&combined, &pk_cols)
+                    {
+                        return PhysicalPlan::Scan {
+                            table,
+                            output_schema,
+                            projection,
+                            predicate: None,
+                            limit,
+                            access: ScanAccess::PkLookupBatch { keys },
+                        };
+                    }
+                    // TD-127: secondary-index lookup — an equality / IN
+                    // on a non-PK secondary-indexed column. The index
+                    // only NARROWS, so KEEP the predicate as a residual
+                    // Filter above the scan (the executor re-checks every
+                    // candidate, and falls back to a full scan when the
+                    // reader has no built index).
+                    let secondary_cols = resolver.secondary_index_columns(&table);
+                    if caps.secondary_lookup
+                        && !secondary_cols.is_empty()
+                        && matches!(access, ScanAccess::FullScan)
+                        && let Some((column, values)) =
+                            try_secondary_lookup(&combined, &secondary_cols, &output_schema)
+                    {
+                        // Push the combined predicate into the scan too
+                        // (used only on the full-scan fallback) when the
+                        // adapter pushes predicates; the residual Filter
+                        // is the row-exact authority on both paths.
+                        let scan_predicate = if caps.push_predicate {
+                            combined.clone()
+                        } else {
+                            None
+                        };
+                        let scan = PhysicalPlan::Scan {
+                            table,
+                            output_schema,
+                            projection,
+                            predicate: scan_predicate,
+                            limit,
+                            access: ScanAccess::SecondaryLookup { column, values },
+                        };
+                        return match combined {
+                            Some(p) => PhysicalPlan::Filter {
+                                input: Box::new(scan),
+                                predicate: p,
+                            },
+                            None => scan,
+                        };
+                    }
                     if caps.push_predicate {
                         PhysicalPlan::Scan {
                             table,
@@ -1199,6 +1295,151 @@ fn try_pk_lookup(
     }
     // All PK slots must be covered.
     key.into_iter().collect()
+}
+
+/// TD-128: extract a discrete multi-key batch from a predicate that is
+/// ENTIRELY a single-column `PK IN (v1, v2, …)` or a pure
+/// `PK = a OR PK = b OR …` disjunction. Returns one key tuple per
+/// value (single-component in v1). Returns `None` when the predicate
+/// has any other shape (an ANDed residual, a non-PK column, a
+/// column-referencing value, or `NOT IN`) so the caller leaves the
+/// predicate intact. Only fires for single-column PKs.
+fn try_pk_lookup_batch(predicate: &Option<Expr>, pk_cols: &[usize]) -> Option<Vec<Vec<Expr>>> {
+    // v1: single-column PK only.
+    let [pk] = pk_cols else {
+        return None;
+    };
+    let pk = *pk;
+    let p = predicate.as_ref()?;
+    match p {
+        // `PK IN (v1, v2, …)` (not negated).
+        Expr::In {
+            expr,
+            list,
+            not: false,
+        } => {
+            let Expr::Column(c) = expr.as_ref() else {
+                return None;
+            };
+            if c.ordinal != pk || list.is_empty() {
+                return None;
+            }
+            if list.iter().any(expression_references_columns) {
+                return None;
+            }
+            Some(list.iter().map(|v| vec![v.clone()]).collect())
+        }
+        // `PK = a OR PK = b OR …` — every disjunct must be a PK
+        // equality against a constant.
+        Expr::BinaryOp {
+            op: BinaryOp::Or, ..
+        } => {
+            let mut keys = Vec::new();
+            collect_pk_eq_disjuncts(p, pk, &mut keys)?;
+            if keys.is_empty() { None } else { Some(keys) }
+        }
+        _ => None,
+    }
+}
+
+/// Walk an OR-tree, collecting one `[value]` key per `PK = const`
+/// leaf. Returns `None` if any leaf is not a PK equality against a
+/// constant.
+fn collect_pk_eq_disjuncts(expr: &Expr, pk: usize, out: &mut Vec<Vec<Expr>>) -> Option<()> {
+    match expr {
+        Expr::BinaryOp {
+            op: BinaryOp::Or,
+            left,
+            right,
+        } => {
+            collect_pk_eq_disjuncts(left, pk, out)?;
+            collect_pk_eq_disjuncts(right, pk, out)?;
+            Some(())
+        }
+        Expr::BinaryOp {
+            op: BinaryOp::Eq,
+            left,
+            right,
+        } => {
+            let (col, value) = match (left.as_ref(), right.as_ref()) {
+                (Expr::Column(c), v) => (c, v),
+                (v, Expr::Column(c)) => (c, v),
+                _ => return None,
+            };
+            if col.ordinal != pk || expression_references_columns(value) {
+                return None;
+            }
+            out.push(vec![value.clone()]);
+            Some(())
+        }
+        _ => None,
+    }
+}
+
+/// TD-127: find one secondary-index probe in a predicate — an
+/// equality (`col = const`) or `IN`-list (`col IN (…)`, not negated)
+/// on a column the table declares as a single-column secondary index.
+/// Returns `(column_name, probe_values)` for the FIRST matching
+/// conjunct. The remaining conjuncts stay in the residual Filter (the
+/// index only narrows), so this scans the AND-conjuncts and does NOT
+/// require the whole predicate to be the probe.
+fn try_secondary_lookup(
+    predicate: &Option<Expr>,
+    secondary_cols: &[String],
+    output_schema: &RelationalSchema,
+) -> Option<(String, Vec<Expr>)> {
+    let p = predicate.as_ref()?;
+    // Resolve indexed column NAMES to ordinals in the (still full at
+    // this pass) scan schema, matching how PK lookup matches on ordinal.
+    let indexed: Vec<(usize, String)> = secondary_cols
+        .iter()
+        .filter_map(|name| {
+            output_schema
+                .column_by_name(name)
+                .map(|(idx, info)| (idx, info.name.clone()))
+        })
+        .collect();
+    if indexed.is_empty() {
+        return None;
+    }
+    for conj in flatten_and(p) {
+        match conj {
+            Expr::BinaryOp {
+                op: BinaryOp::Eq,
+                left,
+                right,
+            } => {
+                let (col, value) = match (left.as_ref(), right.as_ref()) {
+                    (Expr::Column(c), v) => (c, v),
+                    (v, Expr::Column(c)) => (c, v),
+                    _ => continue,
+                };
+                if expression_references_columns(value) {
+                    continue;
+                }
+                if let Some((_, name)) = indexed.iter().find(|(idx, _)| *idx == col.ordinal) {
+                    return Some((name.clone(), vec![value.clone()]));
+                }
+            }
+            Expr::In {
+                expr,
+                list,
+                not: false,
+            } => {
+                let Expr::Column(c) = expr.as_ref() else {
+                    continue;
+                };
+                if list.is_empty() || list.iter().any(expression_references_columns) {
+                    continue;
+                }
+                if let Some((_, name)) = indexed.iter().find(|(idx, _)| *idx == c.ordinal) {
+                    return Some((name.clone(), list.clone()));
+                }
+            }
+            _ => continue,
+        }
+    }
+    None
 }
 
 fn flatten_and(expr: &Expr) -> Vec<&Expr> {
@@ -2093,6 +2334,7 @@ mod tests {
         StaticCapabilities {
             caps: ReaderCapabilities::full(),
             pk_columns: pk,
+            secondary_columns: Vec::new(),
         }
     }
 
@@ -2100,6 +2342,16 @@ mod tests {
         StaticCapabilities {
             caps: ReaderCapabilities::none(),
             pk_columns: Vec::new(),
+            secondary_columns: Vec::new(),
+        }
+    }
+
+    /// `cap_full` plus a set of secondary-indexed column names (TD-127).
+    fn cap_full_with_secondary(pk: Vec<usize>, secondary: Vec<&str>) -> StaticCapabilities {
+        StaticCapabilities {
+            caps: ReaderCapabilities::full(),
+            pk_columns: pk,
+            secondary_columns: secondary.into_iter().map(String::from).collect(),
         }
     }
 
@@ -2399,6 +2651,242 @@ mod tests {
         }
     }
 
+    // --- TD-128: PK batch (IN-list / eq-OR) ---------------------------
+
+    #[test]
+    fn push_predicate_pk_in_list_becomes_pk_lookup_batch() {
+        let id = users_schema().resolve_column("id").unwrap();
+        let pred = Expr::In {
+            expr: Box::new(Expr::column(id)),
+            list: vec![
+                Expr::literal(ProximaValue::Int64(1)),
+                Expr::literal(ProximaValue::Int64(2)),
+                Expr::literal(ProximaValue::Int64(3)),
+            ],
+            not: false,
+        };
+        let physical = PhysicalPlan::Filter {
+            input: Box::new(lower_to_physical(users_scan())),
+            predicate: pred,
+        };
+        match push_predicates(physical, &cap_full(vec![0])) {
+            PhysicalPlan::Scan {
+                access: ScanAccess::PkLookupBatch { keys },
+                predicate,
+                ..
+            } => {
+                assert_eq!(keys.len(), 3, "one key per IN value");
+                assert!(keys.iter().all(|k| k.len() == 1), "single-column PK");
+                // Fully captured → predicate dropped.
+                assert_eq!(predicate, None);
+            }
+            other => panic!("expected PkLookupBatch scan, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn push_predicate_pk_eq_or_becomes_pk_lookup_batch() {
+        // id = 1 OR id = 2
+        let id = users_schema().resolve_column("id").unwrap();
+        let pred = Expr::BinaryOp {
+            op: BinaryOp::Or,
+            left: Box::new(Expr::bin(
+                BinaryOp::Eq,
+                Expr::column(id.clone()),
+                Expr::literal(ProximaValue::Int64(1)),
+            )),
+            right: Box::new(Expr::bin(
+                BinaryOp::Eq,
+                Expr::column(id),
+                Expr::literal(ProximaValue::Int64(2)),
+            )),
+        };
+        let physical = PhysicalPlan::Filter {
+            input: Box::new(lower_to_physical(users_scan())),
+            predicate: pred,
+        };
+        match push_predicates(physical, &cap_full(vec![0])) {
+            PhysicalPlan::Scan {
+                access: ScanAccess::PkLookupBatch { keys },
+                predicate,
+                ..
+            } => {
+                assert_eq!(keys.len(), 2);
+                assert_eq!(predicate, None);
+            }
+            other => panic!("expected PkLookupBatch scan, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn push_predicate_pk_in_list_skipped_without_capability() {
+        let id = users_schema().resolve_column("id").unwrap();
+        let pred = Expr::In {
+            expr: Box::new(Expr::column(id)),
+            list: vec![
+                Expr::literal(ProximaValue::Int64(1)),
+                Expr::literal(ProximaValue::Int64(2)),
+            ],
+            not: false,
+        };
+        let physical = PhysicalPlan::Filter {
+            input: Box::new(lower_to_physical(users_scan())),
+            predicate: pred,
+        };
+        // pk_lookup (single) on, but batch capability off → stays a scan+predicate.
+        let caps = StaticCapabilities {
+            caps: ReaderCapabilities::full().with_pk_lookup_batch(false),
+            pk_columns: vec![0],
+            secondary_columns: Vec::new(),
+        };
+        match push_predicates(physical, &caps) {
+            PhysicalPlan::Scan {
+                access: ScanAccess::FullScan,
+                predicate: Some(_),
+                ..
+            } => {}
+            other => panic!("expected FullScan with predicate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn push_predicate_not_in_list_not_batched() {
+        // `id NOT IN (...)` is not a discrete-key batch.
+        let id = users_schema().resolve_column("id").unwrap();
+        let pred = Expr::In {
+            expr: Box::new(Expr::column(id)),
+            list: vec![Expr::literal(ProximaValue::Int64(1))],
+            not: true,
+        };
+        let physical = PhysicalPlan::Filter {
+            input: Box::new(lower_to_physical(users_scan())),
+            predicate: pred,
+        };
+        match push_predicates(physical, &cap_full(vec![0])) {
+            PhysicalPlan::Scan {
+                access: ScanAccess::FullScan,
+                ..
+            } => {}
+            other => panic!("expected FullScan, got {other:?}"),
+        }
+    }
+
+    // --- TD-127: secondary-index lookup -------------------------------
+
+    #[test]
+    fn push_predicate_secondary_eq_becomes_secondary_lookup_keeps_filter() {
+        // WHERE name = 'bob' with a secondary index on `name`.
+        let name = users_schema().resolve_column("name").unwrap();
+        let pred = Expr::bin(
+            BinaryOp::Eq,
+            Expr::column(name),
+            Expr::literal(ProximaValue::String("bob".into())),
+        );
+        let physical = PhysicalPlan::Filter {
+            input: Box::new(lower_to_physical(users_scan())),
+            predicate: pred,
+        };
+        let result = push_predicates(physical, &cap_full_with_secondary(vec![0], vec!["name"]));
+        // The index only narrows → planner KEEPS the residual Filter above the scan.
+        match result {
+            PhysicalPlan::Filter { input, predicate } => {
+                assert!(
+                    matches!(predicate, Expr::BinaryOp { .. }),
+                    "residual filter kept"
+                );
+                match *input {
+                    PhysicalPlan::Scan {
+                        access: ScanAccess::SecondaryLookup { column, values },
+                        ..
+                    } => {
+                        assert_eq!(column, "name");
+                        assert_eq!(values.len(), 1);
+                    }
+                    other => panic!("expected SecondaryLookup scan, got {other:?}"),
+                }
+            }
+            other => panic!("expected Filter(SecondaryLookup), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn push_predicate_secondary_in_list_becomes_secondary_lookup() {
+        let name = users_schema().resolve_column("name").unwrap();
+        let pred = Expr::In {
+            expr: Box::new(Expr::column(name)),
+            list: vec![
+                Expr::literal(ProximaValue::String("alice".into())),
+                Expr::literal(ProximaValue::String("carol".into())),
+            ],
+            not: false,
+        };
+        let physical = PhysicalPlan::Filter {
+            input: Box::new(lower_to_physical(users_scan())),
+            predicate: pred,
+        };
+        let result = push_predicates(physical, &cap_full_with_secondary(vec![0], vec!["name"]));
+        match result {
+            PhysicalPlan::Filter { input, .. } => match *input {
+                PhysicalPlan::Scan {
+                    access: ScanAccess::SecondaryLookup { column, values },
+                    ..
+                } => {
+                    assert_eq!(column, "name");
+                    assert_eq!(values.len(), 2);
+                }
+                other => panic!("expected SecondaryLookup scan, got {other:?}"),
+            },
+            other => panic!("expected Filter(SecondaryLookup), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn push_predicate_secondary_skipped_when_column_unindexed() {
+        // `age` is not declared as a secondary index → normal scan+predicate.
+        let age = users_schema().resolve_column("age").unwrap();
+        let pred = Expr::bin(
+            BinaryOp::Eq,
+            Expr::column(age),
+            Expr::literal(ProximaValue::Int32(30)),
+        );
+        let physical = PhysicalPlan::Filter {
+            input: Box::new(lower_to_physical(users_scan())),
+            predicate: pred,
+        };
+        let result = push_predicates(physical, &cap_full_with_secondary(vec![0], vec!["name"]));
+        match result {
+            PhysicalPlan::Scan {
+                access: ScanAccess::FullScan,
+                predicate: Some(_),
+                ..
+            } => {}
+            other => panic!("expected FullScan with predicate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn push_predicate_secondary_skipped_without_declared_index() {
+        // Same predicate but NO secondary index declared → not a SecondaryLookup.
+        let name = users_schema().resolve_column("name").unwrap();
+        let pred = Expr::bin(
+            BinaryOp::Eq,
+            Expr::column(name),
+            Expr::literal(ProximaValue::String("bob".into())),
+        );
+        let physical = PhysicalPlan::Filter {
+            input: Box::new(lower_to_physical(users_scan())),
+            predicate: pred,
+        };
+        match push_predicates(physical, &cap_full(vec![0])) {
+            PhysicalPlan::Scan {
+                access: ScanAccess::FullScan,
+                predicate: Some(_),
+                ..
+            } => {}
+            other => panic!("expected FullScan with predicate, got {other:?}"),
+        }
+    }
+
     // --- EXPLAIN rendering --------------------------------------------
 
     #[test]
@@ -2521,8 +3009,11 @@ mod tests {
         };
         // Caps: push_predicate but NOT pk_lookup.
         let caps = StaticCapabilities {
-            caps: ReaderCapabilities::full().with_pk_lookup(false),
+            caps: ReaderCapabilities::full()
+                .with_pk_lookup(false)
+                .with_pk_lookup_batch(false),
             pk_columns: vec![0],
+            secondary_columns: Vec::new(),
         };
         let result = push_predicates(physical, &caps);
         // Falls back to predicate pushdown (FullScan + predicate).

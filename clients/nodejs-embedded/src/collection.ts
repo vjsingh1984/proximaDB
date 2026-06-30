@@ -53,6 +53,24 @@ function insertedCount(response: RecordBatchResponse): number {
 export interface CollectionHttpClient extends SearchHttpClient {
   get<T>(url: string): Promise<T>;
   delete<T>(url: string): Promise<T>;
+  /**
+   * Typed transport for core collection / record ops (TD-126 Phase 4). These
+   * route through the generated REST client (src/generated/schema.ts) instead
+   * of hand-built URL strings.
+   */
+  createCollectionRequest(body: Record<string, unknown>): Promise<unknown>;
+  getCollectionRequest(collectionId: string): Promise<unknown>;
+  insertRecordsRequest(
+    collectionId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown>;
+  getRecordRequest(
+    collectionId: string,
+    recordId: string,
+    includeVector: boolean,
+    includeText: boolean,
+  ): Promise<unknown>;
+  deleteRecordRequest(collectionId: string, recordId: string): Promise<void>;
 }
 
 // ============================================================================
@@ -151,8 +169,7 @@ export class CollectionBuilder {
       tags: this.tagsValue.length > 0 ? this.tagsValue : undefined,
     };
 
-    const url = this.client.url() + "/api/v2/collections";
-    await this.client.post<{ success: boolean }>(url, request);
+    await this.client.createCollectionRequest(request as Record<string, unknown>);
   }
 
   /**
@@ -248,8 +265,10 @@ export class InsertBuilder {
       validate_schema: true,
     };
 
-    const url = this.client.url() + `/api/v2/collections/${this.collectionName}/records/batch`;
-    await this.client.post<RecordBatchResponse>(url, request);
+    await this.client.insertRecordsRequest(
+      this.collectionName,
+      request as unknown as Record<string, unknown>,
+    );
   }
 }
 
@@ -311,8 +330,10 @@ export class BatchInsertBuilder {
       validate_schema: true,
     };
 
-    const url = this.client.url() + `/api/v2/collections/${this.collectionName}/records/batch`;
-    const response = await this.client.post<RecordBatchResponse>(url, request);
+    const response = (await this.client.insertRecordsRequest(
+      this.collectionName,
+      request as unknown as Record<string, unknown>,
+    )) as RecordBatchResponse;
     return insertedCount(response);
   }
 }
@@ -385,8 +406,10 @@ export class UpdateBuilder {
       replace_metadata: this.replaceMetadataFlag,
     };
 
-    const url = this.client.url() + `/api/v2/collections/${this.collectionName}/records/batch`;
-    await this.client.post<RecordBatchResponse>(url, request);
+    await this.client.insertRecordsRequest(
+      this.collectionName,
+      request as unknown as Record<string, unknown>,
+    );
   }
 }
 
@@ -445,8 +468,9 @@ export class CollectionHandle {
    * Get collection information
    */
   async info(): Promise<CollectionInfo> {
-    const url = this.client.url() + "/api/v2/collections/" + this.collectionName;
-    return await this.client.get<CollectionInfo>(url);
+    return (await this.client.getCollectionRequest(
+      this.collectionName,
+    )) as CollectionInfo;
   }
 
   /**
@@ -470,8 +494,12 @@ export class CollectionHandle {
    */
   async getVector(id: string): Promise<VectorRecord | null> {
     try {
-      const url = this.client.url() + `/api/v2/collections/${this.collectionName}/records/${id}?include_vector=true&include_text=false`;
-      return await this.client.get<VectorRecord>(url);
+      return (await this.client.getRecordRequest(
+        this.collectionName,
+        id,
+        true,
+        false,
+      )) as VectorRecord;
     } catch (e: unknown) {
       if (e instanceof Error && e.message.includes("404")) {
         return null;
@@ -492,8 +520,7 @@ export class CollectionHandle {
    * Delete a vector by ID
    */
   async deleteVector(id: string): Promise<void> {
-    const url = this.client.url() + `/api/v2/collections/${this.collectionName}/records/${id}`;
-    await this.client.delete<unknown>(url);
+    await this.client.deleteRecordRequest(this.collectionName, id);
   }
 
   /**

@@ -35,6 +35,33 @@ the supported-surface docs and durability tests say otherwise.
 | Events | append-only stream, expected version, replay, snapshots | event API and `EVENTS` logical operator |
 | Observability | logs, metrics, traces, span lookup | existing observability API and logical operators |
 
+## Entity And Fusion Boundary
+
+The SKS/entity shape is a convenience contract, not a new storage lane. An
+entity spans existing primitives:
+
+| Entity concern | Backing primitive | API owner |
+| --- | --- | --- |
+| Stable semantic identity and typed fields | `ProximaRecord` id + `props` | record/collection APIs |
+| Current topology and explicit relations | graph node + graph edges | graph APIs and `GRAPH_QUERY` |
+| One or more embeddings | vector-bearing records / embedding cells | record/vector APIs and `VECTOR_SEARCH` |
+| Source chunks and evidence | document records / text fields | document APIs and `DOCUMENT_QUERY` |
+| Provenance, temporal validity, replay | event/history records | event/logical query path |
+| Cross-modal ranking | `oid`-keyed fusion seam | query/fusion layer |
+
+Do not introduce a v2 entity store with its own WAL, path layout, or recovery
+rules. If a v2 `EntityService` is exposed, it should be an orchestration facade:
+
+- `UpsertEntity`: write/update the graph node, vector-bearing records, document
+  provenance, and optional temporal/event records through their owning services.
+- `GetEntity`: assemble the view from graph + record/vector + document/event
+  lookups.
+- `SearchEntities`: seed from vector search, apply record/document predicates,
+  optionally expand through graph, then fuse/rank via the shared `oid` seam.
+
+This avoids the wrong seam: separate "entity storage" that duplicates graph
+nodes, vector records, document metadata, and temporal state.
+
 ## Server API V2
 
 The v2 server surface should be additive and map to the existing service layer:

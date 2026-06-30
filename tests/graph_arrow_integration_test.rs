@@ -10,8 +10,8 @@
 
 #[cfg(test)]
 mod graph_arrow_integration_tests {
-    use proximadb::graph::{Edge, Node, service::GraphOperationsService};
-    use proximadb::proto::proximadb_v1::{CompressionAlgorithm, GraphStorageConfig, PropertyValue};
+    use proximadb::graph::{Edge, Node, PropertyValue, service::GraphOperationsService};
+    use proximadb::proto::proximadb_v1::{CompressionAlgorithm, GraphStorageConfig};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -62,11 +62,9 @@ mod graph_arrow_integration_tests {
             properties: HashMap::from([(
                 "name".to_string(),
                 PropertyValue {
-                    value: Some(
-                        proximadb::proto::proximadb_v1::property_value::Value::StringValue(
-                            "Alice".to_string(),
-                        ),
-                    ),
+                    value: Some(proximadb::graph::property_value::Value::StringValue(
+                        "Alice".to_string(),
+                    )),
                 },
             )]),
             embedding: None,
@@ -80,11 +78,9 @@ mod graph_arrow_integration_tests {
             properties: HashMap::from([(
                 "name".to_string(),
                 PropertyValue {
-                    value: Some(
-                        proximadb::proto::proximadb_v1::property_value::Value::StringValue(
-                            "Bob".to_string(),
-                        ),
-                    ),
+                    value: Some(proximadb::graph::property_value::Value::StringValue(
+                        "Bob".to_string(),
+                    )),
                 },
             )]),
             embedding: None,
@@ -121,9 +117,7 @@ mod graph_arrow_integration_tests {
             properties: HashMap::from([(
                 "weight".to_string(),
                 PropertyValue {
-                    value: Some(
-                        proximadb::proto::proximadb_v1::property_value::Value::DoubleValue(0.8),
-                    ),
+                    value: Some(proximadb::graph::property_value::Value::DoubleValue(0.8)),
                 },
             )]),
             weight: Some(0.8),

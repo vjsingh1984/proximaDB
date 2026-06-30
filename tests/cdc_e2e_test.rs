@@ -313,10 +313,7 @@ fn test_column_value_as_string_all_variants() {
     assert!(ColumnValue::Null.as_string().is_none());
     assert_eq!(ColumnValue::Int(-42).as_string(), Some("-42".to_string()));
     assert_eq!(ColumnValue::UInt(42).as_string(), Some("42".to_string()));
-    assert_eq!(
-        ColumnValue::Float(3.14).as_string(),
-        Some("3.14".to_string())
-    );
+    assert_eq!(ColumnValue::Float(3.5).as_string(), Some("3.5".to_string()));
     assert_eq!(
         ColumnValue::String("hello".to_string()).as_string(),
         Some("hello".to_string())

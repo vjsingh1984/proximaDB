@@ -8,7 +8,10 @@
 //! - `Catalog` — the core async trait every catalog backend implements
 //! - All `Catalog*` types used in trait method signatures
 
+use proximadb_compression_types::CompressionAlgorithm;
 use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
+use proximadb_distance_types::DistanceMetric;
+use proximadb_quantization_types::QuantizationType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -18,6 +21,10 @@ pub mod canonical_precision;
 // Collection-level DR / CRR engine contract (P1 of
 // COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc).
 pub mod collection_dr_policy;
+// Global corpus-version registry + store trait (relocated from the root crate's
+// src/catalog so storage-side consumers like compaction can depend on it downward).
+pub mod corpus_version;
+pub use corpus_version::CorpusVersionRegistry;
 // Customer-facing DR policy mutation surface (S14 of the same contract).
 pub mod dr_policy_store;
 // DR reconciler decision logic (P3a of the same contract).
@@ -32,6 +39,7 @@ pub mod embedding_precision_policy;
 pub mod glue;
 pub mod hive;
 pub mod iceberg;
+pub mod id_allocator;
 pub mod native;
 pub mod oltp;
 #[cfg(feature = "polaris-catalog")]
@@ -67,6 +75,50 @@ pub enum StoragePoolClass {
     /// Dedicated bucket/storage-account pair per tenant per region pair.
     #[serde(alias = "enterprise_dedicated")]
     Dedicated,
+}
+
+/// Plane a catalog instance serves in the two-tier operator/account isolation
+/// model (Phase 5).
+///
+/// * [`Operator`](Self::Operator) — the SaaS provider's **control-plane**
+///   registry of all customer accounts (entitlements, storage bindings,
+///   billing). It holds metadata-*about*-accounts, never tenant table data,
+///   and is stored under the reserved `_operator/` root.
+/// * [`Account`](Self::Account) — a customer account's **data-plane** catalog
+///   (its tenants → namespaces → objects), stored under
+///   `accounts/{account_id}/…`. A per-account catalog is structurally unable to
+///   name another account's objects — isolation is structural, not a query
+///   predicate.
+///
+/// Single-deployment default is one `Operator`-roled system catalog (it holds
+/// the whole deployment's objects until multi-account provisioning splits
+/// data-plane catalogs out per account).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogRole {
+    /// Control-plane registry of accounts (under `_operator/`).
+    Operator,
+    /// Data-plane catalog scoped to one customer account.
+    Account {
+        /// The owning account ID (roots the catalog under `accounts/{id}/…`).
+        account_id: String,
+    },
+}
+
+impl CatalogRole {
+    /// The owning account ID for an [`Account`](Self::Account) catalog, or
+    /// `None` for the [`Operator`](Self::Operator) control plane.
+    pub fn account_id(&self) -> Option<&str> {
+        match self {
+            CatalogRole::Operator => None,
+            CatalogRole::Account { account_id } => Some(account_id.as_str()),
+        }
+    }
+
+    /// True for the control-plane operator catalog.
+    pub fn is_operator(&self) -> bool {
+        matches!(self, CatalogRole::Operator)
+    }
 }
 
 /// Namespace metadata.
@@ -107,6 +159,18 @@ pub struct CatalogNamespace {
     pub updated_at_ms: i64,
 
     // --- Engine multi-tenant authority fields (stable identifiers) ---
+    /// ADR-031 / TD-181 P0: stable, immutable `u64` **catalog object identity**,
+    /// minted from the single system-wide catalog sequence (globally unique
+    /// across all tenants, never reused). This is the catalog-object surrogate
+    /// the planner/FK/path layers will key on; it is distinct from
+    /// `namespace_id` (the legacy `ns_<uuid>` path token, retired in a later
+    /// phase) and from `tenant_id`/`account_id` (externally assigned, **not**
+    /// catalog surrogates — ADR-031 reconciliation amendment 2). Additive +
+    /// `#[serde(default)]`, so legacy rows and federated (external-catalog)
+    /// namespaces load as `None` (mixed-read-safe; only native-minted
+    /// namespaces carry one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_id: Option<u64>,
     /// Opaque, stable, server-issued ULID. Never reused, never changes on
     /// rename. Drives physical paths and provider rule filters. `None`
     /// for legacy rows pending P0.5 migration backfill.
@@ -117,6 +181,14 @@ pub struct CatalogNamespace {
     /// `"tnt_legacy_system"` until operator re-parents).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
+    /// Owning customer **account** — the SaaS billing/isolation boundary
+    /// that sits *above* `tenant_id` (a tenant is a workspace/sub-org
+    /// inside an account). Drives the account-rooted physical path
+    /// `accounts/{account_id}/{tenant_id}/{namespace_id}/{object_id}/`.
+    /// `None` keeps the legacy flat `data/{tenant_id}/...` render
+    /// (mixed-safe; the account tier is inert until provisioned).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
     /// Region where authoritative writes land. `None` is allowed only
     /// for namespaces with no DR policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -152,8 +224,10 @@ impl CatalogNamespace {
             location: None,
             created_at_ms: now,
             updated_at_ms: now,
+            object_id: None,
             namespace_id: None,
             tenant_id: None,
+            account_id: None,
             region_home: None,
             default_dr_region_pair_id: None,
             storage_pool_class: StoragePoolClass::default(),
@@ -163,6 +237,12 @@ impl CatalogNamespace {
     /// Get fully qualified name
     pub fn fqn(&self) -> String {
         self.levels.join(".")
+    }
+
+    /// Set the stable `u64` catalog object identity (ADR-031 / TD-181 P0).
+    pub fn with_object_id(mut self, object_id: u64) -> Self {
+        self.object_id = Some(object_id);
+        self
     }
 
     /// Add a property
@@ -195,6 +275,14 @@ impl CatalogNamespace {
         self
     }
 
+    /// Set the owning customer account (the billing/isolation boundary
+    /// above `tenant_id`). Activates the account-rooted physical path;
+    /// leaving it unset keeps the legacy flat `data/{tenant_id}/...` render.
+    pub fn with_account(mut self, account_id: impl Into<String>) -> Self {
+        self.account_id = Some(account_id.into());
+        self
+    }
+
     /// Set the home region for authoritative writes.
     pub fn with_region_home(mut self, region: impl Into<String>) -> Self {
         self.region_home = Some(region.into());
@@ -224,8 +312,19 @@ impl CatalogNamespace {
 /// Column definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogColumn {
-    /// Column ID (stable across renames)
+    /// Column ID — the **physical** field identity: stable across renames and
+    /// mapped 1:1 to the Iceberg/Parquet field-id (ADR-010). This is the on-disk
+    /// column mapping, NOT the catalog surrogate; see `object_id`.
     pub id: i32,
+    /// ADR-031 / TD-181: the **catalog** surrogate identity — a stable, immutable
+    /// `u64` `object_id` from the one system-wide catalog sequence (globally
+    /// unique, never reused). Distinct role from `id` (the physical field-id):
+    /// `object_id` is what catalog→catalog references and the path migration key
+    /// on; `id` is the Parquet/PAX field mapping. Both coexist by role (ADR-031
+    /// reconciliation amendment 4). Additive + `#[serde(default)]`, so legacy
+    /// rows and not-yet-persisted columns load as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_id: Option<u64>,
     /// Column name
     pub name: String,
     /// Data type (canonical logical type — ADR-024).
@@ -263,6 +362,7 @@ impl CatalogColumn {
     pub fn new(id: i32, name: impl Into<String>, data_type: ProximaType) -> Self {
         Self {
             id,
+            object_id: None,
             name: name.into(),
             data_type,
             nullable: true,
@@ -272,6 +372,12 @@ impl CatalogColumn {
             is_deleted: false,
             original_id: None,
         }
+    }
+
+    /// Set the stable `u64` catalog object identity (ADR-031 / TD-181).
+    pub fn with_object_id(mut self, object_id: u64) -> Self {
+        self.object_id = Some(object_id);
+        self
     }
 
     /// Set nullable
@@ -323,6 +429,7 @@ impl CatalogColumn {
     pub fn from_arrow_field(field: &arrow_schema::Field, id: i32) -> Self {
         Self {
             id,
+            object_id: None,
             name: field.name().clone(),
             data_type: ProximaType::from_arrow_type(field.data_type()),
             nullable: field.is_nullable(),
@@ -424,11 +531,81 @@ pub fn catalog_arrow_type(ty: &ProximaType) -> arrow_schema::DataType {
     }
 }
 
+/// Catalog-authoritative embedding descriptor for a vector table.
+///
+/// The system catalog is the system-of-record for *which* model vectorizes a
+/// table and the geometry of its output, but it deliberately does NOT depend on
+/// the modality engine (`proximadb-embedding` is a `modality` crate, above the
+/// control layer). The embedding engine maps this descriptor to its own route
+/// type. Precision *policy* (allowed/canonical precisions, recall SLO) is carried
+/// separately in the dedicated precision-policy fields; this captures only model
+/// identity + output geometry.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogEmbeddingConfig {
+    /// Model/route identifier, opaque to the catalog and resolved by the
+    /// embedding engine, e.g. `"bge-small"`, `"openai:text-embedding-3-small"`,
+    /// or `"byo:https://…"`.
+    pub model: String,
+    /// Output dimensionality of the model.
+    pub dimension: u32,
+    /// Native scalar precision of the model output. Legacy/unset → `Fp32`.
+    #[serde(default)]
+    pub native_precision: proximadb_records::EmbeddingScalarType,
+    /// Whether the engine L2-normalizes embeddings before they are stored.
+    #[serde(default)]
+    pub normalize: bool,
+}
+
+/// Catalog-authoritative table-level storage descriptor.
+///
+/// Catalog-native (not the wire `proto` `StorageConfig`) so the catalog stays
+/// decoupled from the transport schema. This is the table-level default;
+/// fine-grained per-layout authority/format lives in
+/// [`CatalogTableSchema::storage_layouts`] and the selected specialization in
+/// [`CatalogTableSchema::storage_specialization`]. Every field is `None` =
+/// "inherit the engine default", so the descriptor is inert until explicitly set.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogStorageConfig {
+    /// Compression codec for cold/warehouse segments. `None` = engine default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compression: Option<CompressionAlgorithm>,
+    /// Target segment/file size in MiB before rotation. `None` = engine default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_segment_size_mb: Option<u32>,
+    /// Whether read-through caching is enabled for this table. `None` = inherit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enable_caching: Option<bool>,
+}
+
 /// Table schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogTableSchema {
     /// Table name
     pub name: String,
+    /// ADR-031 stable, immutable internal object id (per-type `u64`, globally unique
+    /// across tenants, never reused) — the rename-safe physical key for the WAL
+    /// `collection_id`, memtable partition, and object-store paths. `None` = legacy /
+    /// not-yet-allocated; `create_table` assigns it, `rename_table` preserves it.
+    /// Additive + `#[serde(default)]` so old persisted schemas deserialize to `None`
+    /// (mixed-read-safe). Physical layers still key on `name` until the migration
+    /// cuts over (ADR-031 O2).
+    #[serde(default)]
+    pub object_id: Option<u64>,
+    /// ADR-031 Phase 4a per-scope compact numeric identity for the typed
+    /// object-store path. `stable_namespace_id` (u16, per-account) and
+    /// `stable_collection_id` (u32, per-namespace) are minted by the catalog's
+    /// `CatalogIdService` at create time and persisted here. The **account** u32
+    /// is NOT stored (it would duplicate `account_id`); it's derived from the
+    /// account string via a registry at path-build time. Legacy rows load as
+    /// `None` (mixed-read-safe — the typed path is opt-in, env-gated
+    /// `PROXIMADB_TYPED_PATHS`). The root crate composes these primitives into a
+    /// `CollectionIdentity` at the path boundary (layering: the catalog cannot
+    /// import that root type). All values are numeric in-memory; base62 is
+    /// applied only to path segments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_namespace_id: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_collection_id: Option<u32>,
     /// Table columns
     pub columns: Vec<CatalogColumn>,
     /// Primary key columns (by name)
@@ -542,6 +719,29 @@ pub struct CatalogTableSchema {
     #[serde(default)]
     pub is_legacy_vector_record: bool,
 
+    // === Phase 0 (system-catalog redesign): typed vector/storage config ===
+    // Promote distance metric, quantization codec, embedding model, and storage
+    // config out of loose `properties` string carriage into typed fields, so the
+    // forthcoming catalog WAL/snapshot format serializes the *final* schema shape
+    // from day one. All additive `#[serde(default)]` ⇒ catalogs persisted before
+    // this change deserialize with `None`.
+    /// Vector distance metric for this table's ANN projections. `None` =
+    /// unspecified (the engine/projection default applies).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distance_metric: Option<DistanceMetric>,
+    /// Vector quantization codec for this table. `None` = unspecified (engine
+    /// default, typically full-precision / no quantization).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantization: Option<QuantizationType>,
+    /// Embedding model descriptor (model identity + output geometry). `None` for
+    /// non-vector tables or when embeddings are supplied pre-computed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_config: Option<CatalogEmbeddingConfig>,
+    /// Table-level storage configuration (compression, segment size, caching).
+    /// `None` = inherit engine defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_config: Option<CatalogStorageConfig>,
+
     /// Schema version
     pub schema_version: i32,
     /// Table properties
@@ -563,6 +763,9 @@ impl Default for CatalogTableSchema {
 
         Self {
             name: String::new(),
+            object_id: None,
+            stable_namespace_id: None,
+            stable_collection_id: None,
             columns: Vec::new(),
             primary_key: Vec::new(),
             indexes: Vec::new(),
@@ -595,6 +798,11 @@ impl Default for CatalogTableSchema {
             fingerprint: 0,
             created_at_ms_schema: 0,
             is_legacy_vector_record: false,
+            // Phase 0: typed vector/storage config, all unspecified by default.
+            distance_metric: None,
+            quantization: None,
+            embedding_config: None,
+            storage_config: None,
             schema_version: 1,
             properties: HashMap::new(),
             location: None,
@@ -640,6 +848,30 @@ impl CatalogTableSchema {
     /// Add a rebuildable projection descriptor.
     pub fn with_projection(mut self, projection: CatalogProjection) -> Self {
         self.projections.push(projection);
+        self
+    }
+
+    /// Set the vector distance metric.
+    pub fn with_distance_metric(mut self, metric: DistanceMetric) -> Self {
+        self.distance_metric = Some(metric);
+        self
+    }
+
+    /// Set the vector quantization codec.
+    pub fn with_quantization(mut self, quantization: QuantizationType) -> Self {
+        self.quantization = Some(quantization);
+        self
+    }
+
+    /// Set the embedding model descriptor.
+    pub fn with_embedding_config(mut self, config: CatalogEmbeddingConfig) -> Self {
+        self.embedding_config = Some(config);
+        self
+    }
+
+    /// Set the table-level storage configuration.
+    pub fn with_storage_config(mut self, config: CatalogStorageConfig) -> Self {
+        self.storage_config = Some(config);
         self
     }
 
@@ -1191,6 +1423,13 @@ fn measured_ratio(raw_bytes: u64, encoded_bytes: u64) -> f64 {
 /// Index definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogIndex {
+    /// ADR-031 / TD-181 P0: stable, immutable `u64` catalog object identity,
+    /// minted from the single system-wide catalog sequence (globally unique,
+    /// never reused) — the same sequence that mints table and namespace oids.
+    /// Additive + `#[serde(default)]`, so legacy persisted indexes load as
+    /// `None` (mixed-read-safe; backfilled on first allocation pass).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_id: Option<u64>,
     /// Index name
     pub name: String,
     /// Indexed columns
@@ -1211,6 +1450,7 @@ impl CatalogIndex {
         index_type: CatalogIndexType,
     ) -> Self {
         Self {
+            object_id: None,
             name: name.into(),
             columns,
             index_type,
@@ -1222,6 +1462,12 @@ impl CatalogIndex {
     /// Set unique
     pub fn unique(mut self) -> Self {
         self.is_unique = true;
+        self
+    }
+
+    /// Set the stable `u64` catalog object identity (ADR-031 / TD-181 P0).
+    pub fn with_object_id(mut self, object_id: u64) -> Self {
+        self.object_id = Some(object_id);
         self
     }
 }
@@ -2743,14 +2989,38 @@ mod tests {
     }
 
     #[test]
+    fn catalog_role_accessors_and_serde() {
+        let op = CatalogRole::Operator;
+        assert!(op.is_operator());
+        assert_eq!(op.account_id(), None);
+
+        let acct = CatalogRole::Account {
+            account_id: "acct_acme".to_string(),
+        };
+        assert!(!acct.is_operator());
+        assert_eq!(acct.account_id(), Some("acct_acme"));
+
+        // snake_case, round-trips.
+        let j = serde_json::to_string(&op).expect("ser operator");
+        assert_eq!(j, "\"operator\"");
+        let back: CatalogRole = serde_json::from_str(&j).expect("de operator");
+        assert_eq!(back, op);
+        let j2 = serde_json::to_string(&acct).expect("ser account");
+        let back2: CatalogRole = serde_json::from_str(&j2).expect("de account");
+        assert_eq!(back2, acct);
+    }
+
+    #[test]
     fn namespace_dr_builders_compose() {
         let ns = CatalogNamespace::new(vec!["catalog".into(), "db".into()])
+            .with_account("acct_acme")
             .with_tenant("tnt_acme")
             .with_namespace_id("ns_01HX7Q8K2N5R9P3M1B2C3D4E5F")
             .with_region_home("us-east-1")
             .with_default_dr_region_pair("aws:us-east-1:us-west-2")
             .with_storage_pool_class(StoragePoolClass::Standard);
 
+        assert_eq!(ns.account_id.as_deref(), Some("acct_acme"));
         assert_eq!(ns.tenant_id.as_deref(), Some("tnt_acme"));
         assert_eq!(
             ns.namespace_id.as_deref(),
@@ -2782,6 +3052,7 @@ mod tests {
             serde_json::from_str(legacy_json).expect("legacy namespace JSON must deserialize");
         assert!(ns.namespace_id.is_none());
         assert!(ns.tenant_id.is_none());
+        assert!(ns.account_id.is_none());
         assert_eq!(ns.storage_pool_class, StoragePoolClass::Pooled);
 
         // Re-serializing must skip the None fields so legacy consumers
@@ -2789,6 +3060,7 @@ mod tests {
         let reserialized = serde_json::to_string(&ns).expect("serialize");
         assert!(!reserialized.contains("namespace_id"));
         assert!(!reserialized.contains("tenant_id"));
+        assert!(!reserialized.contains("account_id"));
         assert!(!reserialized.contains("region_home"));
         assert!(!reserialized.contains("default_dr_region_pair_id"));
         // `storage_pool_class` is non-Option so it does show up; that's
@@ -3733,6 +4005,88 @@ mod tests {
         assert_eq!(schema.primary_key_ids(), vec![1]);
     }
 
+    // === Phase 0 (system-catalog redesign): typed vector/storage config ===
+
+    /// All four typed fields survive a JSON serialize → deserialize round-trip
+    /// losslessly, exercising the reused foundation enums (`DistanceMetric`,
+    /// `QuantizationType`, `CompressionAlgorithm`) and the catalog-native config
+    /// structs.
+    #[test]
+    fn catalog_table_schema_round_trips_typed_vector_storage_config() {
+        let schema = CatalogTableSchema::new("typed_vec")
+            .with_distance_metric(DistanceMetric::Cosine)
+            .with_quantization(QuantizationType::Scalar)
+            .with_embedding_config(CatalogEmbeddingConfig {
+                model: "bge-small".to_string(),
+                dimension: 384,
+                native_precision: proximadb_records::EmbeddingScalarType::Fp32,
+                normalize: true,
+            })
+            .with_storage_config(CatalogStorageConfig {
+                compression: Some(CompressionAlgorithm::Zstd),
+                max_segment_size_mb: Some(128),
+                enable_caching: Some(true),
+            });
+
+        let json = serde_json::to_string(&schema).unwrap();
+        let back: CatalogTableSchema = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back.distance_metric, Some(DistanceMetric::Cosine));
+        assert_eq!(back.quantization, Some(QuantizationType::Scalar));
+        assert_eq!(
+            back.embedding_config,
+            Some(CatalogEmbeddingConfig {
+                model: "bge-small".to_string(),
+                dimension: 384,
+                native_precision: proximadb_records::EmbeddingScalarType::Fp32,
+                normalize: true,
+            })
+        );
+        assert_eq!(
+            back.storage_config,
+            Some(CatalogStorageConfig {
+                compression: Some(CompressionAlgorithm::Zstd),
+                max_segment_size_mb: Some(128),
+                enable_caching: Some(true),
+            })
+        );
+    }
+
+    /// DURABLE compat: the four typed fields are omitted from JSON when unset
+    /// (`skip_serializing_if`), and a catalog persisted BEFORE this change — i.e.
+    /// JSON lacking the keys entirely — still deserializes, with each field
+    /// defaulting to `None`.
+    #[test]
+    fn catalog_table_schema_omits_and_defaults_typed_fields_when_unset() {
+        // Unset → omitted from serialized JSON.
+        let schema = CatalogTableSchema::new("plain");
+        let value = serde_json::to_value(&schema).unwrap();
+        let obj = value.as_object().unwrap();
+        assert!(!obj.contains_key("distance_metric"));
+        assert!(!obj.contains_key("quantization"));
+        assert!(!obj.contains_key("embedding_config"));
+        assert!(!obj.contains_key("storage_config"));
+
+        // Pre-Phase-0 JSON (no typed-config keys) still loads, fields default.
+        let pre_phase0_json = serde_json::json!({
+            "name": "pre_phase0_collection",
+            "columns": [],
+            "primary_key": [],
+            "indexes": [],
+            "schema_version": 1,
+            "properties": {},
+            "location": null,
+            "created_at_ms": 1700000000000_i64,
+            "updated_at_ms": 1700000000000_i64
+        });
+        let loaded: CatalogTableSchema = serde_json::from_value(pre_phase0_json).unwrap();
+        assert_eq!(loaded.name, "pre_phase0_collection");
+        assert!(loaded.distance_metric.is_none());
+        assert!(loaded.quantization.is_none());
+        assert!(loaded.embedding_config.is_none());
+        assert!(loaded.storage_config.is_none());
+    }
+
     /// The ported storage-plane constructors/helpers behave like the original
     /// `ProximaSchema` they replaced: legacy vector schema, by-id/by-name
     /// column lookup, tombstone-aware active count, and id<->name primary-key
@@ -4064,6 +4418,38 @@ pub trait Catalog: Send + Sync {
     ) -> anyhow::Result<Vec<CatalogNamespace>>;
     async fn namespace_exists(&self, namespace: &[String]) -> anyhow::Result<bool>;
     async fn get_namespace(&self, namespace: &[String]) -> anyhow::Result<CatalogNamespace>;
+    /// ADR-031 Phase 4b: resolve the numeric account u32 for an account string
+    /// (lookup in the durable account registry; mints+persists on first sight).
+    /// Returns `None` for an empty/absent account. The root path-resolver uses
+    /// this to compose a `CollectionIdentity` for the typed object-store path.
+    /// Default `None` — only the native catalog mints; federated/external
+    /// catalogs have no typed identity (legacy paths).
+    async fn account_id_u32(&self, _account: &str) -> anyhow::Result<Option<u32>> {
+        Ok(None)
+    }
+    /// ADR-031 allocator unification: the highest persisted `object_id` across
+    /// all tables (from the durable `object_name_index`). The root startup path
+    /// uses this to raise the collection-id allocator floor above every existing
+    /// object_id, so a freshly minted collection id can never collide with a
+    /// legacy (pre-unification) `schema.object_id` → no oid-index corruption.
+    /// Default `None` (federated catalogs have no native object_ids).
+    async fn max_object_id(&self) -> anyhow::Result<Option<u64>> {
+        Ok(None)
+    }
+    /// ADR-031 Phase 4c: pre-mint the typed identity triple
+    /// `(account_u32, namespace_u16, collection_u32)` for a collection being
+    /// created under `account`/`namespace_key`, BEFORE storage-dir creation.
+    /// The root composes a `CollectionIdentity` from it for the typed DATA path.
+    /// `None` when no account is known (legacy, mixed-safe). Idempotent with the
+    /// later `create_table`→`mint_stable_identity` (preserves pre-stamped values
+    /// via the shared `resolve_typed_triple`). Default `None`.
+    async fn mint_collection_typed_identity(
+        &self,
+        _account: &str,
+        _namespace_key: &str,
+    ) -> anyhow::Result<Option<(u32, u16, u32)>> {
+        Ok(None)
+    }
     async fn update_namespace_properties(
         &self,
         namespace: &[String],
@@ -4082,6 +4468,67 @@ pub trait Catalog: Send + Sync {
     async fn list_tables(&self, namespace: &[String]) -> anyhow::Result<Vec<TableIdentifier>>;
     async fn table_exists(&self, identifier: &TableIdentifier) -> anyhow::Result<bool>;
     async fn get_table(&self, identifier: &TableIdentifier) -> anyhow::Result<CatalogTableSchema>;
+
+    /// TD-110 S3: enumerate every table in a namespace subtree (the `scope`),
+    /// for cross-namespace FOREIGN KEY child discovery on ON DELETE.
+    /// `scope = None` → all top-level namespaces; `scope = Some([tenant])` → the
+    /// tenant's subtree (keeps FK child discovery intra-tenant — cross-tenant
+    /// children are never enumerated). Default impl BFS-walks `list_namespaces`
+    /// + `list_tables`; correct for every backend (a backend-specific global
+    /// index override is possible but would miss legacy name-keyed tables, so
+    /// the recursive default is the complete path).
+    async fn list_all_tables_in_scope(
+        &self,
+        scope: Option<&[String]>,
+    ) -> anyhow::Result<Vec<TableIdentifier>> {
+        let mut tables = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut frontier: Vec<Vec<String>> = match scope {
+            Some(ns) => vec![ns.to_vec()],
+            None => self
+                .list_namespaces(None)
+                .await?
+                .into_iter()
+                .map(|ns| ns.levels)
+                .collect(),
+        };
+        while let Some(ns) = frontier.pop() {
+            if !visited.insert(ns.clone()) {
+                continue;
+            }
+            tables.extend(self.list_tables(&ns).await?);
+            for child in self.list_namespaces(Some(&ns)).await? {
+                frontier.push(child.levels);
+            }
+        }
+        Ok(tables)
+    }
+
+    /// ADR-031 O1 (dual-read): resolve a table by its stable `object_id` — the
+    /// inverse of `get_table(...).object_id`. Returns `None` when no table carries
+    /// that id, or when the backend does not allocate object_ids (external
+    /// catalogs). Lets `dyn Catalog` consumers (change-feed, recovery, planner)
+    /// key on the global id rather than the mutable name. Default: `None`.
+    async fn get_table_by_object_id(
+        &self,
+        object_id: u64,
+    ) -> anyhow::Result<Option<TableIdentifier>> {
+        let _ = object_id;
+        Ok(None)
+    }
+
+    /// Resolve a namespace's levels from its stable catalog `object_id`
+    /// (ADR-031 / TD-181) — the namespace analogue of `get_table_by_object_id`.
+    /// Default `Ok(None)` for external/federated catalogs that don't mint
+    /// ProximaDB object_ids.
+    async fn get_namespace_by_object_id(
+        &self,
+        object_id: u64,
+    ) -> anyhow::Result<Option<Vec<String>>> {
+        let _ = object_id;
+        Ok(None)
+    }
+
     async fn rename_table(
         &self,
         from: &TableIdentifier,

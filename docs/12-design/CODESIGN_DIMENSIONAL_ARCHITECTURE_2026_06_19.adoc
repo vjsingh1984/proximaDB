@@ -185,13 +185,19 @@ mesh tax (a sidecar ~halves throughput / doubles p99; ~70 GB RAM across 1000 pod
 ALB-LCU / API-GW-per-request / cross-AZ cost, while making cross-surface policy consistency *structural*.
 Full HLD: link:IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19.adoc[IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19].
 
-*Billing meter:* [*DONE — C3*] `proximadb_egress_bytes_total{tenant_id, az_locality}` (the *KEU*
-meter) plus the per-query `io_trace.bytes_cross_az` term, fed by one convergent
-`consumption_metrics::record_egress_bytes` at the object-store read boundaries. `AzLocality`
-(`same_az`/`cross_az`/`internet`) is OSS *mechanism*: the deployment declares its object-store
-locality via `PROXIMADB_OBJECT_STORE_LOCALITY` (default `same_az` = the free path, so the egress
-*cost* term is inert until a cross-AZ topology is declared); the AZ topology and per-locality $
-weights stay anvaiops *policy*. Closes the previously-unmetered networking dimension.
+*Billing meter:* [*DONE — C3*] `proximadb_kou_bytes_total{tenant_id, kou_locality, direction}` (the
+*KOU* — Outgress Unit — meter; *distinct from KEU = embedding*) plus the per-query
+`io_trace.egress_bytes` term, fed by one convergent `consumption_metrics::record_kou_bytes` at *both*
+the object-store read boundaries (`direction=read`) and the result boundaries (`direction=result`),
+instrumented across *pgwire, REST, and Arrow Flight*. `KouLocality`
+(`local`/`cross_az`/`cross_region`/`cross_cloud`/`on_prem`/`internet`/`unknown`) is OSS *mechanism*:
+read-egress locality is *derived* from compute-vs-store region (`install_placement`); result-egress
+locality is *classified* from the client IP (`EdgePolicyContext`) against a terraform-emitted scope
+map. Only chargeable buckets feed the cost term, so it stays inert on the free same-region path; the
+per-(cloud, bucket) $ weights stay anvaiops *policy*. `ResultShapePolicy` adds locality-driven,
+lossless byte-minimization (ZSTD on Flight, gzip at the gateway) for far clients. Closes the
+previously-unmetered networking dimension — full multi-cloud model in
+link:OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21.adoc[OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21].
 
 *TAM:* networking is captured indirectly as the cost floor of every serverless DB; the
 disaggregation/RDMA research wave (GaussDB, PolarDB-MP, PVLDB 2024–2025) signals where the
@@ -316,7 +322,7 @@ expected total cost is the sum across dimensions:
 ----
 Cost(q) =  w_storage · bytes_stored·time          (KSU)            ← per-tenant aggregate, not per-query
          + w_read    · (GET_count·get_fee + bytes_read·bw_cost)   (KRU, Dimension 1+2)   [DONE]
-         + w_egress  · bytes_moved·az_locality_cost  (KEU, Dimension 2)   [DONE — C3 meter + cost term]
+         + w_egress  · bytes_moved·kou_locality_cost (KOU, Dimension 2)   [DONE — C3 meter + cost term]
          + w_ingest  · bytes_written·bw_cost        (KIU, storage-write)  [DONE]
          + w_compute · engine_ms·rate              (KRU/KIU, Dimension 4)   [DONE]
          - cache_hit_savings(hit_ratio)            (Dimension 3: fewer GETs/bytes in the trace)
@@ -324,10 +330,10 @@ Cost(q) =  w_storage · bytes_stored·time          (KSU)            ← per-ten
 ----
 
 Status: the per-query route cost model (`src/query/route_cost_model.rs`) now scores the read,
-*egress* (KEU), ingest (KIU), and compute terms in neutral units from the measured
+*egress* (KOU), ingest (KIU), and compute terms in neutral units from the measured
 `IoTraceSnapshot`, and applies the per-tenant tier multiplier (C5 DI seam) to the *reported* cost.
-The egress and ingest terms are *inert by default* (zero on the free same-AZ path / for read-only
-routes), so routing is unchanged until a cross-AZ topology is declared. `w_storage·time` (KSU) stays
+The egress and ingest terms are *inert by default* (zero on the free same-region path / for read-only
+routes), so routing is unchanged until a cross-region/-cloud/internet path is involved. `w_storage·time` (KSU) stays
 a per-tenant aggregate the consumption meter owns — it is not a per-query routing discriminator — and
 the tier multiplier is routing-neutral (a per-tenant scalar scales all candidates equally), so both
 serve *reporting/billing*, not engine selection.
@@ -336,8 +342,8 @@ The weights are *not* guessed — they are the published cost curves in §2, and
 (`GET_count`, `bytes_read`, `bytes_moved`, `engine_ms`, `hit_ratio`) must come from the *measured
 per-query trace* (§4), closing the loop between P3 (trace distribution), P5 (dominant term), and P11
 (measure first). The four existing `consumption_metrics` aggregates already cover storage, read-ops,
-compute-ms, and cache; the *missing quantity is per-query bytes-moved/egress* and the *missing
-granularity is per-query (not per-tenant-aggregate)*.
+compute-ms, and cache; the per-query bytes-moved/egress quantity (KOU) and the per-query (not
+per-tenant-aggregate) granularity are *now supplied* by the `IoTraceSnapshot` + `proximadb_kou_bytes_total`.
 
 == 4. The Trace Substrate (the first deliverable)
 
@@ -378,8 +384,9 @@ tuned on intuition.*
 small-tenant pack store (R5). | PAX v2 leftover, TURBOQUANT, recalibration R5
 | C2 — Cache unification | Collapse cache zoo → one `TenantCache` temperature/cost model; size-aware
 eviction; decouple cache from compute for warm restarts. | proximadb-cache, recalibration R2/R3/R4/R6
-| C3 — Network metering | [*meter DONE*] `(tenant, az_locality)` bytes-moved counter (KEU) +
-per-query `bytes_cross_az`. Remaining: same-AZ placement enforcement; Arrow Flight SQL bulk-egress GA.
+| C3 — Network metering | [*meter DONE*] `proximadb_kou_bytes_total{tenant, kou_locality, direction}`
+counter (KOU) + per-query `io_trace.egress_bytes`; result-egress instrumented at pgwire/REST/Arrow
+Flight. Remaining: same-region placement enforcement; pgwire wire-compression; egress-aware lossy caps.
 | TENANT_COLLECTION_POD_AFFINITY, arrow_flight detector, consumption_metrics
 | C4 — Cost-based routing | [*cost model DONE*] full `Cost(q)` (read+egress+ingest+compute) +
 enriched shape-classes (cardinality, partition fan-out) fed from the measured trace; observe→override→
@@ -404,7 +411,7 @@ live pgwire-bypasses-middleware consistency gap. | network/multiplex+middleware,
 |===
 | Dimension | Billing unit | Market anchor (2025→) | CAGR
 | Object storage | KSU + read-KRU | Data lakehouse $3.5–14B; DBaaS $24B→$70B (2031) | ~20–25% / 19.6%
-| Networking | KEU (to add) | Cost floor of serverless DB; AI-infra ~$160B+ | ~25% (AI-infra)
+| Networking | KOU (shipped) | Cost floor of serverless DB; AI-infra ~$160B+ | ~25% (AI-infra)
 | Local disk / cache | cache-tier SKU | Margin lever on storage TAM (warm-pool SKU) | —
 | Compute / modality | KRU + KIU | Serverless DB $5.3B→$38.7B (2033); vector-DB $2.6B→$9B (2030) | 21.7% / 27.5%
 | Governance / security | tier entitlement | Governance $3.35B→$12.66B; data-security $2.46B→$9.02B | 21.7% / 23.2%
@@ -432,7 +439,8 @@ predicate.
 (pgwire, Arrow Flight, Iceberg, REST v2). No new external surface without a named authority mode,
 policy boundary, freshness behavior, and maturity (P8).
 . *Meter every dimension.* Storage, read, egress, compute, and cache are each metered per-tenant;
-egress (KEU) is the open gap to close. Governance is metered as tier entitlement.
+egress (KOU — Outgress Unit, distinct from KEU = embedding) is metered (shipped: read + result
+directions at pgwire/REST/Flight). Governance is metered as tier entitlement.
 . *One edge plane across all surfaces.* Authn/authz, rate-limiting, tenant extraction, and tracing run
 *once* over a canonical request envelope for *every* surface (pgwire, REST, gRPC, Arrow Flight) — never
 per-protocol and never in a separate gateway box that re-derives state the database owns. New surfaces

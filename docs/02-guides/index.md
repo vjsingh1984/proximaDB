@@ -57,7 +57,7 @@ flowchart TB
 - [Platform Packages](./platform-packages.md) - RPM/DEB/MSI installation
 - [Unified Port Migration](./unified-port-migration.adoc) - Migrate from multi-port
 - [Python SDK](./sdk-python-guide.adoc) - Python client library
-- [API Surface Performance](./api-surface-performance-guide.md) - Choose embedded, SQL, UQL, Cypher, REST/gRPC, pgwire, or Arrow Flight
+- [API Surface Performance](./api-surface-performance-guide.md) - Choose embedded, SQL, UQL, Cypher, REST/gRPC, pgwire, or Arrow Flight (experimental)
 
 ---
 

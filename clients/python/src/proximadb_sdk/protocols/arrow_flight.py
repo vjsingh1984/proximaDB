@@ -167,6 +167,12 @@ class ArrowFlightClient:
             return flight.Location.for_grpc_tls(
                 url[11:].split(":")[0], int(url.split(":")[-1])
             )
+        elif url.startswith("grpc+unix://"):
+            # Unix-domain socket for gRPC (portless embedded mode)
+            return flight.Location.for_grpc_unix(url[len("grpc+unix://") :])
+        elif url.startswith("unix://"):
+            # Legacy unix:// syntax (non-standard but sometimes used)
+            return flight.Location.for_grpc_unix(url[len("unix://") :])
         elif url.startswith("http://"):
             url = url[7:]
         elif url.startswith("https://"):
@@ -201,7 +207,6 @@ class ArrowFlightClient:
     def _authenticate(self):
         """Authenticate with API key via handshake."""
         # Arrow Flight uses handshake for auth
-        auth_handler = flight.ClientAuthHandler()
         # For now, we pass API key as metadata on each call
         pass
 
@@ -750,7 +755,7 @@ class ArrowFlightClient:
         action = flight.Action(action_type, json.dumps(body).encode())
 
         try:
-            results = list(client.do_action(action, options=self._get_call_options()))
+            _ = list(client.do_action(action, options=self._get_call_options()))
             return True
         except Exception as e:
             print(f"Action {action_type} failed: {e}")

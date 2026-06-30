@@ -952,3 +952,6 @@ fn test_cache_remove() {
     let removed_again = cache.remove(&key);
     assert!(!removed_again, "Second remove should return false");
 }
+
+// Risk-coverage scenarios (docs/10-quality/RISK_CONTRACT.toml :: cache-coherence):
+//   scenario: write-invalidates-cache — a write invalidates the query cache (read-after-write / TD-310)

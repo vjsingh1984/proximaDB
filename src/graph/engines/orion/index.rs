@@ -523,22 +523,16 @@ impl Default for IndexManager {
 /// Convert PropertyValue to string for indexing
 fn property_value_to_string(value: &PropertyValue) -> String {
     match &value.value {
-        Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => s.clone(),
-        Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => i.to_string(),
-        Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => d.to_string(),
-        Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => b.to_string(),
-        Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(b)) => {
+        Some(crate::graph::model::property_value::Value::StringValue(s)) => s.clone(),
+        Some(crate::graph::model::property_value::Value::IntValue(i)) => i.to_string(),
+        Some(crate::graph::model::property_value::Value::DoubleValue(d)) => d.to_string(),
+        Some(crate::graph::model::property_value::Value::BoolValue(b)) => b.to_string(),
+        Some(crate::graph::model::property_value::Value::BytesValue(b)) => {
             format!("bytes:{}", b.len())
         }
-        Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(_)) => {
-            "array".to_string()
-        }
-        Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_)) => {
-            "object".to_string()
-        }
-        Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(_)) => {
-            "vector".to_string()
-        }
+        Some(crate::graph::model::property_value::Value::ArrayValue(_)) => "array".to_string(),
+        Some(crate::graph::model::property_value::Value::ObjectValue(_)) => "object".to_string(),
+        Some(crate::graph::model::property_value::Value::VectorValue(_)) => "vector".to_string(),
         None => "null".to_string(),
     }
 }
@@ -553,9 +547,9 @@ mod tests {
         let mut index = PropertyIndex::new("name".to_string());
 
         let value = PropertyValue {
-            value: Some(
-                crate::proto::proximadb_v1::property_value::Value::StringValue("Alice".to_string()),
-            ),
+            value: Some(crate::graph::model::property_value::Value::StringValue(
+                "Alice".to_string(),
+            )),
         };
 
         // Add entry

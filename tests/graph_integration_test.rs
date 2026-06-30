@@ -22,11 +22,11 @@
 // mod helpers;
 // use helpers::graph_test_utils::*;
 use proximadb::{
-    graph::{Edge, Node, PropertyValue, service::GraphOperationsService},
-    proto::proximadb_v1::{
-        CompressionAlgorithm, GraphStorageConfig, NodeQuery, PropertyFilter, TraversalAlgorithm,
-        TraversalRequest, property_value::Value,
+    graph::{
+        Edge, Node, NodeQuery, PropertyFilter, PropertyValue, TraversalAlgorithm, TraversalRequest,
+        property_value::Value, service::GraphOperationsService,
     },
+    proto::proximadb_v1::{CompressionAlgorithm, GraphStorageConfig},
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -403,7 +403,7 @@ async fn test_node_query() {
         labels: vec!["Person".to_string()],
         filters: vec![PropertyFilter {
             key: "city".to_string(),
-            operator: proximadb::proto::proximadb_v1::PropertyFilterOperator::Equals as i32,
+            operator: proximadb::graph::PropertyFilterOperator::Equals as i32,
             value: Some(PropertyValue {
                 value: Some(Value::StringValue("New York".to_string())),
             }),

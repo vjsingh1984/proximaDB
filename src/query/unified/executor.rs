@@ -1026,7 +1026,8 @@ async fn execute_block_batch_semantic_join(
 mod tests {
     use super::*;
     use crate::graph::GraphOperationsService;
-    use crate::proto::proximadb_v1::{CreateGraphRequest, Node as ProtoNode, property_value};
+    use crate::graph::{Node as ProtoNode, property_value};
+    use crate::proto::proximadb_v1::CreateGraphRequest;
     use crate::query::unified::ast::{
         DistanceMetric, FilterOperator, FilterValue, GraphQueryExpr, JoinType, NodeFilter,
         PropertyFilter as UnifiedPropertyFilter, StartNodeSpec, VectorSearchParams,
@@ -1149,7 +1150,7 @@ mod tests {
                         labels: vec!["Person".to_string()],
                         properties: HashMap::from([(
                             "name".to_string(),
-                            crate::proto::proximadb_v1::PropertyValue {
+                            crate::graph::PropertyValue {
                                 value: Some(property_value::Value::StringValue(name.to_string())),
                             },
                         )]),

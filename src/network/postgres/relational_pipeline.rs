@@ -31,6 +31,7 @@ use crate::query::execution::{
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use proximadb_data_model::{ProximaType, ProximaValue};
+use proximadb_functions::builtins;
 use proximadb_relational_algebra::TableId;
 use proximadb_relational_engine::{
     EngineReaderFactory, InMemoryRelationalEngine, RelationalWriter,
@@ -41,10 +42,10 @@ use proximadb_relational_planner::{
     CapabilityResolver, PhysicalPlan, Planner, StaticCapabilities, explain_physical,
 };
 use proximadb_relational_reader::{ReaderCapabilities, ReaderError, RelationalReader, ScanContext};
-use proximadb_relational_types::{ColumnInfo, Expr, NoFunctions, RelationalRow, RelationalSchema};
+use proximadb_relational_types::{ColumnInfo, Expr, ExprError, RelationalRow, RelationalSchema};
 use sqlparser::ast::{
-    Expr as SqlExpr, GroupByExpr, Query as SqlQuery, SelectItem, SetExpr, Statement, TableFactor,
-    TableWithJoins,
+    BinaryOperator, Expr as SqlExpr, GroupByExpr, Query as SqlQuery, SelectItem, SetExpr,
+    Statement, TableFactor, TableWithJoins,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -129,6 +130,14 @@ pub async fn try_run_select(
     vector_ops: Option<Arc<dyn proximadb_runtime::VectorOpsPort>>,
     tenant: Option<&str>,
     controls: ExecutionControls,
+    // pgwire passes `true`: only joins/GROUP BY/aggregates/set-ops engage the
+    // real-data relational engine, leaving simple SELECTs on pgwire's hardened
+    // legacy path. Off-pgwire callers (gRPC/REST `ExecuteQuery`, TD-121) have no
+    // such legacy single-table path, so they pass `false` to route *any*
+    // resolvable relational SELECT through this tenant-scoped pipeline; queries
+    // whose tables don't resolve return `None` and fall back to the caller's
+    // vector/graph engine.
+    require_engagement: bool,
 ) -> Option<Result<ExecutionPipelineResult, String>> {
     // TD-064: the connection's tenant scopes every snapshot read to the tenant's
     // record partition (carried into the SnapshotCatalog → DmlTableReader).
@@ -158,6 +167,7 @@ pub async fn try_run_select(
         let resolver = StaticCapabilities {
             caps: ReaderCapabilities::full(),
             pk_columns: Vec::new(),
+            secondary_columns: Vec::new(),
         };
         return Some(run_plan(&factory, resolver, logical, controls).await);
     }
@@ -171,8 +181,10 @@ pub async fn try_run_select(
         return None;
     };
     // Engaged = a relational shape the legacy single-table path can't serve
-    // (joins / GROUP BY / aggregates / set-ops). Simple SELECTs stay on legacy.
-    if !query_engages_relational_engine(query) {
+    // (joins / GROUP BY / aggregates / set-ops). pgwire keeps simple SELECTs on
+    // its legacy path (`require_engagement = true`); off-pgwire callers route any
+    // resolvable relational SELECT here (`require_engagement = false`).
+    if require_engagement && !query_engages_relational_engine(query) {
         return None;
     }
 
@@ -188,6 +200,13 @@ pub async fn try_run_select(
     // (nor advertised) when the build can't honor it.
     #[cfg(feature = "datafusion-integration")]
     let mut parquet_loc_by_key: HashMap<String, String> = HashMap::new();
+    // ADR-025: per-table OLAP read-merge params (snapshot_lsn + PK column) for the
+    // opted-in parquet-backed tables; empty ⇒ all reads stay on the bare Parquet path.
+    #[cfg(feature = "datafusion-integration")]
+    let mut olap_delta_tables: HashMap<
+        String,
+        crate::query::execution::olap_delta_merge::OlapDeltaTable,
+    > = HashMap::new();
     for raw in &names {
         let key = normalize_table_key(raw);
         if tables.contains_key(&key) {
@@ -198,6 +217,9 @@ pub async fn try_run_select(
                 #[cfg(feature = "datafusion-integration")]
                 if let Some(location) = catalog_table_is_parquet_backed(&catalog_schema) {
                     parquet_loc_by_key.insert(key.clone(), location);
+                    if let Some(params) = olap_delta_table_params(&catalog_schema) {
+                        olap_delta_tables.insert(key.clone(), params);
+                    }
                 }
                 tables.insert(key, PreparedTable::from_catalog(raw, &catalog_schema));
             }
@@ -222,11 +244,39 @@ pub async fn try_run_select(
     #[cfg(not(feature = "datafusion-integration"))]
     let parquet_backed = false;
 
+    // C4 Phase-2b: refine the shape-class with real fan-out / cardinality for
+    // hot Parquet-backed tables, peeked from the in-memory stat cache warmed by
+    // table opens (zero route-time I/O — a cold/never-scanned table stays
+    // `Unknown`, backward-compatible). Finer classes let the cost model
+    // discriminate within the OLAP-over-Parquet band where a Native↔DataFusion
+    // override is freshness-safe.
+    #[cfg(feature = "datafusion-integration")]
+    let (partition_fanout, cardinality) = if parquet_backed {
+        let locations: Vec<String> = parquet_loc_by_key.values().cloned().collect();
+        crate::query::route_cost_model::classify_table_shapes(&locations)
+    } else {
+        (Default::default(), Default::default())
+    };
+    #[cfg(not(feature = "datafusion-integration"))]
+    let (partition_fanout, cardinality) = (Default::default(), Default::default());
+
+    // AST cardinality fallback: when the footer-warmed stat is `Unknown` (native
+    // storage, or a cold Parquet table never yet scanned), derive a cheap
+    // syntax-only hint (LIMIT / scalar aggregate) so the cost-model shape-class
+    // still discriminates instead of collapsing to the coarse class. Pure AST
+    // walk — zero route-time I/O (co-design P5).
+    let cardinality = if cardinality == crate::query::compute_scheduler::CardinalityClass::Unknown {
+        query_cardinality_hint(query)
+    } else {
+        cardinality
+    };
+
     let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: true,
             parquet_backed,
-            ..Default::default()
+            partition_fanout,
+            cardinality,
         },
         // C4: observe-mode advisory from the trace-driven cost model — augments
         // the reason for telemetry/EXPLAIN, never changes the backend.
@@ -236,6 +286,7 @@ pub async fn try_run_select(
         target: "proximadb::compute_route",
         backend = ?decision.backend,
         workload = ?decision.workload_profile,
+        source = decision.source.as_str(),
         reason = %decision.reason,
         "{}",
         decision.explain_line()
@@ -257,6 +308,17 @@ pub async fn try_run_select(
             parquet_tables,
             vector_ops,
             tenant_id: tenant.map(str::to_string),
+            // ADR-025: reconcile opted-in parquet-backed tables with their
+            // post-snapshot WAL delta at scan time. `None` (no opted-in table)
+            // keeps the legacy bare-Parquet read (default-OFF).
+            olap_delta: if olap_delta_tables.is_empty() {
+                None
+            } else {
+                Some(crate::query::execution::olap_delta_merge::OlapDeltaConfig {
+                    source: dml.clone(),
+                    tables: olap_delta_tables,
+                })
+            },
             // Full ANSI SQL over pgwire: when the shared relational frontend can't
             // yet lower a query (e.g. typed DATE literals, certain subquery/window
             // shapes), execute it through DataFusion's own ANSI SQL planner over the
@@ -266,11 +328,16 @@ pub async fn try_run_select(
             allow_engine_sql_fallback: true,
             controls: controls.clone(),
         };
-        return Some(
-            execute_sql_with_backend(decision.backend.clone(), sql, context)
-                .await
-                .map_err(|e| e.to_string()),
+        // ADR-030 / TD-158: time the DataFusion (engine-SQL fallback) execution so
+        // the always-on billing observer can attribute KRU to this engine at scope
+        // close. `record_compute_ms` no-ops outside an `io_trace` scope.
+        let started = std::time::Instant::now();
+        let engine_result = execute_sql_with_backend(decision.backend.clone(), sql, context).await;
+        crate::observability::io_trace::record_compute_ms(
+            &crate::query::compute_scheduler::backend_label(&decision.backend),
+            started.elapsed().as_millis() as u64,
         );
+        return Some(engine_result.map_err(|e| e.to_string()));
     }
 
     let snapshot = SnapshotCatalog {
@@ -310,9 +377,18 @@ async fn execute_physical<F: ReaderFactory>(
     factory: &F,
     controls: ExecutionControls,
 ) -> Result<ExecutionPipelineResult, String> {
-    NativeVolcanoEngine::execute_physical(physical, factory, controls)
+    // ADR-030 / TD-158: feed the per-query I/O trace the native engine's compute
+    // time so the always-on billing observer can emit KRU(tenant, "native") at
+    // scope close. `record_compute_ms` no-ops outside an `io_trace` scope.
+    let started = std::time::Instant::now();
+    let result = NativeVolcanoEngine::execute_physical(physical, factory, controls)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+    crate::observability::io_trace::record_compute_ms(
+        "native",
+        started.elapsed().as_millis() as u64,
+    );
+    result
 }
 
 /// Like [`execute_physical`] but meters every operator (EXPLAIN ANALYZE): returns the
@@ -354,7 +430,17 @@ fn plan_over_snapshot(
         .iter()
         .map(|(key, prepared)| (key.clone(), prepared.pk_columns.clone()))
         .collect();
-    let resolver = SnapshotCapabilities { pk_by_table };
+    // TD-127: per-table secondary-indexed columns so the planner can rewrite a
+    // non-PK equality / IN-list to ScanAccess::SecondaryLookup.
+    let secondary_by_table: HashMap<String, Vec<String>> = snapshot
+        .tables
+        .iter()
+        .map(|(key, prepared)| (key.clone(), prepared.secondary_columns.clone()))
+        .collect();
+    let resolver = SnapshotCapabilities {
+        pk_by_table,
+        secondary_by_table,
+    };
     let planner = Planner::new(resolver);
     Some(planner.plan(logical).map_err(|e| format!("plan: {e}")))
 }
@@ -391,6 +477,80 @@ fn catalog_table_is_parquet_backed(
     })
 }
 
+/// Master switch for the ADR-025 OLAP read-merge. **Default-ON** (ADR-025 PR3):
+/// once a table is materialized, OLAP `SELECT`s reconcile its cold Parquet base
+/// with the authoritative post-snapshot WAL delta so `DELETE`/`UPDATE`/`INSERT`
+/// written after `MATERIALIZE` are reflected. Read-mostly tables (nothing changed
+/// since the snapshot) take the empty-delta fast path — a bare Parquet read — so
+/// default-ON is correctness- and cost-neutral for them.
+///
+/// Kill-switch: set `PROXIMADB_OLAP_DELTA_MERGE` to a falsy token
+/// (`0`/`false`/`off`/`no`, case-insensitive) to force the legacy bare-Parquet
+/// read engine-wide; individual tables can still opt back in via the
+/// `olap_delta_merge` storage-layout property. Any other value — or leaving it
+/// unset — keeps the merge on.
+#[cfg(feature = "datafusion-integration")]
+fn olap_delta_merge_enabled() -> bool {
+    olap_delta_merge_on(std::env::var("PROXIMADB_OLAP_DELTA_MERGE").ok().as_deref())
+}
+
+/// Pure kill-switch policy for [`olap_delta_merge_enabled`], split out so it is
+/// unit-testable without mutating the process environment: `None` (unset) or any
+/// non-falsy value ⇒ merge ON; only an explicit falsy token turns it OFF.
+#[cfg(feature = "datafusion-integration")]
+fn olap_delta_merge_on(var: Option<&str>) -> bool {
+    match var {
+        Some(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        ),
+        None => true,
+    }
+}
+
+/// Resolve the ADR-025 read-merge parameters for a parquet-backed table, or `None`
+/// when it is ineligible (no single-column PK, no recorded `snapshot_lsn`, or not
+/// opted in). Ineligible tables fall back to the bare Parquet read.
+#[cfg(feature = "datafusion-integration")]
+fn olap_delta_table_params(
+    schema: &proximadb_catalog::CatalogTableSchema,
+) -> Option<crate::query::execution::olap_delta_merge::OlapDeltaTable> {
+    use proximadb_catalog::{CatalogAuthorityMode, CatalogPhysicalFormat};
+    // Single-column PK required: the merge recomputes each base row's canonical oid
+    // from its PK column. Keyless heaps fall back to the bare Parquet read.
+    let pk_column = match schema.primary_key.as_slice() {
+        [pk] => pk.clone(),
+        _ => return None,
+    };
+    let layout = schema.storage_layouts.iter().find(|l| {
+        matches!(l.physical_format, CatalogPhysicalFormat::Parquet)
+            && matches!(
+                l.authority,
+                CatalogAuthorityMode::FederatedRead
+                    | CatalogAuthorityMode::ExternalAuthoritative
+                    | CatalogAuthorityMode::ImportedSnapshot
+                    | CatalogAuthorityMode::ExportedPublication
+                    | CatalogAuthorityMode::ProjectionPublication
+            )
+    })?;
+    let opted_in = olap_delta_merge_enabled()
+        || matches!(
+            layout
+                .properties
+                .get("olap_delta_merge")
+                .map(String::as_str),
+            Some("1" | "true" | "on" | "yes")
+        );
+    if !opted_in {
+        return None;
+    }
+    let snapshot_lsn: u64 = layout.properties.get("snapshot_lsn")?.parse().ok()?;
+    Some(crate::query::execution::olap_delta_merge::OlapDeltaTable {
+        snapshot_lsn,
+        pk_column,
+    })
+}
+
 /// Sync `CatalogLookup` wrapper for the process-wide engine.
 struct EngineCatalog(Arc<InMemoryRelationalEngine>);
 
@@ -406,6 +566,11 @@ struct PreparedTable {
     table_name: String,
     schema: RelationalSchema,
     pk_columns: Vec<usize>,
+    /// TD-127: names of this table's single-column non-PK secondary indexes
+    /// (from `schema_secondary_index_columns`). Threaded into the planner's
+    /// `CapabilityResolver::secondary_index_columns` so an equality / IN on
+    /// one of these columns can rewrite to `ScanAccess::SecondaryLookup`.
+    secondary_columns: Vec<String>,
 }
 
 impl PreparedTable {
@@ -425,6 +590,9 @@ impl PreparedTable {
             table_name: name.to_string(),
             schema: RelationalSchema::new(cols),
             pk_columns: pk,
+            secondary_columns: crate::services::record_store::schema_secondary_index_columns(
+                schema,
+            ),
         }
     }
 }
@@ -473,17 +641,31 @@ impl ReaderFactory for SnapshotCatalog {
 /// route). ADR-018 Phase 2 (pgwire SQL parity); TD-076.
 struct SnapshotCapabilities {
     pk_by_table: HashMap<String, Vec<usize>>,
+    /// TD-127: per-table secondary-indexed column names. Empty / absent =
+    /// no secondary index → planner keeps a full scan + filter.
+    secondary_by_table: HashMap<String, Vec<String>>,
 }
 
 impl CapabilityResolver for SnapshotCapabilities {
     fn capabilities(&self, _table: &TableId) -> ReaderCapabilities {
-        // Unchanged pushdown behavior (projection/predicate); PK-lookup is gated
-        // per-table by `primary_key` below.
+        // Unchanged pushdown behavior (projection/predicate). PK-lookup,
+        // PK-batch (TD-128) and secondary-lookup (TD-127) are advertised here
+        // but gated per-table by `primary_key` / `secondary_index_columns`
+        // below, so a table without the relevant index keeps a full scan.
         ReaderCapabilities::full()
+            .with_pk_lookup_batch(true)
+            .with_secondary_lookup(true)
     }
 
     fn primary_key(&self, table: &TableId) -> Vec<usize> {
         self.pk_by_table
+            .get(&normalize_table_key(&table.name))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn secondary_index_columns(&self, table: &TableId) -> Vec<String> {
+        self.secondary_by_table
             .get(&normalize_table_key(&table.name))
             .cloned()
             .unwrap_or_default()
@@ -545,9 +727,14 @@ impl RelationalReader for DmlTableReader {
 
     fn capabilities(&self) -> ReaderCapabilities {
         // Honors projection + predicate + limit + single-column PK lookup
-        // (see `lookup_pk`). The planner gates PkLookup per-table via the
-        // resolver's `primary_key`, so this flag is informational here.
-        ReaderCapabilities::full().with_pk_lookup(true)
+        // (see `lookup_pk`), discrete PK batch (TD-128, `lookup_pk_batch`) and
+        // OLTP secondary lookup (TD-127, `lookup_secondary`). The planner gates
+        // each per-table via the resolver's `primary_key` /
+        // `secondary_index_columns`, so these flags are informational here.
+        ReaderCapabilities::full()
+            .with_pk_lookup(true)
+            .with_pk_lookup_batch(true)
+            .with_secondary_lookup(true)
     }
 
     fn schema(&self) -> &RelationalSchema {
@@ -566,21 +753,33 @@ impl RelationalReader for DmlTableReader {
                 .map_err(ReaderError::PredicateEval)?;
         }
         let predicate: Option<Expr> = ctx.predicate.clone();
-        let row_pred = move |full_row: &[ProximaValue]| -> bool {
+        // ADR-043 Invariant 1 — fail-loud predicate: evaluate against the real
+        // builtin registry and PROPAGATE any eval error (unknown function, cast,
+        // arithmetic, type) instead of coercing it to `false`. The empty registry
+        // (`NoFunctions`) and the error-swallowing `matches!(…, Ok(Boolean(true)))`
+        // here were a silent-data-loss seam: a pushed-down predicate the native
+        // engine could not evaluate dropped every row and presented as a clean empty
+        // result. `scan_table_relational` now surfaces the captured error; a query
+        // native cannot serve fails loudly and the OLAP route answers it (ADR-039).
+        let row_pred = move |full_row: &[ProximaValue]| -> Result<bool, ExprError> {
             match &predicate {
-                Some(expr) => matches!(
-                    expr.eval(&full_row.to_vec(), &NoFunctions),
-                    Ok(ProximaValue::Boolean(true))
-                ),
-                None => true,
+                Some(expr) => match expr.eval(&full_row.to_vec(), builtins())? {
+                    ProximaValue::Boolean(b) => Ok(b),
+                    // SQL three-valued logic: NULL (and any non-boolean predicate
+                    // result) is not TRUE, so the row is excluded — this is a
+                    // *value*, not an error, and is the correct filter semantics.
+                    _ => Ok(false),
+                },
+                None => Ok(true),
             }
         };
-        let row_pred_ref: Option<&(dyn Fn(&[ProximaValue]) -> bool + Send + Sync)> =
-            if ctx.predicate.is_some() {
-                Some(&row_pred)
-            } else {
-                None
-            };
+        let row_pred_ref: Option<
+            &(dyn Fn(&[ProximaValue]) -> Result<bool, ExprError> + Send + Sync),
+        > = if ctx.predicate.is_some() {
+            Some(&row_pred)
+        } else {
+            None
+        };
         let limit = ctx.limit.map(|l| l as usize);
         let (_schema, rows) = self
             .dml
@@ -640,6 +839,80 @@ impl RelationalReader for DmlTableReader {
             .map_err(|e| ReaderError::Storage(e.to_string()))
     }
 
+    /// TD-128: discrete multi-key OLTP point-read (`PK IN (...)` / eq-OR).
+    /// Forwards to [`DmlService::point_lookup_batch_relational`], which reuses
+    /// the same `get_by_key` path (dead-record-filtered) as the single-key
+    /// fast-path. Single-column PK only; SQL NULL keys can't match a stored oid
+    /// and are skipped. Returns the FULL candidate rows (the executor narrows).
+    async fn lookup_pk_batch(
+        &self,
+        keys: &[Vec<ProximaValue>],
+    ) -> Result<Vec<RelationalRow>, ReaderError> {
+        let mut key_strs = Vec::with_capacity(keys.len());
+        for key in keys {
+            if key.len() != 1 {
+                return Err(ReaderError::PkArityMismatch {
+                    expected: 1,
+                    actual: key.len(),
+                });
+            }
+            if let Some(s) = text_encode(&key[0]) {
+                key_strs.push(s);
+            }
+        }
+        tracing::debug!(
+            target: "proximadb::pgwire::new_pipeline",
+            access_path = "PkLookupBatch",
+            table = %self.table_name,
+            keys = key_strs.len(),
+            "relational PK batch point lookup"
+        );
+        self.dml
+            .point_lookup_batch_relational(&self.table_name, &key_strs, self.tenant.as_ref())
+            .await
+            .map_err(|e| ReaderError::Storage(e.to_string()))
+    }
+
+    /// TD-127: OLTP secondary-index point-read. Forwards to
+    /// [`DmlService::secondary_lookup_relational`], which probes the store's
+    /// single-column hash index and re-materializes each live candidate via
+    /// `get_by_key` (dead-record-filtered). `Ok(None)` (no built index, or all
+    /// probe values NULL) → the executor falls back to a full scan + the
+    /// residual filter; `Ok(Some(rows))` → FULL candidate rows (the executor
+    /// narrows and the residual filter re-checks — the index only narrows).
+    async fn lookup_secondary(
+        &self,
+        column: &str,
+        values: &[ProximaValue],
+    ) -> Result<Option<Vec<RelationalRow>>, ReaderError> {
+        let mut value_strs = Vec::with_capacity(values.len());
+        for v in values {
+            if let Some(s) = text_encode(v) {
+                value_strs.push(s);
+            }
+        }
+        if value_strs.is_empty() {
+            // No probe-able (non-NULL) values — let the executor scan + filter.
+            return Ok(None);
+        }
+        tracing::debug!(
+            target: "proximadb::pgwire::new_pipeline",
+            access_path = "SecondaryLookup",
+            table = %self.table_name,
+            column = %column,
+            "relational secondary index point lookup"
+        );
+        self.dml
+            .secondary_lookup_relational(
+                &self.table_name,
+                column,
+                &value_strs,
+                self.tenant.as_ref(),
+            )
+            .await
+            .map_err(|e| ReaderError::Storage(e.to_string()))
+    }
+
     async fn close(&mut self) -> Result<(), ReaderError> {
         self.open_state = None;
         Ok(())
@@ -695,7 +968,7 @@ pub fn text_encode(v: &ProximaValue) -> Option<String> {
         V::Float64(x) => x.to_string(),
         V::Decimal(s) => s.clone(),
         V::String(s) | V::Symbol(s) => s.clone(),
-        V::Binary(b) => {
+        V::Binary(b) | V::BinaryVector(b) => {
             let mut s = String::with_capacity(2 + b.len() * 2);
             s.push_str("\\x");
             for byte in b {
@@ -725,7 +998,28 @@ pub fn text_encode(v: &ProximaValue) -> Option<String> {
             u[15]
         ),
         V::Json(j) | V::Jsonb(j) => j.to_string(),
-        other => format!("{other:?}"),
+        V::Array(values) => {
+            // Element NULL renders as the empty field in a Postgres array
+            // literal (same convention as the legacy simple-query encoder).
+            let parts = values
+                .iter()
+                .map(text_encode)
+                .map(Option::unwrap_or_default)
+                .collect::<Vec<_>>();
+            format!("{{{}}}", parts.join(","))
+        }
+        V::Map(value) | V::Struct(value) => {
+            serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
+        }
+        V::DenseVector(values) => {
+            let parts = values.iter().map(ToString::to_string).collect::<Vec<_>>();
+            format!("[{}]", parts.join(","))
+        }
+        V::SparseVector { indices, values } => serde_json::json!({
+            "indices": indices,
+            "values": values,
+        })
+        .to_string(),
     })
 }
 
@@ -752,6 +1046,7 @@ pub fn classify_select_route(
             crate::query::compute_scheduler::QueryShape {
                 engages_relational: engages,
                 parquet_backed: false,
+                cardinality: query_cardinality_hint(query),
                 ..Default::default()
             },
             Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
@@ -796,6 +1091,20 @@ pub struct SelectRouteExplanation {
     /// per-operator timing is a follow-up (no Volcano instrumentation yet).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_elapsed_us: Option<u64>,
+    /// ADR-004 / TD-174 (gap #4): stats-backed estimated selectivity of the
+    /// `WHERE` clause — the product of per-`col = ?` equality selectivities
+    /// (`1/ndistinct` from the resident HLL distinct count, ADR-037 producer).
+    /// A 0..1 fraction the AnvaiOps cost consumer prices. `None` (omitted) when
+    /// the query has no equality predicate, targets multiple tables, or the
+    /// collection has no resident statistics yet — correct-or-absent, never a
+    /// guessed value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_selectivity: Option<f64>,
+    /// Estimated surviving rows = `record_count × estimated_selectivity`, when
+    /// both the selectivity and the resident `record_count` are known. `None`
+    /// (omitted) otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_rows: Option<u64>,
 }
 
 /// Build the `EXPLAIN SELECT` payload. `Err` if `sql` is not a routable single
@@ -820,7 +1129,91 @@ fn decision_to_explanation(
         physical_plan: None,
         execution_rows: None,
         execution_elapsed_us: None,
+        estimated_selectivity: None,
+        estimated_rows: None,
     }
+}
+
+/// Collect the LHS column names of top-level `col = <literal>` equality predicates
+/// in a single-table SELECT's `WHERE` clause (AND-chained). Non-equality
+/// predicates, OR branches, and `col = col` (no literal) are ignored — only the
+/// shapes statistics can estimate. Returns an empty Vec for anything else.
+fn equality_predicate_columns(query: &SqlQuery) -> Vec<String> {
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return Vec::new();
+    };
+    let Some(selection) = select.selection.as_ref() else {
+        return Vec::new();
+    };
+    let mut cols = Vec::new();
+    collect_eq_columns(selection, &mut cols);
+    cols
+}
+
+fn collect_eq_columns(expr: &SqlExpr, out: &mut Vec<String>) {
+    match expr {
+        SqlExpr::BinaryOp {
+            left,
+            op: BinaryOperator::And,
+            right,
+        } => {
+            collect_eq_columns(left, out);
+            collect_eq_columns(right, out);
+        }
+        SqlExpr::BinaryOp {
+            left,
+            op: BinaryOperator::Eq,
+            right,
+        } => {
+            // `col = <literal>`: a bare identifier on one side, a literal value on
+            // the other (either order). `col = col` has no literal → not estimable.
+            if let (Some(col), true) = (ident_name(left), is_literal(right)) {
+                out.push(col);
+            } else if let (Some(col), true) = (ident_name(right), is_literal(left)) {
+                out.push(col);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn ident_name(expr: &SqlExpr) -> Option<String> {
+    match expr {
+        SqlExpr::Identifier(id) => Some(id.value.clone()),
+        // `t.col` → the bare column name (stats are keyed by column).
+        SqlExpr::CompoundIdentifier(parts) => parts.last().map(|p| p.value.clone()),
+        _ => None,
+    }
+}
+
+fn is_literal(expr: &SqlExpr) -> bool {
+    matches!(expr, SqlExpr::Value(_))
+}
+
+/// Stats-backed selectivity + row estimate for a single-table SELECT's equality
+/// `WHERE` predicates. `eq_sel(field) -> Option<f64>` returns the per-field
+/// equality selectivity (DI seam for testing; production passes the registry).
+/// Returns `(selectivity, estimated_rows)` only when at least one predicate has a
+/// resident statistic — else `None` (caller leaves EXPLAIN unchanged). Multiple
+/// predicates multiply (independence assumption, standard CBO).
+fn stats_filter_estimate(
+    cols: &[String],
+    record_count: Option<u64>,
+    eq_sel: impl Fn(&str) -> Option<f64>,
+) -> Option<(f64, Option<u64>)> {
+    let mut selectivity = 1.0_f64;
+    let mut any = false;
+    for col in cols {
+        if let Some(s) = eq_sel(col) {
+            selectivity *= s;
+            any = true;
+        }
+    }
+    if !any {
+        return None;
+    }
+    let rows = record_count.map(|n| (n as f64 * selectivity).ceil() as u64);
+    Some((selectivity, rows))
 }
 
 /// Prepare an engaging SELECT for EXPLAIN (cold path): resolve table schemas, build
@@ -949,11 +1342,40 @@ async fn route_and_plan_select(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: engages,
             parquet_backed,
+            cardinality: query_cardinality_hint(query),
             ..Default::default()
         },
         Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
     );
     let mut explanation = decision_to_explanation(&decision);
+
+    // ADR-004 / TD-174 (gap #4): disclose stats-backed selectivity for a
+    // single-table SELECT with `col = ?` equality predicate(s). Resolve the table
+    // to the canonical collection id (the key the flush path stamps stats under),
+    // multiply the resident per-field equality selectivities, and estimate
+    // surviving rows from the resident record_count. Best-effort and
+    // correct-or-absent: any unresolved table / absent statistics leaves the
+    // fields `None` (omitted from EXPLAIN) rather than guessing.
+    {
+        let mut table_names = Vec::new();
+        collect_table_names(query, &mut table_names);
+        if table_names.len() == 1 {
+            let cols = equality_predicate_columns(query);
+            if !cols.is_empty()
+                && let Some(collection_id) =
+                    dml.resolve_collection_id(&table_names[0], tenant).await
+            {
+                let registry = crate::core::statistics::statistics_registry();
+                let record_count = registry.envelope(&collection_id).map(|e| e.record_count);
+                if let Some((selectivity, rows)) = stats_filter_estimate(&cols, record_count, |f| {
+                    registry.equality_selectivity(&collection_id, f)
+                }) {
+                    explanation.estimated_selectivity = Some(selectivity);
+                    explanation.estimated_rows = rows;
+                }
+            }
+        }
+    }
     // For the DataFusion route, disclose the concrete Parquet row-group split
     // inventory (partition count + footer row/byte estimates) in place of the
     // conservative whole-collection placeholder, by reading the same object-store
@@ -1013,8 +1435,10 @@ async fn parquet_split_summary(
     let (mut any_rows, mut any_bytes) = (false, false);
     for location in locations {
         let table = ObjectStoreParquetTable::open(location).await.ok()?;
-        partitions += table.split_count();
-        if let Some(r) = table.estimated_rows() {
+        let splits = table.split_count();
+        let est_rows = table.estimated_rows();
+        partitions += splits;
+        if let Some(r) = est_rows {
             rows = rows.saturating_add(r);
             any_rows = true;
         }
@@ -1022,6 +1446,10 @@ async fn parquet_split_summary(
             bytes = bytes.saturating_add(b);
             any_bytes = true;
         }
+        // EXPLAIN opens the footer anyway — warm the route-time shape cache so
+        // the next SELECT's route decision can classify this location's fan-out
+        // / cardinality without a cold read (co-design: zero extra I/O).
+        crate::query::route_cost_model::record_table_shape_stat(location, splits as u32, est_rows);
     }
     Some(crate::query::read_route::ReadSplitSummary::row_groups(
         partitions,
@@ -1130,6 +1558,9 @@ mod route_explain_tests {
         for _ in 0..3 {
             GLOBAL_ROUTE_COST_MODEL.observe_by_label("olap/native", "Native(Volcano)", &snap);
         }
+        // Publish the frozen consult table so the advisory is visible this query
+        // (production recomputes debounced every N observations; tests force it).
+        GLOBAL_ROUTE_COST_MODEL.recompute();
         let expl = explain_select_route("SELECT service, count(*) FROM events GROUP BY service")
             .expect("routable");
         // Observe-mode: the chosen engine is unchanged ...
@@ -1153,6 +1584,73 @@ mod route_explain_tests {
 /// return false and stay on the legacy path.
 fn query_engages_relational_engine(query: &SqlQuery) -> bool {
     set_expr_engages(&query.body)
+}
+
+/// A cheap, syntax-only cardinality hint from the parsed AST — the fallback
+/// when the footer-warmed [`crate::query::route_cost_model::classify_table_shapes`]
+/// stat is `Unknown` (native storage, or a cold Parquet table never yet scanned),
+/// so the cost-model shape-class still discriminates instead of collapsing to
+/// the coarse class. Returns [`CardinalityClass::Small`] only when the query
+/// shape GUARANTEES a tiny result, else `Unknown` (never over-claims). Pure AST
+/// walk — zero route-time I/O (co-design P5: I/O round-trips, not CPU, dominate;
+/// the route path must not probe storage).
+fn query_cardinality_hint(query: &SqlQuery) -> crate::query::compute_scheduler::CardinalityClass {
+    use crate::query::compute_scheduler::CardinalityClass;
+    // sqlparser 0.59 carries LIMIT on the Query as a `LimitClause` enum (standard
+    // `LIMIT N [OFFSET]` vs MySQL `LIMIT offset, N`). A literal renders to a bare
+    // number string; a placeholder / expression doesn't parse → stay Unknown
+    // (never over-claim). Version-agnostic (no `Value::Number` probe).
+    if let Some(rows) = query
+        .limit_clause
+        .as_ref()
+        .and_then(limit_expr)
+        .and_then(|e| e.to_string().parse::<u64>().ok())
+    {
+        return CardinalityClass::from_estimate(Some(rows));
+    }
+    cardinality_hint_body(&query.body)
+}
+
+/// The limit `Expr` from either `LimitClause` variant (`None` for `LIMIT ALL`).
+fn limit_expr(clause: &sqlparser::ast::LimitClause) -> Option<&SqlExpr> {
+    use sqlparser::ast::LimitClause;
+    match clause {
+        LimitClause::LimitOffset { limit, .. } => limit.as_ref(),
+        LimitClause::OffsetCommaLimit { limit, .. } => Some(limit),
+    }
+}
+
+fn cardinality_hint_body(body: &SetExpr) -> crate::query::compute_scheduler::CardinalityClass {
+    use crate::query::compute_scheduler::CardinalityClass;
+    match body {
+        SetExpr::Select(select) => {
+            // A scalar aggregate (aggregate projection, no GROUP BY / HAVING)
+            // yields exactly one row.
+            let has_agg = select.projection.iter().any(select_item_has_aggregate);
+            let has_group_by = match &select.group_by {
+                GroupByExpr::All(_) => true,
+                GroupByExpr::Expressions(exprs, _) => !exprs.is_empty(),
+            };
+            if has_agg && !has_group_by && select.having.is_none() {
+                return CardinalityClass::Small;
+            }
+            CardinalityClass::Unknown
+        }
+        // A parenthesized subquery may carry its own LIMIT; a set-op branch's
+        // LIMIT does not bound the whole result, so be conservative elsewhere.
+        SetExpr::Query(q) => {
+            if let Some(rows) = q
+                .limit_clause
+                .as_ref()
+                .and_then(limit_expr)
+                .and_then(|e| e.to_string().parse::<u64>().ok())
+            {
+                return CardinalityClass::from_estimate(Some(rows));
+            }
+            cardinality_hint_body(&q.body)
+        }
+        _ => CardinalityClass::Unknown,
+    }
 }
 
 fn set_expr_engages(body: &SetExpr) -> bool {
@@ -1182,6 +1680,15 @@ fn set_expr_engages(body: &SetExpr) -> bool {
             // the legacy single-table path can serve — engage the relational/OLAP
             // route so it reaches DataFusion.
             let has_derived = select.from.iter().any(table_with_joins_has_derived);
+            // TD-183: a JSON-path extraction (`->`/`->>`/`json_extract_path_text`,
+            // lowered to `JSON_EXTRACT[_TEXT]` calls by the translator) in a plain
+            // projection or WHERE must engage the relational/OLAP route. Otherwise the
+            // non-engaging SELECT falls through to store-type dispatch, is misread as a
+            // *document* query because the SQL text contains `JSON_EXTRACT`, and is
+            // served by the document handler against an empty collection → 0 rows.
+            // Aggregated forms (e.g. d09 GROUP BY) already engage via `has_group_by`.
+            let has_json_extract = select.projection.iter().any(select_item_has_json_extract)
+                || select.selection.as_ref().is_some_and(expr_has_json_extract);
             has_join
                 || has_group_by
                 || select.having.is_some()
@@ -1189,7 +1696,43 @@ fn set_expr_engages(body: &SetExpr) -> bool {
                 || has_where_subquery
                 || has_projection_subquery
                 || has_derived
+                || has_json_extract
         }
+        _ => false,
+    }
+}
+
+/// True if a projected item applies a JSON-path extraction function. Mirrors
+/// [`select_item_has_aggregate`]; used by the engagement gate (TD-183).
+fn select_item_has_json_extract(item: &SelectItem) -> bool {
+    match item {
+        SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } => {
+            expr_has_json_extract(expr)
+        }
+        _ => false,
+    }
+}
+
+/// True if `expr` contains a `JSON_EXTRACT` / `JSON_EXTRACT_TEXT` /
+/// `json_extract_path_text` call anywhere in its tree. The extraction is always the
+/// outermost function or is wrapped in Cast/Nested/Unary/Binary (e.g.
+/// `(JSON_EXTRACT_TEXT(doc,'price'))::int > 8`), so walking those node kinds — the
+/// same set [`expr_has_aggregate`] walks — is sufficient.
+fn expr_has_json_extract(expr: &SqlExpr) -> bool {
+    match expr {
+        SqlExpr::Function(f) => {
+            let name = f.name.to_string().to_ascii_lowercase();
+            matches!(
+                name.rsplit('.').next().unwrap_or(&name),
+                "json_extract" | "json_extract_text" | "json_extract_path_text"
+            )
+        }
+        SqlExpr::Nested(inner) => expr_has_json_extract(inner),
+        SqlExpr::UnaryOp { expr, .. } => expr_has_json_extract(expr),
+        SqlExpr::BinaryOp { left, right, .. } => {
+            expr_has_json_extract(left) || expr_has_json_extract(right)
+        }
+        SqlExpr::Cast { expr, .. } => expr_has_json_extract(expr),
         _ => false,
     }
 }
@@ -1385,6 +1928,70 @@ mod tests {
         assert!(!gate("SELECT id, status FROM inv WHERE id = 'i1'"));
     }
 
+    /// ADR-025 PR3: the OLAP read-merge is default-ON, with an explicit falsy
+    /// `PROXIMADB_OLAP_DELTA_MERGE` token as the engine-wide kill-switch. Tests the
+    /// pure policy directly so it never has to mutate the process environment.
+    #[cfg(feature = "datafusion-integration")]
+    #[test]
+    fn olap_delta_merge_default_on_with_explicit_killswitch() {
+        // Default-ON: unset and any non-falsy value enable the merge.
+        assert!(olap_delta_merge_on(None));
+        for on in ["1", "true", "on", "yes", "anything", ""] {
+            assert!(olap_delta_merge_on(Some(on)), "`{on}` must keep merge ON");
+        }
+        // Kill-switch: explicit falsy tokens (case-insensitive, trimmed) disable it.
+        for off in ["0", "false", "off", "no", "OFF", " False ", "No"] {
+            assert!(
+                !olap_delta_merge_on(Some(off)),
+                "`{off}` must disable merge"
+            );
+        }
+    }
+
+    fn card_hint(sql: &str) -> crate::query::compute_scheduler::CardinalityClass {
+        let statements = Parser::parse_sql(&GenericDialect {}, sql).expect("parse");
+        match statements.as_slice() {
+            [Statement::Query(query)] => query_cardinality_hint(query),
+            _ => panic!("expected a single SELECT statement"),
+        }
+    }
+
+    #[test]
+    fn cardinality_hint_small_for_limit_and_scalar_aggregate() {
+        use crate::query::compute_scheduler::CardinalityClass;
+        // LIMIT n bounds the result (a literal renders to a bare number string).
+        assert_eq!(
+            card_hint("SELECT * FROM inv LIMIT 10"),
+            CardinalityClass::Small
+        );
+        // A large LIMIT still buckets via from_estimate (≤1M → Medium).
+        assert_eq!(
+            card_hint("SELECT * FROM inv LIMIT 100000"),
+            CardinalityClass::Medium
+        );
+        // A scalar aggregate (no GROUP BY / HAVING) → exactly one row → Small.
+        assert_eq!(
+            card_hint("SELECT COUNT(*) FROM inv"),
+            CardinalityClass::Small
+        );
+        assert_eq!(
+            card_hint("SELECT SUM(qty), AVG(qty) FROM inv"),
+            CardinalityClass::Small
+        );
+        // GROUP BY defeats the scalar-aggregate signal (could be many groups).
+        assert_eq!(
+            card_hint("SELECT status, COUNT(*) FROM inv GROUP BY status"),
+            CardinalityClass::Unknown
+        );
+        // A plain unbounded scan → Unknown (never over-claim).
+        assert_eq!(card_hint("SELECT * FROM inv"), CardinalityClass::Unknown);
+        // A non-literal LIMIT expression doesn't parse to a count → Unknown.
+        assert_eq!(
+            card_hint("SELECT * FROM inv LIMIT 1 + 1"),
+            CardinalityClass::Unknown
+        );
+    }
+
     #[test]
     fn collect_table_names_covers_join_and_normalizes() {
         let statements = Parser::parse_sql(
@@ -1400,6 +2007,59 @@ mod tests {
         let keys: Vec<String> = names.iter().map(|n| normalize_table_key(n)).collect();
         assert!(keys.contains(&"emp".to_string()), "got {keys:?}");
         assert!(keys.contains(&"dept".to_string()), "got {keys:?}");
+    }
+
+    fn parse_query(sql: &str) -> SqlQuery {
+        let statements = Parser::parse_sql(&GenericDialect {}, sql).expect("parse");
+        let [Statement::Query(query)] = statements.as_slice() else {
+            panic!("expected query");
+        };
+        (**query).clone()
+    }
+
+    #[test]
+    fn equality_predicate_columns_extracts_and_chained_literals_only() {
+        // AND-chained equalities → both columns; `t.col` → bare name; literal on
+        // either side works.
+        let q = parse_query("SELECT * FROM t WHERE status = 'open' AND 7 = t.priority");
+        let mut cols = equality_predicate_columns(&q);
+        cols.sort();
+        assert_eq!(cols, vec!["priority".to_string(), "status".to_string()]);
+
+        // No WHERE → empty.
+        assert!(equality_predicate_columns(&parse_query("SELECT * FROM t")).is_empty());
+        // Non-equality (range) and col=col (no literal) → ignored.
+        assert!(
+            equality_predicate_columns(&parse_query("SELECT * FROM t WHERE a > 1 AND b = c"))
+                .is_empty()
+        );
+        // OR is not AND-chained equality → ignored (not estimable here).
+        assert!(
+            equality_predicate_columns(&parse_query("SELECT * FROM t WHERE a = 1 OR b = 2"))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn stats_filter_estimate_multiplies_and_estimates_rows() {
+        let cols = vec!["a".to_string(), "b".to_string(), "unknown".to_string()];
+        // a: 1/4, b: 1/5, unknown: no stat. product = 0.05; rows = ceil(1000*0.05)=50.
+        let (sel, rows) = stats_filter_estimate(&cols, Some(1000), |f| match f {
+            "a" => Some(0.25),
+            "b" => Some(0.2),
+            _ => None,
+        })
+        .expect("at least one field has a stat");
+        assert!((sel - 0.05).abs() < 1e-9, "selectivity {sel}");
+        assert_eq!(rows, Some(50));
+
+        // No field has a stat → None (EXPLAIN left unchanged, never guessed).
+        assert!(stats_filter_estimate(&cols, Some(1000), |_| None).is_none());
+        // Stat but no record_count → selectivity present, rows None.
+        let (sel2, rows2) =
+            stats_filter_estimate(&["a".to_string()], None, |_| Some(0.1)).expect("has stat");
+        assert!((sel2 - 0.1).abs() < 1e-9);
+        assert_eq!(rows2, None);
     }
 
     #[test]
@@ -1433,7 +2093,12 @@ mod tests {
         let mut pk_by_table = HashMap::new();
         pk_by_table.insert("users".to_string(), vec![0]); // single-col PK at ordinal 0
         pk_by_table.insert("edges".to_string(), Vec::new()); // composite/no-PK → none
-        let resolver = SnapshotCapabilities { pk_by_table };
+        let mut secondary_by_table = HashMap::new();
+        secondary_by_table.insert("users".to_string(), vec!["name".to_string()]);
+        let resolver = SnapshotCapabilities {
+            pk_by_table,
+            secondary_by_table,
+        };
 
         // Single-col PK table → planner can pick PkLookup (name normalized).
         assert_eq!(resolver.primary_key(&TableId::new("users")), vec![0]);
@@ -1443,5 +2108,73 @@ mod tests {
         assert!(resolver.primary_key(&TableId::new("unknown")).is_empty());
         // Pushdown capabilities unchanged (pk_lookup gated per-table by primary_key).
         assert!(resolver.capabilities(&TableId::new("users")).pk_lookup);
+        // TD-128/TD-127: batch + secondary advertised (gated per-table below).
+        assert!(
+            resolver
+                .capabilities(&TableId::new("users"))
+                .pk_lookup_batch
+        );
+        assert!(
+            resolver
+                .capabilities(&TableId::new("users"))
+                .secondary_lookup
+        );
+        // TD-127: secondary-indexed columns surfaced per-table (name-normalized);
+        // unknown tables → empty → planner keeps a full scan.
+        assert_eq!(
+            resolver.secondary_index_columns(&TableId::new("USERS")),
+            vec!["name".to_string()]
+        );
+        assert!(
+            resolver
+                .secondary_index_columns(&TableId::new("edges"))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn text_encode_null_is_none_and_exotic_types_render() {
+        // SQL NULL → None (the caller emits the pgwire `-1` null sentinel).
+        // This is the core of the pgwire NULL-rendering fix.
+        assert_eq!(text_encode(&ProximaValue::Null), None);
+
+        // Scalars render as before.
+        assert_eq!(
+            text_encode(&ProximaValue::String("alice".into())),
+            Some("alice".to_string())
+        );
+        assert_eq!(
+            text_encode(&ProximaValue::Boolean(false)),
+            Some("f".to_string())
+        );
+
+        // Exotic types now render explicitly rather than as a Debug fallback.
+        assert_eq!(
+            text_encode(&ProximaValue::Array(vec![
+                ProximaValue::Int32(1),
+                ProximaValue::Int32(2),
+            ])),
+            Some("{1,2}".to_string())
+        );
+        // A NULL element inside an array uses the empty-field convention.
+        assert_eq!(
+            text_encode(&ProximaValue::Array(vec![
+                ProximaValue::Int32(1),
+                ProximaValue::Null,
+            ])),
+            Some("{1,}".to_string())
+        );
+
+        // UUID renders dashed (Postgres format), not raw hex.
+        let uuid = ProximaValue::Uuid([
+            0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4, 0xa7, 0x16, 0x44, 0x66, 0x55, 0x44,
+            0x00, 0x00,
+        ]);
+        let rendered = text_encode(&uuid).expect("uuid must encode");
+        assert_eq!(rendered, "550e8400-e29b-41d4-a716-446655440000");
+        assert!(
+            rendered.contains('-'),
+            "UUID must be dashed (Postgres format)"
+        );
     }
 }

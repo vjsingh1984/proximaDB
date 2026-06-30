@@ -17,3 +17,4 @@ path = "src/lib.rs"
 proximadb-data-model = { workspace = true }
 proximadb-relational-types = { workspace = true }
 dashmap = { workspace = true }
+serde_json = { workspace = true }

@@ -41,10 +41,14 @@ mod common;
 
 use common::{ensure_test_directories, setup_hardware_capabilities};
 use proximadb::graph::service::GraphOperationsService;
-use proximadb::proto::proximadb_v1::{
-    CompressionAlgorithm, Edge, EmbeddingVersion, GraphStorageConfig, Modality, Node,
-    PropertyValue, TraversalAlgorithm, TraversalRequest, property_value::Value,
+// Graph engine speaks engine-neutral types (TD-123 retrofit): Node/Edge/PropertyValue/
+// Value/EmbeddingVersion/TraversalRequest/TraversalAlgorithm now live in graph::model.
+use proximadb::graph::{
+    Edge, EmbeddingVersion, Node, PropertyValue, TraversalAlgorithm, TraversalRequest,
+    property_value::Value,
 };
+// Request/config types on the create_graph_collection boundary stay proto.
+use proximadb::proto::proximadb_v1::{CompressionAlgorithm, GraphStorageConfig, Modality};
 use proximadb::query::unified::UnifiedRecord;
 use proximadb::query::unified::fusion::SubQueryResult;
 use proximadb::query::unified::{DataModel, FusionStrategy, ResultFuser};

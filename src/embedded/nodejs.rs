@@ -140,6 +140,7 @@ impl ProximaDB {
             default_engine: config.default_engine.unwrap_or_else(|| "sst".to_string()),
             enable_wal: config.enable_wal.unwrap_or(true),
             wal_sync_mode: config.wal_sync_mode.unwrap_or_else(|| "batch".to_string()),
+            ..EmbeddedConfig::default()
         };
 
         let db = EmbeddedProximaDB::new(embedded_config)

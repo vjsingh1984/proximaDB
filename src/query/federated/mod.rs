@@ -393,11 +393,11 @@ mod tests {
     use crate::core::search::results::OptimizedSearchRecord;
     use crate::graph::engines::GraphEngine;
     use crate::graph::{Edge, EdgeId, Node, NodeId};
+    use crate::graph::{PropertyValue, property_value};
     use crate::proto::proximadb_v1::{
         DocumentCollectionConfig, DocumentFilter, DocumentUpdate, LogEntry, LogFilter,
-        MetricAggregation, MetricSample, ObservabilityNamespaceConfig, PropertyValue,
-        RetentionConfig, Severity, SqlArray, SqlObject, SqlValue, TraceData, VectorData,
-        property_value, sql_value,
+        MetricAggregation, MetricSample, ObservabilityNamespaceConfig, RetentionConfig, Severity,
+        SqlArray, SqlObject, SqlValue, TraceData, sql_value,
     };
     use crate::query::federated::{FederatedQueryContext, QueryResultCache};
     use crate::storage::MultiModelStorageFacade;
@@ -1024,37 +1024,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_search_uses_collection_service_storage_assignment() {
+        use crate::catalog::CatalogManager;
         use crate::core::config::{StorageConfig, StorageLocation};
         use crate::proto::proximadb_v1::{CollectionConfig, StorageEngine};
         use crate::services::collection::manager::CollectionService;
-        use crate::storage::metadata::backends::universal_backend::{
-            UniversalMetadataBackend, UniversalMetadataConfig,
-        };
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().expect("temp dir should be created");
         let base_url = format!("file://{}", temp_dir.path().display());
+        let metadata_url = format!("{}/metadata", base_url);
 
-        let metadata_backend = Arc::new(
-            UniversalMetadataBackend::new(
-                UniversalMetadataConfig {
-                    storage_url: format!("{}/metadata", base_url),
-                    compression: false,
-                    enable_snapshots: false,
-                    snapshot_threshold: 1000,
-                    keep_snapshots: 2,
-                    backup_url: None,
-                    temp_dir: None,
-                },
-                Arc::new(
-                    FilesystemFactory::create(FilesystemConfig::default())
-                        .await
-                        .expect("filesystem factory should be created"),
-                ),
-            )
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &metadata_url)
             .await
-            .expect("metadata backend should be created"),
-        );
+            .expect("xCatalog should be created");
 
         let mut storage_config = StorageConfig::default();
         storage_config.storage_locations = vec![StorageLocation {
@@ -1062,12 +1046,13 @@ mod tests {
             weight: 1,
             tags: vec!["local".to_string()],
         }];
-        storage_config.metadata_url = format!("{}/metadata", base_url);
+        storage_config.metadata_url = metadata_url;
 
         let collection_service = Arc::new(
-            CollectionService::new(metadata_backend, storage_config)
+            CollectionService::new(storage_config)
                 .await
-                .expect("collection service should be created"),
+                .expect("collection service should be created")
+                .with_catalog_manager(catalog_manager.clone()),
         );
 
         let create_result = collection_service
@@ -1804,9 +1789,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![0.9, 0.1],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![0.9, 0.1])),
                         },
                     )]),
                     embedding: None,
@@ -1819,9 +1802,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![0.2, 0.8],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![0.2, 0.8])),
                         },
                     )]),
                     embedding: None,
@@ -1937,9 +1918,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![0.9, 0.1],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![0.9, 0.1])),
                         },
                     )]),
                     embedding: None,
@@ -2438,9 +2417,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![9.0, 8.0],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![9.0, 8.0])),
                         },
                     )]),
                     embedding: None,
@@ -2453,9 +2430,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![0.1, 0.2],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![0.1, 0.2])),
                         },
                     )]),
                     embedding: None,
@@ -2468,9 +2443,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![0.3, 0.4],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![0.3, 0.4])),
                         },
                     )]),
                     embedding: None,
@@ -2519,9 +2492,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![9.0, 8.0],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![9.0, 8.0])),
                         },
                     )]),
                     embedding: None,
@@ -2534,9 +2505,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![0.1, 0.2],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![0.1, 0.2])),
                         },
                     )]),
                     embedding: None,
@@ -2549,9 +2518,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![0.3, 0.4],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![0.3, 0.4])),
                         },
                     )]),
                     embedding: None,
@@ -2600,9 +2567,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![9.0, 8.0],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![9.0, 8.0])),
                         },
                     )]),
                     embedding: None,
@@ -2615,9 +2580,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![0.1, 0.2],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![0.1, 0.2])),
                         },
                     )]),
                     embedding: None,
@@ -2630,9 +2593,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![0.3, 0.4],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![0.3, 0.4])),
                         },
                     )]),
                     embedding: None,
@@ -2681,9 +2642,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![9.0, 8.0],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![9.0, 8.0])),
                         },
                     )]),
                     embedding: None,
@@ -2696,9 +2655,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![0.1, 0.2],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![0.1, 0.2])),
                         },
                     )]),
                     embedding: None,
@@ -2745,9 +2702,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![9.0, 8.0],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![9.0, 8.0])),
                         },
                     )]),
                     embedding: None,
@@ -2760,9 +2715,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![0.1, 0.2],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![0.1, 0.2])),
                         },
                     )]),
                     embedding: None,
@@ -2775,9 +2728,7 @@ mod tests {
                     properties: HashMap::from([(
                         "embedding".to_string(),
                         PropertyValue {
-                            value: Some(property_value::Value::VectorValue(VectorData {
-                                values: vec![0.3, 0.4],
-                            })),
+                            value: Some(property_value::Value::VectorValue(vec![0.3, 0.4])),
                         },
                     )]),
                     embedding: None,

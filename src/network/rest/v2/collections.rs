@@ -36,6 +36,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
+use utoipa::{IntoParams, ToSchema};
 
 use crate::errors::{ApiError, ApiResult};
 // AnnIndexAdvisor trait needs to be in scope so the recall-tune
@@ -63,6 +64,23 @@ fn collection_distance_metric_label(distance_metric: Option<i32>) -> &'static st
 
 fn non_negative_stat(value: i64) -> u64 {
     u64::try_from(value).unwrap_or(0)
+}
+
+fn collection_create_failure_error(collection_name: &str, error_code: Option<&str>) -> ApiError {
+    let code = error_code.unwrap_or_default();
+    let lower_code = code.to_ascii_lowercase();
+    if code.contains("COLLECTION_EXISTS") || lower_code.contains("already exists") {
+        return ApiError::AlreadyExists(format!("Collection '{}' already exists", collection_name));
+    }
+    ApiError::Internal(format!(
+        "Failed to create collection '{}': {}",
+        collection_name,
+        if code.is_empty() {
+            "unknown error"
+        } else {
+            code
+        }
+    ))
 }
 
 /// Map a proto `EmbeddingPrecision` discriminant (carried on
@@ -101,11 +119,13 @@ fn collection_embedding_precision_label(precision: Option<i32>) -> Option<String
 ///     "enable_proxima_record": true
 /// }
 /// ```
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateCollectionV2Request {
     /// Collection name (required)
+    #[schema(min_length = 1)]
     pub name: String,
     /// Vector dimension (required)
+    #[schema(minimum = 1)]
     pub dimension: u32,
     /// Storage engine selection
     ///
@@ -148,10 +168,100 @@ pub struct CreateCollectionV2Request {
     /// `"target_vector_count:1000"`, `"modalities:text,image"`. Consumed by the
     /// recall advisor / route-health (`services/collection/recall_target.rs`).
     pub tags: Option<Vec<String>>,
+    /// Quantization config (gRPC-v2 parity). When omitted, quantization is
+    /// left unset (engine default).
+    pub quantization: Option<QuantizationConfigInput>,
+    /// Per-collection cold/warm search routing policy (ADR-028). When omitted,
+    /// the system decides cost-derived (`mode = "auto"`). Owners with hard SLAs
+    /// override here; query-time precedence is per-query `search_mode` > this
+    /// policy > cost-model auto-default.
+    pub index_policy: Option<IndexPolicyInput>,
+}
+
+/// REST input for the per-collection index routing policy (mirrors proto
+/// `IndexPolicy`; ADR-028).
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct IndexPolicyInput {
+    /// Routing mode: "auto" (default) | "exact" | "ivf" | "hnsw" | "helix".
+    /// "auto"/omitted ⇒ cost-derived. "exact" ⇒ always brute-force (no index).
+    /// The engine modes force the collection onto that engine/route.
+    pub mode: Option<String>,
+    /// Cold-start index warming: "auto" (default) | "eager" | "lazy" | "never".
+    /// Index/auto modes only — rejected when `mode = "exact"`.
+    pub rehydrate: Option<String>,
+    /// Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
+    /// for the storage class.
+    pub byte_budget: Option<u64>,
+    /// nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when
+    /// `mode = "exact"`.
+    pub nprobe: Option<u32>,
+}
+
+/// ADR-028: validate a REST `IndexPolicyInput` and map it onto the proto
+/// `IndexPolicy`, fail-closed. Modes and rehydrate strings are checked against
+/// allowlists, and the validity matrix is enforced: `rehydrate`/`nprobe` are
+/// index/auto concepts and are rejected when `mode = "exact"` (exact builds no
+/// index). Strings are normalized to lowercase so downstream consumers match
+/// case-insensitively.
+fn build_index_policy(
+    input: IndexPolicyInput,
+) -> Result<crate::proto::proximadb_v1::IndexPolicy, ApiError> {
+    let mode = input
+        .mode
+        .as_deref()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "auto".to_string());
+    let valid_modes = ["auto", "exact", "ivf", "hnsw", "helix"];
+    if !valid_modes.contains(&mode.as_str()) {
+        return Err(ApiError::InvalidArgument(format!(
+            "Invalid index_policy.mode '{}'. Valid modes: {:?}",
+            mode, valid_modes
+        )));
+    }
+
+    let rehydrate = input
+        .rehydrate
+        .as_deref()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "auto".to_string());
+    let valid_rehydrate = ["auto", "eager", "lazy", "never"];
+    if !valid_rehydrate.contains(&rehydrate.as_str()) {
+        return Err(ApiError::InvalidArgument(format!(
+            "Invalid index_policy.rehydrate '{}'. Valid values: {:?}",
+            rehydrate, valid_rehydrate
+        )));
+    }
+
+    let nprobe = input.nprobe.unwrap_or(0);
+
+    // Validity matrix (fail-closed): exact builds no index, so index-only knobs
+    // are contradictory with it.
+    if mode == "exact" {
+        if rehydrate != "auto" {
+            return Err(ApiError::InvalidArgument(
+                "index_policy.rehydrate is invalid with mode='exact' (exact builds no index to rehydrate)".to_string(),
+            ));
+        }
+        if nprobe != 0 {
+            return Err(ApiError::InvalidArgument(
+                "index_policy.nprobe is invalid with mode='exact' (exact builds no index)"
+                    .to_string(),
+            ));
+        }
+    }
+
+    Ok(crate::proto::proximadb_v1::IndexPolicy {
+        mode,
+        rehydrate,
+        byte_budget: input.byte_budget.unwrap_or(0),
+        nprobe,
+    })
 }
 
 /// REST input for a single index config (mirrors proto `IndexConfig`).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct IndexConfigInput {
     /// Optional index name (defaults to `index_<n>`).
     pub index_name: Option<String>,
@@ -164,10 +274,22 @@ pub struct IndexConfigInput {
     pub hnsw_config: Option<HnswConfigInput>,
     /// IVF tuning (when algorithm == "ivf").
     pub ivf_config: Option<IvfConfigInput>,
+    /// Mark this index as the collection's primary ANN index (gRPC-v2 parity).
+    pub is_primary: Option<bool>,
+}
+
+/// REST input for quantization config (mirrors proto `QuantizationConfig`;
+/// gRPC-v2 parity with `V2QuantizationConfig`).
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct QuantizationConfigInput {
+    /// Enable quantization for this collection.
+    pub enabled: Option<bool>,
+    /// Strategy: "smart_defaults" (default) | "minimal" | "aggressive" | "custom_levels".
+    pub strategy: Option<String>,
 }
 
 /// REST input for HNSW index params (mirrors proto `HnswConfig`).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct HnswConfigInput {
     pub m: Option<u32>,
     pub ef_construction: Option<u32>,
@@ -175,7 +297,7 @@ pub struct HnswConfigInput {
 }
 
 /// REST input for IVF index params (mirrors proto `IvfConfig`).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct IvfConfigInput {
     pub n_lists: Option<u32>,
     pub n_probe: Option<u32>,
@@ -184,7 +306,7 @@ pub struct IvfConfigInput {
 /// Schema definition for a collection
 ///
 /// Defines the typed columns and enforcement rules for ProximaRecord support.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
 pub struct SchemaDefinition {
     /// Column definitions
     pub columns: Vec<RestColumnDefinition>,
@@ -205,7 +327,7 @@ pub struct SchemaDefinition {
 pub type ColumnDefinition = RestColumnDefinition;
 
 /// Column definition for schema
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
 pub struct RestColumnDefinition {
     /// Column name
     pub name: String,
@@ -343,7 +465,7 @@ pub fn parse_rest_data_type(
 }
 
 /// Response for collection creation
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CreateCollectionV2Response {
     /// Collection ID (same as name)
     pub collection_id: String,
@@ -378,6 +500,18 @@ pub struct CreateCollectionV2Response {
 /// - `400 Bad Request`: Invalid request or schema
 /// - `409 Conflict`: Collection already exists
 /// - `500 Internal Server Error`: Creation failed
+#[utoipa::path(
+    post,
+    path = "/api/v2/collections",
+    tag = "Collections",
+    operation_id = "createCollection",
+    summary = "Create a collection with optional schema.",
+    request_body = CreateCollectionV2Request,
+    responses(
+        (status = 200, description = "Collection created.", body = CreateCollectionV2Response),
+        (status = 400, description = "Invalid request.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn create_collection_v2(
     Extension(tenant): Extension<TenantContext>,
     State(state): State<AppState>,
@@ -546,6 +680,7 @@ pub async fn create_collection_v2(
                         n_probe: i.n_probe,
                         ..Default::default()
                     }),
+                    is_primary: cfg.is_primary,
                     ..Default::default()
                 });
             }
@@ -553,16 +688,52 @@ pub async fn create_collection_v2(
         }
     };
 
-    let collection_config = CollectionConfig {
+    // gRPC-v2 parity: map the optional quantization config onto the proto.
+    let quantization = request.quantization.take().map(|q| {
+        use crate::proto::proximadb_v1::{QuantizationConfig, quantization_config::Strategy};
+        QuantizationConfig {
+            enabled: q.enabled,
+            strategy: q.strategy.map(|s| {
+                Strategy::from_str_name(&s.to_ascii_uppercase()).unwrap_or(Strategy::SmartDefaults)
+                    as i32
+            }),
+            ..Default::default()
+        }
+    });
+
+    // ADR-028: validate + map the optional index routing policy. Fail-closed on
+    // nonsensical combinations (the mode×rehydrate/nprobe validity matrix) so a
+    // bad policy is rejected at create rather than silently ignored at query time.
+    let index_policy = match request.index_policy.take() {
+        None => None,
+        Some(p) => Some(build_index_policy(p)?),
+    };
+
+    let mut collection_config = CollectionConfig {
         name: request.name.clone(),
         dimension: request.dimension,
         storage_engine: Some(storage_engine_value),
         distance_metric: distance_metric_value,
         canonical_embedding_precision,
         index_configs,
+        quantization,
+        index_policy,
         tags: request.tags.take().unwrap_or_default(),
+        enable_proxima_record: Some(proxima_record_enabled),
         ..Default::default()
     };
+
+    // TD-122: persist the typed schema (ProximaRecord) set at create time so a
+    // read-after-create GetCollection echoes it. Reuses the same SchemaDefinition
+    // → proto mapping as the update-schema endpoint.
+    if let Some(schema) = request.schema.take() {
+        super::schema::apply_schema_definition(
+            &mut collection_config,
+            &schema,
+            schema_id.clone().unwrap_or_default(),
+            "1.0.0".to_string(),
+        );
+    }
 
     let collection_request = CollectionRequest {
         operation: CollectionOperation::CollectionCreate as i32,
@@ -575,13 +746,37 @@ pub async fn create_collection_v2(
 
     // Create collection via unified handlers
     match state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(collection_request, Some(&tenant.tenant_id))
         .await
     {
-        Ok(_resp) => {
+        Ok(resp) if !resp.success => {
+            // The unified handler returns Ok(CollectionResponse) even when the
+            // create FAILED (success=false carries the reason in error_code).
+            // Previously this arm fell through and returned 200 with the echoed
+            // request — masking a half-registered collection (GET dimension:0,
+            // absent from LIST). Honor the failure: surface a real HTTP error.
+            Err(collection_create_failure_error(
+                &request.name,
+                resp.error_code.as_deref(),
+            ))
+        }
+        Ok(resp) => {
+            // #176 follow-up: `collection_id` is the collection's canonical UUID
+            // (`Collection.id`), NOT the request echo. Both the UUID and the user
+            // `name` resolve to the same collection on every endpoint (get/insert/
+            // search/delete) via `CollectionService::collection` → `get_native_proto`,
+            // so returning the UUID keeps a `create → use collection_id` flow working.
+            // Fall back to the request name only if the handler somehow omitted the
+            // created collection (it always populates it on success).
+            let canonical_id = resp
+                .collection
+                .as_ref()
+                .map(|c| c.id.clone())
+                .filter(|id| !id.is_empty())
+                .unwrap_or_else(|| request.name.clone());
             let response = CreateCollectionV2Response {
-                collection_id: request.name.clone(),
+                collection_id: canonical_id,
                 name: request.name,
                 dimension: request.dimension,
                 engine: engine.to_string(),
@@ -614,7 +809,7 @@ pub async fn create_collection_v2(
 }
 
 /// Collection details response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CollectionV2Response {
     /// Collection ID
     pub collection_id: String,
@@ -638,14 +833,55 @@ pub struct CollectionV2Response {
     pub schema: Option<SchemaDefinition>,
     /// Collection statistics
     pub stats: CollectionStatsV2,
+    /// Per-index config (HNSW/IVF params, is_primary) as persisted at create
+    /// time. Mirrors the gRPC-v2 `GetCollection` `index_specs` (TD-122 parity).
+    pub index_specs: Vec<IndexSpecOutput>,
+    /// Quantization config as persisted at create time, or `None` when unset.
+    pub quantization: Option<QuantizationConfigOutput>,
     /// Creation timestamp
     pub created_at: String,
     /// Last update timestamp
     pub updated_at: Option<String>,
 }
 
+/// REST output for a single index config (mirrors gRPC `V2IndexSpec`).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct IndexSpecOutput {
+    /// Algorithm: "hnsw" | "ivf" | "pq" | "flat" | "annoy" | "lsh".
+    pub algorithm: String,
+    /// HNSW params (present when the index is HNSW).
+    pub hnsw: Option<HnswConfigOutput>,
+    /// IVF params (present when the index is IVF).
+    pub ivf: Option<IvfConfigOutput>,
+    /// Whether this is the collection's primary ANN index.
+    pub is_primary: bool,
+}
+
+/// REST output for HNSW params (mirrors gRPC `V2HnswConfig`).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct HnswConfigOutput {
+    pub m: Option<u32>,
+    pub ef_construction: Option<u32>,
+    pub ef_search: Option<u32>,
+}
+
+/// REST output for IVF params (mirrors gRPC `V2IvfConfig`).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct IvfConfigOutput {
+    pub n_lists: Option<u32>,
+    pub n_probe: Option<u32>,
+}
+
+/// REST output for quantization config (mirrors gRPC `V2QuantizationConfig`).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct QuantizationConfigOutput {
+    pub enabled: bool,
+    /// Strategy label, e.g. "smart_defaults" | "minimal" | "aggressive".
+    pub strategy: String,
+}
+
 /// Collection statistics for v2 API
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CollectionStatsV2 {
     /// Total number of records
     pub record_count: u64,
@@ -673,6 +909,20 @@ pub struct CollectionStatsV2 {
 ///
 /// - `404 Not Found`: Collection does not exist
 /// - `500 Internal Server Error`: Retrieval failed
+#[utoipa::path(
+    get,
+    path = "/api/v2/collections/{collection_id}",
+    tag = "Collections",
+    operation_id = "getCollection",
+    summary = "Get collection details.",
+    params(
+        ("collection_id" = String, Path, description = "Collection name/ID."),
+    ),
+    responses(
+        (status = 200, description = "Collection details.", body = CollectionV2Response),
+        (status = 404, description = "Resource not found.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn get_collection_v2(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,
@@ -697,7 +947,7 @@ pub async fn get_collection_v2(
     };
 
     match state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
@@ -710,23 +960,125 @@ pub async fn get_collection_v2(
             let engine_str = collection_storage_engine_label(config.storage_engine);
             let distance_metric_str = collection_distance_metric_label(config.distance_metric);
 
+            // TD-122 parity: surface the persisted per-index + quantization config
+            // (same vocabulary as the gRPC `collection_to_v2` mapper).
+            let index_specs = config
+                .index_configs
+                .iter()
+                .map(|ic| IndexSpecOutput {
+                    algorithm: crate::proto::proximadb_v1::IndexingAlgorithm::try_from(
+                        ic.algorithm,
+                    )
+                    .map(|a| a.as_str_name().to_ascii_lowercase())
+                    .unwrap_or_default(),
+                    hnsw: ic.hnsw_config.as_ref().map(|h| HnswConfigOutput {
+                        m: h.m,
+                        ef_construction: h.ef_construction,
+                        ef_search: h.ef_search,
+                    }),
+                    ivf: ic.ivf_config.as_ref().map(|i| IvfConfigOutput {
+                        n_lists: i.n_lists,
+                        n_probe: i.n_probe,
+                    }),
+                    is_primary: ic.is_primary.unwrap_or(false),
+                })
+                .collect();
+            let quantization = config
+                .quantization
+                .as_ref()
+                .map(|q| QuantizationConfigOutput {
+                    enabled: q.enabled.unwrap_or(false),
+                    strategy: q
+                        .strategy
+                        .and_then(|s| {
+                            crate::proto::proximadb_v1::quantization_config::Strategy::try_from(s)
+                                .ok()
+                        })
+                        .map(|s| s.as_str_name().to_ascii_lowercase())
+                        .unwrap_or_default(),
+                });
+
+            // TD-122: surface the persisted ProximaRecord schema + flags that
+            // CreateCollection set (reconstructed from the catalog asset).
+            let proxima_record_enabled = config.enable_proxima_record.unwrap_or(false);
+            // Text columns + enforcement come from build_existing_schema; the
+            // scalar filterable columns are appended so the view is complete.
+            let mut schema = super::schema::build_existing_schema(&config);
+            let scalar_columns: Vec<RestColumnDefinition> = config
+                .filterable_columns
+                .iter()
+                .map(|f| RestColumnDefinition {
+                    name: f.name.clone(),
+                    data_type: super::schema::filterable_type_to_rest(f.data_type).to_string(),
+                    nullable: Some(true),
+                    indexed: Some(f.indexed),
+                    filterable: Some(true),
+                    max_length: None,
+                    precision: None,
+                    scale: None,
+                    vector_dimension: None,
+                })
+                .collect();
+            if !scalar_columns.is_empty() {
+                match &mut schema {
+                    Some(existing) => {
+                        for col in scalar_columns {
+                            if !existing.columns.iter().any(|c| c.name == col.name) {
+                                existing.columns.push(col);
+                            }
+                        }
+                    }
+                    None => {
+                        schema = Some(SchemaDefinition {
+                            columns: scalar_columns,
+                            enforcement: None,
+                            allow_additional_fields: Some(true),
+                        });
+                    }
+                }
+            }
+            let indexed_fields = config
+                .filterable_columns
+                .iter()
+                .filter(|c| c.indexed)
+                .count() as u32;
+            let text_field_count = config.text_columns.len() as u32;
+
+            let name = if config.name.is_empty() {
+                collection_id.clone()
+            } else {
+                config.name.clone()
+            };
+            // #176 follow-up: return the canonical UUID (`Collection.id`), not the
+            // path echo (which may be the user-supplied name). The path identifier
+            // resolved to this collection by name OR UUID, and the returned UUID is
+            // itself a valid lookup key on every endpoint, so name- and UUID-based
+            // lookup both keep working. Fall back to the path echo only if the
+            // handler returned a collection without an id.
+            let canonical_id = if collection.id.is_empty() {
+                collection_id.clone()
+            } else {
+                collection.id.clone()
+            };
             let response = CollectionV2Response {
-                collection_id: collection_id.clone(),
-                name: collection_id,
+                collection_id: canonical_id,
+                name,
                 dimension: config.dimension,
                 engine: engine_str.to_string(),
                 distance_metric: distance_metric_str.to_string(),
-                proxima_record_enabled: false, // Would be stored in metadata
+                proxima_record_enabled,
                 canonical_embedding_precision: collection_embedding_precision_label(
                     config.canonical_embedding_precision,
                 ),
-                schema: None, // Would be loaded from metadata
+                schema,
                 stats: CollectionStatsV2 {
                     record_count: non_negative_stat(stats.vector_count),
                     storage_size_bytes: non_negative_stat(stats.data_size_bytes),
-                    indexed_fields: 0,
-                    text_field_count: 0,
+                    indexed_fields,
+                    text_field_count,
                 },
+                index_specs,
+                quantization,
                 created_at: chrono::Utc::now().to_rfc3339(),
                 updated_at: None,
             };
@@ -747,7 +1099,8 @@ pub async fn get_collection_v2(
 }
 
 /// Query parameters for listing collections
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListCollectionsV2Query {
     /// Maximum number of collections to return (default: 100)
     pub limit: Option<u32>,
@@ -758,7 +1111,7 @@ pub struct ListCollectionsV2Query {
 }
 
 /// Response for listing collections
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ListCollectionsV2Response {
     /// List of collections
     pub collections: Vec<CollectionV2Summary>,
@@ -773,7 +1126,7 @@ pub struct ListCollectionsV2Response {
 }
 
 /// Response for deleting a collection through the v2 API.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DeleteCollectionV2Response {
     /// Whether the delete request was accepted.
     pub success: bool,
@@ -782,7 +1135,7 @@ pub struct DeleteCollectionV2Response {
 }
 
 /// Summary of a collection for list operations
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CollectionV2Summary {
     /// Collection ID
     pub collection_id: String,
@@ -815,6 +1168,17 @@ pub struct CollectionV2Summary {
 /// ## Errors
 ///
 /// - `500 Internal Server Error`: List operation failed
+#[utoipa::path(
+    get,
+    path = "/api/v2/collections",
+    tag = "Collections",
+    operation_id = "listCollections",
+    summary = "List collections.",
+    params(ListCollectionsV2Query),
+    responses(
+        (status = 200, description = "Collection page.", body = ListCollectionsV2Response),
+    ),
+)]
 pub async fn list_collections_v2(
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantContext>,
@@ -846,7 +1210,7 @@ pub async fn list_collections_v2(
     };
 
     match state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
@@ -868,7 +1232,10 @@ pub async fn list_collections_v2(
                     };
                     CollectionV2Summary {
                         collection_id: c.id.clone(),
-                        name: c.id.clone(),
+                        name: cfg
+                            .map(|c| c.name.clone())
+                            .filter(|n| !n.is_empty())
+                            .unwrap_or_else(|| c.id.clone()),
                         dimension: cfg.map_or(0, |cfg| cfg.dimension),
                         engine: engine_str.to_string(),
                         proxima_record_enabled: false,
@@ -906,6 +1273,20 @@ pub async fn list_collections_v2(
 /// Delete a collection by ID/name. This v2 route keeps SDK lifecycle methods on
 /// the ProximaRecord-era API while delegating to the existing collection control
 /// plane.
+#[utoipa::path(
+    delete,
+    path = "/api/v2/collections/{collection_id}",
+    tag = "Collections",
+    operation_id = "deleteCollection",
+    summary = "Delete a collection.",
+    params(
+        ("collection_id" = String, Path, description = "Collection name/ID."),
+    ),
+    responses(
+        (status = 200, description = "Collection deleted.", body = DeleteCollectionV2Response),
+        (status = 404, description = "Resource not found.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn delete_collection_v2(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,
@@ -929,7 +1310,7 @@ pub async fn delete_collection_v2(
     };
 
     state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
@@ -1726,6 +2107,182 @@ fn object_economy_status_label(
     }
 }
 
+/// Map a proto `FilterableDataType` to the canonical `ProximaType` (ADR-024)
+/// serde label the statistics envelope's `data_type` field carries. Unit
+/// variants only — parametrized temporal/decimal types degrade to their base
+/// label (still a schema-valid string under the frozen contract's
+/// `oneOf[string,object]`).
+fn filterable_type_to_proxima(v: i32) -> &'static str {
+    use crate::proto::proximadb_v1::FilterableDataType as F;
+    match F::try_from(v) {
+        Ok(F::FilterableInteger) => "Int64",
+        Ok(F::FilterableFloat) => "Float64",
+        Ok(F::FilterableDecimal) => "Decimal",
+        Ok(F::FilterableBoolean) => "Boolean",
+        Ok(F::FilterableDatetime) => "Timestamp",
+        Ok(F::FilterableTimestampTz) => "TimestampTz",
+        Ok(F::FilterableDate) => "Date",
+        Ok(F::FilterableTime) => "Time",
+        Ok(F::FilterableUuid) => "Uuid",
+        _ => "String",
+    }
+}
+
+/// Map the engine's maintained `GraphStats` to the envelope's graph modality
+/// block (ADR-037 TD-175). Reuses `GraphOperationsService::get_stats` — the
+/// canonical accessor for the engine's incrementally-maintained node/edge/label
+/// counters — rather than recomputing topology.
+fn graph_stats_to_modality(
+    g: crate::graph::GraphStats,
+) -> crate::core::statistics::GraphStatistics {
+    use crate::core::statistics::{EdgeTypeCount, GraphStatistics, LabelCount};
+    GraphStatistics {
+        total_nodes: g.total_nodes,
+        total_edges: g.total_edges,
+        average_degree: Some(g.average_degree),
+        max_degree: Some(g.max_degree),
+        connected_components: Some(g.connected_components),
+        label_counts: g
+            .label_stats
+            .into_iter()
+            .map(|l| LabelCount {
+                label: l.label,
+                count: l.count,
+            })
+            .collect(),
+        edge_type_counts: g
+            .edge_type_stats
+            .into_iter()
+            .map(|e| EdgeTypeCount {
+                edge_type: e.edge_type,
+                count: e.count,
+            })
+            .collect(),
+    }
+}
+
+/// GET /api/v2/_diagnostics/collections/{collection_id}/statistics
+///
+/// ADR-037 (TD-174): emit the v1 [`StatisticsEnvelope`] — the modality-neutral,
+/// **units-only** boundary object the agent-facing catalog consumes (AnvaiOps
+/// ADR-0021 reads *this*, never the underlying data). It is projected from the
+/// resident per-collection summary maintained at the flush/compaction write
+/// boundary (the sibling of the KSU meter), overlaid with the authoritative
+/// live record/size counts. It is **never a corpus scan** — an agent reads the
+/// tiny envelope instead of the data.
+///
+/// Carries units and distributions only: no pricing, descriptions, quality
+/// grade, PII, or per-account scope (those are AnvaiOps policy). Freshness is a
+/// FACT (a flush/compaction watermark), never an SLA. Tenant-scoped.
+///
+/// ## Errors
+///
+/// - `404 Not Found`: Collection does not exist
+/// - `500 Internal Server Error`: Lookup failed
+#[utoipa::path(
+    get,
+    path = "/api/v2/_diagnostics/collections/{collection_id}/statistics",
+    tag = "Collections",
+    operation_id = "getCollectionStatistics",
+    summary = "Agent-facing statistics envelope (ADR-037 statistics-envelope.v1).",
+    params(
+        ("collection_id" = String, Path, description = "Collection name/ID."),
+    ),
+    responses(
+        (status = 200, description = "Statistics envelope (statistics-envelope.v1; canonical schema in docs/12-design/contracts)."),
+        (status = 404, description = "Resource not found.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
+pub async fn get_collection_statistics_v2(
+    Path(collection_id): Path<String>,
+    Extension(tenant): Extension<TenantContext>,
+    State(state): State<AppState>,
+) -> ApiResult<Json<crate::core::statistics::StatisticsEnvelope>> {
+    if collection_id.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
+    }
+
+    let request = CollectionRequest {
+        operation: CollectionOperation::CollectionGet as i32,
+        collection_id: Some(collection_id.clone()),
+        collection_config: None,
+        query_params: Default::default(),
+        options: Default::default(),
+        migration_config: Default::default(),
+    };
+
+    let resp = state
+        .api_handlers
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                ApiError::CollectionNotFound(collection_id.clone())
+            } else {
+                ApiError::Internal(format!("Failed to get collection: {}", e))
+            }
+        })?;
+
+    let collection = resp.collection.unwrap_or_default();
+    let config = collection.config.unwrap_or_default();
+    let stats = collection.stats.unwrap_or_default();
+    let canonical_id = if collection.id.is_empty() {
+        collection_id.clone()
+    } else {
+        collection.id.clone()
+    };
+
+    // TD-175: best-effort graph modality block from the engine's maintained
+    // graph counters (the `get_stats` accessor); skipped when the collection has
+    // no graph topology so vector-only collections carry no spurious graph block.
+    let graph_modality = state
+        .graph_operations_service
+        .get_stats(&canonical_id)
+        .await
+        .ok()
+        .map(graph_stats_to_modality)
+        .filter(|g| g.total_nodes > 0 || g.total_edges > 0);
+
+    let registry = crate::core::statistics::statistics_registry();
+    // Overlay the authoritative live counts/sizes + schema-level field facts onto
+    // the resident summary (creating it if no flush has populated one yet — then
+    // freshness honestly reads as the epoch "no snapshot" watermark). Per-field
+    // distributions and modality sketches fill in as flush/compaction observes
+    // records (TD-174); this read never scans the corpus.
+    registry.update(&canonical_id, move |summary| {
+        summary.set_record_count(non_negative_stat(stats.vector_count));
+        summary.set_sizes(
+            non_negative_stat(stats.data_size_bytes),
+            Some(non_negative_stat(stats.index_size_bytes)),
+        );
+        for col in &config.filterable_columns {
+            summary.set_field_schema(
+                &col.name,
+                serde_json::Value::String(filterable_type_to_proxima(col.data_type).to_string()),
+                Some(col.indexed),
+                Some(true),
+            );
+        }
+        if config.dimension > 0 {
+            summary.set_vector_meta(
+                config.dimension,
+                collection_distance_metric_label(config.distance_metric),
+            );
+        }
+        if let Some(g) = graph_modality {
+            summary.set_graph_stats(g);
+        }
+    });
+
+    let envelope = registry.envelope(&canonical_id).unwrap_or_else(|| {
+        crate::core::statistics::StatisticsSummary::new(&canonical_id).to_envelope()
+    });
+
+    Ok(Json(envelope))
+}
+
 /// GET /api/v2/_diagnostics/collections/{collection_id}/route-health
 ///
 /// Experimental: returns a machine-readable capability contract describing
@@ -1764,7 +2321,7 @@ pub async fn get_collection_route_health_v2(
     };
 
     let resp = state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
@@ -1783,7 +2340,6 @@ pub async fn get_collection_route_health_v2(
     let distance_metric_str = collection_distance_metric_label(config.distance_metric).to_string();
     let cached_object_economy_status = if engine_str == "sst" {
         state
-            .request_handlers
             .vector_operations_service
             .cached_object_economy_directory_status(&collection_id)
             .as_ref()
@@ -1844,8 +2400,19 @@ pub async fn get_collection_route_health_v2(
     // ADR-023 R3 (c): patch the cold-serving block with live AXIS state — the
     // cold→warm window + per-cluster warm-fill progress for a loaded IVF index.
     health.cold_serving = match crate::storage::engines::sst::core::get_sst_axis_manager() {
-        Some(axis) => match axis.cold_serving_status(&collection_id_for_discovery).await {
-            Some((state, fetched, total)) => ColdServingHealth::from_status(state, fetched, total),
+        Some(axis) => match axis
+            .ivf_cold_serving_status(&collection_id_for_discovery)
+            .await
+        {
+            Some((state_str, fetched, total)) => {
+                use crate::index::axis::IvfServingState;
+                let state = match state_str.as_str() {
+                    "full_two_stage" => IvfServingState::FullTwoStage,
+                    "cold_binary_only" => IvfServingState::ColdBinaryOnly,
+                    _ => IvfServingState::ColdBinaryOnly, // Default fallback
+                };
+                ColdServingHealth::from_status(state, fetched, total)
+            }
             None => ColdServingHealth::unobservable(),
         },
         None => ColdServingHealth::unobservable(),
@@ -2106,7 +2673,7 @@ pub async fn post_collection_recall_tune_v2(
     };
 
     let resp = state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
@@ -2320,27 +2887,26 @@ pub async fn post_collection_recall_tune_v2(
             .map_err(|e| ApiError::Internal(format!("HNSW hot-swap failed: {}", e)))?,
     };
 
-    let (action, applied_changes) = match outcome {
-        crate::index::axis::management::HotSwapOutcome::Applied { changes } => {
-            crate::metrics::recall_drift_metrics::record_recall_drift_hot_swap_applied(
-                &collection_id,
-                crate::metrics::recall_drift_metrics::HOT_SWAP_TRIGGER_OPERATOR,
-            );
-            (
-                "applied_hot_swap",
-                changes
-                    .into_iter()
-                    .map(|c| RecallTuneEfChange {
-                        index_name: c.index_name,
-                        previous_ef_search: c.previous_ef_search,
-                        new_ef_search: c.new_ef_search,
-                    })
-                    .collect(),
-            )
-        }
-        crate::index::axis::management::HotSwapOutcome::NotApplicable { .. } => {
-            ("not_wired", Vec::new())
-        }
+    let (action, applied_changes) = if let Some(applied) = outcome.get("Applied") {
+        crate::metrics::recall_drift_metrics::record_recall_drift_hot_swap_applied(
+            &collection_id,
+            crate::metrics::recall_drift_metrics::HOT_SWAP_TRIGGER_OPERATOR,
+        );
+        let changes: Vec<crate::index::axis::management::HotSwapEfChange> =
+            serde_json::from_value(applied["changes"].clone()).unwrap_or_default();
+        (
+            "applied_hot_swap",
+            changes
+                .into_iter()
+                .map(|c| RecallTuneEfChange {
+                    index_name: c.index_name,
+                    previous_ef_search: c.previous_ef_search,
+                    new_ef_search: c.new_ef_search,
+                })
+                .collect(),
+        )
+    } else {
+        ("not_wired", Vec::new())
     };
 
     Ok(Json(RecallTuneResponse {
@@ -2437,7 +3003,7 @@ async fn ensure_collection_exists(
         migration_config: Default::default(),
     };
     state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
@@ -2572,7 +3138,7 @@ pub async fn post_collection_recluster_v2(
         migration_config: Default::default(),
     };
     let resp = state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
@@ -2647,7 +3213,12 @@ pub async fn post_collection_recluster_v2(
     let active_algo = active_algorithm_for(&config);
     let sized: Option<RecallReclusterSized> = match active_algo {
         "ivf" => {
-            let advised = axis_manager
+            // Downcast to concrete AxisManager for recall-target advisor methods
+            let axis_mgr = axis_manager
+                .as_any()
+                .downcast_ref::<crate::index::axis::management::AxisManager>()
+                .ok_or_else(|| ApiError::Internal("AXIS manager downcast failed".to_string()))?;
+            let advised = axis_mgr
                 .rebuild_and_swap_ivf_index_for_recall_target(
                     internal_id.as_str(),
                     &records,
@@ -2692,7 +3263,12 @@ pub async fn post_collection_recluster_v2(
             })
         }
         _ => {
-            let advised = axis_manager
+            // Downcast to concrete AxisManager for recall-target advisor methods
+            let axis_mgr = axis_manager
+                .as_any()
+                .downcast_ref::<crate::index::axis::management::AxisManager>()
+                .ok_or_else(|| ApiError::Internal("AXIS manager downcast failed".to_string()))?;
+            let advised = axis_mgr
                 .rebuild_and_swap_hnsw_index_for_recall_target(
                     internal_id.as_str(),
                     &records,
@@ -2805,6 +3381,41 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(active_algorithm_for(&cfg), "hnsw");
+    }
+
+    #[test]
+    fn create_collection_failure_maps_collection_exists_to_conflict() {
+        match collection_create_failure_error("symbols", Some("COLLECTION_EXISTS")) {
+            ApiError::AlreadyExists(message) => {
+                assert!(message.contains("symbols"));
+            }
+            other => panic!("expected AlreadyExists, got {other:?}"),
+        }
+
+        match collection_create_failure_error("symbols", Some("collection already exists")) {
+            ApiError::AlreadyExists(message) => {
+                assert!(message.contains("symbols"));
+            }
+            other => panic!("expected AlreadyExists, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_collection_failure_maps_other_errors_to_internal() {
+        match collection_create_failure_error("symbols", Some("catalog write failed")) {
+            ApiError::Internal(message) => {
+                assert!(message.contains("symbols"));
+                assert!(message.contains("catalog write failed"));
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
+
+        match collection_create_failure_error("symbols", None) {
+            ApiError::Internal(message) => {
+                assert!(message.contains("unknown error"));
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
     }
 
     #[test]
@@ -4267,5 +4878,167 @@ mod tests {
 
         // unknown type is rejected (the vocabulary is exactly the ProximaType-mappable set).
         assert!(parse_rest_data_type(&rest_col("not_a_type")).is_err());
+    }
+
+    /// TD-122 parity: the REST create request parses per-index `is_primary` and
+    /// a top-level `quantization` block (gRPC-v2 `V2IndexSpec`/`V2QuantizationConfig`).
+    #[test]
+    fn create_request_parses_is_primary_and_quantization() {
+        let json = r#"{
+            "name": "c",
+            "dimension": 128,
+            "index_configs": [
+                {"algorithm": "hnsw", "hnsw_config": {"m": 24, "ef_construction": 150}, "is_primary": true}
+            ],
+            "quantization": {"enabled": true, "strategy": "aggressive"}
+        }"#;
+        let req: CreateCollectionV2Request = serde_json::from_str(json).expect("parse");
+        let ics = req.index_configs.expect("index_configs");
+        assert_eq!(ics.len(), 1);
+        assert_eq!(ics[0].is_primary, Some(true));
+        assert_eq!(ics[0].hnsw_config.as_ref().and_then(|h| h.m), Some(24));
+        let q = req.quantization.expect("quantization");
+        assert_eq!(q.enabled, Some(true));
+        assert_eq!(q.strategy.as_deref(), Some("aggressive"));
+    }
+
+    /// TD-122 parity: the REST get response serializes `index_specs` (with
+    /// HNSW params + is_primary) and `quantization` so a read-after-create
+    /// echoes what was set.
+    #[test]
+    fn get_response_serializes_index_specs_and_quantization() {
+        let resp = CollectionV2Response {
+            collection_id: "c".into(),
+            name: "c".into(),
+            dimension: 128,
+            engine: "sst".into(),
+            distance_metric: "cosine".into(),
+            proxima_record_enabled: false,
+            canonical_embedding_precision: None,
+            schema: None,
+            stats: CollectionStatsV2 {
+                record_count: 0,
+                storage_size_bytes: 0,
+                indexed_fields: 0,
+                text_field_count: 0,
+            },
+            index_specs: vec![IndexSpecOutput {
+                algorithm: "hnsw".into(),
+                hnsw: Some(HnswConfigOutput {
+                    m: Some(24),
+                    ef_construction: Some(150),
+                    ef_search: Some(64),
+                }),
+                ivf: None,
+                is_primary: true,
+            }],
+            quantization: Some(QuantizationConfigOutput {
+                enabled: true,
+                strategy: "aggressive".into(),
+            }),
+            created_at: "now".into(),
+            updated_at: None,
+        };
+        let v: serde_json::Value = serde_json::to_value(&resp).expect("serialize");
+        assert_eq!(v["index_specs"][0]["hnsw"]["m"], 24);
+        assert_eq!(v["index_specs"][0]["is_primary"], true);
+        assert_eq!(v["quantization"]["enabled"], true);
+        assert_eq!(v["quantization"]["strategy"], "aggressive");
+    }
+
+    // ---- ADR-028 index_policy validation ----
+
+    fn policy_input(mode: &str) -> IndexPolicyInput {
+        IndexPolicyInput {
+            mode: Some(mode.to_string()),
+            rehydrate: None,
+            byte_budget: None,
+            nprobe: None,
+        }
+    }
+
+    #[test]
+    fn index_policy_defaults_to_auto() {
+        let p = build_index_policy(IndexPolicyInput {
+            mode: None,
+            rehydrate: None,
+            byte_budget: None,
+            nprobe: None,
+        })
+        .expect("auto policy is valid");
+        assert_eq!(p.mode, "auto");
+        assert_eq!(p.rehydrate, "auto");
+        assert_eq!(p.byte_budget, 0);
+        assert_eq!(p.nprobe, 0);
+    }
+
+    #[test]
+    fn index_policy_normalizes_and_accepts_valid_modes() {
+        for (raw, expect) in [
+            ("Exact", "exact"),
+            (" HELIX ", "helix"),
+            ("ivf", "ivf"),
+            ("HNSW", "hnsw"),
+        ] {
+            let p = build_index_policy(policy_input(raw)).expect("valid mode");
+            assert_eq!(p.mode, expect);
+        }
+    }
+
+    #[test]
+    fn index_policy_rejects_unknown_mode() {
+        let err = build_index_policy(policy_input("magic")).unwrap_err();
+        assert!(matches!(err, ApiError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn index_policy_rejects_rehydrate_with_exact() {
+        let err = build_index_policy(IndexPolicyInput {
+            mode: Some("exact".into()),
+            rehydrate: Some("eager".into()),
+            byte_budget: None,
+            nprobe: None,
+        })
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn index_policy_rejects_nprobe_with_exact() {
+        let err = build_index_policy(IndexPolicyInput {
+            mode: Some("exact".into()),
+            rehydrate: None,
+            byte_budget: None,
+            nprobe: Some(16),
+        })
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn index_policy_exact_with_byte_budget_is_allowed() {
+        // byte_budget is meaningful for exact (it caps the auto brute-force gate),
+        // so it must NOT be rejected.
+        let p = build_index_policy(IndexPolicyInput {
+            mode: Some("exact".into()),
+            rehydrate: None,
+            byte_budget: Some(8 * 1024 * 1024),
+            nprobe: None,
+        })
+        .expect("exact + byte_budget is valid");
+        assert_eq!(p.mode, "exact");
+        assert_eq!(p.byte_budget, 8 * 1024 * 1024);
+    }
+
+    #[test]
+    fn index_policy_rejects_unknown_rehydrate() {
+        let err = build_index_policy(IndexPolicyInput {
+            mode: Some("ivf".into()),
+            rehydrate: Some("whenever".into()),
+            byte_budget: None,
+            nprobe: None,
+        })
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidArgument(_)));
     }
 }

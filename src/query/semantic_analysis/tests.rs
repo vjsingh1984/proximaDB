@@ -209,40 +209,41 @@ impl MockCollectionService {
     }
 }
 
-async fn setup_analyzer_with_mock() -> Analyzer {
-    // Create a real CollectionService for testing
-    use crate::storage::metadata::backends::universal_backend::{
-        UniversalMetadataBackend, UniversalMetadataConfig,
-    };
-    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+async fn setup_analyzer_with_mock() -> (Analyzer, tempfile::TempDir) {
+    // Create a real CollectionService backed by the system catalog for testing.
+    use crate::catalog::CatalogManager;
     use tempfile::TempDir;
 
     let temp_dir = TempDir::new().unwrap();
-    let fs_config = FilesystemConfig {
-        default_fs: Some(format!("file://{}", temp_dir.path().display())),
-        ..Default::default()
-    };
-    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
+    let storage_url = format!("file://{}", temp_dir.path().display());
 
-    let config = UniversalMetadataConfig {
-        storage_url: format!("file://{}", temp_dir.path().display()),
-        ..Default::default()
-    };
-    let metadata_backend = Arc::new(
-        UniversalMetadataBackend::new(config, filesystem_factory)
-            .await
-            .unwrap(),
-    );
+    let catalog_manager = Arc::new(CatalogManager::new());
+    catalog_manager
+        .create_native_catalog("default", &storage_url)
+        .await
+        .unwrap();
 
+    // Isolate BOTH metadata and storage-location data under the per-test
+    // TempDir. `StorageLocation::default()` is the CWD-relative shared
+    // `file://./data`; leaving it would make concurrent test processes (e.g.
+    // nextest's process-per-test, and the duplicated analyzer::tests module)
+    // race on one shared data dir and intermittently miss the catalog asset
+    // ("Table not found: products"). Mandate #11: pin temp state under tempdir.
     let storage_config = StorageConfig {
-        metadata_url: format!("file://{}", temp_dir.path().display()),
+        metadata_url: storage_url.clone(),
+        storage_locations: vec![crate::core::config::StorageLocation {
+            url: storage_url.clone(),
+            weight: 1,
+            tags: vec!["local".to_string()],
+        }],
         ..Default::default()
     };
 
     let collection_service = Arc::new(
-        CollectionService::new(metadata_backend, storage_config)
+        CollectionService::new(storage_config)
             .await
-            .unwrap(),
+            .unwrap()
+            .with_catalog_manager(catalog_manager.clone()),
     );
 
     // Create the test collections in the actual service
@@ -328,12 +329,16 @@ async fn setup_analyzer_with_mock() -> Analyzer {
         .await
         .expect("Failed to create app_users collection");
 
-    Analyzer::new(collection_service)
+    // The catalog is file-backed ("catalog is sole store", #208), so its temp dir
+    // must outlive setup — otherwise it is deleted on return and every subsequent
+    // `get_collection` reads an empty catalog ("Table not found"). Hand the guard
+    // back to the caller so it lives for the test's duration.
+    (Analyzer::new(collection_service), temp_dir)
 }
 
 #[tokio::test]
 async fn test_analyze_simple_select_success() {
-    let analyzer = setup_analyzer_with_mock().await;
+    let (analyzer, _guard) = setup_analyzer_with_mock().await;
     let sql = "SELECT id, name FROM products";
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
@@ -359,7 +364,7 @@ async fn test_analyze_simple_select_success() {
 
 #[tokio::test]
 async fn test_analyze_unknown_table() {
-    let analyzer = setup_analyzer_with_mock().await;
+    let (analyzer, _guard) = setup_analyzer_with_mock().await;
     let sql = "SELECT id FROM unknown_table";
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
@@ -371,7 +376,7 @@ async fn test_analyze_unknown_table() {
 
 #[tokio::test]
 async fn test_analyze_unknown_column() {
-    let analyzer = setup_analyzer_with_mock().await;
+    let (analyzer, _guard) = setup_analyzer_with_mock().await;
     let sql = "SELECT unknown_col FROM products";
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
@@ -388,7 +393,7 @@ async fn test_analyze_unknown_column() {
 
 #[tokio::test]
 async fn test_analyze_where_clause_type_mismatch() {
-    let analyzer = setup_analyzer_with_mock().await;
+    let (analyzer, _guard) = setup_analyzer_with_mock().await;
     let sql = "SELECT id FROM products WHERE price = 'abc'"; // price is float64, 'abc' is string
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
@@ -400,7 +405,7 @@ async fn test_analyze_where_clause_type_mismatch() {
 
 #[tokio::test]
 async fn test_analyze_vector_similarity_function() {
-    let analyzer = setup_analyzer_with_mock().await;
+    let (analyzer, _guard) = setup_analyzer_with_mock().await;
     let sql = "SELECT VECTOR_SIMILARITY(embedding, [0.1, 0.2]) FROM products";
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
@@ -415,7 +420,7 @@ async fn test_analyze_vector_similarity_function() {
 
 #[tokio::test]
 async fn test_analyze_vector_similarity_function_invalid_args() {
-    let analyzer = setup_analyzer_with_mock().await;
+    let (analyzer, _guard) = setup_analyzer_with_mock().await;
     let sql = "SELECT VECTOR_SIMILARITY(id, name) FROM products"; // id and name are strings
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
@@ -432,7 +437,7 @@ async fn test_analyze_vector_similarity_function_invalid_args() {
 
 #[tokio::test]
 async fn test_analyze_group_by() {
-    let analyzer = setup_analyzer_with_mock().await;
+    let (analyzer, _guard) = setup_analyzer_with_mock().await;
     let sql = "SELECT category, COUNT(*) FROM products GROUP BY category";
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
@@ -447,7 +452,7 @@ async fn test_analyze_group_by() {
 
 #[tokio::test]
 async fn test_analyze_having() {
-    let analyzer = setup_analyzer_with_mock().await;
+    let (analyzer, _guard) = setup_analyzer_with_mock().await;
     let sql = "SELECT category, COUNT(*) FROM products GROUP BY category HAVING COUNT(*) > 10";
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
@@ -462,7 +467,7 @@ async fn test_analyze_having() {
 
 #[tokio::test]
 async fn test_analyze_join() {
-    let analyzer = setup_analyzer_with_mock().await;
+    let (analyzer, _guard) = setup_analyzer_with_mock().await;
     let sql = "SELECT p.name, u.email FROM products AS p JOIN app_users AS u ON p.id = u.user_id";
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
@@ -492,7 +497,7 @@ async fn test_analyze_join() {
 
 #[tokio::test]
 async fn test_analyze_join_ambiguous_column() {
-    let analyzer = setup_analyzer_with_mock().await;
+    let (analyzer, _guard) = setup_analyzer_with_mock().await;
     // Both products and app_users have an 'id' column (products.id, app_users.user_id - but parser might simplify)
     // This test assumes the parser might simplify 'p.id' to 'id' if not careful
     let sql = "SELECT id FROM products JOIN app_users ON products.id = app_users.user_id";
@@ -512,7 +517,7 @@ async fn test_analyze_join_ambiguous_column() {
 
 #[tokio::test]
 async fn test_analyze_sks_similar() {
-    let analyzer = setup_analyzer_with_mock().await;
+    let (analyzer, _guard) = setup_analyzer_with_mock().await;
     let sql = "SELECT SIMILAR(embedding, [0.1, 0.2]) FROM products";
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
@@ -527,7 +532,7 @@ async fn test_analyze_sks_similar() {
 
 #[tokio::test]
 async fn test_analyze_sks_similar_invalid_field() {
-    let analyzer = setup_analyzer_with_mock().await;
+    let (analyzer, _guard) = setup_analyzer_with_mock().await;
     let sql = "SELECT SIMILAR(name, [0.1, 0.2]) FROM products"; // 'name' is string, not vector
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
@@ -544,7 +549,7 @@ async fn test_analyze_sks_similar_invalid_field() {
 
 #[tokio::test]
 async fn test_analyze_sks_follow() {
-    let analyzer = setup_analyzer_with_mock().await;
+    let (analyzer, _guard) = setup_analyzer_with_mock().await;
     let sql = "SELECT FOLLOW('user1', 'friends', 3) FROM app_users";
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
@@ -559,7 +564,7 @@ async fn test_analyze_sks_follow() {
 
 #[tokio::test]
 async fn test_analyze_sks_follow_invalid_start_node() {
-    let analyzer = setup_analyzer_with_mock().await;
+    let (analyzer, _guard) = setup_analyzer_with_mock().await;
     let sql = "SELECT FOLLOW(price, 'friends', 3) FROM products"; // 'price' is float, not string/int
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
@@ -576,7 +581,7 @@ async fn test_analyze_sks_follow_invalid_start_node() {
 
 #[tokio::test]
 async fn test_analyze_sks_assemble() {
-    let analyzer = setup_analyzer_with_mock().await;
+    let (analyzer, _guard) = setup_analyzer_with_mock().await;
     let sql = "SELECT ASSEMBLE(id, name, category) FROM products";
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();

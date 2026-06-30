@@ -57,19 +57,27 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       # Three-tier CI (feat -> develop -> qa -> main):
-      #   * feat -> develop = LIGHT: compile + fmt/clippy + layering + proto +
-      #     panic-policy + capability + security-audit + lints + docs. Fast inner
-      #     loop so development merges quickly and stays unblocked.
-      #   * develop -> qa = MEDIUM (`test_tier`): LIGHT + the core correctness
-      #     suites — rust-test, the 4 rust-integration-test-* engines, feature-matrix.
+      #   * feat -> develop runs the LIGHT jobs (compile + fmt/clippy + layering
+      #     + proto + panic-policy + capability + security-audit + lints + docs)
+      #     AND, via `test_tier`, the core Rust-correctness suites — rust-test,
+      #     the 4 rust-integration-test-* engines, feature-matrix. Surfacing
+      #     correctness at the feat→dev boundary catches latent breakage (broken
+      #     doctests, feature-gating gaps, test-isolation bugs) on the
+      #     introducing PR instead of at develop→qa.
+      #   * develop -> qa = MEDIUM: the above plus the qa-gate conformance
+      #     suites (TPC-H/TPC-DS over pgwire, ANN recall ratchets).
       #   * qa -> main = FULL (`extensive`): MEDIUM + docker-build, coverage,
-      #     python multi-version, cross integration-test, benchmarks. The heaviest,
-      #     pre-promotion gate.
-      # `test_tier` is true for base qa or main (and pushes to those); `extensive`
-      # is true only for base main (and pushes to main).
-      test_tier: ${{ github.base_ref == 'qa' || github.base_ref == 'main' || github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/main' }}
+      #     python multi-version, cross integration-test, benchmarks, CodeQL.
+      #     The heaviest, pre-promotion gate.
+      # `test_tier` is true for base develop, qa, or main (and pushes to qa/main);
+      # `extensive` is true only for base main (and pushes to main).
+      test_tier: ${{ github.base_ref == 'develop' || github.base_ref == 'qa' || github.base_ref == 'main' || github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/main' }}
       extensive: ${{ github.base_ref == 'main' || github.ref == 'refs/heads/main' }}
       rust: ${{ steps.filter.outputs.rust }}
+      # Comprehensive code-path superset gating the always-required rust-compile
+      # hard gate (skips ONLY on docs/non-code-only diffs). See the `compile:`
+      # filter definition below and the rust-compile job comment.
+      compile: ${{ steps.filter.outputs.compile }}
       python: ${{ steps.filter.outputs.python }}
       docker: ${{ steps.filter.outputs.docker }}
       docs: ${{ steps.filter.outputs.docs }}
@@ -80,7 +88,9 @@ jobs:
       storage_changes: ${{ steps.filter.outputs.storage_changes }}
       graph_changes: ${{ steps.filter.outputs.graph_changes }}
       core_changes: ${{ steps.filter.outputs.core_changes }}
+      gpu_paths: ${{ steps.filter.outputs.gpu_paths }}
       network_changes: ${{ steps.filter.outputs.network_changes }}
+      pgwire_accuracy_changes: ${{ steps.filter.outputs.pgwire_accuracy_changes }}
       # SDK change detection
       go_sdk: ${{ steps.filter.outputs.go_sdk }}
       nodejs_sdk: ${{ steps.filter.outputs.nodejs_sdk }}
@@ -89,6 +99,15 @@ jobs:
       openapi_spec: ${{ steps.filter.outputs.openapi_spec }}
       src_connectors: ${{ steps.filter.outputs.src_connectors }}
       spark_jni: ${{ steps.filter.outputs.spark_jni }}
+      # TD-149: on a push to a protected branch (the only branches this workflow's
+      # `push:` trigger covers — main/development/develop/qa), run the drift-detecting
+      # jobs unconditionally. PRs keep the path-filter so the feat→develop tier stays
+      # LIGHT/fast; this catches drift/flakes the instant a merge lands them on the
+      # branch, so they can't accumulate invisibly and block the next triggering PR.
+      # The drift jobs (rust-format, rust-clippy, proto-compat, openapi-spec-drift,
+      # python-lint, the 4 sdk-codegen-drifts, go/nodejs/rust-sdk-lint) OR this `sweep`
+      # into their `if:`.
+      sweep: ${{ github.event_name == 'push' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,11 +120,41 @@ jobs:
           filters: |
             rust:
               - 'src/**'
+              # Workspace members that `cargo` compiles, lints, and tests but that
+              # the filter previously omitted — a crate-only or app-only change
+              # therefore skipped rust-clippy/rust-test/rust-format/feature-matrix
+              # etc. and was caught only by the always-required rust-compile gate.
+              - 'crates/**'
+              - 'apps/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'build.rs'
               - 'tests/**'
               - 'benches/**'
+              # Toolchain pin + cargo config (rustflags) change lint/test outcomes
+              # workspace-wide, so a bump must re-run the Rust suite.
+              - 'rust-toolchain*'
+              - '.cargo/**'
+            # `compile` gates the rust-compile hard gate. It is a deliberate
+            # SUPERSET of every path that can affect `cargo check --workspace`:
+            # the root `src/**`, every workspace member under `crates/**` and
+            # `apps/**` (NOT covered by `rust:` above), test/bench targets, the
+            # manifests + lockfile, build script, toolchain pin, cargo config,
+            # and generated-proto inputs. A docs/non-code-only diff matches
+            # nothing here, so the compile gate skips; ANY code change matches,
+            # so a non-compiling change can never skip the gate (#226 guarantee).
+            compile:
+              - 'src/**'
+              - 'crates/**'
+              - 'apps/**'
+              - 'tests/**'
+              - 'benches/**'
+              - 'build.rs'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain*'
+              - '.cargo/**'
+              - 'proto/**'
             python:
               - 'clients/python/**'
               - 'clients/python-embedded/**'
@@ -142,10 +191,29 @@ jobs:
               - 'src/lib.rs'
               - 'Cargo.toml'
               - 'Cargo.lock'
+            gpu_paths:
+              - 'src/compute/gpu/**'
+              - 'src/compute/distance_computation/**'
+              - 'src/core/hardware_capabilities.rs'
+              - 'Cargo.toml'
             network_changes:
               - 'src/network/**'
               - 'src/api_handlers/**'
               - 'proto/**'
+            # Multi-modal pgwire value-accuracy e2e suite (TD-182 P0). The suite
+            # exercises the SQL/pgwire + relational + DML + cold-path-merge code,
+            # so re-run it when any of those change, when the suite files change,
+            # or when this workflow itself changes (so wiring edits self-verify).
+            pgwire_accuracy_changes:
+              - 'src/query/**'
+              - 'src/network/**'
+              - 'src/services/dml/**'
+              - 'src/core/**'
+              - 'tests/*pgwire*'
+              - 'tests/document_json*'
+              - 'tests/events_tsbs*'
+              - 'tests/sql_value_roundtrip.rs'
+              - '.github/workflows/ci.yml'
             # SDK filters
             go_sdk:
               - 'clients/go/**'
@@ -167,6 +235,40 @@ jobs:
               - 'crates/binding/proximadb-spark-jni/**'
               - 'clients/jvm/spark-connector/**'
               - 'src/connectors/spark.rs'
+
+  # ============================================================================
+  # GPU FEATURE CHECK (macOS) — the `gpu = ["metal"]` feature is macOS-only
+  # (metal) and was previously built by NO CI job, so the GPU path could rot
+  # silently. This compiles `--features gpu` on a macOS runner whenever GPU /
+  # hardware-capabilities / distance code changes, making that path verifiable
+  # (prerequisite for the hardware_capabilities GPU-edge inversion — issue #162).
+  # Advisory (not in `ci-success` needs) until proven stable; promote to required
+  # once it's green across a few runs.
+  # ============================================================================
+  gpu-feature-check:
+    name: GPU Feature Check (macOS)
+    # macos-13 (x86_64), NOT macos-14 (arm64): ring 0.17.x's aarch64 cpu module
+    # has a `CAPS_STATIC` const-assertion that panics on the macos-14 runner —
+    # even on the pinned 1.95.0 toolchain, and it does NOT reproduce on local
+    # Apple Silicon (the x86_64-linux jobs build ring fine). x86_64 macOS still
+    # compiles the `metal` GPU backend, so this verifies `--features gpu` builds
+    # without tripping the aarch64-runner ring bug. arm64-macOS GPU coverage is
+    # tracked separately (issue #184).
+    runs-on: macos-13
+    needs: changes
+    if: needs.changes.outputs.gpu_paths == 'true'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # Match the repo toolchain pin (rust-toolchain.toml = 1.95.0).
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install protobuf
+        run: brew install protobuf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-gpu-macos"
+      - name: cargo check --features gpu
+        run: cargo check -p proximadb --lib --features gpu
 
   # ============================================================================
   # QUALITY CHECKS - Run in parallel, fast feedback
@@ -197,14 +299,47 @@ jobs:
       - name: Validate deterministic guard wiring
         run: python3 scripts/check_deterministic_commit_contract.py
 
+  docs-authority:
+    name: Docs Authority (no retired/engine drift)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.docs == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint customer-facing docs vs the support contract
+        run: python3 scripts/check_doc_authority.py
+      - name: Cross-check perf claims vs BENCHMARK_EVIDENCE.toml
+        run: python3 scripts/check_perf_claims.py
+
+  risk-coverage:
+    name: Risk-Coverage Contract
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate risk→test→tier contract (risk tests are wired into a required tier)
+        run: python3 scripts/check_risk_coverage.py
+
+  oss-docs-decontamination:
+    name: OSS Docs Decontamination
+    runs-on: ubuntu-latest
+    needs: changes
+    steps:
+      - uses: actions/checkout@v4
+      - name: Block commercial $-content in OSS docs
+        # ProximaDB OSS ships mechanism + neutral meters; $-policy lives in anvaiops.
+        # See docs/12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc + scripts/check_no_commercial_docs.sh.
+        run: bash scripts/check_no_commercial_docs.sh
+
   rust-format:
     name: Rust Format
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt
       - name: Install System Dependencies
@@ -243,10 +378,16 @@ jobs:
     name: Proto Compatibility (T4.2)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.proto == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.python == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.proto == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.python == 'true'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          # Match rust-toolchain.toml's declared components + target so `cargo
+          # check` doesn't trigger a rustup re-sync that collides installing
+          # rustfmt-preview on the runner's existing bin/cargo-fmt (T4.2 red).
+          components: rustfmt, clippy
+          targets: x86_64-unknown-linux-gnu
       - name: Install System Dependencies
         run: |
           sudo apt-get update
@@ -274,6 +415,165 @@ jobs:
             crates/foundation/proximadb-proto/src/proto/ \
             src/proto/ \
             || (echo "::error::Generated proto sources have drifted from committed copy. Run scripts/regenerate-proto.sh and commit the result." && exit 1)
+
+  # TD-126 Phase 1: the published REST contract (docs/openapi/proximadb-openapi.yaml)
+  # is GENERATED from the annotated axum handlers (src/network/rest/openapi.rs),
+  # not hand-maintained. This job regenerates it and fails if the committed copy
+  # has drifted from the handler code — the same generated-artifact pattern as
+  # the proto-sync gate above. Regenerate locally with:
+  #   UPDATE_OPENAPI_SPEC=1 cargo test -p proximadb --test openapi_spec_gen
+  openapi-spec-drift:
+    name: OpenAPI Spec From Code (TD-126)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.openapi_spec == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-openapi-spec-drift"
+      - name: Regenerate OpenAPI spec from handlers (drift gate)
+        run: cargo test -p proximadb --test openapi_spec_gen -- --nocapture
+      - name: Fail on uncommitted drift in generated OpenAPI spec
+        run: |
+          git diff --exit-code -- docs/openapi/proximadb-openapi.yaml \
+            || (echo "::error::docs/openapi/proximadb-openapi.yaml has drifted from the annotated REST handlers. Run 'UPDATE_OPENAPI_SPEC=1 cargo test -p proximadb --test openapi_spec_gen' and commit the result." && exit 1)
+
+  # TD-126 Phase 2 (spec-driven SDK pilot, Go): the Go REST transport's wire
+  # plumbing (clients/go/proximadb/internal/genrest) is GENERATED from the
+  # published OpenAPI spec via oapi-codegen (pinned in clients/go/codegen/go.mod).
+  # This job regenerates it and fails if the committed copy has drifted from the
+  # spec — the same generated-artifact pattern as openapi-spec-drift / proto-sync.
+  # Regenerate locally with: make gen-go-sdk
+  go-sdk-codegen-drift:
+    name: Go SDK Codegen Drift (TD-126)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.go_sdk == 'true' || needs.changes.outputs.openapi_spec == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Python deps for the 3.1->3.0 down-conversion
+        run: python -m pip install --upgrade pip pyyaml
+      - name: Regenerate the Go REST transport from the OpenAPI spec
+        env:
+          PYTHON: python
+        run: make gen-go-sdk
+      - name: Fail on uncommitted drift in the generated Go client
+        run: |
+          git diff --exit-code -- clients/go/proximadb/internal/genrest/ \
+            || (echo "::error::clients/go/proximadb/internal/genrest has drifted from the OpenAPI spec. Run 'make gen-go-sdk' and commit the result." && exit 1)
+
+  # TD-126 Phase 4 (spec-driven SDK pilot, TypeScript): the TS REST transport's
+  # wire types (clients/nodejs-embedded/src/generated) are GENERATED from the
+  # published OpenAPI spec via openapi-typescript (pinned in the SDK
+  # package.json). This job regenerates them and fails if the committed copy has
+  # drifted from the spec — the same generated-artifact pattern as
+  # go-sdk-codegen-drift / openapi-spec-drift. Regenerate locally with:
+  # make gen-ts-sdk
+  ts-sdk-codegen-drift:
+    name: TS SDK Codegen Drift (TD-126)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.nodejs_sdk == 'true' || needs.changes.outputs.openapi_spec == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        working-directory: clients/nodejs-embedded
+        run: npm ci
+      - name: Regenerate the TypeScript REST transport from the OpenAPI spec
+        run: make gen-ts-sdk
+      - name: Fail on uncommitted drift in the generated TS client
+        run: |
+          git diff --exit-code -- clients/nodejs-embedded/src/generated/ \
+            || (echo "::error::clients/nodejs-embedded/src/generated has drifted from the OpenAPI spec. Run 'make gen-ts-sdk' and commit the result." && exit 1)
+
+  # TD-126 Phase 4 (spec-driven SDK, Rust): the Rust REST transport's wire
+  # plumbing (clients/rust/src/genrest.rs) is GENERATED from the published
+  # OpenAPI spec via progenitor (pinned in clients/rust/codegen/Cargo.toml),
+  # behind the unchanged hand-written ergonomic facade (clients/rust/src/client.rs).
+  # This job regenerates it and fails if the committed copy has drifted from the
+  # spec — the same generated-artifact pattern as go-sdk-codegen-drift /
+  # openapi-spec-drift / proto-sync. Regenerate locally with: make gen-rust-sdk
+  rust-sdk-codegen-drift:
+    name: Rust SDK Codegen Drift (TD-126)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust_sdk == 'true' || needs.changes.outputs.openapi_spec == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Python deps for the 3.1->3.0 down-conversion
+        run: python -m pip install --upgrade pip pyyaml
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-sdk-codegen-drift"
+          workspaces: clients/rust/codegen
+      - name: Regenerate the Rust REST transport from the OpenAPI spec
+        env:
+          PYTHON: python
+        run: make gen-rust-sdk
+      - name: Fail on uncommitted drift in the generated Rust client
+        run: |
+          git diff --exit-code -- clients/rust/src/genrest.rs \
+            || (echo "::error::clients/rust/src/genrest.rs has drifted from the OpenAPI spec. Run 'make gen-rust-sdk' and commit the result." && exit 1)
+
+  # TD-126 Phase 4 (spec-driven SDK, Python): the Python REST transport's wire
+  # plumbing (clients/python/src/proximadb_sdk/_generated/rest) is GENERATED from
+  # the published OpenAPI spec via openapi-python-client (pinned in
+  # clients/python/codegen/requirements.txt), behind the unchanged hand-written
+  # ergonomic facade (protocols/rest_sync.py). This job regenerates it and fails
+  # if the committed copy has drifted from the spec — the same generated-artifact
+  # pattern as go-sdk-codegen-drift / ts-sdk-codegen-drift / rust-sdk-codegen-drift
+  # / openapi-spec-drift. Regenerate locally with: make gen-python-sdk
+  python-sdk-codegen-drift:
+    name: Python SDK Codegen Drift (TD-126)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.openapi_spec == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # The SDK's own black + isort run the deterministic formatting pass inside
+      # gen.sh, so install them (the generator itself runs in its own pinned
+      # venv that gen.sh provisions from codegen/requirements.txt).
+      - name: Install the SDK's formatters (black + isort)
+        working-directory: clients/python
+        run: pip install -e ".[dev]"
+      - name: Regenerate the Python REST transport from the OpenAPI spec
+        env:
+          PYTHON: python
+        run: make gen-python-sdk
+      - name: Fail on uncommitted drift in the generated Python client
+        run: |
+          git diff --exit-code -- clients/python/src/proximadb_sdk/_generated/ \
+            || (echo "::error::clients/python/src/proximadb_sdk/_generated has drifted from the OpenAPI spec. Run 'make gen-python-sdk' and commit the result." && exit 1)
 
   panic-policy-report:
     name: Panic Policy Report (WS-2 Stage 1)
@@ -334,10 +634,10 @@ jobs:
     name: Rust Clippy
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: clippy
       - name: Install System Dependencies
@@ -383,7 +683,7 @@ jobs:
           - { label: "enterprise-catalogs", pkg: proximadb,        feats: "enterprise-catalogs" }
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install System Dependencies
         # g++ provides libstdc++ for the onnxruntime (ort) build script.
         run: |
@@ -405,7 +705,7 @@ jobs:
     if: needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Run security audit
@@ -416,7 +716,7 @@ jobs:
     name: Python Lint
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.proto == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.proto == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -453,12 +753,12 @@ jobs:
     name: Go SDK Lint
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.go_sdk == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.go_sdk == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24'
       - name: Run go vet
         working-directory: clients/go
         run: go vet ./...
@@ -475,7 +775,7 @@ jobs:
     name: Node.js SDK Lint
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.nodejs_sdk == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.nodejs_sdk == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -492,10 +792,10 @@ jobs:
     name: Rust SDK Lint
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.rust_sdk == 'true'
+    if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust_sdk == 'true'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt, clippy
       - name: Check formatting
@@ -544,7 +844,7 @@ jobs:
 
       # Toolchain setup — one branch per matrix cell
       - if: matrix.setup == 'rust'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.95.0
       - if: matrix.setup == 'rust'
         uses: Swatinem/rust-cache@v2
         with:
@@ -554,7 +854,7 @@ jobs:
       - if: matrix.setup == 'go'
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24'
 
       - if: matrix.setup == 'node'
         uses: actions/setup-node@v4
@@ -612,7 +912,7 @@ jobs:
         kind: [rest, flight]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install System Dependencies
         run: |
           sudo apt-get update
@@ -654,7 +954,7 @@ jobs:
     if: needs.changes.outputs.spark_jni == 'true'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -763,11 +1063,78 @@ jobs:
     if: needs.changes.outputs.docs == 'true'
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Backstop against concurrent sessions colliding on a TD/ADR id (e.g. two
+      # ADR-031 files, or a new per-file TD reusing a legacy id). Fires on rebase
+      # so a number that collides with freshly-merged develop is caught before
+      # merge. Convention: docs/12-design/HOW_TO_FILE_TD_AND_ADR.adoc.
+      - name: Check TD/ADR id uniqueness
+        run: python3 scripts/check_td_adr_unique.py
       - name: Check documentation links
         run: |
           echo "Checking for broken links in documentation..."
           find docs -name "*.md" -o -name "*.adoc" | head -20 || true
           echo "Documentation validation complete"
+
+  # ============================================================================
+  # COMPILE GATE - lib + test shapes, both REQUIRED, in parallel
+  # ============================================================================
+  # Gated ONLY by the comprehensive `compile` path filter (a deliberate SUPERSET
+  # of everything `cargo check --workspace` reads: src/**, crates/**, apps/**,
+  # tests/**, benches/**, manifests, lockfile, build.rs, toolchain pin, .cargo/**,
+  # proto/**). A non-compiling lib OR test shape must block the merge — this is
+  # the guard that would have caught the non-compiling `develop` of #226 (a source
+  # file silently `.gitignore`'d away while its `mod` decl landed) and stale
+  # integration tests no required job compiled. Because the filter is a superset
+  # of ALL code paths, a real code change can never skip this gate; only a
+  # docs/non-code-only diff skips it, which is safe (nothing to compile) and saves
+  # two runner jobs per docs PR. `ci-success` treats a *skipped* compile (docs
+  # only) as pass and blocks only on failure/cancelled — see its "Require Rust
+  # compile" step. `cargo check` (no codegen/link) + rust-cache keep it fast.
+  # Both matrix legs are in `ci-success.needs`.
+  #
+  # The `test` shape is `--lib --bins --tests` (unit + integration tests) — the
+  # correctness-bearing targets. Benches/examples are excluded for now (they
+  # carry separate pre-existing rot); widen to `--all-targets` once those are
+  # repaired.
+  rust-compile:
+    name: Rust Compile (${{ matrix.shape }})
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.compile == 'true'
+    # CARGO_BUILD_JOBS=1: serial compilation keeps peak memory bounded. The
+    # `test` shape compiles every crate's test targets at once and OOM-killed the
+    # runner (exit 143) under default parallelism; serial is the repo's standard
+    # fix for the root-crate test compile (mirrors the rust-test job).
+    env:
+      CARGO_BUILD_JOBS: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shape: lib
+            args: "--workspace --lib --bins"
+          - shape: test
+            args: "--workspace --lib --bins --tests"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-compile-${{ matrix.shape }}"
+          shared-key: "build"
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+
+      - name: cargo check ${{ matrix.args }}
+        run: cargo check ${{ matrix.args }}
 
   # ============================================================================
   # BUILD - Compile Rust binaries
@@ -787,7 +1154,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -836,7 +1203,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -884,7 +1251,7 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-nightly-dev"
@@ -896,7 +1263,7 @@ jobs:
       - name: Run Storage Integration Tests
         run: |
           # Run only explicitly named storage test files (avoids compiling all tests)
-          for test_file in tests/*sst*.rs tests/*storage*.rs tests/*wal*.rs; do
+          for test_file in tests/*sst*.rs tests/*storage*.rs tests/*wal*.rs tests/embedded_tenant_context.rs tests/td112_postflush_recall_e2e.rs; do
             if [ -f "$test_file" ]; then
               test_name=$(basename "$test_file" .rs)
               echo "Running $test_name..."
@@ -917,7 +1284,7 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-nightly-dev"
@@ -928,10 +1295,60 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - name: Run Query Integration Tests
         run: |
-          for test_file in tests/*query*.rs tests/*federated*.rs tests/*cache*.rs; do
+          for test_file in tests/*query*.rs tests/*federated*.rs tests/*cache*.rs tests/filtered_ann_recall_bands.rs tests/query_cache_test.rs tests/vector_ann_recall_e2e.rs; do
             if [ -f "$test_file" ]; then
               test_name=$(basename "$test_file" .rs)
               echo "Running $test_name..."
+              cargo test --test "$test_name" -- --test-threads=1
+            fi
+          done
+
+  rust-integration-test-pgwire-accuracy:
+    name: Rust Integration Tests (pgwire accuracy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [changes]
+    if: |
+      !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
+      needs.changes.outputs.pgwire_accuracy_changes == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-nightly-dev"
+          shared-key: "build"
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      # TD-182 P0: the multi-modal pgwire VALUE-ACCURACY suite — these e2e tests
+      # assert exact result values (and the merged cold-path aggregates), not just
+      # clean execution, so they catch silent wrong-answer regressions the
+      # conformance ratchets miss. Run with --test-threads=1: they toggle the
+      # PROXIMADB_OLAP_DELTA_MERGE process env between awaited queries, so they
+      # must not run concurrently within one process.
+      - name: Run pgwire accuracy e2e
+        run: |
+          for test_name in \
+            pgwire_fk_referential_actions_e2e \
+            pgwire_relational_engine_e2e \
+            pgwire_olap_delta_merge_e2e \
+            document_json_pgwire_e2e \
+            events_tsbs_pgwire_e2e \
+            pgwire_null_rendering_e2e \
+            pgwire_select_or_predicate_e2e \
+            sql_value_roundtrip; do
+            echo "Running $test_name..."
+            # pgwire_fk_referential_actions_e2e also contains the TD-110 S1 recursive-cascade
+            # + concurrency/cycle test (pgwire_cascade_recurses_and_rejects_cycles_depth_and_concurrency),
+            # which needs a multi-pod harness not available in this single-process tier (deferred).
+            # Skip it here so the composite-FK + ON DELETE referential-integrity scenarios run;
+            # the multi-pod tier will run the full file when it lands.
+            if [ "$test_name" = "pgwire_fk_referential_actions_e2e" ]; then
+              cargo test --test "$test_name" -- --test-threads=1 --skip pgwire_cascade_recurses
+            else
               cargo test --test "$test_name" -- --test-threads=1
             fi
           done
@@ -949,7 +1366,7 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-nightly-dev"
@@ -981,7 +1398,7 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-nightly-dev"
@@ -1010,7 +1427,7 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-nightly-coverage"
@@ -1317,7 +1734,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -1353,6 +1770,7 @@ jobs:
       - panic-policy-report
       - panic-policy-no-regression
       - panic-policy-module-guard
+      - rust-compile
       - rust-clippy
       - feature-matrix
       - rust-security
@@ -1360,6 +1778,7 @@ jobs:
       - rust-test
       - rust-integration-test-storage
       - rust-integration-test-query
+      - rust-integration-test-pgwire-accuracy
       - rust-integration-test-graph
       - rust-integration-test-cluster
       - rust-coverage
@@ -1370,26 +1789,67 @@ jobs:
       - docs-validation
       # SDK linting and security
       - go-lint
+      - go-sdk-codegen-drift
+      - rust-sdk-codegen-drift
       - nodejs-lint
+      - ts-sdk-codegen-drift
+      - python-sdk-codegen-drift
       - rust-sdk-lint
       - sdk-security-scan
       - sdk-contract-gates
       - connectors-contract-gates
       - spark-jni-smoke
+      - openapi-spec-drift
+      # gates that encode load-bearing decisions as checks
+      - docs-authority
+      - risk-coverage
     if: always()
     steps:
-      - name: Check Results
+      # HARD GATE — Rust lib + test compile (the `rust-compile` matrix) must pass
+      # whenever it runs. `rust-compile` is gated on the comprehensive `compile`
+      # path filter (a SUPERSET of all code paths), so it is `skipped` ONLY for a
+      # docs/non-code-only diff — safe to let through (nothing to compile).
+      # Therefore block on `failure`/`cancelled` and treat `skipped` (and
+      # `success`) as pass. A matrix job's `result` is 'success' only when BOTH
+      # legs (lib, test) succeed, and 'failure' if either fails. Enforcement uses
+      # GitHub's `needs.<job>.result` expression — NOT a shell-grep of
+      # `toJSON(needs.*.result)`: the historical grep embedded a multi-line JSON
+      # array with unescaped `"` into `results="..."`, which broke bash quoting so
+      # it NEVER matched — `CI Success` silently passed through every failure (it
+      # let the non-compiling develop of #226 merge). Do NOT restore that grep.
+      - name: Require Rust compile (lib + test)
+        if: ${{ needs.rust-compile.result == 'failure' || needs.rust-compile.result == 'cancelled' }}
         run: |
-          echo "## CI Results Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "::error::Rust Compile (lib and/or test shape) did not pass — blocking merge."
+          {
+            echo "## CI Results Summary"
+            echo ""
+            echo "❌ Rust Compile (lib + test) is a required merge gate and did not pass."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
 
-          # Check each job result
-          results="${{ toJSON(needs.*.result) }}"
+      # HARD GATE — every other required job must pass (or be skipped by its path
+      # filter). `CI Success` now means ALL of CI is green, not just rust-compile.
+      # A `needs.*` result of `failure`/`cancelled` fails the merge; `success` and
+      # `skipped` (path-filtered jobs that did not apply) pass. This closes the gap
+      # that let PR #264 merge while `openapi-spec-drift` was red: back then CI
+      # Success was green solely because only `rust-compile` was hard-gated, so a
+      # failing non-compile job did not block the merge.
+      - name: Require all required jobs green
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "::error::One or more required CI jobs failed or were cancelled — blocking merge. CI Success requires every required job green (or path-filtered to skipped)."
+          {
+            echo "## CI Results Summary"
+            echo ""
+            echo "❌ A required CI job failed or was cancelled."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
 
-          if echo "$results" | grep -q '"failure"'; then
-            echo "::error::One or more CI jobs failed"
-            echo "Some jobs failed. Check the workflow run for details." >> $GITHUB_STEP_SUMMARY
-            exit 1
-          fi
-
-          echo "All required CI checks passed!" >> $GITHUB_STEP_SUMMARY
+      - name: Compile gate passed
+        run: |
+          {
+            echo "## CI Results Summary"
+            echo ""
+            echo "✅ Rust Compile (lib + test) passed."
+          } >> "$GITHUB_STEP_SUMMARY"

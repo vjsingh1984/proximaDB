@@ -106,13 +106,92 @@ use crate::storage::cache::orchestrator::{
     CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats,
 };
 use dashmap::DashMap;
-use proximadb_graph::projection::{GraphTopologyProjection, TopologyEpoch};
+use proximadb_cache::{CacheBudget, CacheKey, CacheKind, TenantCache};
+use proximadb_graph::projection::TopologyEpoch;
 use proximadb_kernel::error::ProximaDBError;
 use proximadb_records::{RecordKey, RecordStore};
 use proximadb_storage_common::{CanonicalOperation, CanonicalWalEntry, SnapshotManifest};
+
+use crate::graph::adjacency_projection::{edge_from_canonical_record, node_from_canonical_record};
+use proximadb_graph::record::{GraphEdgeKey, GraphNodeKey};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Env gate (default-OFF) for the TD-168 cold graph-payload tier. When set truthy,
+/// `get_node`/`get_edge` fall back to a byte-budgeted cache over the canonical
+/// record store on a hot (in-RAM) miss, so a graph whose payloads exceed RAM is
+/// still servable. When unset, the engine's all-RAM path is used unchanged.
+const COLD_PAYLOADS_ENV: &str = "PROXIMADB_GRAPH_COLD_PAYLOADS";
+
+/// When the cold-payload tier is on (`COLD_PAYLOADS_ENV`), back it with the
+/// **segment** store (`ColdGraphSegmentStore`, batches records into shared object
+/// segments — far fewer PUTs) instead of the per-record `ColdGraphRecordStore`. The
+/// segment store BUFFERS in RAM, so it is only crash-safe with the recovery
+/// re-population backstop ([`crate::storage::persistence::write_ahead_log::wal_operations::canonical_recovery_repopulate_enabled`])
+/// and the checkpoint/shutdown flush hook; the wiring (`shared_services`) refuses to
+/// use it without that backstop. Default-OFF (#52).
+const SEGMENT_STORE_ENV: &str = "PROXIMADB_GRAPH_SEGMENT_STORE";
+
+/// Per-tenant byte budget for the cold graph-payload caches (TD-168). Coarse
+/// default; criticality-aware sizing is deferred to TD-171.
+const GRAPH_PAYLOAD_CACHE_BYTES: u64 = 128 * 1024 * 1024;
+
+/// Byte-budgeted cold-payload caches for one `GraphOperationsService`. Built lazily
+/// only when the gate is ON, so the default (all-RAM) path pays nothing.
+struct GraphPayloadCaches {
+    nodes: TenantCache<Arc<Node>>,
+    edges: TenantCache<Arc<Edge>>,
+}
+
+impl GraphPayloadCaches {
+    fn new() -> Self {
+        Self {
+            nodes: TenantCache::new(CacheBudget::new(
+                GRAPH_PAYLOAD_CACHE_BYTES,
+                GRAPH_PAYLOAD_CACHE_BYTES,
+            )),
+            edges: TenantCache::new(CacheBudget::new(
+                GRAPH_PAYLOAD_CACHE_BYTES,
+                GRAPH_PAYLOAD_CACHE_BYTES,
+            )),
+        }
+    }
+}
+
+/// True when the cold graph-payload tier (TD-168) is enabled via the env gate.
+/// `pub(crate)` so the Orion persistence layer can gate topology-only snapshots on
+/// the same switch (TD-168 Phase 1b).
+pub(crate) fn cold_payloads_enabled() -> bool {
+    std::env::var(COLD_PAYLOADS_ENV)
+        .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+}
+
+/// True when the cold-payload tier should use the batched segment store
+/// (`SEGMENT_STORE_ENV`) rather than the per-record store. See [`SEGMENT_STORE_ENV`].
+pub(crate) fn segment_store_enabled() -> bool {
+    std::env::var(SEGMENT_STORE_ENV)
+        .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+}
+
+/// Coarse byte-weight estimate for a graph payload, used for the cache budget. The
+/// budget only needs a positive, roughly-proportional weight — exactness is
+/// unnecessary — so this sums the id length and a flat per-property estimate,
+/// clamped into `u32`.
+fn payload_weight(
+    id: &str,
+    properties: &HashMap<String, crate::graph::model::PropertyValue>,
+) -> u32 {
+    const BASE_BYTES: usize = 64;
+    const PER_PROPERTY_BYTES: usize = 64;
+    BASE_BYTES
+        .saturating_add(id.len())
+        .saturating_add(properties.len().saturating_mul(PER_PROPERTY_BYTES))
+        .min(u32::MAX as usize) as u32
+}
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
@@ -169,6 +248,9 @@ pub struct GraphOperationsService {
     transaction_manager: Arc<service_transactions::TransactionManager>,
     /// RBAC manager for permission validation
     rbac_manager: Option<Arc<ConsolidatedRBACManager>>,
+    /// Cold graph-payload caches (TD-168), built lazily on first cold read only
+    /// when `PROXIMADB_GRAPH_COLD_PAYLOADS` is set. Empty (and free) otherwise.
+    payload_caches: OnceLock<GraphPayloadCaches>,
 }
 
 impl GraphOperationsService {
@@ -206,6 +288,7 @@ impl GraphOperationsService {
             graph_settings: default_settings,
             transaction_manager,
             rbac_manager: None,
+            payload_caches: OnceLock::new(),
         };
 
         // Register lightweight graph cache providers with orchestrator
@@ -287,6 +370,7 @@ impl GraphOperationsService {
             graph_settings: default_settings,
             transaction_manager,
             rbac_manager: None,
+            payload_caches: OnceLock::new(),
         };
 
         // Register cache providers
@@ -339,6 +423,229 @@ impl GraphOperationsService {
     pub fn with_canonical_record_store(mut self, record_store: Arc<dyn RecordStore>) -> Self {
         self.canonical_record_store = Some(record_store);
         self
+    }
+
+    /// Read-only access to the canonical record store, when wired. Used by the fusion RBAC seam
+    /// (TD-131/134) to resolve a node/seed `oid` → its backing `ProximaRecord` for `permitted_principals`
+    /// filtering. `None` for single-tenant/embedded builds without a wired store ⇒ the gate fails open.
+    pub fn canonical_record_store(&self) -> Option<&Arc<dyn RecordStore>> {
+        self.canonical_record_store.as_ref()
+    }
+
+    /// Lazily-built cold-payload caches (TD-168). Constructed on first use only,
+    /// so the all-RAM default path never allocates them.
+    fn payload_caches(&self) -> &GraphPayloadCaches {
+        self.payload_caches.get_or_init(GraphPayloadCaches::new)
+    }
+
+    /// Cold-fetch a node payload from the canonical record store on a hot miss
+    /// (TD-168, gated). Serves from a byte-budgeted cache; on a cache miss reads
+    /// the canonical record, reconstructs the `Node`, and admits it (subject to the
+    /// budget). Returns `Ok(None)` when no canonical record exists — a missing
+    /// record is never cached. Callers must check the gate before calling.
+    async fn cold_fetch_node(&self, graph_id: &str, id: &str) -> Result<Option<Arc<Node>>> {
+        if !cold_payloads_enabled() {
+            return Ok(None);
+        }
+        let store = match &self.canonical_record_store {
+            Some(store) => store,
+            None => return Ok(None),
+        };
+        let cache = &self.payload_caches().nodes;
+        let cache_key = CacheKey::new(graph_id, CacheKind::Other, format!("node/{id}"));
+        if let Some(node) = cache.get(&cache_key).await {
+            return Ok(Some(node));
+        }
+        let record_key = RecordKey::new(GraphNodeKey::new(graph_id, id).canonical_oid());
+        let record = store
+            .get_record(&record_key)
+            .await
+            .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        let node = match record.and_then(|record| node_from_canonical_record(&record)) {
+            Some(node) => Arc::new(node),
+            None => return Ok(None),
+        };
+        cache
+            .insert(
+                cache_key,
+                payload_weight(&node.id, &node.properties),
+                node.clone(),
+            )
+            .await;
+        Ok(Some(node))
+    }
+
+    /// Cold-fetch an edge payload from the canonical record store on a hot miss
+    /// (TD-168, gated). See [`Self::cold_fetch_node`].
+    async fn cold_fetch_edge(&self, graph_id: &str, id: &str) -> Result<Option<Arc<Edge>>> {
+        if !cold_payloads_enabled() {
+            return Ok(None);
+        }
+        let store = match &self.canonical_record_store {
+            Some(store) => store,
+            None => return Ok(None),
+        };
+        let cache = &self.payload_caches().edges;
+        let cache_key = CacheKey::new(graph_id, CacheKind::Other, format!("edge/{id}"));
+        if let Some(edge) = cache.get(&cache_key).await {
+            return Ok(Some(edge));
+        }
+        let record_key = RecordKey::new(GraphEdgeKey::new(graph_id, id).canonical_oid());
+        let record = store
+            .get_record(&record_key)
+            .await
+            .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        let edge = match record.and_then(|record| edge_from_canonical_record(&record)) {
+            Some(edge) => Arc::new(edge),
+            None => return Ok(None),
+        };
+        cache
+            .insert(
+                cache_key,
+                payload_weight(&edge.id, &edge.properties),
+                edge.clone(),
+            )
+            .await;
+        Ok(Some(edge))
+    }
+
+    /// Batched [`Self::get_node`] — the depth-collapse for result/frontier
+    /// materialization (ADR-034 P1: latency = depth × RTT). Engine-resident nodes
+    /// are served from RAM; the engine misses are cold-fetched from the canonical
+    /// record store in ONE concurrent batch ([`RecordStore::get_records`]) so K
+    /// cold point-lookups cost ~1 round-trip of latency instead of K serial GETs.
+    /// Returns one slot per id, in order; fetched payloads are admitted to the
+    /// byte-budgeted cache exactly as [`Self::cold_fetch_node`]. Gate OFF or no
+    /// record store ⇒ engine-only (today's behavior, unchanged).
+    pub async fn get_nodes(
+        &self,
+        graph_id: &str,
+        ids: &[String],
+    ) -> Result<Vec<Option<Arc<Node>>>> {
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        let mut out: Vec<Option<Arc<Node>>> = Vec::with_capacity(ids.len());
+        let mut miss_slots: Vec<usize> = Vec::new();
+        for (i, id) in ids.iter().enumerate() {
+            match engine.get_node(id)? {
+                Some(node) => out.push(Some(node)),
+                None => {
+                    out.push(None);
+                    miss_slots.push(i);
+                }
+            }
+        }
+        if miss_slots.is_empty() || !cold_payloads_enabled() {
+            return Ok(out);
+        }
+        let store = match &self.canonical_record_store {
+            Some(store) => store,
+            None => return Ok(out),
+        };
+        let cache = &self.payload_caches().nodes;
+        // Cache-resident misses are served without I/O; the rest form one batch.
+        let mut fetch_slots: Vec<usize> = Vec::new();
+        let mut fetch_keys: Vec<RecordKey> = Vec::new();
+        for &slot in &miss_slots {
+            let id = &ids[slot];
+            let cache_key = CacheKey::new(graph_id, CacheKind::Other, format!("node/{id}"));
+            if let Some(node) = cache.get(&cache_key).await {
+                out[slot] = Some(node);
+            } else {
+                fetch_slots.push(slot);
+                fetch_keys.push(RecordKey::new(
+                    GraphNodeKey::new(graph_id, id).canonical_oid(),
+                ));
+            }
+        }
+        if fetch_keys.is_empty() {
+            return Ok(out);
+        }
+        let records = store
+            .get_records(&fetch_keys)
+            .await
+            .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        for (slot, record) in fetch_slots.into_iter().zip(records) {
+            if let Some(node) = record.and_then(|record| node_from_canonical_record(&record)) {
+                let node = Arc::new(node);
+                let id = &ids[slot];
+                let cache_key = CacheKey::new(graph_id, CacheKind::Other, format!("node/{id}"));
+                cache
+                    .insert(
+                        cache_key,
+                        payload_weight(&node.id, &node.properties),
+                        node.clone(),
+                    )
+                    .await;
+                out[slot] = Some(node);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Batched [`Self::get_edge`] — symmetric to [`Self::get_nodes`] (one
+    /// concurrent cold batch for engine misses; depth-collapse, ADR-034 P1).
+    pub async fn get_edges(
+        &self,
+        graph_id: &str,
+        ids: &[String],
+    ) -> Result<Vec<Option<Arc<Edge>>>> {
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        let mut out: Vec<Option<Arc<Edge>>> = Vec::with_capacity(ids.len());
+        let mut miss_slots: Vec<usize> = Vec::new();
+        for (i, id) in ids.iter().enumerate() {
+            match engine.get_edge(id)? {
+                Some(edge) => out.push(Some(edge)),
+                None => {
+                    out.push(None);
+                    miss_slots.push(i);
+                }
+            }
+        }
+        if miss_slots.is_empty() || !cold_payloads_enabled() {
+            return Ok(out);
+        }
+        let store = match &self.canonical_record_store {
+            Some(store) => store,
+            None => return Ok(out),
+        };
+        let cache = &self.payload_caches().edges;
+        let mut fetch_slots: Vec<usize> = Vec::new();
+        let mut fetch_keys: Vec<RecordKey> = Vec::new();
+        for &slot in &miss_slots {
+            let id = &ids[slot];
+            let cache_key = CacheKey::new(graph_id, CacheKind::Other, format!("edge/{id}"));
+            if let Some(edge) = cache.get(&cache_key).await {
+                out[slot] = Some(edge);
+            } else {
+                fetch_slots.push(slot);
+                fetch_keys.push(RecordKey::new(
+                    GraphEdgeKey::new(graph_id, id).canonical_oid(),
+                ));
+            }
+        }
+        if fetch_keys.is_empty() {
+            return Ok(out);
+        }
+        let records = store
+            .get_records(&fetch_keys)
+            .await
+            .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        for (slot, record) in fetch_slots.into_iter().zip(records) {
+            if let Some(edge) = record.and_then(|record| edge_from_canonical_record(&record)) {
+                let edge = Arc::new(edge);
+                let id = &ids[slot];
+                let cache_key = CacheKey::new(graph_id, CacheKind::Other, format!("edge/{id}"));
+                cache
+                    .insert(
+                        cache_key,
+                        payload_weight(&edge.id, &edge.properties),
+                        edge.clone(),
+                    )
+                    .await;
+                out[slot] = Some(edge);
+            }
+        }
+        Ok(out)
     }
 
     /// Inject the canonical WAL appender that `flush_wal` uses to persist
@@ -622,6 +929,52 @@ impl GraphOperationsService {
         Ok(())
     }
 
+    /// Re-drive every recovered node/edge through the canonical record store so a
+    /// buffered cold store (e.g. `ColdGraphSegmentStore`, whose unflushed buffer is
+    /// lost on crash) is rebuilt from the authoritative recovered engine state
+    /// (TD-066 Part 2, ADR-020). Upserts are idempotent, so this is a no-op of cost
+    /// for an already-durable store and the data-loss fix for a buffered one. No-op
+    /// when no canonical store is wired or the graph is not resident. Returns the
+    /// number of records re-driven.
+    pub(crate) async fn repopulate_canonical_store(&self, graph_id: &str) -> Result<usize> {
+        let Some(record_store) = &self.canonical_record_store else {
+            return Ok(0);
+        };
+        // Clone the Arc out of the map so no DashMap guard is held across the await.
+        let Some(engine) = self.graphs.get(graph_id).map(|e| e.value().clone()) else {
+            return Ok(0);
+        };
+        // PRECONDITION (#52 Phase 1): rebuilding the cold store from the engine assumes
+        // the engine is FULL-RESIDENT — `get_all_nodes`/`get_all_edges` must return the
+        // complete graph. This holds while ORION keeps all payload in RAM and snapshots
+        // it. True payload-offload cold-tiering (engine evicts payload to the cold store
+        // as the sole home) breaks this assumption: the cold store would then have to be
+        // a durable authority (flush + segment-tail index rebuild), not a projection.
+        let nodes = engine.get_all_nodes()?;
+        let edges = engine.get_all_edges()?;
+        let mut records = Vec::with_capacity(nodes.len() + edges.len());
+        for node in &nodes {
+            records.push(node_to_canonical_record(graph_id, node.as_ref()));
+        }
+        for edge in &edges {
+            records.push(edge_to_canonical_record(graph_id, edge.as_ref()));
+        }
+        let count = records.len();
+        if !records.is_empty() {
+            record_store
+                .upsert_records(records)
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
+        tracing::info!(
+            graph_id,
+            nodes = nodes.len(),
+            edges = edges.len(),
+            "TD-066 Part 2: re-populated canonical store from recovered graph state"
+        );
+        Ok(count)
+    }
+
     /// Recover all graphs from persistent storage
     ///
     /// This method should be called during server startup to restore all graph state
@@ -718,6 +1071,21 @@ impl GraphOperationsService {
         // Store in graphs map
         self.graphs
             .insert(graph_id.to_string(), Arc::new(engine_impl));
+
+        // TD-066 Part 2 (gated, default-OFF): engine-WAL replay above rebuilt the
+        // in-memory engine, but the canonical/cold record store — a buffered store
+        // for `ColdGraphSegmentStore` — is not rebuilt by that replay. Re-drive the
+        // recovered nodes/edges through the canonical store so the cold tier is
+        // rebuilt from the authoritative recovered state (the data-loss path that
+        // blocks wiring `ColdGraphSegmentStore` to production, #52).
+        if crate::storage::persistence::write_ahead_log::wal_operations::canonical_recovery_repopulate_enabled() {
+            let records = self.repopulate_canonical_store(graph_id).await?;
+            tracing::info!(
+                graph_id,
+                records,
+                "canonical store re-populated from recovered graph state"
+            );
+        }
 
         Ok(())
     }
@@ -992,9 +1360,65 @@ impl GraphOperationsService {
         if let Some(engine) = self.graphs.get(graph_id) {
             match engine.value().as_ref() {
                 crate::graph::engines::GraphEngineImpl::Orion(orion) => {
+                    let scoped = crate::storage::persistence::write_ahead_log::wal_operations::canonical_replay_scope_enabled();
+                    // TD-066 (c) Part 2: stamp the engine WAL with a
+                    // `CanonicalEmission(checkpoint_lsn)` marker before the
+                    // engine WAL flush, so every subsequent frame is known to
+                    // post-date this canonical checkpoint.
+                    if scoped && let Some(persistence) = orion.persistence() {
+                        persistence
+                            .append_canonical_emission_marker(checkpoint_lsn)
+                            .await?;
+                    }
+                    // Flush the engine WAL so the marker is durable BEFORE the
+                    // snapshot is written. This guarantees the recovery
+                    // invariant "snapshot(X) exists ⟹ marker(X) is durable",
+                    // so a loaded snapshot can always be correlated to its
+                    // marker and replay scoped precisely (no over-replay).
                     orion.flush_wal().await?;
+                    // Write an engine snapshot tagged with checkpoint_lsn so the
+                    // canonical checkpoint is backed by real data — the marker
+                    // alone is only a watermark. Crash-safe: ordered after the
+                    // marker flush (see invariant above).
+                    if scoped && let Some(persistence) = orion.persistence() {
+                        persistence.save_snapshot(orion, checkpoint_lsn).await?;
+                        // TD-066 (d): the snapshot at `checkpoint_lsn` is now
+                        // durable, so engine-WAL segments fully covered by it
+                        // can be reclaimed. Ordered STRICTLY AFTER the snapshot
+                        // (marker → flush → snapshot → truncate): a crash at any
+                        // point still recovers from `snapshot + surviving
+                        // post-marker frames`, bounding WAL growth without
+                        // risking data loss.
+                        let reclaimed = persistence
+                            .truncate_wal_through_checkpoint(checkpoint_lsn)
+                            .await?;
+                        tracing::debug!(
+                            graph_id,
+                            checkpoint_lsn,
+                            reclaimed,
+                            "TD-066 (d): engine WAL truncated after durable snapshot"
+                        );
+                    }
                 }
             }
+        }
+
+        // Flush the canonical/cold record store's write buffer to durable storage.
+        // This is an INDEPENDENT durability action — the cold store is a projection,
+        // not part of the engine-WAL snapshot/truncate ordering above — so it runs
+        // UNCONDITIONALLY (not gated on `scoped`): a buffered store (e.g.
+        // `ColdGraphSegmentStore`) must be flushed at every checkpoint AND graceful
+        // shutdown (`database.rs` calls `flush_wal` per graph on stop), in both the
+        // scoped and non-scoped configs, or its buffer is lost on crash/stop. A
+        // durable-on-write store overrides this to a no-op. NOTE: `canonical_record_store`
+        // is one store shared across graphs (oids embed `graph_id`), so this per-graph
+        // flush drains the global buffer — redundant across graphs but correct; if the
+        // store is ever made per-graph this flush becomes load-bearing.
+        if let Some(store) = &self.canonical_record_store {
+            store
+                .flush()
+                .await
+                .map_err(|e| ProximaDBError::Internal(format!("canonical store flush: {e}")))?;
         }
         Ok(())
     }
@@ -1060,12 +1484,6 @@ impl GraphOperationsService {
                         edge_count = edges.len(),
                         rebuild_epoch,
                         "ORION CSR rebuilt from adjacency projection"
-                    );
-                }
-                #[allow(unreachable_patterns)]
-                _ => {
-                    tracing::debug!(
-                        "rebuild_orion_csr_from_adjacency_projection: not an ORION engine, skipped"
                     );
                 }
             }
@@ -1637,7 +2055,7 @@ impl GraphOperationsService {
 
         // Use property indexes / ordered indexes for prefiltering
         for filter in &query.filters {
-            use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
+            use crate::graph::PropertyFilterOperator as Op;
             match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                 Op::Equals => {
                     // Look up index for this property
@@ -1793,7 +2211,7 @@ impl GraphOperationsService {
         'outer: for node_id in candidates {
             if let Some(node_arc) = engine.get_node(&node_id)? {
                 for filter in &query.filters {
-                    use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
+                    use crate::graph::PropertyFilterOperator as Op;
                     let prop_val_opt = node_arc.properties.get(&filter.key);
                     let filter_value = match &filter.value {
                         Some(v) => v,
@@ -1879,7 +2297,7 @@ impl GraphOperationsService {
         // If neither from nor to specified and filters exist, prefilter by edge property indexes
         if query.from_node_id.is_none() && query.to_node_id.is_none() && (!query.filters.is_empty())
         {
-            use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
+            use crate::graph::PropertyFilterOperator as Op;
             let mut candidate_ids: Option<std::collections::HashSet<EdgeId>> = None;
             for filter in &query.filters {
                 // Only handle equality and range/prefix on stringified keys
@@ -2050,7 +2468,7 @@ impl GraphOperationsService {
         if !query.filters.is_empty() {
             results.retain(|edge| {
                 for filter in &query.filters {
-                    use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
+                    use crate::graph::PropertyFilterOperator as Op;
 
                     // Safely get filter value - if missing, filter fails (edge excluded)
                     let Some(filter_val) = filter.value.as_ref() else {
@@ -2097,10 +2515,7 @@ impl GraphOperationsService {
     // index_key_for_value moved to helpers
 
     /// Get graph statistics
-    pub async fn get_stats(
-        &self,
-        graph_id: &str,
-    ) -> Result<crate::proto::proximadb_v1::GraphStats> {
+    pub async fn get_stats(&self, graph_id: &str) -> Result<crate::graph::GraphStats> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
@@ -2120,19 +2535,19 @@ impl GraphOperationsService {
             }
         }
 
-        let label_stats: Vec<crate::proto::proximadb_v1::LabelStats> = label_counts
+        let label_stats: Vec<crate::graph::LabelStats> = label_counts
             .into_iter()
-            .map(|(label, count)| crate::proto::proximadb_v1::LabelStats { label, count })
+            .map(|(label, count)| crate::graph::LabelStats { label, count })
             .collect();
 
-        let stats = crate::proto::proximadb_v1::GraphStats {
+        let stats = crate::graph::GraphStats {
             total_nodes: engine.node_count().unwrap_or(0) as u64,
             total_edges: self.stats_edges.load(std::sync::atomic::Ordering::Relaxed),
             label_stats,
             edge_type_stats: self
                 .edge_type_counts
                 .iter()
-                .map(|entry| crate::proto::proximadb_v1::EdgeTypeStats {
+                .map(|entry| crate::graph::EdgeTypeStats {
                     edge_type: entry.key().clone(),
                     count: entry.value().load(std::sync::atomic::Ordering::Relaxed),
                 })
@@ -2155,7 +2570,7 @@ impl GraphOperationsService {
     fn convert_properties_to_proto(
         &self,
         properties: &std::collections::HashMap<String, crate::graph::PropertyValue>,
-    ) -> std::collections::HashMap<String, crate::proto::proximadb_v1::PropertyValue> {
+    ) -> std::collections::HashMap<String, crate::graph::PropertyValue> {
         properties
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
@@ -2355,11 +2770,16 @@ impl GraphOperationsService {
 
         let projection_start = std::time::Instant::now();
         if !inserted.is_empty() {
-            let projection = self.adjacency_projection(graph_id);
-            for edge in &inserted {
-                let edge_record = edge_to_canonical_record(graph_id, edge);
-                projection.apply_edge(&edge_record).await?;
-            }
+            // TD-130: build every canonical edge record, then apply the whole
+            // batch under ONE projection write-lock + ONE epoch bump — was one
+            // lock-cycle + epoch bump (and one await) per edge, the per-edge
+            // serialization that dominated bulk ingest.
+            let edge_records: Vec<_> = inserted
+                .iter()
+                .map(|edge| edge_to_canonical_record(graph_id, edge))
+                .collect();
+            self.adjacency_projection(graph_id)
+                .apply_edges(&edge_records)?;
             self.advance_edge_epoch(graph_id);
         }
         let projection_time = projection_start.elapsed();
@@ -2447,10 +2867,10 @@ impl GraphOperationsService {
     /* moved to service_schema_validation.rs
     fn validate_property_value_type(
         key: &str,
-        value: &crate::proto::proximadb_v1::PropertyValue,
+        value: &crate::graph::PropertyValue,
         schema: &crate::proto::proximadb_v1::PropertySchema,
     ) -> Result<()> {
-        use crate::proto::proximadb_v1::property_value::Value as PV;
+        use crate::graph::model::property_value::Value as PV;
         use crate::proto::proximadb_v1::PropertyType as PT;
         match (schema.r#type, &value.value) {
             (x, Some(PV::StringValue(_))) if x == PT::String as i32 => Ok(()),
@@ -2468,7 +2888,7 @@ impl GraphOperationsService {
 
     fn validate_property_constraints(
         key: &str,
-        value: &crate::proto::proximadb_v1::PropertyValue,
+        value: &crate::graph::PropertyValue,
         constraints: &Vec<crate::proto::proximadb_v1::PropertyConstraint>,
     ) -> Result<()> {
         for c in constraints {
@@ -2479,10 +2899,10 @@ impl GraphOperationsService {
 
     fn validate_property_constraint_one(
         key: &str,
-        value: &crate::proto::proximadb_v1::PropertyValue,
+        value: &crate::graph::PropertyValue,
         c: &crate::proto::proximadb_v1::PropertyConstraint,
     ) -> Result<()> {
-        use crate::proto::proximadb_v1::property_value::Value as PV;
+        use crate::graph::model::property_value::Value as PV;
         if let Some(ref sc) = c.constraint.as_ref() {
             match sc {
                 crate::proto::proximadb_v1::property_constraint::Constraint::StringConstraint(sc) => {
@@ -2652,16 +3072,14 @@ mod tests {
 
     fn pv_str(s: &str) -> PropertyValue {
         PropertyValue {
-            value: Some(
-                crate::proto::proximadb_v1::property_value::Value::StringValue(s.to_string()),
-            ),
+            value: Some(crate::graph::model::property_value::Value::StringValue(
+                s.to_string(),
+            )),
         }
     }
     fn pv_int(i: i64) -> PropertyValue {
         PropertyValue {
-            value: Some(crate::proto::proximadb_v1::property_value::Value::IntValue(
-                i,
-            )),
+            value: Some(crate::graph::model::property_value::Value::IntValue(i)),
         }
     }
 
@@ -2714,7 +3132,7 @@ mod tests {
         // Wrong type (string) should fail
         let mut n1_props = std::collections::HashMap::new();
         n1_props.insert("age".to_string(), pv_str("twenty"));
-        let n1 = crate::proto::proximadb_v1::Node {
+        let n1 = crate::graph::Node {
             id: "n1".to_string(),
             labels: vec!["Person".to_string()],
             properties: n1_props,
@@ -2727,7 +3145,7 @@ mod tests {
         // Out of range should fail
         let mut n2_props = std::collections::HashMap::new();
         n2_props.insert("age".to_string(), pv_int(15));
-        let n2 = crate::proto::proximadb_v1::Node {
+        let n2 = crate::graph::Node {
             id: "n2".to_string(),
             labels: vec!["Person".to_string()],
             properties: n2_props,
@@ -2740,7 +3158,7 @@ mod tests {
         // Valid should succeed
         let mut n3_props = std::collections::HashMap::new();
         n3_props.insert("age".to_string(), pv_int(25));
-        let n3 = crate::proto::proximadb_v1::Node {
+        let n3 = crate::graph::Node {
             id: "n3".to_string(),
             labels: vec!["Person".to_string()],
             properties: n3_props,
@@ -2790,7 +3208,7 @@ mod tests {
         };
         service.create_graph_collection(req).await?;
         // Nodes
-        let mk = |id: &str| crate::proto::proximadb_v1::Node {
+        let mk = |id: &str| crate::graph::Node {
             id: id.to_string(),
             labels: vec!["Person".to_string()],
             properties: std::collections::HashMap::new(),
@@ -2802,7 +3220,7 @@ mod tests {
             service.create_node("g_card", mk(id)).await?;
         }
         // First marriage A->B ok
-        let e1 = crate::proto::proximadb_v1::Edge {
+        let e1 = crate::graph::Edge {
             id: "e1".to_string(),
             from_node_id: "A".to_string(),
             to_node_id: "B".to_string(),
@@ -2814,7 +3232,7 @@ mod tests {
         };
         service.create_edge("g_card", e1).await?;
         // Second marriage from A to C should fail (ONE_TO_ONE violates outgoing)
-        let e2 = crate::proto::proximadb_v1::Edge {
+        let e2 = crate::graph::Edge {
             id: "e2".to_string(),
             from_node_id: "A".to_string(),
             to_node_id: "C".to_string(),
@@ -2826,7 +3244,7 @@ mod tests {
         };
         assert!(service.create_edge("g_card", e2).await.is_err());
         // Another marriage to B from D should fail (ONE_TO_ONE violates incoming)
-        let e3 = crate::proto::proximadb_v1::Edge {
+        let e3 = crate::graph::Edge {
             id: "e3".to_string(),
             from_node_id: "D".to_string(),
             to_node_id: "B".to_string(),
@@ -2882,7 +3300,7 @@ mod tests {
         let mut p3 = std::collections::HashMap::new();
         p3.insert("email".to_string(), pv_str("a@test"));
         p3.insert("tenant".to_string(), pv_str("t2"));
-        let n1 = crate::proto::proximadb_v1::Node {
+        let n1 = crate::graph::Node {
             id: "p1".to_string(),
             labels: vec!["Person".to_string()],
             properties: p1,
@@ -2890,7 +3308,7 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        let n2 = crate::proto::proximadb_v1::Node {
+        let n2 = crate::graph::Node {
             id: "p2".to_string(),
             labels: vec!["Person".to_string()],
             properties: p2,
@@ -2898,7 +3316,7 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        let n3 = crate::proto::proximadb_v1::Node {
+        let n3 = crate::graph::Node {
             id: "p3".to_string(),
             labels: vec!["Person".to_string()],
             properties: p3,
@@ -2946,11 +3364,9 @@ mod tests {
             properties: std::collections::HashMap::from([(
                 "name".to_string(),
                 PropertyValue {
-                    value: Some(
-                        crate::proto::proximadb_v1::property_value::Value::StringValue(
-                            "Alice".to_string(),
-                        ),
-                    ),
+                    value: Some(crate::graph::model::property_value::Value::StringValue(
+                        "Alice".to_string(),
+                    )),
                 },
             )]),
             embedding: None,

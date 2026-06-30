@@ -33,6 +33,8 @@ import uuid
 from typing import Any
 
 from llama_index.core.base.base_retriever import BaseRetriever
+from llama_index.core.bridge.pydantic import PrivateAttr
+from llama_index.core.schema import BaseNode, TextNode
 from llama_index.core.vector_stores import (
     VectorStoreQuery,
     VectorStoreQueryResult,
@@ -40,7 +42,6 @@ from llama_index.core.vector_stores import (
 from llama_index.core.vector_stores.types import (
     BasePydanticVectorStore,
     MetadataFilters,
-    Node,
     VectorStoreQueryMode,
 )
 
@@ -60,17 +61,28 @@ class ProximaDBVectorStore(BasePydanticVectorStore):
     stores_text: bool = True
     flat_metadata: bool = True
 
+    _client: Any = PrivateAttr()
+    _collection_name: str = PrivateAttr()
+    _text_key: str = PrivateAttr()
+    _async_client: Any = PrivateAttr(default=None)
+
     def __init__(
         self,
         client: Any,
         collection_name: str,
         *,
         text_key: str = "text",
+        async_client: Any | None = None,
     ) -> None:
         super().__init__()
         self._client = client
         self._collection_name = collection_name
         self._text_key = text_key
+        # Optional native-async client (ProximaDBAsyncUnified). When provided +
+        # started, aquery awaits real async I/O over the generated REST
+        # transport instead of thread-offloading the sync client. Sync
+        # construction/methods are unaffected when omitted.
+        self._async_client = async_client
 
     @property
     def client(self) -> Any:
@@ -78,7 +90,8 @@ class ProximaDBVectorStore(BasePydanticVectorStore):
 
     def add(
         self,
-        nodes: list[Node],
+        nodes: list[BaseNode],
+        **add_kwargs: Any,
     ) -> list[str]:
         """Add nodes to ProximaDB.
 
@@ -95,9 +108,10 @@ class ProximaDBVectorStore(BasePydanticVectorStore):
             doc_id = node.node_id or str(uuid.uuid4())
             ids.append(doc_id)
 
+            content = node.get_content()
             # Build metadata from node
             metadata = dict(node.metadata) if node.metadata else {}
-            metadata[self._text_key] = node.content
+            metadata[self._text_key] = content
 
             # Use the embedding from the node if available
             if node.embedding is None:
@@ -109,7 +123,7 @@ class ProximaDBVectorStore(BasePydanticVectorStore):
                 record_payload(
                     record_id=doc_id,
                     vector=node.embedding,
-                    text=node.content,
+                    text=content,
                     metadata=metadata,
                 )
             )
@@ -140,34 +154,71 @@ class ProximaDBVectorStore(BasePydanticVectorStore):
         Returns:
             Vector store query result with matching nodes.
         """
-        # Convert LlamaIndex query to ProximaDB search
-        metadata_filter = None
-        if query.filters and query.filters.filters:
-            # Convert MetadataFilters to ProximaDB filter format
-            metadata_filter = self._convert_filters(query.filters)
-
         search_results = self._client.search(
             self._collection_name,
-            vector=(
-                query.query_embedding.tolist()
-                if hasattr(query.query_embedding, "tolist")
-                else list(query.query_embedding)
-            ),
+            vector=self._query_vector(query),
             top_k=query.similarity_top_k,
-            metadata_filter=metadata_filter,
+            metadata_filter=self._query_filter(query),
         )
+        return self._results_to_query_result(search_results)
 
-        # Convert results back to LlamaIndex format
-        nodes = []
-        similarities = []
-        ids = []
+    async def aquery(
+        self,
+        query: VectorStoreQuery,
+        **kwargs: Any,
+    ) -> VectorStoreQueryResult:
+        """Asynchronously query ProximaDB for similar nodes.
+
+        When a native-async client was supplied at construction, this awaits
+        real async I/O over the generated REST transport; otherwise it offloads
+        the synchronous ``search`` onto a worker thread to keep the event loop
+        responsive and satisfy LlamaIndex's async query contract.
+        """
+        if self._async_client is not None:
+            search_results = await self._async_client.search(
+                self._collection_name,
+                vector=self._query_vector(query),
+                top_k=query.similarity_top_k,
+                metadata_filter=self._query_filter(query),
+            )
+            return self._results_to_query_result(search_results)
+
+        import asyncio
+
+        search_results = await asyncio.to_thread(
+            self._client.search,
+            self._collection_name,
+            vector=self._query_vector(query),
+            top_k=query.similarity_top_k,
+            metadata_filter=self._query_filter(query),
+        )
+        return self._results_to_query_result(search_results)
+
+    def _query_vector(self, query: VectorStoreQuery) -> list[float]:
+        """Extract a plain ``list[float]`` query vector from a ``VectorStoreQuery``."""
+        embedding = query.query_embedding
+        if hasattr(embedding, "tolist"):
+            return embedding.tolist()
+        return list(embedding)
+
+    def _query_filter(self, query: VectorStoreQuery) -> dict[str, Any] | None:
+        """Convert a query's ``MetadataFilters`` to the ProximaDB filter format."""
+        if query.filters and query.filters.filters:
+            return self._convert_filters(query.filters)
+        return None
+
+    def _results_to_query_result(self, search_results: Any) -> VectorStoreQueryResult:
+        """Convert ProximaDB search results into a ``VectorStoreQueryResult``."""
+        nodes: list[TextNode] = []
+        similarities: list[float] = []
+        ids: list[str] = []
 
         for result in search_results:
             metadata = dict(result.metadata) if result.metadata else {}
             text_content = result.source or metadata.pop(self._text_key, "")
 
             nodes.append(
-                Node(
+                TextNode(
                     text=text_content,
                     embedding=None,  # Embeddings not returned by default
                     metadata=metadata,
@@ -236,11 +287,12 @@ class ProximaDBRetriever(BaseRetriever):
         similarity_top_k: int = 10,
         filters: MetadataFilters | None = None,
     ) -> None:
+        super().__init__()
         self._vector_store = vector_store
         self._similarity_top_k = similarity_top_k
         self._filters = filters
 
-    def _retrieve(self, query_bundle: Any) -> list[Node]:
+    def _retrieve(self, query_bundle: Any) -> list[TextNode]:
         """Retrieve nodes for a query bundle.
 
         Args:

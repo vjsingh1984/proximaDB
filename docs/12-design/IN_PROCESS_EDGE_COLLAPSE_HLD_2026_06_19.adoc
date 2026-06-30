@@ -24,8 +24,12 @@ link:CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc[the co-design spec] and t
 correction. Builds directly on the *existing* in-process edge (`src/network/multiplex/**`,
 `src/network/middleware/**`, `src/network/tls/**`) and the C0 trace substrate
 (`src/observability/io_trace.rs`). Adds no new catalog/record/WAL/routing *authority* — it consolidates
-the edge into one policy plane and names the deployment seam. Proposed crate/type names
-(`proximadb-edge`, `EdgeRequest`, `EdgePolicyPlane`) are proposals, not yet code.
+the edge into one policy plane and names the deployment seam. The crate/type names
+(`proximadb-edge`, `EdgeRequest`, `EdgePolicyPlane`) remain proposals, but the *E0→E1 slice has
+shipped* (2026-06-21): E0 routes pgwire through the same policy stages as REST/gRPC, and the unifying
+edge types `EdgePolicyContext` (one client-IP → `KouLocality` classification) + `ResultShapePolicy`
+(the locality-driven shaping stage) are live in `src/metrics/consumption_metrics.rs`, consumed across
+pgwire/REST/Arrow Flight for result-egress metering + lossless shaping. See §8.
 ====
 
 == 1. Thesis: the edge is pure boundary cost for a system that owns both sides
@@ -264,11 +268,13 @@ low-risk starting point; disaggregation is an evidence-gated option.
 [cols="1,3,2", options="header"]
 |===
 | Phase | Work | Builds on
-| *E0 — close the consistency gap* | Route *pgwire* through the same policy stages as REST/gRPC (tenant,
-authn/authz, rate-limit, trace); wire rate-limit/backpressure to the gRPC/Flight paths. *Highest
-priority — it is a live security inconsistency.* | `network/multiplex`, `network/middleware`, pgwire server
-| *E1 — canonical envelope + one plane* | Introduce `EdgeRequest` + `EdgePolicyPlane`; refactor existing
-middleware into plane stages run once over the envelope for all four surfaces. | `proximadb-edge` (new)
+| *E0 — close the consistency gap* [*SHIPPED 2026-06-20/21*] | pgwire now routed through the same
+policy stages as REST/gRPC (tenant, authn/authz, per-IP rate-limit, trace); client-IP carried on the
+pgwire session. | `network/multiplex`, `network/middleware`, pgwire server
+| *E1 — canonical envelope + one plane* [*PARTIAL 2026-06-21*] | Shipped: `EdgePolicyContext` (one
+client → `KouLocality` seam) + `ResultShapePolicy` (shaping stage), consumed by pgwire/REST/Flight
+for result-egress metering + lossless ZSTD/gzip shaping. Remaining: the full `EdgeRequest` +
+`EdgePolicyPlane` envelope running every stage once over all four surfaces. | `proximadb-edge` (new)
 | *E2 — missing edge capabilities* | Circuit-breaker, retry/tail-hedge, connection draining, admission
 control as plane stages; hot TLS-cert reload. | §4.2 I/O-scheduler trace, `rustls` acceptor
 | *E3 — deployment roles* | `edge` / `compute` / co-located role flag; thin L4-front docs; internal

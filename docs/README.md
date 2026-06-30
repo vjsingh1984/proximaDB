@@ -20,7 +20,7 @@ flowchart LR
   subgraph ProximaDB["ProximaDB"]
     API["Unified API<br/>REST + gRPC + SQL"]
     WAL["Unified WAL<br/>Single durability layer"]
-    ENGS["6 Storage Engines<br/>Tuned for workload"]
+    ENGS["4 Storage Engines + AXIS<br/>Tuned for workload"]
   end
 
   subgraph Output["Queries You Run"]
@@ -107,16 +107,18 @@ JOIN LATERAL DOCUMENT_QUERY('reviews', 'product_id = "' || v.product_id || '"') 
 
 ### Storage Engines
 
-6 specialized engines tuned for your workload:
+4 supported engines tuned for your workload (plus AXIS HNSW/IVF indexes):
 
 | Engine | Best For | Performance |
 |--------|----------|-------------|
 | **SST** | Real-time, write-heavy | ~5ms |
 | **HELIX** | Locality-optimized | ~13ms |
 | **VIPER** | Columnar analytics | ~89ms |
-| **SWIFT** | Ultra-low latency (<5K vectors) | ~95ms |
 | **NOVA** | Mixed workloads | ~101ms |
-| **RAPTOR** | Adaptive, dynamic workloads | ~9ms |
+
+> **Experimental (off by default):** the SWIFT and RAPTOR engines exist behind the
+> `experimental-engines` cargo feature and are disabled in stock builds. Do not target them
+> for v0.2. See [`05-concepts/storage-engines.adoc`](./05-concepts/storage-engines.adoc).
 
 ---
 
@@ -152,7 +154,7 @@ For future-shaping architecture work, start with `docs/12-design/README.adoc`.
 - Single-node scope for the v0.2 support contract
 
 ### Beta: Unified API
-- Single port (5678) for REST, gRPC, and Arrow Flight
+- Single port (5678) for REST, gRPC, and Arrow Flight (Arrow Flight as a customer transport is Experimental)
 - PostgreSQL wire protocol (5433) for SQL clients
 - Python SDK with async support
 
@@ -199,6 +201,7 @@ flowchart TB
     SST[SST Engine]
     HELIX[HELIX Engine]
     VIPER[VIPER Engine]
+    NOVA[NOVA Engine]
     ORION[ORION Graph Engine]
   end
 
@@ -207,6 +210,7 @@ flowchart TB
   WAL --> SST
   WAL --> HELIX
   WAL --> VIPER
+  WAL --> NOVA
   WAL --> ORION
 
   style UQ fill:#e74c3c,stroke:#c0392b,color:#fff
@@ -226,7 +230,7 @@ flowchart TB
 
 ## Version
 
-**Pre-release (in development)**: v0.2.0 — narrow single-node cut targeting May 2026. See
+**Pre-release (in development)**: v0.2.0 — a narrow single-node cut. See
 [`SUPPORTED_SURFACE.adoc`](./SUPPORTED_SURFACE.adoc) for the supported/beta/experimental split
 and [`release-notes/v0.2.0.adoc`](./release-notes/v0.2.0.adoc) for the release contract.
 
@@ -247,4 +251,4 @@ and [`release-notes/v0.2.0.adoc`](./release-notes/v0.2.0.adoc) for the release c
 
 ---
 
-*Last updated: 2026-02-22*
+*Last updated: 2026-06-29*

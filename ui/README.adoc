@@ -1,78 +1,46 @@
-= ProximaDB React Dashboard
-:author: ProximaDB Project
-:version: 1.0.0
-:date: 2025-09-13
-:doctype: article
+= ProximaDB Web Operator Console (`ui/`)
 :toc: left
-:toclevels: 3
-:sectanchors:
-:sectlinks:
+:toclevels: 2
 
-This project was bootstrapped with link:https://github.com/facebook/create-react-app[Create React App].
+A React (TypeScript) single-page operator console for ProximaDB — a multi-tab
+admin/monitoring surface (System Overview, Collections, Metrics, Performance,
+Diagnostics, Alerts, Security, Cache, SQL Query, Graph Visualization). It talks to
+a running server over the REST API (proxied to `http://localhost:5678`).
 
-== Available Scripts
+[IMPORTANT]
+====
+*Status: standalone dev app, not part of the build/CI.* This app is **not** compiled
+by CI, **not** bundled into the `proximadb-server` binary, and **not** consumed by
+downstream services (e.g. `anvaiops`, which integrates via the SDK/REST API only). It
+is the heavier *full operator console* counterpart to the lightweight, read-only
+dashboard the server now serves at `GET /admin` (see
+`docs/04-operations/admin-dashboard.adoc` / `crates/platform/proximadb-admin-ui`).
 
-In the project directory, you can run:
+The CRA `public/` entry assets (`index.html`, `manifest.json`) are present, so the app
+builds with `npm install && npm run build`. It remains a developer/operator app that is
+not gated by CI, so verify a build before relying on it.
+====
 
-=== `npm start`
+== Stack
 
-Runs the app in the development mode.
-Open link:http://localhost:3000[http://localhost:3000] to view it in your browser.
+* React 17 + TypeScript, Create-React-App (`react-scripts`) toolchain.
+* Material-UI v4, Recharts (charts), Cytoscape (graph viz), Monaco (SQL editor), axios.
 
-The page will reload when you make changes.
-You may also see any lint errors in the console.
+== Develop
 
-=== `npm test`
+[source,console]
+----
+$ cd ui
+$ npm install
+$ npm start      # dev server on :3000, proxies API calls to :5678
+$ npm run build  # production bundle into build/
+----
 
-Launches the test runner in the interactive watch mode.
-See the section about link:https://facebook.github.io/create-react-app/docs/running-tests[running tests] for more information.
+== Layout
 
-=== `npm run build`
+* `src/components/*Tab.tsx` — the operator tabs.
+* `src/api/proximaDbApi.ts`, `src/types/api.ts` — the typed REST client + shapes.
+* `src/contexts/ThemeContext.tsx`, `src/components/ThemeToggle.tsx` — theming.
 
-Builds the app for production to the `build` folder.
-It correctly bundles React in production mode and optimizes the build for the best performance.
-
-The build is minified and the filenames include the hashes.
-Your app is ready to be deployed!
-
-See the section about link:https://facebook.github.io/create-react-app/docs/deployment[deployment] for more information.
-
-=== `npm run eject`
-
-NOTE: this is a one-way operation. Once you `eject`, you can't go back!
-
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-== Learn More
-
-You can learn more in the link:https://facebook.github.io/create-react-app/docs/getting-started[Create React App documentation].
-
-To learn React, check out the link:https://reactjs.org/[React documentation].
-
-=== Code Splitting
-
-This section has moved here: link:https://facebook.github.io/create-react-app/docs/code-splitting[https://facebook.github.io/create-react-app/docs/code-splitting]
-
-=== Analyzing the Bundle Size
-
-This section has moved here: link:https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size[https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size]
-
-=== Making a Progressive Web App
-
-This section has moved here: link:https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app[https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app]
-
-=== Advanced Configuration
-
-This section has moved here: link:https://facebook.github.io/create-react-app/docs/advanced-configuration[https://facebook.github.io/create-react-app/docs/advanced-configuration]
-
-=== Deployment
-
-This section has moved here: link:https://facebook.github.io/create-react-app/docs/deployment[https://facebook.github.io/create-react-app/docs/deployment]
-
-=== `npm run build` fails to minify
-
-This section has moved here: link:https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify[https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify]
+The version field in `package.json` is kept in sync with the workspace by
+`scripts/version-sync.sh`.

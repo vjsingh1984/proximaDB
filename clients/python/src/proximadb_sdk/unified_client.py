@@ -17,6 +17,7 @@ import sys
 import time
 from typing import Any, Union
 
+import httpx
 import numpy as np
 
 from .adapters import BaseProtocolAdapter, create_adapter
@@ -24,7 +25,9 @@ from .auth import AuthConfig, AuthMethod, ProximaDBAuth
 from .config import ClientConfig, PortMode, Protocol, load_config
 from .exceptions import (
     CollectionNotFoundError,
+    NetworkError,
     ProximaDBError,
+    ServerError,
 )
 from .models import (
     BatchResult,
@@ -269,6 +272,9 @@ class ProximaDBClient:
         self._timeseries_repository = None
         self._closed = False
         self._prefer_local_fallback = False
+        # Generated openapi Client (ADR-041) backing ingest_documents; built
+        # lazily so a client that never ingests pays no import/construction cost.
+        self._generated_document_client = None
 
         # Setup operation routing if enabled
         if self.enable_operation_routing:
@@ -848,6 +854,38 @@ class ProximaDBClient:
         if self._rest_adapter is None:
             self._rest_adapter = self._create_adapter("rest")
         return self._rest_adapter
+
+    def _get_generated_document_client(self):
+        """Lazily build the shared *base* generated openapi ``Client`` (ADR-041).
+
+        This base client carries only ``base_url`` + auth headers; it is NEVER
+        used to issue a request directly, so its underlying httpx client is
+        never materialized. Per-call headers (``X-Tenant-ID`` / ``X-Ingest-Mode``
+        / ``X-Embed-Source``) are attached on each :meth:`ingest_documents` call
+        via ``Client.with_headers(...)`` — which returns a fresh ``evolve(...)``
+        client whose own httpx client is materialized, so per-call headers never
+        accumulate on this shared base. Returns ``None`` when no server URL is
+        configured; the caller (:meth:`ingest_documents`) decides whether to
+        fall back to the in-memory repository or raise.
+        """
+        if self._generated_document_client is None and self._url:
+            from ._generated.rest.client import Client as GeneratedClient
+
+            headers: dict[str, str] = {}
+            if self._auth is not None:
+                try:
+                    headers.update(self._auth.get_auth_headers())
+                except Exception as e:  # auth is best-effort on the ingest path
+                    logger.debug(
+                        "Could not attach auth headers to generated client: %s", e
+                    )
+            self._generated_document_client = GeneratedClient(
+                base_url=self._url,
+                headers=headers,
+                raise_on_unexpected_status=True,
+                follow_redirects=False,
+            )
+        return self._generated_document_client
 
     def _call_document_adapter(self, method_name: str, *args, **kwargs):
         candidates: list[BaseProtocolAdapter] = []
@@ -1859,26 +1897,161 @@ class ProximaDBClient:
         )
         return {"success": True, "collection_id": collection_id}
 
-    def insert_document(
+    def ingest_documents(
         self,
-        collection_name: str,
-        document: dict[str, Any],
-        id: str | None = None,
+        collection_id: str,
+        records: list[dict[str, Any]],
+        *,
+        tenant_id: str | None = None,
+        ingest_mode: str | None = None,
+        embed_source: str = "native",
+        allow_local_fallback: bool = False,
         **kwargs,
     ) -> dict[str, Any]:
-        """Insert a document."""
-        adapter_result = self._call_document_adapter(
-            "insert_document", collection_name, document, id, **kwargs
-        )
-        if adapter_result is not None:
-            return adapter_result
+        """Ingest documents for native server-side embedding (ADR-041).
 
-        created = self._get_document_repository().insert(collection_name, document, id)
-        return {
-            "id": created.id,
-            "version": created.version,
-            "document": created.content,
-        }
+        Canonical document-ingest surface — delegates to the GENERATED openapi
+        op ``POST /api/v2/collections/{collection_id}/documents``
+        (``_generated/rest/api/documents/ingest_documents.py``), NOT the
+        hand-written ``adapters/rest_adapter.py`` path whose ``insert_document``
+        silently falls back to an in-memory repository on any error.
+
+        The server embeds each record's ``text`` natively (``X-Embed-Source:
+        native``, the default) when no per-record ``vector`` is supplied; pass a
+        ``vector`` to skip server embedding for that record.
+
+        Per-call headers ride the generated client via ``Client.with_headers``
+        (a fresh ``evolve`` client per call — no header accumulation across
+        calls).
+
+        Args:
+            collection_id: Target collection id.
+            records: Each is a ``dict`` with at least ``id`` and (for native
+                embedding) ``text``; optionally ``metadata`` (``dict``) and
+                ``vector`` (``list[float]``). An ``IngestDocument`` is passed
+                through unchanged.
+            tenant_id: Optional tenant scope -> ``X-Tenant-ID``.
+            ingest_mode: Optional billing/metering mode -> ``X-Ingest-Mode``.
+            embed_source: Embedding source -> ``X-Embed-Source`` (default
+                ``"native"``). Pass ``""`` or ``None`` to omit the header.
+            allow_local_fallback: If ``True`` and no server URL is configured,
+                fall back to the in-memory ``DocumentRepository`` instead of
+                raising. Default ``False`` — a server-backed client must surface
+                failures, not swallow them into a local dict.
+
+        Returns:
+            The parsed ``IngestDocumentsResponse`` as a dict
+            (``{"mode", "records", ...}``); ``{"mode": "local", ...}`` on the
+            fallback path.
+
+        Raises:
+            ProximaDBError: No server configured and ``allow_local_fallback`` is
+                False, or a record is malformed.
+            NetworkError: Transport-level failure talking to the server.
+            ServerError: The server returned a documented error envelope
+                (HTTP 400/404) or an unexpected status.
+        """
+        from ._generated.rest.api.documents.ingest_documents import sync_detailed
+        from ._generated.rest.models.error_response import ErrorResponse
+        from ._generated.rest.models.ingest_document import IngestDocument
+        from ._generated.rest.models.ingest_document_metadata import (
+            IngestDocumentMetadata,
+        )
+        from ._generated.rest.models.ingest_documents_request import (
+            IngestDocumentsRequest,
+        )
+        from ._generated.rest.types import UNSET
+
+        # 1. Build the request body from ergonomic record dicts.
+        body_records: list[IngestDocument] = []
+        for rec in records:
+            if isinstance(rec, IngestDocument):
+                body_records.append(rec)
+                continue
+            if not isinstance(rec, dict):
+                raise ProximaDBError(
+                    "ingest_documents record must be a dict or IngestDocument, "
+                    f"got {type(rec).__name__}"
+                )
+            if "id" not in rec:
+                raise ProximaDBError("ingest_documents record missing 'id'")
+            metadata = rec.get("metadata")
+            body_records.append(
+                IngestDocument(
+                    id=str(rec["id"]),
+                    text=rec.get("text", UNSET),
+                    vector=rec.get("vector", UNSET),
+                    metadata=(
+                        IngestDocumentMetadata.from_dict(metadata)
+                        if metadata is not None
+                        else UNSET
+                    ),
+                )
+            )
+        request_body = IngestDocumentsRequest(records=body_records)
+
+        # 2. Resolve the generated client. No server -> caller-controlled fallback.
+        base_client = self._get_generated_document_client()
+        if base_client is None:
+            if not allow_local_fallback:
+                raise ProximaDBError(
+                    "ingest_documents requires a server URL (no PROXIMADB_URL "
+                    "configured). Set allow_local_fallback=True to store records "
+                    "in the in-memory repository."
+                )
+            repo = self._get_document_repository()
+            inserted = []
+            for rec in records:
+                doc = rec if isinstance(rec, dict) else rec.to_dict()
+                doc_id = rec.get("id") if isinstance(rec, dict) else rec.id
+                inserted.append(repo.insert(collection_id, doc, doc_id))
+            return {
+                "mode": "local",
+                "records": [
+                    {
+                        "id": getattr(d, "id", None),
+                        "version": getattr(d, "version", None),
+                    }
+                    for d in inserted
+                ],
+            }
+
+        # 3. Per-call headers on a fresh evolved client (no accumulation).
+        per_call_headers: dict[str, str] = {}
+        if embed_source:
+            per_call_headers["X-Embed-Source"] = embed_source
+        if tenant_id is not None:
+            per_call_headers["X-Tenant-ID"] = str(tenant_id)
+        if ingest_mode is not None:
+            per_call_headers["X-Ingest-Mode"] = str(ingest_mode)
+        client = base_client.with_headers(per_call_headers)
+
+        # 4. Call the generated op and map outcomes.
+        try:
+            response = sync_detailed(
+                collection_id=collection_id, client=client, body=request_body
+            )
+        except httpx.HTTPError as e:
+            raise NetworkError(
+                f"ingest_documents transport error: {e}", original_error=e
+            ) from e
+
+        parsed = response.parsed
+        if isinstance(parsed, ErrorResponse):
+            detail = getattr(getattr(parsed, "error", None), "message", None)
+            raise ServerError(
+                "ingest_documents rejected by server"
+                f"{f': {detail}' if detail else ''}",
+                status_code=response.status_code,
+            )
+        if parsed is None:
+            # raise_on_unexpected_status=True makes this unreachable in practice;
+            # guard anyway so a future regression can't silently return None.
+            raise ServerError(
+                "ingest_documents returned no body",
+                status_code=response.status_code,
+            )
+        return parsed.to_dict()
 
     def get_document(
         self,
@@ -3059,6 +3232,112 @@ class ProximaDBClient:
                 yield item
 
     # The generic search method is defined above and forwards to search_single
+
+    #: Server-enforced upper bound on a single scan page (SCAN_RECORDS_MAX_PAGE).
+    SCAN_MAX_PAGE = 10_000
+    #: Default safety bound on the total rows ``scan`` will accumulate across
+    #: pages before stopping, so an unbounded scan can't exhaust client memory.
+    SCAN_DEFAULT_MAX_ROWS = 1_000_000
+
+    def scan_page(
+        self,
+        collection_id: str,
+        *,
+        filter: list[dict[str, Any]] | dict[str, Any] | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        include_vectors: bool = False,
+        include_text: bool = False,
+    ) -> tuple[list[SearchResult], str | None]:
+        """Scan a single page of records via the vector-free metadata-scan endpoint.
+
+        Returns ``(records, next_cursor)``. ``next_cursor`` is ``None`` at
+        end-of-scan. ``filter`` is the scan endpoint's metadata-filter shape:
+        the typed list ``[{"field", "op", "value"}]`` or an equality map
+        ``{field: value}``; it is pushed into the scan predicate server-side
+        (applied before the limit). Unlike :meth:`search`, this is a true
+        metadata scan with no ANN ordering or similarity cap.
+
+        Requires the REST transport (the scan endpoint is REST-only).
+        """
+        target = self._rest_client or (
+            self._client if hasattr(self._client, "scan_records") else None
+        )
+        if target is None or not hasattr(target, "scan_records"):
+            # Stand up a REST client on demand (the scan endpoint is REST-only).
+            if self._rest_client is None:
+                self._rest_client = self._create_rest_client()
+            target = self._rest_client
+        return target.scan_records(
+            collection_id,
+            filter=filter,
+            limit=limit,
+            cursor=cursor,
+            include_vector=include_vectors,
+            include_text=include_text,
+        )
+
+    def scan(
+        self,
+        collection_id: str,
+        *,
+        filter: list[dict[str, Any]] | dict[str, Any] | None = None,
+        page_size: int | None = None,
+        max_rows: int | None = None,
+        include_vectors: bool = False,
+        include_text: bool = False,
+    ) -> list[SearchResult]:
+        """Scan ALL records matching ``filter`` via cursor pagination.
+
+        Repeatedly calls :meth:`scan_page`, following the returned ``next_cursor``
+        until the server reports end-of-scan (``None``). This returns the full
+        matching set — not a bounded ANN window.
+
+        Args:
+            filter: Scan-endpoint metadata filter (typed list ``[{field,op,value}]``
+                or equality map ``{field: value}``), pushed down server-side.
+            page_size: Rows per page request (clamped to ``SCAN_MAX_PAGE``).
+            max_rows: Safety bound on total accumulated rows. Defaults to
+                :attr:`SCAN_DEFAULT_MAX_ROWS`; the loop stops once it is reached
+                even if the server has more pages.
+            include_vectors: Include vector embeddings in each record.
+            include_text: Include TEXT fields in each record.
+        """
+        cap = self.SCAN_DEFAULT_MAX_ROWS if max_rows is None else max_rows
+        per_page = self.SCAN_MAX_PAGE if page_size is None else page_size
+        per_page = max(1, min(per_page, self.SCAN_MAX_PAGE))
+
+        out: list[SearchResult] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        while len(out) < cap:
+            remaining = cap - len(out)
+            page_limit = min(per_page, remaining)
+            records, cursor = self.scan_page(
+                collection_id,
+                filter=filter,
+                limit=page_limit,
+                cursor=cursor,
+                include_vectors=include_vectors,
+                include_text=include_text,
+            )
+            out.extend(records)
+            if not cursor:
+                break
+            # Defensive: a server that echoes the same cursor would loop forever.
+            if cursor in seen_cursors:
+                logger.warning(
+                    "scan: repeated cursor %s for %s; stopping to avoid a loop",
+                    cursor,
+                    collection_id,
+                )
+                break
+            seen_cursors.add(cursor)
+            # A page that returned nothing but still handed back a cursor would
+            # otherwise spin; stop on an empty page too.
+            if not records:
+                break
+        return out[:cap]
 
     def search_batch(
         self,

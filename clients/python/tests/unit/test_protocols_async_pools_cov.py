@@ -12,8 +12,6 @@ ever opened, and the ResourcePool background maintenance thread sleeps on a
 patched time.sleep so it never blocks the suite.
 """
 
-import sys
-import types
 import warnings
 from unittest.mock import MagicMock, patch
 
@@ -220,17 +218,19 @@ async def test_traverse_prefetch_disabled(async_client):
 
 
 # ---------------------------------------------------------------------------
-# grpc_async deprecated shim
+# grpc_async — native-async gRPC client + backward-compat aliases
+# (was a deprecated sync-shim; now a genuine grpc.aio client. ProximaDBClient /
+#  AsyncGrpcClient remain as aliases of the canonical ProximaDBAsyncGrpcClient.)
 # ---------------------------------------------------------------------------
 def test_grpc_async_module_is_deprecated_shim():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         from proximadb_sdk.protocols import grpc_async
 
-    from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
-
-    assert issubclass(grpc_async.ProximaDBClient, ProximaDBSyncGrpcClient)
-    assert grpc_async.AsyncGrpcClient is grpc_async.ProximaDBClient
+    # The module is now the canonical native-async client (no longer a shim
+    # subclassing the sync client). The legacy names still resolve to it.
+    assert grpc_async.ProximaDBClient is grpc_async.ProximaDBAsyncGrpcClient
+    assert grpc_async.AsyncGrpcClient is grpc_async.ProximaDBAsyncGrpcClient
 
 
 def test_grpc_async_client_construction_warns():
@@ -238,19 +238,21 @@ def test_grpc_async_client_construction_warns():
         warnings.simplefilter("ignore")
         from proximadb_sdk.protocols import grpc_async
 
-    # Patch the parent __init__ so no real channel is created.
+    # Patch the canonical async client __init__ so no real channel is created.
     with patch.object(
-        grpc_async.ProximaDBSyncGrpcClient, "__init__", return_value=None
-    ) as parent_init:
+        grpc_async.ProximaDBAsyncGrpcClient, "__init__", return_value=None
+    ) as canonical_init:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             obj = grpc_async.ProximaDBClient("localhost:5679", foo="bar")
         assert obj is not None
-        parent_init.assert_called_once()
-        args, kwargs = parent_init.call_args
+        canonical_init.assert_called_once()
+        args, kwargs = canonical_init.call_args
         assert args[0] == "localhost:5679"
         assert kwargs == {"foo": "bar"}
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+        # The async client is now canonical, so construction emits no
+        # DeprecationWarning (it did when this was a sync shim).
+        assert not any(issubclass(w.category, DeprecationWarning) for w in caught)
 
 
 # ---------------------------------------------------------------------------

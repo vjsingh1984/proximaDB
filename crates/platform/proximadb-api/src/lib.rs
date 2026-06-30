@@ -225,6 +225,7 @@ pub(crate) mod test_support {
             query: String,
             parameters: Option<Vec<ProximaValue>>,
             collection: Option<String>,
+            _tenant_id: Option<&str>,
         ) -> Result<ExecuteQueryResponse> {
             self.calls.lock().unwrap().push(ApiCall::Sql {
                 query,
@@ -429,6 +430,7 @@ mod tests {
             "select * from docs".to_string(),
             None,
             Some("docs".to_string()),
+            None,
         )
         .await
         .unwrap();

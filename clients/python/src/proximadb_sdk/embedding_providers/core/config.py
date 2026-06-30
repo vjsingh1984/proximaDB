@@ -65,6 +65,8 @@ class ProviderConfig:
         device: Device for computation ("cpu", "cuda", "mps", None=auto-detect)
         cache_dir: Directory for caching models (None=use default)
         trust_remote_code: Whether to allow custom model code execution
+        backend: sentence-transformers compute backend ("torch" default, or
+            "onnx"/"openvino" for faster CPU inference). None = library default.
         extra: Provider-specific additional parameters
     """
 
@@ -74,6 +76,7 @@ class ProviderConfig:
     device: str | None = None
     cache_dir: str | None = None
     trust_remote_code: bool = False
+    backend: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     def merge(self, **kwargs) -> "ProviderConfig":

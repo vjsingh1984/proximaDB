@@ -95,7 +95,9 @@ pub fn sql_value_to_tree_node(value: &SqlValue) -> ProximaTreeNode {
     }
 }
 
-fn tree_node_to_sql_value(node: &ProximaTreeNode) -> SqlValue {
+/// Convert a neutral `ProximaTreeNode` to v1 `SqlValue`. Used by the v2 document
+/// service as a transitional bridge until DocumentService accepts ProximaValue directly.
+pub fn tree_node_to_sql_value(node: &ProximaTreeNode) -> SqlValue {
     match node {
         ProximaTreeNode::Value(value) => proxima_to_sql_value(value),
         ProximaTreeNode::Object(tree) => SqlValue {

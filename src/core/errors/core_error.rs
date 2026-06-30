@@ -230,6 +230,17 @@ pub enum ProximaDBError {
         /// Savepoint name
         name: String,
     },
+
+    /// DML write-lock conflict — another writer holds the table/schema lease.
+    /// Surfaces as pgwire SQLSTATE 55P03 (lock_not_available) / gRPC ABORTED /
+    /// REST 409.
+    #[error("DML lock conflict on {resource}")]
+    DmlLockConflict {
+        /// Locked resource description (e.g. "schema.table").
+        resource: String,
+        /// Pod holding the conflicting lease, if known.
+        holder: Option<String>,
+    },
 }
 
 // Custom implementation for io::Error conversion since it's not Clone/Serialize

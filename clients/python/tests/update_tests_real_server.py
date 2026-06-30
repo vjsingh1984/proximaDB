@@ -141,16 +141,16 @@ class TestConnectionPool(BaseProximaDBTest):
     create_enhanced_semantic_chunker
 )
 from proximadb_sdk.chunking import TextChunk, ChunkingConfig
-from proximadb_sdk.embedding_interface import create_embedding_provider
+from proximadb_sdk.embedding_providers import get_provider
 
 
 class TestSemanticChunking(BaseProximaDBTest):
     """Test semantic chunking with real embeddings"""
-    
+
     def test_semantic_chunking_with_embeddings(self):
         """Test semantic chunking using real BERT embeddings"""
         # Create embedding provider
-        provider = create_embedding_provider("bert")
+        provider = get_provider("bert")
         
         # Create chunker
         chunker = create_enhanced_semantic_chunker(

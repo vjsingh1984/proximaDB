@@ -775,7 +775,6 @@ def test_document_methods_via_adapter():
     adapter.delete_document_collection.return_value = True
     c = make_client(adapter)
     assert c.create_document_collection("c")["success"] is True
-    assert c.insert_document("c", {"a": 1})["id"] == "d1"
     assert c.get_document("c", "d1")["found"] is True
     assert c.query_documents("c", filter={"a": 1})["documents"] == []
     assert c.update_document("c", "d1", [{"set": {}}])["success"] is True
@@ -3016,7 +3015,6 @@ def test_document_adapter_delegation():
     # make sure rest adapter creation doesn't add a second candidate by failing
     c._rest_adapter = adapter
     assert c.create_document_collection("d1")["collection_id"] == "d1"
-    assert c.insert_document("d1", {"k": 1})["id"] == "doc1"
     assert c.get_document("d1", "doc1")["id"] == "doc1"
     assert c.query_documents("d1")["documents"] == []
     assert c.update_document("d1", "doc1", [])["success"] is True

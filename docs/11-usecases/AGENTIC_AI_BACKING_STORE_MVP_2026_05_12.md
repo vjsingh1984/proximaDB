@@ -38,6 +38,7 @@ An agentic AI backing store should cover these lanes:
 | Long-term memory | namespaced JSON KV, prefix namespace listing, filters, semantic search, per-item timestamps | Mostly covered by document + vector engines; needs BaseStore-compatible wrapper |
 | Semantic memory/RAG | dense/sparse vectors, metadata filters, batch upsert/search, hybrid lexical/vector | Covered by vector engines; embedded API covers vector MVP |
 | Project/code graph | nodes, edges, labels, properties, traversal, callers/callees, impact analysis | Embedded Python exposes graph CRUD/traversal; Victor provider already uses server SDK |
+| Entity memory / SKS | semantic units with embeddings, relations, provenance, and temporal memory | Compose records/vectors + graph + documents + events; do not add a separate entity store |
 | Documents | JSON document CRUD/query, schema-free records, indexed paths | Embedded API exposes document CRUD/query; engine is still experimental/in-memory per supported surface |
 | Relational metadata | typed rows, joins, ordering, pagination, SQL-ish access | Server has experimental SEQUOIA; embedded `execute_sql` exists but needs ORM-like mapper tests |
 | Event log/audit | append-only events, stream version, causation/correlation, replay, snapshots | EventLog exists experimentally; needs Python-facing event-store adapter |
@@ -70,6 +71,9 @@ Main gaps before claiming full agentic backing-store coverage:
   in-memory in `docs/SUPPORTED_SURFACE.adoc`; MVP claims must be local/experimental until durability
   tests prove otherwise.
 - Cross-modal embedded tests need to prove one real flow, not only parser/fusion units.
+- Entity-shaped helpers need to assemble graph/vector/document/event state through
+  existing APIs. They must not target the legacy split `ProximaEntityStore` as a
+  new durable backend.
 
 ## MVP Shape
 
@@ -104,6 +108,8 @@ Build embedded-first adapters in this order:
      Victor code symbols, graph edges, events, logs, and vectors.
    - It then runs semantic search, graph traversal, checkpoint replay lookup, event replay,
      and one cross-modal query through `execute_unified_query` or equivalent adapter calls.
+   - Any entity/SKS helper in that proof must be an orchestration wrapper over
+     record/vector + graph + document/event calls, not a second store.
 
 ## Acceptance Criteria
 

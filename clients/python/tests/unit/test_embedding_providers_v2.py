@@ -5,6 +5,9 @@ Tests the new core infrastructure (base, config, registry, cache, mixins)
 and the refactored gte-Qwen provider.
 """
 
+import sys
+import types
+
 import numpy as np
 import pytest
 
@@ -26,6 +29,61 @@ from proximadb_sdk.embedding_providers.mixins import (
 from proximadb_sdk.embedding_providers.providers.local.gte_qwen import (
     GTEQwenProvider,
 )
+
+
+# ---------------------------------------------------------------------------
+# Offline fake for sentence-transformers.
+#
+# GTEQwenProvider speaks SentenceTransformerMixin, which loads its model lazily
+# via ``from sentence_transformers import SentenceTransformer``. Without a stub
+# this would download a real 1.5B-parameter model. Sibling offline test files
+# also install their own (incompatible) fakes into ``sys.modules`` for the whole
+# pytest session, so the TestGTEQwenProvider autouse fixture re-pins THIS fake
+# per-test to keep the provider offline and deterministic.
+# ---------------------------------------------------------------------------
+class _FakeSentenceTransformer:
+    """Deterministic fake SentenceTransformer (returns unit-normalized rows)."""
+
+    def __init__(
+        self,
+        model_name,
+        device=None,
+        trust_remote_code=False,
+        cache_folder=None,
+        backend=None,
+        prompts=None,
+        **kwargs,
+    ):
+        self.model_name = model_name
+        # GTE-Qwen2-1.5B-instruct is 1536-d (the provider default); other models
+        # in the catalog pick up their real dimension via the config metadata, so
+        # the fake only has to produce SOME embedding of the expected width.
+        self._dim = 1536
+
+    def _embed(self, texts):
+        n = len(texts)
+        emb = np.arange(n * self._dim, dtype=np.float32).reshape(n, self._dim)
+        # Unit-normalize each row so NormalizationMixin.check_normalized passes.
+        norms = np.linalg.norm(emb, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        return emb / norms
+
+    def encode(
+        self,
+        texts,
+        batch_size=32,
+        normalize_embeddings=True,
+        show_progress_bar=False,
+        convert_to_numpy=True,
+        **kwargs,
+    ):
+        return self._embed(texts)
+
+
+def _install_st_stub():
+    mod = types.ModuleType("sentence_transformers")
+    mod.SentenceTransformer = _FakeSentenceTransformer
+    return mod
 
 
 class TestModelMetadata:
@@ -284,6 +342,18 @@ pytestmark_models = pytest.mark.requires_models
 @pytestmark_models
 class TestGTEQwenProvider:
     """Test gte-Qwen Provider"""
+
+    @pytest.fixture(autouse=True)
+    def _offline_sentence_transformers(self, monkeypatch):
+        """Pin the offline fake SentenceTransformer into sys.modules for each
+        test and start from an empty ModelCache. Without this, the provider's
+        lazy ``_load_model`` would either download the real 1.5B model or pick
+        up an incompatible fake installed by a sibling offline test file."""
+        monkeypatch.setitem(sys.modules, "sentence_transformers", _install_st_stub())
+        ModelCache().clear()
+        ModelCache().reset_stats()
+        yield
+        ModelCache().clear()
 
     def test_initialization(self):
         """Test provider initialization"""

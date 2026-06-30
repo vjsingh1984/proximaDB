@@ -36,7 +36,11 @@ use serde::{Deserialize, Serialize};
 /// Shared application state
 #[derive(Clone)]
 pub struct AppState {
-    /// Shared unified handlers for business logic delegation
+    /// Shared unified handlers — retained ONLY for the (deprecating) v1 REST
+    /// graph surface (`rest/v1/graph.rs`, ~27 sites). All v2/canonical reads
+    /// — record, collection, vector, graph-ops — are off this field (TD-104
+    /// S5 / REST phases 1–2 + graph-field extraction); it goes away when v1
+    /// graph is deleted.
     pub request_handlers: Arc<UnifiedHandlers>,
     /// Extracted graph execution capability for query planning/execution helpers
     pub graph_execution_service: Arc<dyn GraphExecutionService>,
@@ -48,6 +52,22 @@ pub struct AppState {
     /// Document service, extracted at boot (TD-104 S5). Feeds the document AQL
     /// source; same `Arc` as the root handler.
     pub document_service: Arc<crate::storage::document::DocumentService>,
+    /// Collection service, extracted at boot (TD-104 S5). Feeds the health
+    /// endpoint's collection-count probe; same `Arc` as the root handler.
+    pub collection_service: Arc<crate::services::CollectionService>,
+    /// Graph operations service, extracted at boot (TD-104 S5). Feeds the v2
+    /// graph fusion-search + impact-analysis handlers and the entity
+    /// orchestrator; same `Arc` as the root handler. Replaces per-request
+    /// `state.request_handlers.graph_operations_service` reads.
+    pub graph_operations_service: Arc<crate::graph::GraphOperationsService>,
+    /// Record write-path service (TD-104 S5). Owns record-batch insert/delete
+    /// orchestration; same `Arc` the root handler's `record_ops()` returns.
+    pub record_ops: Arc<crate::api_handlers::record_ops_service::RecordOpsService>,
+    /// Cross-modal fusion service — the single retrieval port every search
+    /// surface delegates to (`SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`).
+    /// Constructed once at boot from the vector + graph services (mirrors the
+    /// TD-104 S5 extraction pattern) instead of per-request in each handler.
+    pub fusion_service: Arc<crate::services::fusion_service::FusionService>,
     /// Observability service, extracted at boot (TD-104 S5). Feeds the
     /// observability AQL source; same `Arc` as the root handler.
     pub observability_service: Arc<crate::observability::ObservabilityService>,
@@ -181,8 +201,24 @@ impl AppState {
         // Mirrors how `graph_execution_service` is already threaded.
         let vector_operations_service = request_handlers.vector_operations_service.clone();
         let document_service = request_handlers.document_service.clone();
+        let collection_service = request_handlers.collection_service.clone();
+        let graph_operations_service = request_handlers.graph_operations_service.clone();
+        let record_ops = request_handlers.record_ops();
         let observability_service = request_handlers.observability_service.clone();
         let event_log = request_handlers.event_log.clone();
+        // Cross-modal fusion port — built once at boot from the vector + graph services and the
+        // shared full-text index map (search-surface contract: one retrieval engine, shared port).
+        // The empty default map here powers the document expander fail-closed; production replaces
+        // it via `with_fulltext_indexes`, which rebuilds this service with the LIVE index map so the
+        // document modality (TD-138) is powered for REST fusion.
+        let fulltext_indexes: FullTextIndexMap =
+            std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        let fusion_service =
+            std::sync::Arc::new(crate::services::fusion_service::FusionService::new(
+                vector_operations_service.clone(),
+                graph_operations_service.clone(),
+                fulltext_indexes.clone(),
+            ));
         // TD-104 2(b): default `api_handlers` to the root handler cast to its
         // `ApiHandlersPort` impl. Production overrides via `with_api_handlers`
         // with the runtime port-based handler; legacy/dev/test paths that never
@@ -195,14 +231,16 @@ impl AppState {
             graph_execution_service,
             vector_operations_service,
             document_service,
+            collection_service,
+            graph_operations_service,
+            record_ops,
+            fusion_service,
             observability_service,
             event_log,
             security_coordinator,
             data_dir,
             query_adapter,
-            fulltext_indexes: Some(Arc::new(std::sync::RwLock::new(
-                std::collections::HashMap::new(),
-            ))),
+            fulltext_indexes: Some(fulltext_indexes),
             catalog_manager: Arc::new(crate::catalog::CatalogManager::new()),
             // Default: standalone pin registry. Production wires
             // SharedServices.pin_registry via `with_pin_registry` so
@@ -290,6 +328,16 @@ impl AppState {
     /// same in-process map — an indexed document is searchable on
     /// both protocols.
     pub fn with_fulltext_indexes(mut self, indexes: FullTextIndexMap) -> Self {
+        // Rebuild the shared fusion service so its DocumentExpander (TD-138) shares this live
+        // index map. This builder runs during boot, before any request is served, so the rebuild
+        // is safe; the fusion service remains a single boot-constructed instance from the
+        // request-serving perspective. (The map type is structurally `HybridFullTextIndexMap`.)
+        self.fusion_service =
+            std::sync::Arc::new(crate::services::fusion_service::FusionService::new(
+                self.vector_operations_service.clone(),
+                self.graph_operations_service.clone(),
+                indexes.clone(),
+            ));
         self.fulltext_indexes = Some(indexes);
         self
     }
@@ -408,7 +456,7 @@ impl AppState {
     pub fn health_state(&self) -> health::HealthState {
         health::HealthState::new(
             self.vector_operations_service.clone(),
-            self.request_handlers.collection_service.clone(),
+            self.collection_service.clone(),
             self.graph_execution_service.clone(),
         )
     }
@@ -589,7 +637,8 @@ fn filter_canonical_wal_for_collection(
                 collection_id, ..
             } => collection_id == collection,
             proximadb_storage_common::CanonicalOperation::Checkpoint(_)
-            | proximadb_storage_common::CanonicalOperation::CdcBarrier { .. } => false,
+            | proximadb_storage_common::CanonicalOperation::CdcBarrier { .. }
+            | proximadb_storage_common::CanonicalOperation::CatalogMutation { .. } => false,
         })
         .collect()
 }
@@ -782,6 +831,7 @@ pub async fn execute_sql(
             query_with_hint,
             sql_params_to_proxima_values(request.parameters.clone()),
             request.collection,
+            None,
         )
         .await
     {
@@ -818,6 +868,17 @@ pub async fn execute_sql(
         }
         Err(e) => {
             error!("SQL query {} failed: {}", request_id, e);
+            // A DML lock/fence conflict must surface as a retryable 409
+            // lock_conflict, not a generic 500. The typed `DmlLockConflict` can
+            // sit several `.context(...)` layers deep, so walk the chain — same
+            // as the pgwire 55P03 and gRPC ABORTED mappings. (421 Misdirected =
+            // wrong pod stays distinct from 409 = conflict on the right pod.)
+            if let Some((resource, holder)) = crate::errors::extract_dml_lock_conflict(&e) {
+                return Err(ApiError::LockConflict(match holder {
+                    Some(h) => format!("{resource} held by {h}"),
+                    None => resource,
+                }));
+            }
             Err(ApiError::Internal(e.to_string()))
         }
     }
@@ -1245,10 +1306,7 @@ pub fn create_router(state: AppState) -> axum::Router {
             CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore,
         };
 
-        let engine = state
-            .request_handlers
-            .vector_operations_service
-            .unified_engine();
+        let engine = state.vector_operations_service.unified_engine();
         let legacy_store = ProximaEntityStore::with_vector_service(
             engine,
             Arc::new(CsrRelationsStore::new()),
@@ -1650,24 +1708,6 @@ pub fn create_router(state: AppState) -> axum::Router {
             }
             Err(e) => {
                 warn!("AI endpoints disabled (initialization failed): {}", e);
-            }
-        }
-    }
-
-    // Optional Sales endpoints (disabled by default; enable with `--features sales_endpoints`)
-    #[cfg(feature = "sales_endpoints")]
-    {
-        use crate::api_handlers::sales_endpoints;
-
-        match tokio::runtime::Runtime::new()
-            .and_then(|rt| rt.block_on(sales_endpoints::initialize_sales_service_state()))
-        {
-            Ok(sales_state) => {
-                router = router.nest("/sales", sales_endpoints::create_sales_router(sales_state));
-                info!("✅ Sales endpoints enabled at /sales");
-            }
-            Err(e) => {
-                warn!("Sales endpoints disabled (initialization failed): {}", e);
             }
         }
     }
@@ -2258,6 +2298,7 @@ mod tests {
             &config.storage,
             None,
             Some(&config),
+            crate::network::multi_server::ServiceProfile::Embedded,
         )
         .await
         .expect("failed to initialize shared services for test app state");

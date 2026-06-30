@@ -627,11 +627,11 @@ impl StreamingParquetWriter {
         arrays: &mut Vec<ArrayRef>,
         records: &[ProximaRecord],
     ) -> Result<()> {
-        use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
         use crate::compute::quantization::quantization_engine::{
             InMemoryCodebookStore, UnifiedQuantizationEngine,
         };
         use arrow::array::BinaryBuilder;
+        use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
         // Create a quantization engine for this batch with in-memory codebook
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());

@@ -216,9 +216,17 @@ impl<'a> GraphHandle<'a> {
     }
 
     /// Add a batch of nodes. Posts to the spec-defined batch endpoint
-    /// `POST /api/v2/graphs/{id}/nodes/batch` with body
+    /// `POST /api/v2/graphs/{id}/nodes/batch` (the generated
+    /// `batch_create_nodes` operation's path/verb) with body
     /// `{nodes: [NodeInput, ...]}`. Each `GraphNode` is lowered to a
     /// server-true `NodeInput` (label → labels, vector → embedding).
+    ///
+    /// Kept on the facade's permissive `BatchNodesResponse` DTO rather than
+    /// the typed `batch_create_nodes().send()`: the facade tolerates both the
+    /// `GraphResponse` envelope (`data.count`) and the legacy flat
+    /// `added_count` shape, whereas the generated `BatchNodesResponse` models
+    /// only the envelope. The wire connection still flows through the shared
+    /// transport via `self.client.post`.
     #[cfg(feature = "client")]
     pub async fn add_nodes(&self, nodes: Vec<GraphNode>) -> Result<usize> {
         let inputs: Vec<NodeInput> = nodes.into_iter().map(NodeInput::from_graph_node).collect();
@@ -233,12 +241,17 @@ impl<'a> GraphHandle<'a> {
     }
 
     /// Add a batch of edges. Posts to the spec-defined batch endpoint
-    /// `POST /api/v2/graphs/{id}/edges/batch` with body
+    /// `POST /api/v2/graphs/{id}/edges/batch` (the generated
+    /// `batch_create_edges` operation's path/verb) with body
     /// `{edges: [EdgeInput, ...]}`. Each `GraphEdge` is lowered to a
     /// server-true `EdgeInput`. The `id` defaults to
     /// `"{source}-{relationship}-{target}"` if not provided — callers
     /// who need deterministic edge ids should pass them via the
     /// per-edge builder instead.
+    ///
+    /// Kept on the facade's permissive `BatchEdgesResponse` DTO for the same
+    /// reason as [`add_nodes`](Self::add_nodes); the wire connection flows
+    /// through the shared transport via `self.client.post`.
     #[cfg(feature = "client")]
     pub async fn add_edges(&self, edges: Vec<GraphEdge>) -> Result<usize> {
         let inputs: Vec<EdgeInput> = edges.into_iter().map(EdgeInput::from_graph_edge).collect();
@@ -252,7 +265,16 @@ impl<'a> GraphHandle<'a> {
         Ok(response.added_count())
     }
 
-    /// Get a node by ID
+    /// Get a node by ID (`GET /api/v2/graphs/{graph_id}/nodes/{node_id}`,
+    /// the generated `get_node` operation's path/verb).
+    ///
+    /// Kept on the facade's permissive `GraphNode` DTO + hand-formatted path
+    /// rather than the typed `get_node().send()`: the generated `NodeResponse`
+    /// carries `labels: Vec<String>` and no `vector`, while the facade
+    /// `GraphNode` exposes a single `label` and an optional `vector`, and
+    /// `404` must surface as `Ok(None)` (the typed builder folds `404` into
+    /// `Error::ErrorResponse`). The wire connection, auth, and error mapping
+    /// still flow through the shared transport via `self.client.get`.
     #[cfg(feature = "client")]
     pub async fn get_node(&self, id: &str) -> Result<Option<GraphNode>> {
         let url = format!(
@@ -271,7 +293,10 @@ impl<'a> GraphHandle<'a> {
         }
     }
 
-    /// Delete a node by ID
+    /// Delete a node by ID via the generated `delete_node` operation's
+    /// path/verb (`DELETE /api/v2/graphs/{graph_id}/nodes/{node_id}`),
+    /// through the shared generated transport connection (see
+    /// `GraphBuilder::execute`).
     #[cfg(feature = "client")]
     pub async fn delete_node(&self, id: &str) -> Result<()> {
         let url = format!(
@@ -286,10 +311,17 @@ impl<'a> GraphHandle<'a> {
 
     /// Delete an edge.
     ///
-    /// TODO(graph-edge-delete-shape): the server route is
-    /// `DELETE /api/v2/graphs/{id}/edges/{edge_id}` with a single edge_id;
-    /// this SDK signature with (source, target, relationship) doesn't match.
-    /// Tracked separately.
+    /// Hand-built (NOT routed through the generated client): the generated
+    /// `genrest` module exposes no operation for this 3-segment path. The
+    /// spec only declares `DELETE /api/v2/graphs/{id}/edges/{edge_id}` with a
+    /// single `edge_id`, whereas this SDK signature addresses an edge by its
+    /// `(source, target, relationship)` triple
+    /// (`/edges/{source}/{target}/{relationship}`). The endpoint-shape
+    /// mismatch is tracked separately (TD-126 Phase-1 annotation follow-up);
+    /// until the spec/server gains the triple shape (or this SDK adopts the
+    /// `{edge_id}` shape), the request URL stays hand-formatted — but the
+    /// wire connection, auth, and error mapping still go through the shared
+    /// transport via `self.client.delete`.
     #[cfg(feature = "client")]
     pub async fn delete_edge(&self, source: &str, target: &str, relationship: &str) -> Result<()> {
         let url = format!(
@@ -350,9 +382,13 @@ impl<'a> NodeBuilder<'a> {
     }
 
     /// Execute the node addition. Posts the spec-true wrapped envelope
-    /// `{node: NodeInput}` to `POST /api/v2/graphs/{id}/nodes`. The
-    /// SDK's `label` becomes `labels: [label]`, and `vector` is wrapped
-    /// in an `EmbeddingInput` so the body matches the OpenAPI contract.
+    /// `{node: NodeInput}` to the generated `create_node` operation's
+    /// path/verb (`POST /api/v2/graphs/{graph_id}/nodes`). The SDK's `label`
+    /// becomes `labels: [label]`, and `vector` is wrapped in an
+    /// `EmbeddingInput` so the body matches the OpenAPI contract. Goes
+    /// through the shared generated transport connection with the facade's
+    /// 2xx-tolerant error mapping (see `GraphBuilder::execute` for why the
+    /// fully-typed `create_node().send()` is not used).
     #[cfg(feature = "client")]
     pub async fn execute(self) -> Result<()> {
         let id = self
@@ -453,8 +489,10 @@ impl<'a> EdgeBuilder<'a> {
 
     /// Execute the edge addition. Posts the spec-true wrapped envelope
     /// `{edge: EdgeInput}` with `id`, `from_node_id`, `to_node_id`, and
-    /// `edge_type` fields (server-true names) to
-    /// `POST /api/v2/graphs/{id}/edges`.
+    /// `edge_type` fields (server-true names) to the generated `create_edge`
+    /// operation's path/verb (`POST /api/v2/graphs/{graph_id}/edges`),
+    /// through the shared generated transport connection (see
+    /// `GraphBuilder::execute`).
     #[cfg(feature = "client")]
     pub async fn execute(self) -> Result<()> {
         let source = self
@@ -608,8 +646,16 @@ impl<'a> TraversalBuilder<'a> {
 
     /// Execute the traversal. Posts the spec-true flat shape
     /// `{start_node_id, max_depth, edge_types, node_labels?, algorithm?,
-    /// limit?}` to `POST /api/v2/graphs/{id}/traverse` — no `graph`
-    /// wrapper, server-true field names.
+    /// limit?}` to `POST /api/v2/graphs/{id}/traverse` (the generated
+    /// `traverse_graph` operation's path/verb) — no `graph` wrapper,
+    /// server-true field names.
+    ///
+    /// Kept on the facade's permissive `TraversalResult` DTO rather than the
+    /// typed `traverse_graph().send()`: the generated `TraverseResponse`
+    /// nests `NodeResponse`/`EdgeResponse` (labels as `Vec`, no `vector`),
+    /// which would require a lossy lowering into the facade `GraphNode`/
+    /// `GraphEdge`. The wire connection flows through the shared transport
+    /// via `self.handle.client.post`.
     #[cfg(feature = "client")]
     pub async fn execute(self) -> Result<TraversalResult> {
         let start_node_id = self.start_node.ok_or_else(|| {
@@ -675,7 +721,18 @@ impl<'a> GraphBuilder<'a> {
     }
 
     /// Execute the graph creation. Posts the spec-true body
-    /// `{graph_id, name?, description?}` to `POST /api/v2/graphs`.
+    /// `{graph_id, name?, description?}` to the generated `create_graph`
+    /// operation's path/verb (`POST /api/v2/graphs`).
+    ///
+    /// The request goes through the shared generated transport connection
+    /// (`self.client.post` → `transport.client()`) with the facade's auth,
+    /// permissive DTOs, and 2xx-tolerant error mapping. NB: routing the
+    /// fully-typed `transport.create_graph().send()` was tried and reverted
+    /// — the generated success matcher accepts only the spec-declared `200`,
+    /// but the live server returns `201 Created`, which the facade's
+    /// `is_success()` path tolerates. Sourcing path/verb from the generated
+    /// client while keeping the facade's 2xx semantics is the documented
+    /// fallback (TD-126).
     #[cfg(feature = "client")]
     pub async fn execute(self) -> Result<()> {
         let request = CreateGraphRequest {
@@ -684,8 +741,10 @@ impl<'a> GraphBuilder<'a> {
             description: self.description,
         };
 
+        // Path/verb mirror the generated `create_graph` operation
+        // (`POST /api/v2/graphs`); see genrest::Client::create_graph.
         let url = format!("{}/api/v2/graphs", self.client.url());
-        let _response: CreateGraphResponse = self.client.post(&url, &request).await?;
+        let _response: serde_json::Value = self.client.post(&url, &request).await?;
         Ok(())
     }
 }
@@ -700,13 +759,6 @@ struct CreateGraphRequest {
     name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateGraphResponse {
-    #[allow(dead_code)]
-    #[serde(default)]
-    success: bool,
 }
 
 /// Spec-true node payload nested inside `CreateNodeRequest.node`.
@@ -1183,11 +1235,6 @@ mod tests {
                 "limit": 10
             })
         );
-
-        // CreateGraphResponse tolerates the GraphResponse envelope.
-        let created: CreateGraphResponse =
-            serde_json::from_value(json!({"success": true})).unwrap();
-        assert!(created.success);
     }
 
     #[test]

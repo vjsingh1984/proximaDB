@@ -192,6 +192,12 @@ pub mod common;
 // Background operation context (optimization)
 pub mod background_flush_context;
 
+// A6 storage-write fence seam (default-OFF; `PROXIMADB_WRITE_FENCING=1`)
+pub mod write_fence;
+
+// Shared per-collection flush materialization (server shutdown + embedded)
+pub mod flush_materializer;
+
 // Engine capabilities and supportability checks
 pub mod engine_capabilities;
 
@@ -202,7 +208,14 @@ pub mod engines;
 pub mod persistence;
 
 // Encryption at rest for data security
-pub mod encryption;
+// Extracted to the `proximadb-storage-encryption` crate; re-exported here for source
+// compatibility (root-crate decomposition).
+pub use proximadb_storage_encryption as encryption;
+
+// EncryptedFilesystem decorator tests stayed in root because they drive the real
+// root-resident LocalFileSystem backend (see the module's header for rationale).
+#[cfg(test)]
+mod encryption_filesystem_tests;
 
 // Unified atomic operations
 pub mod transaction_coordinator;
@@ -215,31 +228,37 @@ pub mod collection_pinning;
 pub mod memtable;
 pub mod metadata;
 // Quantization now handled by unified compute module
-// Storage optimization utilities
-pub mod optimization;
-// Strategy module for collection lifecycle configuration
-pub mod strategy;
+// Storage optimization utilities — extracted to proximadb-storage-optimization (decomp slice B)
+pub use proximadb_storage_optimization as optimization;
+// Strategy module for collection lifecycle configuration — extracted to proximadb-storage-strategy (decomp slice B)
+pub use proximadb_storage_strategy as strategy;
 // Specialized cache system with shared infrastructure
 pub mod cache;
 
-// Multi-tenant architecture modules
-pub mod tenant;
+// Multi-tenant architecture modules — extracted to proximadb-storage-tenant (decomp slice B)
+pub use proximadb_storage_tenant as tenant;
 
 // Auto-tiering policy engine for data lifecycle management
 pub mod tiering;
 
 // Multi-model transaction coordinator for ACID transactions across stores
-pub mod transaction;
+// Extracted to the `proximadb-storage-transaction` crate; re-exported here for
+// source compatibility (root-crate decomposition).
+pub use proximadb_storage_transaction as transaction;
 
 // Semantic Knowledge Store (SKS) modules
 pub mod entity_store;
 pub mod relations;
 
-// Key-value storage interface
-pub mod kv;
+// Key-value storage interface — extracted to the `proximadb-storage-kv` crate
+// (root-crate decomposition Slice A); re-exported here for source compatibility
+// (`crate::storage::kv::{StorageKV, FsKV}`).
+pub use proximadb_storage_kv as kv;
 
 // Unified operations coordination (flush, compaction, re-quantization)
-pub mod operations;
+// Extracted to the `proximadb-storage-operations` crate; re-exported here for source
+// compatibility (root-crate decomposition).
+pub use proximadb_storage_operations as operations;
 
 // Document storage for MongoDB-like JSON document capabilities
 pub mod document;
@@ -252,6 +271,11 @@ pub mod formats;
 
 // Arrow-native schema system for compute engine compatibility
 pub mod schema;
+
+/// Storage↔compute glue relocated from `src/compute/quantization` (quantization
+/// kernel split, step Q2): code that needs the storage/core layers and so cannot
+/// live in a foundation kernel crate.
+pub mod compute_bridge;
 
 // Lock-free implementations have been integrated into the main implementations
 // TransactionCoordinator now uses DashMap for active_operations

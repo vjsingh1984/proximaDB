@@ -31,6 +31,15 @@ pub mod partition_pruning;
 // CATALOG_OBJECT_MODEL #3 read-port: catalog adapter for AXIS index-location resolution.
 pub mod index_location_resolver;
 
+// ADR-035 / TD-SC-1: per-tenant system-catalog hot read cache (byte-bounded,
+// TTL'd, corpus-version-stamped) — fronts the canonical catalog so metadata
+// reads avoid the 1+N+M object-store round-trips.
+pub mod syscat_cache;
+
+// ADR-035 / TD-SC-2: on-disk warm tier between the hot cache and the canonical
+// catalog (OS page cache instead of object-store round-trips on a hot miss).
+pub mod syscat_warm;
+
 // Internal schema registry (multi-model unified catalog)
 pub mod internal;
 
@@ -75,12 +84,13 @@ pub use tier_recommendation::{
     recommend as recommend_tier,
 };
 
+pub use corpus_version::CorpusVersionRegistry;
 /// Corpus version registry — process-wide monotonic counter per
 /// (tenant, collection) for plan-cache invalidation. Catalog write
 /// paths call into this when they make a schema/segment/stats
 /// change visible to the planner.
-pub mod corpus_version;
-pub use corpus_version::CorpusVersionRegistry;
+// Relocated to the proximadb-catalog crate; re-exported here for source compatibility.
+pub use proximadb_catalog::corpus_version;
 
 /// File-backed CorpusVersionStore — first concrete durable backend
 /// for single-node deployments. Other backends (catalog row, KV)
@@ -102,7 +112,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use tokio::sync::RwLock;
+use parking_lot::Mutex;
+use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore};
 use tracing::info;
 
 pub use self::partition_pruning::{
@@ -115,6 +126,92 @@ pub use proximadb_catalog::*;
 // (which is also pulled in via `pub use proximadb_catalog::*`).
 pub use self::traits::{Catalog, CatalogHealth};
 
+/// TD-110 S1: per-table, non-reentrant, in-process DML operation lock registry.
+///
+/// The durable DML lock (`crate::cluster::partition_lease::DmlLockService`)
+/// serializes DML *across pods* but is deliberately re-entrant within a pod: a
+/// pod re-acquiring its own table lease *renews* it, and the in-memory check
+/// skips same-pod/same-scope as compatible. Embedded and single-pod deployments
+/// therefore need a separate, *non-reentrant* in-process lock to serialize
+/// concurrent connections that touch the same table during a referential-action
+/// critical section (ON DELETE CASCADE/RESTRICT child scan → child mutation →
+/// parent tombstone). Without it, a child row inserted by connection B while
+/// connection A's parent DELETE is mid-flight can be orphaned (B's row survives
+/// referencing a now-deleted parent).
+///
+/// Each `(namespace, table)` key maps to a binary semaphore (1 permit);
+/// `acquire_owned` yields an owned permit held across the critical section and
+/// released on drop. Multi-table critical sections (a cascading DELETE) acquire
+/// the whole set in a deterministic `(namespace, name)` order to avoid
+/// self-deadlock — single-table acquirers (INSERT/UPDATE) cannot form a cycle
+/// with a sorted multi-table acquirer.
+#[derive(Default)]
+pub struct TableOpLockRegistry {
+    locks: Mutex<HashMap<TableIdentifier, Arc<Semaphore>>>,
+}
+
+impl TableOpLockRegistry {
+    /// Create an empty registry.
+    pub fn new() -> Self {
+        Self {
+            locks: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Resolve (lazily creating) the binary semaphore for a table.
+    fn semaphore_for(&self, table_id: &TableIdentifier) -> Arc<Semaphore> {
+        // Sync lock held only for the map get/insert — never across an await.
+        let mut locks = self.locks.lock();
+        locks
+            .entry(table_id.clone())
+            .or_insert_with(|| Arc::new(Semaphore::new(1)))
+            .clone()
+    }
+
+    /// Acquire the (non-reentrant) operation lock for one table, blocking until
+    /// free. The returned permit is released on drop.
+    pub async fn acquire(&self, table_id: &TableIdentifier) -> Result<OwnedSemaphorePermit> {
+        self.semaphore_for(table_id)
+            .acquire_owned()
+            .await
+            .map_err(|_| {
+                anyhow!(
+                    "operation lock for table '{}/{}' was closed unexpectedly",
+                    table_id.namespace.join("."),
+                    table_id.name
+                )
+            })
+    }
+
+    /// Acquire operation locks for a set of tables in deterministic `(namespace,
+    /// name)` order (de-duplicated), blocking until all are held. The returned
+    /// permits are released on drop, so bind them to a guard that outlives the
+    /// critical section.
+    pub async fn acquire_sorted(
+        &self,
+        mut tables: Vec<TableIdentifier>,
+    ) -> Result<Vec<OwnedSemaphorePermit>> {
+        tables.sort_by(|a, b| {
+            a.namespace
+                .cmp(&b.namespace)
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        tables.dedup();
+        let mut permits = Vec::with_capacity(tables.len());
+        for table_id in &tables {
+            permits.push(self.acquire(table_id).await?);
+        }
+        Ok(permits)
+    }
+}
+
+impl std::fmt::Debug for TableOpLockRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TableOpLockRegistry")
+            .finish_non_exhaustive()
+    }
+}
+
 /// Catalog manager - manages multiple catalog instances
 pub struct CatalogManager {
     /// Registered catalogs by name
@@ -123,6 +220,10 @@ pub struct CatalogManager {
     default_catalog: RwLock<Option<String>>,
     /// Catalog cache for metadata
     cache: Arc<CatalogCache>,
+    /// TD-110 S1: per-table, non-reentrant in-process DML operation locks used
+    /// to serialize referential-action critical sections within a single pod.
+    /// See [`TableOpLockRegistry`].
+    op_locks: TableOpLockRegistry,
 }
 
 impl CatalogManager {
@@ -132,6 +233,7 @@ impl CatalogManager {
             catalogs: RwLock::new(HashMap::new()),
             default_catalog: RwLock::new(None),
             cache: Arc::new(CatalogCache::new(10000, 300)), // 10K entries, 5min TTL
+            op_locks: TableOpLockRegistry::new(),
         }
     }
 
@@ -141,7 +243,17 @@ impl CatalogManager {
             catalogs: RwLock::new(HashMap::new()),
             default_catalog: RwLock::new(None),
             cache: Arc::new(CatalogCache::new(max_entries, ttl_seconds)),
+            op_locks: TableOpLockRegistry::new(),
         }
+    }
+
+    /// TD-110 S1: per-table, non-reentrant in-process DML operation locks.
+    /// Hosted on `CatalogManager` because it is the single object shared across
+    /// all per-connection `DmlService` instances (pgwire builds a fresh
+    /// `DmlService` per connection), so a registry here is the one place
+    /// concurrent connections actually contend.
+    pub fn op_locks(&self) -> &TableOpLockRegistry {
+        &self.op_locks
     }
 
     /// Register a pre-created catalog
@@ -178,12 +290,42 @@ impl CatalogManager {
             ..Default::default()
         };
 
-        let catalog = proximadb_catalog::native::NativeCatalog::new(
-            name.to_string(),
-            config,
-            self.cache.clone(),
-        )
-        .await?;
+        // TD-CAT-1b (S0): object-store catalog URLs (s3://, gs://, az://) persist
+        // durably by routing all catalog I/O through an injected `FileSystem`
+        // backend resolved from the configured backends. `file://` (and bare
+        // local paths) keep the local-`tokio::fs` path (`fs = None`) so the
+        // on-disk layout and existing tests are byte-identical — the object-store
+        // branch only *relaxes* `NativeCatalog::parse_storage_url`'s fail-closed
+        // bail, it does not change the local path. A cloud scheme whose backend
+        // feature isn't compiled in surfaces a clear `UnsupportedScheme` error
+        // (still strictly safer than silently caching the catalog under /tmp).
+        let is_object_store = storage_url.starts_with("s3://")
+            || storage_url.starts_with("gs://")
+            || storage_url.starts_with("az://");
+
+        let catalog = if is_object_store {
+            let factory =
+                crate::storage::persistence::filesystem::FilesystemFactory::create_default()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("filesystem factory init failed: {e}"))?;
+            let fs = factory.get_filesystem(storage_url).map_err(|e| {
+                anyhow::anyhow!("no filesystem backend for catalog url '{storage_url}': {e}")
+            })?;
+            proximadb_catalog::native::NativeCatalog::new_with_filesystem(
+                name.to_string(),
+                config,
+                self.cache.clone(),
+                Some(fs),
+            )
+            .await?
+        } else {
+            proximadb_catalog::native::NativeCatalog::new(
+                name.to_string(),
+                config,
+                self.cache.clone(),
+            )
+            .await?
+        };
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -627,6 +769,22 @@ impl CatalogManager {
         fqn: &str,
         tenant: Option<&str>,
     ) -> Result<(Arc<dyn Catalog>, TableIdentifier)> {
+        // Structural system-catalog isolation (validate input first): the tenant
+        // id becomes `namespace[0]`, so a tenant must never shadow a reserved
+        // control-plane / per-tenant system subtree. Those are the
+        // underscore-prefixed segments (`_operator`, `_metering`, `_trace`,
+        // `_branches`, `_manifests` — see `DrPathBuilder::RESERVED_SYSTEM_SEGMENTS`).
+        // The physical path resolver already rejects them via `validate_id`;
+        // mirror that at the logical catalog-resolution boundary so DDL/DML cannot
+        // address the system catalog by passing a `_`-prefixed tenant.
+        if let Some(tenant) = tenant.filter(|tenant| !tenant.is_empty())
+            && tenant.starts_with('_')
+        {
+            anyhow::bail!(
+                "tenant '{tenant}' is invalid: tenant identifiers must not begin with '_' \
+                 (reserved for system/control-plane catalog subtrees)"
+            );
+        }
         let (catalog, id) = self.resolve_table(fqn).await?;
         match tenant {
             Some(tenant) if !tenant.is_empty() => {
@@ -801,6 +959,36 @@ mod tests {
         assert!(result.is_err());
         let err = result.err().expect("Expected error result");
         assert!(err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn resolve_table_scoped_rejects_reserved_underscore_tenant() {
+        // A tenant id becomes namespace[0]; a `_`-prefixed tenant would shadow a
+        // reserved control-plane/system subtree. The guard validates the tenant
+        // BEFORE catalog lookup, so the reserved-tenant error fires regardless of
+        // whether the table exists (here: no catalog registered).
+        let manager = CatalogManager::new();
+        for tenant in [
+            "_operator",
+            "_metering",
+            "_trace",
+            "_branches",
+            "_manifests",
+        ] {
+            // `(Arc<dyn Catalog>, TableIdentifier)` isn't `Debug`, so match rather
+            // than `expect_err`.
+            let err = match manager
+                .resolve_table_scoped("some_table", Some(tenant))
+                .await
+            {
+                Ok(_) => panic!("reserved underscore tenant {tenant} must be rejected"),
+                Err(e) => e,
+            };
+            assert!(
+                err.to_string().contains("must not begin with '_'"),
+                "unexpected error for tenant {tenant}: {err}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -986,6 +1174,65 @@ mod tests {
         assert_eq!(default.name(), "first");
 
         // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    /// TD-CAT-1b (S0): the injected-`FileSystem` seam persists catalog metadata
+    /// durably and reads it back across a fresh catalog instance. This is the
+    /// exact code path `create_native_catalog` now uses for object-store URLs,
+    /// proven here over a real `file://` backend (the local backend is always
+    /// registered; cloud backends are feature-gated and covered by emulator
+    /// tests). Before #415 + this slice, object-store catalog URLs fail-closed;
+    /// this asserts the routed-through-backend write+read round-trips.
+    #[tokio::test]
+    async fn native_catalog_injected_filesystem_round_trips() {
+        use crate::storage::persistence::filesystem::FilesystemFactory;
+        use proximadb_catalog::Catalog;
+        use proximadb_catalog::native::{NativeCatalog, NativeCatalogConfig};
+
+        let temp_dir = std::env::temp_dir().join("proximadb_s0_injected_fs");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        let url = format!("file://{}", temp_dir.display());
+
+        let factory = FilesystemFactory::create_default()
+            .await
+            .expect("filesystem factory");
+        let fs = factory.get_filesystem(&url).expect("file:// backend");
+        let cache = CatalogManager::new().cache();
+        let config = NativeCatalogConfig {
+            storage_url: url.clone(),
+            ..Default::default()
+        };
+
+        // Write a namespace THROUGH the injected backend (fs = Some).
+        let catalog = NativeCatalog::new_with_filesystem(
+            "injected".to_string(),
+            config.clone(),
+            cache.clone(),
+            Some(fs.clone()),
+        )
+        .await
+        .expect("construct catalog with injected fs");
+        catalog
+            .create_namespace(&["s0_ns".to_string()], std::collections::HashMap::new())
+            .await
+            .expect("create namespace via injected fs");
+
+        // A FRESH catalog over the same URL+backend must load it from disk —
+        // proving the metadata was persisted durably through the backend, not
+        // just held in memory.
+        let reopened =
+            NativeCatalog::new_with_filesystem("injected".to_string(), config, cache, Some(fs))
+                .await
+                .expect("reopen catalog with injected fs");
+        assert!(
+            reopened
+                .namespace_exists(&["s0_ns".to_string()])
+                .await
+                .expect("namespace_exists"),
+            "namespace written through the injected backend must survive a reopen (durable)"
+        );
+
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
 

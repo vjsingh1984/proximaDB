@@ -46,7 +46,7 @@ impl QueryService for QueryServiceImpl {
             )
         };
         self.port
-            .execute_sql_v1(req.query, parameters, req.collection)
+            .execute_sql_v1(req.query, parameters, req.collection, None)
             .await
             .map(super::deprecated_response)
             .map_err(|e| {

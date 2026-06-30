@@ -112,10 +112,15 @@ class ProximaEventStore:
             global_position=global_position,
             created_at=time.time(),
         )
-        self.adapter.insert_document(
+        self.adapter.ingest_documents(
             self.collection,
-            _event_to_document(record),
-            id=_event_doc_id(stream_id, version, record.event_id),
+            records=[
+                {
+                    "id": _event_doc_id(stream_id, version, record.event_id),
+                    "text": str(record.data),
+                    "metadata": _event_to_document(record),
+                }
+            ],
         )
         return record
 
@@ -231,7 +236,10 @@ class ProximaMapperSession:
         existing = self.adapter.get_document(collection_name, doc_id)
         if existing:
             self.adapter.delete_document(collection_name, doc_id)
-        self.adapter.insert_document(collection_name, payload, id=doc_id)
+        self.adapter.ingest_documents(
+            collection_name,
+            records=[{"id": doc_id, "text": str(payload), "metadata": payload}],
+        )
 
         if vector is not None:
             from proximadb_sdk.integrations._records import (

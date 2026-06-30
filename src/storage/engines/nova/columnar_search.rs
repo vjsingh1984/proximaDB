@@ -9,12 +9,12 @@ use std::sync::Arc;
 use tokio::sync::{Semaphore, mpsc};
 use tracing::{debug, info};
 
-use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
     MetadataFilter, columnar_query_engine::columnar_query_reader::UnifiedParquetReader,
 };
+use proximadb_distance_kernel::{DistanceMetric, engine::UnifiedDistanceCompute};
 
 use super::{
     NovaFile,
@@ -348,11 +348,10 @@ impl NovaColumnarSearch {
         while let Some(candidates) = rx.recv().await {
             for (record, distance) in candidates {
                 // Create SimilarityResult using constructor
-                let similarity_result =
-                    crate::compute::distance_computation::engine::SimilarityResult::new(
-                        distance,
-                        distance_metric,
-                    );
+                let similarity_result = proximadb_distance_kernel::engine::SimilarityResult::new(
+                    distance,
+                    distance_metric,
+                );
 
                 heap.push(SearchCandidate {
                     row_group_id: 0,
@@ -436,9 +435,7 @@ impl NovaColumnarSearch {
             for record in batch {
                 // Create distance compute instance and compute distance
                 let distance_compute =
-                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                        distance_metric,
-                    );
+                    proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(distance_metric);
                 let distance_result = distance_compute.calculate_distance(
                     query_vector,
                     record
@@ -906,9 +903,7 @@ impl NovaColumnarSearch {
                     .collect();
 
                 let distance_compute =
-                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                        distance_metric,
-                    );
+                    proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(distance_metric);
                 let distances = distance_compute.batch_distance_pooled_simd(
                     query_vector,
                     &batch_vectors,

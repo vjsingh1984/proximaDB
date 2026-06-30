@@ -88,6 +88,7 @@ fn full_pipeline_composes_for_a_single_trace() {
         cache_result: CacheResult::Miss,
         failure_class: None,
         bytes_per_vector: 1024.0,
+        egress_bytes: 0,
         predicate_shortfall: None,
         turboquant_explain: None,
     });
@@ -108,6 +109,7 @@ fn full_pipeline_composes_for_a_single_trace() {
         corpus_gb: 1.0,
         total_vectors: 1_000_000,
         occurred_at: "2026-05-22T00:00:00Z".into(),
+        io_trace: None,
     });
     assert_eq!(metering.event_type, "kru");
     assert_eq!(metering.tenant_id, "tenant-a");
@@ -144,6 +146,7 @@ fn full_pipeline_composes_for_a_single_trace() {
         occurred_at_ms: 1_700_000_000_000,
         occurred_at_iso: "2026-05-22T00:00:00Z".into(),
         idempotency_bucket: Duration::from_secs(1),
+        io_trace: None,
     };
     let batch = build_batch(&[batch_input]);
     assert_eq!(batch.count, 1);
@@ -188,6 +191,7 @@ fn batch_of_identical_shapes_collapses_fingerprint_but_keeps_idempotency_distinc
             cache_result: CacheResult::Miss,
             failure_class: None,
             bytes_per_vector: 0.0,
+            egress_bytes: 0,
             predicate_shortfall: None,
             turboquant_explain: None,
         })
@@ -205,6 +209,7 @@ fn batch_of_identical_shapes_collapses_fingerprint_but_keeps_idempotency_distinc
             occurred_at_ms: 1_700_000_000_000,
             occurred_at_iso: "2026-05-22T00:00:00Z".into(),
             idempotency_bucket: Duration::from_secs(1),
+            io_trace: None,
         },
         TraceBatchInput {
             trace: &t2,
@@ -214,6 +219,7 @@ fn batch_of_identical_shapes_collapses_fingerprint_but_keeps_idempotency_distinc
             occurred_at_ms: 1_700_000_000_000,
             occurred_at_iso: "2026-05-22T00:00:00Z".into(),
             idempotency_bucket: Duration::from_secs(1),
+            io_trace: None,
         },
     ];
 
@@ -265,6 +271,7 @@ fn cross_tenant_traces_share_fingerprint_but_have_distinct_idempotency_keys() {
             cache_result: CacheResult::Miss,
             failure_class: None,
             bytes_per_vector: 0.0,
+            egress_bytes: 0,
             predicate_shortfall: None,
             turboquant_explain: None,
         })
@@ -282,6 +289,7 @@ fn cross_tenant_traces_share_fingerprint_but_have_distinct_idempotency_keys() {
             occurred_at_ms: 1_700_000_000_000,
             occurred_at_iso: "2026-05-22T00:00:00Z".into(),
             idempotency_bucket: Duration::from_secs(1),
+            io_trace: None,
         },
         TraceBatchInput {
             trace: &t_b,
@@ -291,6 +299,7 @@ fn cross_tenant_traces_share_fingerprint_but_have_distinct_idempotency_keys() {
             occurred_at_ms: 1_700_000_000_000,
             occurred_at_iso: "2026-05-22T00:00:00Z".into(),
             idempotency_bucket: Duration::from_secs(1),
+            io_trace: None,
         },
     ];
     let batch = build_batch(&inputs);
@@ -344,6 +353,7 @@ fn non_default_plan_choice_propagates_through_the_pipeline() {
         cache_result: CacheResult::Miss,
         failure_class: None,
         bytes_per_vector: 0.0,
+        egress_bytes: 0,
         predicate_shortfall: None,
         turboquant_explain: None,
     });
@@ -356,6 +366,7 @@ fn non_default_plan_choice_propagates_through_the_pipeline() {
         corpus_gb: 0.01,
         total_vectors: 1_000,
         occurred_at: "2026-05-22T00:00:00Z".into(),
+        io_trace: None,
     });
     assert_eq!(
         metering.metadata["index_route"],

@@ -36,11 +36,11 @@ class MockResourcePool:
 def _patch_grpc_client(monkeypatch, fake_stub, fake_pb2):
     monkeypatch.setattr(
         grpc_mod,
-        "v1_graph_pb2_grpc",
-        types.SimpleNamespace(GraphServiceStub=fake_stub),
+        "v2_graph_pb2_grpc",
+        types.SimpleNamespace(ProximaGraphServiceStub=fake_stub),
         raising=False,
     )
-    monkeypatch.setattr(grpc_mod, "v1_graph_pb2", fake_pb2, raising=False)
+    monkeypatch.setattr(grpc_mod, "v2_graph_pb2", fake_pb2, raising=False)
 
     class FakePool:
         def __init__(self, *a, **k):
@@ -73,54 +73,28 @@ def _patch_grpc_client(monkeypatch, fake_stub, fake_pb2):
 
 
 def test_grpc_metadata_overrides(monkeypatch):
+    """Per-call prefetch overrides are now v2-native request fields
+    (enable_prefetch / prefetch_budget), not gRPC metadata."""
     captured = {}
 
     class FakeStub:
         def __init__(self, channel):
             pass
 
-        def ShortestPath(self, req, timeout=None, metadata=None, compression=None):
-            captured["metadata"] = dict(metadata or [])
+        def ShortestPath(self, req, timeout=None):
+            captured["req"] = req
 
-            # Return a minimal response-like object
             class R:
                 node_ids = [req.start_node_id, req.target_node_id]
                 total_weight = 1.0
+                found = True
 
             return R()
 
-    # Patch the stub class used inside client
-    # Patch the module-level graph stubs used by client
-    monkeypatch.setattr(
-        grpc_mod,
-        "v1_graph_pb2_grpc",
-        types.SimpleNamespace(GraphServiceStub=FakeStub),
-        raising=False,
-    )
+    # Use the real v2 graph_pb2 so the client's enum lookups + request build work.
+    from proximadb.v2 import graph_pb2 as v2_graph_pb2
 
-    # Create a fake request class
-    class FakeShortestPathRequest:
-        def __init__(self, **kwargs):
-            for k, v in kwargs.items():
-                setattr(self, k, v)
-
-    monkeypatch.setattr(
-        grpc_mod,
-        "v1_graph_pb2",
-        types.SimpleNamespace(
-            ShortestPathRequest=FakeShortestPathRequest,
-            ShortestPathAlgorithm=types.SimpleNamespace(
-                SHORTEST_PATH_ALGORITHM_DIJKSTRA=1,
-                SHORTEST_PATH_ALGORITHM_ASTAR=2,
-            ),
-        ),
-        raising=False,
-    )
-    _patch_grpc_client(
-        monkeypatch,
-        FakeStub,
-        grpc_mod.v1_graph_pb2,
-    )
+    _patch_grpc_client(monkeypatch, FakeStub, v2_graph_pb2)
 
     client = ProximaDBSyncGrpcClient("localhost:5679")
     client.shortest_path(
@@ -129,17 +103,18 @@ def test_grpc_metadata_overrides(monkeypatch):
         enable_prefetch=True,
         prefetch_budget=9,
     )
-    assert captured["metadata"]["x-graph-prefetch-enabled"] == "true"
-    assert captured["metadata"]["x-graph-prefetch-budget"] == "9"
+    assert captured["req"].enable_prefetch is True
+    assert captured["req"].prefetch_budget == 9
+    assert captured["req"].start_node_id == "n1"
+    assert captured["req"].target_node_id == "n8"
 
 
 def test_grpc_graph_read_helpers_use_existing_query_endpoints(monkeypatch):
+    """query_edges / get_node / delete_node route through v2 ProximaGraphService
+    and build the real v2 request protos (QueryGraphEdgesRequest,
+    GetGraphNodeRequest, DeleteGraphNodeRequest)."""
     captured = {}
-
-    class FakeMessage:
-        def __init__(self, **kwargs):
-            for key, value in kwargs.items():
-                setattr(self, key, value)
+    from proximadb.v2 import graph_pb2 as v2_graph_pb2
 
     class FakeStub:
         def __init__(self, channel):
@@ -147,38 +122,29 @@ def test_grpc_graph_read_helpers_use_existing_query_endpoints(monkeypatch):
 
         def QueryEdges(self, req, timeout=None):
             captured["query_edges"] = req
-            return types.SimpleNamespace(
-                success=True,
-                edges=[
-                    types.SimpleNamespace(
-                        id="e1",
-                        from_node_id="n1",
-                        to_node_id="n2",
-                        edge_type="CALLS",
-                    )
-                ],
-                next_token="offset:3",
+            resp = v2_graph_pb2.QueryGraphEdgesResponse()
+            resp.edges.add(
+                id="e1", from_node_id="n1", to_node_id="n2", edge_type="CALLS"
             )
+            resp.next_token = "offset:3"
+            return resp
 
         def GetNode(self, req, timeout=None):
             captured["get_node"] = req
-            return types.SimpleNamespace(id=req.node_id)
+            node = v2_graph_pb2.GraphNode(id=req.node_id)
+            return v2_graph_pb2.GraphNodeResponse(node=node)
 
         def DeleteNode(self, req, timeout=None):
             captured["delete_node"] = req
-            return types.SimpleNamespace(id=req.node_id)
+            node = v2_graph_pb2.GraphNode(id=req.node_id)
+            return v2_graph_pb2.DeleteGraphNodeResponse(deleted=True, node=node)
 
-    fake_pb2 = types.SimpleNamespace(
-        EdgeQuery=FakeMessage,
-        GetNodeRequest=FakeMessage,
-        DeleteNodeRequest=FakeMessage,
-        PropertyFilter=FakeMessage,
-        PROPERTY_FILTER_OPERATOR_EQUALS=1,
-    )
-    _patch_grpc_client(monkeypatch, FakeStub, fake_pb2)
+    _patch_grpc_client(monkeypatch, FakeStub, v2_graph_pb2)
 
     client = ProximaDBSyncGrpcClient("localhost:5679")
-    monkeypatch.setattr(client, "_convert_to_property_value", lambda value: value)
+    # Only simplify the response decode; let the request build (including the
+    # property-value encode into GraphPropertyValue) run for real so the wiring
+    # is actually exercised.
     monkeypatch.setattr(
         client, "_convert_edge_from_proto", lambda edge: {"id": edge.id}
     )
@@ -202,11 +168,15 @@ def test_grpc_graph_read_helpers_use_existing_query_endpoints(monkeypatch):
     assert captured["query_edges"].graph_id == "code"
     assert captured["query_edges"].from_node_id == "n1"
     assert captured["query_edges"].to_node_id == "n2"
-    assert captured["query_edges"].edge_types == ["CALLS"]
+    assert list(captured["query_edges"].edge_types) == ["CALLS"]
     assert captured["query_edges"].limit == 3
     assert captured["query_edges"].offset == 1
     assert captured["query_edges"].filters[0].key == "lang"
-    assert captured["query_edges"].filters[0].value == "python"
+    # value is encoded as a GraphPropertyValue; decode it back to the python value.
+    assert (
+        client._convert_from_property_value(captured["query_edges"].filters[0].value)
+        == "python"
+    )
 
     assert client.get_node("n42", graph_id="code") == {"id": "n42"}
     assert captured["get_node"].graph_id == "code"

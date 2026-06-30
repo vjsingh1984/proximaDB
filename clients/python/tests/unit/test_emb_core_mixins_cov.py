@@ -483,7 +483,7 @@ def test_cache_reset_stats_and_repr():
     cache = ModelCache()
     cache.get_or_load("k", lambda: 1)
     cache.reset_stats()
-    assert cache.stats() == {"hits": 0, "misses": 0, "loads": 0}
+    assert cache.stats() == {"hits": 0, "misses": 0, "loads": 0, "evictions": 0}
     assert "ModelCache(" in repr(cache)
 
 
@@ -778,3 +778,208 @@ def test_st_embed_batch_no_override(monkeypatch):
     p = STProvider(config=make_config(model=make_model(dimension=384), batch_size=16))
     p.embed_batch(["x"])
     assert FakeST.last_bs == 16
+
+
+# --------------------------------------------------------------------------
+# core/device.py  (auto-detect)
+# --------------------------------------------------------------------------
+def test_resolve_device_explicit_passthrough():
+    from proximadb_sdk.embedding_providers.core.device import resolve_device
+
+    assert resolve_device("cuda") == "cuda"
+    assert resolve_device("cpu") == "cpu"
+
+
+def test_resolve_device_autodetect_prefers_cuda(monkeypatch):
+    from proximadb_sdk.embedding_providers.core import device as device_mod
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: True)
+    fake_torch.backends = types.SimpleNamespace(
+        mps=types.SimpleNamespace(is_available=lambda: True)
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    assert device_mod.resolve_device(None) == "cuda"
+
+
+def test_resolve_device_autodetect_mps_then_cpu(monkeypatch):
+    from proximadb_sdk.embedding_providers.core import device as device_mod
+
+    # No CUDA, yes MPS -> mps
+    t1 = types.ModuleType("torch")
+    t1.cuda = types.SimpleNamespace(is_available=lambda: False)
+    t1.backends = types.SimpleNamespace(
+        mps=types.SimpleNamespace(is_available=lambda: True)
+    )
+    monkeypatch.setitem(sys.modules, "torch", t1)
+    assert device_mod.resolve_device(None) == "mps"
+
+    # No CUDA, no MPS -> cpu
+    t2 = types.ModuleType("torch")
+    t2.cuda = types.SimpleNamespace(is_available=lambda: False)
+    t2.backends = types.SimpleNamespace(
+        mps=types.SimpleNamespace(is_available=lambda: False)
+    )
+    monkeypatch.setitem(sys.modules, "torch", t2)
+    assert device_mod.resolve_device(None) == "cpu"
+
+
+def test_resolve_device_no_torch_returns_none(monkeypatch):
+    from proximadb_sdk.embedding_providers.core import device as device_mod
+
+    monkeypatch.setitem(sys.modules, "torch", None)  # import torch -> ImportError
+    assert device_mod.resolve_device(None) is None
+
+
+# --------------------------------------------------------------------------
+# sentence_transformer mixin: backend + prompts + device auto-detect
+# --------------------------------------------------------------------------
+def test_st_load_passes_backend_and_prompts(monkeypatch):
+    captured = {}
+
+    class FakeST:
+        def __init__(self, name, **kwargs):
+            captured["name"] = name
+            captured.update(kwargs)
+
+        def encode(self, texts, **kwargs):
+            captured["encode_kwargs"] = kwargs
+            return np.ones((len(texts), 384), dtype=np.float32)
+
+    monkeypatch.setattr(
+        sys.modules["sentence_transformers"], "SentenceTransformer", FakeST
+    )
+    p = STProvider(
+        config=make_config(
+            model=make_model(dimension=384, name="onnx-st"),
+            device="cpu",
+            backend="onnx",
+            extra={"prompts": {"query": "query: ", "document": "passage: "}},
+        )
+    )
+    out = p.encode_document(["d1", "d2"])
+    assert out.shape == (2, 384)
+    assert captured["backend"] == "onnx"
+    assert captured["prompts"] == {"query": "query: ", "document": "passage: "}
+    # native ST prompt routed via prompt_name on encode
+    assert captured["encode_kwargs"].get("prompt_name") == "document"
+
+
+def test_st_load_old_st_without_backend_falls_back(monkeypatch):
+    """If sentence-transformers rejects backend/prompts (older version), the
+    mixin retries with the universally supported subset."""
+    calls = {"n": 0}
+
+    class FakeST:
+        def __init__(
+            self,
+            name,
+            device=None,
+            trust_remote_code=False,
+            cache_folder=None,
+            **kwargs,
+        ):
+            calls["n"] += 1
+            if kwargs:  # first attempt passed backend/prompts -> reject
+                raise TypeError("unexpected keyword argument")
+
+        def encode(self, texts, **kwargs):
+            return np.ones((len(texts), 384), dtype=np.float32)
+
+    monkeypatch.setattr(
+        sys.modules["sentence_transformers"], "SentenceTransformer", FakeST
+    )
+    p = STProvider(
+        config=make_config(
+            model=make_model(dimension=384, name="old-st"),
+            device="cpu",
+            backend="onnx",
+        )
+    )
+    out = p.embed(["x"])
+    assert out.shape == (1, 384)
+    assert calls["n"] == 2  # first (with backend) failed, retried without
+
+
+def test_encode_query_without_prompt_is_plain(monkeypatch):
+    captured = {}
+
+    class FakeST:
+        def __init__(self, name, **kwargs):
+            pass
+
+        def encode(self, texts, **kwargs):
+            captured["encode_kwargs"] = kwargs
+            return np.ones((len(texts), 384), dtype=np.float32)
+
+    monkeypatch.setattr(
+        sys.modules["sentence_transformers"], "SentenceTransformer", FakeST
+    )
+    # No prompts configured -> encode_query must NOT pass prompt_name.
+    p = STProvider(config=make_config(model=make_model(dimension=384), device="cpu"))
+    p.encode_query("hello")
+    assert "prompt_name" not in captured["encode_kwargs"]
+
+
+# --------------------------------------------------------------------------
+# core/cache.py: LRU eviction + capacity
+# --------------------------------------------------------------------------
+def test_cache_lru_eviction_evicts_oldest():
+    cache = ModelCache()
+    cache.set_capacity(2)
+    try:
+        cache.get_or_load("a", lambda: "A")
+        cache.get_or_load("b", lambda: "B")
+        # touch "a" so "b" becomes LRU
+        cache.get_or_load("a", lambda: "A")
+        cache.get_or_load("c", lambda: "C")  # exceeds cap -> evict LRU ("b")
+        assert set(cache.keys()) == {"a", "c"}
+        assert cache.stats()["evictions"] == 1
+    finally:
+        cache.set_capacity(4)
+        cache.clear()
+
+
+def test_cache_set_capacity_shrinks_immediately():
+    cache = ModelCache()
+    cache.set_capacity(4)
+    try:
+        for k in ("a", "b", "c"):
+            cache.get_or_load(k, lambda k=k: k.upper())
+        cache.set_capacity(1)
+        assert len(cache.keys()) == 1
+        # most-recently-used survives
+        assert cache.keys() == ["c"]
+    finally:
+        cache.set_capacity(4)
+        cache.clear()
+
+
+def test_cache_capacity_zero_disables_eviction():
+    cache = ModelCache()
+    cache.set_capacity(0)
+    try:
+        for k in ("a", "b", "c", "d", "e"):
+            cache.get_or_load(k, lambda k=k: k.upper())
+        assert len(cache.keys()) == 5
+    finally:
+        cache.set_capacity(4)
+        cache.clear()
+
+
+def test_cache_eviction_releases_model():
+    cache = ModelCache()
+    cache.set_capacity(1)
+    released = {"n": 0}
+
+    class _Model:
+        def cleanup(self):
+            released["n"] += 1
+
+    try:
+        cache.get_or_load("a", _Model)
+        cache.get_or_load("b", _Model)  # evicts "a", calls a.cleanup()
+        assert released["n"] == 1
+    finally:
+        cache.set_capacity(4)
+        cache.clear()

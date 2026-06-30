@@ -1099,13 +1099,13 @@ mod tests {
     #[test]
     fn test_parameter_value_types() {
         let int_val = ParameterValue::Integer(42);
-        let float_val = ParameterValue::Float(3.14);
+        let float_val = ParameterValue::Float(3.5);
         let string_val = ParameterValue::String("hello".to_string());
         let bool_val = ParameterValue::Boolean(true);
 
         // Verify Debug formatting works for all variants
         assert!(format!("{:?}", int_val).contains("42"));
-        assert!(format!("{:?}", float_val).contains("3.14"));
+        assert!(format!("{:?}", float_val).contains("3.5"));
         assert!(format!("{:?}", string_val).contains("hello"));
         assert!(format!("{:?}", bool_val).contains("true"));
 
@@ -1113,7 +1113,7 @@ mod tests {
         let int_clone = int_val.clone();
         assert!(matches!(int_clone, ParameterValue::Integer(42)));
         let float_clone = float_val.clone();
-        assert!(matches!(float_clone, ParameterValue::Float(f) if (f - 3.14).abs() < f64::EPSILON));
+        assert!(matches!(float_clone, ParameterValue::Float(f) if (f - 3.5).abs() < f64::EPSILON));
         let string_clone = string_val.clone();
         assert!(matches!(string_clone, ParameterValue::String(s) if s == "hello"));
         let bool_clone = bool_val.clone();
@@ -1880,7 +1880,7 @@ mod tests {
     fn test_parameter_value_serde_roundtrip() {
         let values = vec![
             ParameterValue::Integer(42),
-            ParameterValue::Float(3.14),
+            ParameterValue::Float(3.5),
             ParameterValue::String("test".to_string()),
             ParameterValue::Boolean(false),
         ];

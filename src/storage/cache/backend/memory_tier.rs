@@ -69,6 +69,31 @@ where
         }
     }
 
+    /// Remove every entry whose key matches `predicate`; returns the count
+    /// removed. Used by per-collection cache invalidation on writes.
+    pub async fn remove_where<F>(&self, predicate: F) -> usize
+    where
+        F: Fn(&K) -> bool,
+    {
+        // Collect matching keys first, then remove — avoids holding a shard
+        // guard across the remove call (DashMap re-entrancy).
+        let matching: Vec<K> = self
+            .storage
+            .iter()
+            .filter(|entry| predicate(entry.key()))
+            .map(|entry| entry.key().clone())
+            .collect();
+        let mut removed = 0usize;
+        for key in matching {
+            if let Some((_, value)) = self.storage.remove(&key) {
+                let entry_size = estimate_size(&value);
+                self.size_bytes.fetch_sub(entry_size, Ordering::Relaxed);
+                removed += 1;
+            }
+        }
+        removed
+    }
+
     /// Get memory usage in bytes
     pub async fn memory_usage(&self) -> usize {
         self.size_bytes.load(Ordering::Relaxed)

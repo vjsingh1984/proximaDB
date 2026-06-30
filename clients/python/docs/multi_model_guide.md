@@ -59,10 +59,15 @@ document = {
     "tags": ["example", "tutorial"],
 }
 
-result = docs.insert_document(
+# ingest_documents is the canonical write surface (ADR-041);
+# ProximaDBDocument.insert_document is deprecated.
+result = client.ingest_documents(
     collection_id="code_files",
-    document=document,
-    id="doc:main.py"
+    records=[{
+        "id": "doc:main.py",
+        "text": document["content"],
+        "metadata": document,
+    }],
 )
 print(f"Document inserted: {result}")
 
@@ -76,12 +81,14 @@ for i in range(100):
         "lines_of_code": 10 + i,
     })
 
-# Batch insert
-for doc in documents:
-    docs.insert_document(
-        collection_id="code_files",
-        document=doc
-    )
+# Batch ingest in one call (not a loop) — ADR-041 canonical surface
+client.ingest_documents(
+    collection_id="code_files",
+    records=[
+        {"id": doc["file_path"], "text": doc["content"], "metadata": doc}
+        for doc in documents
+    ],
+)
 ```
 
 ### Querying Documents
@@ -188,11 +195,14 @@ client.create_document_collection(
     }
 )
 
-# Insert document
-client.insert_document(
-    collection_name="my_docs",
-    document={"category": "tech", "title": "ProximaDB Guide"},
-    id="doc1"
+# Insert document (ingest_documents is the canonical write surface, ADR-041)
+client.ingest_documents(
+    collection_id="my_docs",
+    records=[{
+        "id": "doc1",
+        "text": "ProximaDB Guide",
+        "metadata": {"category": "tech", "title": "ProximaDB Guide"},
+    }],
 )
 
 # Query documents

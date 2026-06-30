@@ -256,6 +256,7 @@ impl ProximaDB {
             rl_policy_path: Some(format!("{}/rl_policy.json", config.data_dir)),
             access_mode: proximadb::embedded::AccessMode::Exclusive,
             node_id: None,
+            tenant_id: None,
         };
 
         let inner = proximadb::embedded::EmbeddedProximaDB::new(internal_config).map_err(|e| {

@@ -158,29 +158,6 @@ pub struct ServiceCollectionConfig {
     pub security: Option<CollectionSecurityConfig>,
 }
 
-/// Service-level Collection type (JSON-serializable)
-#[derive(Debug, Clone)]
-pub struct Collection {
-    /// Unique collection identifier
-    pub id: String,
-    /// Human-readable collection name
-    pub name: String,
-    /// Fixed vector dimension for this collection
-    pub dimension: i32,
-    /// Distance metric used for similarity search
-    pub distance_metric: String,
-    /// Storage engine backing this collection
-    pub storage_engine: String,
-    /// Indexing algorithm used for search
-    pub indexing_algorithm: String,
-    /// ISO 8601 creation timestamp
-    pub created_at: Option<String>,
-    /// ISO 8601 last update timestamp
-    pub updated_at: Option<String>,
-    /// Arbitrary collection-level metadata
-    pub metadata: HashMap<String, serde_json::Value>,
-}
-
 /// Vector operation response metrics
 #[derive(Debug, Clone, Default)]
 pub struct VectorOperationMetrics {
@@ -491,10 +468,6 @@ pub struct CollectionResponse {
     pub success: bool,
     /// Type of operation that was performed
     pub operation: CollectionOperation,
-    /// Single collection result (for GET operation) - use service-level Collection
-    pub collection: Option<Collection>,
-    /// Multiple collections result (for LIST operation) - use service-level Collection
-    pub collections: Vec<Collection>,
     /// Number of affected items
     pub affected_count: i64,
     /// Total count for pagination
@@ -565,8 +538,6 @@ impl CollectionResponse {
         Self {
             success: true,
             operation,
-            collection: None,
-            collections: Vec::new(),
             affected_count: 0,
             total_count: None,
             metadata: HashMap::new(),
@@ -586,8 +557,6 @@ impl CollectionResponse {
         Self {
             success: false,
             operation,
-            collection: None,
-            collections: Vec::new(),
             affected_count: 0,
             total_count: None,
             metadata: HashMap::new(),
@@ -595,20 +564,6 @@ impl CollectionResponse {
             error_code,
             processing_time_us,
         }
-    }
-
-    /// Set the single collection result
-    pub fn with_collection(mut self, collection: Collection) -> Self {
-        self.collection = Some(collection);
-        self.affected_count = 1;
-        self
-    }
-
-    /// Set the multiple collections result
-    pub fn with_collections(mut self, collections: Vec<Collection>) -> Self {
-        self.affected_count = collections.len() as i64;
-        self.collections = collections;
-        self
     }
 }
 
@@ -925,7 +880,5 @@ impl OperationResponse {
 
 /// Backward-compatible alias for OptimizedSearchRecord
 pub type UnifiedSearchResult = OptimizedSearchRecord;
-/// Backward-compatible alias for Collection
-pub type UnifiedCollection = Collection;
 /// Backward-compatible alias for OptimizedSearchRecord
 pub type VectorSearchResult = OptimizedSearchRecord;

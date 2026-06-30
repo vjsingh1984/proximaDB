@@ -437,6 +437,102 @@ impl MetricsExporter for PrometheusExporter {
             metrics.compression.uncompressed_bytes
         )?;
 
+        // T2.2: Cache hit-rate metrics
+        writeln!(
+            output,
+            "# HELP proximadb_cache_hit_rate Overall cache hit rate (0-1)"
+        )?;
+        writeln!(output, "# TYPE proximadb_cache_hit_rate gauge")?;
+        writeln!(
+            output,
+            "proximadb_cache_hit_rate {}",
+            metrics.cache.hit_rate
+        )?;
+
+        writeln!(
+            output,
+            "# HELP proximadb_cache_evictions_per_second Cache evictions per second"
+        )?;
+        writeln!(output, "# TYPE proximadb_cache_evictions_per_second gauge")?;
+        writeln!(
+            output,
+            "proximadb_cache_evictions_per_second {}",
+            metrics.cache.evictions_per_second
+        )?;
+
+        writeln!(
+            output,
+            "# HELP proximadb_cache_memory_used_bytes Cache memory used in bytes"
+        )?;
+        writeln!(output, "# TYPE proximadb_cache_memory_used_bytes gauge")?;
+        writeln!(
+            output,
+            "proximadb_cache_memory_used_bytes {}",
+            metrics.cache.memory_used_bytes
+        )?;
+
+        writeln!(
+            output,
+            "# HELP proximadb_cache_entries_count Total cache entries"
+        )?;
+        writeln!(output, "# TYPE proximadb_cache_entries_count gauge")?;
+        writeln!(
+            output,
+            "proximadb_cache_entries_count {}",
+            metrics.cache.entries_count
+        )?;
+
+        // T1.1: Fusion metrics
+        writeln!(
+            output,
+            "# HELP proximadb_fusion_total Total number of fusion operations"
+        )?;
+        writeln!(output, "# TYPE proximadb_fusion_total counter")?;
+        writeln!(
+            output,
+            "proximadb_fusion_total {}",
+            metrics.fusion.total_fusions
+        )?;
+
+        writeln!(
+            output,
+            "# HELP proximadb_fusion_sources_fused_total Total sources fused across all operations"
+        )?;
+        writeln!(
+            output,
+            "# TYPE proximadb_fusion_sources_fused_total counter"
+        )?;
+        writeln!(
+            output,
+            "proximadb_fusion_sources_fused_total {}",
+            metrics.fusion.total_sources_fused
+        )?;
+
+        writeln!(
+            output,
+            "# HELP proximadb_fusion_sources_skipped_total Total sources skipped across all operations"
+        )?;
+        writeln!(
+            output,
+            "# TYPE proximadb_fusion_sources_skipped_total counter"
+        )?;
+        writeln!(
+            output,
+            "proximadb_fusion_sources_skipped_total {}",
+            metrics.fusion.total_sources_skipped
+        )?;
+
+        writeln!(
+            output,
+            "# HELP proximadb_fusion_latency_seconds_avg Average fusion latency in seconds"
+        )?;
+        writeln!(output, "# TYPE proximadb_fusion_latency_seconds_avg gauge")?;
+        writeln!(
+            output,
+            "proximadb_fusion_latency_seconds_avg {}",
+            metrics.fusion.avg_latency_seconds
+        )?;
+
         Ok(output)
     }
 

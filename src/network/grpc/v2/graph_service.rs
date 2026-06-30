@@ -38,7 +38,7 @@ use std::time::Instant;
 use tonic::{Request, Response, Status};
 use tracing::{debug, error};
 
-use crate::api_handlers::UnifiedHandlers;
+use crate::graph::model as mg;
 use crate::network::grpc::auth as grpc_auth;
 use crate::proto::proximadb_v1 as pv1;
 use crate::proto::proximadb_v2 as pv2;
@@ -48,17 +48,29 @@ use crate::proto::proximadb_v2::proxima_graph_service_server::{
 
 /// gRPC V2 native graph service.
 pub struct ProximaGraphServiceImpl {
-    /// The shared graph backing service — the only dependency the handlers use.
-    /// Held directly (rather than the whole `UnifiedHandlers`) so the service is
-    /// constructible in tests from a standalone `GraphOperationsService`.
+    /// The shared graph backing service — the primary dependency the handlers
+    /// use. Held directly so the service is constructible in tests from a
+    /// standalone `GraphOperationsService` (no ROOT `UnifiedHandlers`
+    /// dependency).
     graph: Arc<crate::graph::GraphOperationsService>,
+    /// Optional unified-query facade for declarative `ExecuteQuery` (the
+    /// supported Cypher subset). `None` outside production wiring (and in the
+    /// standalone-graph test constructor), in which case `ExecuteQuery` returns
+    /// `unimplemented`, mirroring the v1 adapter's behaviour when no adapter is
+    /// configured.
+    query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
 }
 
 impl ProximaGraphServiceImpl {
-    /// Create a new service over the shared unified handlers (production wiring).
-    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
+    /// Create a new service over the shared graph backing service + optional
+    /// unified-query facade.
+    pub fn new(
+        graph: Arc<crate::graph::GraphOperationsService>,
+        query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
+    ) -> Self {
         Self {
-            graph: request_handlers.graph_operations_service.clone(),
+            graph,
+            query_adapter,
         }
     }
 
@@ -86,11 +98,11 @@ impl ProximaGraphServiceImpl {
 // ============================================================================
 
 mod conv {
-    use super::{pv1, pv2};
+    use super::{mg, pv2};
 
     /// v2 property value -> internal property value.
-    pub(super) fn property_value_to_v1(p: pv2::GraphPropertyValue) -> pv1::PropertyValue {
-        use pv1::property_value::Value as V1;
+    pub(super) fn property_value_to_v1(p: pv2::GraphPropertyValue) -> mg::PropertyValue {
+        use mg::property_value::Value as V1;
         use pv2::graph_property_value::Value as V2;
         let value = p.value.map(|v| match v {
             V2::StringValue(s) => V1::StringValue(s),
@@ -98,10 +110,10 @@ mod conv {
             V2::DoubleValue(d) => V1::DoubleValue(d),
             V2::BoolValue(b) => V1::BoolValue(b),
             V2::BytesValue(b) => V1::BytesValue(b),
-            V2::ArrayValue(a) => V1::ArrayValue(pv1::PropertyArray {
+            V2::ArrayValue(a) => V1::ArrayValue(mg::PropertyArray {
                 values: a.values.into_iter().map(property_value_to_v1).collect(),
             }),
-            V2::MapValue(m) => V1::ObjectValue(pv1::PropertyObject {
+            V2::MapValue(m) => V1::ObjectValue(mg::PropertyObject {
                 fields: m
                     .fields
                     .into_iter()
@@ -109,15 +121,15 @@ mod conv {
                     .collect(),
             }),
         });
-        pv1::PropertyValue { value }
+        mg::PropertyValue { value }
     }
 
     /// Internal property value -> v2 property value.
     ///
     /// Vector-valued properties have no v2 representation (embeddings live on the
     /// dedicated `embedding` field) and map to an empty value.
-    pub(super) fn property_value_to_v2(p: pv1::PropertyValue) -> pv2::GraphPropertyValue {
-        use pv1::property_value::Value as V1;
+    pub(super) fn property_value_to_v2(p: mg::PropertyValue) -> pv2::GraphPropertyValue {
+        use mg::property_value::Value as V1;
         use pv2::graph_property_value::Value as V2;
         let value = p.value.and_then(|v| match v {
             V1::StringValue(s) => Some(V2::StringValue(s)),
@@ -140,8 +152,8 @@ mod conv {
         pv2::GraphPropertyValue { value }
     }
 
-    fn embedding_to_v1(e: pv2::GraphEmbedding) -> pv1::EmbeddingVersion {
-        pv1::EmbeddingVersion {
+    fn embedding_to_v1(e: pv2::GraphEmbedding) -> mg::EmbeddingVersion {
+        mg::EmbeddingVersion {
             model_id: e.model_id,
             model_version: e.model_version,
             vector: e.vector,
@@ -152,7 +164,7 @@ mod conv {
         }
     }
 
-    fn embedding_to_v2(e: pv1::EmbeddingVersion) -> pv2::GraphEmbedding {
+    fn embedding_to_v2(e: mg::EmbeddingVersion) -> pv2::GraphEmbedding {
         pv2::GraphEmbedding {
             vector: e.vector,
             dimension: e.dimension,
@@ -161,8 +173,8 @@ mod conv {
         }
     }
 
-    pub(super) fn node_to_v1(n: pv2::GraphNode) -> pv1::Node {
-        pv1::Node {
+    pub(super) fn node_to_v1(n: pv2::GraphNode) -> mg::Node {
+        mg::Node {
             id: n.id,
             labels: n.labels,
             properties: n
@@ -176,7 +188,7 @@ mod conv {
         }
     }
 
-    pub(super) fn node_to_v2(n: pv1::Node) -> pv2::GraphNode {
+    pub(super) fn node_to_v2(n: mg::Node) -> pv2::GraphNode {
         pv2::GraphNode {
             id: n.id,
             labels: n.labels,
@@ -191,8 +203,8 @@ mod conv {
         }
     }
 
-    pub(super) fn edge_to_v1(e: pv2::GraphEdge) -> pv1::Edge {
-        pv1::Edge {
+    pub(super) fn edge_to_v1(e: pv2::GraphEdge) -> mg::Edge {
+        mg::Edge {
             id: e.id,
             from_node_id: e.from_node_id,
             to_node_id: e.to_node_id,
@@ -208,7 +220,7 @@ mod conv {
         }
     }
 
-    pub(super) fn edge_to_v2(e: pv1::Edge) -> pv2::GraphEdge {
+    pub(super) fn edge_to_v2(e: mg::Edge) -> pv2::GraphEdge {
         pv2::GraphEdge {
             id: e.id,
             from_node_id: e.from_node_id,
@@ -227,15 +239,15 @@ mod conv {
 
     /// v2 property filter -> internal. Operator ordinals are aligned by design,
     /// so the enum is a direct numeric carry-over.
-    pub(super) fn filter_to_v1(f: pv2::GraphPropertyFilter) -> pv1::PropertyFilter {
-        pv1::PropertyFilter {
+    pub(super) fn filter_to_v1(f: pv2::GraphPropertyFilter) -> mg::PropertyFilter {
+        mg::PropertyFilter {
             key: f.key,
             operator: f.operator,
             value: f.value.map(property_value_to_v1),
         }
     }
 
-    pub(super) fn stats_to_v2(s: pv1::GraphStats) -> pv2::GraphStats {
+    pub(super) fn stats_to_v2(s: mg::GraphStats) -> pv2::GraphStats {
         pv2::GraphStats {
             total_nodes: s.total_nodes,
             total_edges: s.total_edges,
@@ -263,12 +275,39 @@ mod conv {
         }
     }
 
-    pub(super) fn traversal_stats_to_v2(s: pv1::TraversalStats) -> pv2::GraphTraversalStats {
+    pub(super) fn traversal_stats_to_v2(s: mg::TraversalStats) -> pv2::GraphTraversalStats {
         pv2::GraphTraversalStats {
             nodes_visited: s.nodes_visited,
             edges_traversed: s.edges_traversed,
             max_depth_reached: s.max_depth_reached,
             execution_time_microseconds: s.execution_time_microseconds,
+        }
+    }
+
+    /// v2 traversal request -> internal. Algorithm ordinals are aligned with the
+    /// internal enum by design. Shared by `TraverseGraph` and `StreamTraverse`.
+    pub(super) fn traversal_request_to_v1(
+        graph_id: String,
+        req: pv2::TraverseGraphRequest,
+    ) -> mg::TraversalRequest {
+        mg::TraversalRequest {
+            graph_id,
+            start_node_id: req.start_node_id,
+            max_depth: req.max_depth,
+            edge_types: req.edge_types,
+            node_labels: req.node_labels,
+            filters: req.filters.into_iter().map(filter_to_v1).collect(),
+            algorithm: req.algorithm,
+            limit: req.limit,
+            timeout_ms: req.timeout_ms,
+            max_frontier: req.max_frontier,
+        }
+    }
+
+    /// A v1 `GraphPath` (entity sequence) -> v2 `GraphPath` (node-id sequence).
+    pub(super) fn path_to_v2(p: mg::GraphPath) -> pv2::GraphPath {
+        pv2::GraphPath {
+            node_ids: p.node_ids,
         }
     }
 }
@@ -485,7 +524,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             req.labels
         );
         let offset = resolve_offset(req.offset, &req.continuation_token);
-        let query = pv1::NodeQuery {
+        let query = mg::NodeQuery {
             graph_id: graph_id.clone(),
             labels: req.labels,
             filters: req.filters.into_iter().map(conv::filter_to_v1).collect(),
@@ -517,7 +556,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         let req = request.into_inner();
         debug!("v2 gRPC QueryEdges graph={graph_id}");
         let offset = resolve_offset(req.offset, &req.continuation_token);
-        let query = pv1::EdgeQuery {
+        let query = mg::EdgeQuery {
             graph_id: graph_id.clone(),
             from_node_id: req.from_node_id,
             to_node_id: req.to_node_id,
@@ -572,19 +611,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             "v2 gRPC TraverseGraph graph={graph_id} start={}",
             req.start_node_id
         );
-        // Algorithm ordinals are aligned with the internal enum by design.
-        let internal = pv1::TraversalRequest {
-            graph_id: graph_id.clone(),
-            start_node_id: req.start_node_id,
-            max_depth: req.max_depth,
-            edge_types: req.edge_types,
-            node_labels: req.node_labels,
-            filters: req.filters.into_iter().map(conv::filter_to_v1).collect(),
-            algorithm: req.algorithm,
-            limit: req.limit,
-            timeout_ms: req.timeout_ms,
-            max_frontier: req.max_frontier,
-        };
+        let internal = conv::traversal_request_to_v1(graph_id.clone(), req);
         match self.graph.traverse(&graph_id, internal).await {
             Ok(resp) => {
                 let mut stats = resp.stats.map(conv::traversal_stats_to_v2);
@@ -596,13 +623,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
                 Ok(Response::new(pv2::TraverseGraphResponse {
                     nodes: resp.nodes.into_iter().map(conv::node_to_v2).collect(),
                     edges: resp.edges.into_iter().map(conv::edge_to_v2).collect(),
-                    paths: resp
-                        .paths
-                        .into_iter()
-                        .map(|p| pv2::GraphPath {
-                            node_ids: p.entities.into_iter().map(|e| e.id).collect(),
-                        })
-                        .collect(),
+                    paths: resp.paths.into_iter().map(conv::path_to_v2).collect(),
                     stats,
                 }))
             }
@@ -670,7 +691,280 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             Err(e) => Err(graph_status("get graph statistics", e)),
         }
     }
+
+    // ── Streaming traversal (TD-124) ───────────────────────────────────────
+
+    type StreamTraverseStream = StreamTraverseStream;
+
+    /// Server-streaming traversal. The backing engine materialises the
+    /// traversal eagerly (same call as `TraverseGraph`); we emit a single
+    /// terminal chunk. The streamed wire shape leaves room for incremental
+    /// frontiers without a contract break, mirroring the v1 adapter.
+    async fn stream_traverse(
+        &self,
+        request: Request<pv2::TraverseGraphRequest>,
+    ) -> Result<Response<Self::StreamTraverseStream>, Status> {
+        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let req = request.into_inner();
+        let start = Instant::now();
+        debug!(
+            "v2 gRPC StreamTraverse graph={graph_id} start={}",
+            req.start_node_id
+        );
+        let internal = conv::traversal_request_to_v1(graph_id.clone(), req);
+        let resp = self
+            .graph
+            .traverse(&graph_id, internal)
+            .await
+            .map_err(|e| graph_status("traverse graph", e))?;
+
+        let mut stats = resp.stats.map(conv::traversal_stats_to_v2);
+        if let Some(stats) = stats.as_mut()
+            && stats.execution_time_microseconds == 0
+        {
+            stats.execution_time_microseconds = start.elapsed().as_micros() as u64;
+        }
+        let chunk = pv2::GraphTraversalChunk {
+            nodes: resp.nodes.into_iter().map(conv::node_to_v2).collect(),
+            edges: resp.edges.into_iter().map(conv::edge_to_v2).collect(),
+            paths: resp.paths.into_iter().map(conv::path_to_v2).collect(),
+            stats,
+            done: true,
+        };
+
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        tokio::spawn(async move {
+            let _ = tx.send(Ok(chunk)).await;
+        });
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        Ok(Response::new(Box::pin(stream)))
+    }
+
+    // ── Analytics (TD-124) ──────────────────────────────────────────────────
+
+    async fn get_connected_components(
+        &self,
+        request: Request<pv2::GraphConnectedComponentsRequest>,
+    ) -> Result<Response<pv2::GraphConnectedComponentsResponse>, Status> {
+        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        debug!("v2 gRPC GetConnectedComponents graph={graph_id}");
+        match self.graph.connected_components(&graph_id).await {
+            Ok(comps) => Ok(Response::new(pv2::GraphConnectedComponentsResponse {
+                components: comps
+                    .into_iter()
+                    .map(|node_ids| pv2::GraphComponent { node_ids })
+                    .collect(),
+            })),
+            Err(e) => Err(graph_status("get connected components", e)),
+        }
+    }
+
+    async fn has_cycle(
+        &self,
+        request: Request<pv2::GraphHasCycleRequest>,
+    ) -> Result<Response<pv2::GraphHasCycleResponse>, Status> {
+        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        debug!("v2 gRPC HasCycle graph={graph_id}");
+        match self.graph.has_cycle(&graph_id).await {
+            Ok(has_cycle) => Ok(Response::new(pv2::GraphHasCycleResponse { has_cycle })),
+            Err(e) => Err(graph_status("check for cycles", e)),
+        }
+    }
+
+    // ── Unique-constraint DDL (TD-124) ──────────────────────────────────────
+
+    async fn add_unique_constraint(
+        &self,
+        request: Request<pv2::GraphUniqueConstraintRequest>,
+    ) -> Result<Response<pv2::GraphUniqueConstraintResponse>, Status> {
+        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let req = request.into_inner();
+        debug!(
+            "v2 gRPC AddUniqueConstraint graph={graph_id} label={} property={}",
+            req.label, req.property
+        );
+        // Constraint operations report success/failure in-band (matching the v1
+        // adapter) rather than as a gRPC error, so clients can branch on it.
+        match self
+            .graph
+            .add_unique_constraint(&graph_id, &req.label, &req.property)
+            .await
+        {
+            Ok(()) => Ok(Response::new(pv2::GraphUniqueConstraintResponse {
+                success: true,
+                error_message: None,
+            })),
+            Err(e) => Ok(Response::new(pv2::GraphUniqueConstraintResponse {
+                success: false,
+                error_message: Some(e.to_string()),
+            })),
+        }
+    }
+
+    async fn remove_unique_constraint(
+        &self,
+        request: Request<pv2::GraphUniqueConstraintRequest>,
+    ) -> Result<Response<pv2::GraphUniqueConstraintResponse>, Status> {
+        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let req = request.into_inner();
+        debug!(
+            "v2 gRPC RemoveUniqueConstraint graph={graph_id} label={} property={}",
+            req.label, req.property
+        );
+        match self
+            .graph
+            .remove_unique_constraint(&graph_id, &req.label, &req.property)
+            .await
+        {
+            Ok(_) => Ok(Response::new(pv2::GraphUniqueConstraintResponse {
+                success: true,
+                error_message: None,
+            })),
+            Err(e) => Ok(Response::new(pv2::GraphUniqueConstraintResponse {
+                success: false,
+                error_message: Some(e.to_string()),
+            })),
+        }
+    }
+
+    // ── Batch create (TD-124) ───────────────────────────────────────────────
+
+    async fn batch_create_nodes(
+        &self,
+        request: Request<pv2::BatchCreateGraphNodesRequest>,
+    ) -> Result<Response<pv2::BatchCreateGraphNodesResponse>, Status> {
+        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let req = request.into_inner();
+        debug!(
+            "v2 gRPC BatchCreateNodes graph={graph_id} count={}",
+            req.nodes.len()
+        );
+        let nodes = req.nodes.into_iter().map(conv::node_to_v1).collect();
+        match self.graph.batch_create_nodes(&graph_id, nodes).await {
+            Ok(created) => {
+                let nodes: Vec<pv2::GraphNode> = created
+                    .into_iter()
+                    .map(|n| conv::node_to_v2((*n).clone()))
+                    .collect();
+                Ok(Response::new(pv2::BatchCreateGraphNodesResponse {
+                    success: true,
+                    created_count: nodes.len() as u32,
+                    nodes,
+                    error_message: None,
+                }))
+            }
+            Err(e) => Err(graph_status("batch create nodes", e)),
+        }
+    }
+
+    async fn batch_create_edges(
+        &self,
+        request: Request<pv2::BatchCreateGraphEdgesRequest>,
+    ) -> Result<Response<pv2::BatchCreateGraphEdgesResponse>, Status> {
+        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let req = request.into_inner();
+        debug!(
+            "v2 gRPC BatchCreateEdges graph={graph_id} count={}",
+            req.edges.len()
+        );
+        let edges = req.edges.into_iter().map(conv::edge_to_v1).collect();
+        match self.graph.batch_create_edges(&graph_id, edges).await {
+            Ok(created) => {
+                let edges: Vec<pv2::GraphEdge> = created
+                    .into_iter()
+                    .map(|e| conv::edge_to_v2((*e).clone()))
+                    .collect();
+                Ok(Response::new(pv2::BatchCreateGraphEdgesResponse {
+                    success: true,
+                    created_count: edges.len() as u32,
+                    edges,
+                    error_message: None,
+                }))
+            }
+            Err(e) => Err(graph_status("batch create edges", e)),
+        }
+    }
+
+    // ── Declarative query — Cypher subset (TD-124) ──────────────────────────
+
+    /// Execute a declarative graph query (the supported openCypher subset).
+    ///
+    /// Routes through the shared unified-query facade (the same backing the v1
+    /// adapter uses when a `query_adapter` is configured). When no adapter is
+    /// wired (e.g. a standalone-graph test build), returns `unimplemented`,
+    /// mirroring the v1 legacy path. GREMLIN is not backed and is rejected.
+    async fn execute_query(
+        &self,
+        request: Request<pv2::ExecuteGraphQueryRequest>,
+    ) -> Result<Response<pv2::ExecuteGraphQueryResponse>, Status> {
+        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let req = request.into_inner();
+        debug!(
+            "v2 gRPC ExecuteQuery graph={graph_id} language={}",
+            req.language
+        );
+
+        // Only the openCypher subset (and the UNSPECIFIED default, treated as
+        // Cypher) is backed; GREMLIN is reserved on the contract but unbacked.
+        if req.language == pv2::GraphQueryLanguage::Gremlin as i32 {
+            return Err(Status::unimplemented(
+                "GRAPH_QUERY_LANGUAGE_GREMLIN is not supported; use Cypher",
+            ));
+        }
+
+        let adapter = self.query_adapter.as_ref().ok_or_else(|| {
+            Status::unimplemented(
+                "Declarative graph query execution is not available on this build. \
+                 Use QueryNodes/QueryEdges for property queries or TraverseGraph for traversal.",
+            )
+        })?;
+
+        let graph_name = if graph_id.is_empty() {
+            None
+        } else {
+            Some(graph_id.as_str())
+        };
+
+        match adapter.graph_query(&req.query, graph_name).await {
+            Ok(result) => {
+                // The graph-subset engine returns node-shaped items as JSON
+                // values; surface each as a single `data` string column. Richer
+                // value typing is reserved on the v2 contract for a future
+                // engine expansion (see proto comment on ExecuteGraphQueryRow).
+                let items: Vec<serde_json::Value> = match result.data {
+                    crate::query::facade::QueryResultData::Graph(g) => g.nodes,
+                    crate::query::facade::QueryResultData::Rows(rows) => rows,
+                    _ => Vec::new(),
+                };
+                let rows = items
+                    .into_iter()
+                    .map(|item| {
+                        let mut columns = std::collections::HashMap::new();
+                        columns.insert(
+                            "data".to_string(),
+                            pv2::GraphPropertyValue {
+                                value: Some(pv2::graph_property_value::Value::StringValue(
+                                    item.to_string(),
+                                )),
+                            },
+                        );
+                        pv2::ExecuteGraphQueryRow { columns }
+                    })
+                    .collect();
+                Ok(Response::new(pv2::ExecuteGraphQueryResponse {
+                    rows,
+                    error_message: None,
+                }))
+            }
+            Err(e) => Err(graph_status("execute graph query", e)),
+        }
+    }
 }
+
+/// Server-streaming response type for [`ProximaGraphService::stream_traverse`].
+type StreamTraverseStream = std::pin::Pin<
+    Box<dyn tokio_stream::Stream<Item = Result<pv2::GraphTraversalChunk, Status>> + Send + 'static>,
+>;
 
 #[cfg(test)]
 mod tests {
@@ -706,7 +1000,10 @@ mod tests {
                 access_control: None,
             })
             .await?;
-        Ok(ProximaGraphServiceImpl { graph })
+        Ok(ProximaGraphServiceImpl {
+            graph,
+            query_adapter: None,
+        })
     }
 
     /// Pure check of the v2<->internal property-value mapping, including the
@@ -901,6 +1198,153 @@ mod tests {
         Ok(())
     }
 
+    /// TD-124 analytic/batch/constraint/streaming RPCs over a small graph,
+    /// exercising the new v2 handlers end to end against the backing service.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn td124_batch_analytics_constraint_stream() -> anyhow::Result<()> {
+        use tokio_stream::StreamExt;
+
+        let gid = "v2_graph_td124";
+        let svc = service_with_graph(gid).await?;
+
+        // Batch-create two nodes.
+        let batch_nodes = svc
+            .batch_create_nodes(Request::new(pv2::BatchCreateGraphNodesRequest {
+                graph_id: gid.to_string(),
+                nodes: vec![
+                    pv2::GraphNode {
+                        id: "alice".to_string(),
+                        labels: vec!["Person".to_string()],
+                        properties: HashMap::new(),
+                        embedding: None,
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
+                    },
+                    pv2::GraphNode {
+                        id: "bob".to_string(),
+                        labels: vec!["Person".to_string()],
+                        properties: HashMap::new(),
+                        embedding: None,
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
+                    },
+                ],
+            }))
+            .await?
+            .into_inner();
+        assert!(batch_nodes.success);
+        assert_eq!(batch_nodes.created_count, 2);
+
+        // Batch-create one edge.
+        let batch_edges = svc
+            .batch_create_edges(Request::new(pv2::BatchCreateGraphEdgesRequest {
+                graph_id: gid.to_string(),
+                edges: vec![pv2::GraphEdge {
+                    id: "e1".to_string(),
+                    from_node_id: "alice".to_string(),
+                    to_node_id: "bob".to_string(),
+                    edge_type: "KNOWS".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                }],
+            }))
+            .await?
+            .into_inner();
+        assert!(batch_edges.success);
+        assert_eq!(batch_edges.created_count, 1);
+
+        // Connected components / cycle analysis run against the backing engine.
+        let comps = svc
+            .get_connected_components(Request::new(pv2::GraphConnectedComponentsRequest {
+                graph_id: gid.to_string(),
+            }))
+            .await?
+            .into_inner();
+        let total: usize = comps.components.iter().map(|c| c.node_ids.len()).sum();
+        assert_eq!(total, 2, "both nodes should appear across components");
+
+        let cycle = svc
+            .has_cycle(Request::new(pv2::GraphHasCycleRequest {
+                graph_id: gid.to_string(),
+            }))
+            .await?
+            .into_inner();
+        assert!(!cycle.has_cycle, "a single KNOWS edge is acyclic");
+
+        // Unique-constraint DDL reports success in-band.
+        let added = svc
+            .add_unique_constraint(Request::new(pv2::GraphUniqueConstraintRequest {
+                graph_id: gid.to_string(),
+                label: "Person".to_string(),
+                property: "email".to_string(),
+            }))
+            .await?
+            .into_inner();
+        assert!(
+            added.success,
+            "add_unique_constraint: {:?}",
+            added.error_message
+        );
+
+        let removed = svc
+            .remove_unique_constraint(Request::new(pv2::GraphUniqueConstraintRequest {
+                graph_id: gid.to_string(),
+                label: "Person".to_string(),
+                property: "email".to_string(),
+            }))
+            .await?
+            .into_inner();
+        assert!(removed.success);
+
+        // Server-streaming traversal yields a terminal chunk reaching bob.
+        let mut stream = svc
+            .stream_traverse(Request::new(pv2::TraverseGraphRequest {
+                graph_id: gid.to_string(),
+                start_node_id: "alice".to_string(),
+                max_depth: 2,
+                edge_types: vec![],
+                node_labels: vec![],
+                filters: vec![],
+                algorithm: pv2::GraphTraversalAlgorithm::Bfs as i32,
+                limit: None,
+                timeout_ms: None,
+                max_frontier: None,
+            }))
+            .await?
+            .into_inner();
+        let mut saw_bob = false;
+        let mut saw_done = false;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            if chunk.nodes.iter().any(|n| n.id == "bob") {
+                saw_bob = true;
+            }
+            if chunk.done {
+                saw_done = true;
+            }
+        }
+        assert!(saw_bob, "stream traversal from alice should reach bob");
+        assert!(saw_done, "stream should emit a terminal chunk");
+
+        // ExecuteQuery has no query_adapter in the standalone-graph test build,
+        // so it returns unimplemented (mirroring the v1 legacy path).
+        let exec = svc
+            .execute_query(Request::new(pv2::ExecuteGraphQueryRequest {
+                graph_id: gid.to_string(),
+                language: pv2::GraphQueryLanguage::Cypher as i32,
+                query: "MATCH (n:Person) RETURN n".to_string(),
+                timeout_ms: None,
+            }))
+            .await;
+        assert_eq!(
+            exec.err().map(|s| s.code()),
+            Some(tonic::Code::Unimplemented)
+        );
+        Ok(())
+    }
+
     /// Structural tenant isolation: the same logical `graph_id` under two
     /// different tenants resolves to distinct backing graphs, so a node written
     /// under tenant A is invisible to tenant B.
@@ -921,7 +1365,10 @@ mod tests {
                 })
                 .await?;
         }
-        let svc = ProximaGraphServiceImpl { graph };
+        let svc = ProximaGraphServiceImpl {
+            graph,
+            query_adapter: None,
+        };
 
         let mut create = Request::new(pv2::CreateGraphNodeRequest {
             graph_id: "shared".to_string(),

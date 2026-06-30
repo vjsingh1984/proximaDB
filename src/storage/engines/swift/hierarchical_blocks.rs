@@ -836,8 +836,8 @@ mod tests {
     fn test_ordered_value_number_ordering() {
         assert!(OrderedValue::Number(OrderedFloat(1.0)) < OrderedValue::Number(OrderedFloat(2.0)));
         assert_eq!(
-            OrderedValue::Number(OrderedFloat(3.14)),
-            OrderedValue::Number(OrderedFloat(3.14))
+            OrderedValue::Number(OrderedFloat(3.5)),
+            OrderedValue::Number(OrderedFloat(3.5))
         );
     }
 

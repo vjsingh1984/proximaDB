@@ -123,6 +123,19 @@ impl RecordScanOptions {
     }
 
     pub fn matches_record(&self, record: &ProximaRecord) -> bool {
+        // Dead-record filter (defense-in-depth, applies to EVERY scan using
+        // RecordScanOptions): a tombstone (valid_to_ns == Some(0)) or
+        // TTL-expired (valid_to_ns in the past) record must never surface.
+        // Uses the canonical ProximaRecord::is_visible_at on valid_to_ns
+        // (ns) — never the unit-muddled expires_at.
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+        if !record.is_visible_at(now_ns) {
+            return false;
+        }
+
         if let Some(label) = &self.required_label
             && !record.labels.contains(label)
         {
@@ -155,6 +168,26 @@ pub trait RecordStore: Send + Sync {
 
     async fn get_record(&self, key: &RecordKey) -> RecordStoreResult<Option<ProximaRecord>>;
 
+    /// Batch point-lookup: fetch many records by key in one logical operation,
+    /// returning one slot per input key, in order (`None` = absent).
+    ///
+    /// The default loops [`Self::get_record`] (correct, no I/O saving). Stores
+    /// backed by object storage SHOULD override to issue the independent gets
+    /// **concurrently**, so K point-lookups cost ~one round-trip of latency
+    /// instead of K serial RTTs — the depth-collapse for result/frontier
+    /// materialization (ADR-034 P1: latency = depth × RTT). Note this collapses
+    /// *latency/depth*, not the op count (distinct objects ⇒ still K GETs).
+    async fn get_records(
+        &self,
+        keys: &[RecordKey],
+    ) -> RecordStoreResult<Vec<Option<ProximaRecord>>> {
+        let mut out = Vec::with_capacity(keys.len());
+        for key in keys {
+            out.push(self.get_record(key).await?);
+        }
+        Ok(out)
+    }
+
     async fn delete_record(&self, key: &RecordKey) -> RecordStoreResult<bool>;
 
     async fn upsert_records(
@@ -172,6 +205,16 @@ pub trait RecordStore: Send + Sync {
             records_written: record_oids.len(),
             record_oids,
         })
+    }
+
+    /// Flush any in-memory write buffer to durable storage. The default is a no-op:
+    /// durable-on-write stores (one object PUT per record) have nothing to flush.
+    /// A **buffered** store (e.g. a segment store that batches records into one
+    /// object) MUST override this so callers can force its buffer durable at a
+    /// checkpoint / graceful-shutdown boundary — otherwise an unflushed buffer is
+    /// lost on crash. Called from the graph checkpoint/shutdown path (`flush_wal`).
+    async fn flush(&self) -> RecordStoreResult<()> {
+        Ok(())
     }
 }
 
@@ -278,6 +321,41 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::RwLock;
+
+    #[test]
+    fn matches_record_excludes_tombstone_and_expired() {
+        // A live record passes the unbounded scan filter.
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as i64;
+        let live = ProximaRecord {
+            oid: "alive".into(),
+            ..ProximaRecord::default()
+        };
+        assert!(
+            RecordScanOptions::unbounded().matches_record(&live),
+            "live record matches"
+        );
+
+        // A delete tombstone (valid_to_ns == 0) is excluded.
+        let tombstone = ProximaRecord::tombstone("dead", now_ns);
+        assert!(
+            !RecordScanOptions::unbounded().matches_record(&tombstone),
+            "tombstone excluded from scan"
+        );
+
+        // A TTL-expired record (valid_to_ns in the past) is excluded.
+        let expired = ProximaRecord {
+            oid: "stale".into(),
+            valid_to_ns: Some(now_ns - 1_000_000_000),
+            ..ProximaRecord::default()
+        };
+        assert!(
+            !RecordScanOptions::unbounded().matches_record(&expired),
+            "TTL-expired record excluded from scan"
+        );
+    }
 
     #[derive(Default)]
     struct MemoryRecordStore {

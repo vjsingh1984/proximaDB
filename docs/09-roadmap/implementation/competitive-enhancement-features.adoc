@@ -1438,11 +1438,35 @@ cargo bench --bench streaming_search_bench
 cargo bench
 ----
 
+== Code-Graph Vertical (correlated OLTP + graph + vector) — roadmap
+
+A first-class _code intelligence_ workload: host an external coding agent's Code Property Graph as a
+correlated substrate where one `ProximaRecord`/`oid` per symbol is simultaneously a relational row, an
+ORION graph node, and an HNSW vector. Embedded (local single-repo) and multi-tenant service (anvaiops)
+shapes. Full design: link:../../12-design/CODE_GRAPH_CORRELATED_SUBSTRATE_2026_06_22.adoc[CODE_GRAPH_CORRELATED_SUBSTRATE_2026_06_22].
+
+Trace-driven from a measured 1.26M-node CPG → a three-tier split (Tier-A semantic graph in-RAM,
+Tier-B intra-procedural CPG in columnar PAX, Tier-C relational over Volcano-OLTP). Enabling work:
+
+[cols="1,4,1", options="header"]
+|===
+| TD | Item | Priority
+| TD-127 | OLTP secondary indexes (name/file) on native tables | HIGH
+| TD-128 | Volcano IN-list/range pushdown → multi-key point-batch | HIGH
+| TD-129 | pgwire `ON CONFLICT DO UPDATE` upsert | MED
+| TD-130 | Graph edge bulk-load (sorted LSM merge) | MED
+| TD-131 | Graph on REST v2 + co-planned hybrid endpoint | MED
+| TD-132 | Tier-B CPG-fragment PAX storage contract + I/O trace | MED
+| TD-133 | Optional transactional multi-modal write | LOW
+| TD-134 | Code-embedding KEU meter + per-repo RBAC | MED
+|===
+
 == Related Documentation
 
 * link:../../_internal/roadmap/completed/077-distributed-operations.adoc[Distributed Operations]
 * link:../../_internal/archive/architecture/storage_architecture.adoc[Storage Architecture]
 * link:../../_internal/roadmap/implementation/active/Q4_2025_IMPLEMENTATION.adoc[Q4 2025 Implementation Guide]
+* link:../../12-design/CODE_GRAPH_CORRELATED_SUBSTRATE_2026_06_22.adoc[Code-Graph Correlated Substrate (OLTP + Graph + Vector)]
 
 ---
 

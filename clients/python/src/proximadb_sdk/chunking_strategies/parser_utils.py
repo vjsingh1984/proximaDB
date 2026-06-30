@@ -1,32 +1,28 @@
 """
-Parser utilities and enhancements for code chunking.
+Parser utilities for code chunking.
 
-This module provides:
-- Parser family base classes to reduce duplication
-- Parser instance caching with LRU eviction
-- Robust error handling with fallback strategies
-- Plugin architecture for external parsers
-- Configuration validation
-- Performance metrics and monitoring
+This module provides the pieces that the live chunking path actually uses:
+- Parser error hierarchy (`ParserError`, `ParseError`).
+- A base class for language parsers (`BaseLanguageParser`), used by the
+  document parsers as a tree-sitter-with-regex-fallback skeleton.
+- Lightweight parse metrics (`ParserMetrics`, `MetricsCollector`) consumed by
+  the pipeline executor.
+- Configuration validation (`ValidationResult`, `ConfigValidator`).
 
-Design Patterns Used:
-- Template Method: Parser family base classes define parsing skeleton
-- Singleton: Parser cache ensures single instance per language
-- Strategy: Fallback strategies for error handling
-- Factory: Plugin registry creates parser instances
-- Decorator: Performance monitoring and error handling
+NOTE (2026-06): A second, parallel parser stack used to live here
+(`CFamilyParser`/`ParserCache`/`ParserPlugin`/family base classes/decorators).
+None of it was referenced by the live code-chunking path (`code.py`,
+`factory.py`, `CodeChunkingStrategy`) -- `code.py` carries its own concrete
+per-language parsers and lazy cache -- so the dead stack was removed.
 """
 
 import hashlib
 import logging
-import re
 import threading
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from contextlib import contextmanager
 from dataclasses import dataclass, field
-from enum import Enum, auto
 from functools import wraps
 from typing import (
     Any,
@@ -50,12 +46,6 @@ class ParserError(Exception):
         super().__init__(message)
 
 
-class ParserInitializationError(ParserError):
-    """Raised when parser fails to initialize"""
-
-    pass
-
-
 class ParseError(ParserError):
     """Raised when parsing fails"""
 
@@ -63,38 +53,6 @@ class ParseError(ParserError):
         self.line = line
         self.column = column
         super().__init__(message, **kwargs)
-
-
-class UnsupportedLanguageError(ParserError):
-    """Raised when language is not supported"""
-
-    pass
-
-
-# =============================================================================
-# Fallback Strategy Pattern
-# =============================================================================
-
-
-class FallbackStrategy(Enum):
-    """Strategies for handling parser failures"""
-
-    NONE = auto()  # No fallback, raise exception
-    REGEX = auto()  # Use regex-based parsing
-    SEMANTIC = auto()  # Fall back to semantic text chunking
-    EMPTY = auto()  # Return empty result
-    PARTIAL = auto()  # Return partial results on error
-
-
-@dataclass
-class FallbackConfig:
-    """Configuration for fallback behavior"""
-
-    strategy: FallbackStrategy = FallbackStrategy.REGEX
-    max_retries: int = 1
-    retry_delay_ms: int = 100
-    log_errors: bool = True
-    collect_metrics: bool = True
 
 
 # =============================================================================
@@ -194,82 +152,7 @@ def get_metrics_collector() -> MetricsCollector:
 
 
 # =============================================================================
-# Parser Caching
-# =============================================================================
-
-
-class ParserCache:
-    """
-    Thread-safe LRU cache for parser instances.
-
-    Ensures single parser instance per language to avoid
-    repeated initialization overhead.
-    """
-
-    _instance = None
-    _lock = threading.Lock()
-
-    def __new__(cls, max_size: int = 32):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._cache: dict[str, Any] = {}
-                    cls._instance._access_order: list[str] = []
-                    cls._instance._max_size = max_size
-                    cls._instance._cache_lock = threading.RLock()
-        return cls._instance
-
-    def get(self, language: str) -> Any | None:
-        """Get cached parser instance"""
-        with self._cache_lock:
-            if language in self._cache:
-                # Update access order (LRU)
-                self._access_order.remove(language)
-                self._access_order.append(language)
-                return self._cache[language]
-            return None
-
-    def put(self, language: str, parser: Any):
-        """Cache parser instance"""
-        with self._cache_lock:
-            # Remove from access order if already present
-            if language in self._cache:
-                if language in self._access_order:
-                    self._access_order.remove(language)
-            elif len(self._cache) >= self._max_size:
-                # Evict least recently used
-                if self._access_order:
-                    lru_key = self._access_order.pop(0)
-                    if lru_key in self._cache:
-                        del self._cache[lru_key]
-                    logger.debug(f"Evicted parser from cache: {lru_key}")
-
-            self._cache[language] = parser
-            self._access_order.append(language)
-
-    def clear(self):
-        """Clear the cache"""
-        with self._cache_lock:
-            self._cache.clear()
-            self._access_order.clear()
-
-    def size(self) -> int:
-        """Get current cache size"""
-        return len(self._cache)
-
-    def contains(self, language: str) -> bool:
-        """Check if parser is cached"""
-        return language in self._cache
-
-
-def get_parser_cache() -> ParserCache:
-    """Get the singleton parser cache"""
-    return ParserCache()
-
-
-# =============================================================================
-# Decorators for Error Handling and Metrics
+# Decorators for Metrics
 # =============================================================================
 
 
@@ -307,96 +190,24 @@ def with_metrics(func: Callable) -> Callable:
     return wrapper
 
 
-def with_fallback(fallback_config: FallbackConfig = None) -> Callable:
-    """Decorator to add fallback behavior on parse errors"""
-    config = fallback_config or FallbackConfig()
-
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        def wrapper(self, content: str, file_path: str, *args, **kwargs):
-            last_error = None
-
-            for attempt in range(config.max_retries + 1):
-                try:
-                    return func(self, content, file_path, *args, **kwargs)
-                except Exception as e:
-                    last_error = e
-                    if config.log_errors:
-                        logger.warning(
-                            f"Parse attempt {attempt + 1} failed for {file_path}: {e}"
-                        )
-
-                    if attempt < config.max_retries:
-                        time.sleep(config.retry_delay_ms / 1000)
-
-            # All retries exhausted, apply fallback strategy
-            if config.strategy == FallbackStrategy.NONE:
-                raise last_error
-
-            elif config.strategy == FallbackStrategy.REGEX:
-                return self._fallback_regex_parse(content, file_path)
-
-            elif config.strategy == FallbackStrategy.SEMANTIC:
-                return self._fallback_semantic_parse(content, file_path)
-
-            elif config.strategy == FallbackStrategy.EMPTY:
-                return self._create_empty_result(file_path)
-
-            elif config.strategy == FallbackStrategy.PARTIAL:
-                # Try to return whatever was parsed before error
-                if hasattr(self, "_partial_result"):
-                    return self._partial_result
-                return self._create_empty_result(file_path)
-
-            raise last_error
-
-        return wrapper
-
-    return decorator
-
-
-def cached_parser(func: Callable) -> Callable:
-    """Decorator to use cached parser instances"""
-
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        cache = get_parser_cache()
-        language = getattr(self, "language", "unknown")
-
-        cached = cache.get(language)
-        if cached is not None:
-            # Use cached parser instance
-            self._parser = cached._parser
-            self._language = cached._language
-            return func(self, *args, **kwargs)
-
-        result = func(self, *args, **kwargs)
-        cache.put(language, self)
-        return result
-
-    return wrapper
-
-
 # =============================================================================
-# Parser Family Base Classes
+# Parser Base Class
 # =============================================================================
 
 
 class BaseLanguageParser(ABC):
     """
-    Enhanced base class for language parsers with common functionality.
+    Base class for language parsers with common functionality.
 
     Provides:
     - Tree-sitter initialization with fallback
-    - Common regex patterns
-    - Metrics collection
-    - Error handling
+    - Metrics-friendly attributes
+    - Error handling helpers
     """
 
     def __init__(self):
         self._parser = None
         self._language_binding = None
-        self._fallback_config = FallbackConfig()
         self._init_tree_sitter()
 
     @property
@@ -424,7 +235,7 @@ class BaseLanguageParser(ABC):
             self._parser = get_parser(self.tree_sitter_language_name)
             self._language_binding = get_language(self.tree_sitter_language_name)
             logger.debug(f"Tree-sitter initialized for {self.language}")
-        except ImportError:
+        except (ImportError, OSError):
             logger.info(
                 f"Tree-sitter not available for {self.language}, using regex fallback"
             )
@@ -480,399 +291,6 @@ class BaseLanguageParser(ABC):
     def _compute_content_hash(self, content: str) -> str:
         """Compute hash of content for change detection"""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-
-class CFamilyParser(BaseLanguageParser):
-    """
-    Base parser for C-family languages (C, C++, C#, Java, JavaScript, TypeScript).
-
-    Provides common patterns for:
-    - Braced block detection
-    - Function/method parsing
-    - Class/struct/interface parsing
-    - Preprocessor handling (C/C++)
-    """
-
-    # Common regex patterns for C-family languages
-    BLOCK_START = re.compile(r"\{")
-    BLOCK_END = re.compile(r"\}")
-
-    FUNCTION_PATTERN = re.compile(
-        r"(?:(?:public|private|protected|static|async|virtual|override|abstract)\s+)*"
-        r"(?:[\w<>\[\],\s]+)\s+"  # Return type
-        r"(\w+)\s*"  # Function name
-        r"\([^)]*\)\s*"  # Parameters
-        r"(?:throws\s+[\w,\s]+)?\s*"  # Throws clause (Java)
-        r"\{",
-        re.MULTILINE,
-    )
-
-    CLASS_PATTERN = re.compile(
-        r"(?:(?:public|private|protected|abstract|final|static)\s+)*"
-        r"(?:class|struct|interface|enum)\s+"
-        r"(\w+)",
-        re.MULTILINE,
-    )
-
-    def _find_matching_brace(self, content: str, start: int) -> int:
-        """Find the matching closing brace for an opening brace"""
-        depth = 1
-        i = start + 1
-        in_string = False
-        string_char = None
-
-        while i < len(content) and depth > 0:
-            char = content[i]
-
-            # Handle strings
-            if char in "\"'`" and (i == 0 or content[i - 1] != "\\"):
-                if not in_string:
-                    in_string = True
-                    string_char = char
-                elif char == string_char:
-                    in_string = False
-
-            if not in_string:
-                if char == "{":
-                    depth += 1
-                elif char == "}":
-                    depth -= 1
-
-            i += 1
-
-        return i if depth == 0 else -1
-
-    def _extract_block(self, content: str, start: int) -> tuple[str, int]:
-        """Extract a braced block starting at given position"""
-        brace_pos = content.find("{", start)
-        if brace_pos == -1:
-            return "", -1
-
-        end = self._find_matching_brace(content, brace_pos)
-        if end == -1:
-            return "", -1
-
-        return content[brace_pos:end], end
-
-
-class JVMFamilyParser(CFamilyParser):
-    """
-    Base parser for JVM languages (Java, Kotlin, Scala, Groovy).
-
-    Extends C-family with:
-    - Package declarations
-    - Import statements
-    - Annotations
-    - Generics handling
-    """
-
-    PACKAGE_PATTERN = re.compile(r"package\s+([\w.]+)\s*;?")
-    IMPORT_PATTERN = re.compile(r"import\s+(?:static\s+)?([\w.*]+)\s*;?")
-    ANNOTATION_PATTERN = re.compile(r"@(\w+)(?:\([^)]*\))?")
-
-    def _extract_package(self, content: str) -> str | None:
-        """Extract package declaration"""
-        match = self.PACKAGE_PATTERN.search(content)
-        return match.group(1) if match else None
-
-    def _extract_imports(self, content: str) -> list[str]:
-        """Extract import statements"""
-        return [m.group(1) for m in self.IMPORT_PATTERN.finditer(content)]
-
-    def _extract_annotations(self, content: str, pos: int) -> list[str]:
-        """Extract annotations before a symbol"""
-        # Look backwards from pos for annotations
-        annotations = []
-        lines = content[:pos].split("\n")
-        for line in reversed(lines[-5:]):  # Check last 5 lines
-            line = line.strip()
-            if line.startswith("@"):
-                match = self.ANNOTATION_PATTERN.match(line)
-                if match:
-                    annotations.append(match.group(1))
-            elif line and not line.startswith("//") and not line.startswith("/*"):
-                break
-        return list(reversed(annotations))
-
-
-class DynamicLanguageParser(BaseLanguageParser):
-    """
-    Base parser for dynamic languages (Python, Ruby, JavaScript, PHP).
-
-    Provides patterns for:
-    - Indentation-based blocks (Python, Ruby)
-    - Dynamic method definition
-    - Module/mixin handling
-    """
-
-    # Python-style patterns
-    PYTHON_FUNCTION_PATTERN = re.compile(
-        r"^(\s*)(?:async\s+)?def\s+(\w+)\s*\([^)]*\)\s*(?:->.*?)?:", re.MULTILINE
-    )
-    PYTHON_CLASS_PATTERN = re.compile(
-        r"^(\s*)class\s+(\w+)(?:\([^)]*\))?\s*:", re.MULTILINE
-    )
-
-    # Ruby-style patterns
-    RUBY_METHOD_PATTERN = re.compile(
-        r"^(\s*)def\s+(?:self\.)?(\w+[?!=]?)", re.MULTILINE
-    )
-    RUBY_CLASS_PATTERN = re.compile(r"^(\s*)class\s+(\w+)(?:\s*<\s*\w+)?", re.MULTILINE)
-
-    def _find_indentation_block_end(
-        self, content: str, start: int, base_indent: int
-    ) -> int:
-        """Find end of indentation-based block"""
-        lines = content[start:].split("\n")
-        end_offset = 0
-
-        for i, line in enumerate(lines[1:], 1):
-            # Skip empty lines and comments
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                end_offset += len(line) + 1
-                continue
-
-            # Check indentation
-            current_indent = len(line) - len(line.lstrip())
-            if current_indent <= base_indent and stripped:
-                break
-
-            end_offset += len(line) + 1
-
-        return start + end_offset
-
-
-class FunctionalLanguageParser(BaseLanguageParser):
-    """
-    Base parser for functional languages (Haskell, Elixir, Erlang, OCaml).
-
-    Provides patterns for:
-    - Function definitions with pattern matching
-    - Type signatures
-    - Module definitions
-    """
-
-    # Haskell patterns
-    HASKELL_FUNCTION_PATTERN = re.compile(
-        r"^(\w+)\s*::\s*(.+?)$", re.MULTILINE  # Type signature
-    )
-    HASKELL_MODULE_PATTERN = re.compile(r"^module\s+([\w.]+)", re.MULTILINE)
-
-    # Elixir patterns
-    ELIXIR_MODULE_PATTERN = re.compile(r"defmodule\s+([\w.]+)", re.MULTILINE)
-    ELIXIR_FUNCTION_PATTERN = re.compile(r"def[p]?\s+(\w+)", re.MULTILINE)
-
-
-class MarkupParser(BaseLanguageParser):
-    """
-    Base parser for markup/data languages (XML, JSON, YAML, TOML).
-
-    Provides patterns for:
-    - Nested structure extraction
-    - Key-value parsing
-    - Schema detection
-    """
-
-    def _extract_keys(self, content: str) -> list[str]:
-        """Extract top-level keys from structured data"""
-        raise NotImplementedError
-
-    def _build_hierarchy(self, content: str) -> dict[str, Any]:
-        """Build hierarchical representation"""
-        raise NotImplementedError
-
-
-# =============================================================================
-# Plugin Architecture
-# =============================================================================
-
-
-class ParserPlugin:
-    """
-    Plugin interface for external parsers.
-
-    Allows registration of custom parsers without modifying core code.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        parser_class: type[BaseLanguageParser],
-        languages: list[str],
-        extensions: list[str],
-        priority: int = 0,
-        metadata: dict[str, Any] | None = None,
-    ):
-        self.name = name
-        self.parser_class = parser_class
-        self.languages = languages
-        self.extensions = extensions
-        self.priority = priority  # Higher priority = preferred
-        self.metadata = metadata or {}
-        self._instance: BaseLanguageParser | None = None
-
-    def get_parser(self) -> BaseLanguageParser:
-        """Get or create parser instance"""
-        if self._instance is None:
-            self._instance = self.parser_class()
-        return self._instance
-
-    def supports_language(self, language: str) -> bool:
-        """Check if plugin supports given language"""
-        return language.lower() in [l.lower() for l in self.languages]
-
-    def supports_extension(self, extension: str) -> bool:
-        """Check if plugin supports given file extension"""
-        ext = extension.lower()
-        if not ext.startswith("."):
-            ext = "." + ext
-        return ext in [e.lower() for e in self.extensions]
-
-
-class ParserPluginRegistry:
-    """
-    Registry for parser plugins.
-
-    Manages plugin registration, discovery, and instantiation.
-    Thread-safe singleton pattern.
-    """
-
-    _instance = None
-    _lock = threading.Lock()
-
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._plugins: dict[str, ParserPlugin] = {}
-                    cls._instance._language_index: dict[str, list[str]] = {}
-                    cls._instance._extension_index: dict[str, list[str]] = {}
-        return cls._instance
-
-    def register(self, plugin: ParserPlugin) -> bool:
-        """
-        Register a parser plugin.
-
-        Returns True if registration successful, False if plugin already exists.
-        """
-        if plugin.name in self._plugins:
-            logger.warning(f"Plugin {plugin.name} already registered")
-            return False
-
-        self._plugins[plugin.name] = plugin
-
-        # Index by language
-        for lang in plugin.languages:
-            lang_lower = lang.lower()
-            if lang_lower not in self._language_index:
-                self._language_index[lang_lower] = []
-            self._language_index[lang_lower].append(plugin.name)
-            # Sort by priority
-            self._language_index[lang_lower].sort(
-                key=lambda n: self._plugins[n].priority, reverse=True
-            )
-
-        # Index by extension
-        for ext in plugin.extensions:
-            ext_lower = ext.lower()
-            if not ext_lower.startswith("."):
-                ext_lower = "." + ext_lower
-            if ext_lower not in self._extension_index:
-                self._extension_index[ext_lower] = []
-            self._extension_index[ext_lower].append(plugin.name)
-            self._extension_index[ext_lower].sort(
-                key=lambda n: self._plugins[n].priority, reverse=True
-            )
-
-        logger.info(f"Registered parser plugin: {plugin.name}")
-        return True
-
-    def unregister(self, name: str) -> bool:
-        """Unregister a parser plugin"""
-        if name not in self._plugins:
-            return False
-
-        plugin = self._plugins[name]
-
-        # Remove from language index
-        for lang in plugin.languages:
-            lang_lower = lang.lower()
-            if lang_lower in self._language_index:
-                if name in self._language_index[lang_lower]:
-                    self._language_index[lang_lower].remove(name)
-                # Clean up empty entries
-                if not self._language_index[lang_lower]:
-                    del self._language_index[lang_lower]
-
-        # Remove from extension index
-        for ext in plugin.extensions:
-            ext_lower = ext.lower() if ext.startswith(".") else "." + ext.lower()
-            if ext_lower in self._extension_index:
-                if name in self._extension_index[ext_lower]:
-                    self._extension_index[ext_lower].remove(name)
-                # Clean up empty entries
-                if not self._extension_index[ext_lower]:
-                    del self._extension_index[ext_lower]
-
-        del self._plugins[name]
-        logger.info(f"Unregistered parser plugin: {name}")
-        return True
-
-    def get_parser_for_language(self, language: str) -> BaseLanguageParser | None:
-        """Get best available parser for language"""
-        lang_lower = language.lower()
-        if lang_lower not in self._language_index:
-            return None
-
-        plugin_names = self._language_index[lang_lower]
-        if not plugin_names:
-            return None
-
-        # Return highest priority parser
-        return self._plugins[plugin_names[0]].get_parser()
-
-    def get_parser_for_extension(self, extension: str) -> BaseLanguageParser | None:
-        """Get best available parser for file extension"""
-        ext_lower = extension.lower()
-        if not ext_lower.startswith("."):
-            ext_lower = "." + ext_lower
-
-        if ext_lower not in self._extension_index:
-            return None
-
-        plugin_names = self._extension_index[ext_lower]
-        if not plugin_names:
-            return None
-
-        return self._plugins[plugin_names[0]].get_parser()
-
-    def list_plugins(self) -> list[dict[str, Any]]:
-        """List all registered plugins"""
-        return [
-            {
-                "name": p.name,
-                "languages": p.languages,
-                "extensions": p.extensions,
-                "priority": p.priority,
-                "metadata": p.metadata,
-            }
-            for p in self._plugins.values()
-        ]
-
-    def get_supported_languages(self) -> set[str]:
-        """Get all supported languages"""
-        return set(self._language_index.keys())
-
-    def get_supported_extensions(self) -> set[str]:
-        """Get all supported extensions"""
-        return set(self._extension_index.keys())
-
-
-def get_plugin_registry() -> ParserPluginRegistry:
-    """Get the singleton plugin registry"""
-    return ParserPluginRegistry()
 
 
 # =============================================================================
@@ -948,10 +366,13 @@ class ConfigValidator:
 
     @staticmethod
     def validate_languages(languages: list[str]) -> ValidationResult:
-        """Validate language configuration"""
+        """Validate language configuration against the live parser registry"""
         result = ValidationResult(valid=True)
-        registry = get_plugin_registry()
-        supported = registry.get_supported_languages()
+        # Use the real per-language registry from code.py rather than the
+        # (always-empty) plugin registry that previously backed this check.
+        from .code import get_supported_languages
+
+        supported = {lang.lower() for lang in get_supported_languages()}
 
         for lang in languages:
             if lang.lower() not in supported:
@@ -993,116 +414,21 @@ class ConfigValidator:
 
 
 # =============================================================================
-# Utility Functions
-# =============================================================================
-
-
-@contextmanager
-def parser_context(language: str):
-    """
-    Context manager for parser operations.
-
-    Handles parser acquisition, metrics, and cleanup.
-    """
-    cache = get_parser_cache()
-    collector = get_metrics_collector()
-    start_time = time.perf_counter()
-
-    parser = cache.get(language)
-    cache_hit = parser is not None
-
-    try:
-        yield parser
-    finally:
-        elapsed = (time.perf_counter() - start_time) * 1000
-        logger.debug(
-            f"Parser context for {language}: "
-            f"cache_hit={cache_hit}, elapsed={elapsed:.2f}ms"
-        )
-
-
-def detect_language_from_content(content: str) -> str | None:
-    """
-    Attempt to detect language from content patterns.
-
-    Uses heuristics like shebangs, common patterns, etc.
-    """
-    lines = content.split("\n", 10)[:10]  # Check first 10 lines
-
-    # Check shebang
-    if lines and lines[0].startswith("#!"):
-        shebang = lines[0].lower()
-        if "python" in shebang:
-            return "python"
-        elif "node" in shebang or "deno" in shebang:
-            return "javascript"
-        elif "ruby" in shebang:
-            return "ruby"
-        elif "perl" in shebang:
-            return "perl"
-        elif "bash" in shebang or "sh" in shebang:
-            return "bash"
-
-    # Check for common patterns
-    content_lower = content[:2000].lower()  # Check first 2KB
-
-    if "package main" in content_lower and "func " in content_lower:
-        return "go"
-    elif (
-        "fn main()" in content_lower
-        or "fn " in content_lower
-        and "-> " in content_lower
-    ):
-        return "rust"
-    elif "public class " in content_lower or "public interface " in content_lower:
-        return "java"
-    elif "def " in content_lower and ":" in content_lower:
-        return "python"
-    elif "function " in content_lower or "const " in content_lower:
-        return "javascript"
-
-    return None
-
-
-# =============================================================================
 # Exports
 # =============================================================================
 
 __all__ = [
     # Errors
     "ParserError",
-    "ParserInitializationError",
     "ParseError",
-    "UnsupportedLanguageError",
-    # Fallback
-    "FallbackStrategy",
-    "FallbackConfig",
     # Metrics
     "ParserMetrics",
     "MetricsCollector",
     "get_metrics_collector",
-    # Cache
-    "ParserCache",
-    "get_parser_cache",
-    # Decorators
     "with_metrics",
-    "with_fallback",
-    "cached_parser",
-    # Parser base classes
+    # Parser base class
     "BaseLanguageParser",
-    "CFamilyParser",
-    "JVMFamilyParser",
-    "DynamicLanguageParser",
-    "FunctionalLanguageParser",
-    "MarkupParser",
-    # Plugin system
-    "ParserPlugin",
-    "ParserPluginRegistry",
-    "get_plugin_registry",
     # Validation
     "ValidationResult",
     "ConfigValidator",
-    # Utilities
-    "parser_context",
-    "detect_language_from_content",
 ]

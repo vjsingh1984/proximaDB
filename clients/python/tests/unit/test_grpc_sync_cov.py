@@ -399,9 +399,38 @@ def test_record_proto_bad_type(client):
 
 
 # --------------------------------------------------------------------------- #
-# Collection operations (CollectionService)
+# Collection operations — v2 ProximaRecordService (collection RPCs are served
+# by ProximaRecordServiceStub via _execute_collection_with_pool). The create/get
+# responses are wrapped in CollectionWrapper, which reads .config.name /
+# .config.dimension / .id off the proto.
 # --------------------------------------------------------------------------- #
+class _FakeCollectionConfig:
+    def __init__(self, name, dimension):
+        self.name = name
+        self.dimension = dimension
+
+
+class _FakeCollection:
+    """Minimal object satisfying CollectionWrapper's attribute access."""
+
+    def __init__(self, name, dimension, cid="cid"):
+        self.id = cid
+        self.config = _FakeCollectionConfig(name, dimension)
+        self.stats = None
+        self.created_at = None
+
+
 def _patch_collection_stub(monkeypatch, method, behavior):
+    monkeypatch.setattr(
+        gs.v2_record_pb2_grpc,
+        "ProximaRecordServiceStub",
+        make_stub_factory(method, behavior),
+    )
+
+
+def _patch_collection_v1_stub(monkeypatch, method, behavior):
+    """Patch the v1 CollectionServiceStub used by the *_v1 collection helpers
+    (they construct their stub inside _op and route through _execute_with_pool)."""
     monkeypatch.setattr(
         gs.v1_collection_pb2_grpc,
         "CollectionServiceStub",
@@ -411,9 +440,7 @@ def _patch_collection_stub(monkeypatch, method, behavior):
 
 def test_create_collection(client, monkeypatch):
     def behavior(cfg):
-        return c.Collection(
-            id="cid", config=c.CollectionConfig(name=cfg.name, dimension=cfg.dimension)
-        )
+        return _FakeCollection(name=cfg.name, dimension=cfg.dimension)
 
     _patch_collection_stub(monkeypatch, "CreateCollection", behavior)
     res = client.create_collection(
@@ -425,9 +452,7 @@ def test_create_collection(client, monkeypatch):
 
 def test_create_collection_engine_alias_and_string(client, monkeypatch):
     def behavior(cfg):
-        return c.Collection(
-            id="cid", config=c.CollectionConfig(name=cfg.name, dimension=cfg.dimension)
-        )
+        return _FakeCollection(name=cfg.name, dimension=cfg.dimension)
 
     _patch_collection_stub(monkeypatch, "CreateCollection", behavior)
     res = client.create_collection(
@@ -447,9 +472,7 @@ def test_create_collection_bad_storage_engine(client):
 def test_get_collection(client, monkeypatch):
     def behavior(req):
         assert req.collection_id == "mycoll"
-        return c.Collection(
-            id="cid", config=c.CollectionConfig(name="mycoll", dimension=8)
-        )
+        return _FakeCollection(name="mycoll", dimension=8)
 
     _patch_collection_stub(monkeypatch, "GetCollection", behavior)
     res = client.get_collection("mycoll")
@@ -458,10 +481,13 @@ def test_get_collection(client, monkeypatch):
 
 def test_list_collections(client, monkeypatch):
     def behavior(req):
-        resp = c.ListCollectionsResponse()
-        resp.collections.add(id="a", config=c.CollectionConfig(name="a", dimension=2))
-        resp.collections.add(id="b", config=c.CollectionConfig(name="b", dimension=3))
-        return resp
+        class _Resp:
+            collections = [
+                _FakeCollection(name="a", dimension=2, cid="a"),
+                _FakeCollection(name="b", dimension=3, cid="b"),
+            ]
+
+        return _Resp()
 
     _patch_collection_stub(monkeypatch, "ListCollections", behavior)
     res = client.list_collections()
@@ -470,7 +496,8 @@ def test_list_collections(client, monkeypatch):
 
 def test_delete_collection(client, monkeypatch):
     def behavior(req):
-        return c.DeleteCollectionResponse(success=True)
+        # v2 V2DeleteCollectionResponse only carries `success`.
+        return r.V2DeleteCollectionResponse(success=True)
 
     _patch_collection_stub(monkeypatch, "DeleteCollection", behavior)
     res = client.delete_collection("dead")
@@ -485,7 +512,7 @@ def test_create_collection_v1(client, monkeypatch):
             id="x", config=c.CollectionConfig(name=cfg.name, dimension=cfg.dimension)
         )
 
-    _patch_collection_stub(monkeypatch, "CreateCollection", behavior)
+    _patch_collection_v1_stub(monkeypatch, "CreateCollection", behavior)
     res = client.create_collection_v1(
         "v1c", dimension=5, distance_metric=1, storage_engine=1, tags=["t"]
     )
@@ -493,7 +520,7 @@ def test_create_collection_v1(client, monkeypatch):
 
 
 def test_get_collection_v1(client, monkeypatch):
-    _patch_collection_stub(
+    _patch_collection_v1_stub(
         monkeypatch, "GetCollection", lambda req: c.Collection(id=req.collection_id)
     )
     res = client.get_collection_v1("gid")
@@ -501,7 +528,7 @@ def test_get_collection_v1(client, monkeypatch):
 
 
 def test_list_collections_v1(client, monkeypatch):
-    _patch_collection_stub(
+    _patch_collection_v1_stub(
         monkeypatch, "ListCollections", lambda req: c.ListCollectionsResponse()
     )
     res = client.list_collections_v1(limit=5, offset=1, include_stats=True)
@@ -509,7 +536,7 @@ def test_list_collections_v1(client, monkeypatch):
 
 
 def test_delete_collection_v1(client, monkeypatch):
-    _patch_collection_stub(
+    _patch_collection_v1_stub(
         monkeypatch,
         "DeleteCollection",
         lambda req: c.DeleteCollectionResponse(success=True),
@@ -519,11 +546,11 @@ def test_delete_collection_v1(client, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# Health check
+# Health check — uses v2 ProximaRecordService.ListCollections as a probe.
 # --------------------------------------------------------------------------- #
 def test_health_check_ok(client, monkeypatch):
     _patch_collection_stub(
-        monkeypatch, "ListCollections", lambda req: c.ListCollectionsResponse()
+        monkeypatch, "ListCollections", lambda req: r.V2ListCollectionsResponse()
     )
     res = client.health_check()
     assert res.healthy is True
@@ -676,113 +703,68 @@ def test_search_requires_collection(client):
 
 
 def test_get_vector(client, monkeypatch):
-    class FakeItem:
-        id = "v1"
-        vector = [0.1, 0.2]
-
-        def __init__(self):
-            self.metadata = {}
-
-        def HasField(self, name):
-            return False
-
-    class FakeResults:
-        def __init__(self, item):
-            self.results = [item]
+    # v2 ProximaRecordService.GetRecord returns {found, record}.
+    record = r.ProximaRecord(id="v1")
+    record.vector.extend([0.1, 0.2])
 
     class FakeResponse:
-        def __init__(self):
-            self.success = True
-            self.results = FakeResults(FakeItem())
+        found = True
 
-    monkeypatch.setattr(
-        gs.v1_vector_pb2_grpc,
-        "VectorServiceStub",
-        make_stub_factory("VectorGet", lambda req: FakeResponse()),
-    )
+        def __init__(self):
+            self.record = record
+
+        def HasField(self, name):
+            return name == "record"
+
+    _patch_collection_stub(monkeypatch, "GetRecord", lambda req: FakeResponse())
     res = client.get_vector("col", "v1", include_vector=True, include_metadata=False)
     assert res.id == "v1"
-    assert res["vector"] == [0.1, 0.2]
+    assert res["vector"] == pytest.approx([0.1, 0.2])
 
 
 def test_get_vector_with_metadata_and_fields(client, monkeypatch):
-    from proximadb_sdk.v1 import types_pb2 as t
-
-    class FakeMetaMap(dict):
-        pass
-
-    meta = FakeMetaMap()
-    sv = t.SqlValue()
-    sv.string_value = "news"
-    meta["cat"] = sv
-    sv2 = t.SqlValue()
-    sv2.int64_value = 3
-    meta["rank"] = sv2
-
-    class FakeItem:
-        id = "v1"
-        vector = [0.1, 0.2]
-
-        def __init__(self):
-            self.metadata = meta
-
-        def HasField(self, name):
-            return name in {"timestamp", "version", "source"}
-
-        timestamp = 1700
-        version = 4
-        source = "ingest"
-
-    class FakeResults:
-        def __init__(self, item):
-            self.results = [item]
+    record = r.ProximaRecord(id="v1")
+    record.vector.extend([0.1, 0.2])
+    # v2 props map: str -> TypedValue (decoded via _v2_typed_value_to_python).
+    record.props["cat"].CopyFrom(client._python_to_v2_typed_value("news"))
+    record.props["rank"].CopyFrom(client._python_to_v2_typed_value(3))
 
     class FakeResponse:
-        success = True
+        found = True
 
         def __init__(self):
-            self.results = FakeResults(FakeItem())
+            self.record = record
 
-    monkeypatch.setattr(
-        gs.v1_vector_pb2_grpc,
-        "VectorServiceStub",
-        make_stub_factory("VectorGet", lambda req: FakeResponse()),
-    )
+        def HasField(self, name):
+            return name == "record"
+
+    _patch_collection_stub(monkeypatch, "GetRecord", lambda req: FakeResponse())
     res = client.get_vector("col", "v1", include_vector=True, include_metadata=True)
     assert res.id == "v1"
     assert res["metadata"]["cat"] == "news"
     assert res["metadata"]["rank"] == 3
-    assert res["timestamp_ms"] == 1700
-    assert res["version"] == 4
-    assert res["source"] == "ingest"
 
 
 def test_get_vector_empty_results(client, monkeypatch):
-    class FakeResults:
-        results = []
-
     class FakeResponse:
-        success = True
-        results = FakeResults()
+        found = False
 
-    monkeypatch.setattr(
-        gs.v1_vector_pb2_grpc,
-        "VectorServiceStub",
-        make_stub_factory("VectorGet", lambda req: FakeResponse()),
-    )
+        def HasField(self, name):
+            return False
+
+    _patch_collection_stub(monkeypatch, "GetRecord", lambda req: FakeResponse())
     with pytest.raises(ProximaDBError):
         client.get_vector("col", "v1")
 
 
 def test_get_vector_not_found(client, monkeypatch):
     class FakeResponse:
-        success = False
+        found = False
 
-    monkeypatch.setattr(
-        gs.v1_vector_pb2_grpc,
-        "VectorServiceStub",
-        make_stub_factory("VectorGet", lambda req: FakeResponse()),
-    )
+        def HasField(self, name):
+            return False
+
+    _patch_collection_stub(monkeypatch, "GetRecord", lambda req: FakeResponse())
     with pytest.raises(ProximaDBError):
         client.get_vector("col", "missing")
 
@@ -807,26 +789,17 @@ def test_delete_vectors(client, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# SQL
+# SQL — v2 ProximaRecordService.ExecuteQuery (inline GrpcChannelContext path).
 # --------------------------------------------------------------------------- #
 def test_execute_sql(client, monkeypatch):
     def behavior(req):
-        resp = v1_types.ExecuteQueryResponse(
-            rows_scanned=10, rows_returned=1, execution_time_ms=5
-        )
+        resp = r.V2QueryResponse(rows_returned=1, execution_time_ms=5)
         resp.columns.extend(["name"])
-        resp.column_types.extend(["string"])
         row = resp.rows.add()
-        field = row.fields.add()
-        field.key = "name"
-        field.value.CopyFrom(client._python_to_sql_value("alice"))
+        row.values["name"].CopyFrom(client._python_to_v2_typed_value("alice"))
         return resp
 
-    monkeypatch.setattr(
-        gs.v1_sql_pb2_grpc,
-        "QueryServiceStub",
-        make_stub_factory("ExecuteQuery", behavior),
-    )
+    _patch_collection_stub(monkeypatch, "ExecuteQuery", behavior)
     res = client.execute_sql("SELECT name", parameters=["x", 5], collection="col")
     assert res["row_count"] == 1
     assert res["rows"][0]["name"] == "alice"
@@ -837,11 +810,7 @@ def test_execute_sql_rpc_error(client, monkeypatch):
     def behavior(req):
         raise FakeRpcError(grpc.StatusCode.INTERNAL, "sql-boom")
 
-    monkeypatch.setattr(
-        gs.v1_sql_pb2_grpc,
-        "QueryServiceStub",
-        make_stub_factory("ExecuteQuery", behavior),
-    )
+    _patch_collection_stub(monkeypatch, "ExecuteQuery", behavior)
     with pytest.raises(ProximaDBError):
         client.execute_sql("SELECT 1")
 
@@ -923,12 +892,16 @@ def test_record_stub_unavailable(client, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# Graph operations (GraphService) — property conversions + RPC wrappers
+# Graph operations (v2 ProximaGraphService) — property conversions + RPC
+# wrappers. Graph ops use an inline GrpcChannelContext constructing
+# v2_graph_pb2_grpc.ProximaGraphServiceStub directly. Responses decode via
+# _convert_node_from_proto / _convert_edge_from_proto which expose a
+# ``properties`` key (NOT ``metadata``).
 # --------------------------------------------------------------------------- #
 def _patch_graph_stub(monkeypatch, method, behavior):
     monkeypatch.setattr(
-        gs.v1_graph_pb2_grpc,
-        "GraphServiceStub",
+        gs.v2_graph_pb2_grpc,
+        "ProximaGraphServiceStub",
         make_stub_factory(method, behavior),
     )
 
@@ -953,38 +926,47 @@ def test_property_value_fallback(client):
 
 
 def test_create_node(client, monkeypatch):
-    gp = gs.v1_graph_pb2
+    gp = gs.v2_graph_pb2
 
     def behavior(req):
-        return gp.Node(id="n1", labels=["L"], created_at_ms=1000, updated_at_ms=2000)
+        # Echo the request's encoded properties back so the round-trip is verified.
+        node = gp.GraphNode(
+            id="n1", labels=["L"], created_at_ms=1000, updated_at_ms=2000
+        )
+        node.properties["k"].CopyFrom(req.node.properties["k"])
+        return gp.GraphNodeResponse(node=node)
 
     _patch_graph_stub(monkeypatch, "CreateNode", behavior)
     res = client.create_node("n1", ["L"], properties={"k": "v"}, graph_id="g")
     assert res["id"] == "n1"
     assert res["labels"] == ["L"]
+    assert res["properties"] == {"k": "v"}
     assert res["created_at"] is not None
 
 
 def test_create_edge(client, monkeypatch):
-    gp = gs.v1_graph_pb2
+    gp = gs.v2_graph_pb2
 
     def behavior(req):
-        return gp.Edge(
+        edge = gp.GraphEdge(
             id="e1", from_node_id="a", to_node_id="b", edge_type="REL", weight=1.5
         )
+        edge.properties["k"].CopyFrom(req.edge.properties["k"])
+        return gp.GraphEdgeResponse(edge=edge)
 
     _patch_graph_stub(monkeypatch, "CreateEdge", behavior)
     res = client.create_edge("e1", "a", "b", "REL", properties={"k": 1}, weight=1.5)
     assert res["id"] == "e1"
     assert res["from_node_id"] == "a"
     assert res["weight"] == pytest.approx(1.5)
+    assert res["properties"] == {"k": 1}
 
 
 def test_traverse_graph(client, monkeypatch):
-    gp = gs.v1_graph_pb2
+    gp = gs.v2_graph_pb2
 
     def behavior(req):
-        resp = gp.TraversalResponse()
+        resp = gp.TraverseGraphResponse()
         resp.nodes.add(id="n1")
         resp.edges.add(id="e1", from_node_id="n1", to_node_id="n2", edge_type="R")
         return resp
@@ -997,14 +979,10 @@ def test_traverse_graph(client, monkeypatch):
 
 
 def test_query_nodes(client, monkeypatch):
-    gp = gs.v1_graph_pb2
+    gp = gs.v2_graph_pb2
 
     def behavior(req):
-        resp = (
-            gp.NodeQueryResponse()
-            if hasattr(gp, "NodeQueryResponse")
-            else gp.TraversalResponse()
-        )
+        resp = gp.QueryGraphNodesResponse()
         resp.nodes.add(id="n1")
         return resp
 
@@ -1015,14 +993,10 @@ def test_query_nodes(client, monkeypatch):
 
 
 def test_query_edges(client, monkeypatch):
-    gp = gs.v1_graph_pb2
+    gp = gs.v2_graph_pb2
 
     def behavior(req):
-        resp = (
-            gp.EdgeQueryResponse()
-            if hasattr(gp, "EdgeQueryResponse")
-            else gp.TraversalResponse()
-        )
+        resp = gp.QueryGraphEdgesResponse()
         resp.edges.add(id="e1", from_node_id="a", to_node_id="b", edge_type="R")
         return resp
 
@@ -1034,30 +1008,35 @@ def test_query_edges(client, monkeypatch):
 
 
 def test_get_node(client, monkeypatch):
-    gp = gs.v1_graph_pb2
-    _patch_graph_stub(
-        monkeypatch, "GetNode", lambda req: gp.Node(id="n1", labels=["L"])
-    )
+    gp = gs.v2_graph_pb2
+
+    def behavior(req):
+        node = gp.GraphNode(id="n1", labels=["L"])
+        return gp.GraphNodeResponse(node=node)
+
+    _patch_graph_stub(monkeypatch, "GetNode", behavior)
     res = client.get_node("n1", graph_id="g")
     assert res["id"] == "n1"
 
 
 def test_delete_node(client, monkeypatch):
-    gp = gs.v1_graph_pb2
-    _patch_graph_stub(monkeypatch, "DeleteNode", lambda req: gp.Node(id="n1"))
+    gp = gs.v2_graph_pb2
+
+    def behavior(req):
+        # DeleteNode returns DeleteGraphNodeResponse{deleted, node}
+        node = gp.GraphNode(id="n1")
+        return gp.DeleteGraphNodeResponse(deleted=True, node=node)
+
+    _patch_graph_stub(monkeypatch, "DeleteNode", behavior)
     res = client.delete_node("n1")
     assert res["id"] == "n1"
 
 
 def test_get_outgoing_and_incoming_edges(client, monkeypatch):
-    gp = gs.v1_graph_pb2
+    gp = gs.v2_graph_pb2
 
     def behavior(req):
-        resp = (
-            gp.EdgeQueryResponse()
-            if hasattr(gp, "EdgeQueryResponse")
-            else gp.TraversalResponse()
-        )
+        resp = gp.QueryGraphEdgesResponse()
         resp.edges.add(id="e1", from_node_id="a", to_node_id="b", edge_type="R")
         return resp
 
@@ -1069,13 +1048,11 @@ def test_get_outgoing_and_incoming_edges(client, monkeypatch):
 
 
 def test_shortest_path(client, monkeypatch):
-    gp = gs.v1_graph_pb2
+    gp = gs.v2_graph_pb2
 
     def behavior(req):
-        return (
-            gp.ShortestPathResponse()
-            if hasattr(gp, "ShortestPathResponse")
-            else gp.Node(id="n")
+        return gp.GraphShortestPathResponse(
+            node_ids=["a", "b"], total_weight=1.0, found=True
         )
 
     _patch_graph_stub(monkeypatch, "ShortestPath", behavior)
@@ -1110,7 +1087,7 @@ def test_graph_generic_error(client, monkeypatch):
 
 
 def test_graph_unavailable_guard(client, monkeypatch):
-    monkeypatch.setattr(gs, "v1_graph_pb2_grpc", None)
+    monkeypatch.setattr(gs, "v2_graph_pb2_grpc", None)
     with pytest.raises(ProximaDBError):
         client.create_node("n1", ["L"])
     with pytest.raises(ProximaDBError):

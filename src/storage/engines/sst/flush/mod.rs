@@ -150,13 +150,29 @@ impl SstEngine {
         // Generate SSTable filename with appropriate extension based on block format
         let codec = FilenameCodec::new();
         let mut block_format = BlockFormat::parse_block_format(&self.config().block_format);
-        // P3 Phase B: flag-gated PAX vector segments (default OFF). Reads stay
-        // mixed-format-safe (see `segment_format`), so flipping this on only changes
-        // newly written segments; existing ProximaBlocks segments still read back.
-        if std::env::var("PROXIMADB_PAX_VECTOR_SEGMENTS")
-            .map(|v| matches!(v.as_str(), "1" | "true" | "on" | "yes"))
-            .unwrap_or(false)
-        {
+        // P3 Phase B / Phase C: PAX vector segments. Reads stay mixed-format-
+        // safe — see
+        // `segment_format::mixed_format_legacy_and_pax_segments_coexist_and_read_back`
+        // — so enabling PAX only changes newly written segments; existing
+        // ProximaBlocks segments still read back. STAGED ROLLOUT: default OFF in
+        // v0.2; the develop→qa recall ratchet (qa-gate `pax-recall-ratchet`,
+        // recall@10 >= 0.90 at N=100k) gates the v0.3 flip to default ON.
+        //
+        // Resolution (Phase C escape hatches — see `resolve_pax_segments_enabled`):
+        //   1. Global kill-switch `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE` forces
+        //      legacy `.sst` for EVERY collection (the default-on reversal valve).
+        //   2. Per-collection `pax_vector_format:on|off` tag on
+        //      `CollectionConfig.tags` — explicit opt-in / opt-out (staged
+        //      adoption; mirrors the `recall_target:` tag convention; stored as a
+        //      tag rather than a typed field because proto regen is manual — see
+        //      collection_types.proto).
+        //   3. Global default `PROXIMADB_PAX_VECTOR_SEGMENTS` (env today; Phase F
+        //      flips the absence case to enabled).
+        if resolve_pax_segments_enabled(
+            env_truthy(PAX_VECTOR_SEGMENTS_DISABLE_ENV),
+            collection_pax_format_tag(params.collection_config.as_ref()),
+            env_truthy(PAX_VECTOR_SEGMENTS_ENV),
+        ) {
             block_format = BlockFormat::PaxBlock;
         }
         let file_extension = match block_format {
@@ -430,24 +446,49 @@ impl SstEngine {
                     .unwrap_or(1);
                 let records: Vec<_> = sorted_vectors.into_iter().map(|(_, rec)| rec).collect();
                 let collection_id = params.collection_id.as_deref().unwrap_or("default");
-                // P3 Phase D: vector quantization strategy. Deployment selector for now
-                // (`PROXIMADB_PAX_VECTOR_QUANT` = rabitq|sq8|auto); per-collection proto
-                // config is the productionization follow-up. `Auto` keeps the env default.
-                let quant = match std::env::var("PROXIMADB_PAX_VECTOR_QUANT")
-                    .unwrap_or_default()
-                    .to_ascii_lowercase()
-                    .as_str()
+                // P3 Phase D / TD-155: vector quantization strategy. Precedence:
+                // per-collection pax_vector_quant (catalog config) > deployment env
+                // PROXIMADB_PAX_VECTOR_QUANT > default (Auto). This is the staged-
+                // adoption mechanism — operators opt individual collections into PAX
+                // quant without a global flip (ADR-026/027).
+                let quant = match params
+                    .collection_config
+                    .as_ref()
+                    .and_then(|c| c.config.as_ref())
+                    .and_then(|cfg| cfg.pax_vector_quant.as_deref())
+                    .map(|s| s.to_ascii_lowercase())
                 {
-                    "rabitq" => VectorQuant::RaBitQ,
-                    "sq8" => VectorQuant::Sq8,
-                    _ => VectorQuant::Auto,
+                    Some(s) => match s.as_str() {
+                        "rabitq" => VectorQuant::RaBitQ,
+                        "sq8" => VectorQuant::Sq8,
+                        _ => VectorQuant::Auto,
+                    },
+                    // Fall back to the deployment env.
+                    None => match std::env::var("PROXIMADB_PAX_VECTOR_QUANT")
+                        .unwrap_or_default()
+                        .to_ascii_lowercase()
+                        .as_str()
+                    {
+                        "rabitq" => VectorQuant::RaBitQ,
+                        "sq8" => VectorQuant::Sq8,
+                        _ => VectorQuant::Auto,
+                    },
                 };
+                // TD-156 / ADR-026: configurable PAX block geometry. `None` keeps
+                // the writer default; a larger value (e.g. 8-16 MiB for object
+                // storage) coalesces rows into fewer blocks, cutting the per-block
+                // ranged-GET fragmentation measured by the footer-cache economics
+                // harness. Per-collection config is the productionization follow-up.
+                let target_block = std::env::var("PROXIMADB_PAX_BLOCK_SIZE")
+                    .ok()
+                    .and_then(|v| v.parse::<usize>().ok());
                 let meta = write_pax_segment(
                     std::path::Path::new(staging_path),
                     &records,
                     collection_id,
                     embedding_count,
                     quant,
+                    target_block,
                 )
                 .context("Failed to write PAX vector segment")?;
                 tracing::debug!(blocks = meta.block_count, "PAX segment write completed");
@@ -560,6 +601,22 @@ impl SstEngine {
         self.index_flushed_into_axis(params, vec![final_file_path.clone()])
             .await;
 
+        // ADR-037 / TD-174: maintain the resident statistics summary at the flush
+        // write boundary (the sibling of the KSU resident-bytes meter) and stamp
+        // the freshness watermark. Best-effort and O(records) — observes the
+        // records already in hand, never a separate corpus scan (Decision 1).
+        if let Some(cid) = params.collection_id.as_deref() {
+            // Text columns (if any) drive the document/BM25 corpus block; all
+            // other scalar props drive per-field distribution sketches.
+            let text_columns: std::collections::HashSet<&str> = params
+                .collection_config
+                .as_ref()
+                .and_then(|c| c.config.as_ref())
+                .map(|cfg| cfg.text_columns.iter().map(|s| s.as_str()).collect())
+                .unwrap_or_default();
+            observe_flush_into_statistics(cid, &params.vector_records, &text_columns);
+        }
+
         // Create flush result with file path for AXIS index building
         Ok(FlushResult {
             success: true,
@@ -623,12 +680,243 @@ fn l0_compaction_enabled() -> bool {
 // Using SortingStats from utils.rs instead of local SortStats
 pub type SortStats = SortingStats;
 
+/// ADR-037 / TD-174: fold the just-flushed *live* records into the resident
+/// statistics summary and stamp the flush freshness watermark. Best-effort —
+/// it never fails or blocks the flush, and observes records already in hand at
+/// the write boundary (no separate scan; Decision 1). The generic
+/// `observe_*` API lives in `core::statistics`; the record→value mapping is
+/// engine-local (this layer owns `ProximaRecord`).
+fn observe_flush_into_statistics(
+    collection_id: &str,
+    records: &[ProximaRecord],
+    text_columns: &std::collections::HashSet<&str>,
+) {
+    if records.is_empty() {
+        return;
+    }
+    // Real wall-clock "now" for liveness; a None fallback (impossible for current
+    // dates) degrades to 0, which filters only tombstones — never panics.
+    let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let registry = crate::core::statistics::statistics_registry();
+    registry.update(collection_id, |summary| {
+        for rec in records {
+            // Invariant #16a: dead records (tombstoned / TTL-expired) must not
+            // skew live statistics.
+            if rec.is_dead(now_ns) {
+                continue;
+            }
+            // Vector centroid/spread from the embedding payload(s).
+            for cell in &rec.embeddings {
+                let v = cell.values.to_fp32_owned();
+                if !v.is_empty() {
+                    summary.observe_vector(&v);
+                }
+            }
+            // Walk the property tree once: text columns feed the document/BM25
+            // corpus block (TD-175); every other scalar feeds per-field sketches.
+            let mut doc_tokens: Vec<String> = Vec::new();
+            for (name, node) in &rec.props {
+                let proximadb_records::ProximaTreeNode::Value(pv) = node else {
+                    continue;
+                };
+                if text_columns.contains(name.as_str()) {
+                    if let Some(text) = scalar_text(pv) {
+                        tokenize_into(text, &mut doc_tokens);
+                    }
+                } else if let Some((json, ty)) = scalar_proxima_to_json(pv) {
+                    summary.observe_field(
+                        name,
+                        &serde_json::Value::String(ty.to_string()),
+                        Some(&json),
+                    );
+                }
+            }
+            // One document per record (across all its text columns): term
+            // frequency → top_terms + unique-terms HLL; doc length + distinct
+            // terms → doc_count / avg_doc_length / document-frequency (idf).
+            if !doc_tokens.is_empty() {
+                for t in &doc_tokens {
+                    summary.observe_term(t);
+                }
+                let mut distinct = doc_tokens.clone();
+                distinct.sort();
+                distinct.dedup();
+                summary.observe_document(doc_tokens.len() as u64, &distinct);
+            }
+        }
+        // Attest the freshness FACT: this snapshot is as-of the flush, now. A
+        // watermark, never an SLA (the SLA is AnvaiOps policy, ADR-0021).
+        summary.set_freshness(chrono::Utc::now().to_rfc3339(), "flush", None);
+    });
+}
+
+/// Map a scalar `ProximaValue` to its (JSON value, canonical `ProximaType`
+/// label) for field-level statistics. Non-scalar variants
+/// (Array/Map/Struct/Json/Binary/vectors) and non-finite floats return `None` —
+/// they carry no orderable field distribution.
+fn scalar_proxima_to_json(
+    pv: &proximadb_records::ProximaValue,
+) -> Option<(serde_json::Value, &'static str)> {
+    use proximadb_records::ProximaValue as V;
+    use serde_json::Value as J;
+    let out = match pv {
+        V::Boolean(b) => (J::Bool(*b), "Boolean"),
+        V::Int8(n) => (J::from(*n), "Int8"),
+        V::Int16(n) => (J::from(*n), "Int16"),
+        V::Int32(n) => (J::from(*n), "Int32"),
+        V::Int64(n) => (J::from(*n), "Int64"),
+        V::UInt8(n) => (J::from(*n), "UInt8"),
+        V::UInt16(n) => (J::from(*n), "UInt16"),
+        V::UInt32(n) => (J::from(*n), "UInt32"),
+        V::UInt64(n) => (J::from(*n), "UInt64"),
+        V::Float16(f) | V::Float32(f) => (
+            J::Number(serde_json::Number::from_f64(*f as f64)?),
+            "Float32",
+        ),
+        V::Float64(f) => (J::Number(serde_json::Number::from_f64(*f)?), "Float64"),
+        V::Decimal(s) => (J::String(s.clone()), "Decimal"),
+        V::String(s) | V::Symbol(s) => (J::String(s.clone()), "String"),
+        V::Date(d) => (J::from(*d), "Date"),
+        // Temporal epochs travel as Int64 so they get numeric min/max + quantiles.
+        V::Time(t, _) | V::Timestamp(t, _) | V::TimestampTz(t, _) => (J::from(*t), "Int64"),
+        _ => return None,
+    };
+    Some(out)
+}
+
+/// Borrow the textual payload of a scalar value (String/Symbol) for tokenization.
+fn scalar_text(pv: &proximadb_records::ProximaValue) -> Option<&str> {
+    use proximadb_records::ProximaValue as V;
+    match pv {
+        V::String(s) | V::Symbol(s) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+/// Word-level tokenizer for document/BM25 corpus statistics (ADR-037 TD-175):
+/// lowercase, split on non-alphanumeric, drop empties and absurdly long tokens.
+/// This is the BM25 **word** granularity (idf/df over terms), deliberately
+/// distinct from the BERT subword `tokenizers::Tokenizer` used for
+/// embeddings/reranking — different purpose, not a duplication.
+fn tokenize_into(text: &str, out: &mut Vec<String>) {
+    for raw in text.split(|c: char| !c.is_alphanumeric()) {
+        if raw.is_empty() || raw.len() > 64 {
+            continue;
+        }
+        out.push(raw.to_lowercase());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PAX vector-segment resolution (Phase C escape hatches).
+// ---------------------------------------------------------------------------
+
+/// Global default-on env. Today opt-in (absent → off); Phase F flips the
+/// absence case to enabled.
+const PAX_VECTOR_SEGMENTS_ENV: &str = "PROXIMADB_PAX_VECTOR_SEGMENTS";
+
+/// Global kill-switch. Any truthy value forces legacy `.sst` for EVERY
+/// collection regardless of the per-collection tag or the default-on flip — the
+/// default-on reversal valve (Phase F safety). Follows the `PROXIMADB_DISABLE_*`
+/// convention (`PROXIMADB_DISABLE_SYSTEM_CATALOG`, `PROXIMADB_DISABLE_WAL`).
+const PAX_VECTOR_SEGMENTS_DISABLE_ENV: &str = "PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE";
+
+/// Tag key prefix encoding the per-collection PAX-format override on
+/// `CollectionConfig.tags` — mirrors the `recall_target:` convention
+/// (`services::collection::recall_target`). Stored as a tag rather than a typed
+/// field because the proto-regen pipeline is manual (collection_types.proto).
+const PAX_VECTOR_FORMAT_TAG_PREFIX: &str = "pax_vector_format:";
+
+/// True when `key` is set to a truthy value (`1`/`true`/`on`/`yes`,
+/// case-insensitive). Unset / any other value → false.
+fn env_truthy(key: &str) -> bool {
+    std::env::var(key)
+        .map(|v| matches!(v.as_str(), "1" | "true" | "on" | "yes"))
+        .unwrap_or(false)
+}
+
+/// Read the per-collection `pax_vector_format:on|off` tag from
+/// `CollectionConfig.tags`. `Some(true)` opts the collection INTO PAX even when
+/// the global default is off (staged adoption); `Some(false)` opts it OUT
+/// (legacy `.sst`) even when the global default flips on. Unrecognized values
+/// and absence → `None` (defer to the global default). The last matching tag
+/// wins, matching `parse_recall_target`'s last-wins semantics.
+fn pax_vector_format_tag(config: &crate::proto::proximadb_v1::CollectionConfig) -> Option<bool> {
+    let mut latest: Option<bool> = None;
+    for tag in &config.tags {
+        if let Some(rest) = tag.strip_prefix(PAX_VECTOR_FORMAT_TAG_PREFIX) {
+            latest = match rest.trim().to_ascii_lowercase().as_str() {
+                "on" | "true" | "1" | "yes" => Some(true),
+                "off" | "false" | "0" | "no" => Some(false),
+                _ => latest, // unrecognized value: keep prior resolution
+            };
+        }
+    }
+    latest
+}
+
+/// Traverse `Collection.config` to read the per-collection PAX-format tag.
+fn collection_pax_format_tag(
+    collection: Option<&crate::proto::proximadb_v1::Collection>,
+) -> Option<bool> {
+    collection
+        .as_ref()
+        .and_then(|c| c.config.as_ref())
+        .and_then(pax_vector_format_tag)
+}
+
+/// Resolve whether a flush should emit a PAX vector segment. Pure over its
+/// inputs so the precedence table is unit-testable without touching the process
+/// env. Precedence: kill-switch > per-collection tag > global default.
+fn resolve_pax_segments_enabled(
+    kill_switch: bool,
+    per_collection: Option<bool>,
+    global_default: bool,
+) -> bool {
+    if kill_switch {
+        false
+    } else {
+        per_collection.unwrap_or(global_default)
+    }
+}
+
+#[cfg(test)]
+mod statistics_observe_tests {
+    use super::{scalar_text, tokenize_into};
+    use proximadb_records::ProximaValue;
+
+    #[test]
+    fn tokenizer_lowercases_and_splits_on_non_alphanumeric() {
+        let mut out = Vec::new();
+        tokenize_into("Checkout 500s on payment-submit!", &mut out);
+        assert_eq!(out, vec!["checkout", "500s", "on", "payment", "submit"]);
+    }
+
+    #[test]
+    fn tokenizer_drops_empties_and_overlong_tokens() {
+        let mut out = Vec::new();
+        let long = "x".repeat(100);
+        tokenize_into(&format!("ok   {long} fine"), &mut out);
+        assert_eq!(out, vec!["ok", "fine"]);
+    }
+
+    #[test]
+    fn scalar_text_only_for_string_like() {
+        assert_eq!(scalar_text(&ProximaValue::String("hi".into())), Some("hi"));
+        assert_eq!(
+            scalar_text(&ProximaValue::Symbol("sym".into())),
+            Some("sym")
+        );
+        assert_eq!(scalar_text(&ProximaValue::Int64(7)), None);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
     #[tokio::test]
     async fn test_sort_vectors_for_sstable_encoding() {
@@ -695,13 +983,13 @@ mod tests {
     /// real path exercised here.)
     #[tokio::test]
     async fn td112_live_flush_indexes_vectors_into_axis() {
-        use crate::compute::distance_computation::DistanceMetric;
         use crate::index::axis::management::manager::AxisManager;
-        use crate::index::axis::types::AxisConfig;
         use crate::proto::proximadb_v1::{
             Collection, CollectionConfig, StorageAssignment, StorageEngine,
         };
         use crate::storage::traits::UnifiedStorageEngine;
+        use proximadb_distance_kernel::DistanceMetric;
+        use proximadb_index_types::AxisConfig;
 
         // Attach an AXIS manager (process-global OnceLock; a no-op if a prior test
         // already set one). We read the effective manager back from the engine so
@@ -762,5 +1050,203 @@ mod tests {
             3,
             "the live flush path must index all flushed vectors into AXIS (TD-112)"
         );
+    }
+
+    // ---- Phase C: per-collection PAX opt-out tag + global kill-switch ----
+
+    #[test]
+    fn pax_vector_format_tag_parses_on_off_and_aliases() {
+        use crate::proto::proximadb_v1::CollectionConfig;
+        let cfg = |tags: &[&str]| CollectionConfig {
+            tags: tags.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        };
+        // canonical on/off
+        assert_eq!(
+            pax_vector_format_tag(&cfg(&["pax_vector_format:on"])),
+            Some(true)
+        );
+        assert_eq!(
+            pax_vector_format_tag(&cfg(&["pax_vector_format:off"])),
+            Some(false)
+        );
+        // accepted aliases (case-insensitive, whitespace-trimmed)
+        assert_eq!(
+            pax_vector_format_tag(&cfg(&["pax_vector_format: TRUE"])),
+            Some(true)
+        );
+        assert_eq!(
+            pax_vector_format_tag(&cfg(&["pax_vector_format:0"])),
+            Some(false)
+        );
+        assert_eq!(
+            pax_vector_format_tag(&cfg(&["pax_vector_format:Yes"])),
+            Some(true)
+        );
+        assert_eq!(
+            pax_vector_format_tag(&cfg(&["pax_vector_format:no"])),
+            Some(false)
+        );
+        // unrecognized value / unrelated tag / absent → None (defer to global)
+        assert_eq!(
+            pax_vector_format_tag(&cfg(&["pax_vector_format:maybe"])),
+            None
+        );
+        assert_eq!(pax_vector_format_tag(&cfg(&["recall_target:0.95"])), None);
+        assert_eq!(pax_vector_format_tag(&cfg(&[])), None);
+        // last matching tag wins
+        assert_eq!(
+            pax_vector_format_tag(&cfg(&["pax_vector_format:on", "pax_vector_format:off"])),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn resolve_pax_segments_enabled_precedence() {
+        // kill-switch dominates everything (the default-on reversal valve).
+        assert!(!resolve_pax_segments_enabled(true, Some(true), true));
+        assert!(!resolve_pax_segments_enabled(true, Some(false), true));
+        assert!(!resolve_pax_segments_enabled(true, None, true));
+        // per-collection tag overrides global default both ways.
+        assert!(resolve_pax_segments_enabled(false, Some(true), false));
+        assert!(!resolve_pax_segments_enabled(false, Some(false), true));
+        // absent per-collection tag → global default.
+        assert!(resolve_pax_segments_enabled(false, None, true));
+        assert!(!resolve_pax_segments_enabled(false, None, false));
+    }
+
+    fn collect_exts(dir: &std::path::Path, out: &mut std::collections::HashSet<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_exts(&path, out);
+            } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                out.insert(ext.to_string());
+            }
+        }
+    }
+
+    /// Flush `records` for a collection carrying `tags` and return the set of
+    /// segment-file extensions written under `base_location`.
+    async fn flush_segment_exts(
+        engine: &SstEngine,
+        collection_id: &str,
+        base_location: &str,
+        tags: Vec<String>,
+        records: Vec<ProximaRecord>,
+    ) -> std::collections::HashSet<String> {
+        use crate::proto::proximadb_v1::{
+            Collection, CollectionConfig, StorageAssignment, StorageEngine,
+        };
+        use crate::storage::traits::UnifiedStorageFormat;
+        let collection = Collection {
+            id: collection_id.to_string(),
+            config: Some(CollectionConfig {
+                name: collection_id.to_string(),
+                dimension: 4,
+                storage_engine: Some(StorageEngine::Sst as i32),
+                tags,
+                ..Default::default()
+            }),
+            storage_assignment: Some(StorageAssignment {
+                base_location: base_location.to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let params = FlushParameters {
+            collection_id: Some(collection_id.to_string()),
+            vector_records: records,
+            force: true,
+            synchronous: true,
+            hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            trigger_compaction: false,
+            batch_ids: vec![],
+            collection_config: Some(collection),
+            estimated_size: 0,
+        };
+        let result = engine
+            .do_flush(&params)
+            .await
+            .expect("flush should succeed");
+        assert!(result.success, "flush should succeed");
+
+        let mut exts = std::collections::HashSet::new();
+        collect_exts(std::path::Path::new(base_location), &mut exts);
+        assert!(
+            !exts.is_empty(),
+            "expected at least one flushed segment under {base_location}"
+        );
+        exts
+    }
+
+    /// Staged adoption: with no PAX env set, a `pax_vector_format:on` tag opts
+    /// the collection INTO PAX — the flush emits a `.pax` segment.
+    #[tokio::test]
+    async fn pax_optin_tag_writes_pax_segment_without_env() {
+        // nextest isolates each test in its own process; `set_var`/`remove_var`
+        // are `unsafe` (edition 2024).
+        unsafe {
+            std::env::remove_var(PAX_VECTOR_SEGMENTS_ENV);
+            std::env::remove_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV);
+        }
+        let engine = create_test_engine().await;
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let base = temp_dir.path().to_str().unwrap();
+        let records = vec![
+            create_test_vector("v0", vec![1.0, 0.0, 0.0, 0.0]),
+            create_test_vector("v1", vec![0.0, 1.0, 0.0, 0.0]),
+        ];
+        let exts = flush_segment_exts(
+            &engine,
+            "pax_optin_tag",
+            base,
+            vec!["pax_vector_format:on".to_string()],
+            records,
+        )
+        .await;
+        assert!(
+            exts.contains("pax"),
+            "opt-in tag should write a .pax segment (got {exts:?})"
+        );
+    }
+
+    /// Global kill-switch forces legacy `.sst` even when the collection opts in
+    /// via tag — the default-on reversal valve.
+    #[tokio::test]
+    async fn pax_kill_switch_forces_legacy_sst_even_with_optin_tag() {
+        unsafe {
+            std::env::set_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV, "1");
+        }
+        let engine = create_test_engine().await;
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let base = temp_dir.path().to_str().unwrap();
+        let records = vec![
+            create_test_vector("v0", vec![1.0, 0.0, 0.0, 0.0]),
+            create_test_vector("v1", vec![0.0, 1.0, 0.0, 0.0]),
+        ];
+        let exts = flush_segment_exts(
+            &engine,
+            "pax_kill_switch",
+            base,
+            vec!["pax_vector_format:on".to_string()],
+            records,
+        )
+        .await;
+        assert!(
+            exts.contains("sst"),
+            "kill-switch should force a legacy .sst segment (got {exts:?})"
+        );
+        assert!(
+            !exts.contains("pax"),
+            "kill-switch must suppress .pax even with an opt-in tag (got {exts:?})"
+        );
+        unsafe {
+            std::env::remove_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV);
+        }
     }
 }

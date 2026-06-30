@@ -11,11 +11,11 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
 use crate::core::{String, VectorId};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::UnifiedStorageFormat;
+use proximadb_distance_kernel::DistanceMetric as CoreDistanceMetric;
 
 use super::{WALConfig, WALStats};
 use crate::storage::traits::FlushResult;
@@ -362,47 +362,35 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // Convert CoreDistanceMetric to unified DistanceMetric (they're the same due to alias)
             let unified_metric = distance_metric.map(|m| match m {
                 CoreDistanceMetric::Unspecified => {
-                    crate::compute::distance_computation::DistanceMetric::Cosine
+                    proximadb_distance_kernel::DistanceMetric::Cosine
                 } // Default fallback
-                CoreDistanceMetric::Cosine => {
-                    crate::compute::distance_computation::DistanceMetric::Cosine
-                }
+                CoreDistanceMetric::Cosine => proximadb_distance_kernel::DistanceMetric::Cosine,
                 CoreDistanceMetric::Euclidean => {
-                    crate::compute::distance_computation::DistanceMetric::Euclidean
+                    proximadb_distance_kernel::DistanceMetric::Euclidean
                 }
                 CoreDistanceMetric::DotProduct => {
-                    crate::compute::distance_computation::DistanceMetric::DotProduct
+                    proximadb_distance_kernel::DistanceMetric::DotProduct
                 }
                 CoreDistanceMetric::Manhattan => {
-                    crate::compute::distance_computation::DistanceMetric::Manhattan
+                    proximadb_distance_kernel::DistanceMetric::Manhattan
                 }
-                CoreDistanceMetric::Hamming => {
-                    crate::compute::distance_computation::DistanceMetric::Hamming
-                }
-                CoreDistanceMetric::Jaccard => {
-                    crate::compute::distance_computation::DistanceMetric::Jaccard
-                }
+                CoreDistanceMetric::Hamming => proximadb_distance_kernel::DistanceMetric::Hamming,
+                CoreDistanceMetric::Jaccard => proximadb_distance_kernel::DistanceMetric::Jaccard,
                 CoreDistanceMetric::Chebyshev => {
-                    crate::compute::distance_computation::DistanceMetric::Chebyshev
+                    proximadb_distance_kernel::DistanceMetric::Chebyshev
                 }
-                CoreDistanceMetric::Canberra => {
-                    crate::compute::distance_computation::DistanceMetric::Canberra
-                }
+                CoreDistanceMetric::Canberra => proximadb_distance_kernel::DistanceMetric::Canberra,
                 CoreDistanceMetric::Minkowski => {
-                    crate::compute::distance_computation::DistanceMetric::Minkowski
+                    proximadb_distance_kernel::DistanceMetric::Minkowski
                 }
-                CoreDistanceMetric::Angular => {
-                    crate::compute::distance_computation::DistanceMetric::Angular
-                }
+                CoreDistanceMetric::Angular => proximadb_distance_kernel::DistanceMetric::Angular,
                 CoreDistanceMetric::BrayCurtis => {
-                    crate::compute::distance_computation::DistanceMetric::BrayCurtis
+                    proximadb_distance_kernel::DistanceMetric::BrayCurtis
                 }
                 CoreDistanceMetric::Hellinger => {
-                    crate::compute::distance_computation::DistanceMetric::Hellinger
+                    proximadb_distance_kernel::DistanceMetric::Hellinger
                 }
-                CoreDistanceMetric::Custom => {
-                    crate::compute::distance_computation::DistanceMetric::Custom
-                }
+                CoreDistanceMetric::Custom => proximadb_distance_kernel::DistanceMetric::Custom,
             });
 
             let results = wal_behavior
@@ -410,8 +398,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                     collection_id,
                     query_vector,
                     k,
-                    unified_metric
-                        .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine),
+                    unified_metric.unwrap_or(proximadb_distance_kernel::DistanceMetric::Cosine),
                     None, // No metadata filters
                     true, // Include vectors
                     true, // Include metadata

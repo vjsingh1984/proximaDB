@@ -14,7 +14,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import proximadb_sdk.integrations.victor as victor_mod
+# This module exercises the SDK's adapter for the external `victor` (victor-ai)
+# package, so importing it requires `victor` installed (../victor editable, or
+# PyPI `victor-ai`). Skip cleanly when absent, and tag `live` so the offline SDK
+# coverage ratchet filters it out (run it explicitly in an env that has victor).
+pytest.importorskip("victor")
+pytestmark = pytest.mark.live
+
+import proximadb_sdk.integrations.victor as victor_mod  # noqa: E402
 
 
 def _cfg(**over):

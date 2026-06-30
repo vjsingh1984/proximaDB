@@ -12,6 +12,10 @@ class JsonResponse:
     def json(self):
         return self._payload
 
+    def raise_for_status(self):
+        # Success path: the real httpx Response is a no-op on 2xx.
+        return None
+
 
 class RecordingAsyncClient:
     calls = []
@@ -34,8 +38,10 @@ async def test_embedded_insert_records_uses_v2_record_endpoint(monkeypatch):
     RecordingAsyncClient.calls = []
     monkeypatch.setattr(httpx, "AsyncClient", RecordingAsyncClient)
 
+    # transport="tcp" exercises the plain httpx path (no UDS socket dir needed);
+    # the embedded default changed to "uds", which requires _socket_dir setup.
     db = EmbeddedProximaDB.__new__(EmbeddedProximaDB)
-    db.config = EmbeddedConfig(rest_port=15678)
+    db.config = EmbeddedConfig(rest_port=15678, transport="tcp")
 
     result = await db._insert_records(
         "items",
@@ -60,7 +66,7 @@ async def test_embedded_insert_vectors_aliases_record_insert(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", RecordingAsyncClient)
 
     db = EmbeddedProximaDB.__new__(EmbeddedProximaDB)
-    db.config = EmbeddedConfig(rest_port=15678)
+    db.config = EmbeddedConfig(rest_port=15678, transport="tcp")
 
     await db._insert_vectors("items", [{"id": "r1", "vector": [1, 2]}])
 

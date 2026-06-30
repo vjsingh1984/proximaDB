@@ -29,8 +29,19 @@ from proximadb_sdk.chunking_strategies import (
     SentenceStrategy,
     SlidingWindowStrategy,
 )
-from proximadb_sdk.embedding_interface import get_default_embedding_provider
+from proximadb_sdk.embedding_providers import get_provider
 from proximadb_sdk.models import VectorRecord
+
+
+def get_default_embedding_provider():
+    """Deterministic, offline embedding provider for chunking tests.
+
+    Uses the `core` registry's "simulated" provider (hash-based, no model
+    download) as a drop-in for the now-removed legacy embedding helper.
+    Exposes the same provider contract (`embed_text`, `embed_texts`,
+    `dimension`) that `chunk_and_embed_text` relies on.
+    """
+    return get_provider("simulated")
 
 
 class TestChunkingStrategies:

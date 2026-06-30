@@ -8,8 +8,8 @@ use std::sync::Arc;
 use tracing::{debug, trace};
 
 use super::config::CacheConfig;
-use crate::compute::distance_computation::DistanceMetric;
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
+use proximadb_distance_kernel::DistanceMetric;
 
 /// Cache key for distance tables
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]

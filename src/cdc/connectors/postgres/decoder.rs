@@ -655,8 +655,8 @@ mod tests {
         let int_value = ColumnValue::Text("42".to_string());
         assert_eq!(int_value.parse_i64(), Some(42));
 
-        let float_value = ColumnValue::Text("3.14".to_string());
-        assert!((float_value.parse_f64().unwrap() - 3.14).abs() < 0.001);
+        let float_value = ColumnValue::Text("3.5".to_string());
+        assert!((float_value.parse_f64().unwrap() - 3.5).abs() < 0.001);
 
         let json_value = ColumnValue::Text(r#"{"key": "value"}"#.to_string());
         let parsed = json_value.parse_json().unwrap();

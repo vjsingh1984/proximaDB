@@ -122,6 +122,14 @@ pub struct RichSearchResponse {
     pub results: Vec<RichSearchResult>,
     pub total_found: i64,
     pub collection_id: Option<String>,
+    /// TD-064(a): predicate-aware shortfall — `Some(...)` when a filtered
+    /// search returned fewer than the requested `top_k` after the
+    /// WAL+AXIS+storage merge. First-class and always-on (NOT debug-gated):
+    /// a silent `<top_k` under a tenant/RLS filter is fail-open, so the
+    /// client must be able to tell "fewer than k match my filter" from "the
+    /// engine returned my full top-k". Recomputed authoritatively against
+    /// the final merged result so an AXIS-stage false positive is cleared.
+    pub predicate_shortfall: Option<crate::observability::search_plan_trace::PredicateShortfall>,
 }
 
 #[derive(Debug, Clone)]
@@ -267,6 +275,49 @@ fn proxima_value_to_json(value: &proximadb_data_model::ProximaValue) -> serde_js
     crate::core::search::sql_value_filter::proxima_value_to_json(value)
 }
 
+/// TD-064(a): Authoritative predicate-shortfall **after** the
+/// WAL+AXIS+storage merge.
+///
+/// `final_returned_k` / `requested_k` are the TRUE final merged counts (the
+/// caller passes the post-truncate result length and the user's `top_k`), so an
+/// AXIS-stage false positive — AXIS underflowed its oversample budget, but the
+/// merge with WAL + storage filled the top-k — is cleared (`final_returned_k >=
+/// requested_k` ⇒ `None`). `axis_context` carries only the mode label and
+/// oversample pool from the AXIS stage (read off the diagnostics bus); the
+/// counts always come from the final merge, never from the AXIS value.
+///
+/// `has_filter` gates emission: a `<top_k` result with no predicate just means
+/// the collection has fewer than `k` records — not a security/correctness
+/// shortfall. A tenant/RLS-only shortfall (no *user* filter, but AXIS still
+/// recorded one) is covered by the caller OR-ing `axis_context.is_some()` into
+/// `has_filter`.
+fn recompute_merged_shortfall(
+    requested_k: u32,
+    final_returned_k: u32,
+    has_filter: bool,
+    axis_context: Option<&crate::observability::search_plan_trace::PredicateShortfall>,
+) -> Option<crate::observability::search_plan_trace::PredicateShortfall> {
+    use crate::observability::search_plan_trace::PredicateShortfall;
+    if !has_filter || final_returned_k >= requested_k {
+        return None;
+    }
+    Some(PredicateShortfall {
+        requested_k,
+        returned_k: final_returned_k,
+        // Oversample pool is AXIS-stage context only — fall back to the
+        // requested budget when this shortfall was synthesized at the response
+        // boundary (no AXIS stage ran, e.g. a query-cache hit).
+        oversample_pool: axis_context
+            .map(|c| c.oversample_pool)
+            .filter(|&p| p > 0)
+            .unwrap_or(requested_k),
+        ann_filtering_mode: axis_context
+            .filter(|c| !c.ann_filtering_mode.is_empty())
+            .map(|c| c.ann_filtering_mode.clone())
+            .unwrap_or_else(|| "post_filter".to_string()),
+    })
+}
+
 fn v1_search_result_to_rich(
     result: crate::proto::proximadb_v1::SearchResult,
 ) -> RichSearchResponse {
@@ -291,6 +342,7 @@ fn v1_search_result_to_rich(
             .collect(),
         total_found: result.total_found,
         collection_id: result.collection_id,
+        predicate_shortfall: None,
     }
 }
 
@@ -486,6 +538,21 @@ impl VectorOperationsService {
     pub fn invalidate_collection_cache(&self, collection_id: &str) {
         self.collection_resolver()
             .invalidate_collection_cache(collection_id);
+        // Read-after-write coherence: drop cached query results for this
+        // collection so the next search reflects the write. Fire-and-forget
+        // (async) — callers that need the invalidation guaranteed before a
+        // subsequent read call `invalidate_query_cache` and await it.
+        let query_cache = self.query_cache.clone();
+        let coll = collection_id.to_string();
+        tokio::spawn(async move {
+            query_cache.invalidate_collection(&coll).await;
+        });
+    }
+
+    /// Invalidate cached query results for a collection, awaited. Use this on
+    /// the write paths (insert/delete) where the next read must see the write.
+    pub async fn invalidate_query_cache(&self, collection_id: &str) {
+        self.query_cache.invalidate_collection(collection_id).await;
     }
 
     async fn validate_tenant_collection_access(
@@ -581,10 +648,33 @@ impl VectorOperationsService {
                 results: Vec::new(),
                 total_found: 0,
                 collection_id: Some(collection_id),
+                predicate_shortfall: None,
             });
         };
 
-        Ok(v1_search_result_to_rich(search_result))
+        let mut resp = v1_search_result_to_rich(search_result);
+
+        // TD-064(a): authoritative shortfall recompute at the response
+        // boundary — the TRUE final merged counts vs the user's `top_k`.
+        // This runs inside the caller's `predicate_diagnostics::scope`, so the
+        // bus still carries AXIS-stage context (mode label + oversample pool)
+        // from the search above; `take_shortfall()` retrieves it and clears the
+        // slot. Recomputing here (rather than trusting the AXIS-stage value)
+        // clears post-merge false positives and also covers paths the AXIS
+        // shortfall never sees (query-cache hits, non-AXIS engines).
+        let axis_context = crate::observability::predicate_diagnostics::take_shortfall();
+        // A tenant/RLS-only shortfall has no *user* filter in `request.filters`
+        // but AXIS still recorded one — so `axis_context.is_some()` is OR'd in
+        // to keep disclosing the <top_k result.
+        let has_filter = !request.filters.is_empty() || axis_context.is_some();
+        resp.predicate_shortfall = recompute_merged_shortfall(
+            request.top_k,
+            resp.results.len() as u32,
+            has_filter,
+            axis_context.as_ref(),
+        );
+
+        Ok(resp)
     }
 
     /// Execute canonical rich-record get.
@@ -603,7 +693,17 @@ impl VectorOperationsService {
             request.include_props,
         )
         .await
-        .map(|record| record.map(vector_record_to_rich_result))
+        .map(|record| {
+            // Defense-in-depth: never return a dead (tombstone / TTL-expired)
+            // record from get-by-id, regardless of which backing store (WAL
+            // or SST point-lookup) produced it. The WAL memtable filters on
+            // its own, but the SST point-lookup path does not. Use the
+            // canonical is_visible_at(now_ns) on valid_to_ns.
+            let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+            record
+                .filter(|r| r.is_visible_at(now_ns))
+                .map(vector_record_to_rich_result)
+        })
     }
 
     /// Scan current visible canonical records from the VectorOps-backed WAL/memtable path.
@@ -630,6 +730,15 @@ impl VectorOperationsService {
                 record.tenant_id.is_empty() || record.tenant_id == tenant_context.tenant_id
             });
         }
+        // Defense-in-depth: drop dead records (tombstone / TTL-expired) using
+        // the canonical ProximaRecord::is_dead on valid_to_ns (ns). The WAL
+        // memtable already filters these, but this guarantees no scan ever
+        // leaks a deleted/expired row regardless of the upstream path.
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+        records.retain(|record| !record.is_dead(now_ns));
         if !include_vector {
             for record in &mut records {
                 record.embeddings.clear();
@@ -836,6 +945,9 @@ impl VectorOperationsService {
         if !result.success {
             return Ok(result);
         }
+        // Read-after-write coherence: a deleted record must not resurface
+        // from a stale cached query result. Await so the next search sees it.
+        self.invalidate_query_cache(collection_id).await;
         let total_processed = result.metrics.total_processed.max(0);
         let processing_time_us = start.elapsed().as_micros() as i64;
 
@@ -1762,9 +1874,16 @@ impl VectorOperationsService {
             return Err(anyhow::anyhow!(e));
         }
 
-        self.write_coordinator()
+        let result = self
+            .write_coordinator()
             .insert_batch_internal(collection_id, records)
-            .await
+            .await?;
+        // Read-after-write coherence: a freshly inserted record must be
+        // visible to the next search, not hidden behind a stale cached result.
+        if result.success {
+            self.invalidate_query_cache(collection_id).await;
+        }
+        Ok(result)
     }
 
     /// Alias kept for callers already using ProximaRecord envelopes.
@@ -2157,7 +2276,20 @@ impl VectorOperationsService {
             k as u32,
             filter_str.as_deref(),
         );
-        if let Some(cached_v1) = self.query_cache.get_if_fresh_v1(&cache_key, 300).await {
+        // Strong-freshness reads must NEVER be served from the query cache —
+        // a cached result could predate a concurrent write and violate
+        // read-after-write. Only non-Strong (StaleOk / BoundedStale) reads
+        // may use the cache. Extract freshness here (before the cache check)
+        // so the gate is correct.
+        let freshness_mode = config
+            .as_ref()
+            .and_then(|c| c.freshness_mode.clone())
+            .unwrap_or_default();
+        if !matches!(
+            freshness_mode,
+            crate::core::search::VectorFreshnessMode::Strong
+        ) && let Some(cached_v1) = self.query_cache.get_if_fresh_v1(&cache_key, 300).await
+        {
             // Phase 7.2: a process-local cache hit is the strongest
             // possible signal that this node owns the warm path for
             // the collection — record affinity here too.
@@ -2191,14 +2323,9 @@ impl VectorOperationsService {
             .map(|c| c.search_mode.clone())
             .unwrap_or_default();
 
-        // Phase 5: pull the request's freshness mode (default = Strong)
-        // so the v1 path applies the same delta-merge semantics as the
-        // legacy path. Keep clones of query_vector + filter for the
-        // delta scan since execute_unified_plan takes ownership.
-        let freshness_mode = config
-            .as_ref()
-            .and_then(|c| c.freshness_mode.clone())
-            .unwrap_or_default();
+        // freshness_mode was extracted above (before the cache check) so the
+        // Strong-bypass gate is correct. Keep clones of query_vector + filter
+        // for the delta scan since execute_unified_plan takes ownership.
         let delta_query_vector = query_vector.clone();
         let delta_filter = filter.clone();
 
@@ -3156,7 +3283,14 @@ impl VectorOperationsService {
             collection_id
         );
         let axis_optimized_results = match build_axis_hybrid_query_with_policy(
-            collection_id,
+            // TD-AXIS-1: use the collection's canonical id (UUID) — NOT the
+            // caller's collection_id (which may be the human-readable NAME).
+            // enable_hmgi registered the UUID in hmgi_enabled_collections;
+            // passing the name caused is_hmgi_enabled to return false → HMGI
+            // skipped → IVF fallback → 0 results (ANN index not serving).
+            // ADR-031 follow-up: migrate hmgi_enabled_collections to the stable
+            // object_id (base62) and use that here instead of the UUID.
+            &collection.id,
             &axis_search_params,
             ann_filtering_mode,
             ann_filtering_selectivity.map(|_| proximadb_catalog::AnnFilteringPolicy::default()),
@@ -3164,6 +3298,19 @@ impl VectorOperationsService {
         ) {
             Ok(hybrid_query) => match self.axis_index_manager.query(hybrid_query).await {
                 Ok(result) => {
+                    // TD-064(a): stop dropping `predicate_shortfall` /
+                    // `selected_filtering_mode`. Carry the AXIS-stage shortfall
+                    // onto the per-request diagnostics bus here (explicit
+                    // carrier — the value is then recomputed against the FINAL
+                    // WAL+AXIS+storage merge at the response boundary in
+                    // `search_records_with_tenant_context`, which clears any
+                    // post-merge false positive). `selected_filtering_mode` is
+                    // already reflected in the shortfall's `ann_filtering_mode`
+                    // label, so bind it to document it is captured, not
+                    // silently discarded.
+                    let axis_shortfall = result.predicate_shortfall;
+                    let _selected_filtering_mode = result.selected_filtering_mode;
+                    crate::observability::predicate_diagnostics::set_shortfall(axis_shortfall);
                     let records: Vec<crate::core::search::results::OptimizedSearchRecord> = result
                         .results
                         .into_iter()
@@ -3214,19 +3361,32 @@ impl VectorOperationsService {
         // This is critical for delete/update operations where WAL contains tombstones
         use std::collections::HashMap;
 
-        // Get current time for tombstone detection
-        let current_time_secs = std::time::SystemTime::now()
+        // Current time in nanoseconds for canonical dead-record detection
+        // (see OptimizedSearchRecord::is_dead / proximadb_records::is_record_dead).
+        let now_ns = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
+            .map(|d| d.as_nanos() as i64)
             .unwrap_or(0);
 
         // Build map from results with priority: WAL > AXIS > Storage
         let mut id_to_result: HashMap<String, crate::core::search::results::OptimizedSearchRecord> =
             HashMap::new();
 
-        // WAL results have highest priority (fresher data)
+        // WAL results have highest priority (fresher data). A dead record
+        // (tombstone/expired) wins over a live one for the same OID: in the
+        // insert-then-delete-before-flush case both copies are unflushed in
+        // the same WAL delta, and the tombstone must survive so the dead-record
+        // filter below removes the OID. Never let a live copy overwrite a dead
+        // record. Uses the canonical is_dead(valid_to_ns) — not expires_at.
         for result in wal_optimized_results {
-            id_to_result.insert(result.id.clone(), result);
+            id_to_result
+                .entry(result.id.clone())
+                .and_modify(|existing| {
+                    if !existing.is_dead(now_ns) && result.is_dead(now_ns) {
+                        *existing = result.clone();
+                    }
+                })
+                .or_insert(result);
         }
 
         // AXIS HNSW results second priority (fast indexed search)
@@ -3239,25 +3399,18 @@ impl VectorOperationsService {
             id_to_result.entry(result.id.clone()).or_insert(result);
         }
 
-        // Filter out tombstones and collect final results
-        // Tombstone design: empty vector (Some(vec![])) + expires_at in past (including 0)
-        // NOTE: A record with vector=None is NOT a tombstone - it just means the vector wasn't
-        // returned in the optimized search (common for storage engines that return only IDs/scores)
+        // Filter out dead records (tombstone valid_to_ns==Some(0) OR TTL-expired)
+        // using the canonical predicate on valid_to_ns (ns) — immune to the
+        // expires_at unit confusion and to vector==None (engines returning only
+        // id/score). Defense-in-depth alongside the WAL delta merge.
         let mut all_results: Vec<crate::core::search::results::OptimizedSearchRecord> =
             id_to_result
                 .into_values()
                 .filter(|r| {
-                    // Check if this is a tombstone
-                    // Tombstone: vector is explicitly empty (Some(vec![])) AND expired
-                    // A record with vector=None is NOT a tombstone - it's just missing vector data
-                    let is_explicit_empty_vector = r.vector.as_ref().is_some_and(|v| v.is_empty());
-                    let is_expired = r.expires_at.is_some_and(|e| e <= current_time_secs);
-                    let is_tombstone = is_explicit_empty_vector && is_expired;
-
-                    if is_tombstone {
+                    if r.is_dead(now_ns) {
                         debug!(
-                            "🗑️ Filtering tombstone from two-stage search results: {}",
-                            r.id
+                            "🗑️ Filtering dead record from two-stage search results: {} (valid_to_ns={:?})",
+                            r.id, r.valid_to_ns
                         );
                         false
                     } else {
@@ -3479,6 +3632,16 @@ impl VectorOperationsService {
 
         // Perform index lookup using axis_index_manager
         let query_result = self.axis_index_manager.query(hybrid_query).await?;
+
+        // TD-064(a): stop dropping `predicate_shortfall` /
+        // `selected_filtering_mode` on this path too. Carry a real shortfall
+        // onto the diagnostics bus (only when present, so this step never
+        // clears a shortfall a prior step recorded). `selected_filtering_mode`
+        // is reflected in the shortfall's mode label — captured, not discarded.
+        let _selected_filtering_mode = query_result.selected_filtering_mode;
+        if let Some(sf) = query_result.predicate_shortfall {
+            crate::observability::predicate_diagnostics::set_shortfall(Some(sf));
+        }
 
         // Convert QueryResult to Vec<OptimizedSearchRecord>
         let results: Vec<crate::core::search::results::OptimizedSearchRecord> = query_result
@@ -4527,19 +4690,16 @@ mod index_first_search_tests {
             )
             .await?,
         );
-        let metadata_backend = Arc::new(
-            crate::storage::metadata::MetadataStore::new(
-                crate::storage::metadata::MetadataStoreConfig::default(),
-            )
-            .await?,
-        )
-            as Arc<dyn crate::storage::traits::InternalCollectionProvider>;
+        let metadata_url = format!("file://{}", temp_dir.path().join("metadata").display());
+        config.storage.metadata_url = metadata_url.clone();
+        let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &metadata_url)
+            .await?;
         let collection_service = Arc::new(
-            crate::services::collection::manager::CollectionService::new(
-                metadata_backend,
-                config.storage.clone(),
-            )
-            .await?,
+            crate::services::collection::manager::CollectionService::new(config.storage.clone())
+                .await?
+                .with_catalog_manager(catalog_manager.clone()),
         );
 
         let service = Arc::new(VectorOperationsService::new(
@@ -5344,10 +5504,19 @@ async fn observe_advisor_for_search(collection_id: &str, top_k: u32, observed_la
         return;
     };
 
+    // Downcast to concrete AxisManager for recall-target advisor methods
+    let axis_mgr = match axis_manager
+        .as_any()
+        .downcast_ref::<crate::index::axis::management::AxisManager>()
+    {
+        Some(m) => m,
+        None => return,
+    };
+
     // (2) Read the active strategy. Missing strategy → collection
     // hasn't been opted into the advisor or wasn't given a recall
     // target. No observation.
-    let strategy = match axis_manager.get_collection_strategy(collection_id).await {
+    let strategy = match axis_mgr.get_collection_strategy(collection_id).await {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -5433,4 +5602,76 @@ async fn observe_advisor_for_search(collection_id: &str, top_k: u32, observed_la
         observed_latency_us,
     );
     crate::services::advisor_observations::record_observation(&obs);
+}
+
+#[cfg(test)]
+mod recompute_merged_shortfall_tests {
+    //! TD-064(a): unit tests for the authoritative post-merge shortfall
+    //! recompute. The AXIS-stage value can be a post-merge false positive
+    //! (WAL+storage fill the top-k); the recompute against the FINAL merged
+    //! count clears it, while a genuine shortfall survives.
+    use super::recompute_merged_shortfall;
+    use crate::observability::search_plan_trace::PredicateShortfall;
+
+    fn axis_ctx(returned_k: u32, mode: &str, pool: u32) -> PredicateShortfall {
+        PredicateShortfall {
+            requested_k: 10,
+            returned_k,
+            oversample_pool: pool,
+            ann_filtering_mode: mode.to_string(),
+        }
+    }
+
+    #[test]
+    fn axis_false_positive_is_cleared_when_merge_fills_top_k() {
+        // AXIS underflowed its oversample budget (returned 3), but the
+        // WAL+storage merge brought the final count to the full top_k → no
+        // shortfall must be reported (the post-merge false positive).
+        let ctx = axis_ctx(3, "inline", 50);
+        assert!(recompute_merged_shortfall(10, 10, true, Some(&ctx)).is_none());
+    }
+
+    #[test]
+    fn genuine_shortfall_survives_the_merge() {
+        // AXIS returned 3, the merge did NOT recover more → the shortfall is
+        // real and must survive, with the FINAL merged count as returned_k
+        // (not the AXIS-stage value) and the AXIS mode label preserved.
+        let ctx = axis_ctx(3, "inline", 50);
+        let sf = recompute_merged_shortfall(10, 3, true, Some(&ctx)).expect("shortfall");
+        assert_eq!(sf.requested_k, 10);
+        assert_eq!(
+            sf.returned_k, 3,
+            "returned_k must be the FINAL merged count"
+        );
+        assert_eq!(sf.oversample_pool, 50, "oversample pool carried from AXIS");
+        assert_eq!(sf.ann_filtering_mode, "inline");
+    }
+
+    #[test]
+    fn synthesized_when_no_axis_context_but_filtered_underflow() {
+        // Cache-hit / non-AXIS path: no AXIS context, but a user filter still
+        // underflowed → synthesize with the post_filter fallback label and the
+        // requested budget as the oversample pool.
+        let sf = recompute_merged_shortfall(10, 4, true, None).expect("synthesized shortfall");
+        assert_eq!(sf.requested_k, 10);
+        assert_eq!(sf.returned_k, 4);
+        assert_eq!(sf.ann_filtering_mode, "post_filter");
+        assert_eq!(sf.oversample_pool, 10, "falls back to requested budget");
+    }
+
+    #[test]
+    fn no_filter_means_no_shortfall_even_when_underflowed() {
+        // A <top_k result with no predicate just means the collection has
+        // fewer than k records — not a security/correctness shortfall.
+        let ctx = axis_ctx(3, "inline", 50);
+        assert!(recompute_merged_shortfall(10, 3, false, Some(&ctx)).is_none());
+    }
+
+    #[test]
+    fn full_top_k_is_never_a_shortfall() {
+        let ctx = axis_ctx(3, "post_filter", 20);
+        assert!(recompute_merged_shortfall(10, 10, true, Some(&ctx)).is_none());
+        // also: more than requested (cap) is not a shortfall
+        assert!(recompute_merged_shortfall(10, 12, true, Some(&ctx)).is_none());
+    }
 }

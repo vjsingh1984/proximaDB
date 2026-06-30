@@ -112,7 +112,7 @@ impl UnifiedHELIXReader {
     pub fn for_spatial_locality_query(
         filesystem_factory: Arc<FilesystemFactory>,
         collection_id: String,
-        filter: Option<crate::core::search::FilterExpression>,
+        filter: Option<proximadb_filter_expression::FilterExpression>,
     ) -> Result<Self> {
         Self::new(
             filesystem_factory,

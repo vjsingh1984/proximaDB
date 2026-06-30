@@ -55,10 +55,10 @@ use tracing::debug;
 
 // Reuse existing platform capabilities
 use super::common::VectorStats;
-use crate::core::hardware_capabilities::get_hardware_capabilities;
 use proximadb_compression::{
     CompressionAlgorithm, CompressionContext, CompressionProvider, StandardCompression,
 };
+use proximadb_hardware_caps::get_hardware_capabilities;
 
 // Import bloom filter types from common
 use super::common::{
@@ -66,11 +66,11 @@ use super::common::{
     RowGroupBloomFilter, RowGroupNeighbor,
 };
 use super::matrix_builder::MatrixBuilder;
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
+use proximadb_hardware_caps::HardwareCapabilities;
 use proximadb_runtime_common::pool::VectorMemoryPool;
 // ProximaCodec system for encoding/decoding
 use crate::storage::engines::core::ops::proximacodec::{
@@ -2391,7 +2391,7 @@ mod minimal_hnsw_tests {
     #[test]
     fn test_distance_aware_clustering() {
         // Create a minimal HNSW builder
-        let hw_caps = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hw_caps = proximadb_hardware_caps::get_hardware_capabilities();
         let mut builder = IvfClusteringBuilder::new(3, hw_caps); // Small row groups for testing
 
         // Add nodes with predefined edges and distances
@@ -2506,7 +2506,7 @@ mod minimal_hnsw_tests {
 
 #[test]
 fn test_uniqueness_guarantee() {
-    let hw_caps = crate::core::hardware_capabilities::get_hardware_capabilities();
+    let hw_caps = proximadb_hardware_caps::get_hardware_capabilities();
     let mut builder = IvfClusteringBuilder::new(5, hw_caps);
 
     // Add 10 nodes
@@ -2597,7 +2597,7 @@ impl RaptorWriter {
 
         // Initialize unified distance compute first
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(
-            crate::compute::distance_computation::DistanceMetric::Cosine,
+            proximadb_distance_kernel::DistanceMetric::Cosine,
         ));
 
         // Initialize codebook store for quantization
@@ -2621,7 +2621,7 @@ impl RaptorWriter {
         let quant_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig {
                 enable_hardware_acceleration: config.enable_simd,
-                distance_metric: crate::compute::distance_computation::DistanceMetric::Cosine,
+                distance_metric: proximadb_distance_kernel::DistanceMetric::Cosine,
                 ..Default::default() // INT8 by default, PQ requires explicit config
             };
 
@@ -5666,7 +5666,7 @@ mod tests {
                     value: Some(SqlVal::NullValue(0)),
                 },
                 SqlValue {
-                    value: Some(SqlVal::NumberValue(3.14)),
+                    value: Some(SqlVal::NumberValue(3.5)),
                 },
             ],
         };

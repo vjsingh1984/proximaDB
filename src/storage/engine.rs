@@ -4,10 +4,8 @@ use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManag
 use crate::storage::{
     engines::sst::{Compaction, SstEngine},
     persistence::disk_manager::DiskManager,
-    traits::InternalCollectionProvider,
 };
 use proximadb_records::{EmbeddingCell, ProximaRecord};
-use proximadb_storage_common::storage_path::StoragePath;
 // Import ProximaBlockCollectionMetadata from the appropriate location
 use crate::storage::engines::core::formats::proximablocks::header_metadata::ProximaBlockCollectionMetadata;
 use dashmap::DashMap;
@@ -15,7 +13,6 @@ use rand::seq::SliceRandom;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 // Note: Distance computation is handled by the unified compute module
@@ -33,10 +30,15 @@ pub struct StorageEngine {
     filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
 
     /// Shared distance computation engine for all storage operations
-    distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+    distance_compute: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
 
-    /// Collection metadata provider - injected after construction to break circular dependency
-    metadata_provider: RwLock<Option<Arc<dyn InternalCollectionProvider>>>,
+    /// A6 storage-write fence (default-OFF). Injected post-construction from the
+    /// bootstrap (`database.rs`) once `SharedServices` — and thus the durable
+    /// `PartitionLeaseManager` — exists, mirroring the `set_precision_resolver`
+    /// pattern (the storage engine is built before the lease stack). Threaded into
+    /// the shutdown flush coordinator so a fenced-out pod cannot publish stale data
+    /// to shared storage. `None` ⇒ no fence ⇒ flush proceeds (fail-open).
+    storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>>,
 }
 
 impl StorageEngine {
@@ -59,18 +61,14 @@ impl StorageEngine {
     }
 
     /// Create new storage engine without collection service dependency
-    /// The metadata provider will be injected later via set_metadata_provider
     pub async fn new_without_collection_service(
         config: StorageConfig,
     ) -> crate::storage::Result<Self> {
-        Self::new_internal(config, None).await
+        Self::new_internal(config).await
     }
 
     /// Internal constructor used by both public constructors
-    async fn new_internal(
-        config: StorageConfig,
-        metadata_provider: Option<Arc<dyn InternalCollectionProvider>>,
-    ) -> crate::storage::Result<Self> {
+    async fn new_internal(config: StorageConfig) -> crate::storage::Result<Self> {
         // Extract data directories from storage locations
         let data_dirs: Vec<PathBuf> = config
             .storage_locations
@@ -125,16 +123,6 @@ impl StorageEngine {
             .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?,
         );
 
-        // Attach metadata provider to WAL manager for recovery
-        if let Some(provider) = metadata_provider.as_ref() {
-            write_ahead_log_manager
-                .set_metadata_provider(provider.clone())
-                .await;
-            tracing::info!(
-                "📋 Metadata provider attached to WAL manager for collection config access during recovery"
-            );
-        }
-
         // StorageEngine focuses on pure storage operations (LSM, WAL, MMAP)
         tracing::info!("📂 StorageEngine: Metadata operations delegated to SharedServices");
 
@@ -173,34 +161,25 @@ impl StorageEngine {
             compaction_manager,
             filesystem,
             distance_compute: Arc::new(
-                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+                proximadb_distance_kernel::engine::UnifiedDistanceCompute::default(),
             ),
-            metadata_provider: RwLock::new(metadata_provider),
+            storage_write_fence: None,
         })
     }
 
-    /// Set the metadata provider - used to inject CollectionService after construction
-    pub async fn set_metadata_provider(&self, provider: Arc<dyn InternalCollectionProvider>) {
-        let mut lock = self.metadata_provider.write().await;
-        *lock = Some(provider.clone());
-        info!("✅ Metadata provider injected into StorageEngine");
-
-        // CRITICAL: Also set metadata provider on WAL manager so it can query storage assignments
-        self.write_ahead_log_manager
-            .set_metadata_provider(provider.clone())
-            .await;
-        info!("✅ Metadata provider propagated to WAL manager");
-
-        // CRITICAL: Also set on WAL Registry so ALL pool instances get it
-        let registry =
-            crate::storage::persistence::write_ahead_log::get_write_ahead_log_manager_registry();
-        registry.set_metadata_provider(provider).await;
-        info!("✅ Metadata provider propagated to WAL Registry (pool)");
-    }
-
-    /// Get metadata provider - returns None if not yet injected
-    async fn get_metadata_provider(&self) -> Option<Arc<dyn InternalCollectionProvider>> {
-        self.metadata_provider.read().await.clone()
+    /// Inject the A6 storage-write fence (default-OFF). Called from the bootstrap
+    /// after `SharedServices` builds the durable `PartitionLeaseManager`, so the
+    /// shutdown flush path enforces the **same** ownership view as the network
+    /// write-gates. Mirrors `Compaction::set_precision_resolver` (post-construction
+    /// wiring of a dependency the storage engine is built before).
+    pub fn set_storage_write_fence(
+        &mut self,
+        fence: Arc<dyn crate::storage::write_fence::StorageWriteFence>,
+    ) {
+        self.storage_write_fence = Some(fence);
+        tracing::info!(
+            "🔒 STORAGE_ENGINE: A6 storage-write fence wired (default-OFF; set PROXIMADB_WRITE_FENCING=1 to enforce)"
+        );
     }
 
     pub async fn start(&mut self) -> crate::storage::Result<()> {
@@ -279,39 +258,152 @@ impl StorageEngine {
     ) -> crate::storage::Result<
         crate::storage::persistence::write_ahead_log::flush_coordinator::FlushAllResult,
     > {
-        use crate::storage::persistence::write_ahead_log::flush_coordinator::WALFlushCoordinator;
+        use crate::storage::flush_materializer::{CollectionFlushPlan, materialize_collection};
+        use crate::storage::persistence::write_ahead_log::flush_coordinator::FlushAllResult;
+        use crate::storage::persistence::write_ahead_log::{
+            get_global_write_buffer_behavior, list_collections_from_catalog,
+        };
 
-        // Create a temporary flush coordinator for shutdown
-        let flush_coordinator = WALFlushCoordinator::new();
+        let empty_result = FlushAllResult {
+            collections_flushed: 0,
+            total_vectors_flushed: 0,
+            total_bytes_written: 0,
+            failed_collections: vec![],
+        };
 
-        // Register all SST engines from our storage map
-        // Each SST engine implements UnifiedStorageFormat
-        for entry in self.sst_storages.iter() {
-            let engine_key = entry.key();
-            let engine = entry.value();
-            // SST engines use "sst" as engine type
-            flush_coordinator
-                .register_storage_engine("sst", engine.clone())
-                .await;
-            tracing::debug!("Registered SST engine '{}' for shutdown flush", engine_key);
+        // The global write buffer is the source of unflushed batches (the SAME
+        // singleton the embedded path drains). Absent ⇒ nothing to flush.
+        let write_buffer = match get_global_write_buffer_behavior() {
+            Some(wb) => wb,
+            None => {
+                tracing::info!(
+                    "📋 STORAGE_ENGINE: No global write buffer initialized, nothing to flush"
+                );
+                return Ok(empty_result);
+            }
+        };
+
+        let collections_to_flush = write_buffer.list_collections_with_unflushed_data().await;
+        if collections_to_flush.is_empty() {
+            tracing::info!("📋 STORAGE_ENGINE: No collections have unflushed data");
+            return Ok(empty_result);
         }
 
-        // Set collection service if available for metadata lookup
-        if let Some(ref _provider) = *self.metadata_provider.read().await {
-            // Note: FlushCoordinator expects CollectionService, but we have InternalCollectionProvider
-            // The flush_all_collections() method will use None for flush_context and let
-            // execute_coordinated_flush() handle engine determination
-            tracing::debug!("Metadata provider available for engine determination");
+        tracing::info!(
+            "🛑 STORAGE_ENGINE: Found {} collections with unflushed data: {:?}",
+            collections_to_flush.len(),
+            collections_to_flush
+        );
+
+        // Catalog is the metadata authority: resolve each collection's engine /
+        // dimension / on-disk path / owning tenant. This is what the old throwaway
+        // coordinator lacked (TD-163) — without it the engine could not be resolved
+        // and the shutdown flush silently materialized nothing.
+        let catalog = list_collections_from_catalog().await;
+
+        let mut collections_flushed = 0usize;
+        let mut total_vectors_flushed = 0u64;
+        let mut total_bytes_written = 0u64;
+        let mut failed_collections: Vec<(String, String)> = Vec::new();
+
+        for collection_id in &collections_to_flush {
+            // The server keys the write buffer by canonical UUID, so resolve by id.
+            let Some(meta) = catalog.iter().find(|c| &c.id == collection_id) else {
+                tracing::warn!(
+                    "⚠️ STORAGE_ENGINE: No catalog metadata for collection '{}'; cannot resolve engine, skipping",
+                    collection_id
+                );
+                failed_collections.push((collection_id.clone(), "no catalog metadata".to_string()));
+                continue;
+            };
+
+            let config = meta.config.as_ref();
+            let assignment = meta.storage_assignment.as_ref();
+            let engine_type = assignment
+                .map(|a| a.engine)
+                .or_else(|| config.and_then(|c| c.storage_engine))
+                .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32);
+            let dimension = config.map(|c| c.dimension).unwrap_or(0);
+            let base_location = assignment
+                .map(|a| a.base_location.clone())
+                .unwrap_or_default();
+            let tenant_id = proximadb_tenant::tenant_id_of(meta);
+
+            let plan = CollectionFlushPlan {
+                wal_key: collection_id.clone(),
+                canonical_id: collection_id.clone(),
+                base_location,
+                engine_type,
+                dimension,
+                tenant_id,
+            };
+
+            // A6 fence is applied inside `materialize_collection` (default-OFF), so a
+            // pod displaced by a lease takeover is rejected before the storage write.
+            // `free_wal=true`: once the SST segment is written, free the WAL so the
+            // materialized segment — not a WAL replay — is the durable restart-recall
+            // source (the whole point of materializing to SST; keeping the WAL made
+            // recovery replay it and ignore the segment we just wrote). Safe now that
+            // TD-165 fixed cold-read recall (IVF posting lists populated at flush + the
+            // SST route honors SearchMode); gated by the insert→SIGINT→restart→search
+            // round-trip in runtime-evidence/TD163_SERVER_FLUSH_MATERIALIZATION_2026_06_26.md.
+            // Shutdown is terminal, so the freed batches are never re-flushed.
+            match materialize_collection(
+                &write_buffer,
+                &plan,
+                self.storage_write_fence.as_ref(),
+                None,
+                true,
+                Some(&self.axis_index_manager),
+            )
+            .await
+            {
+                Ok(Some(outcome)) => {
+                    collections_flushed += 1;
+                    total_vectors_flushed += outcome.entries_flushed;
+                    total_bytes_written += outcome.bytes;
+                    tracing::info!(
+                        "✅ STORAGE_ENGINE: Flushed collection '{}': {} vectors, {} bytes",
+                        collection_id,
+                        outcome.entries_flushed,
+                        outcome.bytes
+                    );
+                }
+                Ok(None) => {
+                    tracing::debug!(
+                        "📋 STORAGE_ENGINE: Collection '{}' had no unflushed batches",
+                        collection_id
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "❌ STORAGE_ENGINE: Failed to flush collection '{}': {}",
+                        collection_id,
+                        e
+                    );
+                    failed_collections.push((collection_id.clone(), e.to_string()));
+                }
+            }
         }
 
-        // Execute flush for all collections with unflushed data
-        match flush_coordinator.flush_all_collections().await {
-            Ok(result) => Ok(result),
-            Err(e) => Err(crate::storage::StorageError::WalError(format!(
-                "Failed to flush memtable to storage: {}",
-                e
-            ))),
-        }
+        tracing::info!(
+            "🛑 STORAGE_ENGINE: Flush complete — {} collections, {} vectors, {} bytes{}",
+            collections_flushed,
+            total_vectors_flushed,
+            total_bytes_written,
+            if failed_collections.is_empty() {
+                String::new()
+            } else {
+                format!(", {} failures", failed_collections.len())
+            }
+        );
+
+        Ok(FlushAllResult {
+            collections_flushed,
+            total_vectors_flushed,
+            total_bytes_written,
+            failed_collections,
+        })
     }
 
     /// Recover all vectors from WAL files for all collections
@@ -335,22 +427,13 @@ impl StorageEngine {
             }
         };
 
-        // Get all collections from metadata provider
-        let metadata_provider = self.metadata_provider.read().await;
-        let provider = match metadata_provider.as_ref() {
-            Some(p) => p,
-            None => {
-                warn!("⚠️  STORAGE_ENGINE: No metadata provider set, cannot recover collections");
-                return Ok(());
-            }
-        };
-
-        let collections = provider.list_collections().await.map_err(|e| {
-            crate::storage::StorageError::WalError(format!(
-                "Failed to list collections during WAL recovery: {}",
-                e
-            ))
-        })?;
+        // Get all collections from the catalog (sole authority for metadata).
+        let collections =
+            crate::storage::persistence::write_ahead_log::list_collections_from_catalog().await;
+        if collections.is_empty() {
+            info!("📋 STORAGE_ENGINE: No collections in catalog to recover");
+            return Ok(());
+        }
 
         info!(
             "📋 STORAGE_ENGINE: Found {} collections to recover",
@@ -397,22 +480,14 @@ impl StorageEngine {
     pub async fn register_collections_for_recovery(&self) -> crate::storage::Result<()> {
         info!("🔧 STORAGE_ENGINE: Registering collections with recovery manager");
 
-        // Get all collections from metadata provider
-        let collections = if let Some(provider) = self.get_metadata_provider().await {
-            match provider.list_collections().await {
-                Ok(collections) => {
-                    info!("📋 Found {} collections to register", collections.len());
-                    collections
-                }
-                Err(e) => {
-                    warn!("⚠️ Failed to list collections: {}", e);
-                    return Ok(()); // Continue even if we can't list collections
-                }
-            }
-        } else {
-            info!("📋 No metadata provider available, skipping registration");
+        // Get all collections from the catalog (sole authority for metadata).
+        let collections =
+            crate::storage::persistence::write_ahead_log::list_collections_from_catalog().await;
+        if collections.is_empty() {
+            info!("📋 No collections in catalog, skipping registration");
             return Ok(());
-        };
+        }
+        info!("📋 Found {} collections to register", collections.len());
 
         // Get recovery manager from WAL
         let recovery_manager = match self.write_ahead_log_manager.get_recovery_manager().await {
@@ -564,16 +639,8 @@ impl StorageEngine {
             collection_id,
             vector_size
         );
-        // Implement stats update functionality using metadata provider
-        if let Some(_provider) = self.get_metadata_provider().await {
-            // Deferred: Implement stats update when MetadataProvider supports it
-            // provider.update_stats(collection_id, 1, vector_size as i64).await?;
-        } else {
-            tracing::warn!(
-                "⚠️ No metadata provider available, cannot update stats for collection {}",
-                collection_id
-            );
-        }
+        // Deferred: collection stats are now maintained through the catalog;
+        // wire a catalog-backed stats update here when supported.
         tracing::debug!(
             "✅ Completed metadata stats update for collection {}",
             collection_id
@@ -643,16 +710,7 @@ impl StorageEngine {
                 .delete(collection_id, id.clone())
                 .await?;
 
-            // Update metadata statistics
-            if let Some(_provider) = self.get_metadata_provider().await {
-                // Deferred: Implement stats update when MetadataProvider supports it
-                // provider.update_stats(collection_id, -1, 0).await?;
-            } else {
-                tracing::warn!(
-                    "⚠️ No metadata provider available, cannot update stats for collection {}",
-                    collection_id
-                );
-            }
+            // Deferred: collection stats are now maintained through the catalog.
         }
 
         // Mark as deleted in SST storage using tombstone
@@ -691,14 +749,41 @@ impl StorageEngine {
         collection_id: String,
         base_location: String,
     ) -> crate::storage::Result<()> {
+        // ADR-031 Phase 4c: this low-level entrypoint has no catalog/schema
+        // handle, so it cannot resolve a typed identity. Delegates to the
+        // typed-aware inner with `None` → byte-identical legacy paths. The
+        // authoritative create path (`CollectionService::create_storage_directories`)
+        // threads the pre-minted identity and creates the typed dirs; this path
+        // is a fallback that stays legacy (mixed-read-safe).
+        self.create_collection_with_storage_typed(collection_id, base_location, None)
+            .await
+    }
+
+    /// ADR-031 Phase 4c: typed-aware storage create. `Some(identity)` creates
+    /// the data/wal/index dirs at the account-rooted typed path
+    /// (`{base}/accounts/{base62}/…/{sub}`); `None` is byte-identical legacy.
+    /// Callers that hold a pre-minted [`CollectionIdentity`] (resolved from the
+    /// catalog's `stable_*_id` + account u32) pass it here so the engine writes
+    /// to the same typed path the catalog asset records.
+    pub async fn create_collection_with_storage_typed(
+        &self,
+        collection_id: String,
+        base_location: String,
+        typed_identity: Option<crate::core::stable_id::CollectionIdentity>,
+    ) -> crate::storage::Result<()> {
         // NOTE: Collection metadata should be managed by CollectionService
         // Storage layer should only handle storage concerns, not metadata
         tracing::debug!("💾 Creating storage for collection: {}", collection_id);
 
-        // Create directory paths based on base_location
-        let data_url = StoragePath::collection_data_path(&base_location, &collection_id);
-        let write_buffer_url = StoragePath::collection_wal_path(&base_location, &collection_id);
-        let index_url = StoragePath::collection_index_path(&base_location, &collection_id);
+        // Create directory paths based on base_location. The typed helper's
+        // `None` branch is byte-identical to the legacy `StoragePath::collection_*_path`.
+        use crate::storage::trait_components::path_resolver::{
+            collection_data_path_typed, collection_index_path_typed, collection_wal_path_typed,
+        };
+        let data_url = collection_data_path_typed(&base_location, &collection_id, typed_identity);
+        let write_buffer_url =
+            collection_wal_path_typed(&base_location, &collection_id, typed_identity);
+        let index_url = collection_index_path_typed(&base_location, &collection_id, typed_identity);
 
         // Create all required directories for the collection
         // This ensures directories exist before any writes occur
@@ -744,30 +829,12 @@ impl StorageEngine {
     }
 
     async fn load_collections(&self) -> crate::storage::Result<()> {
-        tracing::info!("🔍 STORAGE_ENGINE: Loading collections from metadata provider");
+        tracing::info!("🔍 STORAGE_ENGINE: Loading collections from catalog");
 
-        // Get collections from metadata provider which has access to the filestore backend
-        let collections = if let Some(provider) = self.get_metadata_provider().await {
-            match provider.list_collections().await {
-                Ok(collections) => {
-                    tracing::info!(
-                        "📋 Found {} collections in metadata store",
-                        collections.len()
-                    );
-                    collections
-                }
-                Err(e) => {
-                    tracing::error!("❌ Failed to get collections from metadata: {}", e);
-                    return Err(crate::core::StorageError::SstEngine(format!(
-                        "Failed to load collections from metadata: {}",
-                        e
-                    )));
-                }
-            }
-        } else {
-            tracing::warn!("⚠️ No metadata provider available, cannot load collections");
-            return Ok(());
-        };
+        // Get collections from the catalog (sole authority for metadata).
+        let collections =
+            crate::storage::persistence::write_ahead_log::list_collections_from_catalog().await;
+        tracing::info!("📋 Found {} collections in catalog", collections.len());
 
         if collections.is_empty() {
             tracing::info!("📋 No collections to load");
@@ -999,7 +1066,7 @@ impl StorageEngine {
     /// Get the shared distance computation engine
     pub fn distance_compute(
         &self,
-    ) -> &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute> {
+    ) -> &Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute> {
         &self.distance_compute
     }
 
@@ -1009,7 +1076,7 @@ impl StorageEngine {
         &self,
         query: &[f32],
         vector: &[f32],
-        distance_metric: &crate::compute::distance_computation::DistanceMetric,
+        distance_metric: &proximadb_distance_kernel::DistanceMetric,
     ) -> crate::storage::Result<f32> {
         // Use shared unified distance computation engine
         let result = self
@@ -1114,20 +1181,9 @@ impl StorageEngine {
     pub async fn cleanup_for_tests(&self) -> crate::storage::Result<()> {
         tracing::debug!("🧹 Starting storage cleanup for test scenarios");
 
-        // Get list of all collections from metadata provider
-        let collections: Vec<ProximaBlockCollectionMetadata> =
-            match self.metadata_provider.read().await.as_ref() {
-                Some(_provider) => {
-                    // Deferred: Add list_collections method to InternalCollectionProvider trait
-                    // For now, return empty list to allow compilation
-                    warn!("Collection listing not yet implemented for test cleanup");
-                    Vec::new()
-                }
-                None => {
-                    warn!("SharedServices not available for collection listing");
-                    Vec::new()
-                }
-            };
+        // Collection-level enumeration for test cleanup is no longer wired through
+        // a metadata provider; the WAL flush-all path below handles cleanup.
+        let collections: Vec<ProximaBlockCollectionMetadata> = Vec::new();
 
         // Collect collection IDs
         let collection_ids: Vec<String> = collections
@@ -1164,17 +1220,8 @@ impl StorageEngine {
             }
         }
 
-        // Clear metadata store by deleting all collections
-        for collection in collections {
-            // Use metadata provider for collection deletion
-            if let Some(_provider) = self.metadata_provider.read().await.as_ref() {
-                // Deferred: Add delete_collection method to InternalCollectionProvider trait
-                tracing::debug!(
-                    "Collection deletion would happen through metadata provider for {}",
-                    collection.collection_id
-                );
-            }
-        }
+        // Collection deletion now flows through the catalog; no provider-driven
+        // deletion is performed here during test cleanup.
 
         // Clear in-memory structures using DashMap
         // Note: SST storage is now singleton - no clearing needed

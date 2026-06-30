@@ -4,10 +4,14 @@
 :icons: font
 :source-highlighter: rouge
 :sectnums:
-:last-updated: 2026-06-16
+:last-updated: 2026-06-24
 
 Status: Apex reference index (active baseline) +
-Date: 2026-06-16 +
+Date: 2026-06-24 (filename `SYSTEM_MAP_2026_05_30` is the original; content tracks current HEAD) +
+Cost spine: the multi-engine routing + cache policy shown here is co-optimized against the *measured
+per-query I/O trace* across the five physical dimensions — see
+`CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` (the unified cost objective the `ComputeScheduler`
+minimizes) and `DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc` (the strategic pivot). +
 Scope: One recursive whole-system view — workspace layers, `src/` modules, storage/access-method
 families, the ORION graph runtime, write/read data paths, and the
 protocol-facade-to-canonical-authority convergence. This is also the solution-architecture
@@ -18,8 +22,8 @@ feeders (see <<feeders>>).
 
 [.lead]
 This is the **single pane of glass** for ProximaDB. It exists to answer one question fast — "where does
-a thing live, and what does it converge on?" Current manifest reality: 66 workspace members, 61 crates
-under `crates/`, and 46 real top-level `src/` module directories. It is navigation-first: it does not
+a thing live, and what does it converge on?" Current manifest reality: 79 workspace members
+under `crates/` + `apps/`, and ~52 real top-level `src/` module directories. It is navigation-first: it does not
 duplicate the per-module detail in the feeder docs, it indexes and ties them together so they stop
 diverging.
 
@@ -250,7 +254,7 @@ operator visibility.
 |===
 
 [#workspace]
-== Layer 1 — Workspace (66 members, layered)
+== Layer 1 — Workspace (79 members, layered)
 
 The workspace follows the stable map from `CLAUDE.md`:
 `Foundation -> Contracts -> Control -> Horizontal -> Modality -> Storage -> Query/Cross-Model -> Platform -> Apps/Bindings`.
@@ -263,12 +267,12 @@ flowchart TB
   classDef layer fill:#4a90e2,stroke:#2e5c8a,color:#000;
   classDef apps fill:#cfe2f7,stroke:#2e5c8a,color:#000;
 
-  FND["<b>Foundation</b> (14)<br/>kernel · data-model · proto · records · filter-expr<br/>distance/compression/encoding/quantization-types<br/>config · hardware · pipeline-operator · relational-types · functions"]:::layer
+  FND["<b>Foundation</b> (20)<br/>kernel · data-model · proto · records · filter-expr<br/>distance-kernel/types · compression/encoding/quantization-types<br/>index-traits/types · cache · memory-pool · hardware(-caps)<br/>config · pipeline-operator · relational-types · functions"]:::layer
   CTR["<b>Contracts</b> (1)<br/>quantization (behavior + compat gates)"]:::layer
   CTL["<b>Control</b> (1)<br/>proximadb-catalog — xCatalog, 8 backends, route knobs"]:::layer
   HRZ["<b>Horizontal</b> (7)<br/>codec · compression · security · telemetry<br/>runtime-common · embedded-common · recall-bench"]:::layer
-  MOD["<b>Modality Runtime</b> (11)<br/>vector · document · graph · observability · embedding · queue<br/>rank-core/features/expr/profile/onnx"]:::layer
-  STG["<b>Storage</b> (4)<br/>storage-common · block-format (PAX)<br/>object-store · iceberg-engine"]:::layer
+  MOD["<b>Modality Runtime</b> (12)<br/>vector · document · graph · observability · embedding · queue<br/>quantization-kernel · rank-core/features/expr/profile/onnx"]:::layer
+  STG["<b>Storage</b> (8)<br/>storage-common · block-format (PAX) · object-store · iceberg-engine<br/>storage-kv · storage-optimization · storage-strategy · storage-tenant"]:::layer
   QRY["<b>Query / Cross-Model</b> (20)<br/>query · uql · multimodel-{query,plan} · relational-{algebra…engine}<br/>{vector,document,graph,observability}-query · graph-{arrow,subset}<br/>query-{capability,clauses,filter,fusion}"]:::layer
   PLT["<b>Platform</b> (2)<br/>proximadb-api (REST/gRPC/Flight/pgwire surfaces)<br/>proximadb-runtime (composition, PortUserContext)"]:::layer
   APP["<b>Apps / Bindings</b><br/>workspace: server · migrate · bench · root · rust client · spark JNI<br/>repo clients: python · go · embedded java/node/go/c"]:::apps

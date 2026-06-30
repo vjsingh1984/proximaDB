@@ -227,7 +227,7 @@ impl PaxBlockHeaderV2 {
     ///
     /// Returns the parsed header and the byte length consumed.
     ///
-    /// The `try_into().unwrap()` calls below are infallible: each takes an
+    /// The `try_into()` conversions below are infallible: each takes an
     /// exact-4-byte slice of `data` and converts it to `[u8; 4]`. The
     /// preceding `data.len() < header_len` checks ensure every slice is
     /// in bounds and exactly 4 bytes long.

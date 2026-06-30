@@ -604,6 +604,63 @@ impl Expr {
             }
         }
     }
+
+    /// Recursively collect every function-call name referenced in this expression
+    /// (in evaluation order). Used to pre-validate that a predicate's functions
+    /// resolve against the executor's registry before scanning, so a scan that
+    /// cannot evaluate a function fails loudly instead of silently dropping rows.
+    pub fn collect_func_names<'a>(&'a self, out: &mut Vec<&'a str>) {
+        match self {
+            Expr::Column(_) | Expr::Literal { .. } => {}
+            Expr::Cast { expr, .. } | Expr::UnaryOp { expr, .. } | Expr::IsNull { expr, .. } => {
+                expr.collect_func_names(out)
+            }
+            Expr::BinaryOp { left, right, .. } | Expr::NullIf { left, right } => {
+                left.collect_func_names(out);
+                right.collect_func_names(out);
+            }
+            Expr::Between {
+                expr, low, high, ..
+            } => {
+                expr.collect_func_names(out);
+                low.collect_func_names(out);
+                high.collect_func_names(out);
+            }
+            Expr::In { expr, list, .. } => {
+                expr.collect_func_names(out);
+                for e in list {
+                    e.collect_func_names(out);
+                }
+            }
+            Expr::Like { expr, pattern, .. } => {
+                expr.collect_func_names(out);
+                pattern.collect_func_names(out);
+            }
+            Expr::Case {
+                branches,
+                otherwise,
+            } => {
+                for (cond, then) in branches {
+                    cond.collect_func_names(out);
+                    then.collect_func_names(out);
+                }
+                if let Some(default) = otherwise {
+                    default.collect_func_names(out);
+                }
+            }
+            Expr::Coalesce(args) => {
+                for a in args {
+                    a.collect_func_names(out);
+                }
+            }
+            Expr::FuncCall { name, args, .. } => {
+                out.push(name.as_str());
+                for a in args {
+                    a.collect_func_names(out);
+                }
+            }
+        }
+    }
 }
 
 /// Best-effort inference of a `ProximaValue`'s `ProximaType`.
@@ -1012,6 +1069,13 @@ fn values_equal(l: &ProximaValue, r: &ProximaValue) -> Result<bool, ExprError> {
         (ULID(a), ULID(b)) => a == b,
         (Decimal(a), Decimal(b)) => a == b,
         _ => {
+            // A dynamically-typed `Json` scalar operand coerces to its natural type so
+            // `doc->'price' = 8` works cast-free (ADR-043 zero-copy idiom). Unwrap one
+            // (or both) and re-compare; non-Json operands are unchanged.
+            let (lc, rc) = (json_scalar(l), json_scalar(r));
+            if lc.is_some() || rc.is_some() {
+                return values_equal(lc.as_ref().unwrap_or(l), rc.as_ref().unwrap_or(r));
+            }
             // Mixed numeric types: widen both sides to f64 and
             // compare. SQL standard: integer-vs-floating-point
             // and integer-vs-integer comparisons must succeed.
@@ -1053,6 +1117,12 @@ fn compare_ord(l: &ProximaValue, r: &ProximaValue) -> Result<std::cmp::Ordering,
         (Timestamp(a, ua), Timestamp(b, ub)) if ua == ub => a.cmp(b),
         (TimestampTz(a, ua), TimestampTz(b, ub)) if ua == ub => a.cmp(b),
         _ => {
+            // `Json` scalar operands coerce to their natural type (mirrors
+            // `values_equal`) so ordered comparisons over `->` extractions are cast-free.
+            let (lc, rc) = (json_scalar(l), json_scalar(r));
+            if lc.is_some() || rc.is_some() {
+                return compare_ord(lc.as_ref().unwrap_or(l), rc.as_ref().unwrap_or(r));
+            }
             // Mixed numeric types: widen to f64 and compare.
             // Mirrors `values_equal`'s widening path.
             if let (Some(lf), Some(rf)) = (try_to_f64(l), try_to_f64(r)) {
@@ -1084,6 +1154,26 @@ fn try_to_f64(v: &ProximaValue) -> Option<f64> {
         V::UInt64(x) => Some(*x as f64),
         V::Float16(x) | V::Float32(x) => Some(*x as f64),
         V::Float64(x) => Some(*x),
+        _ => None,
+    }
+}
+
+/// Unwrap a JSON SCALAR (`number`/`bool`/`string`) into the matching `ProximaValue`,
+/// so a dynamically-typed `Json` operand coerces naturally in comparisons and casts —
+/// the cast-free `doc->'price' > 8` idiom (ADR-043). Objects, arrays, and JSON `null`
+/// have no scalar form and return `None` (the caller then errors loudly per Invariant 1
+/// rather than guessing). A JSON integer maps to `Int64`, a non-integer to `Float64`.
+fn json_scalar(v: &ProximaValue) -> Option<ProximaValue> {
+    let (ProximaValue::Json(j) | ProximaValue::Jsonb(j)) = v else {
+        return None;
+    };
+    match j {
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(ProximaValue::Int64)
+            .or_else(|| n.as_f64().map(ProximaValue::Float64)),
+        serde_json::Value::Bool(b) => Some(ProximaValue::Boolean(*b)),
+        serde_json::Value::String(s) => Some(ProximaValue::String(s.clone())),
         _ => None,
     }
 }
@@ -1155,6 +1245,12 @@ pub fn cast_value(v: &ProximaValue, target: &ProximaType) -> Result<ProximaValue
     {
         return Ok(v.clone());
     }
+    // A `Json` scalar casts by its natural type: `CAST(doc->'price' AS INT)` unwraps the
+    // JSON number, then casts that. Objects/arrays/JSON-null have no scalar (json_scalar
+    // returns None) and fall through to the UnsupportedCast error.
+    if let Some(scalar) = json_scalar(v) {
+        return cast_value(&scalar, target);
+    }
     macro_rules! to_i64 {
         ($n:expr) => {
             i64::try_from($n).map_err(|_| ExprError::ArithmeticOverflow)
@@ -1199,6 +1295,26 @@ pub fn cast_value(v: &ProximaValue, target: &ProximaType) -> Result<ProximaValue
             PV::Int64(s.parse::<i64>().map_err(|_| ExprError::UnsupportedCast {
                 from: PT::String,
                 to: PT::Int64,
+            })?)
+        }
+        // `::int`/`::smallint`/`::tinyint` (now reaching here, no longer string-stripped):
+        // parse to the narrower width. Postgres `int4`→Int32 is the common d06 path.
+        (PV::String(s), PT::Int32) => {
+            PV::Int32(s.parse::<i32>().map_err(|_| ExprError::UnsupportedCast {
+                from: PT::String,
+                to: PT::Int32,
+            })?)
+        }
+        (PV::String(s), PT::Int16) => {
+            PV::Int16(s.parse::<i16>().map_err(|_| ExprError::UnsupportedCast {
+                from: PT::String,
+                to: PT::Int16,
+            })?)
+        }
+        (PV::String(s), PT::Float32) => {
+            PV::Float32(s.parse::<f32>().map_err(|_| ExprError::UnsupportedCast {
+                from: PT::String,
+                to: PT::Float32,
             })?)
         }
         (PV::String(s), PT::Float64) => {
@@ -1769,6 +1885,23 @@ mod tests {
     fn cast_null_stays_null() {
         let v = cast_value(&ProximaValue::Null, &ProximaType::Int64).unwrap();
         assert_eq!(v, ProximaValue::Null);
+    }
+
+    #[test]
+    fn json_scalar_coerces_in_cast_and_compare() {
+        use ProximaValue as V;
+        // CAST(json number AS int) unwraps the JSON scalar to its natural type.
+        let ten = V::Json(serde_json::json!(10));
+        assert_eq!(cast_value(&ten, &ProximaType::Int64).unwrap(), V::Int64(10));
+        // Cast-free comparison idiom: a Json scalar coerces against a native scalar.
+        assert!(values_equal(&V::Json(serde_json::json!(8)), &V::Int64(8)).unwrap());
+        assert_eq!(
+            compare_ord(&V::Json(serde_json::json!(10)), &V::Int64(8)).unwrap(),
+            std::cmp::Ordering::Greater
+        );
+        assert!(values_equal(&V::Json(serde_json::json!(true)), &V::Boolean(true)).unwrap());
+        // An object/array has no scalar form → cast errors loudly (never silent).
+        assert!(cast_value(&V::Json(serde_json::json!({ "a": 1 })), &ProximaType::Int64).is_err());
     }
 
     // --- type_check ----------------------------------------------------

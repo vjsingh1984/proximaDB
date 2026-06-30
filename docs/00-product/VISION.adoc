@@ -81,7 +81,7 @@ embedded deployment, or real-time event processing at the edge.
 ProximaDB takes a different path: _specialized engine per workload, unified under one query
 language and one data plane_.
 
-**Vector Engines** (6 engines, each optimized for a distinct access pattern):
+**Vector Engines** (4 supported engines, each optimized for a distinct access pattern):
 
 [cols="1,2,1"]
 |===
@@ -89,11 +89,13 @@ language and one data plane_.
 
 | SST | Write-optimized, real-time ingestion | ~5.32ms
 | HELIX | Locality-optimized, Hilbert curve ordering | ~13.2ms
-| RAPTOR | Adaptive row-group, dynamic workloads | ~9.36ms
 | VIPER | Columnar Parquet, analytics queries | ~89.5ms
-| SWIFT | Ultra-low latency, small collections (<5K) | ~95ms
 | NOVA | Progressive columnar, mixed read/write | ~101.6ms
 |===
+
+NOTE: The SWIFT and RAPTOR engines also exist but are *experimental* -- off by default behind
+the `experimental-engines` cargo feature and not part of the supported surface. They are
+excluded from the table above and the performance narrative.
 
 **Graph Engines** (native CSR format with Arc-based zero-copy memory):
 
@@ -513,6 +515,6 @@ organization-wide adoption.
 
 '''
 
-_Last Updated_: March 2026
+_Last Updated_: June 2026
 
 _Supersedes_: `docs/05-concepts/vision.adoc`

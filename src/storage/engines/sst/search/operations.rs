@@ -23,11 +23,11 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::core::search::FilterExpression;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::engines::sst::SstEngine;
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_filter_expression::FilterExpression;
 
 /// Low-level search operations
 pub struct SearchOperations {
@@ -368,9 +368,9 @@ pub struct SearchOperationStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
     #[tokio::test]
     async fn test_validate_search_params() {

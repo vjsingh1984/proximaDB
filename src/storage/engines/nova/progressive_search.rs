@@ -6,11 +6,11 @@ use super::streaming_processor::{
     ProcessingStage, RowGroupProcessingResult, StreamingConfig, StreamingContext,
     StreamingRowGroupProcessor,
 };
-use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;
+use proximadb_distance_kernel::{DistanceMetric, engine::UnifiedDistanceCompute};
 use std::collections::BinaryHeap;
 use std::sync::Arc;
 use tracing::{debug, info, instrument};

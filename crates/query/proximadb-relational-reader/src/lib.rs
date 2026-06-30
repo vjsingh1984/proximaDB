@@ -164,6 +164,26 @@ pub struct ReaderCapabilities {
     /// Reader has zone maps (min/max per block) for range
     /// predicates.
     pub zone_map_skip: bool,
+
+    /// Reader supports a discrete multi-key point lookup via
+    /// [`RelationalReader::lookup_pk_batch`] (TD-128). Falsy =
+    /// the default loop-over-`lookup_pk` implementation is used,
+    /// so this is purely an efficiency signal (a real engine may
+    /// batch the probes); the planner only emits
+    /// `ScanAccess::PkLookupBatch` when this is true AND a PK is
+    /// declared.
+    pub pk_lookup_batch: bool,
+
+    /// Reader has an OLTP secondary (non-PK) hash index it can
+    /// probe via [`RelationalReader::lookup_secondary`] (TD-127).
+    /// Falsy = the default returns `Ok(None)` and the planner
+    /// never emits `ScanAccess::SecondaryLookup`. When true the
+    /// planner additionally consults
+    /// [`super::CapabilityResolver::secondary_index_columns`] to
+    /// gate which columns are eligible; the reader MAY still
+    /// answer `Ok(None)` at runtime (index not built / disabled),
+    /// in which case the executor falls back to a full scan.
+    pub secondary_lookup: bool,
 }
 
 impl ReaderCapabilities {
@@ -177,6 +197,8 @@ impl ReaderCapabilities {
             pk_lookup: false,
             bloom_probe: false,
             zone_map_skip: false,
+            pk_lookup_batch: false,
+            secondary_lookup: false,
         }
     }
 
@@ -189,6 +211,8 @@ impl ReaderCapabilities {
             pk_lookup: true,
             bloom_probe: true,
             zone_map_skip: true,
+            pk_lookup_batch: true,
+            secondary_lookup: true,
         }
     }
 
@@ -210,6 +234,14 @@ impl ReaderCapabilities {
     }
     pub const fn with_zone_map_skip(mut self, b: bool) -> Self {
         self.zone_map_skip = b;
+        self
+    }
+    pub const fn with_pk_lookup_batch(mut self, b: bool) -> Self {
+        self.pk_lookup_batch = b;
+        self
+    }
+    pub const fn with_secondary_lookup(mut self, b: bool) -> Self {
+        self.secondary_lookup = b;
         self
     }
 }
@@ -236,8 +268,13 @@ impl ReaderCapabilities {
 /// - Re-evaluating the predicate per row (the executor does that).
 /// - Enforcing the limit (the executor does that).
 /// - Handling NULL semantics (the executor does that).
+// `Send + Sync`: `Sync` is required by async_trait for the provided
+// (default) `&self` methods `lookup_pk_batch` / `lookup_secondary`
+// (TD-127/128) — the generated default future captures `&self`, which
+// is `Send` only when `Self: Sync`. Every implementor holds plain
+// data / `Arc`s and is already `Sync`.
 #[async_trait]
-pub trait RelationalReader: Send {
+pub trait RelationalReader: Send + Sync {
     /// Stable identifier for logs and metrics, e.g. `"sst"`,
     /// `"viper"`, `"nova"`, `"vec"` (test).
     fn name(&self) -> &'static str;
@@ -272,6 +309,54 @@ pub trait RelationalReader: Send {
     /// [`ReaderError::PkArityMismatch`] otherwise.
     async fn lookup_pk(&self, key: &[ProximaValue]) -> Result<Option<RelationalRow>, ReaderError>;
 
+    /// Discrete multi-key point lookup (TD-128): resolve each key
+    /// in `keys` and return the FULL row for every key that hits.
+    /// Each `key` is one primary-key tuple (single-component in
+    /// v1). Missing keys are simply absent from the result — the
+    /// returned vec is NOT positionally aligned with `keys`.
+    ///
+    /// The default implementation loops [`Self::lookup_pk`]; an
+    /// engine that declares
+    /// [`ReaderCapabilities::pk_lookup_batch`] MAY override this to
+    /// batch the probes. Rows are FULL (unprojected) — the executor
+    /// narrows them against the scan projection, exactly as on the
+    /// single-key `lookup_pk` path.
+    async fn lookup_pk_batch(
+        &self,
+        keys: &[Vec<ProximaValue>],
+    ) -> Result<Vec<RelationalRow>, ReaderError> {
+        let mut rows = Vec::with_capacity(keys.len());
+        for key in keys {
+            if let Some(row) = self.lookup_pk(key).await? {
+                rows.push(row);
+            }
+        }
+        Ok(rows)
+    }
+
+    /// OLTP secondary-index point lookup (TD-127): probe a
+    /// single-column non-PK hash index for the rows whose `column`
+    /// value equals any of `values` (an equality is a one-element
+    /// `values`; an `IN`-list is many). Returns:
+    ///
+    /// - `Ok(None)` when no index is available for `column` (the
+    ///   default, and at runtime when an engine's index is
+    ///   unbuilt / disabled) — the executor falls back to a full
+    ///   scan, re-applying the predicate the planner deliberately
+    ///   left in place.
+    /// - `Ok(Some(rows))` (possibly empty) when the index
+    ///   answered. The rows are CANDIDATES (FULL, unprojected): the
+    ///   hash index only NARROWS, so the residual `Filter` above the
+    ///   scan still re-checks every row.
+    async fn lookup_secondary(
+        &self,
+        column: &str,
+        values: &[ProximaValue],
+    ) -> Result<Option<Vec<RelationalRow>>, ReaderError> {
+        let _ = (column, values);
+        Ok(None)
+    }
+
     /// Release any resources. Idempotent; safe to call even if
     /// `open` was never called.
     async fn close(&mut self) -> Result<(), ReaderError>;
@@ -299,6 +384,11 @@ pub struct VecReader {
     full_schema: RelationalSchema,
     rows: Vec<RelationalRow>,
     pk_columns: Vec<usize>,
+    /// Ordinals (within `full_schema`) carrying a non-PK secondary
+    /// hash index (TD-127). Empty = no secondary index; then
+    /// `lookup_secondary` returns `Ok(None)` and the planner won't
+    /// pick `SecondaryLookup`.
+    secondary_columns: Vec<usize>,
     open_ctx: Option<OpenState>,
 }
 
@@ -323,8 +413,18 @@ impl VecReader {
             full_schema: schema,
             rows,
             pk_columns,
+            secondary_columns: Vec::new(),
             open_ctx: None,
         }
+    }
+
+    /// Register a non-PK secondary index on the given column
+    /// ordinals (TD-127). Chainable. Enables
+    /// [`ReaderCapabilities::secondary_lookup`] and makes
+    /// [`Self::lookup_secondary`] answer for those columns.
+    pub fn with_secondary_index(mut self, columns: Vec<usize>) -> Self {
+        self.secondary_columns = columns;
+        self
     }
 
     fn resolve_projection(
@@ -362,7 +462,11 @@ impl RelationalReader for VecReader {
     }
 
     fn capabilities(&self) -> ReaderCapabilities {
-        ReaderCapabilities::full().with_pk_lookup(!self.pk_columns.is_empty())
+        let has_pk = !self.pk_columns.is_empty();
+        ReaderCapabilities::full()
+            .with_pk_lookup(has_pk)
+            .with_pk_lookup_batch(has_pk)
+            .with_secondary_lookup(!self.secondary_columns.is_empty())
     }
 
     fn schema(&self) -> &RelationalSchema {
@@ -452,6 +556,61 @@ impl RelationalReader for VecReader {
         Ok(None)
     }
 
+    async fn lookup_pk_batch(
+        &self,
+        keys: &[Vec<ProximaValue>],
+    ) -> Result<Vec<RelationalRow>, ReaderError> {
+        if self.pk_columns.is_empty() {
+            return Err(ReaderError::PkLookupUnsupported);
+        }
+        let mut out = Vec::with_capacity(keys.len());
+        for key in keys {
+            if key.len() != self.pk_columns.len() {
+                return Err(ReaderError::PkArityMismatch {
+                    expected: self.pk_columns.len(),
+                    actual: key.len(),
+                });
+            }
+            for row in &self.rows {
+                let matches = self
+                    .pk_columns
+                    .iter()
+                    .zip(key.iter())
+                    .all(|(&idx, expected)| &row[idx] == expected);
+                if matches {
+                    out.push(row.clone());
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    async fn lookup_secondary(
+        &self,
+        column: &str,
+        values: &[ProximaValue],
+    ) -> Result<Option<Vec<RelationalRow>>, ReaderError> {
+        // Resolve the probed column to an ordinal; only answer when
+        // it carries a registered secondary index (else `Ok(None)`
+        // so the executor falls back to a scan).
+        let Some((ordinal, _)) = self.full_schema.column_by_name(column) else {
+            return Ok(None);
+        };
+        if !self.secondary_columns.contains(&ordinal) {
+            return Ok(None);
+        }
+        // Candidate rows: every row whose indexed value is in the
+        // probe set. FULL (unprojected); the executor narrows.
+        let candidates: Vec<RelationalRow> = self
+            .rows
+            .iter()
+            .filter(|row| values.iter().any(|v| &row[ordinal] == v))
+            .cloned()
+            .collect();
+        Ok(Some(candidates))
+    }
+
     async fn close(&mut self) -> Result<(), ReaderError> {
         self.open_ctx = None;
         Ok(())
@@ -526,6 +685,8 @@ mod tests {
         assert!(!c.pk_lookup);
         assert!(!c.bloom_probe);
         assert!(!c.zone_map_skip);
+        assert!(!c.pk_lookup_batch);
+        assert!(!c.secondary_lookup);
     }
 
     #[test]
@@ -536,6 +697,8 @@ mod tests {
         assert!(c.pk_lookup);
         assert!(c.bloom_probe);
         assert!(c.zone_map_skip);
+        assert!(c.pk_lookup_batch);
+        assert!(c.secondary_lookup);
     }
 
     #[test]
@@ -767,6 +930,115 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ReaderError::PkArityMismatch { .. }));
+    }
+
+    // --- PK batch lookup (TD-128) ---------------------------------
+
+    #[tokio::test]
+    async fn vec_reader_pk_lookup_batch_returns_matching_rows() {
+        let r = users_reader();
+        let keys = vec![
+            vec![ProximaValue::Int64(1)],
+            vec![ProximaValue::Int64(3)],
+            vec![ProximaValue::Int64(999)], // miss — simply absent
+        ];
+        let rows = r.lookup_pk_batch(&keys).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        let names: Vec<&str> = rows
+            .iter()
+            .map(|row| match &row[1] {
+                ProximaValue::String(s) => s.as_str(),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert!(names.contains(&"alice"));
+        assert!(names.contains(&"carol"));
+    }
+
+    #[tokio::test]
+    async fn vec_reader_pk_lookup_batch_unsupported_when_no_pk() {
+        let r = VecReader::new(users_schema(), users_rows(), vec![]);
+        let err = r
+            .lookup_pk_batch(&[vec![ProximaValue::Int64(1)]])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ReaderError::PkLookupUnsupported));
+    }
+
+    #[test]
+    fn vec_reader_pk_lookup_batch_capability_tracks_pk() {
+        assert!(users_reader().capabilities().pk_lookup_batch);
+        let no_pk = VecReader::new(users_schema(), users_rows(), vec![]);
+        assert!(!no_pk.capabilities().pk_lookup_batch);
+    }
+
+    // --- Secondary lookup (TD-127) --------------------------------
+
+    fn users_reader_with_name_index() -> VecReader {
+        // PK on id (ordinal 0), secondary index on name (ordinal 1).
+        VecReader::new(users_schema(), users_rows(), vec![0]).with_secondary_index(vec![1])
+    }
+
+    #[test]
+    fn vec_reader_secondary_capability_tracks_index() {
+        assert!(
+            users_reader_with_name_index()
+                .capabilities()
+                .secondary_lookup
+        );
+        assert!(!users_reader().capabilities().secondary_lookup);
+    }
+
+    #[tokio::test]
+    async fn vec_reader_secondary_lookup_returns_candidates() {
+        let r = users_reader_with_name_index();
+        let rows = r
+            .lookup_secondary("name", &[ProximaValue::String("bob".into())])
+            .await
+            .unwrap()
+            .expect("indexed column answers Some");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][0], ProximaValue::Int64(2));
+        // Candidate rows are FULL (unprojected).
+        assert_eq!(rows[0].len(), 3);
+    }
+
+    #[tokio::test]
+    async fn vec_reader_secondary_lookup_in_list_unions() {
+        let r = users_reader_with_name_index();
+        let rows = r
+            .lookup_secondary(
+                "name",
+                &[
+                    ProximaValue::String("alice".into()),
+                    ProximaValue::String("carol".into()),
+                ],
+            )
+            .await
+            .unwrap()
+            .expect("indexed column answers Some");
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn vec_reader_secondary_lookup_none_when_unindexed() {
+        // `age` has no secondary index → Ok(None) (scan fallback).
+        let r = users_reader_with_name_index();
+        let out = r
+            .lookup_secondary("age", &[ProximaValue::Int32(30)])
+            .await
+            .unwrap();
+        assert!(out.is_none());
+    }
+
+    #[tokio::test]
+    async fn vec_reader_secondary_lookup_none_when_no_index_registered() {
+        let r = users_reader(); // no secondary index at all
+        let out = r
+            .lookup_secondary("name", &[ProximaValue::String("bob".into())])
+            .await
+            .unwrap();
+        assert!(out.is_none());
     }
 
     // --- Trait object dispatch -----------------------------------

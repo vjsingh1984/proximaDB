@@ -58,14 +58,12 @@ fn load_spec() -> Value {
 }
 
 fn operation<'a>(spec: &'a Value, path_template: &str, method: &str) -> &'a Value {
-    let op = spec
-        .pointer(&format!(
-            "/paths/{}/{}",
-            json_pointer_escape(path_template),
-            method.to_lowercase()
-        ))
-        .unwrap_or_else(|| panic!("{method} {path_template} not in OpenAPI spec"));
-    op
+    spec.pointer(&format!(
+        "/paths/{}/{}",
+        json_pointer_escape(path_template),
+        method.to_lowercase()
+    ))
+    .unwrap_or_else(|| panic!("{method} {path_template} not in OpenAPI spec"))
 }
 
 fn json_pointer_escape(s: &str) -> String {
@@ -117,7 +115,7 @@ fn request_body_schema<'a>(_spec: &'a Value, op: &'a Value) -> Option<&'a Value>
         .get("schema")
 }
 
-fn operation_id<'a>(op: &'a Value) -> &'a str {
+fn operation_id(op: &Value) -> &str {
     op.get("operationId")
         .and_then(Value::as_str)
         .unwrap_or("<missing operationId>")
@@ -421,6 +419,98 @@ async fn list_collections_matches_spec() {
     let client = ProximaClient::connect(server.base_url()).unwrap();
     let collections = client.list_collections().await.unwrap();
     assert!(collections.is_empty());
+
+    mock.assert_async().await;
+}
+
+/// Regression (TD-126 Phase 4): `list_collections` previously failed to
+/// deserialize when the server emitted `record_count: null` (the v2
+/// `CollectionV2Summary.record_count` is `Option<u64>` and is `null`
+/// unless `include_stats=true`). End-to-end through the SDK over a mock
+/// server.
+#[tokio::test]
+async fn list_collections_decodes_null_record_count() {
+    let spec = load_spec();
+    let server = MockServer::start_async().await;
+    let op = operation(&spec, "/api/v2/collections", "get");
+    assert_eq!(operation_id(op), "listCollections");
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(Method::GET).path("/api/v2/collections");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "collections": [
+                        {
+                            "collection_id": "col_1",
+                            "name": "items",
+                            "dimension": 128,
+                            "engine": "sst",
+                            "proxima_record_enabled": true,
+                            "record_count": null
+                        }
+                    ],
+                    "total": 1,
+                    "limit": 50,
+                    "offset": 0,
+                    "has_more": false
+                }));
+        })
+        .await;
+
+    let client = ProximaClient::connect(server.base_url()).unwrap();
+    let collections = client.list_collections().await.unwrap();
+    assert_eq!(collections.len(), 1);
+    assert_eq!(collections[0].name, "items");
+    assert_eq!(collections[0].vector_count, 0);
+
+    mock.assert_async().await;
+}
+
+/// Regression (TD-126 Phase 4): `get_vector` decodes the server's
+/// `RecordV2Response`, whose `vector` and `text_fields` are nullable and
+/// arrive as explicit JSON `null` when not requested. End-to-end through
+/// the SDK over a mock server, exercising the props-shaped record.
+#[tokio::test]
+async fn get_vector_decodes_props_record_with_null_vector() {
+    let spec = load_spec();
+    let server = MockServer::start_async().await;
+    let op = operation(
+        &spec,
+        "/api/v2/collections/{collection_id}/records/{record_id}",
+        "get",
+    );
+    assert_eq!(operation_id(op), "getRecord");
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(Method::GET)
+                .path("/api/v2/collections/items/records/rec_1");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "id": "rec_1",
+                    "vector": null,
+                    "props": {"category": "tech", "score": 0.9},
+                    "text_fields": null,
+                    "version": 3,
+                    "timestamp": 1718000000_i64
+                }));
+        })
+        .await;
+
+    let client = ProximaClient::connect(server.base_url()).unwrap();
+    let record = client
+        .collection("items")
+        .get_vector("rec_1")
+        .await
+        .unwrap()
+        .expect("record should be present");
+    assert_eq!(record.id, "rec_1");
+    assert!(record.vector.is_empty());
+    assert!(record.text_fields.is_empty());
+    assert_eq!(record.props["category"], json!("tech"));
 
     mock.assert_async().await;
 }

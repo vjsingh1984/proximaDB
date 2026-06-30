@@ -305,6 +305,7 @@ impl HybridPort for RestHybridPortImpl {
     }
 }
 
+#[allow(deprecated)]
 fn proto_fusion_strategy(
     strategy: i32,
     params: Option<&proximadb_proto::v1::FusionStrategyParams>,
@@ -564,6 +565,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)] // exercises the deprecated v1 HybridPort::hybrid_search (TD-138 phase 1)
     async fn rest_hybrid_port_forwards_proto_filters_to_vector_search() {
         let vector_ops = Arc::new(CapturingVectorOpsPort::default());
         let port =

@@ -70,8 +70,8 @@ REST + gRPC + Arrow Flight]
   subgraph DataPlane[Data Plane]
     WAL[Unified WAL]
     MEM[Memtables]
-    ENG["Vector Engines<br/>(SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR)"]
-    GRAPHENG["Graph Engines<br/>(ORION, PULSAR, QUASAR)"]
+    ENG["Vector Engines<br/>(SST, VIPER, HELIX, NOVA)"]
+    GRAPHENG["Graph Engine<br/>(ORION)"]
     OBSSTORE["Observability Storage<br/>(partitioned logs, time-series, traces)"]
   end
 
@@ -94,20 +94,19 @@ treat as headroom indicators, not a published SLA.*
 |===
 |Metric|Reference (10M vectors, 768-d, single-node, internal arm64 macOS bench)
 
-|Search latency|~8 ms avg, ~15 ms p99 (HNSW, M=32; YMMV by hardware)
-|Ingest throughput|~125K vectors/sec (small-batch WAL path)
 |Recall@10|~97% (HNSW, M=32; not an SLA — see SUPPORTED_SURFACE)
 |Memory efficiency|~1.2 GB for 10M vectors (PQ-quantised path)
-|Hybrid search|~8 ms (vector + BM25)
 |===
 
 [NOTE]
 ====
 **v0.2 positioning**: this release is a narrow single-node cut. Hybrid retrieval,
 document/graph/observability, pgwire/federated SQL, object-economy and
-filtered-ANN routes are **Beta**. Distributed cluster execution, PULSAR/QUASAR,
-full SQL parity, external-table execution, and conditional/filter writes are
-**Experimental** and must not be inferred from the numbers above. See
+filtered-ANN routes are **Beta**. Distributed cluster execution, full SQL parity,
+external-table execution, Arrow Flight as a customer-facing transport, the
+SWIFT/RAPTOR storage engines, and conditional/filter writes are
+**Experimental** and must not be inferred from the numbers above. (The PULSAR and
+QUASAR graph engine names are *retired* — use ORION.) See
 link:docs/SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`] for the support
 contract and
 link:docs/release-notes/v0.2.0.adoc[`docs/release-notes/v0.2.0.adoc`] for the
@@ -317,7 +316,7 @@ JOIN LATERAL GRAPH_QUERY('MATCH (s:Service {name: "' || l.service || '"})-[:DEPE
 |===
 | Capability | Status | Notes
 
-| Vector search + filters | Stable | 6 storage engines, AXIS indexes, metadata filters
+| Vector search + filters | Stable | 4 supported storage engines (SST/VIPER/HELIX/NOVA) + AXIS (HNSW/IVF) indexes, metadata filters
 | Document store | Stable | WAL‑backed, JSON path queries, full‑text search
 | Graph traversal | Stable | ORION (in‑memory CSR), WAL persistence, algorithms
 | Observability logs | Stable | WAL‑backed, partitioned storage, 6 SIEM adapters
@@ -328,6 +327,12 @@ JOIN LATERAL GRAPH_QUERY('MATCH (s:Service {name: "' || l.service || '"})-[:DEPE
 | Web UI dashboard | Stable | SQL editor, graph visualization, dark/light theme
 | Python SDK | Stable | Graph analytics, AutoML, observability, security
 |===
+
+NOTE: Tier detail lives in link:docs/SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`]. A
+few capabilities in the tree are *not* in the supported surface above: the SWIFT and RAPTOR
+storage engines are **experimental** (off by default behind the `experimental-engines` cargo
+feature), Arrow Flight is an **experimental** customer-facing transport, and distributed
+cluster execution is **experimental**.
 
 ---
 
@@ -359,7 +364,7 @@ Features:
 * link:docs/04-operations/[Operations] - Deployment, monitoring, security
 * link:docs/06-internals/[Internals] - Contributing, testing, architecture decisions
 
-**v0.2.0 Release** (February 2026):
+**v0.2.0 Release** (June 2026):
 * Platform packages: link:docs/02-guides/platform-packages.md[RPM, DEB, MSI]
 * Unified port architecture (single port 5678)
 * Multi-model query engine with cross-model joins
@@ -367,8 +372,8 @@ Features:
 **Key Guides**:
 * link:docs/02-guides/vector-search.md[Vector Search] - Semantic search, filtering, hybrid search
 * link:docs/02-guides/multi-model-joins.md[Multi-Model Joins] - Cross-model SQL queries
-* link:docs/05-concepts/storage-engines.adoc[Storage Engines] - SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR
-* link:docs/06-internals/GRAPH_ENGINES_GUIDE.adoc[Graph Engines Guide] - ORION (production), PULSAR (distributed), QUASAR (tiered)
+* link:docs/05-concepts/storage-engines.adoc[Storage Engines] - SST, VIPER, HELIX, NOVA (SWIFT/RAPTOR experimental)
+* link:docs/06-internals/GRAPH_ENGINES_GUIDE.adoc[Graph Engines Guide] - ORION
 
 ---
 

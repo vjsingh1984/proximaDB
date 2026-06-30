@@ -32,11 +32,14 @@ use proximadb_graph::projection::{
     ProjectionResult, TopologyApplyResult, TopologyEpoch, TopologyFormat,
     adjacency_entries_for_edge,
 };
-use proximadb_graph::record::{CanonicalEdge, CanonicalNode, GraphNodeKey};
+use proximadb_graph::record::{
+    CanonicalEdge, CanonicalNode, GraphNodeKey, canonical_edge_from_record,
+    canonical_node_from_record,
+};
 use proximadb_records::{ProximaRecord, ProximaTree, ProximaTreeNode};
 
 use crate::graph::{Edge, Node};
-use crate::proto::proximadb_v1::{PropertyValue, property_value};
+use crate::graph::{PropertyArray, PropertyObject, PropertyValue, property_value};
 
 /// In-memory adjacency table projection for one graph dataset.
 #[derive(Debug)]
@@ -178,6 +181,46 @@ impl InMemoryGraphAdjacencyProjection {
         }
         removed
     }
+
+    /// TD-130: apply a batch of canonical edge records under a SINGLE write-lock
+    /// acquisition and a SINGLE epoch bump, instead of one lock-cycle + epoch
+    /// bump per edge (`apply_edge`). This removes the per-edge serialization that
+    /// dominated bulk edge ingest — the projection lock, not the O(1) composite
+    /// probe, was the measured per-edge cost on the batch path (e.g. ~96.5K
+    /// edges/repo at initial code-graph index). Entries are computed outside the
+    /// lock; upsert semantics match `apply_edge` (each edge's prior entries are
+    /// removed first). Returns the total adjacency entries written.
+    pub fn apply_edges(&self, edge_records: &[ProximaRecord]) -> ProjectionResult<usize> {
+        // Compute all entries before taking the lock; fail closed on any record
+        // that is not a canonical graph edge (same contract as `apply_edge`).
+        let mut prepared = Vec::with_capacity(edge_records.len());
+        for edge_record in edge_records {
+            let entries = adjacency_entries_for_edge(edge_record).ok_or_else(|| {
+                proximadb_kernel::error::ProximaDBError::InvalidInput(
+                    "record is not a canonical graph edge".to_string(),
+                )
+            })?;
+            prepared.push((edge_record.oid.as_str(), entries));
+        }
+        if prepared.is_empty() {
+            return Ok(0);
+        }
+
+        let mut state = self.state.write().map_err(|_| {
+            proximadb_kernel::error::ProximaDBError::Internal(
+                "graph adjacency projection write lock poisoned".to_string(),
+            )
+        })?;
+        let mut entries_written = 0;
+        for (edge_oid, entries) in prepared {
+            Self::remove_edge_oid(&mut state, edge_oid);
+            entries_written += Self::apply_entries(&mut state, entries);
+        }
+        // One epoch transition for the whole batch, so readers observe the batch
+        // atomically rather than N intermediate epochs.
+        state.epoch = state.epoch.next();
+        Ok(entries_written)
+    }
 }
 
 /// Convert the root graph edge compatibility shape into a canonical edge
@@ -211,6 +254,110 @@ pub fn node_to_canonical_record(graph_id: &str, node: &Node) -> ProximaRecord {
     canonical.created_at_ns = node.created_at_ms.saturating_mul(1_000_000);
     canonical.updated_at_ns = node.updated_at_ms.saturating_mul(1_000_000);
     canonical.into_proxima_record()
+}
+
+/// Reconstruct the root graph node compatibility shape from a canonical record —
+/// the inverse of [`node_to_canonical_record`]. Returns `None` if the record is
+/// not a graph-node record. Used by the cold-payload tier (TD-168) to materialize
+/// a `Node` fetched from the canonical record store on a cache miss.
+///
+/// Fields the forward projection does not persist are reconstructed as defaults:
+/// `embedding` is `None`, and `labels` carries the single stored label (the
+/// canonical record keeps one label, not the full multi-label set).
+pub fn node_from_canonical_record(record: &ProximaRecord) -> Option<Node> {
+    let canonical = canonical_node_from_record(record)?;
+    let labels = if canonical.node_label.is_empty() {
+        Vec::new()
+    } else {
+        vec![canonical.node_label]
+    };
+    Some(Node {
+        id: canonical.key.node_id,
+        labels,
+        properties: tree_to_property_map(&canonical.properties),
+        embedding: None,
+        created_at_ms: ns_to_ms(canonical.created_at_ns),
+        updated_at_ms: ns_to_ms(canonical.updated_at_ns),
+    })
+}
+
+/// Reconstruct the root graph edge compatibility shape from a canonical record —
+/// the inverse of [`edge_to_canonical_record`]. Endpoints are recovered by
+/// reversing the canonical node oid (`graph/{graph_id}/node/{node_id}`). `weight`
+/// is not persisted by the forward projection and is reconstructed as `None`.
+pub fn edge_from_canonical_record(record: &ProximaRecord) -> Option<Edge> {
+    let canonical = canonical_edge_from_record(record)?;
+    let graph_id = canonical.key.graph_id.clone();
+    Some(Edge {
+        id: canonical.key.edge_id,
+        from_node_id: node_id_from_oid(&canonical.src_node_oid, &graph_id),
+        to_node_id: node_id_from_oid(&canonical.dst_node_oid, &graph_id),
+        edge_type: canonical.edge_label,
+        properties: tree_to_property_map(&canonical.properties),
+        weight: None,
+        created_at_ms: ns_to_ms(canonical.created_at_ns),
+        updated_at_ms: ns_to_ms(canonical.updated_at_ns),
+    })
+}
+
+/// Recover the original node id from a canonical node oid
+/// (`graph/{graph_id}/node/{node_id}`). Falls back to the whole oid if the prefix
+/// does not match — never panics.
+fn node_id_from_oid(oid: &str, graph_id: &str) -> String {
+    oid.strip_prefix(&format!("graph/{graph_id}/node/"))
+        .unwrap_or(oid)
+        .to_string()
+}
+
+/// Canonical record clock is nanoseconds; the graph model carries milliseconds.
+fn ns_to_ms(ns: i64) -> i64 {
+    ns / 1_000_000
+}
+
+fn tree_to_property_map(tree: &ProximaTree) -> std::collections::HashMap<String, PropertyValue> {
+    tree.iter()
+        .map(|(key, node)| (key.clone(), tree_node_to_property_value(node)))
+        .collect()
+}
+
+fn tree_node_to_property_value(node: &ProximaTreeNode) -> PropertyValue {
+    match node {
+        ProximaTreeNode::Object(fields) => PropertyValue {
+            value: Some(property_value::Value::ObjectValue(PropertyObject {
+                fields: fields
+                    .iter()
+                    .map(|(key, child)| (key.clone(), tree_node_to_property_value(child)))
+                    .collect(),
+            })),
+        },
+        ProximaTreeNode::Value(value) => proxima_value_to_property_value(value),
+    }
+}
+
+fn proxima_value_to_property_value(value: &ProximaValue) -> PropertyValue {
+    use property_value::Value;
+    // Inverse of `property_value_to_proxima`. Graph properties only ever serialize
+    // the variants handled below; any other `ProximaValue` is not part of the graph
+    // property shape, so it maps defensively to an empty value rather than panicking.
+    let inner = match value {
+        ProximaValue::String(v) => Some(Value::StringValue(v.clone())),
+        ProximaValue::Int64(v) => Some(Value::IntValue(*v)),
+        ProximaValue::Float64(v) => Some(Value::DoubleValue(*v)),
+        ProximaValue::Boolean(v) => Some(Value::BoolValue(*v)),
+        ProximaValue::Binary(v) => Some(Value::BytesValue(v.clone())),
+        ProximaValue::Array(items) => Some(Value::ArrayValue(PropertyArray {
+            values: items.iter().map(proxima_value_to_property_value).collect(),
+        })),
+        ProximaValue::Struct(fields) => Some(Value::ObjectValue(PropertyObject {
+            fields: fields
+                .iter()
+                .map(|(key, child)| (key.clone(), proxima_value_to_property_value(child)))
+                .collect(),
+        })),
+        ProximaValue::DenseVector(v) => Some(Value::VectorValue(v.clone())),
+        _ => None,
+    };
+    PropertyValue { value: inner }
 }
 
 fn property_map_to_tree(
@@ -253,7 +400,7 @@ fn property_value_to_proxima(value: &PropertyValue) -> ProximaValue {
                 .collect(),
         ),
         Some(property_value::Value::VectorValue(vector)) => {
-            ProximaValue::DenseVector(vector.values.clone())
+            ProximaValue::DenseVector(vector.clone())
         }
         None => ProximaValue::Null,
     }
@@ -426,6 +573,97 @@ mod tests {
         );
     }
 
+    fn prop_str(s: &str) -> PropertyValue {
+        PropertyValue {
+            value: Some(property_value::Value::StringValue(s.to_string())),
+        }
+    }
+    fn prop_int(i: i64) -> PropertyValue {
+        PropertyValue {
+            value: Some(property_value::Value::IntValue(i)),
+        }
+    }
+
+    #[test]
+    fn node_round_trips_through_canonical_record() {
+        // TD-168: a node fetched from the cold record store must reconstruct
+        // identically to the original (over the fields the canonical record
+        // persists — single label, no embedding).
+        let mut properties = HashMap::new();
+        properties.insert("name".to_string(), prop_str("Ada"));
+        properties.insert("rank".to_string(), prop_int(7));
+        properties.insert(
+            "tags".to_string(),
+            PropertyValue {
+                value: Some(property_value::Value::ArrayValue(PropertyArray {
+                    values: vec![prop_str("a"), prop_str("b")],
+                })),
+            },
+        );
+        properties.insert(
+            "meta".to_string(),
+            PropertyValue {
+                value: Some(property_value::Value::ObjectValue(PropertyObject {
+                    fields: {
+                        let mut m = HashMap::new();
+                        m.insert("k".to_string(), prop_int(1));
+                        m
+                    },
+                })),
+            },
+        );
+        let node = Node {
+            id: "n1".to_string(),
+            labels: vec!["Person".to_string()],
+            properties,
+            embedding: None,
+            created_at_ms: 10,
+            updated_at_ms: 20,
+        };
+
+        let record = node_to_canonical_record("g1", &node);
+        let restored = node_from_canonical_record(&record).expect("node record");
+        assert_eq!(restored, node);
+    }
+
+    #[test]
+    fn edge_round_trips_through_canonical_record() {
+        // TD-168: endpoints are recovered by reversing the canonical node oid;
+        // `weight` is not persisted by the projection, so the original must omit
+        // it for an identity round-trip.
+        let mut properties = HashMap::new();
+        properties.insert("since".to_string(), prop_int(2020));
+        let edge = Edge {
+            id: "e1".to_string(),
+            from_node_id: "n1".to_string(),
+            to_node_id: "n2".to_string(),
+            edge_type: "KNOWS".to_string(),
+            properties,
+            weight: None,
+            created_at_ms: 10,
+            updated_at_ms: 20,
+        };
+
+        let record = edge_to_canonical_record("g1", &edge);
+        let restored = edge_from_canonical_record(&record).expect("edge record");
+        assert_eq!(restored, edge);
+    }
+
+    #[test]
+    fn from_record_rejects_wrong_element_kind() {
+        // A node record is not an edge and vice-versa.
+        let node_rec = node_to_canonical_record(
+            "g1",
+            &Node {
+                id: "n1".to_string(),
+                labels: vec!["Person".to_string()],
+                ..Default::default()
+            },
+        );
+        assert!(edge_from_canonical_record(&node_rec).is_none());
+        assert!(node_from_canonical_record(&node_rec).is_some());
+    }
+
     #[tokio::test]
     async fn indexes_edges_by_src_and_dst() {
         let projection = InMemoryGraphAdjacencyProjection::new("g1");
@@ -471,6 +709,81 @@ mod tests {
             "graph/g1/edge/e1"
         );
         assert_eq!(projection.applied_epoch(), TopologyEpoch(2));
+    }
+
+    #[test]
+    fn apply_edges_batches_under_one_epoch() {
+        let projection = InMemoryGraphAdjacencyProjection::new("g1");
+        let records = vec![
+            edge_record("g1", "e1", "n1", "n2"),
+            edge_record("g1", "e2", "n1", "n3"),
+            edge_record("g1", "e3", "n2", "n3"),
+        ];
+
+        // Whole batch applied: 2 adjacency entries per edge (src + dst).
+        let written = projection.apply_edges(&records).expect("apply batch");
+        assert_eq!(written, 6);
+
+        // The key property (TD-130): ONE epoch transition for the batch, not one
+        // per edge — three `apply_edge` calls would land at TopologyEpoch(3).
+        assert_eq!(projection.applied_epoch(), TopologyEpoch(1));
+
+        // Topology is identical to the per-edge path.
+        assert_eq!(projection.edge_count().expect("edge count"), 3);
+        assert_eq!(
+            projection
+                .edges_by_src("graph/g1/node/n1")
+                .expect("n1 outgoing")
+                .len(),
+            2
+        );
+        assert_eq!(
+            projection
+                .edges_by_dst("graph/g1/node/n3")
+                .expect("n3 incoming")
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn apply_edges_upserts_and_rejects_non_edges() {
+        let projection = InMemoryGraphAdjacencyProjection::new("g1");
+        // Seed an edge, then re-point it via a later batch — upsert must drop the
+        // old destination, matching `apply_edge`'s replace semantics.
+        projection
+            .apply_edges(&[edge_record("g1", "e1", "n1", "n2")])
+            .expect("seed");
+        projection
+            .apply_edges(&[edge_record("g1", "e1", "n1", "n3")])
+            .expect("repoint");
+        assert_eq!(projection.edge_count().expect("edge count"), 1);
+        assert!(
+            projection
+                .edges_by_dst("graph/g1/node/n2")
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            projection.edges_by_dst("graph/g1/node/n3").unwrap()[0]
+                .key
+                .edge_oid,
+            "graph/g1/edge/e1"
+        );
+
+        // A non-edge record fails closed before any state is mutated.
+        let node = node_to_canonical_record(
+            "g1",
+            &Node {
+                id: "n9".to_string(),
+                labels: vec!["Person".to_string()],
+                properties: HashMap::new(),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        );
+        assert!(projection.apply_edges(&[node]).is_err());
     }
 
     #[tokio::test]

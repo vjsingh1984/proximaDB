@@ -199,6 +199,7 @@ pub async fn build_external_collection_v2(
 }
 
 /// `POST /api/v2/external-collections/:id/search`
+#[allow(deprecated)]
 pub async fn search_external_collection_v2(
     Path(id): Path<String>,
     State(state): State<AppState>,

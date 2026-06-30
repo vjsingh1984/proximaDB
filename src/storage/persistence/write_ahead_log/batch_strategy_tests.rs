@@ -11,7 +11,6 @@
 #[cfg(test)]
 mod write_ahead_log_batch_strategy_tests {
     use super::super::*;
-    use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::persistence::write_ahead_log::BatchId;
@@ -19,6 +18,7 @@ mod write_ahead_log_batch_strategy_tests {
     use anyhow::Result;
     use async_trait::async_trait;
     use proximadb_data_model::ProximaValue;
+    use proximadb_distance_kernel::DistanceMetric;
     use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -31,7 +31,7 @@ mod write_ahead_log_batch_strategy_tests {
         filesystem: Option<Arc<FilesystemFactory>>,
         initialized: bool,
         wal_behavior: Option<MockWriteBufferBehavior>,
-        distance_compute: crate::compute::distance_computation::engine::UnifiedDistanceCompute,
+        distance_compute: proximadb_distance_kernel::engine::UnifiedDistanceCompute,
     }
 
     #[derive(Debug)]
@@ -107,18 +107,14 @@ mod write_ahead_log_batch_strategy_tests {
                 initialized: false,
                 wal_behavior: Some(MockWriteBufferBehavior::new()),
                 distance_compute:
-                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+                    proximadb_distance_kernel::engine::UnifiedDistanceCompute::default(),
             }
         }
     }
 
     #[async_trait]
-    impl crate::compute::distance_computation::engine::DistanceComputeProvider
-        for MockWALBatchStrategy
-    {
-        fn distance_compute(
-            &self,
-        ) -> &crate::compute::distance_computation::engine::UnifiedDistanceCompute {
+    impl proximadb_distance_kernel::engine::DistanceComputeProvider for MockWALBatchStrategy {
+        fn distance_compute(&self) -> &proximadb_distance_kernel::engine::UnifiedDistanceCompute {
             &self.distance_compute
         }
     }

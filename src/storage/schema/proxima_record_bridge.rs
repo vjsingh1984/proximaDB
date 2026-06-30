@@ -1473,7 +1473,7 @@ mod tests {
         // Spread across the fp16 dynamic range to catch any silent
         // downconversion: large, fractional, negative, denormal-ish.
         let src_a = vec![1.0_f32, -2.5, 65504.0, 0.0001, 100.25, -0.5, 42.0, 7.125];
-        let src_b = vec![0.0_f32, 1.0, -1.0, 0.5, -0.25, 32.0, -16.5, 3.140625];
+        let src_b = vec![0.0_f32, 1.0, -1.0, 0.5, -0.25, 32.0, -16.5, 3.5];
         let recs = vec![fp16_record("a", &src_a), fp16_record("b", &src_b)];
 
         let batch = bridge.records_to_batch(&recs).expect("records_to_batch");

@@ -9,7 +9,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::{Mutex, RwLock};
 
-    use crate::compute::distance_computation::DistanceMetric;
+    use proximadb_distance_kernel::DistanceMetric;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
@@ -160,6 +160,7 @@ mod tests {
             priority: OperationPriority::Normal,
             timeout_ms: Some(60_000),
             extra_metadata: HashMap::new(),
+            tenant_id: None,
         }
     }
 

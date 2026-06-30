@@ -17,7 +17,7 @@
 //! Unit tests for filestore metadata backend and dependency injection
 
 use proximadb::core::config::{MetadataBackendConfig, StorageConfig};
-use proximadb::network::multi_server::SharedServices;
+use proximadb::network::multi_server::{ServiceProfile, SharedServices};
 use proximadb::proto::proximadb_v1::{
     Collection as ProtoCollection, CollectionConfig as ProtoCollectionConfig, CollectionStats,
     DistanceMetric, StorageEngine as ProtoStorageEngine,
@@ -74,7 +74,7 @@ async fn test_single_metadata_backend_instance() {
 
     // Create SharedServices which creates the single metadata backend
     let (shared_services, collection_service) =
-        SharedServices::new(None, &storage_config, None, None)
+        SharedServices::new(None, &storage_config, None, None, ServiceProfile::Embedded)
             .await
             .unwrap();
 

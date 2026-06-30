@@ -23,6 +23,7 @@
 //! - AXIS can optionally add ML clustering as an optimization layer
 //! - Clean separation: VIPER = storage, AXIS = indexing
 use anyhow::Result;
+use proximadb_storage_ports::CollectionMetadataPort;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -125,8 +126,7 @@ pub struct ViperEngine {
     /// - None during engine initialization
     /// - Some when first collection accessed
     /// - Shared read access for concurrent queries
-    collection_service:
-        Arc<RwLock<Option<Arc<crate::services::collection::manager::CollectionService>>>>,
+    collection_service: Arc<RwLock<Option<Arc<dyn CollectionMetadataPort>>>>,
 
     /// **Unified Caching Filesystem**
     ///
@@ -278,7 +278,7 @@ pub struct ViperEngine {
     /// - Supports hybrid vector + metadata queries
     ///
     /// None if AXIS disabled, Some for indexed collections
-    axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
+    axis_manager: Option<Arc<dyn proximadb_index_traits::IndexEngine>>,
 }
 
 impl std::fmt::Debug for ViperEngine {
@@ -366,9 +366,8 @@ impl ViperEngine {
         let filesystem_config =
             crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await?);
-        let distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-        );
+        let distance_compute =
+            Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
 
         Self::new_with_config(core_config, filesystem, distance_compute).await
     }
@@ -377,9 +376,7 @@ impl ViperEngine {
     pub async fn new_with_config(
         core_config: crate::core::config::ViperConfig,
         filesystem: Arc<FilesystemFactory>,
-        _distance_compute: Arc<
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute,
-        >, // VIPER creates its own internally
+        _distance_compute: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>, // VIPER creates its own internally
     ) -> Result<Self> {
         info!("🔧 Creating stateless VIPER engine");
 
@@ -411,7 +408,7 @@ impl ViperEngine {
         collection_id: String,
         core_config: crate::core::config::ViperConfig,
         filesystem: Arc<FilesystemFactory>,
-        distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+        distance_compute: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
         _base_location: String, // Ignored
     ) -> Result<Self> {
         // Just call the stateless new() method
@@ -446,9 +443,8 @@ impl ViperEngine {
         // Initialize unified quantization engine from compute module
         // This provides the core quantization algorithms (Binary, INT8, PQ)
         // that VIPER uses for its multi-stage compression pipeline
-        let distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-        );
+        let distance_compute =
+            Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
 
         // In-memory codebook store for PQ quantization
         // Codebooks are trained on sample data and cached for fast access
@@ -482,7 +478,7 @@ impl ViperEngine {
                 ),
                 // Cosine is default, but can be overridden per collection
                 distance_metric:
-                    crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+                    proximadb_distance_kernel::engine::DistanceMetric::Cosine,
                 // Enable Binary→INT8→PQ→FP32 progressive refinement
                 enable_progressive: true,
                 // Initial filter returns 100x final k for refinement
@@ -601,7 +597,7 @@ impl ViperEngine {
     /// Set the collection service for metadata access
     pub async fn set_collection_service(
         &self,
-        collection_service: Arc<crate::services::collection::manager::CollectionService>,
+        collection_service: Arc<dyn CollectionMetadataPort>,
     ) {
         let mut service_lock = self.collection_service.write().await;
         *service_lock = Some(collection_service);
@@ -618,28 +614,26 @@ impl ViperEngine {
     /// - HNSW-based approximate nearest neighbor search
     /// - IVF partition pruning
     /// - Hybrid vector + metadata queries
-    pub fn axis_manager(
-        &self,
-    ) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
+    pub fn axis_manager(&self) -> Option<&Arc<dyn proximadb_index_traits::IndexEngine>> {
         self.axis_manager.as_ref()
     }
 
-    /// Convert FilterExpression to AXIS MetadataFilter format
+    /// Convert FilterExpression to Index MetadataFilter format (DTO)
     ///
-    /// This helper converts our internal FilterExpression type to AXIS's
-    /// MetadataFilter format for hybrid vector + metadata queries.
-    fn convert_filter_to_axis(
-        filter_expression: Option<&crate::core::search::FilterExpression>,
-    ) -> Vec<crate::index::axis::management::manager::MetadataFilter> {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
-        use crate::index::axis::management::manager::{FilterOperator, MetadataFilter};
+    /// This helper converts our internal FilterExpression type to the
+    /// IndexMetadataFilter DTO format for hybrid vector + metadata queries.
+    fn convert_filter_to_index(
+        filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
+    ) -> Vec<proximadb_index_traits::IndexMetadataFilter> {
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
+        use proximadb_index_traits::{IndexFilterOperator, IndexMetadataFilter};
 
         let Some(filter) = filter_expression else {
             return Vec::new();
         };
 
-        // Convert filter expressions to AXIS metadata filters
-        let mut axis_filters = Vec::new();
+        // Convert filter expressions to index metadata filters
+        let mut index_filters = Vec::new();
 
         match filter {
             FilterExpression::Comparison {
@@ -647,43 +641,45 @@ impl ViperEngine {
                 operator,
                 value,
             } => {
-                // Convert ComparisonOperator to AXIS FilterOperator
-                let axis_operator = match operator {
-                    ComparisonOperator::Equals => FilterOperator::Equals,
-                    ComparisonOperator::NotEquals => FilterOperator::NotEquals,
-                    ComparisonOperator::GreaterThan => FilterOperator::GreaterThan,
-                    ComparisonOperator::GreaterThanOrEqual => FilterOperator::GreaterThan, // Approximate
-                    ComparisonOperator::LessThan => FilterOperator::LessThan,
-                    ComparisonOperator::LessThanOrEqual => FilterOperator::LessThan, // Approximate
-                    ComparisonOperator::In => FilterOperator::In,
-                    ComparisonOperator::NotIn => FilterOperator::NotIn,
+                // Convert ComparisonOperator to IndexFilterOperator
+                let index_operator = match operator {
+                    ComparisonOperator::Equals => IndexFilterOperator::Equals,
+                    ComparisonOperator::NotEquals => IndexFilterOperator::NotEquals,
+                    ComparisonOperator::GreaterThan => IndexFilterOperator::GreaterThan,
+                    ComparisonOperator::GreaterThanOrEqual => {
+                        IndexFilterOperator::GreaterThanOrEqual
+                    }
+                    ComparisonOperator::LessThan => IndexFilterOperator::LessThan,
+                    ComparisonOperator::LessThanOrEqual => IndexFilterOperator::LessThanOrEqual,
+                    ComparisonOperator::In => IndexFilterOperator::In,
+                    ComparisonOperator::NotIn => IndexFilterOperator::NotIn,
                     _ => {
                         tracing::debug!(
-                            "Operator {:?} not directly supported by AXIS, will use post-filtering",
+                            "Operator {:?} not directly supported by index, will use post-filtering",
                             operator
                         );
-                        return axis_filters;
+                        return index_filters;
                     }
                 };
 
-                axis_filters.push(MetadataFilter {
+                index_filters.push(IndexMetadataFilter {
                     field: field.clone(),
-                    operator: axis_operator,
+                    operator: index_operator,
                     value: value.clone(),
                 });
             }
             FilterExpression::And(filters) => {
                 for f in filters {
-                    axis_filters.extend(Self::convert_filter_to_axis(Some(f)));
+                    index_filters.extend(Self::convert_filter_to_index(Some(f)));
                 }
             }
             FilterExpression::Or(_) | FilterExpression::Not(_) => {
-                // OR and NOT are not directly supported by AXIS, will use post-filtering
-                tracing::debug!("OR/NOT filters not supported by AXIS, will use post-filtering");
+                // OR and NOT are not directly supported by index, will use post-filtering
+                tracing::debug!("OR/NOT filters not supported by index, will use post-filtering");
             }
         }
 
-        axis_filters
+        index_filters
     }
 
     // ============================================================================
@@ -860,7 +856,7 @@ impl ViperEngine {
         &self,
         query: &[f32],
         candidates: &[Vec<f32>],
-        metric: crate::compute::distance_computation::DistanceMetric,
+        metric: proximadb_distance_kernel::DistanceMetric,
     ) -> Result<Vec<f32>> {
         // Use universal optimizer's hardware-accelerated distance computation
         self.universal_optimizer
@@ -1114,7 +1110,13 @@ impl ViperEngine {
             "🔍 VIPER Engine: Looking up vector {} in collection {} at {}",
             vector_id, collection_id, base_path
         );
-        // Get all Parquet files from {base_path}/{collection_id}/data
+        // Get all Parquet files from {base_path}/{collection_id}/data.
+        // TODO ADR-031 Phase 4d: when `PROXIMADB_TYPED_PATHS=1`, this must resolve
+        // the typed account-rooted path (`accounts/{base62}/…/data`) via
+        // `collection_data_path_typed` using the collection's pre-minted
+        // `CollectionIdentity` (threaded from the catalog's `stable_*_id` +
+        // account u32). Until then the env gate stays OFF and this legacy path
+        // is byte-identical to the typed helper's `None` branch (mixed-read-safe).
         let data_dir = StoragePath::collection_data_path(base_path, collection_id);
         let parquet_files = self.list_parquet_files_in_dir(&data_dir).await?;
         if parquet_files.is_empty() {
@@ -2274,25 +2276,25 @@ impl UnifiedStorageFormat for ViperEngine {
                 collection_id
             );
 
-            // Convert filter expression to AXIS metadata filters
-            let axis_filters = Self::convert_filter_to_axis(filter_expression);
+            // Convert filter expression to Index MetadataFilter format (DTO)
+            let index_filters = Self::convert_filter_to_index(filter_expression);
 
-            // Build hybrid query for AXIS
-            use crate::index::axis::management::manager::{HybridQuery, VectorQuery};
-            let hybrid_query = HybridQuery {
+            // Build hybrid query DTO for index engine
+            use proximadb_index_traits::{IndexHybridQuery, IndexVectorQuery};
+            let hybrid_query = IndexHybridQuery {
                 collection_id: collection_id.to_string(),
-                vector_query: Some(VectorQuery::Dense {
+                vector_query: Some(IndexVectorQuery::Dense {
                     vector: query_vector.to_vec(),
                     similarity_threshold: 0.0, // Return all results up to k
                 }),
-                metadata_filters: axis_filters,
+                metadata_filters: index_filters,
                 id_filters: Vec::new(),
                 top_k: k,
                 include_expired: false,
-                ..Default::default()
+                search_effort: None,
             };
 
-            // Execute AXIS query (HNSW or IVF based on index type)
+            // Execute index query (HNSW or IVF based on index type)
             let axis_start = std::time::Instant::now();
             match axis_manager.query(hybrid_query).await {
                 Ok(axis_results) => {
@@ -2707,9 +2709,7 @@ impl UnifiedStorageFormat for ViperEngine {
 
         // Get distance compute engine
         let distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                distance_metric,
-            ),
+            proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(distance_metric),
         );
 
         for record in read_results.results {
@@ -3289,6 +3289,9 @@ mod minimal_compaction_tests {
                 text_storage_configs: vec![],
                 enable_dual_use_embeddings: None,
                 canonical_embedding_precision: None,
+                permitted_principals: vec![],
+                index_policy: None,
+                pax_vector_quant: None,
             }),
             stats: Some(crate::proto::proximadb_v1::CollectionStats {
                 vector_count: 0,

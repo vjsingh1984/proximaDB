@@ -20,7 +20,7 @@ import logging
 import threading
 import time
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, Callable, Generator
+from collections.abc import AsyncGenerator, Callable, Generator, Iterable
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
@@ -787,17 +787,37 @@ class ChunkingPipeline:
     # -------------------------------------------------------------------------
 
     def process_stream(
-        self, text: str, source_id: str, metadata: dict[str, Any] | None = None
+        self,
+        text_source: "str | Iterable[str]",
+        source_id: str,
+        metadata: dict[str, Any] | None = None,
     ) -> Generator[TextChunk, None, None]:
         """
-        Process text as a stream, yielding chunks as they're ready.
+        Yield validated/enriched chunks one at a time.
 
-        Memory-efficient for large documents.
+        ``text_source`` may be a single ``str`` (backward compatible) or an
+        iterable of text pieces (e.g. successive file reads).
+
+        Memory profile depends on the strategy:
+
+        * **Streamable strategy** (``chunker.supports_streaming is True`` —
+          sliding-window / fixed-size / sentence / paragraph) **and** an
+          iterable ``text_source``: a *genuinely incremental, bounded-memory*
+          stream. Chunking maintains only a small local buffer and chunks are
+          produced before the whole input is consumed; the full input and the
+          full chunk list are never materialized.
+        * **Non-streamable strategy** (code / semantic-embedding / recursive /
+          structural-semantic): the *honest fallback* — ``chunk_stream``
+          materializes the input and runs the batch chunker (these need the
+          whole document), but chunks are still yielded one at a time so the
+          downstream validation/enrichment stages run per-chunk.
+
+        A plain ``str`` ``text_source`` is always materialized (it already is),
+        so the bounded-memory benefit applies specifically to a streamable
+        strategy fed an iterable source.
         """
         try:
-            chunks = self.chunker.chunk(text, source_id, metadata)
-
-            for chunk in chunks:
+            for chunk in self.chunker.chunk_stream(text_source, source_id, metadata):
                 try:
                     chunk = self.validation_stage.process(chunk)
                     chunk = self.enrichment_stage.process(chunk)
@@ -813,18 +833,33 @@ class ChunkingPipeline:
                 raise
 
     async def process_stream_async(
-        self, text: str, source_id: str, metadata: dict[str, Any] | None = None
+        self,
+        text_source: "str | Iterable[str]",
+        source_id: str,
+        metadata: dict[str, Any] | None = None,
     ) -> AsyncGenerator[TextChunk, None]:
         """
-        Async version of stream processing.
+        Async version of :meth:`process_stream`.
+
+        Same memory profile applies (genuinely incremental for a streamable
+        strategy + iterable source; honest materialize-then-chunk fallback
+        otherwise). The chunk iterator is advanced in a thread-pool executor so
+        CPU-bound chunking does not block the event loop, while the
+        validation/enrichment stages run per-chunk on the loop.
         """
         try:
             loop = asyncio.get_event_loop()
-            chunks = await loop.run_in_executor(
-                None, lambda: self.chunker.chunk(text, source_id, metadata)
+            chunk_iter = iter(
+                self.chunker.chunk_stream(text_source, source_id, metadata)
             )
+            _SENTINEL = object()
 
-            for chunk in chunks:
+            while True:
+                chunk = await loop.run_in_executor(
+                    None, lambda: next(chunk_iter, _SENTINEL)
+                )
+                if chunk is _SENTINEL:
+                    break
                 try:
                     chunk = await self.validation_stage.process_async(chunk)
                     chunk = await self.enrichment_stage.process_async(chunk)

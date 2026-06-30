@@ -144,6 +144,14 @@ pub struct EmbeddedConfig {
     /// Node ID for leader election (only used in LeaderFollower mode)
     /// If not set, a random UUID will be generated
     pub node_id: Option<String>,
+    /// Logical tenant for the boundary governance contract (co-design tenet 3).
+    /// `None` (default) keeps the legacy single-tenant behavior byte-identical —
+    /// records are written with an empty `tenant_id` and the vector on-disk layout
+    /// (collection-keyed) is unchanged. When set, inserts are routed through the
+    /// same tenant-scoped path the networked server uses, so the boundary contract
+    /// is uniform and multi-tenant embedding becomes opt-in (no migration: embedded
+    /// vector paths are not tenant-keyed).
+    pub tenant_id: Option<String>,
 }
 
 impl Default for EmbeddedConfig {
@@ -170,6 +178,7 @@ impl Default for EmbeddedConfig {
             // Multi-process coordination defaults
             access_mode: AccessMode::Exclusive, // Default to exclusive access
             node_id: None,                      // Auto-generate if needed
+            tenant_id: None,                    // Single-tenant default (legacy behavior)
         }
     }
 }
@@ -203,7 +212,22 @@ impl EmbeddedConfig {
             rl_policy_path: Some(format!("{}/rl_policy.json", path)),
             access_mode: AccessMode::Exclusive, // Benchmarks use exclusive access
             node_id: None,
+            tenant_id: None,
         }
+    }
+
+    /// Cold-path benchmark config (TD-096 S2): identical to [`Self::for_benchmarks`]
+    /// but with the block cache **disabled** (`cache_size_mb: 0`) and the RL planner
+    /// off (deterministic). Pair with a flush-then-**reopen** so the WAL memtable and
+    /// cache start empty — this forces searches to read from the `FileSystem`-backed
+    /// SST files so `CountingFileSystem` measures real disk GETs (the warm-cache +
+    /// WAL-retention confound that masked S2's measurement is removed).
+    pub fn for_benchmarks_cold(data_path: impl Into<String>) -> Self {
+        let mut cfg = Self::for_benchmarks(data_path);
+        cfg.cache_size_mb = 0;
+        cfg.enable_rl_planner = false;
+        cfg.rl_policy_path = None;
+        cfg
     }
 
     /// Create an optimized configuration for memory-constrained environments
@@ -230,6 +254,7 @@ impl EmbeddedConfig {
             rl_policy_path: None,
             access_mode: AccessMode::Exclusive, // Default to exclusive access
             node_id: None,
+            tenant_id: None,
         }
     }
 
@@ -256,6 +281,22 @@ impl EmbeddedConfig {
     /// * `node_id` - Unique identifier for this node
     pub fn with_node_id(mut self, node_id: impl Into<String>) -> Self {
         self.node_id = Some(node_id.into());
+        self
+    }
+
+    /// Set the logical tenant for the boundary governance contract.
+    ///
+    /// `None` (the default) keeps legacy single-tenant behavior; setting a tenant
+    /// opts the embedded database into the same tenant-scoped write path the
+    /// networked server uses. Embedded vector storage is collection-keyed (not
+    /// tenant-keyed), so this is non-breaking — existing data resolves unchanged.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let config = EmbeddedConfig::default().with_tenant("acme");
+    /// ```
+    pub fn with_tenant(mut self, tenant_id: impl Into<String>) -> Self {
+        self.tenant_id = Some(tenant_id.into());
         self
     }
 }
@@ -544,8 +585,8 @@ impl EmbeddedGraphNode {
     }
 
     /// Convert to proto Node for storage
-    pub fn to_proto(&self) -> crate::proto::proximadb_v1::Node {
-        use crate::proto::proximadb_v1::{Node, PropertyValue, property_value::Value};
+    pub fn to_proto(&self) -> crate::graph::Node {
+        use crate::graph::{Node, PropertyValue, property_value::Value};
 
         let properties: std::collections::HashMap<String, PropertyValue> = self
             .properties
@@ -571,8 +612,8 @@ impl EmbeddedGraphNode {
     }
 
     /// Create from proto Node
-    pub fn from_proto(node: &crate::proto::proximadb_v1::Node) -> Self {
-        use crate::proto::proximadb_v1::property_value::Value;
+    pub fn from_proto(node: &crate::graph::Node) -> Self {
+        use crate::graph::model::property_value::Value;
 
         let properties: std::collections::HashMap<String, String> = node
             .properties
@@ -662,8 +703,8 @@ impl EmbeddedGraphEdge {
     }
 
     /// Convert to proto Edge
-    pub fn to_proto(&self) -> crate::proto::proximadb_v1::Edge {
-        use crate::proto::proximadb_v1::{Edge, PropertyValue, property_value::Value};
+    pub fn to_proto(&self) -> crate::graph::Edge {
+        use crate::graph::{Edge, PropertyValue, property_value::Value};
 
         let properties: std::collections::HashMap<String, PropertyValue> = self
             .properties
@@ -691,8 +732,8 @@ impl EmbeddedGraphEdge {
     }
 
     /// Create from proto Edge
-    pub fn from_proto(edge: &crate::proto::proximadb_v1::Edge) -> Self {
-        use crate::proto::proximadb_v1::property_value::Value;
+    pub fn from_proto(edge: &crate::graph::Edge) -> Self {
+        use crate::graph::model::property_value::Value;
 
         let properties: std::collections::HashMap<String, String> = edge
             .properties
@@ -796,9 +837,13 @@ impl EmbeddedProximaDB {
             );
         }
 
-        // Create tokio runtime for async operations
+        // Create tokio runtime for async operations.
+        // 8MB worker stack: correlated subqueries (TPC-H Q2/Q20-Q22) produce
+        // deep-but-finite async call chains through join/predicate evaluation
+        // that overflow the default ~2MB stack. 8MB passes all 22 TPC-H queries.
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(num_cpus::get().min(4))
+            .thread_stack_size(8 * 1024 * 1024)
             .enable_all()
             .build()?;
 
@@ -1088,20 +1133,20 @@ impl EmbeddedProximaDB {
                 &storage_config,
                 Some(orchestrator),
                 None, // No full config needed
+                // Fused in-process: no Prometheus/billing/scrape background work.
+                crate::network::multi_server::ServiceProfile::Embedded,
             )
             .await
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                 Box::new(std::io::Error::other(e.to_string()))
             })?;
 
-        // Set global metadata provider for WAL path resolution
-        // This eliminates the "No metadata provider after 100ms" warning
-        // by ensuring WAL operations can resolve collection paths immediately
-        crate::storage::persistence::write_ahead_log::set_global_metadata_provider(
-            collection_service.metadata_backend().clone(),
-        )
-        .await;
-        tracing::debug!("✅ Embedded: Global metadata provider set for WAL path resolution");
+        // Set the global catalog for WAL path resolution. The catalog is the
+        // sole authority, so WAL operations resolve collection paths through it.
+        if let Some(catalog_manager) = collection_service.catalog_manager() {
+            crate::storage::persistence::write_ahead_log::set_global_catalog(catalog_manager).await;
+            tracing::debug!("✅ Embedded: Global catalog set for WAL/recovery resolution");
+        }
 
         let collection_port: std::sync::Arc<dyn proximadb_runtime::CollectionPort> =
             collection_service;
@@ -1466,6 +1511,20 @@ impl EmbeddedProximaDB {
         })
     }
 
+    /// Build the optional governance `TenantContext` from the configured tenant.
+    ///
+    /// `None` (the default) means legacy single-tenant behavior — inserts take the
+    /// plain path and records keep an empty `tenant_id`. When a tenant is configured
+    /// (`EmbeddedConfig::with_tenant`), inserts route through the same tenant-scoped
+    /// path the networked server uses, making the boundary contract uniform
+    /// (co-design tenet 3). Non-breaking: embedded vector storage is collection-keyed.
+    fn embedded_tenant_context(&self) -> Option<crate::storage::tenant::context::TenantContext> {
+        self.config
+            .tenant_id
+            .clone()
+            .map(crate::storage::tenant::context::TenantContext::for_tenant_id)
+    }
+
     /// Insert vectors into a collection
     ///
     /// Supports batched inserts for better performance. Internally, vectors are
@@ -1488,15 +1547,22 @@ impl EmbeddedProximaDB {
 
         let count = records.len();
 
+        // Governance contract (co-design tenet 3): when a tenant is configured,
+        // route through the tenant-scoped insert the networked path uses; otherwise
+        // keep the legacy plain path byte-identical (single-tenant default).
+        let tenant_ctx = self.embedded_tenant_context();
         let result = self.runtime.block_on(async {
-            let result = self
-                .shared_services
-                .vector_operations_service
-                .insert_batch(collection, records)
-                .await
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(e.to_string()))
-                })?;
+            let vos = &self.shared_services.vector_operations_service;
+            let result = match tenant_ctx.as_ref() {
+                Some(ctx) => {
+                    vos.insert_batch_with_tenant_context(collection, records, Some(ctx))
+                        .await
+                }
+                None => vos.insert_batch(collection, records).await,
+            }
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                Box::new(std::io::Error::other(e.to_string()))
+            })?;
 
             if !result.success {
                 return Err(Box::new(std::io::Error::other(
@@ -1578,15 +1644,22 @@ impl EmbeddedProximaDB {
         let start = std::time::Instant::now();
         let count = records.len();
 
+        // Governance contract (co-design tenet 3): when a tenant is configured,
+        // route through the tenant-scoped insert the networked path uses; otherwise
+        // keep the legacy plain path byte-identical (single-tenant default).
+        let tenant_ctx = self.embedded_tenant_context();
         let result = self.runtime.block_on(async {
-            let result = self
-                .shared_services
-                .vector_operations_service
-                .insert_batch(collection, records)
-                .await
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(e.to_string()))
-                })?;
+            let vos = &self.shared_services.vector_operations_service;
+            let result = match tenant_ctx.as_ref() {
+                Some(ctx) => {
+                    vos.insert_batch_with_tenant_context(collection, records, Some(ctx))
+                        .await
+                }
+                None => vos.insert_batch(collection, records).await,
+            }
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                Box::new(std::io::Error::other(e.to_string()))
+            })?;
 
             if !result.success {
                 return Err(Box::new(std::io::Error::other(
@@ -2168,281 +2241,211 @@ impl EmbeddedProximaDB {
         let start = std::time::Instant::now();
 
         // Explicitly typed as Result<u64, E> to capture bytes written for metrics
-        let result: Result<u64, Box<dyn std::error::Error + Send + Sync>> = self.runtime.block_on(async {
-            use crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
-            use crate::storage::traits::FlushParameters;
-            use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageAssignment};
+        let result: Result<u64, Box<dyn std::error::Error + Send + Sync>> =
+            self.runtime.block_on(async {
+                use crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
 
-            tracing::info!("🛑 EMBEDDED: Flushing all unflushed data to storage engines...");
+                tracing::info!("🛑 EMBEDDED: Flushing all unflushed data to storage engines...");
 
-            // Get the base storage URL from our embedded config
-            let base_storage_url = if let Some(loc) = self.config.storage_locations.first() {
-                loc.to_url()
-            } else {
-                return Err(Box::new(std::io::Error::other(
-                    "No storage locations configured",
-                )) as Box<dyn std::error::Error + Send + Sync>);
-            };
-            tracing::debug!("EMBEDDED: Using base storage URL: {}", base_storage_url);
+                // Get the base storage URL from our embedded config
+                let base_storage_url = if let Some(loc) = self.config.storage_locations.first() {
+                    loc.to_url()
+                } else {
+                    return Err(
+                        Box::new(std::io::Error::other("No storage locations configured"))
+                            as Box<dyn std::error::Error + Send + Sync>,
+                    );
+                };
+                tracing::debug!("EMBEDDED: Using base storage URL: {}", base_storage_url);
 
-            // Get the global write buffer to access unflushed data
-            let write_buffer = match get_global_write_buffer_behavior() {
-                Some(wb) => wb,
-                None => {
-                    tracing::info!("📋 EMBEDDED: No global write buffer initialized, nothing to flush");
-                    return Ok(0);
-                }
-            };
-
-            // Get list of collections with unflushed data
-            let collections_to_flush = write_buffer.list_collections_with_unflushed_data().await;
-            if collections_to_flush.is_empty() {
-                tracing::info!("📋 EMBEDDED: No collections have unflushed data");
-                return Ok(0);
-            }
-
-            tracing::info!(
-                "🔄 EMBEDDED: Found {} collections with unflushed data: {:?}",
-                collections_to_flush.len(),
-                collections_to_flush
-            );
-
-            let mut total_vectors_flushed = 0u64;
-            let mut total_bytes_written = 0u64;
-            let mut collections_flushed = 0usize;
-            let mut failed_collections: Vec<(String, String)> = Vec::new();
-
-            // Flush each collection directly using its configured storage engine
-            // Idempotency is handled at the batch level by get_unflushed_batches() and clear_flushed()
-            for collection_id in &collections_to_flush {
-                tracing::info!("🔄 EMBEDDED: Flushing collection '{}'", collection_id);
-
-                // Get the collection's metadata to find its configured storage engine
-                let collection_metadata = self.collection_port
-                    .get_collection(collection_id, None)
-                    .await;
-
-                // Resolve the canonical collection ID (UUID), storage path, engine, and dimension.
-                // WAL uses the human-friendly collection name, but SST storage is keyed by UUID.
-                let mut canonical_collection_id = collection_id.clone();
-                let mut collection_name = collection_id.clone();
-                let mut base_location_for_flush = base_storage_url.clone();
-                let mut storage_engine_type = crate::proto::proximadb_v1::StorageEngine::Sst as i32;
-                let mut collection_dimension: u32 = 0;
-
-                if let Ok(Some(coll)) = &collection_metadata {
-                    canonical_collection_id = coll.id.clone();
-                    if let Some(cfg) = &coll.config {
-                        collection_name = cfg.name.clone();
-                        collection_dimension = cfg.dimension;
-                        storage_engine_type = cfg
-                            .storage_engine
-                            .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32);
-                    }
-
-                    // Prefer the persisted storage assignment path so we flush into the same directory
-                    if let Some(assign) = &coll.storage_assignment {
-                        base_location_for_flush = assign.base_location.clone();
-                        storage_engine_type = assign.engine;
-                    }
-                }
-
-                // Create the correct storage engine for this collection
-                let proto_engine = crate::proto::proximadb_v1::StorageEngine::try_from(storage_engine_type)
-                    .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst);
-
-                let engine_name = format!("{:?}", proto_engine);
-                tracing::info!(
-                    "🔧 EMBEDDED: Collection '{}' uses {} engine",
-                    collection_id, engine_name
-                );
-
-                let storage_engine = match crate::storage::engines::factory::StorageFormatFactory::create_from_proto_async(proto_engine).await {
-                    Ok(engine) => engine,
-                    Err(e) => {
-                        tracing::warn!(
-                            "❌ EMBEDDED: Failed to create {} engine for '{}': {}, falling back to SST",
-                            engine_name, collection_id, e
+                // Get the global write buffer to access unflushed data
+                let write_buffer = match get_global_write_buffer_behavior() {
+                    Some(wb) => wb,
+                    None => {
+                        tracing::info!(
+                            "📋 EMBEDDED: No global write buffer initialized, nothing to flush"
                         );
-                        // Fallback to unified SST engine
-                        self.shared_services.vector_operations_service.unified_engine()
+                        return Ok(0);
                     }
                 };
 
-                // Get unflushed batches for this collection
-                match write_buffer.get_unflushed_batches(collection_id).await {
-                    Ok(batches) => {
-                        if batches.is_empty() {
-                            tracing::debug!("📋 EMBEDDED: Collection '{}' has no unflushed batches", collection_id);
-                            continue;
+                // Get list of collections with unflushed data
+                let collections_to_flush =
+                    write_buffer.list_collections_with_unflushed_data().await;
+                if collections_to_flush.is_empty() {
+                    tracing::info!("📋 EMBEDDED: No collections have unflushed data");
+                    return Ok(0);
+                }
+
+                tracing::info!(
+                    "🔄 EMBEDDED: Found {} collections with unflushed data: {:?}",
+                    collections_to_flush.len(),
+                    collections_to_flush
+                );
+
+                let mut total_vectors_flushed = 0u64;
+                let mut total_bytes_written = 0u64;
+                let mut collections_flushed = 0usize;
+                let mut failed_collections: Vec<(String, String)> = Vec::new();
+
+                // Flush each collection directly using its configured storage engine
+                // Idempotency is handled at the batch level by get_unflushed_batches() and clear_flushed()
+                for collection_id in &collections_to_flush {
+                    tracing::info!("🔄 EMBEDDED: Flushing collection '{}'", collection_id);
+
+                    // Get the collection's metadata to find its configured storage engine
+                    let collection_metadata = self
+                        .collection_port
+                        .get_collection(collection_id, None)
+                        .await;
+
+                    // Resolve the canonical collection ID (UUID), storage path, engine, and dimension.
+                    // WAL uses the human-friendly collection name, but SST storage is keyed by UUID.
+                    let mut canonical_collection_id = collection_id.clone();
+                    let mut collection_name = collection_id.clone();
+                    let mut base_location_for_flush = base_storage_url.clone();
+                    let mut storage_engine_type =
+                        crate::proto::proximadb_v1::StorageEngine::Sst as i32;
+                    let mut collection_dimension: u32 = 0;
+
+                    if let Ok(Some(coll)) = &collection_metadata {
+                        canonical_collection_id = coll.id.clone();
+                        if let Some(cfg) = &coll.config {
+                            collection_name = cfg.name.clone();
+                            collection_dimension = cfg.dimension;
+                            storage_engine_type = cfg
+                                .storage_engine
+                                .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32);
                         }
 
-                        // Combine all canonical records from unflushed batches.
-                        // Tombstone records have no embeddings; the SST writer cannot handle empty vectors in its
-                        // centroid/spatial-clustering pipeline.  Filter them out here — the deleted
-                        // IDs will simply be absent from the resulting SST, which is correct for the
-                        // single-level embedded flush path (no older SST file holds a stale copy).
-                        let vector_records: Vec<proximadb_records::ProximaRecord> = batches
-                            .iter()
-                            .flat_map(|batch| batch.vector_records.iter().cloned())
-                            .filter(|r| r.embeddings.first().is_some_and(|e| !e.values.is_empty()))
-                            .collect();
+                        // Prefer the persisted storage assignment path so we flush into the same directory
+                        if let Some(assign) = &coll.storage_assignment {
+                            base_location_for_flush = assign.base_location.clone();
+                            storage_engine_type = assign.engine;
+                        }
+                    }
 
-                        let vector_count = vector_records.len();
-                        tracing::info!(
-                            "📋 EMBEDDED: Collection '{}' has {} vectors to flush from {} batches using {} engine",
-                            collection_id, vector_count, batches.len(), engine_name
-                        );
+                    // Resolve the owning tenant for the A6 fence (embedded is single-pod;
+                    // no fence is wired, so this is parity/forward-looking only).
+                    let tenant_id = match &collection_metadata {
+                        Ok(Some(c)) => proximadb_tenant::tenant_id_of(c),
+                        _ => None,
+                    };
 
-                        // Create a collection config with the correct storage assignment, engine type, and dimension
-                        // This ensures the flush writes to our embedded data directory with correct format
-                        // IMPORTANT: dimension is required for VIPER/NOVA flush to work properly
-                        let collection_config = Collection {
-                            id: canonical_collection_id.clone(),
-                            storage_assignment: Some(StorageAssignment {
-                                base_location: base_location_for_flush.clone(),
-                                engine: storage_engine_type, // Pass the correct engine type
-                                ..Default::default()
-                            }),
-                            config: Some(CollectionConfig {
-                                name: collection_name.clone(),
-                                storage_engine: Some(storage_engine_type), // Set engine in config too
-                                dimension: collection_dimension, // CRITICAL: VIPER/NOVA require dimension for flush
-                                ..Default::default()
-                            }),
-                            ..Default::default()
-                        };
+                    // Materialize this collection's unflushed batches via the shared
+                    // helper (engine factory + flush() funnel + WAL cleanup + A6 fence).
+                    // Embedded is single-pod: it passes no fence and reuses the running
+                    // unified SST engine as the create-failure fallback.
+                    let plan = crate::storage::flush_materializer::CollectionFlushPlan {
+                        wal_key: collection_id.clone(),
+                        canonical_id: canonical_collection_id.clone(),
+                        base_location: base_location_for_flush.clone(),
+                        engine_type: storage_engine_type,
+                        dimension: collection_dimension,
+                        tenant_id,
+                    };
+                    let fallback_engine = self
+                        .shared_services
+                        .vector_operations_service
+                        .unified_engine();
+                    // free_wal=true preserves embedded's existing behavior (delete the
+                    // WAL after flush — no 2× overhead). Its cold-read recall gap is the
+                    // same dependent TD as the server's.
+                    let axis_manager = self
+                        .shared_services
+                        .vector_operations_service
+                        .axis_index_manager();
+                    match crate::storage::flush_materializer::materialize_collection(
+                        &write_buffer,
+                        &plan,
+                        None,
+                        Some(fallback_engine),
+                        true,
+                        Some(&axis_manager),
+                    )
+                    .await
+                    {
+                        Ok(Some(outcome)) => {
+                            total_vectors_flushed += outcome.entries_flushed;
+                            total_bytes_written += outcome.bytes;
+                            collections_flushed += 1;
 
-                        // Create flush parameters with the correct storage path
-                        let flush_params = FlushParameters {
-                            // Use the canonical UUID for on-disk layout while keeping WAL cleanup keyed by name
-                            collection_id: Some(canonical_collection_id.clone()),
-                            force: true,
-                            synchronous: true,
-                            vector_records,
-                            // Propagate batch IDs so the engine can report/trace flushed batches
-                            batch_ids: batches.iter().map(|b| b.batch_id).collect(),
-                            collection_config: Some(collection_config),
-                            ..Default::default()
-                        };
-
-                        // Execute flush via the public flush() method which includes validation
-                        // and post-processing (do_flush is internal implementation)
-                        match storage_engine.flush(flush_params).await {
-                            Ok(result) => {
-                                let entries = result.entries_flushed.unwrap_or(0);
-                                let bytes = result.bytes_written.unwrap_or(0);
-
-                                total_vectors_flushed += entries;
-                                total_bytes_written += bytes;
-                                collections_flushed += 1;
-
-                                tracing::debug!(
-                                    "🔄 EMBEDDED: Flush for '{}' completed; EventLog consumer will build AXIS indexes in the background",
-                                    collection_name
-                                );
-
-                                // Clear flushed batches from memtable (synchronous - eager cleanup)
-                                if let Err(e) = write_buffer.clear_flushed(collection_id).await {
-                                    tracing::warn!(
-                                        "⚠️ EMBEDDED: Failed to clear flushed batches for '{}': {}",
-                                        collection_id, e
-                                    );
-                                }
-
-                                // Delete WAL files from disk after successful flush
-                                // This prevents 2x storage overhead from keeping WAL + SST files
-                                let batch_id_strings: Vec<String> = batches.iter()
-                                    .map(|b| b.batch_id.to_base62())
-                                    .collect();
-
-                                if !batch_id_strings.is_empty() {
-                                    match crate::storage::persistence::write_ahead_log::manifest::mark_flushed_and_delete_files(&batch_id_strings).await {
-                                        Ok(deleted) => {
-                                            tracing::info!(
-                                                "🗑️ EMBEDDED: Deleted {} WAL files for collection '{}'",
-                                                deleted, collection_id
-                                            );
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                "⚠️ EMBEDDED: Failed to delete WAL files for '{}': {}",
-                                                collection_id, e
-                                            );
-                                        }
-                                    }
-                                }
-
-                                // Update collection stats after successful flush
-                                // This is CRITICAL for query optimizer to know dataset size
-                                // Without this, optimizer skips index lookup due to "0 vectors"
-                                if let Err(e) = self.shared_services.collection_service
-                                    .update_stats(&collection_name, vector_count as i64, bytes as i64)
-                                    .await
-                                {
-                                    tracing::warn!(
-                                        "⚠️ EMBEDDED: Failed to update stats for '{}': {}",
-                                        collection_id, e
-                                    );
-                                } else {
-                                    tracing::debug!(
-                                        "📊 EMBEDDED: Updated stats for '{}': +{} vectors, +{} bytes",
-                                        collection_id, vector_count, bytes
-                                    );
-                                    // Invalidate the collection cache so the next search loads fresh stats
-                                    // This ensures query optimizer sees the updated vector_count
-                                    self.shared_services.vector_operations_service
-                                        .invalidate_collection_cache(&collection_name);
-                                }
-
-                                tracing::info!(
-                                    "✅ EMBEDDED: Flushed collection '{}': {} vectors, {} bytes",
-                                    collection_id, entries, bytes
-                                );
-                            }
-                            Err(e) => {
+                            // Update collection stats (the optimizer skips index lookup if
+                            // it sees 0 vectors) + invalidate the cache so the next search
+                            // loads fresh stats. Stats use the submitted count (parity with
+                            // the prior embedded behavior).
+                            if let Err(e) = self
+                                .shared_services
+                                .collection_service
+                                .update_stats(
+                                    &collection_name,
+                                    outcome.vectors_submitted as i64,
+                                    outcome.bytes as i64,
+                                )
+                                .await
+                            {
                                 tracing::warn!(
-                                    "❌ EMBEDDED: Failed to flush collection '{}': {}",
-                                    collection_id, e
+                                    "⚠️ EMBEDDED: Failed to update stats for '{}': {}",
+                                    collection_id,
+                                    e
                                 );
-                                failed_collections.push((collection_id.clone(), e.to_string()));
+                            } else {
+                                self.shared_services
+                                    .vector_operations_service
+                                    .invalidate_collection_cache(&collection_name);
                             }
+
+                            tracing::info!(
+                                "✅ EMBEDDED: Flushed collection '{}': {} vectors, {} bytes",
+                                collection_id,
+                                outcome.entries_flushed,
+                                outcome.bytes
+                            );
+                        }
+                        Ok(None) => {
+                            tracing::debug!(
+                                "📋 EMBEDDED: Collection '{}' has no unflushed batches",
+                                collection_id
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "❌ EMBEDDED: Failed to flush collection '{}': {}",
+                                collection_id,
+                                e
+                            );
+                            failed_collections.push((collection_id.clone(), e.to_string()));
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            "❌ EMBEDDED: Failed to get unflushed batches for '{}': {}",
-                            collection_id, e
-                        );
-                        failed_collections.push((collection_id.clone(), e.to_string()));
+                }
+
+                tracing::info!(
+                    "🛑 EMBEDDED: Flush complete - {} collections, {} vectors, {} bytes{}",
+                    collections_flushed,
+                    total_vectors_flushed,
+                    total_bytes_written,
+                    if failed_collections.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", {} failures", failed_collections.len())
                     }
-                }
-            }
+                );
 
-            tracing::info!(
-                "🛑 EMBEDDED: Flush complete - {} collections, {} vectors, {} bytes{}",
-                collections_flushed,
-                total_vectors_flushed,
-                total_bytes_written,
+                // NOTE: We removed the redundant force_flush_all() call here.
+                // The per-collection storage_engine.flush() above already flushes all data.
+                // Calling force_flush_all() caused duplicate SST files (2x data overhead).
+
                 if failed_collections.is_empty() {
-                    String::new()
+                    Ok(total_bytes_written)
                 } else {
-                    format!(", {} failures", failed_collections.len())
+                    Err(Box::new(std::io::Error::other(format!(
+                        "Failed to flush {} collections: {:?}",
+                        failed_collections.len(),
+                        failed_collections
+                    )))
+                        as Box<dyn std::error::Error + Send + Sync>)
                 }
-            );
-
-            // NOTE: We removed the redundant force_flush_all() call here.
-            // The per-collection storage_engine.flush() above already flushes all data.
-            // Calling force_flush_all() caused duplicate SST files (2x data overhead).
-
-            if failed_collections.is_empty() {
-                Ok(total_bytes_written)
-            } else {
-                Err(Box::new(std::io::Error::other(
-                    format!("Failed to flush {} collections: {:?}", failed_collections.len(), failed_collections),
-                )) as Box<dyn std::error::Error + Send + Sync>)
-            }
-        });
+            });
 
         // Record flush latency and bytes
         let elapsed_us = start.elapsed().as_micros() as u64;
@@ -3514,7 +3517,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
-            let node_query = crate::proto::proximadb_v1::NodeQuery {
+            let node_query = crate::graph::NodeQuery {
                 labels,
                 ..Default::default()
             };
@@ -3548,7 +3551,7 @@ impl EmbeddedProximaDB {
             let proto_nodes = graph_service
                 .query_nodes(
                     graph_id,
-                    crate::proto::proximadb_v1::NodeQuery {
+                    crate::graph::NodeQuery {
                         graph_id: graph_id.to_string(),
                         labels: labels.unwrap_or_default(),
                         filters: properties
@@ -3581,7 +3584,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
-            let edge_query = crate::proto::proximadb_v1::EdgeQuery {
+            let edge_query = crate::graph::EdgeQuery {
                 from_node_id: Some(node_id.to_string()),
                 to_node_id: None,
                 edge_types: edge_types.unwrap_or_default(),
@@ -3612,7 +3615,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
-            let edge_query = crate::proto::proximadb_v1::EdgeQuery {
+            let edge_query = crate::graph::EdgeQuery {
                 from_node_id: None,
                 to_node_id: Some(node_id.to_string()),
                 edge_types: edge_types.unwrap_or_default(),
@@ -3690,14 +3693,14 @@ impl EmbeddedProximaDB {
                 .graph_service
                 .traverse(
                     graph_id,
-                    crate::proto::proximadb_v1::TraversalRequest {
+                    crate::graph::TraversalRequest {
                         graph_id: graph_id.to_string(),
                         start_node_id: start_node_id.to_string(),
                         max_depth,
                         edge_types: edge_types.unwrap_or_default(),
                         node_labels: Vec::new(),
                         filters: Vec::new(),
-                        algorithm: crate::proto::proximadb_v1::TraversalAlgorithm::Bfs as i32,
+                        algorithm: crate::graph::TraversalAlgorithm::Bfs as i32,
                         limit,
                         timeout_ms: None,
                         max_frontier: None,
@@ -3709,6 +3712,130 @@ impl EmbeddedProximaDB {
                 })?;
 
             Ok(Self::traversal_response_to_embedded(response))
+        })
+    }
+
+    /// Impact analysis (TD-131): forward blast radius (outgoing edges — "what does X impact") or
+    /// backward (incoming edges — "what impacts X"). `direction` = `"forward"` | `"backward"`.
+    /// Delegates to the server graph service's `impact_analysis`, so the embedded result is the
+    /// server result (the embedded-parity guarantee). Reuses [`Self::traversal_response_to_embedded`].
+    pub fn impact_analysis(
+        &self,
+        graph_id: &str,
+        start_node_id: &str,
+        direction: &str,
+        edge_types: Option<Vec<String>>,
+        max_depth: u32,
+        limit: usize,
+    ) -> Result<EmbeddedGraphTraversalResult, Box<dyn std::error::Error + Send + Sync>> {
+        let dir = match direction {
+            "backward" => crate::graph::ImpactDirection::Backward,
+            _ => crate::graph::ImpactDirection::Forward,
+        };
+        self.runtime.block_on(async {
+            let response = self
+                .shared_services
+                .graph_service
+                .impact_analysis(
+                    graph_id,
+                    start_node_id,
+                    dir,
+                    edge_types.unwrap_or_default(),
+                    max_depth,
+                    limit,
+                )
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::other(e.to_string()))
+                })?;
+            Ok(Self::traversal_response_to_embedded(response))
+        })
+    }
+
+    /// Vector-seed → graph-expand → fuse-by-`oid` (TD-137/TD-131). Constructs the SAME `FusionService`
+    /// core the REST endpoint uses (`FusionService::new(vector, graph)`), so embedded results are
+    /// identical to the server path by construction. `rrf` selects the rank-based fallback policy;
+    /// `grain` = `"nodes"` | `"edges"` | `"both"`. Returns `(FusedItem, FusionStats)`.
+    pub fn fusion_search(
+        &self,
+        graph_id: &str,
+        vector_collection: &str,
+        query_vector: Vec<f32>,
+        max_depth: u32,
+        edge_types: Vec<String>,
+        max_seeds: usize,
+        limit: usize,
+        vector_weight: f32,
+        graph_weight: f32,
+        rrf: bool,
+        grain: &str,
+        text_query: Option<String>,
+        document_collection: Option<String>,
+        document_weight: Option<f32>,
+    ) -> Result<
+        (
+            Vec<crate::core::search::cross_modal_fusion::FusedItem>,
+            crate::core::search::cross_modal_fusion::FusionStats,
+        ),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
+        self.runtime.block_on(async {
+            use crate::core::search::cross_modal_fusion::FusionPolicy;
+            use crate::services::fusion_service::{
+                DocumentFusionSpec, FusionOidKey, FusionService, GraphFusionParams, GraphGrain,
+            };
+
+            let service = FusionService::new(
+                self.shared_services.vector_operations_service.clone(),
+                self.shared_services.graph_service.clone(),
+                // TD-138: share the live full-text index map so the document modality is powered
+                // when a caller supplies a document spec (the params below pass `document: None`
+                // for now; the shared map is wired so a future embedded text_query works directly).
+                self.shared_services.fulltext_indexes.clone(),
+            );
+            let params = GraphFusionParams {
+                route_policy: None,
+                graph_id: graph_id.to_string(),
+                vector_collection: vector_collection.to_string(),
+                query_vector,
+                max_depth,
+                edge_types,
+                max_seeds,
+                limit,
+                vector_weight,
+                graph_weight,
+                grain: match grain {
+                    "edges" => GraphGrain::Edges,
+                    "both" => GraphGrain::Both,
+                    _ => GraphGrain::Nodes,
+                },
+                // Embedded = single-repo/local; within-tenant `permitted_principals` RBAC does not
+                // apply (structural isolation only).
+                principal: None,
+                policy: if rrf {
+                    FusionPolicy::rrf()
+                } else {
+                    FusionPolicy::default()
+                },
+                oid_key: FusionOidKey::Canonical,
+                // TD-138 document modality (embedded parity with REST #508): enable iff a
+                // non-empty `text_query` was supplied. The service above shares the live
+                // full-text index map, so the DocumentExpander runs the BM25 search.
+                document: text_query
+                    .as_ref()
+                    .filter(|t| !t.trim().is_empty())
+                    .map(|t| DocumentFusionSpec {
+                        text_query: t.clone(),
+                        collection: document_collection.clone(),
+                        weight: document_weight.unwrap_or(1.0),
+                        k: None,
+                    }),
+            };
+            service.graph_fusion_search(params).await.map_err(
+                |e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::other(e.to_string()))
+                },
+            )
         })
     }
 
@@ -4247,6 +4374,7 @@ impl EmbeddedProximaDB {
                     query.to_string(),
                     proto_params,
                     collection.map(str::to_string),
+                    None, // embedded single-process: no per-request tenant
                 )
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
@@ -4260,9 +4388,10 @@ impl EmbeddedProximaDB {
     /// Insert or upsert Arrow IPC stream bytes through the embedded vector batch path.
     ///
     /// This is the in-process equivalent of Arrow Flight vector bulk_insert/bulk_upsert:
-    /// Arrow IPC stream bytes are decoded to RecordBatches, converted to ProximaRecord
-    /// batches with the shared Arrow codec, and routed directly to the embedded
-    /// vector service without binding ports or starting a Flight server.
+    /// Arrow IPC stream bytes are decoded to RecordBatches and delegated to
+    /// [`Self::insert_arrow_batches`]. This entry point exists for byte-stream
+    /// sources; in-process callers should prefer the batch path (Arrow C Data
+    /// Interface) which avoids the IPC serialize/deserialize round-trip.
     pub fn insert_arrow_ipc(
         &self,
         collection: &str,
@@ -4270,9 +4399,6 @@ impl EmbeddedProximaDB {
         insert_only: bool,
         tenant_id: Option<&str>,
     ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-        self.check_write_access()?;
-
-        let start = std::time::Instant::now();
         let cursor = std::io::Cursor::new(ipc_stream);
         let reader = arrow_ipc::reader::StreamReader::try_new(cursor, None).map_err(
             |e| -> Box<dyn std::error::Error + Send + Sync> {
@@ -4294,6 +4420,27 @@ impl EmbeddedProximaDB {
                 })?,
             );
         }
+
+        self.insert_arrow_batches(collection, batches, insert_only, tenant_id)
+    }
+
+    /// Zero-copy sibling of [`Self::insert_arrow_ipc`]: ingest already-decoded
+    /// Arrow `RecordBatch`es. The Python embedding hands these across the FFI
+    /// boundary via the **Arrow C Data Interface** (`arrow::pyarrow`), so there is
+    /// no IPC serialize on the Python side and no IPC deserialize here — only the
+    /// unavoidable Arrow→ProximaRecord model conversion remains. Co-design Pillar C
+    /// (move the dominant cost term of the boundary that replaced the deleted
+    /// network dimension). Routed to the same embedded vector service; no ports.
+    pub fn insert_arrow_batches(
+        &self,
+        collection: &str,
+        batches: Vec<arrow::record_batch::RecordBatch>,
+        insert_only: bool,
+        tenant_id: Option<&str>,
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        self.check_write_access()?;
+
+        let start = std::time::Instant::now();
 
         let mut records =
             crate::network::arrow_ipc::codec::ArrowProtoCodec::batches_to_proxima_records(batches)
@@ -4785,8 +4932,8 @@ impl EmbeddedProximaDB {
 
     fn property_filters_from_map(
         properties: &std::collections::HashMap<String, String>,
-    ) -> Vec<crate::proto::proximadb_v1::PropertyFilter> {
-        use crate::proto::proximadb_v1::{PropertyFilter, PropertyFilterOperator, PropertyValue};
+    ) -> Vec<crate::graph::PropertyFilter> {
+        use crate::graph::{PropertyFilter, PropertyFilterOperator, PropertyValue};
 
         properties
             .iter()
@@ -4794,11 +4941,9 @@ impl EmbeddedProximaDB {
                 key: key.clone(),
                 operator: PropertyFilterOperator::Equals as i32,
                 value: Some(PropertyValue {
-                    value: Some(
-                        crate::proto::proximadb_v1::property_value::Value::StringValue(
-                            value.clone(),
-                        ),
-                    ),
+                    value: Some(crate::graph::model::property_value::Value::StringValue(
+                        value.clone(),
+                    )),
                 }),
             })
             .collect()
@@ -4826,7 +4971,7 @@ impl EmbeddedProximaDB {
     }
 
     fn traversal_response_to_embedded(
-        response: crate::proto::proximadb_v1::TraversalResponse,
+        response: crate::graph::TraversalResponse,
     ) -> EmbeddedGraphTraversalResult {
         let nodes = response
             .nodes
@@ -4841,7 +4986,7 @@ impl EmbeddedProximaDB {
         let paths = response
             .paths
             .into_iter()
-            .map(|path| path.entities.into_iter().map(|entity| entity.id).collect())
+            .map(|path| path.node_ids)
             .collect();
         let stats = response.stats.map(|stats| EmbeddedTraversalStats {
             nodes_visited: stats.nodes_visited,

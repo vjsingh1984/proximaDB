@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-06-17T15:52:45Z",
+  "generated_at_utc": "2026-06-26T17:10:13Z",
   "mode": "report",
   "modules": {
     "api_handlers": {
@@ -9,10 +9,10 @@
       "unwrap": 0
     },
     "core": {
-      "expect": 1,
+      "expect": 0,
       "path": "src/core",
-      "total": 3,
-      "unwrap": 2
+      "total": 1,
+      "unwrap": 1
     },
     "graph": {
       "expect": 0,
@@ -41,18 +41,18 @@
     "storage": {
       "expect": 5,
       "path": "src/storage",
-      "total": 39,
-      "unwrap": 34
+      "total": 12,
+      "unwrap": 7
     }
   },
-  "repo": "devfix2",
+  "repo": "chore-reduce-panic-prone-quick-wins",
   "scan_scope": "src/**/*.rs excluding tests/legacy/test-benchmark-example files and #[cfg(test)] blocks; ignores parser-internal self.expect(...) calls",
   "source_root": "src",
   "status": "pass",
   "totals": {
-    "expect": 24,
-    "total": 65,
-    "unwrap": 41
+    "expect": 23,
+    "total": 36,
+    "unwrap": 13
   },
   "violations": []
 }

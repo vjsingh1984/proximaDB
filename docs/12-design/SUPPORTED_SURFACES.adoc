@@ -69,7 +69,7 @@ Current relational/pgwire DML and compute-routing implementation tracker:
 | Path expansion (k-hop) | ✅ | ✅ | — | ✅
 | Cypher query | ✅ | ✅ | — | ✅ (PGQ extension)
 | PageRank / centrality | ✅ (async) | ✅ (async) | — | —
-| Mixed vector + graph hybrid | ✅ | ✅ | ✅ | —
+| Mixed vector + graph hybrid | ✅ (`/api/v2/graphs/{id}/fusion-search`) | ⚠️ v1 compat/deferred | — | —
 |===
 
 === Physical Projection Status
@@ -97,7 +97,7 @@ Current relational/pgwire DML and compute-routing implementation tracker:
 | ANN / top-K search | ✅ | ✅ | ✅ | ✅
 | Filtered vector search | ✅ | ✅ | ✅ | ✅
 | Hybrid BM25 + dense | ✅ | ✅ | — | —
-| Vector + graph hybrid | ✅ | ✅ | ✅ | —
+| Vector + graph hybrid | ✅ (`/api/v2/graphs/{id}/fusion-search`) | ⚠️ v1 compat/deferred | — | —
 |===
 
 === Physical Projection Status
@@ -108,6 +108,34 @@ Current relational/pgwire DML and compute-routing implementation tracker:
 | HNSW index | ✅ Retained (rebuildable) | `ProjectionDirective::HnswIndex`. Rebuilt from canonical `ProximaRecord::embeddings` fields. Predicate-aware ACORN construction per spec §6.1.
 | IVF / PQ quantized index | ✅ Retained (rebuildable) | Quantization lives in `proximadb-vector` modality crate. Foundation types from `proximadb-quantization-types`.
 | Storage engine vector layouts (SST/HELIX/VIPER/NOVA/SWIFT) | ✅ Retained (canonical record layouts/access methods) | Flush, compaction, ProximaBlocks/columnar serialization, filtering, and search result shaping are migrating to `ProximaRecord::embeddings` + `props`. Legacy `VectorRecord` is allowed only in explicit v1 compatibility helpers while client/proto migration completes.
+|===
+
+---
+
+== Entity / Semantic Knowledge Store
+
+=== API Support
+
+[cols="2,1,1,1,1", options="header"]
+|===
+| Operation | REST | gRPC | Arrow Flight | pgwire
+| Upsert entity-shaped view | ⚠️ v1 compat only | ⚠️ v1 compat only (`proximadb.v1.EntityService`) | — | —
+| Get entity-shaped view | ⚠️ v1 compat only | ⚠️ v1 compat only (`proximadb.v1.EntityService`) | — | —
+| Delete entity-shaped view | ⚠️ v1 compat only | ⚠️ v1 compat only (`proximadb.v1.EntityService`) | — | —
+| Search entity-shaped view | ⚠️ v1 compat only | ⚠️ v1 compat only (`proximadb.v1.EntityService`) | — | Use vector/document/graph SQL extensions instead
+| v2 entity orchestration facade | Planned | Planned | — | —
+|===
+
+=== Physical Projection Status
+
+[cols="2,1,3", options="header"]
+|===
+| Projection / Engine | Status | Notes
+| No standalone v2 entity store | ✅ Required architecture | SKS/entity is a composed view over record/vector, graph, document/provenance, and event/temporal history. It must not introduce a separate WAL, path namespace, recovery loop, or billing boundary.
+| Legacy `ProximaEntityStore` / split relations stores | ⚠️ Compatibility / transition only | Useful for old v1 handlers and migration tests, but not a target for new v2 work. New entity-shaped helpers should orchestrate existing services.
+| Entity graph/topology view | ✅ Retained (rebuildable) | Backed by graph nodes/edges and ORION/CSR projections.
+| Entity embedding view | ✅ Retained (rebuildable) | Backed by vector-bearing `ProximaRecord` rows / embedding cells and ANN projections.
+| Entity provenance / evidence view | ✅ Retained (rebuildable or canonical by policy) | Backed by document/text records and event/history records with explicit provenance.
 |===
 
 ---

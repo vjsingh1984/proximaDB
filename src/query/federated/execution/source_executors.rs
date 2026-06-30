@@ -281,7 +281,7 @@ mod tests {
     fn test_federated_value_display() {
         assert_eq!(FederatedValue::String("hello".into()).to_string(), "hello");
         assert_eq!(FederatedValue::Integer(42).to_string(), "42");
-        assert_eq!(FederatedValue::Float(3.14).to_string(), "3.14");
+        assert_eq!(FederatedValue::Float(3.5).to_string(), "3.5");
         assert_eq!(FederatedValue::Boolean(true).to_string(), "true");
         assert_eq!(FederatedValue::Null.to_string(), "NULL");
     }

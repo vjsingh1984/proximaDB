@@ -4,7 +4,7 @@ mod tests {
     use crate::graph::engines::orion::OrionGraphEngine;
     use crate::graph::rag::SubgraphBuilder;
     use crate::graph::rag::engine_impls::KHopSubgraphBuilder;
-    use crate::proto::proximadb_v1::{Edge, Node};
+    use crate::graph::{Edge, Node};
     use std::collections::HashMap;
     use std::sync::Arc;
 

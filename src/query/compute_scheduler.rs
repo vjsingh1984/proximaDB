@@ -143,6 +143,31 @@ pub struct QueryShape {
     pub partition_fanout: PartitionFanout,
 }
 
+/// What produced a [`SelectRouteDecision`] — a `route_decisions_total` metric
+/// label (co-design C4 operator surface). `Static` is the policy rule; the two
+/// override variants only occur when `PROXIMADB_ROUTE_COST_OVERRIDE` is enabled.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RouteSource {
+    /// The static shape-rule decision (no cost-model override fired).
+    #[default]
+    Static,
+    /// Live cost-model override to a confidently-cheaper freshness-safe backend.
+    OverrideExploit,
+    /// Rate-limited exploration flip to a cold freshness-safe backend (warm-up).
+    OverrideExplore,
+}
+
+impl RouteSource {
+    /// Stable metric-label form for `route_decisions_total{source}`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RouteSource::Static => "static",
+            RouteSource::OverrideExploit => "override_exploit",
+            RouteSource::OverrideExplore => "override_explore",
+        }
+    }
+}
+
 /// A materialized read-route decision: the engine, the workload it was
 /// classified as, and a human-readable reason. Emitted to telemetry and, once a
 /// SELECT `EXPLAIN` surface exists, surfaced there via [`Self::explain_line`].
@@ -154,6 +179,8 @@ pub struct SelectRouteDecision {
     pub workload_profile: CatalogWorkloadProfile,
     /// Human-readable reason for the choice.
     pub reason: String,
+    /// What produced this decision (static rule vs cost-model override/explore).
+    pub source: RouteSource,
 }
 
 impl SelectRouteDecision {
@@ -283,17 +310,25 @@ impl ComputeScheduler {
 
     /// Route a relational `SELECT` plan to a physical engine.
     ///
-    /// P0 invariant: the backend is ALWAYS `Native`. Only the workload
-    /// classification and reason vary, so the contract is locked before any
-    /// second physical executor exists.
+    /// Public entry: applies the static shape rule, then records the decision
+    /// metric and stamps the route onto the io_trace scope via [`finalize_route`].
     pub fn route_select(&self, shape: QueryShape) -> SelectRouteDecision {
-        let decision = match (shape.engages_relational, shape.parquet_backed) {
+        finalize_route(self.route_select_inner(shape), shape)
+    }
+
+    /// The static shape rule ONLY — no metric, no io_trace stamp. The pure
+    /// policy core; [`Self::route_select`] and [`Self::route_select_advised`]
+    /// wrap it (the latter may override the backend before stamping, so the
+    /// stamp reflects the FINAL engine — see [`finalize_route`]).
+    fn route_select_inner(&self, shape: QueryShape) -> SelectRouteDecision {
+        match (shape.engages_relational, shape.parquet_backed) {
             // P1: OLAP shape over Parquet-backed (object-store) table(s) → DataFusion.
             (true, true) => SelectRouteDecision {
                 backend: ComputeBackend::DataFusionLocal,
                 workload_profile: CatalogWorkloadProfile::Olap,
                 reason: "OLAP shape over Parquet-backed table(s) — DataFusion over object storage"
                     .to_string(),
+                source: RouteSource::Static,
             },
             // OLAP shape on native storage — Volcano serves it from WAL+RecordStorage
             // until the relational base tier is Parquet/Iceberg (course-correction §6 P3).
@@ -302,22 +337,15 @@ impl ComputeScheduler {
                 workload_profile: CatalogWorkloadProfile::Olap,
                 reason: "OLAP shape (join/group-by/aggregate/set-op) on native storage — Volcano"
                     .to_string(),
+                source: RouteSource::Static,
             },
             (false, _) => SelectRouteDecision {
                 backend: ComputeBackend::Native,
                 workload_profile: CatalogWorkloadProfile::Oltp,
                 reason: "OLTP shape (point/simple select) — Volcano".to_string(),
+                source: RouteSource::Static,
             },
-        };
-        // C4 ingestion: stamp the chosen route onto the active io_trace scope (a
-        // no-op when unscoped, e.g. unit tests / EXPLAIN-only). The completed
-        // query's measured snapshot then feeds the trace-driven cost model at
-        // flush; empty traces are skipped, so EXPLAIN-only calls cost nothing.
-        crate::observability::io_trace::record_route(
-            &crate::query::route_cost_model::shape_class(&shape),
-            &backend_label(&decision.backend),
-        );
-        decision
+        }
     }
 
     /// Route a relational `SELECT` and materialize the typed read-route plan.
@@ -326,96 +354,161 @@ impl ComputeScheduler {
     }
 
     /// Route a `SELECT`, then — if a trace-driven cost model is supplied —
-    /// **observe-mode** advise: consult the measured per-(shape-class, backend)
-    /// cost (co-design C4) and fold its recommendation into the decision's
-    /// `reason` for EXPLAIN/telemetry, *without changing the backend*.
+    /// consult its frozen recommendation table (a lock-free `ArcSwap` load +
+    /// `HashMap` get, never the learn-path mutex) and either disclose an advisory
+    /// (observe-mode) or flip to a freshness-safe challenger (live override,
+    /// flag-gated via `PROXIMADB_ROUTE_COST_OVERRIDE`). With override OFF (the
+    /// default) or no warmed history, the static decision is returned unchanged.
     ///
-    /// This closes the co-design loop (C0 trace → cost model → router). By
-    /// default it is **observe-mode**: the scheduler discloses what the trace
-    /// *would* recommend and whether it diverges from the static rule, without
-    /// changing the backend. When the model's live override is enabled (slice 4,
-    /// flag-gated via `PROXIMADB_ROUTE_COST_OVERRIDE`) and a freshness-safe
-    /// challenger is confidently cheaper, the route is *flipped* to it. With no
-    /// warmed history the static decision is returned unchanged.
+    /// This closes the co-design loop (C0 trace → cost model → router) while
+    /// keeping the decision lock-free and O(1): freshness-safety is baked into
+    /// the frozen table (only `olap/parquet` offers two safe engines), so the
+    /// consult can never flip a query onto an engine that would serve it
+    /// incorrectly (e.g. a point/OLTP query onto a stale base snapshot).
     pub fn route_select_advised(
         &self,
         shape: QueryShape,
         model: Option<&crate::query::route_cost_model::RouteCostModel>,
     ) -> SelectRouteDecision {
-        let mut decision = self.route_select(shape);
+        use crate::query::route_cost_model::RouteConsult;
+
+        let mut decision = self.route_select_inner(shape);
         let Some(model) = model else {
-            return decision;
+            return finalize_route(decision, shape);
         };
         let class = crate::query::route_cost_model::shape_class(&shape);
 
-        // Live override (flag-gated, confidence-gated). Only consider backends
-        // that are freshness-SAFE for this shape (see `override_candidates`), so
-        // the cost model can never flip a query onto an engine that would serve
-        // it incorrectly (e.g. a point/OLTP query onto a stale base snapshot).
-        if model.override_active() {
-            let safe = override_candidates(shape, &decision.backend);
-            // Exploration (Phase 2) first: warm an under-explored freshness-safe
-            // candidate so it accrues history the override can later act on.
-            // Bounded + rate-limited + freshness-safe (see `exploration_choice`).
-            if let Some(explore) = model.exploration_choice(&class, &safe)
-                && backend_label(&explore) != backend_label(&decision.backend)
+        // Lock-free consult: a single ArcSwap load + HashMap get. `None` on a
+        // cold table (no baked entry) → keep the static route unchanged.
+        let consult = model.consult(&class);
+
+        if model.override_active()
+            && let Some(consult) = consult.as_ref()
+        {
+            // Exploration (warm-up) first: rate-limited flip to the baked
+            // least-sampled freshness-safe candidate so it accrues history the
+            // exploit override can later act on. Bounded + freshness-safe.
+            if let Some(target) = consult
+                .explore_target()
+                // Staleness guard: the frozen target may have warmed since the
+                // last recompute; re-check against the frozen ranked samples (a
+                // target absent from `ranked` was never observed → still cold).
+                .filter(|t| {
+                    backend_label(t) != backend_label(&decision.backend)
+                        && consult
+                            .find(t)
+                            .is_none_or(|c| c.samples < model.min_samples())
+                })
+                && model
+                    .next_exploration_tick()
+                    .is_multiple_of(model.exploration_interval())
             {
                 let prev = backend_label(&decision.backend);
                 decision.reason = format!(
                     "{} | cost-model EXPLORE {prev}→{} (gathering cost history)",
                     decision.reason,
-                    backend_label(&explore)
+                    backend_label(target)
                 );
-                decision.backend = explore;
-                return decision;
+                decision.backend = target.clone();
+                decision.source = RouteSource::OverrideExplore;
+                return finalize_route(decision, shape);
             }
-            // Exploitation: override to the confidently-cheaper backend.
-            if let Some(rec) = model.recommend_override(&class, &decision.backend, &safe) {
-                let prev = backend_label(&decision.backend);
-                decision.reason = format!(
-                    "{} | cost-model OVERRIDE {prev}→{} ({})",
-                    decision.reason,
-                    backend_label(&rec.backend),
-                    rec.reason()
-                );
-                decision.backend = rec.backend;
-                return decision;
+
+            // Exploit override — TD-170 hard round-trip gate, then the soft
+            // min_advantage byte-cost gate — both resolved from frozen data.
+            if let Some(static_choice) = consult.find(&decision.backend)
+                && static_choice.samples >= model.min_samples()
+            {
+                // Hard gate: a backend over the round-trip budget loses even
+                // when it moves fewer bytes (latency = depth × RTT). Flip to the
+                // cheapest freshness-safe candidate WITHIN the budget.
+                if let Some(budget) = model.rtt_budget()
+                    && static_choice.range_gets > budget
+                    && let Some(within) = consult
+                        .ranked()
+                        .iter()
+                        .filter(|c| c.range_gets <= budget)
+                        .min_by(|a, b| {
+                            a.score
+                                .partial_cmp(&b.score)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        .filter(|c| backend_label(&c.backend) != backend_label(&decision.backend))
+                {
+                    let prev = backend_label(&decision.backend);
+                    decision.reason = format!(
+                        "{} | cost-model OVERRIDE {prev}→{} (RTT budget {budget:.0} exceeded)",
+                        decision.reason,
+                        backend_label(&within.backend)
+                    );
+                    decision.backend = within.backend.clone();
+                    decision.source = RouteSource::OverrideExploit;
+                    return finalize_route(decision, shape);
+                }
+
+                // Soft gate: flip to the cheapest warmed candidate if it beats
+                // the static route by at least `min_advantage`.
+                if let Some(challenger) = consult
+                    .ranked()
+                    .iter()
+                    .filter(|c| c.samples >= model.min_samples())
+                    .find(|c| backend_label(&c.backend) != backend_label(&decision.backend))
+                    .filter(|c| c.score < static_choice.score * (1.0 - model.min_advantage()))
+                {
+                    let prev = backend_label(&decision.backend);
+                    decision.reason = format!(
+                        "{} | cost-model OVERRIDE {prev}→{} (score {:.1} vs {:.1})",
+                        decision.reason,
+                        backend_label(&challenger.backend),
+                        challenger.score,
+                        static_choice.score
+                    );
+                    decision.backend = challenger.backend.clone();
+                    decision.source = RouteSource::OverrideExploit;
+                    return finalize_route(decision, shape);
+                }
             }
         }
 
-        // Observe-mode advisory (no behavior change): disclose the recommendation.
-        let candidates = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
-        if let Some(rec) = model.recommend(&class, &candidates) {
-            let advisory = if rec.backend == decision.backend {
-                format!("cost-model concurs ({})", rec.reason())
+        // Observe-mode advisory (no behavior change): disclose the cheapest
+        // warmed freshness-safe candidate from the frozen table.
+        if let Some(consult) = consult.as_ref()
+            && let Some(rec) = consult
+                .ranked()
+                .iter()
+                .find(|c| c.samples >= model.min_samples())
+        {
+            let advisory = if backend_label(&rec.backend) == backend_label(&decision.backend) {
+                format!("cost-model concurs (score {:.1})", rec.score)
             } else {
                 format!(
-                    "cost-model would prefer {} ({}) — observe-mode, route unchanged",
+                    "cost-model would prefer {} (score {:.1}) — observe-mode, route unchanged",
                     backend_label(&rec.backend),
-                    rec.reason()
+                    rec.score
                 )
             };
             decision.reason = format!("{} | {advisory}", decision.reason);
         }
-        decision
+
+        finalize_route(decision, shape)
     }
 }
 
-/// The freshness-SAFE backend set a live override may choose among for `shape`.
-///
-/// Only OLAP-over-Parquet has more than one freshness-compatible engine: both
-/// Native's strong-freshness scan (WAL+RecordStorage) and DataFusion's
-/// base-snapshot scan correctly answer an analytic query, and both are already
-/// used by the static rule for this shape — so flipping between them is safe.
-/// OLTP (point/simple) is freshness-critical → never override off Native; OLAP
-/// on native storage has no Parquet base → DataFusion cannot serve it. Those
-/// keep only the static backend, so `recommend_override` can never flip them.
-fn override_candidates(shape: QueryShape, static_backend: &ComputeBackend) -> Vec<ComputeBackend> {
-    if shape.engages_relational && shape.parquet_backed {
-        vec![ComputeBackend::Native, ComputeBackend::DataFusionLocal]
-    } else {
-        vec![static_backend.clone()]
+/// Record the decision metric (and the OLAP-on-Native nudge), then stamp the
+/// FINAL route onto the active io_trace scope. Called once per route decision,
+/// AFTER any override has settled the backend — so the learn loop attributes a
+/// query's measured cost to the engine that actually served it (fixing the prior
+/// bug where the static backend was stamped before an override could flip it).
+/// Stamping is a no-op when no io_trace scope is active (unit tests / EXPLAIN).
+fn finalize_route(decision: SelectRouteDecision, shape: QueryShape) -> SelectRouteDecision {
+    let class = crate::query::route_cost_model::shape_class(&shape);
+    let backend = backend_label(&decision.backend);
+    crate::metrics::route_metrics::record_decision(&backend, &class, decision.source.as_str());
+    if decision.backend == ComputeBackend::Native && class.starts_with("olap/") {
+        crate::metrics::route_metrics::record_olap_on_native(&class);
     }
+    crate::observability::io_trace::record_route(&class, &backend);
+    decision
 }
 
 #[cfg(test)]
@@ -532,32 +625,35 @@ mod tests {
     #[test]
     fn advised_is_observe_mode_never_overrides_backend() {
         use crate::query::route_cost_model::RouteCostModel;
-        // OLAP-on-native shape: static rule => Native(Volcano).
+        // OLAP-over-Parquet: static rule => DataFusionLocal. Warm Native as far
+        // cheaper (few coalesced GETs vs DataFusion's many) so observe-mode
+        // DISCLOSES the preference without flipping the backend. (The only class
+        // with two freshness-safe engines — the only one an advisory can prefer.)
         let shape = QueryShape {
             engages_relational: true,
-            parquet_backed: false,
+            parquet_backed: true,
             ..Default::default()
         };
-        let model = RouteCostModel::new().with_min_samples(1);
-        // Teach the model that DataFusion is far cheaper for this shape-class
-        // (few coalesced GETs vs Native's many small GETs).
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_recompute_every(1);
         for _ in 0..4 {
             model.observe(
-                "olap/native",
-                &ComputeBackend::DataFusionLocal,
+                "olap/parquet",
+                &ComputeBackend::Native,
                 &io_snap(3, 16 << 20),
             );
             model.observe(
-                "olap/native",
-                &ComputeBackend::Native,
+                "olap/parquet",
+                &ComputeBackend::DataFusionLocal,
                 &io_snap(300, 16 << 20),
             );
         }
         let advised = ComputeScheduler::new().route_select_advised(shape, Some(&model));
         // Backend is UNCHANGED (observe-mode) ...
-        assert_eq!(advised.backend, ComputeBackend::Native);
+        assert_eq!(advised.backend, ComputeBackend::DataFusionLocal);
         // ... but the divergence is disclosed for EXPLAIN/validation.
-        assert!(advised.reason.contains("would prefer DataFusionLocal"));
+        assert!(advised.reason.contains("would prefer Native"));
         assert!(advised.reason.contains("observe-mode"));
     }
 
@@ -569,7 +665,9 @@ mod tests {
             parquet_backed: false,
             ..Default::default()
         };
-        let model = RouteCostModel::new().with_min_samples(1);
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_recompute_every(1);
         // Only Native has history for this shape-class → it is the min, concurring
         // with the static OLTP→Native rule.
         for _ in 0..3 {
@@ -588,7 +686,9 @@ mod tests {
             parquet_backed: true,
             ..Default::default()
         }; // static => DataFusionLocal
-        let model = RouteCostModel::new().with_min_samples(1); // override OFF (default)
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_recompute_every(1); // override OFF (default)
         for _ in 0..5 {
             model.observe(
                 "olap/parquet",
@@ -615,7 +715,9 @@ mod tests {
             parquet_backed: true,
             ..Default::default()
         }; // static => DataFusionLocal
-        let model = RouteCostModel::new().with_min_samples(1);
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_recompute_every(1);
         model.set_override_enabled(true);
         for _ in 0..5 {
             model.observe(
@@ -645,7 +747,8 @@ mod tests {
         }; // static => DataFusionLocal
         let model = RouteCostModel::new()
             .with_min_samples(1)
-            .with_exploration_interval(1);
+            .with_exploration_interval(1)
+            .with_recompute_every(1);
         model.set_override_enabled(true);
         // DataFusion (the static route) is warm; Native is unexplored → explore it.
         for _ in 0..5 {
@@ -674,7 +777,8 @@ mod tests {
         }; // static => Native (OLTP)
         let model = RouteCostModel::new()
             .with_min_samples(1)
-            .with_exploration_interval(1);
+            .with_exploration_interval(1)
+            .with_recompute_every(1);
         model.set_override_enabled(true);
         // Even with DataFusion history for this class, OLTP's freshness-safe set
         // is just [Native], so exploration has nothing to probe.
@@ -700,7 +804,9 @@ mod tests {
             parquet_backed: true,
             ..Default::default()
         };
-        let model = RouteCostModel::new().with_min_samples(1);
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_recompute_every(1);
         model.set_override_enabled(true);
         // Even if DataFusion looks absurdly cheap for this class, it is not a
         // freshness-safe candidate for OLTP, so it can never be chosen.
@@ -740,5 +846,66 @@ mod tests {
             plan.route_explanation().policy_boundary,
             "connector-enforced"
         );
+    }
+
+    #[test]
+    fn cold_model_consult_returns_static_decision() {
+        use crate::query::route_cost_model::RouteCostModel;
+        // Empty model (no observations) → frozen table empty → consult None →
+        // static decision unchanged, no advisory appended.
+        let model = RouteCostModel::new();
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            ..Default::default()
+        };
+        let advised = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        assert_eq!(advised.backend, ComputeBackend::DataFusionLocal);
+        assert_eq!(advised.source, RouteSource::Static);
+        assert!(!advised.reason.contains("cost-model"));
+    }
+
+    #[test]
+    fn override_sets_decision_source_label() {
+        use crate::query::route_cost_model::RouteCostModel;
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            ..Default::default()
+        };
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_recompute_every(1);
+        model.set_override_enabled(true);
+        for _ in 0..5 {
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::Native,
+                &io_snap(3, 16 << 20),
+            );
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(300, 16 << 20),
+            );
+        }
+        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        assert_eq!(d.backend, ComputeBackend::Native);
+        assert_eq!(d.source, RouteSource::OverrideExploit);
+    }
+
+    #[test]
+    fn olap_on_native_is_static_with_volcano_backend() {
+        // An olap/native route stays on Volcano (single freshness-safe candidate)
+        // with a Static source; the ROUTE_OLAP_ON_NATIVE_TOTAL nudge is the
+        // operator signal (asserted in route_metrics tests), recorded in finalize_route.
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: false,
+            ..Default::default()
+        };
+        let d = ComputeScheduler::new().route_select(shape);
+        assert_eq!(d.backend, ComputeBackend::Native);
+        assert_eq!(d.source, RouteSource::Static);
     }
 }

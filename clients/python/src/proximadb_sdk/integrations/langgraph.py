@@ -29,7 +29,14 @@ from typing import Any
 
 from langchain_core.embeddings import Embeddings
 from langchain_core.tools import BaseTool
-from langchain_core.tools import create_retriever_tool as _lc_create_retriever_tool
+
+# Canonical, version-stable location of ``create_retriever_tool``. It lives in
+# ``langchain_core.tools.retriever`` in both LangChain 0.3.x and 1.x (the
+# ``langchain.tools.retriever`` shim was removed in 1.x). ``langchain_core.tools``
+# re-exports it, but the submodule path is the one guaranteed across both floors.
+from langchain_core.tools.retriever import (
+    create_retriever_tool as _lc_create_retriever_tool,
+)
 
 from proximadb_sdk.integrations.langchain import ProximaDBVectorStore
 

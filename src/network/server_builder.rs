@@ -609,6 +609,9 @@ pub struct MultiServerBuilder {
     api_config: Option<crate::core::config::ApiConfig>,
     /// Data directory from server config (server.data_dir from TOML)
     data_dir: PathBuf,
+    /// Mount the read-only `/admin` dashboard (from `[server.admin_ui] enabled`).
+    /// Off by default; opt-in for standalone instances.
+    admin_ui_enabled: bool,
 }
 
 impl Default for MultiServerBuilder {
@@ -619,6 +622,7 @@ impl Default for MultiServerBuilder {
             arrow_ipc_builder: ArrowIpcServerBuilder::default(),
             api_config: None,
             data_dir: PathBuf::from("/tmp/proximadb/data"),
+            admin_ui_enabled: false,
         }
     }
 }
@@ -694,6 +698,13 @@ impl MultiServerBuilder {
         self
     }
 
+    /// Enable the read-only embedded admin dashboard at `/admin` (off by default).
+    /// Wire from `config.server.admin_ui.enabled`.
+    pub fn with_admin_ui_enabled(mut self, enabled: bool) -> Self {
+        self.admin_ui_enabled = enabled;
+        self
+    }
+
     /// Build the complete multi-server configuration
     pub fn build(mut self) -> Result<MultiServerConfig> {
         // Apply API config compression settings to builders if available
@@ -735,6 +746,10 @@ impl MultiServerBuilder {
             unified_mode: self.api_config.as_ref().is_some_and(|c| c.unified_mode),
             unified_port: self.api_config.as_ref().map_or(5678, |c| c.unified_port),
             unified_bind_address: "0.0.0.0".to_string(),
+            // Portless (UDS) transport is wired post-build in database.rs from
+            // `[api].transport`/`socket_dir`; the builder always starts in TCP mode.
+            uds_socket_dir: None,
+            admin_ui_enabled: self.admin_ui_enabled,
             // Cluster mode defaults
             #[cfg(feature = "cluster")]
             cluster_config: None, // Cluster mode disabled by default

@@ -12,7 +12,6 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::{debug, info, trace, warn};
 
 use crate::storage::BatchId;
@@ -21,7 +20,7 @@ use crate::storage::persistence::write_ahead_log::{
     recovery_thread_pool::get_recovery_thread_pool, serialization::SerializationFormat,
     serialization::SerializerFactory,
 };
-use crate::storage::traits::{InternalCollectionProvider, UnifiedStorageFormat};
+use crate::storage::traits::UnifiedStorageFormat;
 
 /// Recovery destination configuration
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -44,8 +43,6 @@ pub struct RecoveryManager {
     recovery_mode: RecoveryMode,
     /// Statistics
     stats: Arc<tokio::sync::RwLock<WalRecoveryStats>>,
-    /// Metadata provider for getting real collection configs
-    metadata_provider: Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
 }
 
 /// Backwards-compat alias for [`WalRecoveryStats`].
@@ -82,7 +79,6 @@ impl Clone for RecoveryManager {
             flush_coordinator: self.flush_coordinator.clone(),
             recovery_mode: self.recovery_mode,
             stats: self.stats.clone(),
-            metadata_provider: self.metadata_provider.clone(),
         }
     }
 }
@@ -94,9 +90,10 @@ impl RecoveryManager {
         config: crate::storage::persistence::write_ahead_log::config::WALConfig,
         _wal_behavior: Arc<crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper>,
         filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
-        metadata_provider: Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
     ) -> Self {
-        info!("🎯 Creating RecoveryManager with direct-to-storage recovery and metadata provider");
+        info!(
+            "🎯 Creating RecoveryManager with direct-to-storage recovery (catalog-backed config resolution)"
+        );
 
         // Create disk manager
         let disk_manager = Arc::new(WriteAheadLogDiskManager::new(
@@ -119,7 +116,6 @@ impl RecoveryManager {
             // Can be flushed to storage later when engines are ready
             recovery_mode: RecoveryMode::ViaMemtable,
             stats: Arc::new(tokio::sync::RwLock::new(WalRecoveryStats::default())),
-            metadata_provider,
         }
     }
 
@@ -226,7 +222,6 @@ impl RecoveryManager {
             let storage_engines = self.storage_engines.clone();
             let flush_coordinator = self.flush_coordinator.clone();
             let recovery_mode = self.recovery_mode;
-            let metadata_provider = self.metadata_provider.clone();
 
             // Execute recovery task through thread pool
             let task = thread_pool.execute_recovery_task("recover_collection", async move {
@@ -242,7 +237,6 @@ impl RecoveryManager {
                     flush_coordinator,
                     recovery_mode,
                     None,
-                    metadata_provider,
                 )
                 .await;
 
@@ -349,7 +343,6 @@ impl RecoveryManager {
             self.flush_coordinator.clone(),
             self.recovery_mode,
             None, // No progress callback for startup recovery
-            self.metadata_provider.clone(),
         )
         .await?;
 
@@ -384,7 +377,6 @@ impl RecoveryManager {
             self.flush_coordinator.clone(),
             self.recovery_mode,
             progress_callback,
-            self.metadata_provider.clone(),
         )
         .await?;
 
@@ -407,7 +399,6 @@ impl RecoveryManager {
         _flush_coordinator: Arc<WALFlushCoordinator>,
         recovery_mode: RecoveryMode,
         progress_callback: Option<RecoveryProgressCallback>,
-        metadata_provider: Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
     ) -> Result<(u64, u64)> {
         info!(
             "🔄 Recovering collection: {} (mode: {:?})",
@@ -509,7 +500,6 @@ impl RecoveryManager {
                         &storage_engines,
                         recovery_mode,
                         &e.storage_url,
-                        &metadata_provider,
                     )
                     .await?;
 
@@ -670,9 +660,7 @@ impl RecoveryManager {
             .to_string();
 
         // Pass recovered vectors to flush coordinator
-        // It will use the storage engine's do_flush method properly
-        // Note: metadata_provider needs to be passed from caller context
-        let metadata_provider = Arc::new(RwLock::new(None::<Arc<dyn InternalCollectionProvider>>));
+        // It will use the storage engine's do_flush method properly.
         let flush_result = Self::flush_recovered_vectors(
             file_info,
             vectors,
@@ -680,7 +668,6 @@ impl RecoveryManager {
             storage_engines,
             recovery_mode,
             &storage_url,
-            &metadata_provider,
         )
         .await
         .context("Failed to flush recovered vectors")?;
@@ -716,7 +703,6 @@ impl RecoveryManager {
         storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
         _recovery_mode: RecoveryMode,
         storage_url: &str,
-        metadata_provider: &Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
     ) -> Result<crate::storage::traits::FlushResult> {
         // Get the storage engine for this collection
         let engines = storage_engines.read().await;
@@ -727,33 +713,21 @@ impl RecoveryManager {
             )
         })?;
 
-        // Try to get REAL collection config from metadata provider
-        let collection_config = if let Some(provider) = metadata_provider.read().await.as_ref() {
-            match provider.get_collection(&file_info.collection_id).await {
-                Ok(Some(collection)) => {
-                    info!(
-                        "✅ Using REAL collection config from metadata for {}",
-                        file_info.collection_id
-                    );
-                    Some(collection)
-                }
-                Ok(None) => {
-                    warn!(
-                        "⚠️ Collection {} not found in metadata, using minimal config",
-                        file_info.collection_id
-                    );
-                    Self::create_minimal_collection_config(&file_info.collection_id, storage_url)
-                }
-                Err(e) => {
-                    warn!(
-                        "⚠️ Failed to get collection config: {}, using minimal config",
-                        e
-                    );
-                    Self::create_minimal_collection_config(&file_info.collection_id, storage_url)
-                }
-            }
+        // The catalog is the sole read authority; resolve collection config from
+        // it, otherwise fall back to a minimal config.
+        let collection_config = if let Some(collection) =
+            super::resolve_collection_from_catalog(&file_info.collection_id).await
+        {
+            info!(
+                "✅ Using collection config from catalog for {}",
+                file_info.collection_id
+            );
+            Some(collection)
         } else {
-            warn!("⚠️ No metadata provider available, using minimal config");
+            warn!(
+                "⚠️ Collection {} not found in catalog, using minimal config",
+                file_info.collection_id
+            );
             Self::create_minimal_collection_config(&file_info.collection_id, storage_url)
         };
 
@@ -869,7 +843,6 @@ impl ParallelRecoveryManager {
             config,
             wal_behavior,
             filesystem_factory,
-            Arc::new(tokio::sync::RwLock::new(None)), // Metadata provider for test
         ));
         let num_workers = num_workers.unwrap_or_else(|| num_cpus::get().min(8));
 
@@ -1063,12 +1036,8 @@ mod tests {
                 crate::storage::memtable::MemtableConfig::default(),
             ),
         );
-        let recovery_manager = RecoveryManager::new(
-            config,
-            wal_behavior,
-            filesystem_factory.clone(),
-            Arc::new(tokio::sync::RwLock::new(None)),
-        );
+        let recovery_manager =
+            RecoveryManager::new(config, wal_behavior, filesystem_factory.clone());
 
         (disk_manager, flush_coordinator, recovery_manager, temp_dir)
     }

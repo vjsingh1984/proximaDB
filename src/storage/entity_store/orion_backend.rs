@@ -55,12 +55,15 @@ use std::sync::{Arc, OnceLock};
 
 use super::EntityStore;
 use super::graph_schema::{EntityNodeMapper, RelationEdgeMapper};
-use crate::graph::{GraphOperationsService, Node, PropertyValue};
-use crate::proto::proximadb_v1::{
-    ComparisonOp, EdgeQuery, Entity, LogicalOp, MetadataFilter, NodeQuery, Relation, filter_clause,
-    property_value,
+use crate::graph::{
+    EdgeQuery, GraphOperationsService, Node, NodeQuery, PropertyValue, property_value,
 };
-use crate::{core::VectorId, index::AxisManager};
+use crate::proto::proximadb_v1::{
+    ComparisonOp, Entity, LogicalOp, MetadataFilter, Relation, filter_clause,
+};
+use proximadb_index_traits::{
+    IndexFilterOperator, IndexHybridQuery, IndexMetadataFilter, IndexQuery, IndexVectorQuery,
+};
 
 /// Orion-backed entity store using graph-first architecture
 pub struct OrionBackedEntityStore {
@@ -77,13 +80,13 @@ pub struct OrionBackedEntityStore {
     relation_mapper: RelationEdgeMapper,
 
     /// Optional AXIS manager for hybrid vector + metadata search
-    axis_manager: Option<Arc<AxisManager>>,
+    axis_manager: Option<Arc<dyn IndexQuery>>,
 }
 
-static GLOBAL_AXIS_MANAGER: OnceLock<Arc<AxisManager>> = OnceLock::new();
+static GLOBAL_AXIS_MANAGER: OnceLock<Arc<dyn IndexQuery>> = OnceLock::new();
 
 /// Register a global AXIS manager so new stores can default to it.
-pub fn set_global_axis_manager(axis_manager: Arc<AxisManager>) {
+pub fn set_global_axis_manager(axis_manager: Arc<dyn IndexQuery>) {
     let _ = GLOBAL_AXIS_MANAGER.set(axis_manager);
 }
 
@@ -114,7 +117,7 @@ impl OrionBackedEntityStore {
     }
 
     /// Attach an AXIS manager for hybrid search; returns self for chaining.
-    pub fn with_axis_manager(mut self, axis_manager: Arc<AxisManager>) -> Self {
+    pub fn with_axis_manager(mut self, axis_manager: Arc<dyn IndexQuery>) -> Self {
         self.axis_manager = Some(axis_manager);
         self
     }
@@ -312,16 +315,14 @@ impl EntityStore for OrionBackedEntityStore {
             // Convert metadata filters (AND semantics; OR not yet supported in AXIS)
             let axis_filters = Self::convert_metadata_filters(metadata_filter.as_ref());
 
-            let hybrid_query = crate::index::axis::management::manager::HybridQuery {
+            let hybrid_query = IndexHybridQuery {
                 collection_id: collection_id.to_string(),
-                vector_query: Some(
-                    crate::index::axis::management::manager::VectorQuery::Dense {
-                        vector: vec.clone(),
-                        similarity_threshold: 0.0,
-                    },
-                ),
+                vector_query: Some(IndexVectorQuery::Dense {
+                    vector: vec.clone(),
+                    similarity_threshold: 0.0,
+                }),
                 metadata_filters: axis_filters,
-                id_filters: Vec::<VectorId>::new(),
+                id_filters: Vec::<String>::new(),
                 top_k,
                 include_expired: false,
                 ..Default::default()
@@ -730,9 +731,7 @@ impl OrionBackedEntityStore {
     }
 
     /// Convert proto metadata filters to AXIS metadata filters (best-effort).
-    fn convert_metadata_filters(
-        filter: Option<&MetadataFilter>,
-    ) -> Vec<crate::index::axis::management::manager::MetadataFilter> {
+    fn convert_metadata_filters(filter: Option<&MetadataFilter>) -> Vec<IndexMetadataFilter> {
         let Some(filter) = filter else {
             return Vec::new();
         };
@@ -742,18 +741,10 @@ impl OrionBackedEntityStore {
             .iter()
             .filter_map(|clause| {
                 let operator = match ComparisonOp::try_from(clause.op).ok() {
-                    Some(ComparisonOp::Eq) => {
-                        crate::index::axis::management::manager::FilterOperator::Equals
-                    }
-                    Some(ComparisonOp::Ne) => {
-                        crate::index::axis::management::manager::FilterOperator::NotEquals
-                    }
-                    Some(ComparisonOp::Gt) => {
-                        crate::index::axis::management::manager::FilterOperator::GreaterThan
-                    }
-                    Some(ComparisonOp::Lt) => {
-                        crate::index::axis::management::manager::FilterOperator::LessThan
-                    }
+                    Some(ComparisonOp::Eq) => IndexFilterOperator::Equals,
+                    Some(ComparisonOp::Ne) => IndexFilterOperator::NotEquals,
+                    Some(ComparisonOp::Gt) => IndexFilterOperator::GreaterThan,
+                    Some(ComparisonOp::Lt) => IndexFilterOperator::LessThan,
                     _ => return None,
                 };
 
@@ -769,7 +760,7 @@ impl OrionBackedEntityStore {
                     None => return None,
                 };
 
-                Some(crate::index::axis::management::manager::MetadataFilter {
+                Some(IndexMetadataFilter {
                     field: clause.field.clone(),
                     operator,
                     value,

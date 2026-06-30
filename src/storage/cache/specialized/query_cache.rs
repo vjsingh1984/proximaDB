@@ -173,6 +173,16 @@ impl QueryCache {
         false
     }
 
+    /// Invalidate ALL cached query results for a collection. Called on write
+    /// (insert/update/delete/DDL) via the CacheInvalidationCoordinator so a
+    /// write is immediately visible to subsequent reads (read-after-write).
+    /// Returns the number of entries evicted.
+    pub async fn invalidate_collection(&self, collection_id: &str) -> usize {
+        self.base
+            .remove_where(|k| k.collection_id == collection_id)
+            .await
+    }
+
     /// Resize the cache
     pub async fn resize(&self, _new_size_mb: usize) -> anyhow::Result<()> {
         // Deferred: Implement cache resizing

@@ -13,12 +13,12 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::core::search::FilterExpression;
 use crate::storage::engines::core::formats::proximablocks::block_structures::{
     ProximaBlockMetadata, ProximaDataBlock,
 };
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
+use proximadb_filter_expression::FilterExpression;
 
 /// ✅ Reading strategy for different access patterns
 #[derive(Debug, Clone)]
@@ -396,7 +396,7 @@ impl ProximaBlockReader {
         metadata: &ProximaBlockMetadata,
         filter: &Option<&FilterExpression>,
     ) -> bool {
-        use crate::core::search::ComparisonOperator;
+        use proximadb_filter_expression::ComparisonOperator;
 
         // If no filter, always check the block
         let Some(filter_expr) = filter else {

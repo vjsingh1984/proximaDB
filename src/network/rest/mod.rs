@@ -21,6 +21,8 @@
 pub use crate::api_handlers;
 /// Health and readiness check endpoints
 pub mod health;
+/// OpenAPI spec-from-code aggregation + generator (TD-126 Phase 1).
+pub mod openapi;
 /// Progressive multi-stage search with explain endpoint
 pub mod progressive_search_handler;
 /// Proto-JSON bidirectional serialization for REST responses

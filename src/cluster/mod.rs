@@ -53,6 +53,11 @@ pub mod consensus;
 pub mod distributed_ops;
 pub mod metadata_service;
 pub mod node_registry;
+/// Generation-fenced per-partition write leases over object storage (Phase 7):
+/// a peer holds a durable, fenced lease over one (tenant, collection) for
+/// contention-free local writes. Backs [`primary_pod_registry`]'s in-memory
+/// routing with a split-brain-safe durable authority.
+pub mod partition_lease;
 /// Write-side affinity for (tenant_id, collection_id) → primary_pod
 /// bindings. Complementary to [`cache_affinity`]: durable, authoritative,
 /// drives write routing. See module doc for the read/write split.
@@ -83,9 +88,12 @@ pub use metadata_service::{ClusterMetadata, MetadataService, MetadataServiceConf
 pub use node_registry::{
     NodeHealth, NodeInfo, NodeRegistry, NodeRegistryConfig, NodeRole, NodeStatus,
 };
+pub use partition_lease::{
+    LeaseOutcome, PartitionLease, PartitionLeaseManager, PartitionLeaseStore,
+};
 pub use primary_pod_registry::{
     AssignmentReason, PrimaryPod, PrimaryPodRegistry, WriteRoutingDecision, consult_for_write,
-    resolve_self_pod_id,
+    consult_for_write_leased, resolve_self_pod_id,
 };
 pub use replication::{
     EngineReplication, ReplicaState, ReplicationAck, ReplicationConfig, ReplicationEntry,

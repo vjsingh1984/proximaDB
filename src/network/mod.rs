@@ -179,6 +179,9 @@ pub mod auth;
 pub mod grpc;
 /// Hybrid (vector + BM25 text) search execution engine
 pub mod hybrid_search;
+/// In-process reference MCP transport (ADR-037 Decision 5) — bound only when
+/// `api.mcp_port` is configured (off by default).
+pub mod mcp;
 /// Metrics endpoints (Prometheus, JSON, health)
 pub mod metrics_service;
 /// HTTP middleware stack (auth, CORS, rate limiting, TLS)
@@ -197,7 +200,13 @@ pub mod server_builder;
 // etc via re-exports in `multi_server.rs`.
 /// Shared business-logic service composition layer (SharedServices)
 pub mod shared_services;
-pub mod tls;
+/// A6 storage-write fence adapter (cluster lease manager → storage fence trait).
+pub mod storage_write_fence;
+// Extracted to the `proximadb-tls` crate; re-exported here for source compatibility
+// (root-crate decomposition).
+pub use proximadb_tls as tls;
+/// Unix-domain socket binding helpers for portless ("embedded") transport mode.
+pub mod uds;
 
 pub use metrics_service::*;
 pub use middleware::*;

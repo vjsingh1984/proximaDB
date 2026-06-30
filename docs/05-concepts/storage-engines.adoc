@@ -3,7 +3,7 @@
 :toclevels: 3
 :icons: font
 :source-highlighter: rouge
-:last-updated: December 2025
+:last-updated: June 2026
 
 [.lead]
 Choose the vector storage engine that fits your workload. Engines are pluggable and optimized for different access patterns.
@@ -38,14 +38,6 @@ Choose the vector storage engine that fits your workload. Engines are pluggable 
 | High (batch)
 | 99%+
 
-| **SWIFT**
-| Small datasets (<10K), ultra-low latency
-| ~15ms
-| ~5ms
-| High
-| Low
-| 100%
-
 | **NOVA**
 | Mixed read/write workloads
 | ~30ms
@@ -53,14 +45,6 @@ Choose the vector storage engine that fits your workload. Engines are pluggable 
 | Medium
 | Medium
 | 97%+
-
-| **RAPTOR**
-| Evolving/dynamic workloads
-| ~10ms
-| ~10-15ms
-| Medium
-| High
-| 96%+
 |===
 
 [WARNING]
@@ -90,19 +74,13 @@ flowchart TD
     D -->|Analytics queries| VIPER
     D -->|Mixed queries| E{Dataset size?}
 
-    E -->|<10K vectors| SWIFT[SWIFT Engine]
-    E -->|10K-1M vectors| F{Workload stable?}
-    E -->|>1M vectors| SST
-
-    F -->|Yes| NOVA[NOVA Engine]
-    F -->|No, evolving| RAPTOR[RAPTOR Engine]
+    E -->|Small / medium| NOVA[NOVA Engine]
+    E -->|Large, >1M| SST[SST Engine]
 
     style SST fill:#4a90e2,color:#fff
     style HELIX fill:#2e5c8a,color:#fff
     style VIPER fill:#1a3a5c,color:#fff
-    style SWIFT fill:#6ba3d6,color:#fff
     style NOVA fill:#3d7ab8,color:#fff
-    style RAPTOR fill:#5090c8,color:#fff
 ----
 
 == Use Case Recommendations
@@ -187,52 +165,27 @@ client.create_collection(
 )
 ----
 
-=== Small Dataset, Maximum Speed
+=== Experimental Engines (SWIFT, RAPTOR)
 
-**Recommended: SWIFT Engine**
+[WARNING]
+====
+**SWIFT and RAPTOR are experimental and OFF by default.** They live behind the
+`experimental-engines` cargo feature; a stock build rejects them at the engine
+factory with "Use SST, VIPER, HELIX, or NOVA instead." They are *not* part of the
+v0.2 supported surface. Enable only with `cargo build --features experimental-engines`.
+====
 
-Best for:
+When enabled, they target two niches not covered by the supported engines:
 
-* Prototyping and development
-* Small reference datasets (<10K vectors)
-* Exact nearest neighbor (no approximation)
-* Multi-tenant with isolated small collections
+* **SWIFT** -- in-memory, exact nearest-neighbor for tiny collections (<10K vectors),
+  prototyping, and small isolated multi-tenant sets. Use **SST** or **NOVA** instead for
+  any supported workload.
+* **RAPTOR** -- adaptive row-group layout for evolving/unpredictable access patterns. Use
+  **NOVA** (mixed read/write) for supported mixed workloads.
 
-[source,python]
-----
-client.create_collection(
-    name="product_catalog",
-    dimension=384,
-    engine="swift",
-    engine_config={
-        "in_memory": True,
-        "exact_search": True
-    }
-)
-----
-
-=== Dynamic/Evolving Workloads
-
-**Recommended: RAPTOR Engine**
-
-Best for:
-
-* A/B testing with changing data patterns
-* Adaptive caching based on access patterns
-* Workloads with unpredictable query distribution
-
-[source,python]
-----
-client.create_collection(
-    name="adaptive_embeddings",
-    dimension=768,
-    engine="raptor",
-    engine_config={
-        "adaptive_pruning": True,
-        "cache_hot_blocks": True
-    }
-)
-----
+Config knobs and bench numbers for both appear in the SWIFT/RAPTOR subsections of the
+Engine Configuration Reference and Performance Benchmarks below (clearly marked experimental).
+Do not build production v0.2 collections on these engines.
 
 == Engine Configuration Reference
 
@@ -322,7 +275,9 @@ client.create_collection(
 | `2.0`
 |===
 
-=== SWIFT Engine Options
+=== SWIFT Engine Options (experimental — off by default)
+
+NOTE: SWIFT requires `--features experimental-engines` and is not a v0.2 supported engine.
 
 [cols="2,1,3,2", options="header"]
 |===
@@ -366,7 +321,9 @@ client.create_collection(
 | 128
 |===
 
-=== RAPTOR Engine Options
+=== RAPTOR Engine Options (experimental — off by default)
+
+NOTE: RAPTOR requires `--features experimental-engines` and is not a v0.2 supported engine.
 
 [cols="2,1,3,2", options="header"]
 |===
@@ -389,6 +346,10 @@ client.create_collection(
 |===
 
 == Performance Benchmarks
+
+NOTE: SWIFT and RAPTOR rows below are **experimental** (off by default) and are shown for
+reference only; they are not part of the v0.2 supported surface. Treat all figures as
+internal reference points, not a published SLA (see link:../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE]).
 
 === Latency Comparison (10K vectors, 128 dimensions)
 

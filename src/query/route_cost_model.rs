@@ -38,7 +38,9 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
+
+use arc_swap::ArcSwap;
 
 use crate::observability::io_trace::IoTraceSnapshot;
 use crate::query::compute_scheduler::{QueryShape, backend_label};
@@ -66,6 +68,90 @@ pub fn install_route_cost_observer() {
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     GLOBAL_ROUTE_COST_MODEL.set_override_enabled(on);
+}
+
+// ── Per-Parquet-location shape stats (route-time classification) ────────────
+
+/// One Parquet table's physical shape, warmed for free wherever the table is
+/// opened and peeked at route time so the cost-model shape-class discriminates
+/// OLAP-over-Parquet queries by fan-out / cardinality WITHOUT a cold footer
+/// read on the route path (co-design P5: I/O round-trips, not CPU, dominate).
+#[derive(Clone, Copy, Debug)]
+pub struct TableShapeStat {
+    /// Row-group / split count — the GET-fan-out a scan of this table pays.
+    pub row_groups: u32,
+    /// Estimated row count from footer statistics, when the footer carries it.
+    pub rows: Option<u64>,
+}
+
+/// Process-global, bounded cache of per-Parquet-location [`TableShapeStat`]s.
+/// Warmed as a free side-effect of opening a table for execution/EXPLAIN (the
+/// opener already reads the footer) and consulted at the route decision so the
+/// scheduler's [`QueryShape`] carries real `partition_fanout` / `cardinality`
+/// for hot tables. A cold (never-scanned) table simply lacks an entry → the
+/// shape stays coarse (`Unknown`), so a fresh table changes nothing until its
+/// first scan warms the stat. Workload-adaptive, and adds zero I/O to routing.
+static GLOBAL_TABLE_SHAPE_STATS: LazyLock<Mutex<HashMap<String, TableShapeStat>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Soft cap on cached locations. Locations are catalog-bounded in practice; this
+/// only guards a runaway (e.g. a bug minting synthetic locations). Over-cap the
+/// cache clears wholesale — stat data is advisory and re-warms on the next scan.
+const TABLE_SHAPE_STAT_CAP: usize = 8192;
+
+/// Record (or refresh) a table's shape stat. Called by the Parquet opener after
+/// it has the footer, so this adds no I/O. Best-effort: a poisoned lock or an
+/// over-cap cache is silently dropped (classification then falls back coarse).
+pub fn record_table_shape_stat(location: &str, row_groups: u32, rows: Option<u64>) {
+    let mut guard = GLOBAL_TABLE_SHAPE_STATS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if guard.len() >= TABLE_SHAPE_STAT_CAP {
+        guard.clear();
+    }
+    guard.insert(location.to_string(), TableShapeStat { row_groups, rows });
+}
+
+/// Aggregate the cached stats for `locations` into cost-model shape buckets.
+///
+/// Conservative: if *any* referenced location lacks a warmed stat, returns
+/// `(Unknown, Unknown)` — never half-classify a multi-table query from partial
+/// data, since an unknown table could dominate fan-out / cardinality. An empty
+/// slice also yields `Unknown`. Sums row-groups (total GET fan-out) and rows
+/// (total scan cardinality) across the tables, then buckets via the scheduler's
+/// [`PartitionFanout`] / [`CardinalityClass`].
+///
+/// [`PartitionFanout`]: crate::query::compute_scheduler::PartitionFanout
+/// [`CardinalityClass`]: crate::query::compute_scheduler::CardinalityClass
+pub fn classify_table_shapes(
+    locations: &[String],
+) -> (
+    crate::query::compute_scheduler::PartitionFanout,
+    crate::query::compute_scheduler::CardinalityClass,
+) {
+    use crate::query::compute_scheduler::{CardinalityClass, PartitionFanout};
+    if locations.is_empty() {
+        return (PartitionFanout::Unknown, CardinalityClass::Unknown);
+    }
+    let guard = GLOBAL_TABLE_SHAPE_STATS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let mut total_row_groups = 0u32;
+    let mut total_rows: Option<u64> = Some(0);
+    for loc in locations {
+        let Some(stat) = guard.get(loc) else {
+            return (PartitionFanout::Unknown, CardinalityClass::Unknown);
+        };
+        total_row_groups = total_row_groups.saturating_add(stat.row_groups);
+        total_rows = match (total_rows, stat.rows) {
+            (Some(acc), Some(r)) => Some(acc.saturating_add(r)),
+            _ => None,
+        };
+    }
+    (
+        PartitionFanout::from_count(Some(total_row_groups)),
+        CardinalityClass::from_estimate(total_rows),
+    )
 }
 
 /// Per-tenant governance **tier-entitlement multiplier** resolver — the final
@@ -307,6 +393,124 @@ impl RouteRecommendation {
     }
 }
 
+// ── Frozen recommendation table: the lock-free consult path (co-design C4) ──
+//
+// The consult half of the cost model. `RouteCostModel::consult` does a single
+// `ArcSwap::load` + `HashMap` get — never the learn-path `cells` mutex — so the
+// route decision stays O(1) and lock-free even when live override is enabled.
+// The EWMA learner is the SOLE writer, recomputing this table debounced on the
+// observe path; readers always see a consistent immutable snapshot.
+
+/// One freshness-safe candidate's baked cost summary in the frozen table.
+#[derive(Debug, Clone)]
+pub struct BackendChoice {
+    /// The candidate engine.
+    pub backend: ComputeBackend,
+    /// Weighted neutral score (lower = cheaper) — the soft byte-cost term.
+    pub score: f64,
+    /// EWMA sample count at bake time.
+    pub samples: u64,
+    /// Predicted ranged-GET count — the TD-170 hard round-trip-budget term.
+    pub range_gets: f64,
+}
+
+/// Per-shape-class pre-baked recommendation: everything the lock-free consult
+/// needs to reproduce the explore / override / advisory decision without a
+/// lock. Immutable once published via [`ArcSwap`].
+#[derive(Debug, Clone)]
+pub struct ClassRecommendation {
+    /// Every freshness-safe candidate with ANY history, cheapest-first. Carries
+    /// score/samples/range_gets so the consult can apply BOTH the soft
+    /// `min_advantage` gate and the hard `rtt_budget` gate from frozen data.
+    ranked: Vec<BackendChoice>,
+    /// The least-sampled freshness-safe candidate still under `min_samples` (the
+    /// exploration warm-up target), or `None` once all are warm. May target a
+    /// never-observed safe candidate (0 samples). Resolved against the live
+    /// `explore_tick` at consult time.
+    explore_target: Option<ComputeBackend>,
+}
+
+impl ClassRecommendation {
+    /// Ranked freshness-safe candidates with history, cheapest-first.
+    pub fn ranked(&self) -> &[BackendChoice] {
+        &self.ranked
+    }
+    /// The baked exploration warm-up target, if any candidate is still cold.
+    pub fn explore_target(&self) -> Option<&ComputeBackend> {
+        self.explore_target.as_ref()
+    }
+    /// Find the candidate matching `backend` (by canonical label). Used to
+    /// resolve the static route's baked cost at consult time.
+    pub fn find(&self, backend: &ComputeBackend) -> Option<&BackendChoice> {
+        let want = backend_label(backend);
+        self.ranked
+            .iter()
+            .find(|c| backend_label(&c.backend) == want)
+    }
+}
+
+/// Immutable snapshot of all per-class recommendations, held in an [`ArcSwap`]
+/// inside [`RouteCostModel`]. The consult path loads it once and does a
+/// `HashMap` get — fully lock-free.
+#[derive(Debug, Clone, Default)]
+struct RouteRecommendationTable {
+    by_class: HashMap<String, ClassRecommendation>,
+}
+
+/// Lock-free consult over the frozen recommendation table (DIP seam). The
+/// scheduler depends on this abstraction, not the concrete [`RouteCostModel`];
+/// the concrete model implements it backed by its [`ArcSwap`] table, and a test
+/// double can satisfy it with canned data. Production consult stays
+/// monomorphized over the concrete model (no `&dyn` on the hot path) — the
+/// trait exists for testability and a future persisted/remote cost model.
+pub trait RouteConsult {
+    /// Lock-free consult for one shape-class. `None` when the class has no baked
+    /// entry (cold start — the caller keeps the static route).
+    fn consult(&self, shape_class: &str) -> Option<ClassRecommendation>;
+    /// Whether live override is currently enabled (reads the live `AtomicBool`).
+    fn override_active(&self) -> bool;
+    /// Advance and return the exploration rate-limit tick (pre-increment value).
+    fn next_exploration_tick(&self) -> u64;
+    /// Config surfaced for the consult's gate logic.
+    fn min_samples(&self) -> u64;
+    fn min_advantage(&self) -> f64;
+    fn exploration_interval(&self) -> u64;
+    /// TD-170 hard round-trip budget (`None` = disabled).
+    fn rtt_budget(&self) -> Option<f64>;
+}
+
+/// Inverse of [`backend_label`] — recover a [`ComputeBackend`] from its frozen
+/// label. Returns `None` for an unrecognized label so the recomputer skips it
+/// instead of panicking (a stale/mistyped label never corrupts the frozen table).
+fn parse_backend_label(label: &str) -> Option<ComputeBackend> {
+    match label {
+        "Native(Volcano)" => Some(ComputeBackend::Native),
+        "DataFusionLocal" => Some(ComputeBackend::DataFusionLocal),
+        "DataFusionDistributed" => Some(ComputeBackend::DataFusionDistributed),
+        "PolarsLocal" => Some(ComputeBackend::PolarsLocal),
+        "DuckDbCompat" => Some(ComputeBackend::DuckDbCompat),
+        _ => label
+            .strip_prefix("ExternalDelegated(")
+            .and_then(|s| s.strip_suffix(')'))
+            .map(|s| ComputeBackend::ExternalDelegated(s.to_string())),
+    }
+}
+
+/// The freshness-safe backend SET for a shape-class, derived from its prefix —
+/// reproduces `compute_scheduler::override_candidates` without a [`QueryShape`].
+/// Only `olap/parquet` has two freshness-compatible engines (Native's
+/// strong-freshness scan and DataFusion's base-snapshot scan both correctly
+/// answer an analytic query); every other class keeps its single static
+/// backend, so a baked override can never flip a query onto an engine that
+/// would serve it incorrectly.
+fn freshness_safe_backends_from_class(shape_class: &str) -> Vec<ComputeBackend> {
+    if shape_class.starts_with("olap/parquet") {
+        vec![ComputeBackend::Native, ComputeBackend::DataFusionLocal]
+    } else {
+        vec![ComputeBackend::Native]
+    }
+}
+
 /// Trace-driven, thread-safe route cost model. One instance is consulted at the
 /// route decision and fed by completed-query traces.
 #[derive(Debug)]
@@ -327,6 +531,32 @@ pub struct RouteCostModel {
     /// freshness-safe candidate is sampled (~1 in `exploration_interval`).
     explore_tick: AtomicU64,
     exploration_interval: u64,
+    /// TD-170 / ADR-034 P7: a HARD per-query round-trip (predicted `range_gets`)
+    /// budget. `None` = disabled (default). When set, the override fires
+    /// regardless of the soft `min_advantage` byte-cost gate if the static choice
+    /// exceeds the budget and a freshness-safe candidate is within it — because
+    /// latency = depth × RTT, so a backend over the round-trip budget loses even
+    /// when it moves fewer bytes.
+    rtt_budget: Option<f64>,
+    /// Frozen recommendation table — the LOCK-FREE consult surface. Read via
+    /// [`ArcSwap`] (`load` + `HashMap` get) on the route hot path; written only
+    /// by [`Self::recompute_locked`] (debounced on the observe path). Empty at
+    /// construction → consult returns `None` → callers keep the static route.
+    table: ArcSwap<RouteRecommendationTable>,
+    /// Observation counter driving the debounced frozen-table recompute.
+    observation_count: AtomicU64,
+    /// Recompute the frozen table every Nth observation (debounce). Lower warms
+    /// the consult view faster at more recompute cost; min 1 (recompute always).
+    recompute_every: u64,
+}
+
+/// Parse `PROXIMADB_ROUTE_RTT_BUDGET` (a positive round-trip count) — the
+/// production source for the TD-170 round-trip budget. Default `None` (disabled).
+fn rtt_budget_from_env() -> Option<f64> {
+    std::env::var("PROXIMADB_ROUTE_RTT_BUDGET")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|b| *b > 0.0)
 }
 
 impl Default for RouteCostModel {
@@ -348,7 +578,19 @@ impl RouteCostModel {
             min_advantage: 0.15,
             explore_tick: AtomicU64::new(0),
             exploration_interval: 16,
+            rtt_budget: rtt_budget_from_env(),
+            table: ArcSwap::from_pointee(RouteRecommendationTable::default()),
+            observation_count: AtomicU64::new(0),
+            recompute_every: 64,
         }
+    }
+
+    /// Set the hard round-trip budget (predicted `range_gets`); `None` disables it
+    /// (the default). Builder form for tests; production reads
+    /// `PROXIMADB_ROUTE_RTT_BUDGET` at construction.
+    pub fn with_rtt_budget(mut self, budget: Option<f64>) -> Self {
+        self.rtt_budget = budget.filter(|b| *b > 0.0);
+        self
     }
 
     /// Tune how often exploration samples an under-explored candidate (~1 in N
@@ -370,9 +612,22 @@ impl RouteCostModel {
         self
     }
 
-    /// Enable/disable live route override (flag-gated; default OFF).
+    /// Tune how often the frozen consult table is recomputed (every Nth
+    /// observation). `1` rebuilds on every observe (deterministic for tests);
+    /// production defaults to `64`. Min 1.
+    pub fn with_recompute_every(mut self, n: u64) -> Self {
+        self.recompute_every = n.max(1);
+        self
+    }
+
+    /// Enable/disable live route override (flag-gated; default OFF). Enabling
+    /// forces a frozen-table recompute so the very first override consult reads
+    /// current history, not a possibly-stale debounced snapshot.
     pub fn set_override_enabled(&self, on: bool) {
         self.override_enabled.store(on, Ordering::Relaxed);
+        if on {
+            self.recompute_locked();
+        }
     }
 
     /// Whether live override is currently enabled.
@@ -408,11 +663,21 @@ impl RouteCostModel {
     /// neutral label, not a `ComputeBackend` (no layer-up dependency).
     pub fn observe_by_label(&self, shape_class: &str, backend_label: &str, snap: &IoTraceSnapshot) {
         let key = (shape_class.to_string(), backend_label.to_string());
-        let mut cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
-        cells
-            .entry(key)
-            .or_default()
-            .fold(self.alpha, CostQuantities::from_snapshot(snap));
+        {
+            let mut cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
+            cells
+                .entry(key)
+                .or_default()
+                .fold(self.alpha, CostQuantities::from_snapshot(snap));
+        }
+        // Debounced recompute of the frozen consult table. Every Nth observation
+        // rebuilds it (O(cells), tiny); the consult path stays lock-free between
+        // recomputes. Runs inline on the (less latency-sensitive) query-completion
+        // path — no background thread, no shutdown wiring.
+        let n = self.observation_count.fetch_add(1, Ordering::Relaxed);
+        if (n + 1).is_multiple_of(self.recompute_every) {
+            self.recompute_locked();
+        }
     }
 
     /// Current learned estimate for one (shape-class, backend), if any history.
@@ -442,11 +707,24 @@ impl RouteCostModel {
         shape_class: &str,
         candidates: &[ComputeBackend],
     ) -> Option<RouteRecommendation> {
+        self.recommend_filtered(shape_class, candidates, None)
+    }
+
+    /// Like [`recommend`] but, when `max_rtt` is `Some`, only considers candidates
+    /// whose predicted `range_gets` is within that round-trip budget (TD-170 hard
+    /// admission filter) — used to pick the cheapest *within-budget* backend.
+    fn recommend_filtered(
+        &self,
+        shape_class: &str,
+        candidates: &[ComputeBackend],
+        max_rtt: Option<f64>,
+    ) -> Option<RouteRecommendation> {
         let mut scored: Vec<(ComputeBackend, RouteCost)> = candidates
             .iter()
             .filter_map(|b| {
                 self.estimate(shape_class, b)
                     .filter(|c| c.samples >= self.min_samples)
+                    .filter(|c| max_rtt.is_none_or(|budget| c.range_gets <= budget))
                     .map(|c| (b.clone(), c))
             })
             .collect();
@@ -489,13 +767,28 @@ impl RouteCostModel {
         if !self.override_active() {
             return None;
         }
-        let rec = self.recommend(shape_class, candidates)?;
-        if backend_label(&rec.backend) == backend_label(static_backend) {
-            return None; // the model already agrees with the static choice
-        }
         let static_cost = self.estimate(shape_class, static_backend)?;
         if static_cost.samples < self.min_samples {
             return None; // not enough evidence about the static route to beat it
+        }
+        // TD-170: the round-trip budget is a HARD admission constraint, checked
+        // BEFORE the soft byte-cost gate — and even when the static route is
+        // otherwise the byte-cheapest. If the static choice's predicted round-trips
+        // exceed the budget, route to the cheapest freshness-safe candidate WITHIN
+        // the budget: a backend over the round-trip budget loses even when it moves
+        // fewer bytes (latency = depth × RTT), regardless of `min_advantage`.
+        if let Some(budget) = self.rtt_budget
+            && static_cost.range_gets > budget
+            && let Some(within) = self.recommend_filtered(shape_class, candidates, Some(budget))
+            && backend_label(&within.backend) != backend_label(static_backend)
+        {
+            return Some(within);
+        }
+        // Soft byte-cost gate: flip only to a candidate beating the static route by
+        // at least `min_advantage`.
+        let rec = self.recommend(shape_class, candidates)?;
+        if backend_label(&rec.backend) == backend_label(static_backend) {
+            return None; // the model already agrees with the static choice
         }
         if rec.score < static_cost.score * (1.0 - self.min_advantage) {
             Some(rec)
@@ -545,6 +838,112 @@ impl RouteCostModel {
         } else {
             None
         }
+    }
+}
+
+impl RouteConsult for RouteCostModel {
+    fn consult(&self, shape_class: &str) -> Option<ClassRecommendation> {
+        // Single ArcSwap load + HashMap get — the only consult-path cost. The
+        // returned ClassRecommendation is cloned out (cheap: a small Vec) so the
+        // Guard is released immediately; the learn-path mutex is never touched.
+        self.table.load().by_class.get(shape_class).cloned()
+    }
+    fn override_active(&self) -> bool {
+        self.override_enabled.load(Ordering::Relaxed)
+    }
+    fn next_exploration_tick(&self) -> u64 {
+        self.explore_tick.fetch_add(1, Ordering::Relaxed)
+    }
+    fn min_samples(&self) -> u64 {
+        self.min_samples
+    }
+    fn min_advantage(&self) -> f64 {
+        self.min_advantage
+    }
+    fn exploration_interval(&self) -> u64 {
+        self.exploration_interval
+    }
+    fn rtt_budget(&self) -> Option<f64> {
+        self.rtt_budget
+    }
+}
+
+impl RouteCostModel {
+    /// Force a frozen-table recompute now (tests / a future EXPLAIN nudge).
+    /// Production relies on the debounced recompute inside [`Self::observe_by_label`].
+    pub fn recompute(&self) {
+        self.recompute_locked();
+    }
+
+    /// Rebuild the frozen [`RouteRecommendationTable`] from the current `cells`
+    /// and publish it via [`ArcSwap::store`]. The SOLE writer of the frozen
+    /// table — the consult path only reads it. O(cells) (tiny: ≤ ~16 classes ×
+    /// 2 backends). Locks `cells` once for the read.
+    fn recompute_locked(&self) {
+        let cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
+        // Group observed cells by shape-class (the first tuple element).
+        let mut by_class: HashMap<String, Vec<(String, Cell)>> = HashMap::new();
+        for ((class, label), cell) in cells.iter() {
+            by_class
+                .entry(class.clone())
+                .or_default()
+                .push((label.clone(), *cell));
+        }
+        let mut table = RouteRecommendationTable {
+            by_class: HashMap::new(),
+        };
+        for (class, entries) in by_class {
+            let safe = freshness_safe_backends_from_class(&class);
+            // ranked: freshness-safe candidates with ANY history, cheapest-first.
+            let mut ranked: Vec<BackendChoice> = entries
+                .iter()
+                .filter_map(|(label, cell)| {
+                    let backend = parse_backend_label(label)?;
+                    let is_safe = safe.iter().any(|s| backend_label(s) == *label);
+                    if !is_safe || cell.samples == 0 {
+                        return None;
+                    }
+                    Some(BackendChoice {
+                        backend,
+                        score: self.score(cell.quantities()),
+                        samples: cell.samples,
+                        range_gets: cell.range_gets,
+                    })
+                })
+                .collect();
+            ranked.sort_by(|a, b| {
+                a.score
+                    .partial_cmp(&b.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            // explore_target: least-sampled freshness-safe candidate still under
+            // min_samples. Only meaningful when ≥2 safe candidates exist; a
+            // never-observed safe candidate (0 samples) is a valid target.
+            let explore_target = if safe.len() < 2 {
+                None
+            } else {
+                safe.iter()
+                    .map(|b| {
+                        let s = entries
+                            .iter()
+                            .find(|(l, _)| backend_label(b) == *l)
+                            .map(|(_, c)| c.samples)
+                            .unwrap_or(0);
+                        (b.clone(), s)
+                    })
+                    .filter(|(_, s)| *s < self.min_samples)
+                    .min_by_key(|(_, s)| *s)
+                    .map(|(b, _)| b)
+            };
+            table.by_class.insert(
+                class,
+                ClassRecommendation {
+                    ranked,
+                    explore_target,
+                },
+            );
+        }
+        self.table.store(Arc::new(table));
     }
 }
 
@@ -848,6 +1247,52 @@ mod tests {
     }
 
     #[test]
+    fn td170_rtt_budget_routes_away_from_byte_cheapest_over_budget_backend() {
+        // DataFusion is byte-CHEAPEST (no bytes/compute) but blows the round-trip
+        // budget (10 GETs); Native is WITHIN budget (2 GETs) but costs more total
+        // bytes — so the soft byte-cost gate would never flip away from DataFusion.
+        let warm = |m: &RouteCostModel| {
+            for _ in 0..8 {
+                m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(10, 0, 0));
+                m.observe_by_label("olap/parquet", "Native(Volcano)", &snap(2, 50 << 20, 0));
+            }
+        };
+        let cands = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+
+        // No budget: DataFusion is byte-cheapest → recommend = static DataFusion →
+        // the over-round-trip route is KEPT (the soft gate can't see the depth cost).
+        let m = RouteCostModel::new().with_min_samples(1);
+        m.set_override_enabled(true);
+        warm(&m);
+        assert_eq!(
+            m.recommend("olap/parquet", &cands).unwrap().backend,
+            ComputeBackend::DataFusionLocal,
+            "DataFusion is the byte-cheapest backend"
+        );
+        assert!(
+            m.recommend_override("olap/parquet", &ComputeBackend::DataFusionLocal, &cands)
+                .is_none(),
+            "no budget → keeps the byte-cheapest static route despite its round-trips"
+        );
+
+        // Budget = 3: DataFusion (10 GETs) blows it → HARD override to the
+        // within-budget Native, even though Native costs MORE total bytes.
+        let mb = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_rtt_budget(Some(3.0));
+        mb.set_override_enabled(true);
+        warm(&mb);
+        let over = mb
+            .recommend_override("olap/parquet", &ComputeBackend::DataFusionLocal, &cands)
+            .expect("RTT budget must reshape the route off the over-budget backend");
+        assert_eq!(
+            over.backend,
+            ComputeBackend::Native,
+            "RTT budget routes to the within-budget backend over the byte-cheapest one"
+        );
+    }
+
+    #[test]
     fn override_none_when_static_is_already_cheapest() {
         let m = RouteCostModel::new().with_min_samples(1);
         m.set_override_enabled(true);
@@ -974,6 +1419,116 @@ mod tests {
     }
 
     #[test]
+    fn recompute_bakes_ranked_cheapest_first() {
+        let m = RouteCostModel::new().with_min_samples(1);
+        // Native cheap (3 GETs), DataFusion dear (300 GETs) for olap/parquet.
+        for _ in 0..3 {
+            m.observe_by_label("olap/parquet", "Native(Volcano)", &snap(3, 1 << 20, 1));
+            m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(300, 1 << 20, 1));
+        }
+        m.recompute();
+        let consult = m.consult("olap/parquet").expect("baked");
+        let ranked = consult.ranked();
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(
+            backend_label(&ranked[0].backend),
+            "Native(Volcano)",
+            "cheapest first"
+        );
+        assert!(ranked[0].score < ranked[1].score);
+    }
+
+    #[test]
+    fn recompute_explore_target_is_least_sampled_cold_candidate() {
+        let m = RouteCostModel::new().with_min_samples(3);
+        // DataFusion warm; Native never observed (0 samples) → explore Native.
+        for _ in 0..5 {
+            m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(4, 1 << 20, 1));
+        }
+        m.recompute();
+        let consult = m.consult("olap/parquet").expect("baked");
+        assert_eq!(
+            consult.explore_target().map(backend_label).as_deref(),
+            Some("Native(Volcano)")
+        );
+    }
+
+    #[test]
+    fn recompute_explore_target_none_once_all_safe_candidates_warm() {
+        let m = RouteCostModel::new().with_min_samples(1);
+        for _ in 0..3 {
+            m.observe_by_label("olap/parquet", "Native(Volcano)", &snap(2, 1 << 20, 1));
+            m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(4, 1 << 20, 1));
+        }
+        m.recompute();
+        let consult = m.consult("olap/parquet").expect("baked");
+        assert_eq!(
+            consult.explore_target(),
+            None,
+            "both warm → nothing to explore"
+        );
+    }
+
+    #[test]
+    fn recompute_only_olap_parquet_exposes_two_safe_candidates() {
+        // The freshness-safety gate from the class prefix: only olap/parquet
+        // exposes both engines; every other class keeps a single static backend.
+        let m = RouteCostModel::new().with_min_samples(1);
+        for (class, label) in [
+            ("olap/parquet", "Native(Volcano)"),
+            ("olap/parquet", "DataFusionLocal"),
+            ("olap/native", "Native(Volcano)"),
+            ("olap/native", "DataFusionLocal"), // NOT freshness-safe here
+            ("oltp/parquet", "DataFusionLocal"), // NOT freshness-safe here
+            ("oltp/native", "Native(Volcano)"),
+        ] {
+            m.observe_by_label(class, label, &snap(2, 1 << 20, 1));
+        }
+        m.recompute();
+        let olap_parquet = m.consult("olap/parquet").expect("baked");
+        assert_eq!(
+            olap_parquet.ranked().len(),
+            2,
+            "olap/parquet has two safe engines"
+        );
+        let olap_native = m.consult("olap/native").expect("baked");
+        assert_eq!(
+            olap_native.ranked().len(),
+            1,
+            "olap/native drops non-safe DataFusion"
+        );
+        assert_eq!(
+            backend_label(&olap_native.ranked()[0].backend),
+            "Native(Volcano)"
+        );
+        let oltp_parquet = m.consult("oltp/parquet").expect("baked");
+        assert!(
+            oltp_parquet.ranked().is_empty(),
+            "oltp/parquet keeps only Native (unobserved) — DF is not freshness-safe"
+        );
+        assert_eq!(
+            oltp_parquet.explore_target(),
+            None,
+            "single safe candidate → no explore"
+        );
+    }
+
+    #[test]
+    fn recompute_skips_unknown_backend_labels() {
+        let m = RouteCostModel::new().with_min_samples(1);
+        // A synthetic/unknown label must be dropped, never panic.
+        m.observe_by_label("olap/parquet", "SomeUnknownEngine", &snap(2, 1 << 20, 1));
+        m.observe_by_label("olap/parquet", "Native(Volcano)", &snap(2, 1 << 20, 1));
+        m.recompute();
+        let consult = m.consult("olap/parquet").expect("baked");
+        assert_eq!(consult.ranked().len(), 1);
+        assert_eq!(
+            backend_label(&consult.ranked()[0].backend),
+            "Native(Volcano)"
+        );
+    }
+
+    #[test]
     fn exploration_never_fires_with_a_single_candidate() {
         // OLTP gets a single freshness-safe candidate → nothing to explore.
         let m = RouteCostModel::new().with_exploration_interval(1);
@@ -981,6 +1536,137 @@ mod tests {
         assert!(
             m.exploration_choice("oltp/native", &[ComputeBackend::Native])
                 .is_none()
+        );
+    }
+
+    // ── C4 Phase-2b: route-time shape-stat cache (T2.1 wiring / T3.3 ratchet) ─
+
+    #[test]
+    fn classify_table_shapes_empty_and_missing_is_unknown() {
+        use crate::query::compute_scheduler::{CardinalityClass, PartitionFanout};
+        // Empty slice → Unknown.
+        let (pf, card) = classify_table_shapes(&[]);
+        assert_eq!(
+            (pf, card),
+            (PartitionFanout::Unknown, CardinalityClass::Unknown)
+        );
+        // A location with no warmed stat → Unknown (conservative: never
+        // half-classify — an unknown table could dominate fan-out/cardinality).
+        let (pf, card) = classify_table_shapes(&["test://route-shape/missing".to_string()]);
+        assert_eq!(
+            (pf, card),
+            (PartitionFanout::Unknown, CardinalityClass::Unknown)
+        );
+    }
+
+    #[test]
+    fn classify_table_shapes_buckets_and_sums_warmed_stats() {
+        use crate::query::compute_scheduler::{CardinalityClass, PartitionFanout};
+        // Small / single-row-group table.
+        record_table_shape_stat("test://route-shape/small", 1, Some(500));
+        let (pf, card) = classify_table_shapes(&["test://route-shape/small".to_string()]);
+        assert_eq!(pf, PartitionFanout::Single);
+        assert_eq!(card, CardinalityClass::Small);
+
+        // Large / many-row-group table.
+        record_table_shape_stat("test://route-shape/large", 5_000, Some(50_000_000));
+        let (pf, card) = classify_table_shapes(&["test://route-shape/large".to_string()]);
+        assert_eq!(pf, PartitionFanout::Many);
+        assert_eq!(card, CardinalityClass::Large);
+
+        // Two warmed tables: row-groups and rows SUM (total GET fan-out / scan
+        // cardinality). 12 row-groups → Many; 1.3M rows → Large.
+        record_table_shape_stat("test://route-shape/sum-a", 6, Some(600_000));
+        record_table_shape_stat("test://route-shape/sum-b", 6, Some(700_000));
+        let (pf, card) = classify_table_shapes(&[
+            "test://route-shape/sum-a".to_string(),
+            "test://route-shape/sum-b".to_string(),
+        ]);
+        assert_eq!(pf, PartitionFanout::Many);
+        assert_eq!(card, CardinalityClass::Large);
+
+        // Conservative: a cold location among warmed ones → Unknown.
+        let (pf, card) = classify_table_shapes(&[
+            "test://route-shape/sum-a".to_string(),
+            "test://route-shape/cold".to_string(),
+        ]);
+        assert_eq!(
+            (pf, card),
+            (PartitionFanout::Unknown, CardinalityClass::Unknown)
+        );
+    }
+
+    #[test]
+    fn shape_class_discriminates_fine_parquet_signals() {
+        use crate::query::compute_scheduler::{CardinalityClass, PartitionFanout, QueryShape};
+        // Coarse (no fine signals) — the backward-compatible 2-part key.
+        let coarse = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            ..Default::default()
+        });
+        assert_eq!(coarse, "olap/parquet");
+        // Refined — distinct keys per fine signal, so the model accrues
+        // per-(cardinality, fan-out) cells instead of one noisy bucket.
+        let big = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            cardinality: CardinalityClass::Large,
+            partition_fanout: PartitionFanout::Many,
+        });
+        let small = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            cardinality: CardinalityClass::Small,
+            partition_fanout: PartitionFanout::Single,
+        });
+        assert_ne!(big, coarse);
+        assert_ne!(small, coarse);
+        assert_ne!(big, small);
+    }
+
+    #[test]
+    fn warmed_fine_class_lets_cost_override_flip_route() {
+        // T2.1 keystone (T3.3 ratchet): with real fine signals the model accrues
+        // trustworthy per-(cardinality, fan-out) cost; with override enabled it
+        // flips a freshness-safe OLAP-Parquet route to the confidently-cheaper
+        // backend. This is the co-design loop actually closing — observe-mode
+        // promoted to act-mode on reliable per-class evidence.
+        use crate::query::compute_scheduler::{
+            CardinalityClass, ComputeScheduler, PartitionFanout, QueryShape,
+        };
+        let m = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_min_advantage(0.1)
+            .with_recompute_every(1);
+        m.set_override_enabled(true);
+        let big = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            cardinality: CardinalityClass::Large,
+            partition_fanout: PartitionFanout::Many,
+        };
+        let class = shape_class(&big);
+        // Observe Native as confidently cheaper than DataFusion for THIS fine
+        // class (far fewer object-store round-trips). Both backends get ≥
+        // min_samples → exploration is satisfied (warm), so the exploit override
+        // runs deterministically rather than probing.
+        for _ in 0..3 {
+            m.observe(&class, &ComputeBackend::Native, &snap(2, 8192, 1));
+            m.observe(
+                &class,
+                &ComputeBackend::DataFusionLocal,
+                &snap(40, 1 << 20, 8),
+            );
+        }
+        let decision = ComputeScheduler::new().route_select_advised(big, Some(&m));
+        // Static rule picks DataFusion for OLAP-Parquet; the warmed model
+        // overrides to freshness-safe, cheaper Native.
+        assert_eq!(decision.backend, ComputeBackend::Native);
+        assert!(
+            decision.reason.contains("OVERRIDE"),
+            "expected override reason, got: {}",
+            decision.reason
         );
     }
 }

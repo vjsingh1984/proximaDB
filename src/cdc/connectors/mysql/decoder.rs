@@ -901,7 +901,7 @@ mod tests {
             ColumnValue::Null,
             ColumnValue::Int(-42),
             ColumnValue::UInt(42),
-            ColumnValue::Float(3.14),
+            ColumnValue::Float(3.5),
             ColumnValue::String("hello".to_string()),
             ColumnValue::Bytes(vec![1, 2, 3]),
         ];

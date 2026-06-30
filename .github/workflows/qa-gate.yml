@@ -15,7 +15,13 @@ on:
 
 concurrency:
   group: qa-gate-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  # false (not true): a develop→qa promotion PR has head=develop, so every push
+  # to develop fires a `synchronize` event landing in the SAME per-PR group —
+  # with cancel-in-progress:true that killed the in-flight run before TPC-H/DS
+  # could finish (the promotion never completed during develop churn). false lets
+  # the in-flight run finish; GitHub still keeps only the newest *pending* run per
+  # group (older pendings are auto-dropped), so there is no runaway stacking.
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -43,39 +49,106 @@ jobs:
           fi
           echo "ok: main PR originates from qa"
 
-  tpch-pgwire:
-    name: TPC-H pgwire integration
+  # SINGLE combined job: compile all pgwire + recall test binaries ONCE on this
+  # runner, then run them. Same runner => the compiled target/ is reused across
+  # the runs (cargo sees its own artifacts as up-to-date, no recompile between
+  # suites). The previous separate-jobs design (a `build` job + per-suite
+  # `needs:[build]` jobs) wasted a ~40m build job because Swatinem/rust-cache
+  # cannot reliably ferry target/ ACROSS runners — cargo recompiled each suite
+  # from scratch on its own runner. Building once here and running sequentially
+  # eliminates both the redundant compiles and the cross-runner cache misses.
+  # The e2e tests embed the server (tokio::spawn), so they link the lib; a shared
+  # compiled target/ is the lever, not a pre-built server binary. The PAX recall
+  # step is the storage-format mandate (#8/#10) recall@k ratchet (≥0.90 vs f32).
+  # Sequential runs (not parallel) for reliability: clear per-suite pass/fail and
+  # no cross-suite memory contention on the materialize-heavy pgwire suites.
+  pgwire-recall-tests:
+    name: Integration tests (TPC-H/DS pgwire + PAX recall)
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 100
+    env:
+      # 8MB worker stack: correlated subqueries + recall ratchets produce
+      # deep-but-finite async call chains that overflow the default ~2MB.
+      RUST_MIN_STACK: "8388608"
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install system deps
         run: |
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-qa-tpch"
+          prefix-key: "v1-qa-integration"
+      - name: Build all integration test binaries (once)
+        env:
+          CARGO_BUILD_JOBS: "4"
+        run: |
+          cargo test --test tpch_pgwire_e2e --test tpcds_pgwire_e2e --no-run
+          cargo test -p proximadb-block-format --lib --no-run
+          cargo test --test embedded_flush_recovery --no-run
+          # TD-182 P0b: previously-orphaned vector recall ratchets (gate them here).
+          cargo test --test vector_ann_recall_e2e --test nova_cold_search_recall_test \
+            --test td112_postflush_recall_e2e --test raptor_recall_test \
+            --test helix_cold_search_recall_test --no-run
       - name: Run TPC-H over pgwire
-        run: CARGO_BUILD_JOBS=2 cargo test --test tpch_pgwire_e2e -- --nocapture
+        env:
+          # 8MB worker stack: correlated subqueries (Q2/Q20-Q22) produce
+          # deep-but-finite async call chains that overflow the default ~2MB.
+          RUST_MIN_STACK: "8388608"
+        run: cargo test --test tpch_pgwire_e2e -- --nocapture
+      - name: Run TPC-DS over pgwire
+        run: cargo test --test tpcds_pgwire_e2e -- --nocapture
+      - name: Run PAX recall ratchets
+        run: cargo test -p proximadb-block-format --lib recall -- --nocapture
+      - name: Run cold-read recall ratchet (TD-163/TD-165)
+        # Guards the SST cold-read path TD-163 now relies on (free_wal=true): after a
+        # flush+reopen, recall@k must not regress the hot memtable path. Catches the
+        # cold-read ranking regression the vec_0-only assertion in
+        # sst_block_serialization_roundtrip missed (why TD-165 was marked Resolved
+        # prematurely). Well-separated seeded vectors → recall@10 = 1.0 on both paths.
+        run: cargo test --test embedded_flush_recovery recall -- --nocapture
+      # TD-182 P0b: vector-recall ratchets that previously ran in NO CI tier
+      # (orphaned). Each asserts recall@k / exact-match vs an f32 baseline. The
+      # td112 suite runs only its `recall` test here; its `axis_index_rebuilt_*`
+      # test is a separate pre-existing AXIS-rebuild regression tracked as TD-184.
+      - name: Run vector ANN recall ratchet (TD-182 P0b)
+        run: cargo test --test vector_ann_recall_e2e -- --nocapture
+      - name: Run NOVA bounds-prune recall ratchet (TD-182 P0b)
+        run: cargo test --test nova_cold_search_recall_test -- --nocapture
+      - name: Run HELIX cold-search recall ratchet (TD-182 P0b)
+        run: cargo test --test helix_cold_search_recall_test -- --nocapture
+      - name: Run RAPTOR recall-after-reopen ratchet (TD-182 P0b)
+        run: cargo test --test raptor_recall_test -- --nocapture
+      - name: Run TD-112 post-flush recall ratchet (TD-182 P0b)
+        run: cargo test --test td112_postflush_recall_e2e recall -- --nocapture
 
-  tpcds-pgwire:
-    name: TPC-DS pgwire integration
+  # Validate the object-store access-tier cost lever (TD-168/TD-173) against REAL
+  # cloud APIs via emulators — Azurite (Azure), MinIO (S3), fake-gcs (GCP) — the
+  # "develop→qa upfront validation" for the cold-payload tier. The default CI only
+  # exercises put_with_tier on memory:// (where the tier degrades to a plain put),
+  # so a native-class mapping regression that a real cloud API would 4xx is
+  # invisible there; this job runs the tier path end-to-end. Azure + S3 are strict
+  # (PUT-with-tier accepted + round-trip); GCS is best-effort (the test self-skips
+  # on a fake-gcs/object_store incompatibility). All orchestration lives in
+  # scripts/run_cloud_emulator_tests.sh so the CI path == `make cloud-emulator-test`.
+  cloud-emulator-object-store:
+    name: Cloud object-store emulators (Azurite/MinIO/fake-gcs)
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install system deps
         run: |
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-qa-tpcds"
-      - name: Run TPC-DS over pgwire
-        run: CARGO_BUILD_JOBS=2 cargo test --test tpcds_pgwire_e2e -- --nocapture
+          prefix-key: "v1-qa-cloud-emulator"
+      - name: Validate Cool tier against Azure/S3/GCS emulators
+        # docker + aws/az CLIs are preinstalled on ubuntu-latest runners.
+        run: bash scripts/run_cloud_emulator_tests.sh
 
   sdk-coverage-ratchet:
     name: SDK Coverage Ratchet
@@ -101,9 +174,12 @@ jobs:
           # Coverage needs a single aggregating process; tolerate the known
           # _cov sys.modules-leak failures (the ratchet measures coverage, not
           # pass/fail — the per-file isolation gate in ci.yml owns correctness).
+          # Run OFFLINE unit tests only: filter out `integration` (needs a running
+          # server) and `live` (needs an external dependency / network, e.g. the
+          # `victor` package). The victor test self-skips via importorskip + `live`.
           pytest tests/unit/ -q -p no:cacheprovider --timeout=120 \
             --cov=proximadb_sdk --cov-report=json:/tmp/sdk-cov.json \
-            --ignore=tests/unit/test_integrations_victor_cov.py \
+            -m "not integration and not live" \
             --ignore=tests/unit/test_chunking_code_cov.py \
             --continue-on-collection-errors || true
           test -f /tmp/sdk-cov.json
@@ -117,14 +193,18 @@ jobs:
   rust-coverage-ratchet:
     name: Rust Coverage Ratchet
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    # FIRST CUT: cargo-llvm-cov over the full workspace is heavy and has OOM'd
-    # CI before; kept non-blocking until the baseline is seeded from a clean run
-    # and memory is tamed. Flip to required (remove this line) once stable.
+    timeout-minutes: 90
+    # FIRST CUT: cargo-llvm-cov over the full workspace is heavy. 60m was too
+    # tight — it timed out mid-lib-test-run (deep into the graph/index tests),
+    # so the seed artifact was never produced. 90m lets it complete + emit the
+    # seed (rust-coverage-seed.json), the prerequisite to baseline rust:* in
+    # COVERAGE_BASELINE.json. Still non-blocking (continue-on-error); flip to
+    # required (remove continue-on-error) only AFTER a clean run seeds the
+    # baseline AND it stays green.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: llvm-tools-preview
       - name: Install system deps + cargo-llvm-cov
@@ -139,7 +219,7 @@ jobs:
         env:
           CARGO_BUILD_JOBS: "1"
         run: |
-          cargo llvm-cov --lib --no-report --workspace
+          cargo llvm-cov --lib --no-report -p proximadb
           cargo llvm-cov report --json --output-path /tmp/llvm-cov.json
           python3 scripts/coverage_ratchet.py normalize --rust /tmp/llvm-cov.json -o /tmp/rust-current.json
           # Seed the baseline if absent (first run), else ratchet-check.

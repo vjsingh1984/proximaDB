@@ -115,7 +115,8 @@ impl FileSystem for GcsFileSystem {
             return Ok(Vec::new());
         }
         let (bucket, object) = Self::parse(path)?;
-        self.client
+        let bytes = self
+            .client
             .download_object(
                 &GetObjectRequest {
                     bucket,
@@ -125,10 +126,23 @@ impl FileSystem for GcsFileSystem {
                 &Range(Some(offset), Some(offset + length - 1)),
             )
             .await
-            .map_err(|e| Self::net("GCS download_object range", e))
+            .map_err(|e| Self::net("GCS download_object range", e))?;
+        // ADR-030 / TD-158: physical GET boundary — feed the per-query I/O accumulator
+        // (task-local; no-op outside a query scope). Always-on core counters.
+        crate::observability::io_trace::record_range_gets(1);
+        crate::observability::io_trace::record_bytes_read(bytes.len() as u64);
+        Ok(bytes)
     }
 
     async fn write(&self, path: &str, data: &[u8], _options: Option<FileOptions>) -> FsResult<()> {
+        // NOTE (ADR-036): the canonical `FileOptions.storage_class` → GCS storage
+        // class (`ObjectAccessTier::as_gcs_storage_class`) is not yet wired here.
+        // Unlike the object_store-backed Azure/S3 backends (which set the class via
+        // `Attribute::StorageClass` on the PUT), this backend uses the native
+        // `google-cloud-storage` Simple media upload, which cannot carry a storage
+        // class — that needs a metadata/resumable upload. GCS is not the MVP cloud
+        // (Azure is); tracked as a follow-up under TD-173. Writes use the bucket
+        // default class today.
         let (bucket, object) = Self::parse(path)?;
         let upload_type = UploadType::Simple(Media::new(object));
         self.client

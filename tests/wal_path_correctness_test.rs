@@ -20,10 +20,14 @@
 //! based on collection storage assignments, rather than falling back to default paths.
 
 use proximadb::graph::engines::GraphEngine;
-use proximadb::storage::persistence::write_ahead_log::{
-    is_global_metadata_provider_available, wait_for_global_metadata_provider,
-};
-use std::time::Duration;
+
+// NOTE: the former `test_global_metadata_provider_availability` test was removed.
+// It exercised the global metadata-provider availability/wait API
+// (`is_global_metadata_provider_available` / `wait_for_global_metadata_provider`),
+// which was deleted in Phase 4c (#208) when collection resolution moved to the
+// catalog-first path (`set_global_catalog` + `resolve_collection_from_catalog`).
+// The replacement has no availability-polling surface to assert against, so there
+// is no current-API analog to port this test to.
 
 /// Helper to get current timestamp in milliseconds
 fn now_ms() -> i64 {
@@ -31,26 +35,6 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64
-}
-
-/// Test that the global metadata provider initialization works
-#[tokio::test]
-async fn test_global_metadata_provider_availability() {
-    // Initially, the provider might not be available
-    let initially_available = is_global_metadata_provider_available().await;
-
-    // The wait function should work without panicking
-    let result = wait_for_global_metadata_provider(Duration::from_millis(10)).await;
-
-    // If initially not available, wait should return false after timeout
-    if !initially_available {
-        assert!(
-            !result,
-            "Should return false if provider not set within timeout"
-        );
-    }
-
-    tracing::info!("Global metadata provider availability check passed");
 }
 
 /// Test that WAL operations work with the graph persistence service

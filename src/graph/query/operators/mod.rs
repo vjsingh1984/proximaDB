@@ -6,8 +6,8 @@
 //! path.
 
 use crate::graph::engines::GraphEngine;
+use crate::graph::{Edge, Node};
 use anyhow::Result;
-use proximadb_proto::proximadb_v1::{Edge, Node};
 use std::sync::Arc;
 
 // TODO: Move implementation to proximadb-graph crate

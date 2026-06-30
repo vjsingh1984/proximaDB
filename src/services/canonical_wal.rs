@@ -64,6 +64,22 @@ impl FramedTableWalAppender {
         &self.path
     }
 
+    /// Raise the next-assigned sequence floor so future appends never reuse a
+    /// sequence at or below `floor` (monotonic — a lower floor is ignored).
+    ///
+    /// `next_sequence` is otherwise derived from the on-disk WAL's highest frame.
+    /// That is correct only while the WAL still carries the full history; once a
+    /// snapshot watermark advances *past* the on-disk frames — the WAL was
+    /// compacted to empty (Phase 3), or this pod adopted a *peer's* snapshot
+    /// whose watermark lives in a different local sequence space (Phase 6b) — the
+    /// file-derived floor sits below the snapshot's `applied_seq`. A fresh append
+    /// would then land at a sequence the in-RAM authority has already applied and
+    /// be idempotently dropped on fold. Seeding the floor from the snapshot
+    /// watermark at open closes that gap.
+    pub fn advance_sequence_floor(&self, floor: u64) {
+        self.next_sequence.fetch_max(floor, Ordering::SeqCst);
+    }
+
     /// Read all complete entries currently present in the WAL.
     pub async fn read_entries(&self) -> Result<Vec<CanonicalWalEntry>> {
         read_entries_from_path(&self.path).await
@@ -302,6 +318,49 @@ fn encode_frame(entry: &CanonicalWalEntry, out: &mut Vec<u8>) -> Result<()> {
     out.extend_from_slice(&payload_crc.to_le_bytes());
     out.extend_from_slice(&payload);
 
+    Ok(())
+}
+
+/// Atomically rewrite the canonical WAL at `path` so it contains exactly
+/// `entries`, **preserving their original `sequence_number`s**. Writes a temp
+/// file, fsyncs it, atomically renames it over `path`, then best-effort fsyncs
+/// the parent directory so the rename is durable.
+///
+/// Used by the system catalog to compact its WAL after a durable snapshot: the
+/// snapshot covers every mutation up to its watermark LSN, so the WAL is
+/// rewritten to keep only the entries after it. Because the sequence numbers are
+/// preserved verbatim (not reassigned), the live appender's monotonic counter
+/// and the snapshot watermark stay consistent across the rewrite.
+pub async fn rewrite_canonical_wal(path: &Path, entries: &[CanonicalWalEntry]) -> Result<()> {
+    let mut frames = Vec::new();
+    for entry in entries {
+        encode_frame(entry, &mut frames)?;
+    }
+    let tmp = path.with_extension("wal-compact-tmp");
+    {
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp)
+            .await
+            .with_context(|| format!("opening compaction temp {}", tmp.display()))?;
+        file.write_all(&frames)
+            .await
+            .with_context(|| format!("writing compaction temp {}", tmp.display()))?;
+        file.flush().await?;
+        file.sync_data()
+            .await
+            .with_context(|| format!("fsync compaction temp {}", tmp.display()))?;
+    }
+    tokio::fs::rename(&tmp, path)
+        .await
+        .with_context(|| format!("atomically replacing canonical WAL {}", path.display()))?;
+    if let Some(dir) = path.parent()
+        && let Ok(handle) = std::fs::File::open(dir)
+    {
+        let _ = handle.sync_all();
+    }
     Ok(())
 }
 

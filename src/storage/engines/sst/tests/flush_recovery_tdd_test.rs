@@ -20,7 +20,6 @@ mod tests {
     use tempfile::TempDir;
     use tracing::{debug, info, warn};
 
-    use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
     use crate::core::search::{SearchMode, SearchParams};
     use crate::proto::proximadb_v1::{
         Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType, SqlValue,
@@ -31,6 +30,7 @@ mod tests {
     use crate::storage::traits::{
         FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageFormat,
     };
+    use proximadb_distance_kernel::{DistanceMetric, engine::UnifiedDistanceCompute};
 
     /// Helper to create test vectors with known patterns
     fn create_test_vectors(num_vectors: usize, dimension: usize) -> Vec<VectorRecord> {

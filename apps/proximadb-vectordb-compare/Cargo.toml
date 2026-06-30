@@ -1,0 +1,20 @@
+[package]
+name = "proximadb-vectordb-compare"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "ProximaDB vs competitor (Qdrant/Weaviate/Milvus/Pinecone) comparison runner"
+
+[[bin]]
+name = "proximadb-vectordb-compare"
+path = "src/main.rs"
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

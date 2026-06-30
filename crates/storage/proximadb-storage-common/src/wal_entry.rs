@@ -96,6 +96,25 @@ pub enum CanonicalOperation {
         /// Events that were published up to `barrier_sequence`.
         events: Vec<CdcRecordEvent>,
     },
+    /// System-catalog DDL mutation (read-heavy system-catalog redesign).
+    ///
+    /// Carries an opaque, control-plane-encoded routing `key` plus the
+    /// serialized catalog delta `bytes`, so that this storage-layer crate stays
+    /// decoupled from the control-plane catalog types (storage sits *below*
+    /// control in the workspace layering). The system catalog's in-RAM
+    /// authority (`SystemCatalogState`, root crate) owns the key grammar and
+    /// decodes `bytes` when folding the WAL on recovery. Catalog mutations do
+    /// not drive record/projection replay, so record-recovery consumers treat
+    /// this variant as a no-op.
+    CatalogMutation {
+        /// Control-plane routing key, e.g. `"table:<catalog>/<ns>/<name>"`,
+        /// `"table-delete:<catalog>/<ns>/<name>"`, or `"ns:<catalog>/<name>"`.
+        /// Opaque to storage-common.
+        key: String,
+        /// Serialized catalog delta (`rmp_serde` of the typed mutation).
+        /// Opaque bytes; decoded by the system catalog.
+        bytes: Vec<u8>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -373,9 +392,13 @@ pub fn recover_from_canonical_wal<R: ProjectionRebuilder>(
                     }
                 }
             }
-            // Checkpoints and CDC barriers do not trigger projection rebuilds;
-            // the caller uses the checkpoint LSN to scope the replay window.
-            CanonicalOperation::Checkpoint(_) | CanonicalOperation::CdcBarrier { .. } => {}
+            // Checkpoints, CDC barriers, and catalog mutations do not trigger
+            // record/projection rebuilds; the caller uses the checkpoint LSN to
+            // scope the replay window, and catalog mutations are folded by the
+            // system catalog's own in-RAM authority, not by record recovery.
+            CanonicalOperation::Checkpoint(_)
+            | CanonicalOperation::CdcBarrier { .. }
+            | CanonicalOperation::CatalogMutation { .. } => {}
         }
     }
 

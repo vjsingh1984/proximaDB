@@ -1621,18 +1621,27 @@ fn constraint_gaps_for_schema(schema: &CatalogTableSchema) -> Vec<String> {
         gaps.push("unique_indexes_cataloged_not_enforced".to_string());
     }
 
-    let mut has_foreign_key = false;
+    // TD-110: single-column FK references (INSERT parent-exists) and ON DELETE
+    // referential actions are now enforced. Still unenforced — and therefore
+    // still surfaced as a gap — are composite FKs and any ON UPDATE action.
+    let mut has_unenforced_foreign_key = false;
     for constraint in &schema.relational_capabilities.constraints {
         match constraint {
             ColumnConstraint::Check { .. } => {}
-            ColumnConstraint::ForeignKey { .. } => has_foreign_key = true,
+            ColumnConstraint::ForeignKey {
+                columns, on_update, ..
+            } => {
+                if columns.len() != 1 || on_update.is_some() {
+                    has_unenforced_foreign_key = true;
+                }
+            }
             ColumnConstraint::Unique { .. } => {
                 gaps.push("unique_constraints_cataloged_not_enforced".to_string());
             }
         }
     }
 
-    if has_foreign_key {
+    if has_unenforced_foreign_key {
         gaps.push("foreign_keys_cataloged_not_enforced".to_string());
     }
 
@@ -2024,7 +2033,8 @@ mod tests {
                         references_table: "customers".to_string(),
                         references_columns: vec!["id".to_string()],
                         on_delete: None,
-                        on_update: None,
+                        // ON UPDATE actions are still unenforced → still a gap.
+                        on_update: Some(proximadb_catalog::ReferentialAction::Cascade),
                     },
                 ],
                 ..Default::default()

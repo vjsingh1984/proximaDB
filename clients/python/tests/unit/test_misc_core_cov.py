@@ -9,10 +9,13 @@ its private attributes so no real transport is ever opened.
 from __future__ import annotations
 
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from proximadb_sdk import metadata_utils as mu
+from proximadb_sdk import unified_client_async as uca
+from proximadb_sdk.config import Protocol
 from proximadb_sdk.performance import data_models as dm
 
 # ---------------------------------------------------------------------------
@@ -253,12 +256,6 @@ def test_create_validation_result_no_threshold_equality():
 # ---------------------------------------------------------------------------
 
 
-from unittest.mock import AsyncMock, MagicMock
-
-from proximadb_sdk import unified_client_async as uca
-from proximadb_sdk.config import Protocol
-
-
 def _make_unified():
     return uca.ProximaDBAsyncUnified(url="http://testserver", timeout=5.0)
 
@@ -290,33 +287,48 @@ async def test_astart_rest_path(monkeypatch):
 @pytest.mark.asyncio
 async def test_astart_grpc_path(monkeypatch):
     fake_grpc = MagicMock()
-    monkeypatch.setattr(uca, "GRPC_OK", True)
-    monkeypatch.setattr(uca, "GrpcAsyncClient", MagicMock(return_value=fake_grpc))
+    fake_grpc.connect = AsyncMock()
+    monkeypatch.setattr(uca, "_grpc_available", lambda: True)
+    monkeypatch.setattr(uca, "RestAsyncClient", MagicMock(return_value=AsyncMock()))
+    import proximadb_sdk.protocols.grpc_async as grpc_async
+
+    monkeypatch.setattr(
+        grpc_async, "ProximaDBAsyncGrpcClient", MagicMock(return_value=fake_grpc)
+    )
     c = uca.ProximaDBAsyncUnified(url="http://testserver", protocol=Protocol.GRPC)
     await c.astart()
     assert c._grpc is fake_grpc
+    assert c._use_grpc is True
 
 
 @pytest.mark.asyncio
 async def test_astart_grpc_failure_falls_back_to_rest(monkeypatch):
     fake_rest = AsyncMock()
-    monkeypatch.setattr(uca, "GRPC_OK", True)
-    monkeypatch.setattr(
-        uca, "GrpcAsyncClient", MagicMock(side_effect=RuntimeError("no channel"))
-    )
+    monkeypatch.setattr(uca, "_grpc_available", lambda: True)
     monkeypatch.setattr(uca, "RestAsyncClient", MagicMock(return_value=fake_rest))
+    import proximadb_sdk.protocols.grpc_async as grpc_async
+
+    monkeypatch.setattr(
+        grpc_async,
+        "ProximaDBAsyncGrpcClient",
+        MagicMock(side_effect=RuntimeError("no channel")),
+    )
     c = uca.ProximaDBAsyncUnified(url="http://testserver", protocol=Protocol.GRPC)
     await c.astart()
     assert c._grpc is None
+    assert c._use_grpc is False
     assert c._rest is fake_rest
 
 
 @pytest.mark.asyncio
 async def test_aclose_with_rest():
     c = _make_unified()
-    c._rest = AsyncMock()
+    fake_rest = AsyncMock()
+    c._rest = fake_rest
     await c.aclose()
-    c._rest.aclose.assert_awaited_once()
+    # aclose() resets _rest to None after closing, so assert on the captured mock.
+    fake_rest.aclose.assert_awaited_once()
+    assert c._rest is None
 
 
 @pytest.mark.asyncio

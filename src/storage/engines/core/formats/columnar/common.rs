@@ -198,7 +198,7 @@ pub struct ZeroCopyConfig {
 #[derive(Debug, Clone)]
 pub struct DistanceComputationConfig {
     /// Default distance metric
-    pub default_distance_metric: crate::compute::distance_computation::DistanceMetric,
+    pub default_distance_metric: proximadb_distance_kernel::DistanceMetric,
 
     /// Progressive search configuration
     pub progressive_search: ColumnarCommonProgressiveSearchConfig,
@@ -707,7 +707,7 @@ impl CommonColumnarOperations {
 
     // Distance computation methods removed - use compute module directly
     // Engines (NOVA, VIPER) should use:
-    // - crate::compute::distance_computation::engine::UnifiedDistanceCompute
+    // - proximadb_distance_kernel::engine::UnifiedDistanceCompute
     // - crate::compute::quantization::storage_engine::StorageQuantizationEngine
 
     // Batch distance computation removed - use compute module directly
@@ -822,7 +822,7 @@ impl CommonColumnarOperations {
         // For now, return placeholder data
         info!("File metadata loading from disk not fully implemented");
 
-        use crate::compute::distance_computation::DistanceMetric;
+        use proximadb_distance_kernel::DistanceMetric;
 
         let metadata = ColumnarFileMetadata {
             collection_id: "placeholder".to_string(),
@@ -953,31 +953,23 @@ impl SerializationOptimizationConfig {
 
 impl DistanceComputationConfig {
     #[allow(dead_code)]
-    fn to_simd_optimization(
-        &self,
-    ) -> crate::compute::distance_computation::quantized::SIMDOptimization {
-        crate::compute::distance_computation::quantized::SIMDOptimization::default()
+    fn to_simd_optimization(&self) -> proximadb_distance_kernel::quantized::SIMDOptimization {
+        proximadb_distance_kernel::quantized::SIMDOptimization::default()
     }
 
     #[allow(dead_code)]
-    fn to_cache_config(
-        &self,
-    ) -> crate::compute::distance_computation::quantized::DistanceCacheConfig {
-        crate::compute::distance_computation::quantized::DistanceCacheConfig::default()
+    fn to_cache_config(&self) -> proximadb_distance_kernel::quantized::DistanceCacheConfig {
+        proximadb_distance_kernel::quantized::DistanceCacheConfig::default()
     }
 
     #[allow(dead_code)]
-    fn to_approximation_config(
-        &self,
-    ) -> crate::compute::distance_computation::quantized::ApproximationConfig {
-        crate::compute::distance_computation::quantized::ApproximationConfig::default()
+    fn to_approximation_config(&self) -> proximadb_distance_kernel::quantized::ApproximationConfig {
+        proximadb_distance_kernel::quantized::ApproximationConfig::default()
     }
 
     #[allow(dead_code)]
-    fn to_hardware_preferences(
-        &self,
-    ) -> crate::compute::distance_computation::quantized::HardwarePreferences {
-        crate::compute::distance_computation::quantized::HardwarePreferences::default()
+    fn to_hardware_preferences(&self) -> proximadb_distance_kernel::quantized::HardwarePreferences {
+        proximadb_distance_kernel::quantized::HardwarePreferences::default()
     }
 }
 
@@ -1097,7 +1089,7 @@ impl Default for ZeroCopyConfig {
 impl Default for DistanceComputationConfig {
     fn default() -> Self {
         Self {
-            default_distance_metric: crate::compute::distance_computation::DistanceMetric::Cosine,
+            default_distance_metric: proximadb_distance_kernel::DistanceMetric::Cosine,
             progressive_search: ColumnarCommonProgressiveSearchConfig::default(),
             distance_caching: DistanceCachingConfig::default(),
             hardware_acceleration: HardwareAccelerationConfig::default(),

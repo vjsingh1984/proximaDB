@@ -29,6 +29,7 @@ pub struct MetricsExportSnapshot {
     pub collections: HashMap<String, ExporterCollectionMetrics>,
     pub cache: ExporterCacheMetrics,
     pub compression: CompressionMetrics,
+    pub fusion: ExporterFusionMetrics,
     pub custom: HashMap<String, f64>,
 }
 
@@ -137,6 +138,33 @@ pub struct CompressionMetrics {
     pub compressed_bytes: u64,
     pub uncompressed_bytes: u64,
     pub compression_time_ms: f64,
+}
+
+/// Cross-modal fusion metrics — T1.1.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExporterFusionMetrics {
+    /// Total number of fusion operations performed.
+    pub total_fusions: u64,
+
+    /// Total number of source modalities fused.
+    pub total_sources_fused: u64,
+
+    /// Total number of source modalities skipped.
+    pub total_sources_skipped: u64,
+
+    /// Average fusion latency in seconds.
+    pub avg_latency_seconds: f64,
+}
+
+impl Default for ExporterFusionMetrics {
+    fn default() -> Self {
+        Self {
+            total_fusions: 0,
+            total_sources_fused: 0,
+            total_sources_skipped: 0,
+            avg_latency_seconds: 0.0,
+        }
+    }
 }
 
 /// Export format enum

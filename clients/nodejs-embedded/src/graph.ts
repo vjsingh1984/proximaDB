@@ -21,13 +21,29 @@ import {
 } from "./types";
 
 /**
- * HTTP client interface for graph operations
+ * HTTP client interface for graph operations.
+ *
+ * Wire calls route through the typed `*Request` seam methods (TD-126 Phase 4),
+ * which dispatch via the generated openapi-fetch transport. The generic
+ * `get`/`delete` + `url()` remain ONLY for `deleteEdge`, whose 3-segment route
+ * shape (`/edges/{source}/{target}/{rel}`) has no matching generated op (the
+ * spec uses `/edges/{edge_id}`); see `GraphHandle.deleteEdge`.
  */
 export interface GraphHttpClient {
   get<T>(url: string): Promise<T>;
-  post<T>(url: string, body: unknown): Promise<T>;
   delete<T>(url: string): Promise<T>;
   url(): string;
+  // Typed transport seams (route through the generated client).
+  createGraphRequest(body: Record<string, unknown>): Promise<unknown>;
+  getGraphRequest(graphId: string): Promise<unknown>;
+  getGraphStatsRequest(graphId: string): Promise<unknown>;
+  createNodeRequest(graphId: string, body: Record<string, unknown>): Promise<unknown>;
+  batchCreateNodesRequest(graphId: string, body: Record<string, unknown>): Promise<unknown>;
+  getNodeRequest(graphId: string, nodeId: string): Promise<unknown>;
+  deleteNodeRequest(graphId: string, nodeId: string): Promise<void>;
+  createEdgeRequest(graphId: string, body: Record<string, unknown>): Promise<unknown>;
+  batchCreateEdgesRequest(graphId: string, body: Record<string, unknown>): Promise<unknown>;
+  traverseGraphRequest(graphId: string, body: Record<string, unknown>): Promise<unknown>;
 }
 
 // ============================================================================
@@ -115,8 +131,10 @@ export class NodeBuilder {
     }
 
     const request = { node };
-    const url = this.handle.getClient().url() + "/api/v2/graphs/" + this.handle.getName() + "/nodes";
-    await this.handle.getClient().post<{ id: string }>(url, request);
+    await this.handle.getClient().createNodeRequest(
+      this.handle.getName(),
+      request as unknown as Record<string, unknown>,
+    );
   }
 
   /**
@@ -258,8 +276,10 @@ export class EdgeBuilder {
     }
 
     const request = { edge };
-    const url = this.handle.getClient().url() + "/api/v2/graphs/" + this.handle.getName() + "/edges";
-    await this.handle.getClient().post<{ id: string }>(url, request);
+    await this.handle.getClient().createEdgeRequest(
+      this.handle.getName(),
+      request as unknown as Record<string, unknown>,
+    );
   }
 
   /**
@@ -451,8 +471,11 @@ export class TraversalBuilder {
     void this.traversalDirection;
     void this.filterExpr;
 
-    const url = this.handle.getClient().url() + "/api/v2/graphs/" + this.handle.getName() + "/traverse";
-    return await this.handle.getClient().post<TraversalResult>(url, request);
+    const data = await this.handle.getClient().traverseGraphRequest(
+      this.handle.getName(),
+      request,
+    );
+    return data as TraversalResult;
   }
 }
 
@@ -523,12 +546,11 @@ export class GraphHandle {
   async addNodes(nodes: NodeInput[] | GraphNode[]): Promise<number> {
     const normalized: NodeInput[] = nodes.map(n => normalizeNodeInput(n));
     const request = { nodes: normalized };
-    const url = this.client.url() + "/api/v2/graphs/" + this.graphName + "/nodes/batch";
-    const response = await this.client.post<{ data?: { count?: number }; count?: number }>(
-      url,
-      request,
-    );
-    return response.data?.count ?? response.count ?? normalized.length;
+    const response = (await this.client.batchCreateNodesRequest(
+      this.graphName,
+      request as unknown as Record<string, unknown>,
+    )) as { data?: { count?: number }; count?: number } | null;
+    return response?.data?.count ?? response?.count ?? normalized.length;
   }
 
   /**
@@ -549,12 +571,11 @@ export class GraphHandle {
   async addEdges(edges: EdgeInput[] | GraphEdge[]): Promise<number> {
     const normalized: EdgeInput[] = edges.map(e => normalizeEdgeInput(e));
     const request = { edges: normalized };
-    const url = this.client.url() + "/api/v2/graphs/" + this.graphName + "/edges/batch";
-    const response = await this.client.post<{ data?: { count?: number }; count?: number }>(
-      url,
-      request,
-    );
-    return response.data?.count ?? response.count ?? normalized.length;
+    const response = (await this.client.batchCreateEdgesRequest(
+      this.graphName,
+      request as unknown as Record<string, unknown>,
+    )) as { data?: { count?: number }; count?: number } | null;
+    return response?.data?.count ?? response?.count ?? normalized.length;
   }
 
   /**
@@ -562,9 +583,16 @@ export class GraphHandle {
    */
   async getNode(nodeId: string): Promise<GraphNode | null> {
     try {
-      const url = this.client.url() + "/api/v2/graphs/" + this.graphName + "/nodes/" + nodeId;
-      return await this.client.get<GraphNode>(url);
+      const data = await this.client.getNodeRequest(this.graphName, nodeId);
+      return data as GraphNode;
     } catch (e: unknown) {
+      // The facade maps a 404 to a ProximaDBError (statusCode 404, message =
+      // server body). Treat "not found" as a null result, preserving the
+      // pre-rebase behavior; match on status or the body text.
+      const status = (e as { statusCode?: number }).statusCode;
+      if (status === 404) {
+        return null;
+      }
       if (e instanceof Error && e.message.includes("404")) {
         return null;
       }
@@ -576,11 +604,17 @@ export class GraphHandle {
    * Delete a node by ID
    */
   async deleteNode(nodeId: string): Promise<void> {
-    const url = this.client.url() + "/api/v2/graphs/" + this.graphName + "/nodes/" + nodeId;
-    await this.client.delete<unknown>(url);
+    await this.client.deleteNodeRequest(this.graphName, nodeId);
   }
 
-  // TODO(graph-edge-delete-shape): server route is DELETE /api/v2/graphs/{id}/edges/{edge_id} with a single edge_id; this SDK signature doesn't match. Tracked separately.
+  // deleteEdge is intentionally LEFT facade-built (generic URL path): the
+  // generated REST client has no matching typed op for this 3-segment route
+  // shape. The OpenAPI spec / generated client model edge deletion as
+  // `DELETE /api/v2/graphs/{graph_id}/edges/{edge_id}` (single `edge_id`),
+  // whereas this SDK's public signature is `(source, target, relationship)` →
+  // `/edges/{source}/{target}/{relationship}`. Until the SDK signature is
+  // reconciled to `{edge_id}` (separate change), this cannot route through the
+  // generated client. Tracked separately.
   /**
    * Delete an edge
    */
@@ -590,11 +624,14 @@ export class GraphHandle {
   }
 
   /**
-   * Get graph statistics
+   * Get graph statistics.
+   *
+   * Routed through the generated typed transport (TD-126 Phase 4).
+   * Wire endpoint: GET /api/v2/graphs/{graph_id} (getGraph)
    */
   async info(): Promise<GraphInfo> {
-    const url = this.client.url() + "/api/v2/graphs/" + this.graphName;
-    return await this.client.get<GraphInfo>(url);
+    const data = await this.client.getGraphRequest(this.graphName);
+    return data as GraphInfo;
   }
 }
 
@@ -650,8 +687,7 @@ export class GraphBuilder {
       request.description = this.graphDescription;
     }
 
-    const url = this.client.url() + "/api/v2/graphs";
-    await this.client.post<{ graph_id?: string; success?: boolean }>(url, request);
+    await this.client.createGraphRequest(request);
   }
 }
 

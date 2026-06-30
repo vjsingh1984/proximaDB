@@ -72,6 +72,7 @@
 //!   empty registry with a warning. Operators re-apply via the
 //!   future REST endpoint.
 
+use anyhow::Context;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -531,6 +532,82 @@ pub fn consult_for_write(
             target_pod: binding.pod,
         },
     }
+}
+
+/// Lease-aware write consultation. Tries to acquire/renew a partition
+/// lease before consulting the in-memory registry.
+///
+/// ## Semantics
+///
+/// | Lease manager state | Outcome |
+/// |---|---|
+/// | `None` (single-pod) | Falls back to `consult_for_write` |
+/// | Acquire succeeds | `Allow` (we hold the lease) |
+/// | Acquire fails | `Misrouted { target_pod }` (another pod holds it) |
+///
+/// The caller (REST/gRPC/pgwire/Flight handler) should:
+/// * Proceed with the write if `is_allowed()`
+/// * Respond 421 Misdirected Request with the `target_pod` if `Misrouted`
+///
+/// ## Split-brain safety
+///
+/// Even if a pod bypasses this check (e.g., local single-pod deployment),
+/// the object-store fence in `SystemCatalog` still enforces generation fencing
+/// on every DDL commit. The lease is a latency optimization; the fence is
+/// the correctness authority.
+///
+/// ## Usage
+///
+/// ```rust,ignore
+/// use crate::cluster::primary_pod_registry::consult_for_write_leased;
+/// use std::time::{SystemTime, UNIX_EPOCH};
+///
+/// let decision = consult_for_write_leased(
+///     &registry,
+///     lease_manager.as_deref(),  // Option<&PartitionLeaseManager>
+///     "pod-1",
+///     "acme",
+///     "widgets",
+///     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
+/// ).await?;
+/// if !decision.is_allowed() {
+///     return Err(Error::Misrouted { target_pod: decision.target_pod() });
+/// }
+/// ```
+pub async fn consult_for_write_leased(
+    registry: &PrimaryPodRegistry,
+    lease_manager: Option<&crate::cluster::partition_lease::PartitionLeaseManager>,
+    self_pod_id: &str,
+    tenant_id: &str,
+    collection_id: &str,
+    now_ms: i64,
+) -> Result<WriteRoutingDecision, anyhow::Error> {
+    if let Some(manager) = lease_manager {
+        // Try to acquire/renew the lease
+        let got_lease = manager
+            .acquire(tenant_id, collection_id, now_ms)
+            .await
+            .with_context(|| {
+                format!("lease acquisition for {tenant_id}/{collection_id} on pod {self_pod_id}")
+            })?;
+
+        if got_lease {
+            // We hold the lease → allow the write
+            return Ok(WriteRoutingDecision::Allow);
+        }
+
+        // Another pod holds the lease. The manager has already updated
+        // the in-memory registry (via `reconcile`), so we can safely
+        // consult it for the target pod.
+    }
+
+    // Fall back to in-memory lookup (single-pod or lease manager unavailable)
+    Ok(consult_for_write(
+        registry,
+        self_pod_id,
+        tenant_id,
+        collection_id,
+    ))
 }
 
 /// Resolve the current pod's identity. Order of precedence:

@@ -43,7 +43,11 @@ impl MemtableRecordStorage {
                     self.delete_record(&RecordKey::new(oid)).await?;
                     summary.deletes_replayed += 1;
                 }
-                CanonicalOperation::Checkpoint(_) | CanonicalOperation::CdcBarrier { .. } => {}
+                // Checkpoints, CDC barriers, and system-catalog mutations carry
+                // no record state for the memtable to replay.
+                CanonicalOperation::Checkpoint(_)
+                | CanonicalOperation::CdcBarrier { .. }
+                | CanonicalOperation::CatalogMutation { .. } => {}
             }
         }
 

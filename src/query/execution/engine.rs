@@ -163,6 +163,13 @@ pub struct QueryExecutionContext {
     /// Optional request tenant for engines that need tenant-scoped I/O, metrics,
     /// or billing attribution.
     pub tenant_id: Option<String>,
+    /// ADR-025 OLAP read-merge (relational cold path): when set, parquet-backed
+    /// tables listed here are reconciled at scan time against the authoritative
+    /// post-snapshot WAL delta (deletes/updates/inserts that landed after the
+    /// `MATERIALIZE` snapshot), keyed by canonical `oid`. `None` ⇒ legacy bare
+    /// Parquet reads (the merge is default-ON; the kill-switch
+    /// `PROXIMADB_OLAP_DELTA_MERGE=0` forces this). See [`super::olap_delta_merge`].
+    pub olap_delta: Option<super::olap_delta_merge::OlapDeltaConfig>,
     /// Escape hatch for SQL dialect gaps while the shared relational lowering
     /// catches up. Keep false for production routes that require one logical
     /// plane across Volcano and DataFusion.
@@ -440,20 +447,25 @@ mod tests {
         assert_eq!(normalize_table_key("\"Mixed\""), "mixed");
     }
 
-    #[tokio::test]
-    async fn dispatcher_rejects_unimplemented_backend_with_typed_error() {
-        let err = execute_sql_with_backend(
-            ComputeBackend::DataFusionDistributed,
-            "SELECT 1",
-            QueryExecutionContext::default(),
-        )
-        .await
-        .expect_err("distributed execution is not implemented");
+    // Watchdog-wrapped (`run_sync`): a bare `#[tokio::test]` here has no 30s bound,
+    // so the multi-threaded-runtime hang (CLAUDE.md #11) rides to nextest's 120s
+    // slow-timeout. These Volcano tests are pure compute (no real `.await` I/O).
+    #[test]
+    fn dispatcher_rejects_unimplemented_backend_with_typed_error() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let err = execute_sql_with_backend(
+                ComputeBackend::DataFusionDistributed,
+                "SELECT 1",
+                QueryExecutionContext::default(),
+            )
+            .await
+            .expect_err("distributed execution is not implemented");
 
-        assert!(matches!(
-            err,
-            ExecutionError::UnsupportedBackend(ComputeBackend::DataFusionDistributed)
-        ));
+            assert!(matches!(
+                err,
+                ExecutionError::UnsupportedBackend(ComputeBackend::DataFusionDistributed)
+            ));
+        });
     }
 
     #[test]
@@ -490,205 +502,225 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn native_volcano_adapter_executes_values_plan() {
-        let result = NativeVolcanoEngine::execute_physical(
-            values_plan(),
-            &EmptyReaderFactory,
-            ExecutionControls::default(),
-        )
-        .await
-        .expect("values plan should execute");
-
-        assert_eq!(result.schema.columns[0].name, "id");
-        assert_eq!(
-            result.rows,
-            vec![vec![ProximaValue::Int64(1)], vec![ProximaValue::Int64(2)]]
-        );
-    }
-
-    #[tokio::test]
-    async fn native_volcano_metered_adapter_returns_rows_and_metrics() {
-        let plan = PhysicalPlan::Limit {
-            input: Box::new(values_plan()),
-            limit: Some(1),
-            offset: 0,
-        };
-        let (result, metrics) = NativeVolcanoEngine::execute_physical_metered(
-            plan,
-            &EmptyReaderFactory,
-            ExecutionControls::default(),
-        )
-        .await
-        .expect("metered values plan should execute");
-
-        assert_eq!(result.rows, vec![vec![ProximaValue::Int64(1)]]);
-        let labels: Vec<&str> = metrics.iter().map(|m| m.label.as_str()).collect();
-        assert_eq!(labels, vec!["Limit", "Values"]);
-        assert_eq!(
-            metrics.iter().map(|m| m.arity).collect::<Vec<_>>(),
-            vec![1, 0]
-        );
-        assert_eq!(metrics[0].rows, 1);
-    }
-
-    #[tokio::test]
-    async fn execution_engine_stream_default_preserves_schema_and_rows() {
-        let stream_result = StaticEngine
-            .execute_sql_stream("SELECT id FROM t", QueryExecutionContext::default())
+    #[test]
+    fn native_volcano_adapter_executes_values_plan() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let result = NativeVolcanoEngine::execute_physical(
+                values_plan(),
+                &EmptyReaderFactory,
+                ExecutionControls::default(),
+            )
             .await
-            .expect("default stream wrapper should execute");
+            .expect("values plan should execute");
 
-        assert_eq!(stream_result.schema.columns[0].name, "id");
-        let rows = stream_result
-            .rows
-            .try_collect::<Vec<RelationalRow>>()
+            assert_eq!(result.schema.columns[0].name, "id");
+            assert_eq!(
+                result.rows,
+                vec![vec![ProximaValue::Int64(1)], vec![ProximaValue::Int64(2)]]
+            );
+        });
+    }
+
+    #[test]
+    fn native_volcano_metered_adapter_returns_rows_and_metrics() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let plan = PhysicalPlan::Limit {
+                input: Box::new(values_plan()),
+                limit: Some(1),
+                offset: 0,
+            };
+            let (result, metrics) = NativeVolcanoEngine::execute_physical_metered(
+                plan,
+                &EmptyReaderFactory,
+                ExecutionControls::default(),
+            )
             .await
-            .expect("stream rows should be ok");
-        assert_eq!(
-            rows,
-            vec![vec![ProximaValue::Int64(7)], vec![ProximaValue::Int64(8)]]
-        );
+            .expect("metered values plan should execute");
+
+            assert_eq!(result.rows, vec![vec![ProximaValue::Int64(1)]]);
+            let labels: Vec<&str> = metrics.iter().map(|m| m.label.as_str()).collect();
+            assert_eq!(labels, vec!["Limit", "Values"]);
+            assert_eq!(
+                metrics.iter().map(|m| m.arity).collect::<Vec<_>>(),
+                vec![1, 0]
+            );
+            assert_eq!(metrics[0].rows, 1);
+        });
     }
 
-    #[tokio::test]
-    async fn native_volcano_stream_yields_rows_incrementally() {
-        let result = NativeVolcanoEngine::execute_physical_stream(
-            values_plan(),
-            &EmptyReaderFactory,
-            ExecutionControls::default(),
-        )
-        .await
-        .expect("values plan should open for streaming");
-
-        // Schema is available before draining any row.
-        assert_eq!(result.schema.columns[0].name, "id");
-
-        let mut rows = result.rows;
-        let first = rows.next().await.expect("first row").expect("row ok");
-        assert_eq!(first, vec![ProximaValue::Int64(1)]);
-        let second = rows.next().await.expect("second row").expect("row ok");
-        assert_eq!(second, vec![ProximaValue::Int64(2)]);
-        assert!(rows.next().await.is_none());
-    }
-
-    #[tokio::test]
-    async fn native_volcano_stream_honors_mid_stream_cancellation() {
-        let flag = Arc::new(AtomicBool::new(false));
-        let controls = ExecutionControls {
-            cancellation_flag: Some(flag.clone()),
-            ..Default::default()
-        };
-        let result = NativeVolcanoEngine::execute_physical_stream(
-            values_plan(),
-            &EmptyReaderFactory,
-            controls,
-        )
-        .await
-        .expect("values plan should open for streaming");
-
-        let mut rows = result.rows;
-        let first = rows.next().await.expect("first row").expect("row ok");
-        assert_eq!(first, vec![ProximaValue::Int64(1)]);
-
-        // Cancel after the first row; the next pull must surface Cancelled rather
-        // than continuing to drain the plan.
-        flag.store(true, Ordering::Relaxed);
-        let err = rows
-            .next()
-            .await
-            .expect("a stream item")
-            .expect_err("cancelled mid-stream");
-        assert!(matches!(err, ExecutionError::Cancelled));
-    }
-
-    #[tokio::test]
-    async fn native_volcano_stream_enforces_row_limit() {
-        let controls = ExecutionControls {
-            max_rows: Some(1),
-            ..Default::default()
-        };
-        let result = NativeVolcanoEngine::execute_physical_stream(
-            values_plan(),
-            &EmptyReaderFactory,
-            controls,
-        )
-        .await
-        .expect("values plan should open for streaming");
-
-        let mut rows = result.rows;
-        let first = rows.next().await.expect("first row").expect("row ok");
-        assert_eq!(first, vec![ProximaValue::Int64(1)]);
-        let err = rows
-            .next()
-            .await
-            .expect("a stream item")
-            .expect_err("row limit should reject the overflow row");
-        assert!(matches!(
-            err,
-            ExecutionError::RowLimitExceeded {
-                limit: 1,
-                actual: 2
-            }
-        ));
-    }
-
-    #[tokio::test]
-    async fn native_volcano_stream_truncates_without_error() {
-        let controls = ExecutionControls {
-            max_rows: Some(1),
-            row_limit_mode: RowLimitMode::Truncate,
-            ..Default::default()
-        };
-        let result = NativeVolcanoEngine::execute_physical_stream(
-            values_plan(),
-            &EmptyReaderFactory,
-            controls,
-        )
-        .await
-        .expect("values plan should open for streaming");
-
-        let mut rows = result.rows;
-        let first = rows.next().await.expect("first row").expect("row ok");
-        assert_eq!(first, vec![ProximaValue::Int64(1)]);
-        // Truncate mode stops at the cap with no overflow error: the second row
-        // of the values plan is never produced.
-        assert!(rows.next().await.is_none());
-    }
-
-    #[tokio::test]
-    async fn native_volcano_materialized_truncates_without_error() {
-        let controls = ExecutionControls {
-            max_rows: Some(1),
-            row_limit_mode: RowLimitMode::Truncate,
-            ..Default::default()
-        };
-        let result =
-            NativeVolcanoEngine::execute_physical(values_plan(), &EmptyReaderFactory, controls)
+    #[test]
+    fn execution_engine_stream_default_preserves_schema_and_rows() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let stream_result = StaticEngine
+                .execute_sql_stream("SELECT id FROM t", QueryExecutionContext::default())
                 .await
-                .expect("truncate mode returns the capped result, not an error");
+                .expect("default stream wrapper should execute");
 
-        assert_eq!(result.rows, vec![vec![ProximaValue::Int64(1)]]);
+            assert_eq!(stream_result.schema.columns[0].name, "id");
+            let rows = stream_result
+                .rows
+                .try_collect::<Vec<RelationalRow>>()
+                .await
+                .expect("stream rows should be ok");
+            assert_eq!(
+                rows,
+                vec![vec![ProximaValue::Int64(7)], vec![ProximaValue::Int64(8)]]
+            );
+        });
     }
 
-    #[tokio::test]
-    async fn native_volcano_materialized_errors_on_overflow() {
-        let controls = ExecutionControls {
-            max_rows: Some(1),
-            row_limit_mode: RowLimitMode::Error,
-            ..Default::default()
-        };
-        let err =
-            NativeVolcanoEngine::execute_physical(values_plan(), &EmptyReaderFactory, controls)
-                .await
-                .expect_err("error mode rejects an oversized result");
+    // Root-cause fix for CLAUDE.md #11: use `test_runtime::run_sync` (block_on)
+    // instead of `#[tokio::test]` — see `test_runtime.rs` for the SOLID design.
+    #[test]
+    fn native_volcano_stream_yields_rows_incrementally() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let result = NativeVolcanoEngine::execute_physical_stream(
+                values_plan(),
+                &EmptyReaderFactory,
+                ExecutionControls::default(),
+            )
+            .await
+            .expect("values plan should open for streaming");
 
-        assert!(matches!(
-            err,
-            ExecutionError::RowLimitExceeded {
-                limit: 1,
-                actual: 2
-            }
-        ));
+            // Schema is available before draining any row.
+            assert_eq!(result.schema.columns[0].name, "id");
+
+            let mut rows = result.rows;
+            let first = rows.next().await.expect("first row").expect("row ok");
+            assert_eq!(first, vec![ProximaValue::Int64(1)]);
+            let second = rows.next().await.expect("second row").expect("row ok");
+            assert_eq!(second, vec![ProximaValue::Int64(2)]);
+            assert!(rows.next().await.is_none());
+        });
+    }
+
+    #[test]
+    fn native_volcano_stream_honors_mid_stream_cancellation() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let flag = Arc::new(AtomicBool::new(false));
+            let controls = ExecutionControls {
+                cancellation_flag: Some(flag.clone()),
+                ..Default::default()
+            };
+            let result = NativeVolcanoEngine::execute_physical_stream(
+                values_plan(),
+                &EmptyReaderFactory,
+                controls,
+            )
+            .await
+            .expect("values plan should open for streaming");
+
+            let mut rows = result.rows;
+            let first = rows.next().await.expect("first row").expect("row ok");
+            assert_eq!(first, vec![ProximaValue::Int64(1)]);
+
+            // Cancel after the first row; the next pull must surface Cancelled rather
+            // than continuing to drain the plan.
+            flag.store(true, Ordering::Relaxed);
+            let err = rows
+                .next()
+                .await
+                .expect("a stream item")
+                .expect_err("cancelled mid-stream");
+            assert!(matches!(err, ExecutionError::Cancelled));
+        });
+    }
+
+    #[test]
+    fn native_volcano_stream_enforces_row_limit() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let controls = ExecutionControls {
+                max_rows: Some(1),
+                ..Default::default()
+            };
+            let result = NativeVolcanoEngine::execute_physical_stream(
+                values_plan(),
+                &EmptyReaderFactory,
+                controls,
+            )
+            .await
+            .expect("values plan should open for streaming");
+
+            let mut rows = result.rows;
+            let first = rows.next().await.expect("first row").expect("row ok");
+            assert_eq!(first, vec![ProximaValue::Int64(1)]);
+            let err = rows
+                .next()
+                .await
+                .expect("a stream item")
+                .expect_err("row limit should reject the overflow row");
+            assert!(matches!(
+                err,
+                ExecutionError::RowLimitExceeded {
+                    limit: 1,
+                    actual: 2
+                }
+            ));
+        });
+    }
+
+    #[test]
+    fn native_volcano_stream_truncates_without_error() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let controls = ExecutionControls {
+                max_rows: Some(1),
+                row_limit_mode: RowLimitMode::Truncate,
+                ..Default::default()
+            };
+            let result = NativeVolcanoEngine::execute_physical_stream(
+                values_plan(),
+                &EmptyReaderFactory,
+                controls,
+            )
+            .await
+            .expect("values plan should open for streaming");
+
+            let mut rows = result.rows;
+            let first = rows.next().await.expect("first row").expect("row ok");
+            assert_eq!(first, vec![ProximaValue::Int64(1)]);
+            // Truncate mode stops at the cap with no overflow error: the second row
+            // of the values plan is never produced.
+            assert!(rows.next().await.is_none());
+        });
+    }
+
+    #[test]
+    fn native_volcano_materialized_truncates_without_error() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let controls = ExecutionControls {
+                max_rows: Some(1),
+                row_limit_mode: RowLimitMode::Truncate,
+                ..Default::default()
+            };
+            let result =
+                NativeVolcanoEngine::execute_physical(values_plan(), &EmptyReaderFactory, controls)
+                    .await
+                    .expect("truncate mode returns the capped result, not an error");
+
+            assert_eq!(result.rows, vec![vec![ProximaValue::Int64(1)]]);
+        });
+    }
+
+    #[test]
+    fn native_volcano_materialized_errors_on_overflow() {
+        crate::query::execution::test_runtime::run_sync(async {
+            let controls = ExecutionControls {
+                max_rows: Some(1),
+                row_limit_mode: RowLimitMode::Error,
+                ..Default::default()
+            };
+            let err =
+                NativeVolcanoEngine::execute_physical(values_plan(), &EmptyReaderFactory, controls)
+                    .await
+                    .expect_err("error mode rejects an oversized result");
+
+            assert!(matches!(
+                err,
+                ExecutionError::RowLimitExceeded {
+                    limit: 1,
+                    actual: 2
+                }
+            ));
+        });
     }
 }

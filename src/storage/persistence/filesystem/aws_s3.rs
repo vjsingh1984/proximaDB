@@ -21,9 +21,9 @@ use object_store::ObjectStore;
 // handle. Required in scope here or the bridge calls below fail to resolve
 // (E0599) — this file is feature-gated (`aws`) and not built by default CI.
 use object_store::ObjectStoreExt;
-use object_store::PutPayload;
 use object_store::aws::AmazonS3Builder;
 use object_store::path::Path as ObjPath;
+use object_store::{Attribute, Attributes, PutOptions, PutPayload};
 use std::sync::Arc;
 
 use super::{
@@ -169,16 +169,41 @@ impl FileSystem for AwsS3FileSystem {
             .get_range(&ObjPath::from(key), offset..(offset + length))
             .await
             .map_err(|e| Self::net("S3 get_range", e))?;
+        // ADR-030 / TD-158: physical GET boundary — feed the per-query I/O accumulator
+        // (task-local; no-op outside a query scope). Always-on core counters.
+        crate::observability::io_trace::record_range_gets(1);
+        crate::observability::io_trace::record_bytes_read(bytes.len() as u64);
         Ok(bytes.to_vec())
     }
 
-    async fn write(&self, path: &str, data: &[u8], _options: Option<FileOptions>) -> FsResult<()> {
+    async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
         let (bucket, key) = Self::parse(path)?;
         let store = self.store_for(&bucket)?;
-        store
-            .put(&ObjPath::from(key), PutPayload::from(data.to_vec()))
-            .await
-            .map_err(|e| Self::net("S3 put", e))?;
+        let dst = ObjPath::from(key);
+        let payload = PutPayload::from(data.to_vec());
+        // Access tier is the object-storage cost lever (ADR-036): map the canonical
+        // `FileOptions.storage_class` to `x-amz-storage-class` on the PUT. Unset/typo
+        // ⇒ `None` ⇒ the bucket default class (today's behavior, unchanged).
+        match options.as_ref().and_then(FileOptions::access_tier) {
+            Some(tier) => {
+                let mut attributes = Attributes::new();
+                attributes.insert(Attribute::StorageClass, tier.as_s3_storage_class().into());
+                let opts = PutOptions {
+                    attributes,
+                    ..Default::default()
+                };
+                store
+                    .put_opts(&dst, payload, opts)
+                    .await
+                    .map_err(|e| Self::net("S3 put_opts", e))?;
+            }
+            None => {
+                store
+                    .put(&dst, payload)
+                    .await
+                    .map_err(|e| Self::net("S3 put", e))?;
+            }
+        }
         Ok(())
     }
 

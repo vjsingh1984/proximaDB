@@ -29,11 +29,12 @@
 //! - Scalability (performance vs graph size)
 
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
+use proximadb::graph::EmbeddingVersion;
 use proximadb::graph::engines::GraphEngine;
 use proximadb::graph::engines::orion::OrionGraphEngine;
 use proximadb::graph::hybrid::semantic_traversal::{SemanticBFSTraversal, SemanticTraversalInput};
 use proximadb::graph::{Edge, Node};
-use proximadb::proto::proximadb_v1::{DistanceMetric, EmbeddingVersion};
+use proximadb::proto::proximadb_v1::DistanceMetric;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -47,13 +48,10 @@ fn generate_node(id: usize, dimension: usize) -> Node {
     let mut properties = HashMap::new();
     properties.insert(
         "name".to_string(),
-        proximadb::proto::proximadb_v1::PropertyValue {
-            value: Some(
-                proximadb::proto::proximadb_v1::property_value::Value::StringValue(format!(
-                    "node_{}",
-                    id
-                )),
-            ),
+        proximadb::graph::PropertyValue {
+            value: Some(proximadb::graph::property_value::Value::StringValue(
+                format!("node_{}", id),
+            )),
         },
     );
 

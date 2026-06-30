@@ -14,12 +14,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 use tracing::debug;
 
-use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
 use crate::core::bloom::strategies::composite::CompositeBloomFilter;
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy};
 use crate::storage::memtable::core::MemtableConfig;
 use crate::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use crate::storage::persistence::write_ahead_log::{BatchId, WALOperation, WALStats};
+use proximadb_distance_kernel::DistanceMetric as CoreDistanceMetric;
 use proximadb_records::ProximaRecord;
 
 /// Canonical key format for a metadata `field=value` entry in a batch's
@@ -531,8 +531,8 @@ impl WALBehaviorWrapper {
         collection_id: &str,
         query_vector: &[f32],
         top_k: usize,
-        distance_metric: crate::compute::distance_computation::DistanceMetric,
-        _metadata_filters: Option<&crate::core::search::FilterExpression>,
+        distance_metric: proximadb_distance_kernel::DistanceMetric,
+        _metadata_filters: Option<&proximadb_filter_expression::FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<crate::proto::proximadb_v1::SearchVectorRecord>> {
@@ -546,48 +546,20 @@ impl WALBehaviorWrapper {
         // Convert unified DistanceMetric to CoreDistanceMetric for now
         // Deferred: Update global partitioned memtable to accept unified DistanceMetric for all 13 metrics
         let core_metric = match distance_metric {
-            crate::compute::distance_computation::DistanceMetric::Unspecified => {
-                CoreDistanceMetric::Cosine
-            } // Default fallback
-            crate::compute::distance_computation::DistanceMetric::Cosine => {
-                CoreDistanceMetric::Cosine
-            }
-            crate::compute::distance_computation::DistanceMetric::Euclidean => {
-                CoreDistanceMetric::Euclidean
-            }
-            crate::compute::distance_computation::DistanceMetric::DotProduct => {
-                CoreDistanceMetric::DotProduct
-            }
-            crate::compute::distance_computation::DistanceMetric::Manhattan => {
-                CoreDistanceMetric::Manhattan
-            }
-            crate::compute::distance_computation::DistanceMetric::Hamming => {
-                CoreDistanceMetric::Hamming
-            }
-            crate::compute::distance_computation::DistanceMetric::Jaccard => {
-                CoreDistanceMetric::Jaccard
-            }
-            crate::compute::distance_computation::DistanceMetric::Chebyshev => {
-                CoreDistanceMetric::Chebyshev
-            }
-            crate::compute::distance_computation::DistanceMetric::Canberra => {
-                CoreDistanceMetric::Canberra
-            }
-            crate::compute::distance_computation::DistanceMetric::Minkowski => {
-                CoreDistanceMetric::Minkowski
-            }
-            crate::compute::distance_computation::DistanceMetric::Angular => {
-                CoreDistanceMetric::Angular
-            }
-            crate::compute::distance_computation::DistanceMetric::BrayCurtis => {
-                CoreDistanceMetric::BrayCurtis
-            }
-            crate::compute::distance_computation::DistanceMetric::Hellinger => {
-                CoreDistanceMetric::Hellinger
-            }
-            crate::compute::distance_computation::DistanceMetric::Custom => {
-                CoreDistanceMetric::Custom
-            }
+            proximadb_distance_kernel::DistanceMetric::Unspecified => CoreDistanceMetric::Cosine, // Default fallback
+            proximadb_distance_kernel::DistanceMetric::Cosine => CoreDistanceMetric::Cosine,
+            proximadb_distance_kernel::DistanceMetric::Euclidean => CoreDistanceMetric::Euclidean,
+            proximadb_distance_kernel::DistanceMetric::DotProduct => CoreDistanceMetric::DotProduct,
+            proximadb_distance_kernel::DistanceMetric::Manhattan => CoreDistanceMetric::Manhattan,
+            proximadb_distance_kernel::DistanceMetric::Hamming => CoreDistanceMetric::Hamming,
+            proximadb_distance_kernel::DistanceMetric::Jaccard => CoreDistanceMetric::Jaccard,
+            proximadb_distance_kernel::DistanceMetric::Chebyshev => CoreDistanceMetric::Chebyshev,
+            proximadb_distance_kernel::DistanceMetric::Canberra => CoreDistanceMetric::Canberra,
+            proximadb_distance_kernel::DistanceMetric::Minkowski => CoreDistanceMetric::Minkowski,
+            proximadb_distance_kernel::DistanceMetric::Angular => CoreDistanceMetric::Angular,
+            proximadb_distance_kernel::DistanceMetric::BrayCurtis => CoreDistanceMetric::BrayCurtis,
+            proximadb_distance_kernel::DistanceMetric::Hellinger => CoreDistanceMetric::Hellinger,
+            proximadb_distance_kernel::DistanceMetric::Custom => CoreDistanceMetric::Custom,
         };
 
         let raw_results = self

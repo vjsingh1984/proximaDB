@@ -4,6 +4,7 @@
 # source: proximadb/v1/document.proto
 # Protobuf Python Version: 6.31.1
 """Generated protocol buffer code."""
+
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import runtime_version as _runtime_version
@@ -11,12 +12,7 @@ from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
 
 _runtime_version.ValidateProtobufRuntimeVersion(
-    _runtime_version.Domain.PUBLIC,
-    6,
-    31,
-    1,
-    '',
-    'proximadb/v1/document.proto'
+    _runtime_version.Domain.PUBLIC, 6, 31, 1, "", "proximadb/v1/document.proto"
 )
 # @@protoc_insertion_point(imports)
 
@@ -26,103 +22,107 @@ _sym_db = _symbol_database.Default()
 from . import types_pb2 as proximadb_dot_v1_dot_types__pb2
 from . import vector_types_pb2 as proximadb_dot_v1_dot_vector__types__pb2
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1bproximadb/v1/document.proto\x12\x0cproximadb.v1\x1a\x18proximadb/v1/types.proto\x1a\x1fproximadb/v1/vector_types.proto\"\xa7\x01\n\x0f\x44ocumentContent\x12)\n\x08\x64ocument\x18\x01 \x01(\x0b\x32\x17.proximadb.v1.SqlObject\x12\x16\n\tschema_id\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x15\n\rindexed_paths\x18\x03 \x03(\t\x12\x1a\n\rdocument_type\x18\x04 \x01(\tH\x01\x88\x01\x01\x42\x0c\n\n_schema_idB\x10\n\x0e_document_type\"\xfe\x01\n\x18\x44ocumentCollectionConfig\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x18\n\x0bjson_schema\x18\x02 \x01(\tH\x00\x88\x01\x01\x12.\n\x07indexes\x18\x03 \x03(\x0b\x32\x1d.proximadb.v1.IndexDefinition\x12\x17\n\x0f\x65nable_fulltext\x18\x04 \x01(\x08\x12\x16\n\x0e\x66ulltext_paths\x18\x05 \x03(\t\x12\x13\n\x0bttl_seconds\x18\x06 \x01(\x04\x12\x34\n\x0b\x63ompression\x18\x07 \x01(\x0b\x32\x1f.proximadb.v1.CompressionConfigB\x0e\n\x0c_json_schema\"\x8b\x01\n\x0fIndexDefinition\x12\x0c\n\x04path\x18\x01 \x01(\t\x12.\n\nindex_type\x18\x02 \x01(\x0e\x32\x1a.proximadb.v1.DocIndexType\x12\x0e\n\x06unique\x18\x03 \x01(\x08\x12\x0e\n\x06sparse\x18\x04 \x01(\x08\x12\x11\n\x04name\x18\x05 \x01(\tH\x00\x88\x01\x01\x42\x07\n\x05_name\"\xab\x01\n\x0e\x44ocumentFilter\x12\x34\n\nconditions\x18\x01 \x03(\x0b\x32 .proximadb.v1.DocFilterCondition\x12\x30\n\nor_filters\x18\x02 \x03(\x0b\x32\x1c.proximadb.v1.DocumentFilter\x12\x31\n\x0b\x61nd_filters\x18\x03 \x03(\x0b\x32\x1c.proximadb.v1.DocumentFilter\"\xa4\x01\n\x12\x44ocFilterCondition\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x31\n\x08operator\x18\x02 \x01(\x0e\x32\x1f.proximadb.v1.DocFilterOperator\x12%\n\x05value\x18\x03 \x01(\x0b\x32\x16.proximadb.v1.SqlValue\x12&\n\x06values\x18\x04 \x03(\x0b\x32\x16.proximadb.v1.SqlValue\"\x86\x01\n\x0e\x44ocumentUpdate\x12\x30\n\toperation\x18\x01 \x01(\x0e\x32\x1d.proximadb.v1.UpdateOperation\x12\x0c\n\x04path\x18\x02 \x01(\t\x12*\n\x05value\x18\x03 \x01(\x0b\x32\x16.proximadb.v1.SqlValueH\x00\x88\x01\x01\x42\x08\n\x06_value\"Y\n\x1f\x43reateDocumentCollectionRequest\x12\x36\n\x06\x63onfig\x18\x01 \x01(\x0b\x32&.proximadb.v1.DocumentCollectionConfig\"J\n CreateDocumentCollectionResponse\x12\x15\n\rcollection_id\x18\x01 \x01(\t\x12\x0f\n\x07success\x18\x02 \x01(\x08\"n\n\x15InsertDocumentRequest\x12\x12\n\ncollection\x18\x01 \x01(\t\x12\x0f\n\x02id\x18\x02 \x01(\tH\x00\x88\x01\x01\x12)\n\x08\x64ocument\x18\x03 \x01(\x0b\x32\x17.proximadb.v1.SqlObjectB\x05\n\x03_id\"5\n\x16InsertDocumentResponse\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0f\n\x07version\x18\x02 \x01(\x04\"H\n\x12GetDocumentRequest\x12\x12\n\ncollection\x18\x01 \x01(\t\x12\n\n\x02id\x18\x02 \x01(\t\x12\x12\n\nprojection\x18\x03 \x03(\t\"r\n\x13GetDocumentResponse\x12.\n\x08\x64ocument\x18\x01 \x01(\x0b\x32\x17.proximadb.v1.SqlObjectH\x00\x88\x01\x01\x12\x0f\n\x07version\x18\x02 \x01(\x04\x12\r\n\x05\x66ound\x18\x03 \x01(\x08\x42\x0b\n\t_document\"\x9a\x01\n\x15UpdateDocumentRequest\x12\x12\n\ncollection\x18\x01 \x01(\t\x12\n\n\x02id\x18\x02 \x01(\t\x12-\n\x07updates\x18\x03 \x03(\x0b\x32\x1c.proximadb.v1.DocumentUpdate\x12\x1d\n\x10\x65xpected_version\x18\x04 \x01(\x04H\x00\x88\x01\x01\x42\x13\n\x11_expected_version\">\n\x16UpdateDocumentResponse\x12\x13\n\x0bnew_version\x18\x01 \x01(\x04\x12\x0f\n\x07success\x18\x02 \x01(\x08\"7\n\x15\x44\x65leteDocumentRequest\x12\x12\n\ncollection\x18\x01 \x01(\t\x12\n\n\x02id\x18\x02 \x01(\t\")\n\x16\x44\x65leteDocumentResponse\x12\x0f\n\x07\x64\x65leted\x18\x01 \x01(\x08\"\xca\x01\n\x15QueryDocumentsRequest\x12\x12\n\ncollection\x18\x01 \x01(\t\x12,\n\x06\x66ilter\x18\x02 \x01(\x0b\x32\x1c.proximadb.v1.DocumentFilter\x12\x12\n\nprojection\x18\x03 \x03(\t\x12%\n\x04sort\x18\x04 \x03(\x0b\x32\x17.proximadb.v1.SortField\x12\r\n\x05limit\x18\x05 \x01(\r\x12\x0e\n\x06offset\x18\x06 \x01(\r\x12\x15\n\rinclude_count\x18\x07 \x01(\x08\"A\n\tSortField\x12\x0c\n\x04path\x18\x01 \x01(\t\x12&\n\x05order\x18\x02 \x01(\x0e\x32\x17.proximadb.v1.SortOrder\"\x8a\x01\n\x16QueryDocumentsResponse\x12/\n\tdocuments\x18\x01 \x03(\x0b\x32\x1c.proximadb.v1.DocumentResult\x12\x18\n\x0btotal_count\x18\x02 \x01(\x04H\x00\x88\x01\x01\x12\x15\n\rquery_time_ms\x18\x03 \x01(\x04\x42\x0e\n\x0c_total_count\"v\n\x0e\x44ocumentResult\x12\n\n\x02id\x18\x01 \x01(\t\x12)\n\x08\x64ocument\x18\x02 \x01(\x0b\x32\x17.proximadb.v1.SqlObject\x12\x0f\n\x07version\x18\x03 \x01(\x04\x12\x12\n\x05score\x18\x04 \x01(\x02H\x00\x88\x01\x01\x42\x08\n\x06_score\"\x8f\x01\n\x19\x41ggregateDocumentsRequest\x12\x12\n\ncollection\x18\x01 \x01(\t\x12,\n\x06\x66ilter\x18\x02 \x01(\x0b\x32\x1c.proximadb.v1.DocumentFilter\x12\x30\n\x08pipeline\x18\x03 \x03(\x0b\x32\x1e.proximadb.v1.AggregationStage\"\xca\x02\n\x10\x41ggregationStage\x12)\n\x05match\x18\x01 \x01(\x0b\x32\x18.proximadb.v1.MatchStageH\x00\x12)\n\x05group\x18\x02 \x01(\x0b\x32\x18.proximadb.v1.GroupStageH\x00\x12-\n\x07project\x18\x03 \x01(\x0b\x32\x1a.proximadb.v1.ProjectStageH\x00\x12\'\n\x04sort\x18\x04 \x01(\x0b\x32\x17.proximadb.v1.SortStageH\x00\x12)\n\x05limit\x18\x05 \x01(\x0b\x32\x18.proximadb.v1.LimitStageH\x00\x12\'\n\x04skip\x18\x06 \x01(\x0b\x32\x17.proximadb.v1.SkipStageH\x00\x12+\n\x06unwind\x18\x07 \x01(\x0b\x32\x19.proximadb.v1.UnwindStageH\x00\x42\x07\n\x05stage\":\n\nMatchStage\x12,\n\x06\x66ilter\x18\x01 \x01(\x0b\x32\x1c.proximadb.v1.DocumentFilter\"J\n\nGroupStage\x12\x0b\n\x03key\x18\x01 \x01(\t\x12/\n\x0c\x61ggregations\x18\x02 \x03(\x0b\x32\x19.proximadb.v1.Aggregation\"d\n\x0b\x41ggregation\x12\x14\n\x0coutput_field\x18\x01 \x01(\t\x12+\n\x04type\x18\x02 \x01(\x0e\x32\x1d.proximadb.v1.AggregationType\x12\x12\n\ninput_path\x18\x03 \x01(\t\"\xe2\x01\n\x0cProjectStage\x12\x36\n\x06\x66ields\x18\x01 \x03(\x0b\x32&.proximadb.v1.ProjectStage.FieldsEntry\x12:\n\x08\x63omputed\x18\x02 \x03(\x0b\x32(.proximadb.v1.ProjectStage.ComputedEntry\x1a-\n\x0b\x46ieldsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x08:\x02\x38\x01\x1a/\n\rComputedEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"4\n\tSortStage\x12\'\n\x06\x66ields\x18\x01 \x03(\x0b\x32\x17.proximadb.v1.SortField\"\x1b\n\nLimitStage\x12\r\n\x05limit\x18\x01 \x01(\r\"\x19\n\tSkipStage\x12\x0c\n\x04skip\x18\x01 \x01(\r\"2\n\x0bUnwindStage\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x15\n\rpreserve_null\x18\x02 \x01(\x08\"]\n\x1a\x41ggregateDocumentsResponse\x12(\n\x07results\x18\x01 \x03(\x0b\x32\x17.proximadb.v1.SqlObject\x12\x15\n\rquery_time_ms\x18\x02 \x01(\x04\" \n\x1eListDocumentCollectionsRequest\"\\\n\x1fListDocumentCollectionsResponse\x12\x39\n\x0b\x63ollections\x18\x01 \x03(\x0b\x32$.proximadb.v1.DocumentCollectionInfo\"\x8a\x01\n\x16\x44ocumentCollectionInfo\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x16\n\x0e\x64ocument_count\x18\x02 \x01(\x04\x12\x1a\n\x12storage_size_bytes\x18\x03 \x01(\x04\x12.\n\x07indexes\x18\x04 \x03(\x0b\x32\x1d.proximadb.v1.IndexDefinition\"5\n\x1f\x44\x65leteDocumentCollectionRequest\x12\x12\n\ncollection\x18\x01 \x01(\t\"3\n DeleteDocumentCollectionResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08*\xb3\x01\n\x0c\x44ocIndexType\x12\x1e\n\x1a\x44OC_INDEX_TYPE_UNSPECIFIED\x10\x00\x12\x18\n\x14\x44OC_INDEX_TYPE_BTREE\x10\x01\x12\x17\n\x13\x44OC_INDEX_TYPE_HASH\x10\x02\x12\x1b\n\x17\x44OC_INDEX_TYPE_INVERTED\x10\x03\x12\x1b\n\x17\x44OC_INDEX_TYPE_FULLTEXT\x10\x04\x12\x16\n\x12\x44OC_INDEX_TYPE_GEO\x10\x05*\xbf\x03\n\x11\x44ocFilterOperator\x12#\n\x1f\x44OC_FILTER_OPERATOR_UNSPECIFIED\x10\x00\x12\x1a\n\x16\x44OC_FILTER_OPERATOR_EQ\x10\x01\x12\x1a\n\x16\x44OC_FILTER_OPERATOR_NE\x10\x02\x12\x1a\n\x16\x44OC_FILTER_OPERATOR_GT\x10\x03\x12\x1b\n\x17\x44OC_FILTER_OPERATOR_GTE\x10\x04\x12\x1a\n\x16\x44OC_FILTER_OPERATOR_LT\x10\x05\x12\x1b\n\x17\x44OC_FILTER_OPERATOR_LTE\x10\x06\x12\x1a\n\x16\x44OC_FILTER_OPERATOR_IN\x10\x07\x12\x1e\n\x1a\x44OC_FILTER_OPERATOR_NOT_IN\x10\x08\x12 \n\x1c\x44OC_FILTER_OPERATOR_CONTAINS\x10\t\x12\x1d\n\x19\x44OC_FILTER_OPERATOR_REGEX\x10\n\x12\x1e\n\x1a\x44OC_FILTER_OPERATOR_EXISTS\x10\x0b\x12\x1c\n\x18\x44OC_FILTER_OPERATOR_TYPE\x10\x0c\x12 \n\x1c\x44OC_FILTER_OPERATOR_FULLTEXT\x10\r*\xf7\x01\n\x0fUpdateOperation\x12 \n\x1cUPDATE_OPERATION_UNSPECIFIED\x10\x00\x12\x18\n\x14UPDATE_OPERATION_SET\x10\x01\x12\x1a\n\x16UPDATE_OPERATION_UNSET\x10\x02\x12\x18\n\x14UPDATE_OPERATION_INC\x10\x03\x12\x19\n\x15UPDATE_OPERATION_PUSH\x10\x04\x12\x19\n\x15UPDATE_OPERATION_PULL\x10\x05\x12\x1f\n\x1bUPDATE_OPERATION_ADD_TO_SET\x10\x06\x12\x1b\n\x17UPDATE_OPERATION_RENAME\x10\x07*P\n\tSortOrder\x12\x1a\n\x16SORT_ORDER_UNSPECIFIED\x10\x00\x12\x12\n\x0eSORT_ORDER_ASC\x10\x01\x12\x13\n\x0fSORT_ORDER_DESC\x10\x02*\xaa\x02\n\x0f\x41ggregationType\x12 \n\x1c\x41GGREGATION_TYPE_UNSPECIFIED\x10\x00\x12\x1a\n\x16\x41GGREGATION_TYPE_COUNT\x10\x01\x12\x18\n\x14\x41GGREGATION_TYPE_SUM\x10\x02\x12\x18\n\x14\x41GGREGATION_TYPE_AVG\x10\x03\x12\x18\n\x14\x41GGREGATION_TYPE_MIN\x10\x04\x12\x18\n\x14\x41GGREGATION_TYPE_MAX\x10\x05\x12\x1a\n\x16\x41GGREGATION_TYPE_FIRST\x10\x06\x12\x19\n\x15\x41GGREGATION_TYPE_LAST\x10\x07\x12\x19\n\x15\x41GGREGATION_TYPE_PUSH\x10\x08\x12\x1f\n\x1b\x41GGREGATION_TYPE_ADD_TO_SET\x10\t2\x98\x07\n\x0f\x44ocumentService\x12q\n\x10\x43reateCollection\x12-.proximadb.v1.CreateDocumentCollectionRequest\x1a..proximadb.v1.CreateDocumentCollectionResponse\x12n\n\x0fListCollections\x12,.proximadb.v1.ListDocumentCollectionsRequest\x1a-.proximadb.v1.ListDocumentCollectionsResponse\x12q\n\x10\x44\x65leteCollection\x12-.proximadb.v1.DeleteDocumentCollectionRequest\x1a..proximadb.v1.DeleteDocumentCollectionResponse\x12[\n\x0eInsertDocument\x12#.proximadb.v1.InsertDocumentRequest\x1a$.proximadb.v1.InsertDocumentResponse\x12R\n\x0bGetDocument\x12 .proximadb.v1.GetDocumentRequest\x1a!.proximadb.v1.GetDocumentResponse\x12[\n\x0eUpdateDocument\x12#.proximadb.v1.UpdateDocumentRequest\x1a$.proximadb.v1.UpdateDocumentResponse\x12[\n\x0e\x44\x65leteDocument\x12#.proximadb.v1.DeleteDocumentRequest\x1a$.proximadb.v1.DeleteDocumentResponse\x12[\n\x0eQueryDocuments\x12#.proximadb.v1.QueryDocumentsRequest\x1a$.proximadb.v1.QueryDocumentsResponse\x12g\n\x12\x41ggregateDocuments\x12\'.proximadb.v1.AggregateDocumentsRequest\x1a(.proximadb.v1.AggregateDocumentsResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
+    b'\n\x1bproximadb/v1/document.proto\x12\x0cproximadb.v1\x1a\x18proximadb/v1/types.proto\x1a\x1fproximadb/v1/vector_types.proto"\xa7\x01\n\x0f\x44ocumentContent\x12)\n\x08\x64ocument\x18\x01 \x01(\x0b\x32\x17.proximadb.v1.SqlObject\x12\x16\n\tschema_id\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x15\n\rindexed_paths\x18\x03 \x03(\t\x12\x1a\n\rdocument_type\x18\x04 \x01(\tH\x01\x88\x01\x01\x42\x0c\n\n_schema_idB\x10\n\x0e_document_type"\xfe\x01\n\x18\x44ocumentCollectionConfig\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x18\n\x0bjson_schema\x18\x02 \x01(\tH\x00\x88\x01\x01\x12.\n\x07indexes\x18\x03 \x03(\x0b\x32\x1d.proximadb.v1.IndexDefinition\x12\x17\n\x0f\x65nable_fulltext\x18\x04 \x01(\x08\x12\x16\n\x0e\x66ulltext_paths\x18\x05 \x03(\t\x12\x13\n\x0bttl_seconds\x18\x06 \x01(\x04\x12\x34\n\x0b\x63ompression\x18\x07 \x01(\x0b\x32\x1f.proximadb.v1.CompressionConfigB\x0e\n\x0c_json_schema"\x8b\x01\n\x0fIndexDefinition\x12\x0c\n\x04path\x18\x01 \x01(\t\x12.\n\nindex_type\x18\x02 \x01(\x0e\x32\x1a.proximadb.v1.DocIndexType\x12\x0e\n\x06unique\x18\x03 \x01(\x08\x12\x0e\n\x06sparse\x18\x04 \x01(\x08\x12\x11\n\x04name\x18\x05 \x01(\tH\x00\x88\x01\x01\x42\x07\n\x05_name"\xab\x01\n\x0e\x44ocumentFilter\x12\x34\n\nconditions\x18\x01 \x03(\x0b\x32 .proximadb.v1.DocFilterCondition\x12\x30\n\nor_filters\x18\x02 \x03(\x0b\x32\x1c.proximadb.v1.DocumentFilter\x12\x31\n\x0b\x61nd_filters\x18\x03 \x03(\x0b\x32\x1c.proximadb.v1.DocumentFilter"\xa4\x01\n\x12\x44ocFilterCondition\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x31\n\x08operator\x18\x02 \x01(\x0e\x32\x1f.proximadb.v1.DocFilterOperator\x12%\n\x05value\x18\x03 \x01(\x0b\x32\x16.proximadb.v1.SqlValue\x12&\n\x06values\x18\x04 \x03(\x0b\x32\x16.proximadb.v1.SqlValue"\x86\x01\n\x0e\x44ocumentUpdate\x12\x30\n\toperation\x18\x01 \x01(\x0e\x32\x1d.proximadb.v1.UpdateOperation\x12\x0c\n\x04path\x18\x02 \x01(\t\x12*\n\x05value\x18\x03 \x01(\x0b\x32\x16.proximadb.v1.SqlValueH\x00\x88\x01\x01\x42\x08\n\x06_value"Y\n\x1f\x43reateDocumentCollectionRequest\x12\x36\n\x06\x63onfig\x18\x01 \x01(\x0b\x32&.proximadb.v1.DocumentCollectionConfig"J\n CreateDocumentCollectionResponse\x12\x15\n\rcollection_id\x18\x01 \x01(\t\x12\x0f\n\x07success\x18\x02 \x01(\x08"n\n\x15InsertDocumentRequest\x12\x12\n\ncollection\x18\x01 \x01(\t\x12\x0f\n\x02id\x18\x02 \x01(\tH\x00\x88\x01\x01\x12)\n\x08\x64ocument\x18\x03 \x01(\x0b\x32\x17.proximadb.v1.SqlObjectB\x05\n\x03_id"5\n\x16InsertDocumentResponse\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0f\n\x07version\x18\x02 \x01(\x04"H\n\x12GetDocumentRequest\x12\x12\n\ncollection\x18\x01 \x01(\t\x12\n\n\x02id\x18\x02 \x01(\t\x12\x12\n\nprojection\x18\x03 \x03(\t"r\n\x13GetDocumentResponse\x12.\n\x08\x64ocument\x18\x01 \x01(\x0b\x32\x17.proximadb.v1.SqlObjectH\x00\x88\x01\x01\x12\x0f\n\x07version\x18\x02 \x01(\x04\x12\r\n\x05\x66ound\x18\x03 \x01(\x08\x42\x0b\n\t_document"\x9a\x01\n\x15UpdateDocumentRequest\x12\x12\n\ncollection\x18\x01 \x01(\t\x12\n\n\x02id\x18\x02 \x01(\t\x12-\n\x07updates\x18\x03 \x03(\x0b\x32\x1c.proximadb.v1.DocumentUpdate\x12\x1d\n\x10\x65xpected_version\x18\x04 \x01(\x04H\x00\x88\x01\x01\x42\x13\n\x11_expected_version">\n\x16UpdateDocumentResponse\x12\x13\n\x0bnew_version\x18\x01 \x01(\x04\x12\x0f\n\x07success\x18\x02 \x01(\x08"7\n\x15\x44\x65leteDocumentRequest\x12\x12\n\ncollection\x18\x01 \x01(\t\x12\n\n\x02id\x18\x02 \x01(\t")\n\x16\x44\x65leteDocumentResponse\x12\x0f\n\x07\x64\x65leted\x18\x01 \x01(\x08"\xca\x01\n\x15QueryDocumentsRequest\x12\x12\n\ncollection\x18\x01 \x01(\t\x12,\n\x06\x66ilter\x18\x02 \x01(\x0b\x32\x1c.proximadb.v1.DocumentFilter\x12\x12\n\nprojection\x18\x03 \x03(\t\x12%\n\x04sort\x18\x04 \x03(\x0b\x32\x17.proximadb.v1.SortField\x12\r\n\x05limit\x18\x05 \x01(\r\x12\x0e\n\x06offset\x18\x06 \x01(\r\x12\x15\n\rinclude_count\x18\x07 \x01(\x08"A\n\tSortField\x12\x0c\n\x04path\x18\x01 \x01(\t\x12&\n\x05order\x18\x02 \x01(\x0e\x32\x17.proximadb.v1.SortOrder"\x8a\x01\n\x16QueryDocumentsResponse\x12/\n\tdocuments\x18\x01 \x03(\x0b\x32\x1c.proximadb.v1.DocumentResult\x12\x18\n\x0btotal_count\x18\x02 \x01(\x04H\x00\x88\x01\x01\x12\x15\n\rquery_time_ms\x18\x03 \x01(\x04\x42\x0e\n\x0c_total_count"v\n\x0e\x44ocumentResult\x12\n\n\x02id\x18\x01 \x01(\t\x12)\n\x08\x64ocument\x18\x02 \x01(\x0b\x32\x17.proximadb.v1.SqlObject\x12\x0f\n\x07version\x18\x03 \x01(\x04\x12\x12\n\x05score\x18\x04 \x01(\x02H\x00\x88\x01\x01\x42\x08\n\x06_score"\x8f\x01\n\x19\x41ggregateDocumentsRequest\x12\x12\n\ncollection\x18\x01 \x01(\t\x12,\n\x06\x66ilter\x18\x02 \x01(\x0b\x32\x1c.proximadb.v1.DocumentFilter\x12\x30\n\x08pipeline\x18\x03 \x03(\x0b\x32\x1e.proximadb.v1.AggregationStage"\xca\x02\n\x10\x41ggregationStage\x12)\n\x05match\x18\x01 \x01(\x0b\x32\x18.proximadb.v1.MatchStageH\x00\x12)\n\x05group\x18\x02 \x01(\x0b\x32\x18.proximadb.v1.GroupStageH\x00\x12-\n\x07project\x18\x03 \x01(\x0b\x32\x1a.proximadb.v1.ProjectStageH\x00\x12\'\n\x04sort\x18\x04 \x01(\x0b\x32\x17.proximadb.v1.SortStageH\x00\x12)\n\x05limit\x18\x05 \x01(\x0b\x32\x18.proximadb.v1.LimitStageH\x00\x12\'\n\x04skip\x18\x06 \x01(\x0b\x32\x17.proximadb.v1.SkipStageH\x00\x12+\n\x06unwind\x18\x07 \x01(\x0b\x32\x19.proximadb.v1.UnwindStageH\x00\x42\x07\n\x05stage":\n\nMatchStage\x12,\n\x06\x66ilter\x18\x01 \x01(\x0b\x32\x1c.proximadb.v1.DocumentFilter"J\n\nGroupStage\x12\x0b\n\x03key\x18\x01 \x01(\t\x12/\n\x0c\x61ggregations\x18\x02 \x03(\x0b\x32\x19.proximadb.v1.Aggregation"d\n\x0b\x41ggregation\x12\x14\n\x0coutput_field\x18\x01 \x01(\t\x12+\n\x04type\x18\x02 \x01(\x0e\x32\x1d.proximadb.v1.AggregationType\x12\x12\n\ninput_path\x18\x03 \x01(\t"\xe2\x01\n\x0cProjectStage\x12\x36\n\x06\x66ields\x18\x01 \x03(\x0b\x32&.proximadb.v1.ProjectStage.FieldsEntry\x12:\n\x08\x63omputed\x18\x02 \x03(\x0b\x32(.proximadb.v1.ProjectStage.ComputedEntry\x1a-\n\x0b\x46ieldsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x08:\x02\x38\x01\x1a/\n\rComputedEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01"4\n\tSortStage\x12\'\n\x06\x66ields\x18\x01 \x03(\x0b\x32\x17.proximadb.v1.SortField"\x1b\n\nLimitStage\x12\r\n\x05limit\x18\x01 \x01(\r"\x19\n\tSkipStage\x12\x0c\n\x04skip\x18\x01 \x01(\r"2\n\x0bUnwindStage\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x15\n\rpreserve_null\x18\x02 \x01(\x08"]\n\x1a\x41ggregateDocumentsResponse\x12(\n\x07results\x18\x01 \x03(\x0b\x32\x17.proximadb.v1.SqlObject\x12\x15\n\rquery_time_ms\x18\x02 \x01(\x04" \n\x1eListDocumentCollectionsRequest"\\\n\x1fListDocumentCollectionsResponse\x12\x39\n\x0b\x63ollections\x18\x01 \x03(\x0b\x32$.proximadb.v1.DocumentCollectionInfo"\x8a\x01\n\x16\x44ocumentCollectionInfo\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x16\n\x0e\x64ocument_count\x18\x02 \x01(\x04\x12\x1a\n\x12storage_size_bytes\x18\x03 \x01(\x04\x12.\n\x07indexes\x18\x04 \x03(\x0b\x32\x1d.proximadb.v1.IndexDefinition"5\n\x1f\x44\x65leteDocumentCollectionRequest\x12\x12\n\ncollection\x18\x01 \x01(\t"3\n DeleteDocumentCollectionResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08*\xb3\x01\n\x0c\x44ocIndexType\x12\x1e\n\x1a\x44OC_INDEX_TYPE_UNSPECIFIED\x10\x00\x12\x18\n\x14\x44OC_INDEX_TYPE_BTREE\x10\x01\x12\x17\n\x13\x44OC_INDEX_TYPE_HASH\x10\x02\x12\x1b\n\x17\x44OC_INDEX_TYPE_INVERTED\x10\x03\x12\x1b\n\x17\x44OC_INDEX_TYPE_FULLTEXT\x10\x04\x12\x16\n\x12\x44OC_INDEX_TYPE_GEO\x10\x05*\xbf\x03\n\x11\x44ocFilterOperator\x12#\n\x1f\x44OC_FILTER_OPERATOR_UNSPECIFIED\x10\x00\x12\x1a\n\x16\x44OC_FILTER_OPERATOR_EQ\x10\x01\x12\x1a\n\x16\x44OC_FILTER_OPERATOR_NE\x10\x02\x12\x1a\n\x16\x44OC_FILTER_OPERATOR_GT\x10\x03\x12\x1b\n\x17\x44OC_FILTER_OPERATOR_GTE\x10\x04\x12\x1a\n\x16\x44OC_FILTER_OPERATOR_LT\x10\x05\x12\x1b\n\x17\x44OC_FILTER_OPERATOR_LTE\x10\x06\x12\x1a\n\x16\x44OC_FILTER_OPERATOR_IN\x10\x07\x12\x1e\n\x1a\x44OC_FILTER_OPERATOR_NOT_IN\x10\x08\x12 \n\x1c\x44OC_FILTER_OPERATOR_CONTAINS\x10\t\x12\x1d\n\x19\x44OC_FILTER_OPERATOR_REGEX\x10\n\x12\x1e\n\x1a\x44OC_FILTER_OPERATOR_EXISTS\x10\x0b\x12\x1c\n\x18\x44OC_FILTER_OPERATOR_TYPE\x10\x0c\x12 \n\x1c\x44OC_FILTER_OPERATOR_FULLTEXT\x10\r*\xf7\x01\n\x0fUpdateOperation\x12 \n\x1cUPDATE_OPERATION_UNSPECIFIED\x10\x00\x12\x18\n\x14UPDATE_OPERATION_SET\x10\x01\x12\x1a\n\x16UPDATE_OPERATION_UNSET\x10\x02\x12\x18\n\x14UPDATE_OPERATION_INC\x10\x03\x12\x19\n\x15UPDATE_OPERATION_PUSH\x10\x04\x12\x19\n\x15UPDATE_OPERATION_PULL\x10\x05\x12\x1f\n\x1bUPDATE_OPERATION_ADD_TO_SET\x10\x06\x12\x1b\n\x17UPDATE_OPERATION_RENAME\x10\x07*P\n\tSortOrder\x12\x1a\n\x16SORT_ORDER_UNSPECIFIED\x10\x00\x12\x12\n\x0eSORT_ORDER_ASC\x10\x01\x12\x13\n\x0fSORT_ORDER_DESC\x10\x02*\xaa\x02\n\x0f\x41ggregationType\x12 \n\x1c\x41GGREGATION_TYPE_UNSPECIFIED\x10\x00\x12\x1a\n\x16\x41GGREGATION_TYPE_COUNT\x10\x01\x12\x18\n\x14\x41GGREGATION_TYPE_SUM\x10\x02\x12\x18\n\x14\x41GGREGATION_TYPE_AVG\x10\x03\x12\x18\n\x14\x41GGREGATION_TYPE_MIN\x10\x04\x12\x18\n\x14\x41GGREGATION_TYPE_MAX\x10\x05\x12\x1a\n\x16\x41GGREGATION_TYPE_FIRST\x10\x06\x12\x19\n\x15\x41GGREGATION_TYPE_LAST\x10\x07\x12\x19\n\x15\x41GGREGATION_TYPE_PUSH\x10\x08\x12\x1f\n\x1b\x41GGREGATION_TYPE_ADD_TO_SET\x10\t2\x98\x07\n\x0f\x44ocumentService\x12q\n\x10\x43reateCollection\x12-.proximadb.v1.CreateDocumentCollectionRequest\x1a..proximadb.v1.CreateDocumentCollectionResponse\x12n\n\x0fListCollections\x12,.proximadb.v1.ListDocumentCollectionsRequest\x1a-.proximadb.v1.ListDocumentCollectionsResponse\x12q\n\x10\x44\x65leteCollection\x12-.proximadb.v1.DeleteDocumentCollectionRequest\x1a..proximadb.v1.DeleteDocumentCollectionResponse\x12[\n\x0eInsertDocument\x12#.proximadb.v1.InsertDocumentRequest\x1a$.proximadb.v1.InsertDocumentResponse\x12R\n\x0bGetDocument\x12 .proximadb.v1.GetDocumentRequest\x1a!.proximadb.v1.GetDocumentResponse\x12[\n\x0eUpdateDocument\x12#.proximadb.v1.UpdateDocumentRequest\x1a$.proximadb.v1.UpdateDocumentResponse\x12[\n\x0e\x44\x65leteDocument\x12#.proximadb.v1.DeleteDocumentRequest\x1a$.proximadb.v1.DeleteDocumentResponse\x12[\n\x0eQueryDocuments\x12#.proximadb.v1.QueryDocumentsRequest\x1a$.proximadb.v1.QueryDocumentsResponse\x12g\n\x12\x41ggregateDocuments\x12\'.proximadb.v1.AggregateDocumentsRequest\x1a(.proximadb.v1.AggregateDocumentsResponseb\x06proto3'
+)
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
-_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'proximadb.v1.document_pb2', _globals)
+_builder.BuildTopDescriptorsAndMessages(
+    DESCRIPTOR, "proximadb.v1.document_pb2", _globals
+)
 if not _descriptor._USE_C_DESCRIPTORS:
-  DESCRIPTOR._loaded_options = None
-  _globals['_PROJECTSTAGE_FIELDSENTRY']._loaded_options = None
-  _globals['_PROJECTSTAGE_FIELDSENTRY']._serialized_options = b'8\001'
-  _globals['_PROJECTSTAGE_COMPUTEDENTRY']._loaded_options = None
-  _globals['_PROJECTSTAGE_COMPUTEDENTRY']._serialized_options = b'8\001'
-  _globals['_DOCINDEXTYPE']._serialized_start=4110
-  _globals['_DOCINDEXTYPE']._serialized_end=4289
-  _globals['_DOCFILTEROPERATOR']._serialized_start=4292
-  _globals['_DOCFILTEROPERATOR']._serialized_end=4739
-  _globals['_UPDATEOPERATION']._serialized_start=4742
-  _globals['_UPDATEOPERATION']._serialized_end=4989
-  _globals['_SORTORDER']._serialized_start=4991
-  _globals['_SORTORDER']._serialized_end=5071
-  _globals['_AGGREGATIONTYPE']._serialized_start=5074
-  _globals['_AGGREGATIONTYPE']._serialized_end=5372
-  _globals['_DOCUMENTCONTENT']._serialized_start=105
-  _globals['_DOCUMENTCONTENT']._serialized_end=272
-  _globals['_DOCUMENTCOLLECTIONCONFIG']._serialized_start=275
-  _globals['_DOCUMENTCOLLECTIONCONFIG']._serialized_end=529
-  _globals['_INDEXDEFINITION']._serialized_start=532
-  _globals['_INDEXDEFINITION']._serialized_end=671
-  _globals['_DOCUMENTFILTER']._serialized_start=674
-  _globals['_DOCUMENTFILTER']._serialized_end=845
-  _globals['_DOCFILTERCONDITION']._serialized_start=848
-  _globals['_DOCFILTERCONDITION']._serialized_end=1012
-  _globals['_DOCUMENTUPDATE']._serialized_start=1015
-  _globals['_DOCUMENTUPDATE']._serialized_end=1149
-  _globals['_CREATEDOCUMENTCOLLECTIONREQUEST']._serialized_start=1151
-  _globals['_CREATEDOCUMENTCOLLECTIONREQUEST']._serialized_end=1240
-  _globals['_CREATEDOCUMENTCOLLECTIONRESPONSE']._serialized_start=1242
-  _globals['_CREATEDOCUMENTCOLLECTIONRESPONSE']._serialized_end=1316
-  _globals['_INSERTDOCUMENTREQUEST']._serialized_start=1318
-  _globals['_INSERTDOCUMENTREQUEST']._serialized_end=1428
-  _globals['_INSERTDOCUMENTRESPONSE']._serialized_start=1430
-  _globals['_INSERTDOCUMENTRESPONSE']._serialized_end=1483
-  _globals['_GETDOCUMENTREQUEST']._serialized_start=1485
-  _globals['_GETDOCUMENTREQUEST']._serialized_end=1557
-  _globals['_GETDOCUMENTRESPONSE']._serialized_start=1559
-  _globals['_GETDOCUMENTRESPONSE']._serialized_end=1673
-  _globals['_UPDATEDOCUMENTREQUEST']._serialized_start=1676
-  _globals['_UPDATEDOCUMENTREQUEST']._serialized_end=1830
-  _globals['_UPDATEDOCUMENTRESPONSE']._serialized_start=1832
-  _globals['_UPDATEDOCUMENTRESPONSE']._serialized_end=1894
-  _globals['_DELETEDOCUMENTREQUEST']._serialized_start=1896
-  _globals['_DELETEDOCUMENTREQUEST']._serialized_end=1951
-  _globals['_DELETEDOCUMENTRESPONSE']._serialized_start=1953
-  _globals['_DELETEDOCUMENTRESPONSE']._serialized_end=1994
-  _globals['_QUERYDOCUMENTSREQUEST']._serialized_start=1997
-  _globals['_QUERYDOCUMENTSREQUEST']._serialized_end=2199
-  _globals['_SORTFIELD']._serialized_start=2201
-  _globals['_SORTFIELD']._serialized_end=2266
-  _globals['_QUERYDOCUMENTSRESPONSE']._serialized_start=2269
-  _globals['_QUERYDOCUMENTSRESPONSE']._serialized_end=2407
-  _globals['_DOCUMENTRESULT']._serialized_start=2409
-  _globals['_DOCUMENTRESULT']._serialized_end=2527
-  _globals['_AGGREGATEDOCUMENTSREQUEST']._serialized_start=2530
-  _globals['_AGGREGATEDOCUMENTSREQUEST']._serialized_end=2673
-  _globals['_AGGREGATIONSTAGE']._serialized_start=2676
-  _globals['_AGGREGATIONSTAGE']._serialized_end=3006
-  _globals['_MATCHSTAGE']._serialized_start=3008
-  _globals['_MATCHSTAGE']._serialized_end=3066
-  _globals['_GROUPSTAGE']._serialized_start=3068
-  _globals['_GROUPSTAGE']._serialized_end=3142
-  _globals['_AGGREGATION']._serialized_start=3144
-  _globals['_AGGREGATION']._serialized_end=3244
-  _globals['_PROJECTSTAGE']._serialized_start=3247
-  _globals['_PROJECTSTAGE']._serialized_end=3473
-  _globals['_PROJECTSTAGE_FIELDSENTRY']._serialized_start=3379
-  _globals['_PROJECTSTAGE_FIELDSENTRY']._serialized_end=3424
-  _globals['_PROJECTSTAGE_COMPUTEDENTRY']._serialized_start=3426
-  _globals['_PROJECTSTAGE_COMPUTEDENTRY']._serialized_end=3473
-  _globals['_SORTSTAGE']._serialized_start=3475
-  _globals['_SORTSTAGE']._serialized_end=3527
-  _globals['_LIMITSTAGE']._serialized_start=3529
-  _globals['_LIMITSTAGE']._serialized_end=3556
-  _globals['_SKIPSTAGE']._serialized_start=3558
-  _globals['_SKIPSTAGE']._serialized_end=3583
-  _globals['_UNWINDSTAGE']._serialized_start=3585
-  _globals['_UNWINDSTAGE']._serialized_end=3635
-  _globals['_AGGREGATEDOCUMENTSRESPONSE']._serialized_start=3637
-  _globals['_AGGREGATEDOCUMENTSRESPONSE']._serialized_end=3730
-  _globals['_LISTDOCUMENTCOLLECTIONSREQUEST']._serialized_start=3732
-  _globals['_LISTDOCUMENTCOLLECTIONSREQUEST']._serialized_end=3764
-  _globals['_LISTDOCUMENTCOLLECTIONSRESPONSE']._serialized_start=3766
-  _globals['_LISTDOCUMENTCOLLECTIONSRESPONSE']._serialized_end=3858
-  _globals['_DOCUMENTCOLLECTIONINFO']._serialized_start=3861
-  _globals['_DOCUMENTCOLLECTIONINFO']._serialized_end=3999
-  _globals['_DELETEDOCUMENTCOLLECTIONREQUEST']._serialized_start=4001
-  _globals['_DELETEDOCUMENTCOLLECTIONREQUEST']._serialized_end=4054
-  _globals['_DELETEDOCUMENTCOLLECTIONRESPONSE']._serialized_start=4056
-  _globals['_DELETEDOCUMENTCOLLECTIONRESPONSE']._serialized_end=4107
-  _globals['_DOCUMENTSERVICE']._serialized_start=5375
-  _globals['_DOCUMENTSERVICE']._serialized_end=6295
+    DESCRIPTOR._loaded_options = None
+    _globals["_PROJECTSTAGE_FIELDSENTRY"]._loaded_options = None
+    _globals["_PROJECTSTAGE_FIELDSENTRY"]._serialized_options = b"8\001"
+    _globals["_PROJECTSTAGE_COMPUTEDENTRY"]._loaded_options = None
+    _globals["_PROJECTSTAGE_COMPUTEDENTRY"]._serialized_options = b"8\001"
+    _globals["_DOCINDEXTYPE"]._serialized_start = 4110
+    _globals["_DOCINDEXTYPE"]._serialized_end = 4289
+    _globals["_DOCFILTEROPERATOR"]._serialized_start = 4292
+    _globals["_DOCFILTEROPERATOR"]._serialized_end = 4739
+    _globals["_UPDATEOPERATION"]._serialized_start = 4742
+    _globals["_UPDATEOPERATION"]._serialized_end = 4989
+    _globals["_SORTORDER"]._serialized_start = 4991
+    _globals["_SORTORDER"]._serialized_end = 5071
+    _globals["_AGGREGATIONTYPE"]._serialized_start = 5074
+    _globals["_AGGREGATIONTYPE"]._serialized_end = 5372
+    _globals["_DOCUMENTCONTENT"]._serialized_start = 105
+    _globals["_DOCUMENTCONTENT"]._serialized_end = 272
+    _globals["_DOCUMENTCOLLECTIONCONFIG"]._serialized_start = 275
+    _globals["_DOCUMENTCOLLECTIONCONFIG"]._serialized_end = 529
+    _globals["_INDEXDEFINITION"]._serialized_start = 532
+    _globals["_INDEXDEFINITION"]._serialized_end = 671
+    _globals["_DOCUMENTFILTER"]._serialized_start = 674
+    _globals["_DOCUMENTFILTER"]._serialized_end = 845
+    _globals["_DOCFILTERCONDITION"]._serialized_start = 848
+    _globals["_DOCFILTERCONDITION"]._serialized_end = 1012
+    _globals["_DOCUMENTUPDATE"]._serialized_start = 1015
+    _globals["_DOCUMENTUPDATE"]._serialized_end = 1149
+    _globals["_CREATEDOCUMENTCOLLECTIONREQUEST"]._serialized_start = 1151
+    _globals["_CREATEDOCUMENTCOLLECTIONREQUEST"]._serialized_end = 1240
+    _globals["_CREATEDOCUMENTCOLLECTIONRESPONSE"]._serialized_start = 1242
+    _globals["_CREATEDOCUMENTCOLLECTIONRESPONSE"]._serialized_end = 1316
+    _globals["_INSERTDOCUMENTREQUEST"]._serialized_start = 1318
+    _globals["_INSERTDOCUMENTREQUEST"]._serialized_end = 1428
+    _globals["_INSERTDOCUMENTRESPONSE"]._serialized_start = 1430
+    _globals["_INSERTDOCUMENTRESPONSE"]._serialized_end = 1483
+    _globals["_GETDOCUMENTREQUEST"]._serialized_start = 1485
+    _globals["_GETDOCUMENTREQUEST"]._serialized_end = 1557
+    _globals["_GETDOCUMENTRESPONSE"]._serialized_start = 1559
+    _globals["_GETDOCUMENTRESPONSE"]._serialized_end = 1673
+    _globals["_UPDATEDOCUMENTREQUEST"]._serialized_start = 1676
+    _globals["_UPDATEDOCUMENTREQUEST"]._serialized_end = 1830
+    _globals["_UPDATEDOCUMENTRESPONSE"]._serialized_start = 1832
+    _globals["_UPDATEDOCUMENTRESPONSE"]._serialized_end = 1894
+    _globals["_DELETEDOCUMENTREQUEST"]._serialized_start = 1896
+    _globals["_DELETEDOCUMENTREQUEST"]._serialized_end = 1951
+    _globals["_DELETEDOCUMENTRESPONSE"]._serialized_start = 1953
+    _globals["_DELETEDOCUMENTRESPONSE"]._serialized_end = 1994
+    _globals["_QUERYDOCUMENTSREQUEST"]._serialized_start = 1997
+    _globals["_QUERYDOCUMENTSREQUEST"]._serialized_end = 2199
+    _globals["_SORTFIELD"]._serialized_start = 2201
+    _globals["_SORTFIELD"]._serialized_end = 2266
+    _globals["_QUERYDOCUMENTSRESPONSE"]._serialized_start = 2269
+    _globals["_QUERYDOCUMENTSRESPONSE"]._serialized_end = 2407
+    _globals["_DOCUMENTRESULT"]._serialized_start = 2409
+    _globals["_DOCUMENTRESULT"]._serialized_end = 2527
+    _globals["_AGGREGATEDOCUMENTSREQUEST"]._serialized_start = 2530
+    _globals["_AGGREGATEDOCUMENTSREQUEST"]._serialized_end = 2673
+    _globals["_AGGREGATIONSTAGE"]._serialized_start = 2676
+    _globals["_AGGREGATIONSTAGE"]._serialized_end = 3006
+    _globals["_MATCHSTAGE"]._serialized_start = 3008
+    _globals["_MATCHSTAGE"]._serialized_end = 3066
+    _globals["_GROUPSTAGE"]._serialized_start = 3068
+    _globals["_GROUPSTAGE"]._serialized_end = 3142
+    _globals["_AGGREGATION"]._serialized_start = 3144
+    _globals["_AGGREGATION"]._serialized_end = 3244
+    _globals["_PROJECTSTAGE"]._serialized_start = 3247
+    _globals["_PROJECTSTAGE"]._serialized_end = 3473
+    _globals["_PROJECTSTAGE_FIELDSENTRY"]._serialized_start = 3379
+    _globals["_PROJECTSTAGE_FIELDSENTRY"]._serialized_end = 3424
+    _globals["_PROJECTSTAGE_COMPUTEDENTRY"]._serialized_start = 3426
+    _globals["_PROJECTSTAGE_COMPUTEDENTRY"]._serialized_end = 3473
+    _globals["_SORTSTAGE"]._serialized_start = 3475
+    _globals["_SORTSTAGE"]._serialized_end = 3527
+    _globals["_LIMITSTAGE"]._serialized_start = 3529
+    _globals["_LIMITSTAGE"]._serialized_end = 3556
+    _globals["_SKIPSTAGE"]._serialized_start = 3558
+    _globals["_SKIPSTAGE"]._serialized_end = 3583
+    _globals["_UNWINDSTAGE"]._serialized_start = 3585
+    _globals["_UNWINDSTAGE"]._serialized_end = 3635
+    _globals["_AGGREGATEDOCUMENTSRESPONSE"]._serialized_start = 3637
+    _globals["_AGGREGATEDOCUMENTSRESPONSE"]._serialized_end = 3730
+    _globals["_LISTDOCUMENTCOLLECTIONSREQUEST"]._serialized_start = 3732
+    _globals["_LISTDOCUMENTCOLLECTIONSREQUEST"]._serialized_end = 3764
+    _globals["_LISTDOCUMENTCOLLECTIONSRESPONSE"]._serialized_start = 3766
+    _globals["_LISTDOCUMENTCOLLECTIONSRESPONSE"]._serialized_end = 3858
+    _globals["_DOCUMENTCOLLECTIONINFO"]._serialized_start = 3861
+    _globals["_DOCUMENTCOLLECTIONINFO"]._serialized_end = 3999
+    _globals["_DELETEDOCUMENTCOLLECTIONREQUEST"]._serialized_start = 4001
+    _globals["_DELETEDOCUMENTCOLLECTIONREQUEST"]._serialized_end = 4054
+    _globals["_DELETEDOCUMENTCOLLECTIONRESPONSE"]._serialized_start = 4056
+    _globals["_DELETEDOCUMENTCOLLECTIONRESPONSE"]._serialized_end = 4107
+    _globals["_DOCUMENTSERVICE"]._serialized_start = 5375
+    _globals["_DOCUMENTSERVICE"]._serialized_end = 6295
 # @@protoc_insertion_point(module_scope)

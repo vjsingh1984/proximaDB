@@ -11,10 +11,11 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
+use crate::core::search::SearchParams;
 use crate::proto::proximadb_v1::Collection;
 use crate::storage::document::DocumentRecord;
 use crate::storage::traits::{StorageQueryContext, UnifiedStorageFormat};
+use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 
 // =============================================================================
 // TRAIT: ColdTierRetriever (Dependency Inversion Principle)

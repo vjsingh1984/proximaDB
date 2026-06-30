@@ -319,6 +319,47 @@ impl EmbeddingDrainer {
             .await
             .map_err(|e| anyhow::anyhow!("drainer embed failed: {e}"))?;
 
+        // Record KEU metering for embedding operations (TD-134)
+        // We record after the embedding call to capture the actual work done
+        let embedding_count = result.vectors.len() as u64;
+        // Estimate token counts (this would be more accurate with actual tokenization)
+        let estimated_input_tokens = embedding_count.saturating_mul(512); // ~512 tokens per record average
+        let estimated_output_tokens =
+            embedding_count.saturating_mul(result.route.dimension() as u64);
+
+        // Record KEU for the tenant (use the first payload's tenant_id)
+        if !payload_indices.is_empty() {
+            let tenant_id = &payload_indices[0].0.tenant_id;
+            // Simple provider/model name extraction from route
+            let (provider, model): (&'static str, String) = match &result.route {
+                proximadb_embedding::config::EmbedRoute::BgeSmall => {
+                    ("victor", "bge-small-en-v1.5".to_string())
+                }
+                proximadb_embedding::config::EmbedRoute::BgeLarge => {
+                    ("victor", "bge-large-en-v1.5".to_string())
+                }
+                proximadb_embedding::config::EmbedRoute::BgeM3 => ("victor", "bge-m3".to_string()),
+                proximadb_embedding::config::EmbedRoute::AzureOpenAi { model } => {
+                    ("azure_openai", std::format!("azure_{:?}", model))
+                }
+                proximadb_embedding::config::EmbedRoute::OpenAi { model } => {
+                    ("openai", std::format!("openai_{:?}", model))
+                }
+                proximadb_embedding::config::EmbedRoute::Cohere { model } => {
+                    ("cohere", std::format!("cohere_{:?}", model))
+                }
+                proximadb_embedding::config::EmbedRoute::Byo { url, .. } => ("byo", url.clone()),
+            };
+            crate::metrics::consumption_metrics::record_keu_units(
+                Some(tenant_id),
+                provider,
+                &model,
+                "embed_batch",
+                estimated_input_tokens,
+                estimated_output_tokens,
+            );
+        }
+
         // Re-split the result back to per-payload + insert.
         let dim = result.route.dimension() as u32;
         for ((payload, range), msg) in payload_indices.iter().zip(messages.iter()) {

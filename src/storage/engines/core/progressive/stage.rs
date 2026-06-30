@@ -10,9 +10,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
 /// Quantization level identifier for stages
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

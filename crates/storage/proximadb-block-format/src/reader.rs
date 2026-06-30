@@ -1146,40 +1146,29 @@ mod tests {
         );
     }
 
-    /// P3 Phase G — cold-recall harness at scale (N=1000) over a REAL two-column
-    /// PAX block. This is the *ratchet gate* the migration plan requires before the
-    /// cold-scan wiring (C.2): the writer emits RaBitQ codes (`EMBED_BASE`) plus a
-    /// co-located SQ8 rerank column (`RERANK_BASE`); the scan reads the block back,
-    /// runs the `rabitq_rank` stage-1 prefilter, then `rerank_rows` (the SQ8 cascade
-    /// stage-2) over the candidate pool — exactly the cascade C.2 drives. Recall@10
-    /// must hold within tolerance of the exact-f32 baseline at realistic N (small-N is
-    /// brute-force-served and doesn't exercise the approximate path). The rerank here
-    /// is the on-segment SQ8 column (4×, no external f32 GET); an f32 rerank column is
-    /// added only if SQ8 can't hold the gate. RATCHET: mean recall@10 >= 0.90 — only
-    /// goes up.
-    #[test]
-    fn rabitq_cold_recall_harness_n1000_recall_at_10() {
+    /// Deterministic LCG vector generator (same stream the corpus + query noise are
+    /// built from). Seeded → reproducible recall numbers (mandate #11).
+    fn lcg_vec(seed: u64, dim: usize) -> Vec<f32> {
+        let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+        (0..dim)
+            .map(|_| {
+                s ^= s >> 30;
+                s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                s ^= s >> 27;
+                ((s >> 11) as f32 / (1u64 << 53) as f32) * 2.0 - 1.0
+            })
+            .collect()
+    }
+
+    /// Build a deterministic corpus of `n` DIM=64 vectors and a REAL two-column
+    /// PAX block: RaBitQ codes (`EMBED_BASE`) + co-located SQ8 rerank column
+    /// (`RERANK_BASE`). Shared by the N=1k and N=100k cold-recall harnesses so the
+    /// gate runs at small-N (brute-force-dominated) AND at production scale (where
+    /// the RaBitQ→SQ8 cascade is the actual serving path).
+    fn build_cold_recall_corpus_and_block(n: usize) -> (Vec<Vec<f32>>, Vec<u8>) {
         const DIM: usize = 64;
-        const N: usize = 1000;
-        const Q: usize = 50;
-        const K: usize = 10;
-        const REFINE: usize = 100; // candidate pool before SQ8 rerank
-        const RATCHET: f32 = 0.90;
+        let corpus: Vec<Vec<f32>> = (0..n).map(|i| lcg_vec(i as u64, DIM)).collect();
 
-        let gen_vec = |seed: u64| -> Vec<f32> {
-            let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
-            (0..DIM)
-                .map(|_| {
-                    s ^= s >> 30;
-                    s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-                    s ^= s >> 27;
-                    ((s >> 11) as f32 / (1u64 << 53) as f32) * 2.0 - 1.0
-                })
-                .collect()
-        };
-        let corpus: Vec<Vec<f32>> = (0..N).map(|i| gen_vec(i as u64)).collect();
-
-        // Build the real two-column segment: RaBitQ codes + co-located SQ8 rerank.
         let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
             .with_quant(crate::writer::VectorQuant::RaBitQ);
         for (i, v) in corpus.iter().enumerate() {
@@ -1192,10 +1181,74 @@ mod tests {
                 ))
                 .unwrap();
         }
-        let block = writer.flush().unwrap();
+        (corpus, writer.flush().unwrap())
+    }
+
+    /// Run the RaBitQ→SQ8 cold-scan cascade over `q` deterministic near-neighbor
+    /// queries against `corpus` (read back via `reader`), returning mean recall@k
+    /// vs the exact-f32 top-k. `refine` is the stage-1 RaBitQ candidate pool size.
+    fn cold_cascade_recall_mean(
+        reader: &PaxBlockReader,
+        corpus: &[Vec<f32>],
+        q: usize,
+        k: usize,
+        refine: usize,
+    ) -> f32 {
+        let n = corpus.len();
+        let dim = corpus[0].len();
+        let l2 =
+            |a: &[f32], b: &[f32]| -> f32 { a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum() };
+        let exact_topk = |qv: &[f32]| -> std::collections::HashSet<usize> {
+            let mut idx: Vec<usize> = (0..n).collect();
+            idx.sort_by(|&a, &b| {
+                l2(&corpus[a], qv)
+                    .partial_cmp(&l2(&corpus[b], qv))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            idx.into_iter().take(k).collect()
+        };
+
+        let mut recalls = Vec::with_capacity(q);
+        for qi in 0..q {
+            let base = (qi * (n / q)) % n;
+            let noise = lcg_vec((qi as u64).wrapping_add(7_000_000), dim);
+            let query: Vec<f32> = corpus[base]
+                .iter()
+                .zip(&noise)
+                .map(|(v, nn)| v + nn * 0.01)
+                .collect();
+
+            // Stage 1: RaBitQ candidate prefilter; Stage 2: SQ8 rerank over the pool.
+            let cand = reader.rabitq_rank(&query, refine).unwrap();
+            let reranked = reader.rerank_rows(0, &query, &cand).unwrap();
+            let got: std::collections::HashSet<usize> =
+                reranked.into_iter().take(k).map(|(row, _)| row).collect();
+
+            let truth = exact_topk(&query);
+            let hits = truth.iter().filter(|i| got.contains(i)).count();
+            recalls.push(hits as f32 / k as f32);
+        }
+        recalls.iter().sum::<f32>() / recalls.len() as f32
+    }
+
+    /// P3 Phase G — cold-recall ratchet at N=1000 over a REAL two-column PAX block.
+    /// Storage-format mandate (#8): the RaBitQ→SQ8 cascade (stage-1 `rabitq_rank`
+    /// prefilter → stage-2 `rerank_rows` SQ8 rerank) must hold recall@10 within
+    /// tolerance of the exact-f32 baseline. Small-N is brute-force-dominated, so
+    /// this is the fast gate; the N=100k harness below exercises the approximate
+    /// path at production scale. RATCHET: mean recall@10 >= 0.90 — only goes up.
+    #[test]
+    fn rabitq_cold_recall_harness_n1000_recall_at_10() {
+        const N: usize = 1000;
+        const Q: usize = 50;
+        const K: usize = 10;
+        const REFINE: usize = 100; // candidate pool before SQ8 rerank
+        const RATCHET: f32 = 0.90;
+
+        let (corpus, block) = build_cold_recall_corpus_and_block(N);
         let reader = PaxBlockReader::open(&block).unwrap();
 
-        // Both vector columns must be present and correctly quantized.
+        // Both vector columns present and correctly quantized.
         let emb = reader.vector_params().get(col_id::EMBED_BASE).unwrap();
         assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ_RESERVED);
         let rer = reader
@@ -1204,8 +1257,7 @@ mod tests {
             .unwrap();
         assert_eq!(rer.quant_kind, QUANT_SQ8);
 
-        // ~30× target on the hot scan column: assert real compression so the gate
-        // is meaningful (RaBitQ codes ≪ SQ8 rerank ≪ raw f32).
+        // ~30× target on the hot scan column: RaBitQ codes ≪ SQ8 rerank ≪ raw f32.
         let embed_len = reader
             .column_metas()
             .iter()
@@ -1218,51 +1270,45 @@ mod tests {
             .find(|m| m.column_id == crate::col_id::RERANK_BASE)
             .unwrap()
             .stripe_len as usize;
-        let raw = N.div_ceil(8) + N * DIM * 4;
+        let raw = N.div_ceil(8) + N * 64 * 4;
         assert!(
             embed_len < rerank_len && rerank_len < raw,
             "expected RaBitQ ({embed_len}) < SQ8 ({rerank_len}) < raw ({raw})"
         );
 
-        let l2 =
-            |a: &[f32], b: &[f32]| -> f32 { a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum() };
-        let exact_topk = |q: &[f32]| -> std::collections::HashSet<usize> {
-            let mut idx: Vec<usize> = (0..N).collect();
-            idx.sort_by(|&a, &b| {
-                l2(&corpus[a], q)
-                    .partial_cmp(&l2(&corpus[b], q))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            idx.into_iter().take(K).collect()
-        };
-
-        let mut recalls = Vec::with_capacity(Q);
-        for qi in 0..Q {
-            let base = (qi * (N / Q)) % N;
-            let noise = gen_vec((qi as u64).wrapping_add(7_000_000));
-            let query: Vec<f32> = corpus[base]
-                .iter()
-                .zip(&noise)
-                .map(|(v, n)| v + n * 0.01)
-                .collect();
-
-            // Stage 1: RaBitQ candidate prefilter (what C.2 calls in the cold scan).
-            let cand = reader.rabitq_rank(&query, REFINE).unwrap();
-            // Stage 2: SQ8 cascade rerank over the candidate pool → final top-K.
-            let reranked = reader.rerank_rows(0, &query, &cand).unwrap();
-            let got: std::collections::HashSet<usize> =
-                reranked.into_iter().take(K).map(|(row, _)| row).collect();
-
-            let truth = exact_topk(&query);
-            let hits = truth.iter().filter(|i| got.contains(i)).count();
-            recalls.push(hits as f32 / K as f32);
-        }
-        let mean = recalls.iter().sum::<f32>() / recalls.len() as f32;
+        let mean = cold_cascade_recall_mean(&reader, &corpus, Q, K, REFINE);
+        eprintln!("[recall-ratchet] N={N} REFINE={REFINE} mean recall@{K} = {mean:.4}");
         assert!(
             mean >= RATCHET,
             "P3 Phase G: RaBitQ→SQ8 cascade recall@{K} at N={N} = {mean:.3} < ratchet \
              {RATCHET}. Recall regressed — add an f32 rerank column rather than lowering \
              the ratchet."
+        );
+    }
+
+    /// Production-scale cold-recall ratchet (N=100k). At small-N the top-k is
+    /// effectively brute-force-served and barely exercises the approximate cascade;
+    /// this harness runs the RaBitQ→SQ8 path at a corpus size where the stage-1
+    /// candidate pool (REFINE) is a real sub-sample of the corpus, proving recall
+    /// holds before PAX quantization is flipped default-on (rollout Phase 2). Same
+    /// deterministic corpus/cascade as the N=1k gate. RATCHET only goes up (#10).
+    #[test]
+    fn rabitq_cold_recall_harness_n100000_recall_at_10() {
+        const N: usize = 100_000;
+        const Q: usize = 50;
+        const K: usize = 10;
+        const REFINE: usize = 1000; // wider pool at scale — top-k of 10 from 100k
+        const RATCHET: f32 = 0.90;
+
+        let (corpus, block) = build_cold_recall_corpus_and_block(N);
+        let reader = PaxBlockReader::open(&block).unwrap();
+        let mean = cold_cascade_recall_mean(&reader, &corpus, Q, K, REFINE);
+        eprintln!("[recall-ratchet] N={N} REFINE={REFINE} mean recall@{K} = {mean:.4}");
+        assert!(
+            mean >= RATCHET,
+            "PAX RaBitQ→SQ8 cascade recall@{K} at N={N} = {mean:.3} < ratchet {RATCHET}. \
+             A production-scale recall regression blocks the PAX default-on flip — widen \
+             REFINE or add an f32 rerank tier rather than lowering the ratchet."
         );
     }
 

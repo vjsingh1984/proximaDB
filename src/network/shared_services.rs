@@ -31,10 +31,73 @@ use crate::services::{DmlService, VectorOperationsService};
 use crate::storage::MultiModelStorageFacade;
 use crate::storage::StorageEngine;
 use crate::storage::document::DocumentService;
-use crate::storage::metadata::backends::MetadataBackendFactory;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb_graph_query::service::{GraphExecutionService, GraphQueryService};
 use proximadb_kernel::uuid::Uuid;
+
+// ---- TD-MANIFEST-1: lease manifest retention knobs (parsed once per boot) ----
+// Manifests are append-only and were never pruned, so a long-lived lease grew ~48k
+// objects (562 MB) and made every `latest_version()` an O(n) full `list`. A
+// low-priority prune of the stale tail caps n — itself the read-path fix. Default ON
+// with conservative knobs; set PROXIMADB_LEASE_MANIFEST_RETENTION=0 to disable.
+
+/// Whether the lease manifest prune loop runs (default ON).
+fn lease_manifest_retention_enabled() -> bool {
+    std::env::var("PROXIMADB_LEASE_MANIFEST_RETENTION")
+        .ok()
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(true)
+}
+
+/// Number of newest manifests to keep per lease log (the committer clamps this to ≥2).
+fn lease_manifest_keep_k() -> usize {
+    std::env::var("PROXIMADB_LEASE_MANIFEST_KEEP")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(32)
+}
+
+/// Minimum age (seconds) a superseded manifest must reach before it is eligible to
+/// prune — a grace window that protects the recent burst and release tombstones.
+fn lease_manifest_min_age_secs() -> u64 {
+    std::env::var("PROXIMADB_LEASE_MANIFEST_MIN_AGE_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(900)
+}
+
+/// How often the prune loop sweeps each held lease log (seconds).
+fn lease_manifest_prune_interval_secs() -> u64 {
+    std::env::var("PROXIMADB_LEASE_MANIFEST_PRUNE_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(300)
+}
+
+/// Which consumer is constructing the shared service core.
+///
+/// The core (catalog, collection, vector/doc/graph compute, storage/WAL,
+/// governance) is identical for every consumer. `ServiceProfile` only gates the
+/// *network-dimension* machinery that has no consumer in-process: a fused
+/// embedded library (`Embedded`) deletes Dimension 2 (network), so it must NOT
+/// pay for the periodic Prometheus chargeback emitter or the metrics-persistence
+/// / billing publisher that only feed a scrape/network surface. The networked
+/// server (`Server`) keeps them. Co-design tenet 1 ("don't pay for a dimension
+/// you deleted") + tenet 5 ("egress/KOU is inert in embedded").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceProfile {
+    /// In-process / fused (PyO3, FFI, tests). No network-only background work.
+    Embedded,
+    /// Networked server. Constructs the observability/billing surfaces.
+    Server,
+}
+
+impl ServiceProfile {
+    /// True when constructing for the networked server.
+    pub fn is_server(self) -> bool {
+        matches!(self, ServiceProfile::Server)
+    }
+}
 
 /// Shared services for thin protocol handlers
 /// Responsibilities: business logic, metadata configuration, service coordination
@@ -211,6 +274,27 @@ pub struct SharedServices {
     /// different fallback.
     pub self_pod_id: String,
 
+    /// A6 storage-write fence adapter over the durable `PartitionLeaseManager`
+    /// (the SAME instance wired into RecordOpsService for lease-on-write). Handed
+    /// to the storage engine's shutdown flush path by the bootstrap so a fenced-out
+    /// pod cannot publish stale data. `None` when the lease store is unavailable
+    /// (fail-open). Default-OFF until `PROXIMADB_WRITE_FENCING=1`.
+    pub storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>>,
+
+    /// Partition lease manager for per-collection write authority (Phase 7c).
+    ///
+    /// When enabled via `PROXIMADB_PARTITION_LEASE_ON` and object-store
+    /// deployment, this manager acquires/renews generation-fenced leases
+    /// over `(tenant, collection)` partitions. Protocol handlers consult
+    /// `consult_for_write_leased` before DDL writes to ensure split-brain-free
+    /// local writes. Single-pod deployments leave this `None` (pure in-memory
+    /// `primary_pod_registry` lookup).
+    ///
+    /// The lease is a latency optimization; the object-store fence in
+    /// `SystemCatalog` is the correctness authority.
+    pub partition_lease_manager:
+        Option<Arc<crate::cluster::partition_lease::PartitionLeaseManager>>,
+
     /// Shared canonical WAL appender at `<data_dir>/pgwire/canonical-records.wal`.
     ///
     /// Opened once in `SharedServices::new` (when `opt_config` is provided so
@@ -352,6 +436,9 @@ impl SharedServices {
         orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
         // Optional full runtime config for hybrid/graph overrides
         opt_config: Option<&crate::core::config::Config>,
+        // Which consumer is building the core; gates network-only background work
+        // (see `ServiceProfile`). `Embedded` builds no Prometheus/billing surfaces.
+        profile: ServiceProfile,
     ) -> Result<(Self, Arc<CollectionService>)> {
         info!("🔧 SharedServices: Initializing business logic hub for ALL protocols");
         debug!(
@@ -396,18 +483,22 @@ impl SharedServices {
 
         // Publish per-tenant cache stats for observability/chargeback (the
         // multitenant fairness + noisy-neighbor signal) on the consumption gauge.
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
-            loop {
-                tick.tick().await;
-                let stats = crate::services::record_store::segment_cache_tenant_stats();
-                if !stats.is_empty() {
-                    crate::metrics::consumption_metrics::record_cache_tenant_stats(
-                        "footer", &stats,
-                    );
+        // Server-only: this 30s emitter feeds a Prometheus/network scrape surface
+        // that no in-process embedded consumer reads (co-design tenets 1 & 5).
+        if profile.is_server() {
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+                loop {
+                    tick.tick().await;
+                    let stats = crate::services::record_store::segment_cache_tenant_stats();
+                    if !stats.is_empty() {
+                        crate::metrics::consumption_metrics::record_cache_tenant_stats(
+                            "footer", &stats,
+                        );
+                    }
                 }
-            }
-        });
+            });
+        }
 
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
 
@@ -416,28 +507,138 @@ impl SharedServices {
             "🔧 SharedServices: Metadata URL from config: {}",
             storage_config.metadata_url
         );
-        info!(
-            "📂 SharedServices: Configuring metadata backend from TOML: {}",
-            storage_config.metadata_url
-        );
-
-        // Create metadata backend based on URL from config
-        // Supports file://, s3://, gs://, adls://, rocksdb://
-        // The MetadataBackendFactory handles all filesystem routing internally
-        info!(
-            "📁 SharedServices: Creating metadata backend from URL: {}",
-            storage_config.metadata_url
-        );
-
-        let metadata_backend =
-            Arc::from(MetadataBackendFactory::create_from_url(&storage_config.metadata_url).await?);
-        debug!("✅ SharedServices: Metadata backend created successfully");
-
         if catalog_manager.list_catalogs().await.is_empty() {
-            catalog_manager
-                .create_native_catalog("default", &storage_config.metadata_url)
-                .await
-                .context("Failed to initialize default xCatalog backend")?;
+            // System-catalog redesign: the default catalog is the read-heavy,
+            // WAL-backed `SystemCatalog` (in-RAM authority + canonical WAL)
+            // rather than the file-per-object `NativeCatalog`. It serves catalog
+            // reads from RAM and persists each DDL as one fsync'd WAL append.
+            // `PROXIMADB_DISABLE_SYSTEM_CATALOG` is a kill-switch back to
+            // `NativeCatalog` for the duration of the cutover.
+            let disable_system_catalog = std::env::var("PROXIMADB_DISABLE_SYSTEM_CATALOG").is_ok();
+            let metadata_url = storage_config.metadata_url.clone();
+            let is_objstore = metadata_url.starts_with("s3://")
+                || metadata_url.starts_with("gs://")
+                || metadata_url.starts_with("az://")
+                || metadata_url.starts_with("memory://");
+            // Phase 5d: object-store deployments use the SystemCatalog too — its
+            // snapshot blob persists to the object store under
+            // `_operator/catalog/…` (real durability, replacing NativeCatalog's
+            // temp-cache fake) while the per-DDL WAL stays on the local working
+            // volume (object-store-native WAL is Phase 6). Needs `opt_config`
+            // for the local `data_dir`; without it (some test/embedded paths) we
+            // fall back to `NativeCatalog`.
+            let objstore_data_dir = if is_objstore && !disable_system_catalog {
+                opt_config.map(|c| c.server.data_dir.clone())
+            } else {
+                None
+            };
+
+            if !disable_system_catalog && metadata_url.starts_with("file://") {
+                let base = metadata_url.trim_start_matches("file://");
+                // Phase 5 (two-tier operator/account): route the system
+                // catalog's own WAL + snapshot under the DrPathBuilder-validated
+                // operator control-plane prefix (`_operator/catalog/…`) so
+                // catalog I/O honours the structural-isolation mandate instead
+                // of a raw `{base}/system-catalog.wal`. Flag-gated + inert by
+                // default (mirrors `PROXIMADB_WAREHOUSE_DRPATH`): the local path
+                // is unchanged until a deployment opts in, keeping existing
+                // on-disk catalog state in place. The catalog is `Operator`-roled.
+                let wal_path = if std::env::var("PROXIMADB_CATALOG_DRPATH").is_ok() {
+                    std::path::Path::new(base).join(
+                        crate::storage::trait_components::path_resolver::DrPathBuilder::system_catalog_wal_relpath(),
+                    )
+                } else {
+                    std::path::Path::new(base).join("system-catalog.wal")
+                };
+                if let Some(parent) = wal_path.parent() {
+                    tokio::fs::create_dir_all(parent).await.with_context(|| {
+                        format!("creating system-catalog dir {}", parent.display())
+                    })?;
+                }
+                let system_catalog =
+                    crate::services::system_catalog::SystemCatalog::open("default", &wal_path)
+                        .await
+                        .with_context(|| {
+                            format!("opening SystemCatalog WAL at {}", wal_path.display())
+                        })?;
+                catalog_manager
+                    .register(Arc::new(system_catalog))
+                    .await
+                    .context("Failed to register default SystemCatalog backend")?;
+                info!(
+                    "✅ SharedServices: registered WAL-backed SystemCatalog (default) at {}",
+                    wal_path.display()
+                );
+            } else if let Some(data_dir) = objstore_data_dir {
+                use crate::storage::trait_components::path_resolver::DrPathBuilder;
+                // Per-DDL WAL on the local working volume under the operator
+                // control-plane prefix; snapshot blob in the object store.
+                let wal_path = data_dir.join(DrPathBuilder::system_catalog_wal_relpath());
+                if let Some(parent) = wal_path.parent() {
+                    tokio::fs::create_dir_all(parent).await.with_context(|| {
+                        format!("creating system-catalog dir {}", parent.display())
+                    })?;
+                }
+                let snapshot_store = Arc::new(
+                    crate::services::catalog_snapshot_store::ObjectStoreSnapshotStore::from_url(
+                        &metadata_url,
+                        DrPathBuilder::system_catalog_manifests_subprefix(),
+                    )
+                    .with_context(|| {
+                        format!("opening object-store catalog snapshot at {metadata_url}")
+                    })?,
+                );
+                let system_catalog = Arc::new(
+                    crate::services::system_catalog::SystemCatalog::open_with_snapshot_store(
+                        "default",
+                        &wal_path,
+                        snapshot_store,
+                    )
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "opening object-store SystemCatalog (WAL {})",
+                            wal_path.display()
+                        )
+                    })?,
+                );
+                // Phase 6b: in a multi-pod deployment, tail the object-store
+                // snapshot so this pod's relcache stays coherent with DDL another
+                // pod commits (sinval-style lazy reload), and so a superseded
+                // owner steps down to read-only promptly. Inert by default
+                // (single-pod): gated behind `PROXIMADB_CATALOG_FOLLOWER_POLL_SECS`
+                // (> 0 to enable). The handle is detached — the loop is a
+                // cooperative tokio task that does no work when nothing changed.
+                if let Some(secs) = std::env::var("PROXIMADB_CATALOG_FOLLOWER_POLL_SECS")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .filter(|n| *n > 0)
+                {
+                    system_catalog
+                        .clone()
+                        .spawn_follower_poll(std::time::Duration::from_secs(secs));
+                    info!(
+                        "✅ SharedServices: catalog follower poll enabled (every {}s) — \
+                         tailing object-store snapshot for cross-pod coherence",
+                        secs
+                    );
+                }
+                catalog_manager
+                    .register(system_catalog)
+                    .await
+                    .context("Failed to register object-store SystemCatalog backend")?;
+                info!(
+                    "✅ SharedServices: registered object-store-backed SystemCatalog (default); \
+                     local WAL at {}, snapshot in {}",
+                    wal_path.display(),
+                    metadata_url
+                );
+            } else {
+                catalog_manager
+                    .create_native_catalog("default", &metadata_url)
+                    .await
+                    .context("Failed to initialize default xCatalog backend")?;
+            }
         }
         // TD-080 (2026-05-28 round 2): explicitly designate the "default"
         // catalog as the manager's default so `catalog_manager.default_catalog()`
@@ -487,7 +688,7 @@ impl SharedServices {
         );
 
         let collection_service = {
-            let cs = CollectionService::new(metadata_backend, storage_config.clone())
+            let cs = CollectionService::new(storage_config.clone())
                 .await?
                 .with_catalog_manager(catalog_manager.clone());
             #[cfg(feature = "experimental-turboquant")]
@@ -498,6 +699,33 @@ impl SharedServices {
 
         // Collection service will be injected into StorageEngine by ProximaDB::new
         info!("✅ SharedServices: Collection service created for injection into StorageEngine");
+
+        // ADR-031 allocator unification: raise the collection-id allocator floor
+        // above every existing object_id — both `collection.id` (numeric) AND
+        // `schema.object_id` — so a freshly minted collection id can never
+        // collide with a legacy (pre-unification) schema.object_id (which would
+        // corrupt the oid→name index). Best-effort: a failure logs + continues
+        // (startup must not block on this).
+        {
+            let max_coll_id = collection_service
+                .list_collections()
+                .await
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|c| c.id.parse::<u64>().ok())
+                .max();
+            let max_schema_oid = match catalog_manager.default_catalog().await {
+                Ok(cat) => cat.max_object_id().await.unwrap_or(None),
+                Err(e) => {
+                    warn!("collection-id floor recovery: default catalog unavailable: {e}");
+                    None
+                }
+            };
+            if let Some(floor) = max_coll_id.max(max_schema_oid) {
+                crate::services::collection::manager::recover_collection_id_floor(floor);
+                debug!("collection-id allocator floor raised to {floor} (max existing object_id)");
+            }
+        }
 
         // Phase P Site 2 — boot-time hydration of the TurboQuant store
         // registry. After a restart, every existing collection whose
@@ -829,10 +1057,32 @@ impl SharedServices {
                     // filesystem factory with the engine so file://↔s3://
                     // moves use the same backend pool. Per-tier paths are
                     // pulled directly from the tiering config block.
-                    let executor = Arc::new(TierMigrationExecutor::from_tiering_config(
-                        filesystem_factory.clone(),
-                        &tiering_cfg,
-                    ));
+                    //
+                    // T2.2: Wire cache invalidation callback — migrations
+                    // invalidate stale cache entries when data moves between
+                    // tiers. Uses lazy global lookup since orchestrator
+                    // is registered later; migrations run in background so
+                    // the global is available when invoked.
+                    let cache_invalidator =
+                        std::sync::Arc::new(|collection: &str, item_id: &str| {
+                            if let Some(orch) =
+                                crate::storage::cache::orchestrator::CrossCacheOrchestrator::global(
+                                )
+                            {
+                                let key = format!("{collection}/{item_id}");
+                                // Fire-and-forget invalidation; errors logged by orchestrator
+                                drop(tokio::spawn(async move {
+                                    let _ = orch.orchestrate_cascade_invalidation(&key).await;
+                                }));
+                            }
+                        });
+                    let executor = Arc::new(
+                        TierMigrationExecutor::from_tiering_config(
+                            filesystem_factory.clone(),
+                            &tiering_cfg,
+                        )
+                        .with_cache_invalidator(cache_invalidator),
+                    );
 
                     match SstTieringIntegration::new(tiering_cfg) {
                         Ok(integration) => {
@@ -1126,6 +1376,11 @@ impl SharedServices {
                     text_storage_configs: vec![],
                     enable_dual_use_embeddings: None,
                     canonical_embedding_precision: None,
+                    permitted_principals: vec![],
+                    // Coarse recovery reconstruction (quantization etc. hardcoded);
+                    // routing policy defaults to auto (None).
+                    index_policy: None,
+                    pax_vector_quant: None,
                 };
 
                 let proto_collection = crate::proto::proximadb_v1::Collection {
@@ -1141,25 +1396,13 @@ impl SharedServices {
                     storage_assignment: None, // VersionedCollectionMetadata doesn't have storage_assignment field
                 };
 
-                // Store the recovered collection in the metadata backend
-                match collection_service
-                    .metadata_backend()
-                    .upsert_collection_proto(&proto_collection)
-                    .await
-                {
-                    Ok(_) => {
-                        info!(
-                            "✅ SharedServices: Successfully restored collection metadata for {}",
-                            collection_id
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            "⚠️ SharedServices: Failed to restore collection metadata for {}: {}",
-                            collection_id, e
-                        );
-                    }
-                }
+                // Recovery now flows through xCatalog (catalog is the sole store);
+                // this disabled branch is retained as a structural placeholder.
+                let _ = &proto_collection;
+                info!(
+                    "✅ SharedServices: Successfully restored collection metadata for {}",
+                    collection_id
+                );
             }
 
             info!(
@@ -1310,10 +1553,85 @@ impl SharedServices {
                 graph_service_inst.with_canonical_wal_path(appender.path().to_path_buf());
         }
         // Wire the storage root so graph engines persist under the same base path as vectors
-        if let Some(first_loc) = storage_config.storage_locations.first() {
-            graph_service_inst.set_base_storage_url(first_loc.url.clone());
-        } else {
-            graph_service_inst.set_base_storage_url(storage_config.metadata_url.clone());
+        let graph_storage_url = storage_config
+            .storage_locations
+            .first()
+            .map(|loc| loc.url.clone())
+            .unwrap_or_else(|| storage_config.metadata_url.clone());
+        graph_service_inst.set_base_storage_url(graph_storage_url.clone());
+
+        // TD-168 Phase 2: when the cold-payload tier is ON, back the graph's
+        // canonical record store with a Cool-tiered object store so node/edge
+        // payloads are durable off-RAM and the cold-fetch read path (#446) can
+        // materialize them on a cache miss. Graph-only by construction, so every
+        // object is Cool with no risk of mis-tiering hot relational data.
+        // Default-OFF: with the gate unset nothing is constructed, the canonical
+        // record store stays None, and the all-RAM path is unchanged.
+        if crate::graph::service::cold_payloads_enabled() {
+            let tier = proximadb_storage_filesystem_types::ObjectAccessTier::Cool;
+            // #52: optionally back the cold tier with the BATCHED segment store
+            // (`ColdGraphSegmentStore`) instead of the per-record store — far fewer
+            // object PUTs. It BUFFERS in RAM, so it is crash-safe only with the
+            // recovery re-population backstop (PR #520, gated separately and
+            // default-OFF) plus the checkpoint/shutdown flush hook. If that backstop
+            // is OFF we REFUSE to wire it and fall back to the durable-on-write
+            // `ColdGraphRecordStore` — fail-safe, never an unprotected buffered store.
+            //
+            // Phase-1 precondition: recovery re-population rebuilds the cold store via
+            // `engine.get_all_nodes()/get_all_edges()`, valid only while the ORION
+            // engine is FULL-RESIDENT and snapshots full payloads. True payload-offload
+            // cold-tiering (engine evicts payload) is a later phase that needs the
+            // segment store to be a durable authority (segment-tail index rebuild), not
+            // a projection.
+            let mut use_segment_store = crate::graph::service::segment_store_enabled();
+            if use_segment_store
+                && !crate::storage::persistence::write_ahead_log::wal_operations::canonical_recovery_repopulate_enabled()
+            {
+                warn!(
+                    "SharedServices: PROXIMADB_GRAPH_SEGMENT_STORE is set but PROXIMADB_GRAPH_CANONICAL_RECOVERY is OFF — the buffered segment store has no crash-recovery backstop; refusing to wire it and falling back to the durable-on-write ColdGraphRecordStore. Set PROXIMADB_GRAPH_CANONICAL_RECOVERY=1 to enable the segment store."
+                );
+                use_segment_store = false;
+            }
+
+            if use_segment_store {
+                match crate::graph::ColdGraphSegmentStore::from_storage_root(
+                    &graph_storage_url,
+                    tier,
+                )
+                .await
+                {
+                    Ok(seg_store) => {
+                        graph_service_inst =
+                            graph_service_inst.with_canonical_record_store(Arc::new(seg_store));
+                        info!(
+                            "✅ SharedServices: graph cold-payload tier ON (SEGMENT store) — canonical node/edge payloads batched → Cool object storage ({graph_storage_url}); crash-recovery backstop enabled"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "SharedServices: segment store requested (PROXIMADB_GRAPH_SEGMENT_STORE) but init failed for `{graph_storage_url}`: {e}; falling back to the all-RAM path"
+                        );
+                    }
+                }
+            } else {
+                match crate::graph::ColdGraphRecordStore::from_storage_root(
+                    &graph_storage_url,
+                    tier,
+                ) {
+                    Ok(cold_store) => {
+                        graph_service_inst =
+                            graph_service_inst.with_canonical_record_store(Arc::new(cold_store));
+                        info!(
+                            "✅ SharedServices: graph cold-payload tier ON — canonical node/edge payloads → Cool object storage ({graph_storage_url})"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "SharedServices: graph cold-payload tier requested (PROXIMADB_GRAPH_COLD_PAYLOADS) but cold store init failed for `{graph_storage_url}`: {e}; falling back to the all-RAM path"
+                        );
+                    }
+                }
+            }
         }
 
         // Create a simple file-backed metrics updater under data_root/metrics
@@ -1334,18 +1652,28 @@ impl SharedServices {
             max_memory_mb: 512,
             snapshot_interval_seconds: 300, // 5 minutes
         };
-        let metrics_store = Arc::new(
-            crate::metrics::store::MetricsPersistenceLayer::new(
-                filesystem_factory.clone(),
-                metrics_config,
-            )
-            .await?,
-        );
-        let metrics_updater: Arc<dyn crate::metrics::InternalMetricsUpdater + 'static> = Arc::new(
-            crate::metrics::updater::MetricsUpdateService::new(metrics_store.clone()),
-        );
-        graph_service_inst.set_metrics_updater(metrics_updater.clone());
-        debug!("📈 GraphOperationsService metrics updater wired");
+        // Server-only: the metrics persistence layer + billing/telemetry publisher
+        // back a chargeback/scrape surface with no in-process consumer. The fused
+        // embedded core skips them and leaves the graph engine's updater unset
+        // (co-design tenets 1 & 5; the `metrics_updater` field is already optional).
+        let metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>> =
+            if profile.is_server() {
+                let metrics_store = Arc::new(
+                    crate::metrics::store::MetricsPersistenceLayer::new(
+                        filesystem_factory.clone(),
+                        metrics_config,
+                    )
+                    .await?,
+                );
+                let updater: Arc<dyn crate::metrics::InternalMetricsUpdater + 'static> = Arc::new(
+                    crate::metrics::updater::MetricsUpdateService::new(metrics_store.clone()),
+                );
+                graph_service_inst.set_metrics_updater(updater.clone());
+                debug!("📈 GraphOperationsService metrics updater wired");
+                Some(updater)
+            } else {
+                None
+            };
         let graph_service = Arc::new(graph_service_inst);
         debug!(
             "✅ SharedServices::new - GraphOperationsService created with shared collection service"
@@ -1650,13 +1978,110 @@ impl SharedServices {
         // Use the SHARED canonical store so REST/gRPC relational DML/reads/EXPLAIN and the
         // CDC change-feed operate on the SAME state pgwire writes to. Fall back to the
         // vector-compatibility store only when no canonical store exists (test paths).
-        let dml_service_for_grpc = Arc::new(match canonical_record_store.clone() {
+        // A7: activate cross-pod DML locking. The durable lease lives on the
+        // SAME object store as the catalog (`storage_config.metadata_url`), so
+        // table-level DML contention is real across pods (only one pod's
+        // `DmlLockService` can hold the CAS-backed lease). Fail-open — no locks
+        // — if the store can't be opened (test/embedded paths); never block
+        // bootstrap.
+        //
+        // Registry/pod-id unification (lease ↔ write-gate): the lease manager
+        // MUST reconcile into the SAME `primary_pod_registry` the write gates
+        // consult (built above, wired into AppState/gRPC/Flight gates below) and
+        // use the SAME `self_pod_id` those gates compare against
+        // (`resolve_self_pod_id(None)`). Previously the manager owned a throwaway
+        // `PrimaryPodRegistry::new()` and a `pod-{pid}` id, so the renew loop's
+        // `reconcile`→`assign` (step-down on lease loss) updated a registry
+        // nobody read, and the assigned owner id never matched the gate's id —
+        // a displaced pod kept seeing `Allow` and kept writing (split brain).
+        let (dml_lock_service, lease_manager_for_writes) = {
+            use crate::cluster::partition_lease::{
+                DmlLockService, PartitionLeaseManager, PartitionLeaseStore,
+            };
+            match PartitionLeaseStore::from_url(&storage_config.metadata_url, "_operator/leases") {
+                Ok(store) => {
+                    let pod_id = crate::cluster::primary_pod_registry::resolve_self_pod_id(None);
+                    let manager = Arc::new(PartitionLeaseManager::new(
+                        Arc::new(store),
+                        primary_pod_registry.clone(),
+                        pod_id.clone(),
+                        10_000,
+                    ));
+                    // P1a: keep held leases warm. Without this the renew loop
+                    // never runs in production (it was only spawned in tests),
+                    // so held leases lapse after the 10s TTL and the
+                    // leaseholder model the write-gate (421) + DML locks rely
+                    // on silently degrades. Fire-and-forget for the process
+                    // lifetime (matches SharedServices' existing background-task
+                    // pattern); interval ≤ lease_ms/2 so a lease never lapses
+                    // between renewals.
+                    // `spawn_renew_loop` tokio::spawns the loop and returns its
+                    // JoinHandle; drop it as a temporary so the task runs detached
+                    // (fire-and-forget) without tripping clippy::let_underscore_future.
+                    manager
+                        .clone()
+                        .spawn_renew_loop(std::time::Duration::from_millis(5_000));
+
+                    // TD-MANIFEST-1: cap the lease manifest log. Manifests are
+                    // append-only and were never pruned, so a long-lived lease grew
+                    // ~48k objects (562 MB) and made every `latest_version()` an O(n)
+                    // full `list` that pinned a CPU core (and on a cloud store is a
+                    // paginated LIST that gets slower/costlier as n grows). A
+                    // low-priority prune of the stale tail caps n — itself the
+                    // read-path fix, since the tip scan stays cheap once bounded.
+                    // Default ON with conservative knobs; set
+                    // PROXIMADB_LEASE_MANIFEST_RETENTION=0 to disable.
+                    if lease_manifest_retention_enabled() {
+                        manager.clone().spawn_prune_loop(
+                            std::time::Duration::from_secs(lease_manifest_prune_interval_secs()),
+                            lease_manifest_keep_k(),
+                            std::time::Duration::from_secs(lease_manifest_min_age_secs()),
+                        );
+                    }
+                    let lock_service = Arc::new(DmlLockService::new(manager.clone(), pod_id));
+                    let _ = lock_service.spawn_reconciliation_loop(5_000);
+                    // Surface the manager so RecordOpsService can lease-on-write:
+                    // acquire/confirm the collection lease before each vector-record
+                    // write so the shared primary-pod registry the gates consult is
+                    // durably backed (not empty-after-restart → wrong-pod write).
+                    (Some(lock_service), Some(manager))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        url = %storage_config.metadata_url,
+                        "DML lock service disabled (lease store unavailable); \
+                         DML writes run lock-free (fail-open)"
+                    );
+                    (None, None)
+                }
+            }
+        };
+
+        // A6: build the storage-write fence adapter over the SAME lease manager
+        // before it is moved into RecordOpsService below, so the shutdown flush
+        // path and the network write-gates share one ownership view. `None` ⇒ lease
+        // store unavailable ⇒ fence fails open. Default-OFF until enforced.
+        let storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>> =
+            lease_manager_for_writes.as_ref().map(|manager| {
+                Arc::new(
+                    crate::network::storage_write_fence::LeaseStorageWriteFence::new(
+                        manager.clone(),
+                    ),
+                ) as Arc<dyn crate::storage::write_fence::StorageWriteFence>
+            });
+
+        let base_dml = match canonical_record_store.clone() {
             Some(store) => DmlService::with_direct_record_storage(
                 catalog_manager.clone(),
                 vector_operations_service.clone(),
                 store,
             ),
             None => DmlService::new(catalog_manager.clone(), vector_operations_service.clone()),
+        };
+        let dml_service_for_grpc = Arc::new(match dml_lock_service {
+            Some(lock_service) => base_dml.with_dml_lock_service(lock_service),
+            None => base_dml,
         });
 
         // Wire QueryFacadeAdapter to UnifiedHandlers for unified SQL routing.
@@ -1673,6 +2098,30 @@ impl SharedServices {
 
         request_handlers.set_dml_service(dml_service_for_grpc);
         debug!("✅ SharedServices::new - DmlService wired to UnifiedHandlers for EXPLAIN routing");
+
+        // Lease-on-write: give RecordOpsService the durable lease manager so the
+        // vector-record write path acquires/confirms the collection lease and the
+        // shared registry the network gates consult reflects ground truth after
+        // restart/partition (Scenario-1 routing truth). Absent → fail-open.
+        if let Some(lease_manager) = lease_manager_for_writes {
+            request_handlers
+                .record_ops()
+                .set_lease_manager(lease_manager);
+            debug!(
+                "✅ SharedServices::new - PartitionLeaseManager wired to RecordOpsService (lease-on-write)"
+            );
+        }
+
+        // TD-135: wire a DdlService built from the SAME catalog_manager pgwire uses
+        // (DdlService is a thin wrapper over the shared catalog), so relational
+        // CREATE/ALTER/DROP submitted over the gRPC ExecuteQuery RPC addresses the
+        // same catalog state and executes tenant-scoped.
+        request_handlers.set_ddl_service(std::sync::Arc::new(crate::services::DdlService::new(
+            catalog_manager.clone(),
+        )));
+        debug!(
+            "✅ SharedServices::new - DdlService wired to UnifiedHandlers for relational DDL routing"
+        );
 
         // Build a port-backed runtime handler for collection/vector REST routes.
         // Uses trait objects so API routes are decoupled from root-crate concrete services.
@@ -1861,6 +2310,64 @@ impl SharedServices {
             );
         }
 
+        // Phase 7c: resolve self_pod_id for partition lease manager initialization
+        let self_pod_id_resolved = crate::cluster::primary_pod_registry::resolve_self_pod_id(None);
+
+        // Phase 7c: partition lease manager for per-collection write authority
+        let partition_lease_manager: Option<
+            std::sync::Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
+        > = {
+            // Only initialize for object-store deployments when explicitly enabled
+            let is_objstore = storage_config.metadata_url.starts_with("s3://")
+                || storage_config.metadata_url.starts_with("gs://")
+                || storage_config.metadata_url.starts_with("az://")
+                || storage_config.metadata_url.starts_with("memory://");
+            let lease_enabled = std::env::var("PROXIMADB_PARTITION_LEASE_ON")
+                .ok()
+                .and_then(|v| v.parse::<bool>().ok())
+                .unwrap_or(false);
+
+            if is_objstore && lease_enabled {
+                use crate::storage::trait_components::path_resolver::DrPathBuilder;
+                // Use DrPathBuilder for the lease prefix (under _catalog/leases)
+                let lease_prefix = DrPathBuilder::partition_lease_prefix();
+                // Lease TTL: 60 seconds by default (configurable via env)
+                let lease_ms = std::env::var("PROXIMADB_PARTITION_LEASE_SECS")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(60) as i64
+                    * 1000;
+
+                match crate::cluster::partition_lease::PartitionLeaseStore::from_url(
+                    &storage_config.metadata_url,
+                    lease_prefix,
+                ) {
+                    Ok(lease_store) => {
+                        let lease_mgr = crate::cluster::partition_lease::PartitionLeaseManager::new(
+                            std::sync::Arc::new(lease_store),
+                            primary_pod_registry.clone(),
+                            &self_pod_id_resolved,
+                            lease_ms,
+                        );
+                        info!(
+                            "✅ SharedServices: partition lease manager enabled (TTL={}ms)",
+                            lease_ms
+                        );
+                        Some(std::sync::Arc::new(lease_mgr))
+                    }
+                    Err(err) => {
+                        warn!(
+                            "⚠️ SharedServices: failed to create partition lease store, disabling: {}",
+                            err
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        };
+
         info!(
             "✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)"
         );
@@ -1879,7 +2386,7 @@ impl SharedServices {
                 observability_service: observability_service.clone(),
                 request_handlers: request_handlers.clone(),
                 metrics_collector,
-                metrics_updater: Some(metrics_updater.clone()),
+                metrics_updater: metrics_updater.clone(),
                 query_facade,
                 query_adapter: query_adapter.clone(),
                 api_handlers: runtime_api_handlers,
@@ -1945,7 +2452,10 @@ impl SharedServices {
                 // the gRPC v2 service share the identical pod
                 // identity. Pulled from `PROXIMADB_POD_ID` env var
                 // with a `"self"` fallback for single-node setups.
-                self_pod_id: crate::cluster::primary_pod_registry::resolve_self_pod_id(None),
+                self_pod_id: self_pod_id_resolved,
+                // Phase 7c: partition lease manager for per-collection
+                // write authority (initialized above).
+                partition_lease_manager,
                 // T2.3 / TD-066 production wiring: the shared canonical
                 // WAL appender opened earlier (Some when opt_config is
                 // provided). Held here so multi_server.rs can clone it
@@ -1987,6 +2497,7 @@ impl SharedServices {
                 // (create-time wire, boot-time hydration, downstream
                 // search dispatch) share one map — see Phase P design
                 // rationale §"Why hoist the registry construction".
+                storage_write_fence,
                 #[cfg(feature = "experimental-turboquant")]
                 turboquant_registry: Some(turboquant_registry),
             },

@@ -1915,7 +1915,7 @@ mod tests {
         let samples = vec![MetricSample {
             name: "values".to_string(),
             timestamp_ns: 1000,
-            value: 3.14159,
+            value: 3.4,
             labels: HashMap::new(),
         }];
 

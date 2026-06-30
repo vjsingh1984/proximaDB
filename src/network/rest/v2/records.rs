@@ -38,6 +38,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, error, info};
+use utoipa::{IntoParams, ToSchema};
 
 use crate::api_handlers::{
     RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordDeleteBatchRequest,
@@ -376,7 +377,7 @@ fn convert_typed_filters_to_clauses(
 /// live contract is exposed via `WriteContractHealth` on the route-health
 /// diagnostic endpoint (`GET /api/v2/_diagnostics/collections/{id}/route-health`);
 /// see also `docs/SUPPORTED_SURFACE.adoc` "Not Supported in v0.2".
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct InsertRecordsRequest {
     /// Records to insert
     pub records: Vec<ProximaRecordInput>,
@@ -395,13 +396,15 @@ pub struct InsertRecordsRequest {
 /// This is the JSON-serializable input format for ProximaRecord.
 /// It uses serde_json::Value for typed fields to support dynamic typing
 /// at the API boundary, with validation happening during conversion.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ProximaRecordInput {
     /// Record ID (optional, will be auto-generated if not provided)
     pub id: Option<String>,
     /// Vector embedding (required)
+    #[schema(value_type = Vec<f32>)]
     pub vector: Vec<f32>,
     /// Canonical rich property map.
+    #[schema(value_type = Option<HashMap<String, Value>>)]
     pub props: Option<HashMap<String, RestProximaValue>>,
     /// Dedicated TEXT fields with storage hints
     pub text_fields: Option<Vec<TextFieldInput>>,
@@ -1027,7 +1030,7 @@ fn typed_filter_to_rich(filter: &TypedFilter) -> Result<RichFilterCondition, Api
 ///
 /// TEXT fields are stored in dedicated columns with optional chunking
 /// for large content. The storage hint helps optimize storage strategy.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct TextFieldInput {
     /// Field name
     pub name: String,
@@ -1043,7 +1046,7 @@ pub struct TextFieldInput {
 }
 
 /// Response for insert operation
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct InsertRecordsResponse {
     /// Number of successfully inserted records
     pub inserted_count: usize,
@@ -1056,7 +1059,7 @@ pub struct InsertRecordsResponse {
 }
 
 /// Error details for a failed record insertion
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct InsertError {
     /// Index of the record in the request
     pub index: usize,
@@ -1083,6 +1086,21 @@ pub struct InsertError {
 /// - `400 Bad Request`: Invalid request format or validation error
 /// - `404 Not Found`: Collection does not exist
 /// - `500 Internal Server Error`: Storage or processing error
+#[utoipa::path(
+    post,
+    path = "/api/v2/collections/{collection_id}/records/batch",
+    tag = "Records",
+    operation_id = "insertRecords",
+    summary = "Insert or upsert ProximaRecord batches.",
+    params(
+        ("collection_id" = String, Path, description = "Collection name/ID."),
+    ),
+    request_body = InsertRecordsRequest,
+    responses(
+        (status = 200, description = "Batch write result.", body = InsertRecordsResponse),
+        (status = 400, description = "Invalid request.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn insert_records(
     Path(collection): Path<String>,
     State(state): State<AppState>,
@@ -1269,7 +1287,7 @@ pub async fn insert_records(
     );
 
     match state
-        .request_handlers
+        .record_ops
         .handle_record_batch_for_tenant(batch_request, Some(&tenant.tenant_id))
         .await
     {
@@ -1354,11 +1372,13 @@ pub async fn insert_records(
 ///     "include_text": true
 /// }
 /// ```
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct TypedSearchRequest {
     /// Query vector
+    #[schema(value_type = Vec<f32>, min_items = 1)]
     pub vector: Vec<f32>,
     /// Number of results to return
+    #[schema(minimum = 1)]
     pub top_k: usize,
     /// Typed filters with operator support
     pub filters: Option<Vec<TypedFilter>>,
@@ -1381,7 +1401,7 @@ pub struct TypedSearchRequest {
 /// A typed filter for search operations
 ///
 /// Supports various comparison operators with type-safe values.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct TypedFilter {
     /// Field name to filter on
     pub field: String,
@@ -1401,28 +1421,32 @@ pub struct TypedFilter {
     /// - "ends_with": String ends with suffix
     pub op: String,
     /// Filter value (type depends on field type)
+    #[schema(value_type = Value)]
     pub value: RestProximaValue,
     /// Upper bound for "between" operator
+    #[schema(value_type = Option<Value>)]
     pub value_upper: Option<RestProximaValue>,
 }
 
 /// Search result with typed fields
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct TypedSearchResult {
     /// Record ID
     pub id: String,
     /// Similarity score (0.0 - 1.0 for cosine, distance for L2)
     pub score: f32,
     /// Vector embedding (if requested)
+    #[schema(value_type = Option<Vec<f32>>)]
     pub vector: Option<Vec<f32>>,
     /// Rich properties from the record
+    #[schema(value_type = HashMap<String, Value>)]
     pub props: HashMap<String, RestProximaValue>,
     /// TEXT fields (if include_text is true)
     pub text_fields: Option<Vec<TextFieldOutput>>,
 }
 
 /// Output format for TEXT fields
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct TextFieldOutput {
     /// Field name
     pub name: String,
@@ -1435,7 +1459,7 @@ pub struct TextFieldOutput {
 }
 
 /// Search response with typed results
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct TypedSearchResponse {
     /// Search results
     pub results: Vec<TypedSearchResult>,
@@ -1445,19 +1469,59 @@ pub struct TypedSearchResponse {
     pub latency_ms: u64,
     /// Request ID for tracing
     pub request_id: String,
+    /// TD-064: predicate-aware shortfall — present when a filtered search
+    /// returned fewer than the requested `top_k` after the WAL+AXIS+storage
+    /// merge. **Always emitted when present (NOT `debug`-gated)**, unlike
+    /// `search_plan_trace`: a silent `<top_k` under a tenant/RLS filter is
+    /// fail-open, so the client must be able to distinguish "fewer than k
+    /// records match my filter" from "the engine returned my full top-k".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub predicate_shortfall: Option<PredicateShortfallWire>,
     /// SearchPlanTrace (LLD §10) — the per-query telemetry envelope that
     /// upstream gateways consume for metering and planner-v2 training.
     /// Phase 0 emits a stub trace populated from request_id + latency; later
     /// phases fill in the per-stage counters. Only emitted when the request
     /// sets `debug=true` (LLD §1 contract).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Value>)]
     pub search_plan_trace: Option<crate::observability::search_plan_trace::SearchPlanTrace>,
     /// Human-readable explain summary derived from the SearchPlanTrace.
     /// Only emitted when the request sets `debug=true` — gives an on-call
     /// operator a one-glance view of the plan, cache result, and any
     /// actionable hints (high scan fraction, repair triggered, ...).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Value>)]
     pub explain: Option<crate::observability::route_explain::RouteExplain>,
+}
+
+/// TD-064: predicate-aware recall shortfall (REST wire shape).
+///
+/// Mirrors `observability::search_plan_trace::PredicateShortfall` as an
+/// explicit REST/OpenAPI schema so the field is typed and documented on the
+/// wire without forcing the observability type (or the slim `IndexQueryResult`
+/// DTO) to derive `ToSchema`.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PredicateShortfallWire {
+    /// The `top_k` value the caller asked for.
+    pub requested_k: u32,
+    /// Results actually returned after predicate filtering + merge.
+    pub returned_k: u32,
+    /// Candidate pool size considered before the predicate (oversample budget).
+    pub oversample_pool: u32,
+    /// ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or
+    /// `pre_filter`).
+    pub ann_filtering_mode: String,
+}
+
+impl From<&crate::observability::search_plan_trace::PredicateShortfall> for PredicateShortfallWire {
+    fn from(sf: &crate::observability::search_plan_trace::PredicateShortfall) -> Self {
+        Self {
+            requested_k: sf.requested_k,
+            returned_k: sf.returned_k,
+            oversample_pool: sf.oversample_pool,
+            ann_filtering_mode: sf.ann_filtering_mode.clone(),
+        }
+    }
 }
 
 /// POST /api/v2/collections/{collection}/search
@@ -1477,6 +1541,21 @@ pub struct TypedSearchResponse {
 /// - `400 Bad Request`: Invalid request format or filter error
 /// - `404 Not Found`: Collection does not exist
 /// - `500 Internal Server Error`: Search execution error
+#[utoipa::path(
+    post,
+    path = "/api/v2/collections/{collection_id}/search",
+    tag = "Search",
+    operation_id = "searchRecords",
+    summary = "Search records with vector similarity and typed filters.",
+    params(
+        ("collection_id" = String, Path, description = "Collection name/ID."),
+    ),
+    request_body = TypedSearchRequest,
+    responses(
+        (status = 200, description = "Search results.", body = TypedSearchResponse),
+        (status = 400, description = "Invalid request.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn search_with_typed_filters(
     Path(collection): Path<String>,
     State(state): State<AppState>,
@@ -1579,7 +1658,7 @@ pub async fn search_with_typed_filters(
         "rest.v2.records.search",
         crate::observability::predicate_diagnostics::scope(async {
             let outcome = state
-                .request_handlers
+                .record_ops
                 .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
                 .await;
             let downgraded =
@@ -1619,7 +1698,6 @@ pub async fn search_with_typed_filters(
         }),
     )
     .await;
-    let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
 
     match search_outcome {
         Ok(resp) => {
@@ -1747,11 +1825,12 @@ pub async fn search_with_typed_filters(
                     // in-scope above → actual_egress_gb (the KEU billing quantity
                     // the control plane prices). 0 on the free same-AZ path.
                     egress_bytes,
-                    // TD-064: shortfall pulled from the task-local
-                    // diagnostics bus established above. `None` when
-                    // no AxisManager-level shortfall was recorded
-                    // during this search.
-                    predicate_shortfall: predicate_shortfall.clone(),
+                    // TD-064: shortfall is now a first-class field on the
+                    // service response (`resp.predicate_shortfall`),
+                    // recomputed authoritatively against the final merged
+                    // result. Feed the same value into the debug-gated
+                    // EXPLAIN/trace so both surfaces agree.
+                    predicate_shortfall: resp.predicate_shortfall.clone(),
                     // Phase K: TurboQuant EXPLAIN payload pulled from
                     // the same task-local bus. `None` for searches
                     // that didn't route through TurboQuant scoring;
@@ -1832,6 +1911,9 @@ pub async fn search_with_typed_filters(
                 total_matches: Some(total_matches),
                 latency_ms,
                 request_id: request_id.clone(),
+                // TD-064: typed, top-level, always-on shortfall (mapped from
+                // the service response field). `None` on the happy path.
+                predicate_shortfall: resp.predicate_shortfall.as_ref().map(Into::into),
                 search_plan_trace: trace_field,
                 explain: explain_field,
             };
@@ -1857,7 +1939,8 @@ pub async fn search_with_typed_filters(
 }
 
 /// Query parameters for getting a single record
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct GetRecordV2Query {
     /// Whether to include the vector in the response
     pub include_vector: Option<bool>,
@@ -1866,13 +1949,15 @@ pub struct GetRecordV2Query {
 }
 
 /// Response for getting a single record
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RecordV2Response {
     /// Record ID
     pub id: String,
     /// Vector embedding (if requested)
+    #[schema(value_type = Option<Vec<f32>>)]
     pub vector: Option<Vec<f32>>,
     /// Rich properties from the record
+    #[schema(value_type = HashMap<String, Value>)]
     pub props: HashMap<String, RestProximaValue>,
     /// TEXT fields (if include_text is true)
     pub text_fields: Option<Vec<TextFieldOutput>>,
@@ -1883,7 +1968,7 @@ pub struct RecordV2Response {
 }
 
 /// Response for deleting a single record.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DeleteRecordV2Response {
     /// Whether the delete tombstone was accepted.
     pub success: bool,
@@ -1915,6 +2000,22 @@ pub struct DeleteRecordV2Response {
 ///
 /// - `404 Not Found`: Collection or record does not exist
 /// - `500 Internal Server Error`: Retrieval failed
+#[utoipa::path(
+    get,
+    path = "/api/v2/collections/{collection_id}/records/{record_id}",
+    tag = "Records",
+    operation_id = "getRecord",
+    summary = "Get a record by ID.",
+    params(
+        ("collection_id" = String, Path, description = "Collection name/ID."),
+        ("record_id" = String, Path, description = "Record ID."),
+        GetRecordV2Query,
+    ),
+    responses(
+        (status = 200, description = "Record.", body = RecordV2Response),
+        (status = 404, description = "Resource not found.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn get_record_v2(
     Path((collection_id, record_id)): Path<(String, String)>,
     State(state): State<AppState>,
@@ -1948,7 +2049,7 @@ pub async fn get_record_v2(
     });
 
     match state
-        .request_handlers
+        .record_ops
         .handle_record_get_for_tenant(
             RichRecordGetRequest {
                 collection_id: collection_id.clone(),
@@ -2006,6 +2107,20 @@ pub async fn get_record_v2(
 /// DELETE /api/v2/collections/{collection_id}/records/{record_id}
 ///
 /// Delete a single record by writing a tombstone through the rich record path.
+#[utoipa::path(
+    delete,
+    path = "/api/v2/collections/{collection_id}/records/{record_id}",
+    tag = "Records",
+    operation_id = "deleteRecord",
+    summary = "Delete a record by ID.",
+    params(
+        ("collection_id" = String, Path, description = "Collection name/ID."),
+        ("record_id" = String, Path, description = "Record ID."),
+    ),
+    responses(
+        (status = 200, description = "Delete accepted.", body = DeleteRecordV2Response),
+    ),
+)]
 pub async fn delete_record_v2(
     Path((collection_id, record_id)): Path<(String, String)>,
     State(state): State<AppState>,
@@ -2028,6 +2143,44 @@ pub async fn delete_record_v2(
         ));
     }
 
+    // Primary-pod write-router gate (symmetric with `insert_records`). Deletes
+    // are mutations too: a delete accepted on a displaced pod would never reach
+    // the primary's memtable, leaving the record live on the primary. Gate
+    // BEFORE any storage work.
+    match crate::cluster::primary_pod_registry::consult_for_write(
+        &state.primary_pod_registry,
+        &state.self_pod_id,
+        &tenant.tenant_id,
+        &collection_id,
+    ) {
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Allow => {
+            if state
+                .primary_pod_registry
+                .is_assigned(&tenant.tenant_id, &collection_id)
+            {
+                crate::metrics::primary_pod_metrics::record_allowed_bound(&tenant.tenant_id);
+            } else {
+                crate::metrics::primary_pod_metrics::record_allowed_unbounded(&tenant.tenant_id);
+            }
+        }
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Misrouted { target_pod } => {
+            crate::metrics::primary_pod_metrics::record_misrouted(&tenant.tenant_id);
+            tracing::warn!(
+                target = "proximadb.primary_pod.misroute",
+                self_pod = %state.self_pod_id,
+                target_pod = %target_pod,
+                tenant_id = %tenant.tenant_id,
+                collection_id = %collection_id,
+                "v2 delete misrouted — client SDK should retry against the primary pod"
+            );
+            return Err(ApiError::Misdirected {
+                target_pod,
+                tenant_id: tenant.tenant_id.clone(),
+                collection_id: collection_id.clone(),
+            });
+        }
+    }
+
     let intent = WriteIntent::new(&collection_id, WriteOperationKind::Delete)
         .with_durability(WriteDurabilityRequirement::WalRequired)
         .with_row_count_hint(1);
@@ -2040,7 +2193,7 @@ pub async fn delete_record_v2(
     );
 
     match state
-        .request_handlers
+        .record_ops
         .handle_record_delete_batch_for_tenant(
             RichRecordDeleteBatchRequest {
                 collection_id: collection_id.clone(),
@@ -2125,7 +2278,7 @@ fn decode_scan_cursor(
 
 /// Body of `POST /records/scan`. Mirrors the OpenAPI `ScanRecordsRequest`
 /// schema; all fields optional so an empty `{}` returns the first page.
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, ToSchema)]
 pub struct ScanRecordsRequest {
     /// Opaque continuation token returned as `next_cursor` from a
     /// prior page. Omit / null to start from the beginning.
@@ -2138,6 +2291,7 @@ pub struct ScanRecordsRequest {
     /// Accepts either the typed list form `[{field,op,value}]` (mirrors
     /// `searchRecords.filters`) or a simple equality map `{field: value}`.
     #[serde(default)]
+    #[schema(value_type = Option<Value>)]
     pub filter: Option<serde_json::Value>,
     #[serde(default)]
     pub include_vector: Option<bool>,
@@ -2148,7 +2302,7 @@ pub struct ScanRecordsRequest {
 /// Response shape for `scanRecords`. Empty `records` + null
 /// `next_cursor` signals end-of-scan. Each record matches the OpenAPI
 /// `RecordResponse` schema (same shape used by `getRecord`).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ScanRecordsResponse {
     pub records: Vec<RecordV2Response>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2174,6 +2328,22 @@ const SCAN_RECORDS_DEFAULT_LIMIT: usize = 1_000;
 /// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
 /// still deferred: `next_cursor` is always `None` today; callers bump
 /// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+#[utoipa::path(
+    post,
+    path = "/api/v2/collections/{collection_id}/records/scan",
+    tag = "Records",
+    operation_id = "scanRecords",
+    summary = "Paginated scan of records in a collection.",
+    params(
+        ("collection_id" = String, Path, description = "Collection name/ID."),
+    ),
+    request_body = ScanRecordsRequest,
+    responses(
+        (status = 200, description = "Page of records + optional next cursor.", body = ScanRecordsResponse),
+        (status = 400, description = "Invalid request.", body = crate::network::rest::openapi::ErrorResponse),
+        (status = 404, description = "Resource not found.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn scan_records(
     Path(collection_id): Path<String>,
     State(state): State<AppState>,
@@ -2215,7 +2385,7 @@ pub async fn scan_records(
     // streaming layer; the handler returns a single ordered page plus the next
     // cursor (O(log d + limit) per page once the scan index is warm).
     let (page, next_cursor) = state
-        .request_handlers
+        .record_ops
         .handle_record_scan_paginated_for_tenant(
             &collection_id,
             inbound_cursor.as_ref(),
@@ -2342,7 +2512,7 @@ pub async fn get_changes(
     Query(q): Query<ChangesQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let changes = state
-        .request_handlers
+        .record_ops
         .table_changes(&collection_id, q.since_lsn)
         .await
         .map_err(|e| ApiError::Internal(format!("change-feed read failed: {e}")))?;
@@ -3001,7 +3171,7 @@ mod tests {
         assert!(matches!(int_val, Some(Value::IntValue(42))));
 
         // Float
-        let float_val = json_to_filter_clause_value(&serde_json::json!(3.14));
+        let float_val = json_to_filter_clause_value(&serde_json::json!(3.5));
         assert!(matches!(float_val, Some(Value::DoubleValue(_))));
 
         // Boolean
@@ -3055,9 +3225,9 @@ mod tests {
     #[test]
     fn test_json_to_sql_value_float() {
         use crate::proto::proximadb_v1::sql_value::Value;
-        let val = json_to_sql_value(&serde_json::json!(3.14));
+        let val = json_to_sql_value(&serde_json::json!(3.5));
         match val.value {
-            Some(Value::NumberValue(f)) => assert!((f - 3.14).abs() < f64::EPSILON),
+            Some(Value::NumberValue(f)) => assert!((f - 3.5).abs() < f64::EPSILON),
             other => panic!("Expected NumberValue, got {:?}", other),
         }
     }
@@ -3153,10 +3323,10 @@ mod tests {
     fn test_sql_value_to_json_number() {
         use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
         let sv = SqlValue {
-            value: Some(Value::NumberValue(2.718)),
+            value: Some(Value::NumberValue(2.5)),
         };
         let result = sql_value_to_json(&sv).expect("Should convert number");
-        assert!((result.as_f64().expect("Should be f64") - 2.718).abs() < 0.001);
+        assert!((result.as_f64().expect("Should be f64") - 2.5).abs() < 0.001);
     }
 
     #[test]
@@ -3365,9 +3535,9 @@ mod tests {
 
     #[test]
     fn test_json_to_sql_float() {
-        let sv = json_to_sql_value(&serde_json::json!(3.14));
+        let sv = json_to_sql_value(&serde_json::json!(3.5));
         if let Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) = sv.value {
-            assert!((f - 3.14).abs() < 1e-10);
+            assert!((f - 3.5).abs() < 1e-10);
         } else {
             panic!("Expected NumberValue");
         }
@@ -3475,7 +3645,7 @@ mod tests {
 
     #[test]
     fn test_filter_clause_float() {
-        let val = json_to_filter_clause_value(&serde_json::json!(3.14));
+        let val = json_to_filter_clause_value(&serde_json::json!(3.5));
         assert!(val.is_some());
     }
 
@@ -3834,6 +4004,7 @@ mod tests {
             total_matches: Some(100),
             latency_ms: 5,
             request_id: "req-123".to_string(),
+            predicate_shortfall: None,
             search_plan_trace: None,
             explain: None,
         };

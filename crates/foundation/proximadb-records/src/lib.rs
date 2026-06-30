@@ -909,6 +909,24 @@ impl Default for ProximaRecord {
     }
 }
 
+/// Canonical "is this record dead" rule on `valid_to_ns` (nanoseconds) —
+/// the single source of truth for dead-record filtering. Operates on ns
+/// directly so it is immune to the `expires_at` unit confusion (ms on the
+/// proto wire vs secs in the WAL path). Used by types that carry only
+/// `valid_to_ns` (e.g. `OptimizedSearchRecord`); `ProximaRecord` prefers
+/// the richer [`ProximaRecord::is_dead`] (which also honors `valid_from`).
+///
+/// * `Some(0)` → tombstone (delete marker).
+/// * `Some(v)` where `0 < v < now_ns` → TTL-expired.
+/// * `None` or `v >= now_ns` → alive.
+pub fn is_record_dead(valid_to_ns: Option<i64>, now_ns: i64) -> bool {
+    match valid_to_ns {
+        Some(0) => true,
+        Some(v) if v > 0 && v < now_ns => true,
+        _ => false,
+    }
+}
+
 impl ProximaRecord {
     /// Returns true when this record is a tombstone marker at `snapshot_time_ns`.
     ///
@@ -939,6 +957,14 @@ impl ProximaRecord {
             .valid_to_ns
             .is_none_or(|valid_to_ns| snapshot_time_ns < valid_to_ns);
         valid_from_ok && valid_to_ok
+    }
+
+    /// Returns true when this record must NOT appear in a read at `now_ns`
+    /// — i.e. it is deleted (tombstone) or TTL-expired or not-yet-valid.
+    /// Convenience inverse of [`Self::is_visible_at`]; the single source of
+    /// truth for read-path dead-record filtering on `ProximaRecord`.
+    pub fn is_dead(&self, now_ns: i64) -> bool {
+        !self.is_visible_at(now_ns)
     }
 
     /// Construct a canonical tombstone marker for a logical record id.
@@ -1122,6 +1148,22 @@ mod tests {
         assert_eq!(r.oid, "row-1");
         assert!(r.is_tombstone_at(500));
         assert!(!r.is_visible_at(500));
+        assert!(r.is_dead(500), "tombstone is_dead");
+    }
+
+    #[test]
+    fn test_is_record_dead_canonical_rule() {
+        let now = 1_000_000_000i64;
+        // Tombstone marker.
+        assert!(is_record_dead(Some(0), now));
+        // TTL-expired (valid_to in the past).
+        assert!(is_record_dead(Some(999_999_999), now));
+        // Alive: no expiry.
+        assert!(!is_record_dead(None, now));
+        // Alive: expiry in the future.
+        assert!(!is_record_dead(Some(now + 1_000_000_000), now));
+        // Boundary: valid_to == now is exclusive (still alive at exactly now).
+        assert!(!is_record_dead(Some(now), now));
     }
 
     #[test]

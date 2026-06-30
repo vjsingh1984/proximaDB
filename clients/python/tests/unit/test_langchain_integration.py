@@ -166,3 +166,42 @@ class TestClassMethods:
         records = mock_client.insert_records.call_args.args[1]
         assert records[0]["source"] == "doc1"
         assert records[0]["props"]["src"] == "test"
+
+
+class TestNativeAsyncClient:
+    """The async read path uses a native-async client when one is supplied."""
+
+    @pytest.mark.asyncio
+    async def test_async_search_uses_native_async_client(self, mock_client):
+        from unittest.mock import AsyncMock
+
+        async_client = MagicMock()
+        async_client.search = AsyncMock(
+            return_value=[
+                SearchResult(id="a", score=0.9, metadata={"text": "hello"}),
+            ]
+        )
+        store = ProximaDBVectorStore(
+            client=mock_client,
+            collection_name="test_collection",
+            embedding=FakeEmbeddings(),
+            async_client=async_client,
+        )
+        out = await store.asimilarity_search_by_vector_with_score([0.1, 0.2], k=3)
+        # Native async client awaited; sync client.search NOT used.
+        async_client.search.assert_awaited_once()
+        mock_client.search.assert_not_called()
+        assert len(out) == 1
+        doc, score = out[0]
+        assert isinstance(doc, Document)
+        assert doc.page_content == "hello"
+        assert score == 0.9
+
+    @pytest.mark.asyncio
+    async def test_async_search_falls_back_to_thread_without_async_client(
+        self, store, mock_client
+    ):
+        # No async_client supplied -> offloads the sync client on a worker thread.
+        out = await store.asimilarity_search_by_vector_with_score([0.1, 0.2], k=3)
+        mock_client.search.assert_called_once()
+        assert out == []

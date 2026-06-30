@@ -38,10 +38,13 @@ class ProximaGraphServiceStub(object):
     Canonical v2 graph service. Replaces the deprecated
     `proximadb.v1.GraphService` for SDK and external clients.
 
-    Deferred from this first surface (tracked as a follow-up TD; still reachable
-    on v1 behind `enable_grpc_v1_compat`): StreamTraverse, GetConnectedComponents,
-    HasCycle, Add/RemoveUniqueConstraint, BatchCreateNodes/Edges, ExecuteQuery
-    (Cypher/Gremlin), ExecuteHybridQuery, and the retired PULSAR/QUASAR RPCs.
+    TD-124 added the analytic/batch/constraint/streaming RPCs and the declarative
+    `ExecuteQuery` (Cypher subset) below. Still deferred (only reachable on v1
+    behind `enable_grpc_v1_compat`), because they are not backed by a v2-native
+    surface: `ExecuteHybridQuery` (depends on the full vector+graph
+    `UnifiedHandlers` and the large v1 vector message graph, which has no clean
+    v2-native equivalent), and the retired/unimplemented `CreateGraphWithEngine`,
+    `GetPulsarStats`, and the PULSAR/QUASAR shard RPCs.
     """
 
     def __init__(self, channel):
@@ -134,6 +137,54 @@ class ProximaGraphServiceStub(object):
             response_deserializer=proximadb_dot_v2_dot_graph__pb2.GraphStats.FromString,
             _registered_method=True,
         )
+        self.StreamTraverse = channel.unary_stream(
+            "/proximadb.v2.ProximaGraphService/StreamTraverse",
+            request_serializer=proximadb_dot_v2_dot_graph__pb2.TraverseGraphRequest.SerializeToString,
+            response_deserializer=proximadb_dot_v2_dot_graph__pb2.GraphTraversalChunk.FromString,
+            _registered_method=True,
+        )
+        self.GetConnectedComponents = channel.unary_unary(
+            "/proximadb.v2.ProximaGraphService/GetConnectedComponents",
+            request_serializer=proximadb_dot_v2_dot_graph__pb2.GraphConnectedComponentsRequest.SerializeToString,
+            response_deserializer=proximadb_dot_v2_dot_graph__pb2.GraphConnectedComponentsResponse.FromString,
+            _registered_method=True,
+        )
+        self.HasCycle = channel.unary_unary(
+            "/proximadb.v2.ProximaGraphService/HasCycle",
+            request_serializer=proximadb_dot_v2_dot_graph__pb2.GraphHasCycleRequest.SerializeToString,
+            response_deserializer=proximadb_dot_v2_dot_graph__pb2.GraphHasCycleResponse.FromString,
+            _registered_method=True,
+        )
+        self.AddUniqueConstraint = channel.unary_unary(
+            "/proximadb.v2.ProximaGraphService/AddUniqueConstraint",
+            request_serializer=proximadb_dot_v2_dot_graph__pb2.GraphUniqueConstraintRequest.SerializeToString,
+            response_deserializer=proximadb_dot_v2_dot_graph__pb2.GraphUniqueConstraintResponse.FromString,
+            _registered_method=True,
+        )
+        self.RemoveUniqueConstraint = channel.unary_unary(
+            "/proximadb.v2.ProximaGraphService/RemoveUniqueConstraint",
+            request_serializer=proximadb_dot_v2_dot_graph__pb2.GraphUniqueConstraintRequest.SerializeToString,
+            response_deserializer=proximadb_dot_v2_dot_graph__pb2.GraphUniqueConstraintResponse.FromString,
+            _registered_method=True,
+        )
+        self.BatchCreateNodes = channel.unary_unary(
+            "/proximadb.v2.ProximaGraphService/BatchCreateNodes",
+            request_serializer=proximadb_dot_v2_dot_graph__pb2.BatchCreateGraphNodesRequest.SerializeToString,
+            response_deserializer=proximadb_dot_v2_dot_graph__pb2.BatchCreateGraphNodesResponse.FromString,
+            _registered_method=True,
+        )
+        self.BatchCreateEdges = channel.unary_unary(
+            "/proximadb.v2.ProximaGraphService/BatchCreateEdges",
+            request_serializer=proximadb_dot_v2_dot_graph__pb2.BatchCreateGraphEdgesRequest.SerializeToString,
+            response_deserializer=proximadb_dot_v2_dot_graph__pb2.BatchCreateGraphEdgesResponse.FromString,
+            _registered_method=True,
+        )
+        self.ExecuteQuery = channel.unary_unary(
+            "/proximadb.v2.ProximaGraphService/ExecuteQuery",
+            request_serializer=proximadb_dot_v2_dot_graph__pb2.ExecuteGraphQueryRequest.SerializeToString,
+            response_deserializer=proximadb_dot_v2_dot_graph__pb2.ExecuteGraphQueryResponse.FromString,
+            _registered_method=True,
+        )
 
 
 class ProximaGraphServiceServicer(object):
@@ -144,10 +195,13 @@ class ProximaGraphServiceServicer(object):
     Canonical v2 graph service. Replaces the deprecated
     `proximadb.v1.GraphService` for SDK and external clients.
 
-    Deferred from this first surface (tracked as a follow-up TD; still reachable
-    on v1 behind `enable_grpc_v1_compat`): StreamTraverse, GetConnectedComponents,
-    HasCycle, Add/RemoveUniqueConstraint, BatchCreateNodes/Edges, ExecuteQuery
-    (Cypher/Gremlin), ExecuteHybridQuery, and the retired PULSAR/QUASAR RPCs.
+    TD-124 added the analytic/batch/constraint/streaming RPCs and the declarative
+    `ExecuteQuery` (Cypher subset) below. Still deferred (only reachable on v1
+    behind `enable_grpc_v1_compat`), because they are not backed by a v2-native
+    surface: `ExecuteHybridQuery` (depends on the full vector+graph
+    `UnifiedHandlers` and the large v1 vector message graph, which has no clean
+    v2-native equivalent), and the retired/unimplemented `CreateGraphWithEngine`,
+    `GetPulsarStats`, and the PULSAR/QUASAR shard RPCs.
     """
 
     def CreateNode(self, request, context):
@@ -234,6 +288,54 @@ class ProximaGraphServiceServicer(object):
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
 
+    def StreamTraverse(self, request, context):
+        """Streaming traversal (TD-124)"""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def GetConnectedComponents(self, request, context):
+        """Analytics (TD-124)"""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def HasCycle(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def AddUniqueConstraint(self, request, context):
+        """Unique-constraint DDL (TD-124)"""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def RemoveUniqueConstraint(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def BatchCreateNodes(self, request, context):
+        """Batch create (TD-124)"""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def BatchCreateEdges(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def ExecuteQuery(self, request, context):
+        """Declarative query — Cypher subset (TD-124)"""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
 
 def add_ProximaGraphServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -307,6 +409,46 @@ def add_ProximaGraphServiceServicer_to_server(servicer, server):
             request_deserializer=proximadb_dot_v2_dot_graph__pb2.GetGraphStatsRequest.FromString,
             response_serializer=proximadb_dot_v2_dot_graph__pb2.GraphStats.SerializeToString,
         ),
+        "StreamTraverse": grpc.unary_stream_rpc_method_handler(
+            servicer.StreamTraverse,
+            request_deserializer=proximadb_dot_v2_dot_graph__pb2.TraverseGraphRequest.FromString,
+            response_serializer=proximadb_dot_v2_dot_graph__pb2.GraphTraversalChunk.SerializeToString,
+        ),
+        "GetConnectedComponents": grpc.unary_unary_rpc_method_handler(
+            servicer.GetConnectedComponents,
+            request_deserializer=proximadb_dot_v2_dot_graph__pb2.GraphConnectedComponentsRequest.FromString,
+            response_serializer=proximadb_dot_v2_dot_graph__pb2.GraphConnectedComponentsResponse.SerializeToString,
+        ),
+        "HasCycle": grpc.unary_unary_rpc_method_handler(
+            servicer.HasCycle,
+            request_deserializer=proximadb_dot_v2_dot_graph__pb2.GraphHasCycleRequest.FromString,
+            response_serializer=proximadb_dot_v2_dot_graph__pb2.GraphHasCycleResponse.SerializeToString,
+        ),
+        "AddUniqueConstraint": grpc.unary_unary_rpc_method_handler(
+            servicer.AddUniqueConstraint,
+            request_deserializer=proximadb_dot_v2_dot_graph__pb2.GraphUniqueConstraintRequest.FromString,
+            response_serializer=proximadb_dot_v2_dot_graph__pb2.GraphUniqueConstraintResponse.SerializeToString,
+        ),
+        "RemoveUniqueConstraint": grpc.unary_unary_rpc_method_handler(
+            servicer.RemoveUniqueConstraint,
+            request_deserializer=proximadb_dot_v2_dot_graph__pb2.GraphUniqueConstraintRequest.FromString,
+            response_serializer=proximadb_dot_v2_dot_graph__pb2.GraphUniqueConstraintResponse.SerializeToString,
+        ),
+        "BatchCreateNodes": grpc.unary_unary_rpc_method_handler(
+            servicer.BatchCreateNodes,
+            request_deserializer=proximadb_dot_v2_dot_graph__pb2.BatchCreateGraphNodesRequest.FromString,
+            response_serializer=proximadb_dot_v2_dot_graph__pb2.BatchCreateGraphNodesResponse.SerializeToString,
+        ),
+        "BatchCreateEdges": grpc.unary_unary_rpc_method_handler(
+            servicer.BatchCreateEdges,
+            request_deserializer=proximadb_dot_v2_dot_graph__pb2.BatchCreateGraphEdgesRequest.FromString,
+            response_serializer=proximadb_dot_v2_dot_graph__pb2.BatchCreateGraphEdgesResponse.SerializeToString,
+        ),
+        "ExecuteQuery": grpc.unary_unary_rpc_method_handler(
+            servicer.ExecuteQuery,
+            request_deserializer=proximadb_dot_v2_dot_graph__pb2.ExecuteGraphQueryRequest.FromString,
+            response_serializer=proximadb_dot_v2_dot_graph__pb2.ExecuteGraphQueryResponse.SerializeToString,
+        ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
         "proximadb.v2.ProximaGraphService", rpc_method_handlers
@@ -326,10 +468,13 @@ class ProximaGraphService(object):
     Canonical v2 graph service. Replaces the deprecated
     `proximadb.v1.GraphService` for SDK and external clients.
 
-    Deferred from this first surface (tracked as a follow-up TD; still reachable
-    on v1 behind `enable_grpc_v1_compat`): StreamTraverse, GetConnectedComponents,
-    HasCycle, Add/RemoveUniqueConstraint, BatchCreateNodes/Edges, ExecuteQuery
-    (Cypher/Gremlin), ExecuteHybridQuery, and the retired PULSAR/QUASAR RPCs.
+    TD-124 added the analytic/batch/constraint/streaming RPCs and the declarative
+    `ExecuteQuery` (Cypher subset) below. Still deferred (only reachable on v1
+    behind `enable_grpc_v1_compat`), because they are not backed by a v2-native
+    surface: `ExecuteHybridQuery` (depends on the full vector+graph
+    `UnifiedHandlers` and the large v1 vector message graph, which has no clean
+    v2-native equivalent), and the retired/unimplemented `CreateGraphWithEngine`,
+    `GetPulsarStats`, and the PULSAR/QUASAR shard RPCs.
     """
 
     @staticmethod
@@ -741,6 +886,246 @@ class ProximaGraphService(object):
             "/proximadb.v2.ProximaGraphService/GetGraphStats",
             proximadb_dot_v2_dot_graph__pb2.GetGraphStatsRequest.SerializeToString,
             proximadb_dot_v2_dot_graph__pb2.GraphStats.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def StreamTraverse(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            "/proximadb.v2.ProximaGraphService/StreamTraverse",
+            proximadb_dot_v2_dot_graph__pb2.TraverseGraphRequest.SerializeToString,
+            proximadb_dot_v2_dot_graph__pb2.GraphTraversalChunk.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def GetConnectedComponents(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/proximadb.v2.ProximaGraphService/GetConnectedComponents",
+            proximadb_dot_v2_dot_graph__pb2.GraphConnectedComponentsRequest.SerializeToString,
+            proximadb_dot_v2_dot_graph__pb2.GraphConnectedComponentsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def HasCycle(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/proximadb.v2.ProximaGraphService/HasCycle",
+            proximadb_dot_v2_dot_graph__pb2.GraphHasCycleRequest.SerializeToString,
+            proximadb_dot_v2_dot_graph__pb2.GraphHasCycleResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def AddUniqueConstraint(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/proximadb.v2.ProximaGraphService/AddUniqueConstraint",
+            proximadb_dot_v2_dot_graph__pb2.GraphUniqueConstraintRequest.SerializeToString,
+            proximadb_dot_v2_dot_graph__pb2.GraphUniqueConstraintResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def RemoveUniqueConstraint(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/proximadb.v2.ProximaGraphService/RemoveUniqueConstraint",
+            proximadb_dot_v2_dot_graph__pb2.GraphUniqueConstraintRequest.SerializeToString,
+            proximadb_dot_v2_dot_graph__pb2.GraphUniqueConstraintResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def BatchCreateNodes(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/proximadb.v2.ProximaGraphService/BatchCreateNodes",
+            proximadb_dot_v2_dot_graph__pb2.BatchCreateGraphNodesRequest.SerializeToString,
+            proximadb_dot_v2_dot_graph__pb2.BatchCreateGraphNodesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def BatchCreateEdges(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/proximadb.v2.ProximaGraphService/BatchCreateEdges",
+            proximadb_dot_v2_dot_graph__pb2.BatchCreateGraphEdgesRequest.SerializeToString,
+            proximadb_dot_v2_dot_graph__pb2.BatchCreateGraphEdgesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def ExecuteQuery(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/proximadb.v2.ProximaGraphService/ExecuteQuery",
+            proximadb_dot_v2_dot_graph__pb2.ExecuteGraphQueryRequest.SerializeToString,
+            proximadb_dot_v2_dot_graph__pb2.ExecuteGraphQueryResponse.FromString,
             options,
             channel_credentials,
             insecure,

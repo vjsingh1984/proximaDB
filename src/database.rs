@@ -111,11 +111,33 @@ impl ProximaDB {
         }
         CrossCacheOrchestrator::register_global(orchestrator.clone());
 
+        // Co-design T2.2: wire the io_trace flush to feed the trace-driven cache
+        // sizing loop, so footer miss rate and GET fragmentation drive cache budget.
+        // High footer miss rate → grow footer cache; fragmented GETs → coalesce tuning.
+        crate::storage::cache::orchestrator::CrossCacheOrchestrator::install_trace_driven_sizing(
+            orchestrator.clone(),
+        );
+
+        // T1.1: initialize global fusion metrics for cross-modal fusion observability.
+        // Metrics are emitted to Prometheus for production monitoring and cost model
+        // calibration (fusion_latency_seconds, sources_fused, sources_skipped).
+        crate::metrics::fusion::init_global_fusion_metrics();
+
         // Co-design C4: wire the io_trace flush to feed the trace-driven route
         // cost model, so completed routed queries teach the ComputeScheduler the
         // measured cost of each (shape-class, backend). Observe-mode today —
         // routing is unchanged until a later flag-gated slice.
         crate::query::route_cost_model::install_route_cost_observer();
+        // ADR-030: wire the io_trace flush to the always-on per-tenant billing
+        // meters (KRU read-compute from the snapshot's per-engine compute_ms).
+        // Same snapshot as the route observer above — billed bytes/ms cannot
+        // diverge from the cost model's. Always-on (billing is never gated).
+        crate::metrics::consumption_metrics::install_billing_observer();
+        // TD-161: arm the external OTLP metering push (ADR-027 dual-sink push half).
+        // Inert unless `PROXIMADB_OTLP_ENDPOINT` is set (and no-op when the
+        // `otlp-metering` feature is compiled out). Must run inside the runtime —
+        // the grpc-tonic exporter's reader is driven on it.
+        crate::observability::metering_otlp::init_from_env();
         // Co-design C5 (integration): register the tenant→tier Port to read the
         // header-fed tier registry (`X-Tenant-Tier` → `record_store::TENANT_TIERS`),
         // so the per-tenant tier the cache LimitsResolver already sees also drives
@@ -156,9 +178,100 @@ impl ProximaDB {
             &config.storage,
             Some(orchestrator.clone()),
             Some(&config),
+            network::multi_server::ServiceProfile::Server,
         )
         .await?;
         tracing::info!("✅ ProximaDB::new - SharedServices created with unified CollectionService");
+
+        // ADR-030 KSU: per-tenant resident-storage metering on two decoupled
+        // cadences. KSU is an *accrual* (`bytes·seconds`) over a slow-moving stock
+        // (resident bytes only change on flush/compaction, minutes-to-hours apart),
+        // so neither cadence needs to be fast — and the *durable* one must be slow,
+        // since metering's own object-store writes are billable I/O (the dominant
+        // cost term this co-design effort minimizes). Both are server-lifetime tokio
+        // tasks (dropped on shutdown), first tick delayed one interval, best-effort.
+        //
+        //   1. **Prometheus level gauge** — in-memory `.set()` of the resident level
+        //      that Prometheus integrates downstream. Default 5min (env
+        //      `PROXIMADB_KSU_GAUGE_INTERVAL_SECS`); storage doesn't move faster, so
+        //      a per-minute poll only multiplied the list-collections work.
+        {
+            let cs = collection_service.clone();
+            let interval_secs = std::env::var("PROXIMADB_KSU_GAUGE_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|s| *s > 0)
+                .unwrap_or(300);
+            tokio::spawn(async move {
+                let mut ticker =
+                    tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+                ticker.tick().await; // consume the immediate first tick
+                loop {
+                    ticker.tick().await;
+                    if let Ok(collections) = cs.list_collections().await {
+                        crate::metrics::consumption_metrics::record_storage_snapshot(&collections);
+                    }
+                }
+            });
+        }
+
+        //   2. **Durable `_metering` sink (TD-161)** — coalesced **hourly** snapshot
+        //      persisted to each tenant's object-store `_metering/` subtree
+        //      (ADR-027 dual-sink; the differentiator AnvaiOps prices). Default 1h
+        //      (env `PROXIMADB_METERING_FLUSH_INTERVAL_SECS`) matches AWS byte-hour
+        //      billing granularity (~24 PUTs/tenant/day, not ~1440). Wholly
+        //      best-effort: a missing storage location or filesystem-init failure
+        //      disables only the durable sink — never startup or the gauge above.
+        {
+            let cs = collection_service.clone();
+            let base_url = config.storage.storage_urls().into_iter().next();
+            let interval_secs = std::env::var("PROXIMADB_METERING_FLUSH_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|s| *s > 0)
+                .unwrap_or(3600);
+            tokio::spawn(async move {
+                let Some(base_url) = base_url else {
+                    tracing::warn!(
+                        "TD-161: no storage location configured; durable metering writer disabled"
+                    );
+                    return;
+                };
+                let factory =
+                    match storage::persistence::filesystem::FilesystemFactory::create_default()
+                        .await
+                    {
+                        Ok(f) => std::sync::Arc::new(f),
+                        Err(e) => {
+                            tracing::warn!(
+                                "TD-161: filesystem init failed; durable metering disabled: {e}"
+                            );
+                            return;
+                        }
+                    };
+                let writer =
+                    crate::metrics::metering_writer::DurableMeteringWriter::new(factory, base_url);
+                let mut ticker =
+                    tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+                ticker.tick().await; // consume the immediate first tick
+                loop {
+                    ticker.tick().await;
+                    if let Ok(collections) = cs.list_collections().await {
+                        let usage = crate::metrics::consumption_metrics::aggregate_tenant_storage(
+                            &collections,
+                        );
+                        // Account-less legacy `data/{tenant}/` render: the snapshot
+                        // source (`Collection.config.owner`) carries no account id.
+                        let now_secs = chrono::Utc::now().timestamp();
+                        writer.write_storage_snapshot(&usage, None, now_secs).await;
+                        // Same snapshot → the external OTLP push (inert unless
+                        // configured): the durable record and pushed level cannot
+                        // diverge by construction.
+                        crate::observability::metering_otlp::record_storage_snapshot(&usage);
+                    }
+                }
+            });
+        }
 
         // Step 3: Initialize global WAL manifest
         tracing::info!("🌐 ProximaDB::new - Initializing global WAL manifest...");
@@ -172,27 +285,20 @@ impl ProximaDB {
             .map_err(|e| anyhow::anyhow!("Failed to init WAL manifest: {}", e))?;
         tracing::info!("✅ ProximaDB::new - Global WAL manifest initialized");
 
-        // Step 4: Set global metadata provider BEFORE creating StorageEngine
-        // This ensures WAL pool instances can resolve collection paths correctly
-        tracing::debug!(
-            "🔧 ProximaDB::new - Setting global metadata provider for WAL path resolution..."
-        );
-        storage::persistence::write_ahead_log::set_global_metadata_provider(
-            collection_service.metadata_backend().clone(),
-        )
-        .await;
-        tracing::info!("✅ ProximaDB::new - Global metadata provider set for WAL");
+        // Step 4: Set global catalog BEFORE creating StorageEngine.
+        // The catalog is the sole authority for WAL/recovery collection
+        // resolution, so WAL pool instances resolve collection paths through it.
+        if let Some(catalog_manager) = collection_service.catalog_manager() {
+            storage::persistence::write_ahead_log::set_global_catalog(catalog_manager).await;
+            tracing::info!("✅ ProximaDB::new - Global catalog set for WAL/recovery");
+        }
 
         // Step 5: Initialize the storage engine (SST/VIPER/etc)
         tracing::info!("🌐 ProximaDB::new - Creating StorageEngine...");
-        let storage_engine =
+        let mut storage_engine =
             storage::StorageEngine::new_without_collection_service(config.storage.clone())
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create storage engine: {}", e))?;
-
-        storage_engine
-            .set_metadata_provider(collection_service.metadata_backend().clone())
-            .await;
 
         // Wire CanonicalPrecisionResolver into Compaction. The catalog
         // already exists (constructed inside SharedServices::new above)
@@ -239,6 +345,19 @@ impl ProximaDB {
             }
         }
 
+        // A6: inject the storage-write fence (over the SAME PartitionLeaseManager
+        // the network write-gates use) into the storage engine's shutdown flush
+        // path. Post-construction, mirroring set_precision_resolver: the engine is
+        // built before SharedServices/the lease stack exist. Default-OFF; absent
+        // lease store ⇒ None ⇒ fail-open. Enforced only with PROXIMADB_WRITE_FENCING=1.
+        if let Some(fence) = shared_services.storage_write_fence.clone() {
+            storage_engine.set_storage_write_fence(fence);
+            tracing::info!(
+                "✅ ProximaDB::new - A6 storage-write fence wired to StorageEngine \
+                 (default-OFF; set PROXIMADB_WRITE_FENCING=1 to enforce)"
+            );
+        }
+
         let storage = Arc::new(RwLock::new(storage_engine));
         tracing::info!("✅ ProximaDB::new - StorageEngine initialized successfully");
 
@@ -266,7 +385,8 @@ impl ProximaDB {
             .http(|h| h.bind_address(rest_addr))
             .grpc(|g| g.bind_address(grpc_addr))
             .with_api_config(config.api.clone())
-            .with_data_dir(config.server.data_dir.clone());
+            .with_data_dir(config.server.data_dir.clone())
+            .with_admin_ui_enabled(config.server.admin_ui.enabled);
 
         // Add TLS configuration if enabled
         if config.api.enable_tls.unwrap_or(false) {
@@ -307,6 +427,33 @@ impl ProximaDB {
         )
         .parse()
         .map_err(|e| anyhow::anyhow!("Failed to parse arrow flight bind address: {}", e))?;
+
+        // Portless ("embedded") transport: when `[api].transport = "uds"`, bind
+        // the REST / gRPC / Arrow Flight surfaces to Unix-domain sockets under
+        // `[api].socket_dir` instead of TCP ports, and disable the pgwire
+        // listener (a standard PG TCP driver) so the process opens *no* TCP
+        // listener at all. Mixed-read-safe: the default ("tcp") leaves every
+        // existing deployment unchanged.
+        if config.api.transport.eq_ignore_ascii_case("uds") {
+            let socket_dir = config.api.socket_dir.clone().ok_or_else(|| {
+                anyhow::anyhow!("[api].transport = \"uds\" requires [api].socket_dir to be set")
+            })?;
+            let socket_dir = std::path::PathBuf::from(socket_dir);
+            std::fs::create_dir_all(&socket_dir).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to create UDS socket dir {}: {}",
+                    socket_dir.display(),
+                    e
+                )
+            })?;
+            tracing::info!(
+                socket_dir = %socket_dir.display(),
+                "🔌 Portless mode: binding REST/gRPC/Arrow Flight to Unix-domain sockets (no TCP ports); pgwire disabled"
+            );
+            multi_config.uds_socket_dir = Some(socket_dir);
+            // pgwire has no UDS surface here; embedded clients use REST/gRPC/Flight.
+            multi_config.postgres_config.enable_postgres = false;
+        }
         tracing::debug!("✅ ProximaDB::new - Multi-server config created successfully");
 
         // Initialize security coordinator if configured
@@ -984,7 +1131,7 @@ impl ProximaDB {
     pub async fn get_graph_stats(
         &self,
         graph_id: &str,
-    ) -> anyhow::Result<proto::proximadb_v1::GraphStats> {
+    ) -> anyhow::Result<crate::graph::GraphStats> {
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services

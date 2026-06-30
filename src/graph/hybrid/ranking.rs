@@ -288,7 +288,7 @@ impl RankingStrategy for GraphCentralityStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::EmbeddingVersion;
+    use crate::graph::EmbeddingVersion;
     use std::collections::HashMap;
 
     fn create_test_node(id: &str, embedding: Option<Vec<f32>>) -> Node {

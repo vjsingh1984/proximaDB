@@ -27,7 +27,7 @@ use std::cmp::Ordering;
 
 use super::spatial_encoding::SpatialCode;
 use super::spatial_traits::CurveType;
-use crate::compute::distance_computation::DistanceMetric;
+use proximadb_distance_kernel::DistanceMetric;
 
 /// Pruning mode for block selection
 #[derive(Debug, Clone, Copy, PartialEq)]

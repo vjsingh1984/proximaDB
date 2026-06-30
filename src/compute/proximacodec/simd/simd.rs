@@ -1866,7 +1866,7 @@ mod tests {
             // Sequential data
             vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
             // Random data
-            vec![3.14, 2.71, 1.41, 0.57, 9.81, 6.28, 8.85, 4.67],
+            vec![3.5, 2.5, 1.5, 0.57, 9.81, 6.5, 8.85, 4.67],
             // Normalized embeddings
             vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
             // Mixed positive/negative

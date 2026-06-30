@@ -3,12 +3,10 @@
 //! This module centralizes small helper functions used across node/edge
 //! query, filtering and index utilities to keep service modules lean.
 
-use crate::proto::proximadb_v1::property_value::Value;
+use crate::graph::model::property_value::Value;
 
 // Numeric/string extractors from proto PropertyValue
-pub(super) fn extract_number_from_value(
-    value: &crate::proto::proximadb_v1::PropertyValue,
-) -> Option<f64> {
+pub(super) fn extract_number_from_value(value: &crate::graph::PropertyValue) -> Option<f64> {
     match &value.value {
         Some(Value::IntValue(i)) => Some(*i as f64),
         Some(Value::DoubleValue(d)) => Some(*d),
@@ -17,9 +15,7 @@ pub(super) fn extract_number_from_value(
     }
 }
 
-pub(super) fn extract_string_from_value(
-    value: &crate::proto::proximadb_v1::PropertyValue,
-) -> Option<&str> {
+pub(super) fn extract_string_from_value(value: &crate::graph::PropertyValue) -> Option<&str> {
     match &value.value {
         Some(Value::StringValue(s)) => Some(s.as_str()),
         _ => None,
@@ -92,7 +88,7 @@ fn cmp_key_le(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> 
 // Property-value comparisons used by filters
 pub(super) fn cmp_prop_gt(
     lhs: Option<&crate::graph::PropertyValue>,
-    rhs: &crate::proto::proximadb_v1::PropertyValue,
+    rhs: &crate::graph::PropertyValue,
 ) -> bool {
     match lhs {
         Some(v) => extract_number_from_value(v)
@@ -103,7 +99,7 @@ pub(super) fn cmp_prop_gt(
 }
 pub(super) fn cmp_prop_ge(
     lhs: Option<&crate::graph::PropertyValue>,
-    rhs: &crate::proto::proximadb_v1::PropertyValue,
+    rhs: &crate::graph::PropertyValue,
 ) -> bool {
     match lhs {
         Some(v) => extract_number_from_value(v)
@@ -114,7 +110,7 @@ pub(super) fn cmp_prop_ge(
 }
 pub(super) fn cmp_prop_lt(
     lhs: Option<&crate::graph::PropertyValue>,
-    rhs: &crate::proto::proximadb_v1::PropertyValue,
+    rhs: &crate::graph::PropertyValue,
 ) -> bool {
     match lhs {
         Some(v) => extract_number_from_value(v)
@@ -125,7 +121,7 @@ pub(super) fn cmp_prop_lt(
 }
 pub(super) fn cmp_prop_le(
     lhs: Option<&crate::graph::PropertyValue>,
-    rhs: &crate::proto::proximadb_v1::PropertyValue,
+    rhs: &crate::graph::PropertyValue,
 ) -> bool {
     match lhs {
         Some(v) => extract_number_from_value(v)
@@ -137,7 +133,7 @@ pub(super) fn cmp_prop_le(
 
 pub(super) fn prop_starts_with(
     lhs: Option<&crate::graph::PropertyValue>,
-    rhs: &crate::proto::proximadb_v1::PropertyValue,
+    rhs: &crate::graph::PropertyValue,
 ) -> bool {
     match (lhs, extract_string_from_value(rhs)) {
         (Some(v), Some(prefix)) => match &v.value {
@@ -150,7 +146,7 @@ pub(super) fn prop_starts_with(
 
 pub(super) fn prop_contains(
     lhs: Option<&crate::graph::PropertyValue>,
-    rhs: &crate::proto::proximadb_v1::PropertyValue,
+    rhs: &crate::graph::PropertyValue,
 ) -> bool {
     match (lhs, extract_string_from_value(rhs)) {
         (Some(v), Some(substr)) => match &v.value {

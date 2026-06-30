@@ -830,12 +830,12 @@ mod tests {
             string_value: None,
             bool_value: None,
             int_value: None,
-            double_value: Some(3.14),
+            double_value: Some(3.5),
             array_value: None,
             kvlist_value: None,
             bytes_value: None,
         };
-        assert_eq!(double_val.double_value, Some(3.14));
+        assert_eq!(double_val.double_value, Some(3.5));
     }
 
     #[tokio::test]

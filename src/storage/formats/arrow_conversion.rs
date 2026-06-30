@@ -516,7 +516,7 @@ mod tests {
         fields.insert(
             "float".to_string(),
             SqlValue {
-                value: Some(ProtoSqlValueInner::NumberValue(3.14)),
+                value: Some(ProtoSqlValueInner::NumberValue(3.5)),
             },
         );
         fields.insert(

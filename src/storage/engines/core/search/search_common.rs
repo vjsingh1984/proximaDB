@@ -9,10 +9,11 @@ use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
-use crate::core::search::{FilterExpression, OptimizedSearchRecord};
+use crate::core::search::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
+use proximadb_filter_expression::FilterExpression;
 
 /// Backwards-compat alias for [`UniversalSearchConfig`].
 pub type SearchConfig = UniversalSearchConfig;
@@ -39,7 +40,7 @@ pub struct UniversalSearchConfig {
     pub enable_progressive_search: bool,
 
     /// Distance metric for similarity calculation
-    pub distance_metric: crate::compute::distance_computation::DistanceMetric,
+    pub distance_metric: proximadb_distance_kernel::DistanceMetric,
 }
 
 impl Default for UniversalSearchConfig {
@@ -51,7 +52,7 @@ impl Default for UniversalSearchConfig {
             enable_reranking: true,
             max_parallel_files: 4,
             enable_progressive_search: true,
-            distance_metric: crate::compute::distance_computation::DistanceMetric::default(),
+            distance_metric: proximadb_distance_kernel::DistanceMetric::default(),
         }
     }
 }
@@ -427,7 +428,7 @@ impl UniversalSearchPipeline {
             let similarity_result = self.distance_compute.as_ref().calculate_distance(
                 query_vector,
                 &record.vector,
-                &crate::compute::distance_computation::DistanceMetric::default(),
+                &proximadb_distance_kernel::DistanceMetric::default(),
             );
 
             // Convert metadata from Vec<MetadataItem> to HashMap<String, Value>

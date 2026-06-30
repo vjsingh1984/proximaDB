@@ -8,9 +8,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 
 /// Column-oriented filter evaluator with predicate pushdown
 ///
@@ -632,7 +632,7 @@ impl VIPERSelectiveReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::search::{ComparisonOperator, FilterExpression};
+    use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 
     #[tokio::test]
     async fn test_viper_predicate_pushdown() -> anyhow::Result<()> {

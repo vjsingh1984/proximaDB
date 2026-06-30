@@ -9,11 +9,12 @@ use proximadb_data_model::ProximaValue;
 use proximadb_records::conversions::json_to_proxima;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
+use utoipa::ToSchema;
 
 use crate::errors::{ApiError, ApiResult};
 use crate::network::rest::v1::handlers::AppState;
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum QueryLanguage {
     Uql,
@@ -21,19 +22,22 @@ pub enum QueryLanguage {
     Federated,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct QueryRequest {
     pub language: QueryLanguage,
+    #[schema(min_length = 1)]
     pub query: String,
     #[serde(default)]
+    #[schema(value_type = Option<Vec<Object>>)]
     pub parameters: Option<Vec<serde_json::Value>>,
     pub collection: Option<String>,
     pub limit: Option<u32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ExplainQueryRequest {
     pub language: QueryLanguage,
+    #[schema(min_length = 1)]
     pub query: String,
     pub collection: Option<String>,
 }
@@ -65,6 +69,18 @@ fn json_to_proxima_values(params: Option<Vec<serde_json::Value>>) -> Option<Vec<
 /// pgwire is the canonical *SQL* surface, but UQL/AQL are non-SQL languages that
 /// pgwire cannot serve, so this endpoint is their canonical home. (TD-121 retires
 /// only the plain-SQL gRPC `ExecuteQuery` path, not this UQL/federated surface.)
+#[utoipa::path(
+    post,
+    path = "/api/v2/query",
+    tag = "Query",
+    operation_id = "executeQuery",
+    summary = "Execute AQL or UQL through the shared query facade.",
+    request_body = QueryRequest,
+    responses(
+        (status = 200, description = "Query result.", body = crate::network::rest::openapi::QueryResponse),
+        (status = 400, description = "Invalid request.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn execute_query(
     State(state): State<AppState>,
     Json(request): Json<QueryRequest>,
@@ -105,6 +121,18 @@ pub async fn execute_query(
 }
 
 /// POST /api/v2/query/explain
+#[utoipa::path(
+    post,
+    path = "/api/v2/query/explain",
+    tag = "Query",
+    operation_id = "explainQuery",
+    summary = "Explain an AQL or UQL query through the shared query facade.",
+    request_body = ExplainQueryRequest,
+    responses(
+        (status = 200, description = "Query plan and lowering details.", body = crate::network::rest::openapi::QueryResponse),
+        (status = 400, description = "Invalid request.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn explain_query(
     State(state): State<AppState>,
     Json(request): Json<ExplainQueryRequest>,

@@ -6,15 +6,15 @@ use proximadb_records::{ProximaRecord, conversions::proxima_tree_to_value_map};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_distance_kernel::DistanceMetric;
 
 /// Handles all search operations for NOVA engine
 pub struct NovaSearchOperations {
     filesystem: Arc<FilesystemFactory>,
-    distance_engine: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+    distance_engine: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
 }
 
 /// Operational kill-switch for TD-040 vector-bounds row-group pruning (shared
@@ -49,9 +49,7 @@ impl NovaSearchOperations {
         Self {
             filesystem,
             distance_engine: Arc::new(
-                crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                    distance_metric,
-                ),
+                proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(distance_metric),
             ),
         }
     }

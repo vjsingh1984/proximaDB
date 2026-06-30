@@ -245,8 +245,20 @@ Each slice is an independently shippable, gated increment (one meaty PR each):
   add the `indexes/<projection>` `DrResolvedPath` subprefix; ANN index persistence resolves its path
   from the projection (falls back to `index_persist_url` when unset). *Unblocks indexes-as-catalog-
   objects.* (Queued.)
-. *P2 — Resolver-persists-location.* `DrPathBuilder` writes the computed `location` back to the
-  catalog on create for L1/L2; reads prefer stored `location`. Retire `PROXIMADB_WAREHOUSE_DRPATH`.
+. *P2 — Resolver-persists-location + DrPath the SINGLE layout.* *Persist + prefer-stored was already
+  in place* for the warehouse path: `materialize_table_to_parquet` writes the computed `location` into
+  the catalog layout via `set_storage_layouts`, and the executor prefers the stored layout `location`
+  (`select_primary_layout`; computed prefix only when `location.is_none()`). On that basis the path
+  fork was *fully collapsed*, not just defaulted: `PROXIMADB_WAREHOUSE_DRPATH` (flag) **and** the
+  legacy `data/{tenant}/{ns.join}/{table}` layout **and** the now-redundant manual
+  `validate_object_path_segments` are all *removed*. `resolve_materialize_prefix` is the single
+  canonical DrPath `data/{tenant}/{namespace_id}/{table}` (`build_from_parts` validates every segment).
+  *Single-tenant is a degenerate multi-tenant*: the embedded / no-tenant path carries the well-known
+  `DEFAULT_NAMESPACE_ID` (`ns_default`) — matching the record-store write path — so there is no
+  special case. Safe with no read-both/backfill (reads use the *stored* location; no deployments).
+  Projection-`location` persist is unmotivated (the derived DrPath path is deterministic) and needs a
+  `set_projections` write that does not exist — deferred. *Principle:* addressing is structural, one
+  canonical representation, no per-mode fork (extends "isolation is structural").
 . *P3 — MV as projection.* Replace name-only `materialized_views` with `CatalogProjection{
   MaterializedView}` + `location`; planners/EXPLAIN read projections.
 . *P4 — Collapse the parallel model.* `Collection`/`MetadataStoreInterface` → `CatalogObject`; proto

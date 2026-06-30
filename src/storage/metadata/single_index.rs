@@ -482,6 +482,9 @@ mod tests {
                 text_storage_configs: vec![],
                 enable_dual_use_embeddings: None,
                 canonical_embedding_precision: None,
+                permitted_principals: vec![],
+                index_policy: None,
+                pax_vector_quant: None,
             }),
             stats: Some(CollectionStats {
                 vector_count: 100,

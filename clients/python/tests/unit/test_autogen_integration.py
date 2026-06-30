@@ -162,11 +162,31 @@ class TestRetrieveDocs:
 
 
 class TestGetDocsByIds:
-    def test_get_docs_by_ids(self, db):
-        docs = db.get_docs_by_ids(["id1", "id2"], "test_coll")
-        assert len(docs) == 2
+    def test_get_docs_by_ids_resolves_via_get_vector(self, mock_client):
+        # get_vector now backs get_docs_by_ids: returned records carry content.
+        mock_client.get_vector = MagicMock(
+            return_value=SearchResult(
+                id="id1", score=1.0, source="real content", metadata={"k": "v"}
+            )
+        )
+        db = ProximaDBVectorDB(
+            client=mock_client, embedding_fn=_fake_embed, dimension=3
+        )
+        docs = db.get_docs_by_ids(["id1"], "test_coll")
+        assert len(docs) == 1
         assert docs[0]["id"] == "id1"
-        assert docs[1]["id"] == "id2"
+        assert docs[0]["content"] == "real content"
+        assert docs[0]["metadata"]["k"] == "v"
+        mock_client.get_vector.assert_called_once()
+
+    def test_get_docs_by_ids_skips_missing(self, mock_client):
+        # Missing ids (get_vector raises) are skipped, never returned as stubs.
+        mock_client.get_vector = MagicMock(side_effect=Exception("not found"))
+        db = ProximaDBVectorDB(
+            client=mock_client, embedding_fn=_fake_embed, dimension=3
+        )
+        docs = db.get_docs_by_ids(["nope1", "nope2"], "test_coll")
+        assert docs == []
 
     def test_get_docs_empty(self, db):
         docs = db.get_docs_by_ids([], "test_coll")

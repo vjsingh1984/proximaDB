@@ -10,7 +10,7 @@ mod tests {
         AvroSerializationStrategy, BincodeSerializationStrategy, WALBatchStrategy,
     };
     // WalBatchStrategyExt removed - use write_native_batch directly
-    use crate::compute::distance_computation::DistanceMetric;
+    use proximadb_distance_kernel::DistanceMetric;
     use crate::storage::WALConfig;
     use proximadb_records::{EmbeddingCell, ProximaRecord};
 

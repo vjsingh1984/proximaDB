@@ -271,6 +271,92 @@ impl CrossCacheOrchestrator {
     pub fn global() -> Option<Arc<CrossCacheOrchestrator>> {
         GLOBAL_ORCHESTRATOR.get().cloned()
     }
+
+    /// Install the trace-driven cache observer (T2.2).
+    ///
+    /// This wires the io_trace substrate into the cache sizing loop: every completed
+    /// query that captured footer/GET measurements feeds those signals into cache
+    /// budget decisions. High footer miss rate → grow footer cache; fragmented
+    /// GETs (low avg_get_bytes) → increase coalesce target.
+    pub fn install_trace_driven_sizing(orchestrator: Arc<CrossCacheOrchestrator>) {
+        use crate::observability::io_trace::{IoTraceSnapshot, set_cache_observer};
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        // EWMA state for adaptive tuning (α=0.1 for slow adaptation)
+        struct TraceMetrics {
+            footer_miss_rate: AtomicU64, // EWMA of miss rate × 1000
+            avg_get_bytes: AtomicU64,    // EWMA of avg bytes per GET
+            sample_count: AtomicU64,
+        }
+
+        let metrics = Arc::new(TraceMetrics {
+            footer_miss_rate: AtomicU64::new(500), // Start at 50% miss rate baseline
+            avg_get_bytes: AtomicU64::new(0),      // No baseline
+            sample_count: AtomicU64::new(0),
+        });
+
+        let observer = move |snap: &IoTraceSnapshot| {
+            // Skip if no footer or GET activity
+            if snap.footer_hits + snap.footer_misses == 0 && snap.range_gets == 0 {
+                return;
+            }
+
+            let samples = metrics.sample_count.fetch_add(1, Ordering::Relaxed) + 1;
+            let alpha = if samples < 10 { 1.0 } else { 0.1 }; // Warm up fast, then adapt slow
+
+            // Update footer miss rate EWMA
+            if let Some(ratio) = snap.footer_hit_ratio() {
+                let miss_rate = ((1.0 - ratio) * 1000.0) as u64;
+                let current = metrics.footer_miss_rate.load(Ordering::Relaxed);
+                let updated = (alpha * miss_rate as f64 + (1.0 - alpha) * current as f64) as u64;
+                metrics.footer_miss_rate.store(updated, Ordering::Relaxed);
+
+                // T2.2: If footer miss rate > 60%, grow footer cache budget
+                if updated > 600
+                    && let Some(alloc) = orchestrator.footer_cache_allocator()
+                {
+                    let current = alloc.get_allocation_bytes();
+                    let target = ((current as f64) * 1.1) as usize; // +10%
+                    alloc.set_allocation_bytes(target.min(current * 2)); // Cap at 2×
+                }
+            }
+
+            // Update avg_get_bytes EWMA
+            if let Some(avg) = snap.avg_get_bytes() {
+                let avg_bytes = avg as u64;
+                let current = metrics.avg_get_bytes.load(Ordering::Relaxed);
+                let updated = if current == 0 {
+                    avg_bytes
+                } else {
+                    (alpha * avg_bytes as f64 + (1.0 - alpha) * current as f64) as u64
+                };
+                metrics.avg_get_bytes.store(updated, Ordering::Relaxed);
+
+                // T2.2: If GETs are fragmented (< 1 MiB avg), signal coalesce tuning
+                if updated < 1_048_576 && samples.is_multiple_of(100) {
+                    tracing::warn!(
+                        avg_bytes = updated,
+                        "Fragmented GET pattern detected: avg GET below 1 MiB; reads are paying per-GET fees instead of amortizing over the S3 optimum (~8-16 MiB). Consider increasing coalesce_target or page size."
+                    );
+                }
+            }
+        };
+
+        set_cache_observer(Some(Box::new(observer)));
+    }
+
+    /// Get the footer cache allocator for dynamic budgeting.
+    /// This is a placeholder for the actual footer cache allocator implementation.
+    fn footer_cache_allocator(&self) -> Option<Arc<dyn CacheAllocator>> {
+        // TODO: Wire to actual footer cache allocator (FooterCache)
+        None
+    }
+}
+
+/// Cache allocator trait for dynamic budget adjustment (T2.2).
+pub trait CacheAllocator: Send + Sync {
+    fn get_allocation_bytes(&self) -> usize;
+    fn set_allocation_bytes(&self, bytes: usize);
 }
 
 impl OrchestratorAccessPatternTracker {

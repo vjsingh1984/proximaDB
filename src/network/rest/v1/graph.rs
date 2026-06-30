@@ -894,12 +894,12 @@ pub async fn create_node(
     match app_state
         .request_handlers
         .graph_operations_service
-        .create_node(&graph_id, proto_node)
+        .create_node(&graph_id, proto_node.into())
         .await
     {
         Ok(node) => {
             info!("Successfully created node: {}", node.id);
-            let canonical_node = CanonicalNode::from_proto(&node);
+            let canonical_node = CanonicalNode::from_proto(&(*node).clone().into());
             (
                 StatusCode::CREATED,
                 Json(GraphResponse::success(canonical_node)),
@@ -933,7 +933,7 @@ pub async fn get_node(
     {
         Ok(Some(node)) => {
             info!("Successfully retrieved node: {}", node_id);
-            let canonical_node = CanonicalNode::from_proto(&node);
+            let canonical_node = CanonicalNode::from_proto(&(*node).clone().into());
             Json(GraphResponse::success(canonical_node)).into_response()
         }
         Ok(None) => {
@@ -974,12 +974,12 @@ pub async fn update_node(
     match app_state
         .request_handlers
         .graph_operations_service
-        .update_node(&graph_id, proto_node)
+        .update_node(&graph_id, proto_node.into())
         .await
     {
         Ok(updated_node) => {
             info!("Successfully updated node: {}", node_id);
-            let canonical_node = CanonicalNode::from_proto(&updated_node);
+            let canonical_node = CanonicalNode::from_proto(&(*updated_node).clone().into());
             Json(GraphResponse::success(canonical_node)).into_response()
         }
         Err(err) => {
@@ -1009,7 +1009,7 @@ pub async fn delete_node(
     {
         Ok(Some(deleted_node)) => {
             info!("Successfully deleted node: {}", node_id);
-            let canonical_node = CanonicalNode::from_proto(&deleted_node);
+            let canonical_node = CanonicalNode::from_proto(&(*deleted_node).clone().into());
             Json(GraphResponse::success(canonical_node)).into_response()
         }
         Ok(None) => {
@@ -1057,7 +1057,7 @@ pub async fn get_node_neighbors(
             );
             let canonical_nodes: Vec<CanonicalNode> = neighbors
                 .into_iter()
-                .map(|n| CanonicalNode::from_proto(&n))
+                .map(|n| CanonicalNode::from_proto(&(*n).clone().into()))
                 .collect();
             Json(GraphResponse::success(canonical_nodes)).into_response()
         }
@@ -1090,12 +1090,12 @@ pub async fn create_edge(
     match app_state
         .request_handlers
         .graph_operations_service
-        .create_edge(&graph_id, proto_edge)
+        .create_edge(&graph_id, proto_edge.into())
         .await
     {
         Ok(edge) => {
             info!("Successfully created edge: {}", edge.id);
-            let canonical_edge = CanonicalEdge::from_proto(&edge);
+            let canonical_edge = CanonicalEdge::from_proto(&(*edge).clone().into());
             (
                 StatusCode::CREATED,
                 Json(GraphResponse::success(canonical_edge)),
@@ -1442,7 +1442,7 @@ pub async fn get_edge(
     {
         Ok(Some(edge)) => {
             info!("Successfully retrieved edge: {}", edge_id);
-            let canonical_edge = CanonicalEdge::from_proto(&edge);
+            let canonical_edge = CanonicalEdge::from_proto(&(*edge).clone().into());
             Json(GraphResponse::success(canonical_edge)).into_response()
         }
         Ok(None) => {
@@ -1483,12 +1483,12 @@ pub async fn update_edge(
     match app_state
         .request_handlers
         .graph_operations_service
-        .update_edge(&graph_id, proto_edge)
+        .update_edge(&graph_id, proto_edge.into())
         .await
     {
         Ok(updated_edge) => {
             info!("Successfully updated edge: {}", edge_id);
-            let canonical_edge = CanonicalEdge::from_proto(&updated_edge);
+            let canonical_edge = CanonicalEdge::from_proto(&(*updated_edge).clone().into());
             Json(GraphResponse::success(canonical_edge)).into_response()
         }
         Err(err) => {
@@ -1518,7 +1518,7 @@ pub async fn delete_edge(
     {
         Ok(Some(deleted_edge)) => {
             info!("Successfully deleted edge: {}", edge_id);
-            let canonical_edge = CanonicalEdge::from_proto(&deleted_edge);
+            let canonical_edge = CanonicalEdge::from_proto(&(*deleted_edge).clone().into());
             Json(GraphResponse::success(canonical_edge)).into_response()
         }
         Ok(None) => {
@@ -1562,7 +1562,7 @@ pub async fn traverse_graph(
         .graph_operations_service
         .traverse_with_overrides(
             &graph_id,
-            request.into(),
+            crate::proto::proximadb_v1::TraversalRequest::from(request).into(),
             override_enable_prefetch,
             override_prefetch_budget,
         )
@@ -1574,12 +1574,12 @@ pub async fn traverse_graph(
             let canonical_nodes: Vec<CanonicalNode> = response
                 .nodes
                 .iter()
-                .map(CanonicalNode::from_proto)
+                .map(|n| CanonicalNode::from_proto(&n.clone().into()))
                 .collect();
             let canonical_edges: Vec<CanonicalEdge> = response
                 .edges
                 .iter()
-                .map(CanonicalEdge::from_proto)
+                .map(|e| CanonicalEdge::from_proto(&e.clone().into()))
                 .collect();
             let canonical_paths: Option<Vec<CanonicalPath>> = if response.paths.is_empty() {
                 None
@@ -1588,15 +1588,14 @@ pub async fn traverse_graph(
                     response
                         .paths
                         .iter()
-                        .map(|p| {
-                            CanonicalPath::from_node_ids(
-                                p.entities.iter().map(|e| e.id.clone()).collect(),
-                            )
-                        })
+                        .map(|p| CanonicalPath::from_node_ids(p.node_ids.clone()))
                         .collect(),
                 )
             };
-            let stats = response.stats.as_ref().map(TraversalStats::from_proto);
+            let stats = response
+                .stats
+                .as_ref()
+                .map(|s| TraversalStats::from_proto(&s.clone().into()));
 
             let traversal_results = TraversalResults {
                 nodes: canonical_nodes,
@@ -1718,7 +1717,10 @@ pub async fn query_nodes(
     match app_state
         .request_handlers
         .graph_operations_service
-        .query_nodes(&graph_id, q.clone().into())
+        .query_nodes(
+            &graph_id,
+            crate::proto::proximadb_v1::NodeQuery::from(q.clone()).into(),
+        )
         .await
     {
         Ok(nodes) => {
@@ -1727,7 +1729,7 @@ pub async fn query_nodes(
             let has_more = (nodes.len() as u32) == lim;
             let canonical_nodes: Vec<CanonicalNode> = nodes
                 .into_iter()
-                .map(|n| CanonicalNode::from_proto(&n))
+                .map(|n| CanonicalNode::from_proto(&(*n).clone().into()))
                 .collect();
 
             let mut query_results = QueryResults::new(canonical_nodes, has_more);
@@ -1769,7 +1771,10 @@ pub async fn query_edges(
     match app_state
         .request_handlers
         .graph_operations_service
-        .query_edges(&graph_id, q.clone().into())
+        .query_edges(
+            &graph_id,
+            crate::proto::proximadb_v1::EdgeQuery::from(q.clone()).into(),
+        )
         .await
     {
         Ok(edges) => {
@@ -1778,7 +1783,7 @@ pub async fn query_edges(
             let has_more = (edges.len() as u32) == lim;
             let canonical_edges: Vec<CanonicalEdge> = edges
                 .into_iter()
-                .map(|e| CanonicalEdge::from_proto(&e))
+                .map(|e| CanonicalEdge::from_proto(&(*e).clone().into()))
                 .collect();
 
             let mut query_results = QueryResults::new(canonical_edges, has_more);
@@ -1821,14 +1826,18 @@ pub async fn batch_create_nodes(
     match app_state
         .request_handlers
         .graph_operations_service
-        .batch_create_nodes_with_strategy(&graph_id, proto_nodes, strategy.as_str())
+        .batch_create_nodes_with_strategy(
+            &graph_id,
+            proto_nodes.into_iter().map(Into::into).collect(),
+            strategy.as_str(),
+        )
         .await
     {
         Ok(nodes) => {
             info!("Successfully batch created {} nodes", nodes.len());
             let canonical_nodes: Vec<CanonicalNode> = nodes
                 .into_iter()
-                .map(|n| CanonicalNode::from_proto(&n))
+                .map(|n| CanonicalNode::from_proto(&(*n).clone().into()))
                 .collect();
             let batch_results = BatchResults::new(canonical_nodes);
             Json(GraphResponse::success(batch_results)).into_response()
@@ -1866,14 +1875,14 @@ pub async fn batch_create_edges(
     match app_state
         .request_handlers
         .graph_operations_service
-        .batch_create_edges(&graph_id, proto_edges)
+        .batch_create_edges(&graph_id, proto_edges.into_iter().map(Into::into).collect())
         .await
     {
         Ok(edges) => {
             info!("Successfully batch created {} edges", edges.len());
             let canonical_edges: Vec<CanonicalEdge> = edges
                 .into_iter()
-                .map(|e| CanonicalEdge::from_proto(&e))
+                .map(|e| CanonicalEdge::from_proto(&(*e).clone().into()))
                 .collect();
             let batch_results = BatchResults::new(canonical_edges);
             Json(GraphResponse::success(batch_results)).into_response()
@@ -1907,7 +1916,8 @@ pub async fn get_graph_stats(
     {
         Ok(stats) => {
             info!("Successfully retrieved graph statistics");
-            let rest_stats = RestGraphStats::from(&stats);
+            let rest_stats =
+                RestGraphStats::from(&crate::proto::proximadb_v1::GraphStats::from(stats));
             Json(GraphResponse::success(rest_stats)).into_response()
         }
         Err(err) => {

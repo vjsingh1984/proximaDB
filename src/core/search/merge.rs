@@ -45,7 +45,12 @@ use crate::core::search::results::OptimizedSearchRecord;
 /// the combined check is the right distinguishing signal for the
 /// merge step.
 fn is_wal_tombstone(record: &OptimizedSearchRecord) -> bool {
-    record.vector.is_none() && record.expires_at.is_some()
+    // Canonical tombstone marker: valid_to_ns == Some(0). (The earlier
+    // `vector.is_none() && expires_at.is_some()` heuristic broke under
+    // `include_vectors=false`, where every delta record has vector == None,
+    // and relied on the unit-muddled expires_at.) valid_to_ns is the
+    // ns-accurate source of truth.
+    record.valid_to_ns == Some(0)
 }
 
 /// Merge WAL/memtable delta candidates with directory-routed candidates
@@ -74,10 +79,22 @@ pub fn merge_delta_with_directory_results(
     // Pass 2: build the merged map. Insert delta records first so the
     // "delta wins" rule is enforced by the subsequent directory pass
     // skipping any OIDs already seen.
+    //
+    // A tombstone in the delta suppresses *every* copy of that OID — not
+    // just the flushed/directory copy but also the live copy that may sit
+    // beside it in the same unflushed WAL (insert-then-delete before any
+    // flush). Without this guard the live WAL record survives into the
+    // output because it is itself not a tombstone, so `is_wal_tombstone`
+    // returns false and it gets inserted here while the tombstone is dropped.
     let mut by_oid: HashMap<String, OptimizedSearchRecord> = HashMap::new();
     for record in delta_results {
         if is_wal_tombstone(&record) {
             // Tombstones never appear in the output set.
+            continue;
+        }
+        if tombstone_ids.contains_key(&record.id) {
+            // A tombstone for this OID exists in the same delta — the
+            // delete supersedes this live copy.
             continue;
         }
         by_oid.insert(record.id.clone(), record);
@@ -125,8 +142,9 @@ mod tests {
             score: 0.0,
             similarity: Some(0.0),
             vector: None,
-            // WAL marks tombstones with a set expires_at; the value
-            // itself is irrelevant for the merge contract.
+            // Canonical tombstone marker (valid_to_ns == Some(0)); expires_at
+            // is display-only.
+            valid_to_ns: Some(0),
             expires_at: Some(0),
             ..Default::default()
         }
@@ -180,6 +198,28 @@ mod tests {
 
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].id, "b", "tombstoned OID removed from output");
+    }
+
+    #[test]
+    fn tombstone_in_delta_suppresses_live_copy_in_same_delta() {
+        // Insert-then-delete before any flush: both the live record and its
+        // tombstone are unflushed, so both surface in the WAL delta. The
+        // tombstone must suppress the live copy sitting beside it in the
+        // same delta — not just the flushed/directory copy.
+        let directory: Vec<OptimizedSearchRecord> = vec![];
+        let delta = vec![
+            live("a", 0.9), // live copy, inserted
+            tombstone("a"), // tombstone, same OID, newer
+            live("b", 0.8),
+        ];
+        let merged = merge_delta_with_directory_results(delta, directory, 10);
+
+        assert_eq!(
+            merged.len(),
+            1,
+            "live + tombstone for the same OID in the delta collapses to nothing"
+        );
+        assert_eq!(merged[0].id, "b");
     }
 
     #[test]

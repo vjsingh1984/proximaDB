@@ -119,21 +119,18 @@ mod tests {
             .await
             .unwrap(),
         );
-        let metadata_backend = Arc::new(
-            crate::storage::metadata::MetadataStore::new(
-                crate::storage::metadata::MetadataStoreConfig::default(),
-            )
+        let metadata_url = format!("file://{}", temp_dir.path().join("metadata").display());
+        config.storage.metadata_url = metadata_url.clone();
+        let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &metadata_url)
             .await
-            .unwrap(),
-        )
-            as Arc<dyn crate::storage::traits::InternalCollectionProvider>;
+            .unwrap();
         let collection_service = Arc::new(
-            crate::services::collection::manager::CollectionService::new(
-                metadata_backend,
-                config.storage.clone(),
-            )
-            .await
-            .unwrap(),
+            crate::services::collection::manager::CollectionService::new(config.storage.clone())
+                .await
+                .unwrap()
+                .with_catalog_manager(catalog_manager.clone()),
         );
 
         let service = VectorOperationsService::new(

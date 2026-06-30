@@ -17,9 +17,19 @@ if ! "$root/scripts/worktree.sh" guard >/dev/null 2>&1; then
 fi
 
 # 2) Formatting (fast, no compile) — the most frequent avoidable CI red.
+# Pin to the rust-toolchain.toml channel so local rustfmt matches CI exactly (CI
+# pins dtolnay/rust-toolchain to the same version). Without this the default
+# `cargo` can resolve to a newer stable rustfmt, producing "green local, red CI"
+# (or vice-versa) formatting drift. Reads the channel from the toml = single
+# source of truth.
 if command -v cargo >/dev/null 2>&1; then
-  if ! cargo fmt --all -- --check >/dev/null 2>&1; then
-    echo "pre-push: BLOCKED — rustfmt drift. Run: cargo fmt --all   (bypass: git push --no-verify)" >&2
+  tc="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' "$root/rust-toolchain.toml" 2>/dev/null)"
+  fmt_cargo=(cargo)
+  if [ -n "$tc" ] && command -v rustup >/dev/null 2>&1 && rustup run "$tc" cargo --version >/dev/null 2>&1; then
+    fmt_cargo=(rustup run "$tc" cargo)
+  fi
+  if ! "${fmt_cargo[@]}" fmt --all -- --check >/dev/null 2>&1; then
+    echo "pre-push: BLOCKED — rustfmt drift (toolchain ${tc:-default}). Run: ${fmt_cargo[*]} fmt --all   (bypass: git push --no-verify)" >&2
     exit 1
   fi
 fi

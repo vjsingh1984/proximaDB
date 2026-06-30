@@ -38,6 +38,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
+use utoipa::ToSchema;
 
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
@@ -46,7 +47,7 @@ use crate::network::rest::v1::handlers::AppState;
 use super::collections::{ColumnDefinition, SchemaDefinition};
 
 /// Schema response with metadata
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SchemaResponse {
     /// Schema ID (UUID)
     pub schema_id: String,
@@ -80,6 +81,20 @@ pub struct SchemaResponse {
 ///
 /// - `404 Not Found`: Collection or schema does not exist
 /// - `500 Internal Server Error`: Retrieval failed
+#[utoipa::path(
+    get,
+    path = "/api/v2/collections/{collection_id}/schema",
+    tag = "Schema",
+    operation_id = "getCollectionSchema",
+    summary = "Get collection schema.",
+    params(
+        ("collection_id" = String, Path, description = "Collection name/ID."),
+    ),
+    responses(
+        (status = 200, description = "Collection schema.", body = SchemaResponse),
+        (status = 404, description = "Resource not found.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn get_schema(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,
@@ -104,7 +119,7 @@ pub async fn get_schema(
     };
 
     let collection_response = state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(collection_request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
@@ -280,7 +295,7 @@ pub async fn get_schema(
 ///     "allow_additional_fields": true
 /// }
 /// ```
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateSchemaRequest {
     /// Updated schema definition
     #[serde(flatten)]
@@ -292,7 +307,7 @@ pub struct UpdateSchemaRequest {
 }
 
 /// Schema update response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct UpdateSchemaResponse {
     /// Updated schema ID
     pub schema_id: String,
@@ -309,7 +324,7 @@ pub struct UpdateSchemaResponse {
 }
 
 /// Description of a schema change
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SchemaChange {
     /// Type of change
     pub change_type: String,
@@ -346,6 +361,21 @@ pub struct SchemaChange {
 /// - `404 Not Found`: Collection does not exist
 /// - `409 Conflict`: Incompatible schema change
 /// - `500 Internal Server Error`: Update failed
+#[utoipa::path(
+    put,
+    path = "/api/v2/collections/{collection_id}/schema",
+    tag = "Schema",
+    operation_id = "updateCollectionSchema",
+    summary = "Update collection schema.",
+    params(
+        ("collection_id" = String, Path, description = "Collection name/ID."),
+    ),
+    request_body = UpdateSchemaRequest,
+    responses(
+        (status = 200, description = "Schema updated.", body = UpdateSchemaResponse),
+        (status = 400, description = "Invalid request.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn update_schema(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,
@@ -449,7 +479,7 @@ pub async fn update_schema(
     };
 
     let collection_response = state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(collection_request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
@@ -608,60 +638,14 @@ pub async fn update_schema(
             .map_or("0.0.0", |s| s.schema_version.as_str()),
     );
 
-    // Step 5: Build and store updated schema configuration
-    // Map enforcement mode to proto enum
-    let enforcement_value = match schema.enforcement.as_deref() {
-        Some("strict") => 1,   // SchemaEnforcement::Strict
-        Some("flexible") => 2, // SchemaEnforcement::Flexible
-        Some("hybrid") => 3,   // SchemaEnforcement::Hybrid
-        _ => 3,                // Default to hybrid
-    };
-
-    // Build text_columns from schema columns with text types
-    let text_columns: Vec<String> = schema
-        .columns
-        .iter()
-        .filter(|c| c.data_type == "text" || c.data_type == "text_large")
-        .map(|c| c.name.clone())
-        .collect();
-
-    // Build text_storage_configs for text_large columns
-    let text_storage_configs: Vec<crate::proto::proximadb_v1::TextStorageConfig> = schema
-        .columns
-        .iter()
-        .filter(|c| c.data_type == "text_large")
-        .map(|c| crate::proto::proximadb_v1::TextStorageConfig {
-            column_name: c.name.clone(),
-            strategy: 1, // TextStorage::Chunked
-            inline_threshold: 4096,
-            chunked_threshold: 1048576,
-            chunk_size: c.max_length.unwrap_or(512),
-            generate_chunk_embeddings: false,
-            embedding_model: String::new(),
-            enable_ngram_bloom: false,
-            ngram_size: 3,
-            sidecar_base_path: String::new(),
-            sidecar_compression: 0, // TextCompression::None
-            max_text_size: 0,       // Unlimited
-            enable_fulltext_index: false,
-            fulltext_analyzer: String::new(),
-        })
-        .collect();
-
-    // Create the new record schema config
-    let new_record_schema = crate::proto::proximadb_v1::RecordSchemaConfig {
-        schema_id: new_schema_id.clone(),
-        schema_version: new_version.clone(),
-        enforcement: enforcement_value,
-        auto_evolve: schema.allow_additional_fields.unwrap_or(true),
-        columns: Vec::new(), // Column definitions are stored separately in text_columns/text_storage_configs
-    };
-
-    // Update the collection config
-    config.record_schema = Some(new_record_schema);
-    config.enable_proxima_record = Some(true);
-    config.text_columns = text_columns;
-    config.text_storage_configs = text_storage_configs;
+    // Step 5: Build and store updated schema configuration via the shared
+    // SchemaDefinition → proto mapping (inverse of build_existing_schema).
+    apply_schema_definition(
+        &mut config,
+        schema,
+        new_schema_id.clone(),
+        new_version.clone(),
+    );
 
     // Step 6: Persist the updated collection
     let update_request = crate::proto::proximadb_v1::CollectionRequest {
@@ -674,7 +658,7 @@ pub async fn update_schema(
     };
 
     state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(update_request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to update collection schema: {}", e)))?;
@@ -698,8 +682,126 @@ pub async fn update_schema(
     }))
 }
 
+/// Map a REST schema-enforcement string to the proto `SchemaEnforcement`
+/// discriminant (1=strict, 2=flexible, 3=hybrid; default hybrid).
+pub(crate) fn enforcement_value(enforcement: Option<&str>) -> i32 {
+    match enforcement {
+        Some("strict") => 1,
+        Some("flexible") => 2,
+        Some("hybrid") => 3,
+        _ => 3,
+    }
+}
+
+/// Map a REST scalar column `data_type` to its `(FilterableDataType discriminant,
+/// supports_range)` pair, or `None` for text / structured / array types that are
+/// not metadata-filterable scalar columns (text → `text_columns`). Inverse:
+/// [`filterable_type_to_rest`].
+pub(crate) fn rest_scalar_filterable_type(data_type: &str) -> Option<(i32, bool)> {
+    use crate::proto::proximadb_v1::FilterableDataType as F;
+    let (ty, supports_range) = match data_type {
+        "integer" => (F::FilterableInteger, true),
+        "float" => (F::FilterableFloat, true),
+        "decimal" => (F::FilterableDecimal, true),
+        "boolean" => (F::FilterableBoolean, false),
+        "timestamp" => (F::FilterableDatetime, true),
+        "timestamp_tz" => (F::FilterableTimestampTz, true),
+        "date" => (F::FilterableDate, true),
+        "time" => (F::FilterableTime, true),
+        "uuid" => (F::FilterableUuid, false),
+        _ => return None,
+    };
+    Some((ty as i32, supports_range))
+}
+
+/// Inverse of [`rest_scalar_filterable_type`]: a `FilterableDataType`
+/// discriminant back to its REST `data_type` label (for the GET schema view).
+pub(crate) fn filterable_type_to_rest(v: i32) -> &'static str {
+    use crate::proto::proximadb_v1::FilterableDataType as F;
+    match F::try_from(v) {
+        Ok(F::FilterableInteger) => "integer",
+        Ok(F::FilterableFloat) => "float",
+        Ok(F::FilterableDecimal) => "decimal",
+        Ok(F::FilterableBoolean) => "boolean",
+        Ok(F::FilterableDatetime) => "timestamp",
+        Ok(F::FilterableTimestampTz) => "timestamp_tz",
+        Ok(F::FilterableDate) => "date",
+        Ok(F::FilterableTime) => "time",
+        Ok(F::FilterableUuid) => "uuid",
+        _ => "text",
+    }
+}
+
+/// Populate the ProximaRecord schema fields on a collection config from a REST
+/// `SchemaDefinition`. Text / text_large columns become `text_columns` +
+/// `text_storage_configs`; scalar (numeric/temporal/boolean/uuid) columns that
+/// are filterable become typed `filterable_columns`. Sets
+/// `enable_proxima_record = true`.
+///
+/// Shared by the create-collection and update-schema paths so both persist the
+/// same shape (the inverse of [`build_existing_schema`]).
+pub(crate) fn apply_schema_definition(
+    config: &mut crate::proto::proximadb_v1::CollectionConfig,
+    schema: &SchemaDefinition,
+    schema_id: String,
+    schema_version: String,
+) {
+    let text_columns: Vec<String> = schema
+        .columns
+        .iter()
+        .filter(|c| c.data_type == "text" || c.data_type == "text_large")
+        .map(|c| c.name.clone())
+        .collect();
+
+    // Scalar columns marked filterable (default true) become typed
+    // filterable_columns so metadata filters can push down and GetCollection's
+    // indexed_fields reflects them.
+    let filterable_columns: Vec<crate::proto::proximadb_v1::FilterableColumnSpec> = schema
+        .columns
+        .iter()
+        .filter(|c| c.filterable != Some(false))
+        .filter_map(|c| {
+            rest_scalar_filterable_type(&c.data_type).map(|(data_type, supports_range)| {
+                crate::proto::proximadb_v1::FilterableColumnSpec {
+                    name: c.name.clone(),
+                    data_type,
+                    indexed: c.indexed.unwrap_or(false),
+                    supports_range,
+                    estimated_cardinality: None,
+                }
+            })
+        })
+        .collect();
+
+    let text_storage_configs: Vec<crate::proto::proximadb_v1::TextStorageConfig> = schema
+        .columns
+        .iter()
+        .filter(|c| c.data_type == "text_large")
+        .map(|c| crate::proto::proximadb_v1::TextStorageConfig {
+            column_name: c.name.clone(),
+            strategy: 1, // TextStorage::Chunked
+            inline_threshold: 4096,
+            chunked_threshold: 1048576,
+            chunk_size: c.max_length.unwrap_or(512),
+            ..Default::default()
+        })
+        .collect();
+
+    config.record_schema = Some(crate::proto::proximadb_v1::RecordSchemaConfig {
+        schema_id,
+        schema_version,
+        enforcement: enforcement_value(schema.enforcement.as_deref()),
+        auto_evolve: schema.allow_additional_fields.unwrap_or(true),
+        columns: Vec::new(), // typed columns travel via text_columns / filterable_columns
+    });
+    config.enable_proxima_record = Some(true);
+    config.text_columns = text_columns;
+    config.text_storage_configs = text_storage_configs;
+    config.filterable_columns = filterable_columns;
+}
+
 /// Build existing schema from collection config
-fn build_existing_schema(
+pub(crate) fn build_existing_schema(
     config: &crate::proto::proximadb_v1::CollectionConfig,
 ) -> Option<SchemaDefinition> {
     // If ProximaRecord is not enabled or no schema config, return None
@@ -1171,6 +1273,77 @@ mod tests {
         assert_eq!(schema.columns[0].name, "title");
         assert_eq!(schema.columns[0].data_type, "text");
         assert_eq!(schema.columns[1].name, "body");
+    }
+
+    #[test]
+    fn apply_schema_definition_populates_typed_filterable_columns() {
+        use crate::proto::proximadb_v1::FilterableDataType as F;
+        let schema = SchemaDefinition {
+            columns: vec![
+                ColumnDefinition {
+                    name: "body".to_string(),
+                    data_type: "text".to_string(),
+                    ..blank_col()
+                },
+                ColumnDefinition {
+                    name: "price".to_string(),
+                    data_type: "float".to_string(),
+                    indexed: Some(true),
+                    ..blank_col()
+                },
+                ColumnDefinition {
+                    name: "active".to_string(),
+                    data_type: "boolean".to_string(),
+                    ..blank_col()
+                },
+                ColumnDefinition {
+                    name: "secret".to_string(),
+                    data_type: "integer".to_string(),
+                    filterable: Some(false), // opted out
+                    ..blank_col()
+                },
+            ],
+            enforcement: Some("strict".to_string()),
+            allow_additional_fields: Some(false),
+        };
+        let mut config = crate::proto::proximadb_v1::CollectionConfig::default();
+        apply_schema_definition(&mut config, &schema, "s".to_string(), "1.0.0".to_string());
+
+        // text → text_columns, not filterable_columns.
+        assert_eq!(config.text_columns, vec!["body".to_string()]);
+        // scalar filterable columns: price (indexed, range) + active; secret opted out.
+        assert_eq!(config.filterable_columns.len(), 2);
+        let price = config
+            .filterable_columns
+            .iter()
+            .find(|c| c.name == "price")
+            .expect("price");
+        assert_eq!(price.data_type, F::FilterableFloat as i32);
+        assert!(price.indexed);
+        assert!(price.supports_range);
+        let active = config
+            .filterable_columns
+            .iter()
+            .find(|c| c.name == "active")
+            .expect("active");
+        assert_eq!(active.data_type, F::FilterableBoolean as i32);
+        assert!(!active.indexed);
+        assert!(!active.supports_range);
+        assert!(!config.filterable_columns.iter().any(|c| c.name == "secret"));
+    }
+
+    fn blank_col() -> ColumnDefinition {
+        ColumnDefinition {
+            name: String::new(),
+            data_type: String::new(),
+            nullable: None,
+            indexed: None,
+            filterable: None,
+            max_length: None,
+            precision: None,
+            scale: None,
+            vector_dimension: None,
+        }
     }
 
     #[test]

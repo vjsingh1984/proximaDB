@@ -6,12 +6,6 @@
 
 pub use proximadb_kernel::error::*;
 
-impl From<crate::storage::persistence::filesystem::FilesystemError> for VectorDBError {
-    fn from(err: crate::storage::persistence::filesystem::FilesystemError) -> Self {
-        VectorDBError::Filesystem(err.to_string())
-    }
-}
-
 // Canonical storage errors (storage_common::StorageError) flow to crate::core::errors::ProximaDBError
 // via its #[from] impl. Files returning kernel::VectorDBError should migrate to
 // crate::core::errors::ProximaDBError, which has the full conversion chain.

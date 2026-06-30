@@ -453,8 +453,10 @@ impl Catalog for IcebergCatalog {
             location: None,
             created_at_ms: now,
             updated_at_ms: now,
+            object_id: None,
             namespace_id: None,
             tenant_id: None,
+            account_id: None,
             region_home: None,
             default_dr_region_pair_id: None,
             storage_pool_class: Default::default(),
@@ -506,8 +508,10 @@ impl Catalog for IcebergCatalog {
                 location: None,
                 created_at_ms: now,
                 updated_at_ms: now,
+                object_id: None,
                 namespace_id: None,
                 tenant_id: None,
+                account_id: None,
                 region_home: None,
                 default_dr_region_pair_id: None,
                 storage_pool_class: Default::default(),
@@ -542,8 +546,10 @@ impl Catalog for IcebergCatalog {
             location: None,
             created_at_ms: now,
             updated_at_ms: now,
+            object_id: None,
             namespace_id: None,
             tenant_id: None,
+            account_id: None,
             region_home: None,
             default_dr_region_pair_id: None,
             storage_pool_class: Default::default(),
@@ -725,6 +731,7 @@ impl Catalog for IcebergCatalog {
             .iter()
             .map(|f| CatalogColumn {
                 id: f.id,
+                object_id: None,
                 name: f.name.clone(),
                 data_type: Self::iceberg_type_to_data_type(&f.field_type),
                 nullable: !f.required,
@@ -885,6 +892,7 @@ impl Catalog for IcebergCatalog {
             .iter()
             .map(|f| CatalogColumn {
                 id: f.id,
+                object_id: None,
                 name: f.name.clone(),
                 data_type: Self::iceberg_type_to_data_type(&f.field_type),
                 nullable: !f.required,

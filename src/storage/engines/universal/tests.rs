@@ -2,7 +2,6 @@
 mod tests {
     use std::collections::HashMap;
 
-    use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::engines::universal::adapter::{
         CandidateVector, DistanceComputationRequest, HardwareAccelerationManager,
         UniversalDistanceAdapter,
@@ -13,6 +12,7 @@ mod tests {
     use crate::storage::engines::universal::storage_integration::{
         EngineType, NOVAAdapter, PRISMAdapter,
     };
+    use proximadb_distance_kernel::DistanceMetric;
     use proximadb_kernel::uuid::Uuid;
 
     #[tokio::test]
@@ -101,7 +101,7 @@ mod tests {
     async fn test_quantized_calculator() {
         use crate::storage::engines::universal::config::UniversalAdapterConfig;
         let config = UniversalAdapterConfig::default();
-        let capabilities = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let capabilities = proximadb_hardware_caps::get_hardware_capabilities();
 
         let calculator = UniversalQuantizedCalculator::new(&config, &capabilities).await;
         assert!(
@@ -113,7 +113,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hardware_acceleration_manager() {
-        let capabilities = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let capabilities = proximadb_hardware_caps::get_hardware_capabilities();
 
         let manager = HardwareAccelerationManager::new((*capabilities).clone());
         // Test the manager was created successfully
@@ -231,12 +231,12 @@ pub use crate::storage::engines::universal::storage_integration::{
 #[cfg(test)]
 #[allow(missing_docs)]
 pub mod test_utils {
-    use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::engines::universal::adapter::{
         CandidateVector, DistanceComputationRequest,
     };
     use crate::storage::engines::universal::conversion::StorageFormat;
     use crate::storage::engines::universal::storage_integration::EngineType;
+    use proximadb_distance_kernel::DistanceMetric;
     use proximadb_kernel::uuid::Uuid;
     use std::collections::HashMap;
 

@@ -44,7 +44,9 @@
 
 pub mod collections;
 pub mod discovery;
+pub mod entities;
 pub mod external_collection;
+pub mod graphs;
 pub mod query;
 pub mod records;
 pub mod schema;
@@ -93,6 +95,19 @@ pub fn create_v2_router() -> Router<AppState> {
             "/collections/{collection_id}",
             get(collections::get_collection_v2).delete(collections::delete_collection_v2),
         )
+        // Entity operations (orchestration facade over graph+vector+document)
+        .route(
+            "/collections/{collection_id}/entities",
+            post(entities::upsert_entity_v2),
+        )
+        .route(
+            "/collections/{collection_id}/entities/search",
+            post(entities::search_entities_v2),
+        )
+        .route(
+            "/collections/{collection_id}/entities/{entity_id}",
+            get(entities::get_entity_v2).delete(entities::delete_entity_v2),
+        )
         // Schema management - separate routes for GET and PUT
         .route(
             "/collections/{collection_id}/schema",
@@ -138,6 +153,17 @@ pub fn create_v2_router() -> Router<AppState> {
         // Query facade operations
         .route("/query", post(query::execute_query))
         .route("/query/explain", post(query::explain_query))
+        // Cross-modal fusion seam — graph instance (TD-137): vector seed → graph
+        // expand → calibrated fuse-by-oid.
+        .route(
+            "/graphs/{graph_id}/fusion-search",
+            post(graphs::fusion_search_v2),
+        )
+        // TD-131 — graph impact analysis (forward/backward blast radius).
+        .route(
+            "/graphs/{graph_id}/impact-analysis",
+            post(graphs::impact_analysis_v2),
+        )
         // Phase 8 (F1) — Continuous Discovery jobs (experimental).
         .route(
             "/collections/{collection_id}/discovery-jobs",
@@ -180,6 +206,14 @@ pub fn create_v2_router() -> Router<AppState> {
         .route(
             "/_diagnostics/collections/{collection_id}/route-health",
             get(collections::get_collection_route_health_v2),
+        )
+        // ADR-037 (TD-174) — agent-facing statistics envelope: the
+        // modality-neutral, units-only boundary object the agent catalog
+        // consumes. Read from the resident summary maintained at the
+        // flush/compaction write boundary (never a corpus scan).
+        .route(
+            "/_diagnostics/collections/{collection_id}/statistics",
+            get(collections::get_collection_statistics_v2),
         )
         // Adaptive HNSW retune. POST resolves DriftKind::EfSearchOnly
         // in-place via AxisManager::apply_hnsw_ef_hot_swap; reports

@@ -79,13 +79,11 @@ use tracing::{debug, info, trace, warn};
 
 use crate::core::bloom::BloomFilterStrategy;
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::{
-    DistanceComputeProvider, UnifiedDistanceCompute,
-};
 use crate::core::{String, VectorId};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::traits::{FlushResult, UnifiedStorageFormat};
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_distance_kernel::engine::{DistanceComputeProvider, UnifiedDistanceCompute};
 use proximadb_records::{
     EmbeddingCell, ProximaRecord, ProximaTreeNode, conversions::sql_value_to_proxima,
 };
@@ -163,7 +161,7 @@ pub use recovery_thread_pool::{
 
 // DIP: Re-export path resolver types for convenient access
 pub use crate::storage::trait_components::path_resolver::{
-    CollectionPathResolver, ConfigFallbackResolver, MetadataProviderResolver,
+    CollectionPathResolver, ConfigFallbackResolver,
 };
 
 // Batch coordination exports - BatchId defined below
@@ -386,12 +384,8 @@ pub struct WriteAheadLogManager {
     strategy_type: config::WriteBufferStrategyType,
     /// Cached RecoveryManager instance - shared across registration and recovery
     recovery_manager_cache: Arc<tokio::sync::RwLock<Option<RecoveryManager>>>,
-    /// Metadata provider for accessing collection configurations during recovery
-    metadata_provider: Arc<
-        tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>,
-    >,
-    /// DIP-compliant path resolver (optional - falls back to metadata_provider if None)
-    /// When set, this is used for path resolution instead of the global singleton
+    /// DIP-compliant path resolver (optional). When set, this is used for path
+    /// resolution; otherwise paths are resolved through the global xCatalog.
     path_resolver: Option<Arc<dyn CollectionPathResolver>>,
 }
 
@@ -412,10 +406,6 @@ pub struct WriteAheadLogManagerRegistry {
     strategy_type: config::WriteBufferStrategyType,
     /// Next manager ID for creating new instances
     next_manager_id: Arc<tokio::sync::Mutex<u64>>,
-    /// Metadata provider shared across all pool instances
-    metadata_provider: Arc<
-        tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>,
-    >,
 }
 
 /// WriteAheadLogManager pool entry with workload metrics
@@ -627,29 +617,6 @@ impl WriteAheadLogManagerRegistry {
             wal_config: config::WALConfig::default(),
             strategy_type: config::WriteBufferStrategyType::AvroBatch,
             next_manager_id: Arc::new(tokio::sync::Mutex::new(1)),
-            metadata_provider: get_global_metadata_provider(),
-        }
-    }
-
-    /// Set metadata provider for all pool instances
-    pub async fn set_metadata_provider(
-        &self,
-        provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>,
-    ) {
-        // Update shared registry-level provider
-        {
-            let mut lock = self.metadata_provider.write().await;
-            *lock = Some(provider.clone());
-        }
-        tracing::info!("📋 Metadata provider set on Registry for all pool instances");
-
-        // Propagate to existing managers (they share the Arc when created, but update defensively)
-        let managers: Vec<_> = {
-            let pool = self.manager_pool.read().await;
-            pool.values().map(|entry| entry.manager.clone()).collect()
-        };
-        for manager in managers {
-            manager.set_metadata_provider(provider.clone()).await;
         }
     }
 
@@ -743,7 +710,6 @@ impl WriteAheadLogManagerRegistry {
                     strategy,
                     config.clone(),
                     manager_id.clone(),
-                    Some(self.metadata_provider.clone()),
                 )
                 .await?,
             );
@@ -884,13 +850,8 @@ impl WriteAheadLogManagerRegistry {
             WALBatchFactory::create_batch_serialization_strategy(strategy_type, config, filesystem)
                 .await?;
         let manager = Arc::new(
-            WriteAheadLogManager::new_pool_manager(
-                strategy,
-                config.clone(),
-                manager_id.clone(),
-                Some(self.metadata_provider.clone()),
-            )
-            .await?,
+            WriteAheadLogManager::new_pool_manager(strategy, config.clone(), manager_id.clone())
+                .await?,
         );
 
         let entry = WriteAheadLogManagerPoolEntry {
@@ -1046,76 +1007,125 @@ static GLOBAL_WRITE_BUFFER_BEHAVIOR: GlobalWriteBufferBehaviorSingleton =
 static WAL_MANAGER_REGISTRY: ResettableOnceLock<WriteAheadLogManagerRegistry> =
     ResettableOnceLock::new();
 
-/// Global metadata provider singleton - shared across ALL WriteAheadLogManager instances
-/// This ensures that pool instances created after set_metadata_provider() can still access
-/// the provider. Without this, pool instances would have their own empty Arc<RwLock<None>>.
-type GlobalMetadataValue =
-    Arc<tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>>;
-
-static GLOBAL_METADATA_PROVIDER: ResettableOnceLock<GlobalMetadataValue> =
-    ResettableOnceLock::new();
-
 /// Internal helper to reset global singletons (tests/embedded only)
 pub(crate) unsafe fn reset_global_wal_state_for_tests() {
     unsafe {
-        GLOBAL_METADATA_PROVIDER.reset();
+        GLOBAL_CATALOG.reset();
         GLOBAL_WRITE_BUFFER_BEHAVIOR.wal_behavior.reset();
         WAL_MANAGER_REGISTRY.reset();
     }
 }
 
-/// Get or initialize the global metadata provider
-fn get_global_metadata_provider()
--> Arc<tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>> {
-    GLOBAL_METADATA_PROVIDER
+/// Global catalog singleton — the sole read-authoritative source for collection
+/// metadata during WAL path resolution and recovery. When set, WAL/recovery
+/// resolve a collection's config + storage assignment straight from the catalog
+/// (the system-of-record).
+type GlobalCatalogValue = Arc<tokio::sync::RwLock<Option<Arc<crate::catalog::CatalogManager>>>>;
+
+static GLOBAL_CATALOG: ResettableOnceLock<GlobalCatalogValue> = ResettableOnceLock::new();
+
+fn get_global_catalog() -> GlobalCatalogValue {
+    GLOBAL_CATALOG
         .get()
         .get_or_init(|| Arc::new(tokio::sync::RwLock::new(None)))
         .clone()
 }
 
-/// Set the global metadata provider - MUST be called before any WAL writes
-/// This ensures all pool instances can resolve collection storage assignments
-///
-/// # Example
-/// ```rust,ignore
-/// use std::sync::Arc;
-/// use proximadb::storage::persistence::write_ahead_log::set_global_metadata_provider;
-/// use proximadb::storage::traits::InternalCollectionProvider;
-///
-/// async fn setup(provider: Arc<dyn InternalCollectionProvider>) {
-///     set_global_metadata_provider(provider).await;
-///     // Now WAL writes will correctly resolve storage paths
-/// }
-/// ```
-pub async fn set_global_metadata_provider(
-    provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>,
-) {
-    let global = get_global_metadata_provider();
+/// Set the global catalog used for WAL/recovery collection resolution. Call once
+/// at boot, before any WAL writes or recovery.
+pub async fn set_global_catalog(catalog: Arc<crate::catalog::CatalogManager>) {
+    let global = get_global_catalog();
     let mut lock = global.write().await;
-    *lock = Some(provider);
-    tracing::info!("✅ Global metadata provider set for WAL path resolution");
+    *lock = Some(catalog);
+    tracing::info!("✅ Global catalog set for WAL/recovery collection resolution");
 }
 
-/// Check if global metadata provider is available
-pub async fn is_global_metadata_provider_available() -> bool {
-    let global = get_global_metadata_provider();
-    let lock = global.read().await;
-    lock.is_some()
-}
+/// Resolve a collection (by id or name) to its proto `Collection` via the
+/// catalog, or `None` if no catalog is wired / the collection is absent. The
+/// catalog asset carries the full collection shape (config, storage assignment,
+/// stats), so this faithfully replaces a legacy `provider.get_collection()`
+/// lookup. Resolves by FQN first, then scans by collection id/name (collections
+/// are catalog tables keyed by name, with the id carried as an asset property).
+pub(crate) async fn resolve_collection_from_catalog(
+    collection_id: &str,
+) -> Option<crate::proto::proximadb_v1::Collection> {
+    let global = get_global_catalog();
+    let catalog_manager = global.read().await.clone()?;
 
-/// Wait for global metadata provider to be set with timeout
-/// Returns true if provider became available, false if timeout
-pub async fn wait_for_global_metadata_provider(timeout: std::time::Duration) -> bool {
-    let start = std::time::Instant::now();
-    let check_interval = std::time::Duration::from_millis(10);
-
-    while start.elapsed() < timeout {
-        if is_global_metadata_provider_available().await {
-            return true;
-        }
-        tokio::time::sleep(check_interval).await;
+    // Fast path: the identifier is a fully-qualified table name.
+    if let Ok((catalog, table_id)) = catalog_manager.resolve_table(collection_id).await
+        && catalog.table_exists(&table_id).await.unwrap_or(false)
+        && let Ok(schema) = catalog.get_table(&table_id).await
+        && let Ok(Some(collection)) =
+            crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
+                &table_id, &schema,
+            )
+    {
+        return Some(collection);
     }
-    false
+
+    // Fallback: the identifier is an opaque collection id (UUID). Scan the
+    // catalog and match by id or name.
+    let catalog = catalog_manager.default_catalog().await.ok()?;
+    for namespace in catalog.list_namespaces(None).await.ok()? {
+        let Ok(table_ids) = catalog.list_tables(&namespace.levels).await else {
+            continue;
+        };
+        for table_id in table_ids {
+            let Ok(schema) = catalog.get_table(&table_id).await else {
+                continue;
+            };
+            if let Ok(Some(collection)) =
+                crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
+                    &table_id, &schema,
+                )
+                && (collection.id == collection_id
+                    || collection
+                        .config
+                        .as_ref()
+                        .is_some_and(|cfg| cfg.name == collection_id))
+            {
+                return Some(collection);
+            }
+        }
+    }
+    None
+}
+
+/// List every collection known to the global catalog as proto `Collection`s, or
+/// an empty vec if no catalog is wired. The catalog is the sole authority, so
+/// this replaces the legacy `provider.list_collections()` lookup used during WAL
+/// recovery.
+pub(crate) async fn list_collections_from_catalog() -> Vec<crate::proto::proximadb_v1::Collection> {
+    let global = get_global_catalog();
+    let Some(catalog_manager) = global.read().await.clone() else {
+        return Vec::new();
+    };
+    let Ok(catalog) = catalog_manager.default_catalog().await else {
+        return Vec::new();
+    };
+    let mut collections = Vec::new();
+    let Ok(namespaces) = catalog.list_namespaces(None).await else {
+        return collections;
+    };
+    for namespace in namespaces {
+        let Ok(table_ids) = catalog.list_tables(&namespace.levels).await else {
+            continue;
+        };
+        for table_id in table_ids {
+            let Ok(schema) = catalog.get_table(&table_id).await else {
+                continue;
+            };
+            if let Ok(Some(collection)) =
+                crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
+                    &table_id, &schema,
+                )
+            {
+                collections.push(collection);
+            }
+        }
+    }
+    collections
 }
 
 /// Get the global write buffer behavior singleton if it has been initialized
@@ -1253,7 +1263,7 @@ impl WriteAheadLogManager {
     /// Create new WriteAheadLogManager
     pub async fn new(strategy: Box<dyn WALBatchStrategy>, config: WALConfig) -> Result<Self> {
         // Use new_pool_manager with a default manager ID for backwards compatibility
-        Self::new_pool_manager(strategy, config, "default_manager".to_string(), None).await
+        Self::new_pool_manager(strategy, config, "default_manager".to_string()).await
     }
 
     /// Create new WriteAheadLogManager for specific collections with shared global memtable
@@ -1317,9 +1327,7 @@ impl WriteAheadLogManager {
             shared_wal_behavior: &GLOBAL_WRITE_BUFFER_BEHAVIOR,
             strategy_type,
             recovery_manager_cache: Arc::new(tokio::sync::RwLock::new(None)),
-            // CRITICAL FIX: Use global metadata provider for shared access
-            metadata_provider: get_global_metadata_provider(),
-            // DIP: No path resolver by default, falls back to metadata_provider
+            // DIP: No path resolver by default, falls back to the global xCatalog
             path_resolver: None,
         })
     }
@@ -1337,9 +1345,9 @@ impl WriteAheadLogManager {
     ///
     /// # Example
     /// ```rust,ignore
-    /// use proximadb::storage::trait_components::path_resolver::{MetadataProviderResolver, CollectionPathResolver};
+    /// use proximadb::storage::trait_components::path_resolver::{ConfigFallbackResolver, CollectionPathResolver};
     ///
-    /// let resolver = Arc::new(MetadataProviderResolver::new(metadata_provider));
+    /// let resolver = Arc::new(ConfigFallbackResolver::default());
     /// let wal_manager = WriteAheadLogManager::new_with_path_resolver(
     ///     config,
     ///     "my_collection".to_string(),
@@ -1411,8 +1419,6 @@ impl WriteAheadLogManager {
             shared_wal_behavior: &GLOBAL_WRITE_BUFFER_BEHAVIOR,
             strategy_type,
             recovery_manager_cache: Arc::new(tokio::sync::RwLock::new(None)),
-            // DIP: Still use global metadata provider for other operations
-            metadata_provider: get_global_metadata_provider(),
             // DIP: Use injected path resolver (no 100ms wait needed)
             path_resolver: Some(path_resolver),
         })
@@ -1423,13 +1429,6 @@ impl WriteAheadLogManager {
         _strategy: Box<dyn WALBatchStrategy>,
         config: WALConfig,
         manager_id: String,
-        parent_metadata_provider: Option<
-            Arc<
-                tokio::sync::RwLock<
-                    Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>,
-                >,
-            >,
-        >,
     ) -> Result<Self> {
         tracing::debug!(
             "🏊 Creating pool WriteAheadLogManager {} (shared global memtable)",
@@ -1484,11 +1483,7 @@ impl WriteAheadLogManager {
             shared_wal_behavior: &GLOBAL_WRITE_BUFFER_BEHAVIOR,
             strategy_type,
             recovery_manager_cache: Arc::new(tokio::sync::RwLock::new(None)),
-            // CRITICAL FIX: Use global metadata provider instead of creating new empty one
-            // This ensures ALL pool instances share the same metadata provider
-            metadata_provider: parent_metadata_provider
-                .unwrap_or_else(get_global_metadata_provider),
-            // DIP: No path resolver by default, falls back to metadata_provider
+            // DIP: No path resolver by default, falls back to the global xCatalog
             path_resolver: None,
         })
     }
@@ -1526,16 +1521,6 @@ impl WriteAheadLogManager {
     ) {
         // Storage engine setting moved to config level — strategies receive it directly
         tracing::info!("Storage engine attached to WAL manager for delegated operations");
-    }
-
-    /// Set metadata provider for collection configuration access during recovery
-    pub async fn set_metadata_provider(
-        &self,
-        provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>,
-    ) {
-        let mut metadata_provider = self.metadata_provider.write().await;
-        *metadata_provider = Some(provider);
-        tracing::info!("📋 Metadata provider attached to WAL manager for recovery");
     }
 
     /// Set path resolver for DIP-compliant path resolution (post-construction injection)
@@ -1602,81 +1587,33 @@ impl WriteAheadLogManager {
                         collection_id,
                         e
                     );
-                    // Fall through to metadata_provider path
+                    // Fall through to the catalog path
                 }
             }
         }
 
-        // Legacy path: Check if metadata provider is available
-        let provider_available = {
-            let lock = self.metadata_provider.read().await;
-            lock.is_some()
-        };
-
-        // If not available, wait briefly for it to be set (handles startup race condition)
-        // NOTE: This 100ms wait is only used when no path_resolver is injected
-        if !provider_available {
-            tracing::debug!(
-                "WAL path resolution: Waiting for metadata provider (collection: {})",
+        // The catalog is the sole read authority: resolve from it.
+        if let Some(collection) = resolve_collection_from_catalog(collection_id).await {
+            if let Some(assignment) = collection.storage_assignment {
+                tracing::debug!(
+                    "WAL path resolved via catalog: {} -> {}",
+                    collection_id,
+                    assignment.base_location
+                );
+                return Ok(assignment.base_location.clone());
+            }
+            tracing::warn!(
+                "Collection {} in catalog has no storage_assignment, using fallback",
                 collection_id
             );
-            let timeout = std::time::Duration::from_millis(100);
-            if !wait_for_global_metadata_provider(timeout).await {
-                // Use fallback with warning - this is acceptable during startup/recovery
-                let fallback = self.get_fallback_base_location();
-                tracing::warn!(
-                    "WAL path resolution: No metadata provider after {}ms, using fallback path: {} (collection: {})",
-                    timeout.as_millis(),
-                    fallback,
-                    collection_id
-                );
-                return Ok(fallback);
-            }
+            return Ok(self.get_fallback_base_location());
         }
 
-        // Now try to resolve from metadata provider
-        let metadata_provider_lock = self.metadata_provider.read().await;
-        if let Some(provider) = metadata_provider_lock.as_ref() {
-            match provider.get_collection(collection_id).await {
-                Ok(Some(collection)) => {
-                    if let Some(assignment) = collection.storage_assignment {
-                        tracing::debug!(
-                            "WAL path resolved: {} -> {}",
-                            collection_id,
-                            assignment.base_location
-                        );
-                        return Ok(assignment.base_location.clone());
-                    } else {
-                        // Collection exists but has no storage assignment - this is unexpected
-                        // Try to assign storage now
-                        tracing::warn!(
-                            "Collection {} has no storage_assignment, using fallback",
-                            collection_id
-                        );
-                        return Ok(self.get_fallback_base_location());
-                    }
-                }
-                Ok(None) => {
-                    // Collection not found - this can happen during collection creation
-                    // before the collection is fully registered
-                    tracing::debug!(
-                        "Collection {} not found in metadata, using fallback",
-                        collection_id
-                    );
-                    return Ok(self.get_fallback_base_location());
-                }
-                Err(e) => {
-                    tracing::error!(
-                        "Failed to get collection {} from metadata: {}",
-                        collection_id,
-                        e
-                    );
-                    return Ok(self.get_fallback_base_location());
-                }
-            }
-        }
-
-        // Fallback if metadata provider is not available
+        // Catalog has no entry (e.g. during collection creation/recovery): use fallback.
+        tracing::debug!(
+            "Collection {} not found in catalog, using fallback",
+            collection_id
+        );
         Ok(self.get_fallback_base_location())
     }
 
@@ -2334,48 +2271,32 @@ impl WriteAheadLogManager {
                 config::SyncMode::Always | config::SyncMode::PerBatch
             );
 
-            // Get base location for this collection from metadata provider
-            // CRITICAL FIX: Query collection metadata for actual storage_assignment
-            let base_location = {
-                let metadata_provider_lock = self.metadata_provider.read().await;
-                if let Some(provider) = metadata_provider_lock.as_ref() {
-                    match provider.get_collection(&collection_id).await {
-                        Ok(Some(collection)) => {
-                            if let Some(assignment) = collection.storage_assignment {
-                                debug!(
-                                    "Found storage assignment for WAL persistence: {}",
-                                    assignment.base_location
-                                );
-                                assignment.base_location.clone()
-                            } else {
-                                debug!("No storage assignment in collection; using WAL fallback");
-                                self.config
-                                    .multi_disk
-                                    .data_directories
-                                    .first()
-                                    .cloned()
-                                    .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
-                            }
-                        }
-                        _ => {
-                            debug!("Collection lookup failed for WAL persistence; using fallback");
-                            self.config
-                                .multi_disk
-                                .data_directories
-                                .first()
-                                .cloned()
-                                .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
-                        }
+            // Get base location for this collection from the catalog (sole read
+            // authority for storage_assignment), falling back to config defaults.
+            let base_location =
+                if let Some(collection) = resolve_collection_from_catalog(&collection_id).await {
+                    match collection.storage_assignment {
+                        Some(assignment) => assignment.base_location.clone(),
+                        None => self
+                            .config
+                            .multi_disk
+                            .data_directories
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| "/tmp/proximadb/d1".to_string()),
                     }
                 } else {
+                    debug!(
+                        "Collection {} not found in catalog; using WAL fallback",
+                        collection_id
+                    );
                     self.config
                         .multi_disk
                         .data_directories
                         .first()
                         .cloned()
                         .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
-                }
-            };
+                };
 
             // Create disk manager and write batch
             let filesystem_factory = Arc::new(FilesystemFactory::create_default().await?);
@@ -2421,13 +2342,13 @@ impl WriteAheadLogManager {
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
-        distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
+        distance_metric: Option<proximadb_distance_kernel::DistanceMetric>,
     ) -> Result<Vec<(VectorId, f32, ProximaRecord)>> {
         {
             let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
             let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-            let metric = distance_metric
-                .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
+            let metric =
+                distance_metric.unwrap_or(proximadb_distance_kernel::DistanceMetric::Cosine);
             let results = wal_behavior
                 .search_unflushed_vectors(
                     collection_id,
@@ -2478,11 +2399,11 @@ impl WriteAheadLogManager {
         query_vector: &[f32],
         top_k: usize,
         distance_metric: DistanceMetric,
-        metadata_filters: Option<&crate::core::search::FilterExpression>,
+        metadata_filters: Option<&proximadb_filter_expression::FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+        use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
         tracing::debug!(
             "🔍 WAL: Enhanced search for collection {} with top_k={}, metric={:?}, filters={}",
@@ -2571,6 +2492,7 @@ impl WriteAheadLogManager {
                         timestamp: Some(vector_record.created_at_ns / 1_000_000),
                         updated_at: Some(vector_record.updated_at_ns / 1_000_000),
                         expires_at: expires_at_secs,
+                        valid_to_ns: vector_record.valid_to_ns,
                         ..Default::default()
                     };
                     all_results.push(tombstone_result);
@@ -2634,6 +2556,7 @@ impl WriteAheadLogManager {
                     timestamp: Some(vector_record.created_at_ns / 1_000_000),
                     updated_at: Some(vector_record.updated_at_ns / 1_000_000),
                     expires_at: expires_at_secs,
+                    valid_to_ns: vector_record.valid_to_ns,
                     source: None,
                     semantic_similarity: Some(similarity_result.clone()),
                     ..Default::default()
@@ -2644,13 +2567,27 @@ impl WriteAheadLogManager {
             }
         }
 
-        // Step 5: Sort by score and take top k
-        all_results.sort_by(|a, b| {
+        // Step 5: Sort the LIVE (scored) results by score and take top_k — but
+        // tombstones are suppression markers (score 0.0, `valid_to_ns == Some(0)`),
+        // NOT ranked candidates, so they must be EXEMPT from the ANN top-k cut.
+        // Otherwise (TD-188), once the unflushed live set exceeds the candidate
+        // budget (e.g. N=300 live vs the top_k-scaled candidate count) every
+        // score-0.0 tombstone ranks below the cut and is truncated away before it can
+        // suppress its deleted oid in the downstream MVCC dedup /
+        // `merge_delta_with_directory_results` — so deleted vectors leak back into
+        // results. Partition, truncate only the scored set, then re-append ALL
+        // tombstones unconditionally.
+        let (mut tombstones, mut scored): (Vec<_>, Vec<_>) = all_results
+            .into_iter()
+            .partition(|r| r.valid_to_ns == Some(0));
+        scored.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        all_results.truncate(top_k);
+        scored.truncate(top_k);
+        scored.append(&mut tombstones);
+        all_results = scored;
 
         // Ranks are handled via score field in OptimizedSearchRecord
         // They can be computed by the caller if needed
@@ -2668,7 +2605,7 @@ impl WriteAheadLogManager {
     async fn filter_batches_with_bloom(
         &self,
         batches: Vec<crate::storage::memtable::specialized::wal_behavior::WALVectorBatch>,
-        metadata_filters: &crate::core::search::FilterExpression,
+        metadata_filters: &proximadb_filter_expression::FilterExpression,
     ) -> Result<Vec<crate::storage::memtable::specialized::wal_behavior::WALVectorBatch>> {
         let mut filtered_batches = Vec::new();
         let mut bloom_hits = 0;
@@ -2743,9 +2680,9 @@ impl WriteAheadLogManager {
     /// must still satisfy those `Equals` legs.
     fn extract_filter_conditions(
         &self,
-        filter: &crate::core::search::FilterExpression,
+        filter: &proximadb_filter_expression::FilterExpression,
     ) -> Vec<(String, String)> {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 
         match filter {
             FilterExpression::Comparison {
@@ -3097,14 +3034,13 @@ impl WriteAheadLogManager {
         );
         trace!("FilesystemFactory created for WAL recovery");
 
-        // Create RecoveryManager instance with metadata provider
+        // Create RecoveryManager instance (catalog-backed config resolution)
         let recovery_manager = RecoveryManager::new(
             self.config.clone(),
             self.shared_wal_behavior
                 .get_or_init(&crate::storage::memtable::core::MemtableConfig::default())
                 .clone(),
             filesystem,
-            self.metadata_provider.clone(),
         );
         trace!("RecoveryManager created successfully");
 
@@ -3210,10 +3146,10 @@ impl std::fmt::Debug for WriteAheadLogManager {
 #[cfg(test)]
 mod simple_context_tests {
     use super::*;
-    use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
+    use proximadb_distance_kernel::DistanceMetric;
     use std::collections::HashMap;
 
     #[tokio::test]
@@ -3235,6 +3171,8 @@ mod simple_context_tests {
             priority: OperationPriority::Normal,
             timeout_ms: Some(60_000),
             extra_metadata: HashMap::new(),
+
+            tenant_id: None,
         };
 
         // Validate context fields
@@ -3258,6 +3196,8 @@ mod simple_context_tests {
             priority: OperationPriority::Normal,
             timeout_ms: Some(60_000),
             extra_metadata: HashMap::new(),
+
+            tenant_id: None,
         };
         assert_eq!(sst_context.engine_name(), "sst");
 
@@ -3283,6 +3223,8 @@ mod simple_context_tests {
             priority: OperationPriority::Normal,
             timeout_ms: Some(60_000),
             extra_metadata: HashMap::new(),
+
+            tenant_id: None,
         };
 
         // Test dimension-based optimizations
@@ -3433,10 +3375,10 @@ mod wal_manager_infra_tests {
 #[cfg(test)]
 mod optimization_validation_tests {
     use super::*;
-    use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
+    use proximadb_distance_kernel::DistanceMetric;
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -3508,6 +3450,8 @@ mod optimization_validation_tests {
             priority: OperationPriority::Normal,
             timeout_ms: Some(60_000),
             extra_metadata: HashMap::new(),
+
+            tenant_id: None,
         };
 
         debug!("   BackgroundManager → Uses pre-computed context (NO service call)");
@@ -3575,6 +3519,8 @@ mod optimization_validation_tests {
                 meta.insert("test_key".to_string(), "test_value".to_string());
                 meta
             },
+
+            tenant_id: None,
         };
 
         assert_eq!(context.collection_id, "completeness_test");
