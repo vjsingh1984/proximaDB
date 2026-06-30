@@ -146,6 +146,32 @@ version = "v0.2"
 notes = "qa-gate ratchet (develop→qa promotion). Deterministic seeded LCG corpus (DIM=64). N=1000 REFINE=100 mean recall@10 = 0.9340; N=100000 REFINE=1000 mean recall@10 = 0.9320. Both >= 0.90 ratchet (only goes up, #10). Proves the RaBitQ->SQ8 cascade (stage-1 binary rank -> stage-2 SQ8 rerank, no f32 GET) holds recall at this scale -- a prerequisite for flipping PAX quant default-on (rollout Phase 2). NOTE: REFINE=200 at N=100k gave 0.708; a 1000-wide stage-1 pool (1% of corpus) recovers to 0.932. REPRESENTATIVENESS CAVEAT (audit 2026-06-25, PAX_SUBSTRATE_DESIGN_PLAN_2026_06_25.adoc): this is a DIM=64 synthetic corpus, N<=100k, with a FIXED absolute REFINE=1000 (=1% only at 100k; <0.1% at 1M). It is a fast CI floor, NOT representative of production high-dim embeddings or N>=1M -- the default-on flip (TD-150) is GATED on an additional real-embedding (e.g. SIFT1M / 768-d) N>=1M recall artifact (WS8). Indicative local run, not an SLA."
 
 [[claims]]
+id = "pax_rabitq_sq8_sift1m_recall_at_10"
+claim = "PAX RaBitQ→SQ8 cascade recall@10 on real SIFT (128-d, Euclidean): N=100k indicative 0.9905; N=1M canonical pending qa-gate — WS8 default-on gate"
+metric = "recall_at_10"
+status = "measured"
+asserted_in = ["tests/sift_pax_recall_ratchet_test.rs", ".github/workflows/qa-gate.yml"]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=1000000 cargo test --test sift_pax_recall_ratchet_test -- --nocapture"
+artifact = "docs/_internal/status/SIFT1M_RECALL_RATCHET_2026_06_30.adoc"
+hardware = "local macOS arm64 (indicative; N=1M canonical = qa-gate `sift-pax-recall`, ubuntu-latest)"
+date = "2026-06-30"
+version = "v0.2"
+notes = """Real-dataset WS8 gate resolving the REPRESENTATIVENESS CAVEAT on the
+synthetic pax_rabitq_sq8_recall_at_10 entry above. RESULT (2026-06-30, indicative):
+on REAL SIFT descriptors the PAX RaBitQ->SQ8 cascade holds recall@10 = 0.9905 at
+N=100k (200 queries, brute-force-L2 GT over the subset) -- well above the 0.90
+floor and HIGHER than the synthetic 0.932, directly refuting the worry that real
+(mildly clustered) data degrades RaBitQ. The N=1M CANONICAL confirmation (SIFT's
+provided .ivecs ground truth) is the qa-gate `sift-pax-recall` job's output
+(workflow_dispatch, ubuntu-latest, 120 min; downloads the ~160 MB TEXMEX corpus).
+The default-on flip (Phase F) remains GATED on that N=1M run recording recall@10
+>= 0.90 here. Dataset format: plain-binary .fvecs/.ivecs (NO hdf5 native dep --
+the plan's mandated evaluation to avoid libhdf5 CI friction). Indicative local
+run, NOT an SLA; N=1M canonical pending qa-gate."""
+
+
+[[claims]]
 id = "pax_footer_cache_ranged_read_economics"
 claim = "PAX footer-cache + ranged-read cloud-economics vs whole-byte (local S3-proxy measurement)"
 metric = "object_store_read_economics"

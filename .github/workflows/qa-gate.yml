@@ -12,6 +12,14 @@ on:
   push:
     branches: [qa]
   workflow_dispatch:
+    inputs:
+      # WS8 SIFT1M PAX recall ratchet (see the `sift-pax-recall` job). 100000 =
+      # the fast CI floor; 1000000 = the full gating artifact for the default-on
+      # flip (Phase F).
+      sift_n:
+        description: "SIFT base-vector count (100000 floor | 1000000 full gate)"
+        required: false
+        default: "100000"
 
 concurrency:
   group: qa-gate-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
@@ -122,6 +130,59 @@ jobs:
         run: cargo test --test raptor_recall_test -- --nocapture
       - name: Run TD-112 post-flush recall ratchet (TD-182 P0b)
         run: cargo test --test td112_postflush_recall_e2e recall -- --nocapture
+
+  # WS8: real-dataset PAX RaBitQ→SQ8 recall artifact. MANUAL ONLY
+  # (workflow_dispatch) — it downloads the SIFT1M corpus (~160 MB) and runs a
+  # heavy recall bench, so it is deliberately NOT in the always-on
+  # `pgwire-recall-tests` job (avoids 160 MB-download flakiness on every qa PR).
+  # Produces the dated recall@10 ≥ 0.90 artifact that GATES the PAX default-on
+  # flip (Phase F): the existing `pax-recall-ratchet` is a synthetic DIM=64 CI
+  # floor only (representativeness caveat in BENCHMARK_EVIDENCE.toml WS8). The
+  # ratchet self-skips when the corpus is absent, so a non-manual trigger would
+  # just skip — the `if:` keeps it from scheduling at all.
+  sift-pax-recall:
+    name: SIFT1M PAX RaBitQ recall ratchet (WS8)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-qa-sift"
+      - name: Cache SIFT1M corpus (TEXMEX .fvecs — no native dep)
+        uses: actions/cache@v4
+        with:
+          path: ~/sift1m
+          key: sift1m-texmem-fvecs-v1
+      - name: Download SIFT1M corpus (HTTPS Hugging Face mirror)
+        run: |
+          mkdir -p "$HOME/sift1m"
+          cd "$HOME/sift1m"
+          base=https://huggingface.co/datasets/qbo-odp/sift1m/resolve/main
+          for f in sift_base.fvecs sift_query.fvecs sift_groundtruth.ivecs; do
+            if [ ! -s "$f" ]; then
+              echo "::group::download $f"
+              curl -L --fail --retry 3 -o "$f" "$base/$f"
+              echo "::endgroup::"
+            fi
+          done
+          ls -lh "$HOME/sift1m"
+      - name: Build ratchet binary
+        env:
+          CARGO_BUILD_JOBS: "4"
+        run: cargo test --test sift_pax_recall_ratchet_test --no-run
+      - name: Run SIFT PAX recall ratchet (N=${{ inputs.sift_n || '100000' }})
+        env:
+          PROXIMADB_SIFT_DATASET_DIR: /home/runner/sift1m
+          PROXIMADB_SIFT_N: ${{ inputs.sift_n || '100000' }}
+          PROXIMADB_SIFT_QUERIES: "1000"
+        run: cargo test --test sift_pax_recall_ratchet_test -- --nocapture
 
   # Validate the object-store access-tier cost lever (TD-168/TD-173) against REAL
   # cloud APIs via emulators — Azurite (Azure), MinIO (S3), fake-gcs (GCP) — the
