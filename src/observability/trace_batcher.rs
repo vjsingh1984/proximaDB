@@ -26,6 +26,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::observability::io_trace::IoTraceSnapshot;
 use crate::observability::metering_event::{MeteringInputs, build_kru};
 use crate::observability::search_plan_trace::SearchPlanTrace;
 use crate::observability::trace_digest::{DigestInputs, digest_hex};
@@ -71,6 +72,11 @@ pub struct TraceBatchInput<'a> {
     pub occurred_at_iso: String,
     /// Bucket for the idempotency-key timestamp. Defaults to 1s.
     pub idempotency_bucket: Duration,
+    /// Per-query object-store I/O trace snapshot (KOU dimension). Threaded
+    /// through to `build_kru` so the metering event can surface
+    /// `object_store_gets` / `object_store_bytes_read`. `None` keeps the
+    /// pre-existing metering shape (older call sites).
+    pub io_trace: Option<&'a IoTraceSnapshot>,
 }
 
 /// Build a batch from a slice of inputs. Returns an empty batch when
@@ -97,6 +103,7 @@ pub fn build_batch(inputs: &[TraceBatchInput<'_>]) -> TraceBatch {
             corpus_gb: input.corpus_gb,
             total_vectors: input.total_vectors,
             occurred_at: input.occurred_at_iso.clone(),
+            io_trace: input.io_trace,
         });
 
         let idempotency_key = digest_hex(&DigestInputs {
@@ -161,6 +168,7 @@ pub fn homogeneous_inputs<'a>(
             occurred_at_ms,
             occurred_at_iso: occurred_at_iso.to_string(),
             idempotency_bucket: Duration::from_secs(1),
+            io_trace: None,
         })
         .collect()
 }
@@ -211,6 +219,7 @@ mod tests {
             occurred_at_ms: 1_700_000_000_000,
             occurred_at_iso: "2026-05-21T00:00:00Z".into(),
             idempotency_bucket: Duration::from_secs(1),
+            io_trace: None,
         }
     }
 
