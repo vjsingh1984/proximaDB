@@ -88,6 +88,10 @@ jobs:
             --test td112_postflush_recall_e2e --test raptor_recall_test \
             --test helix_cold_search_recall_test --no-run
       - name: Run TPC-H over pgwire
+        env:
+          # 8MB worker stack: correlated subqueries (Q2/Q20-Q22) produce
+          # deep-but-finite async call chains that overflow the default ~2MB.
+          RUST_MIN_STACK: "8388608"
         run: cargo test --test tpch_pgwire_e2e -- --nocapture
       - name: Run TPC-DS over pgwire
         run: cargo test --test tpcds_pgwire_e2e -- --nocapture
