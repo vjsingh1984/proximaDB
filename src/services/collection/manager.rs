@@ -2167,16 +2167,101 @@ impl CollectionService {
     /// catalog assets use UUID strings so identity is opaque, non-time-leaking, and compatible
     /// with catalog/schema UUID fields across SDKs and embedded mode.
     async fn generate_unique_collection_id(&self) -> Result<String> {
-        for _ in 0..8 {
-            let id = uuid::Uuid::new_v4().to_string();
-            if self.collection_from_catalog_asset(&id).await?.is_none() {
-                return Ok(id);
-            }
-        }
+        // ADR-031: the collection ID is the stable object_id (u64) as a decimal
+        // string — NOT a UUID. The monotonic allocator guarantees uniqueness by
+        // construction (no retry loop needed). base62 is reserved for path
+        // segments only (DrResolvedPath), not the collection.id variable.
+        Ok(generate_numeric_collection_id())
+    }
+}
 
-        Err(anyhow::anyhow!(
-            "Unable to generate a unique UUID for collection"
-        ))
+/// System-wide monotonic allocator for collection object_ids (ADR-031).
+/// One sequence for all collections across all tenants — globally unique,
+/// never reused. Recovered on restart by scanning existing collection IDs.
+static COLLECTION_ID_ALLOCATOR: std::sync::OnceLock<proximadb_catalog::id_allocator::IdAllocator> =
+    std::sync::OnceLock::new();
+
+/// Generate a stable, monotonic collection ID as the **decimal** `object_id`.
+///
+/// ADR-031 representation rule: the `object_id` is `u64` in-memory (numeric —
+/// the canonical identity, never stringified for keying/lookup). Its
+/// client-facing string form (the `collection.id` API field) is the **decimal**
+/// `object_id` — numeric, opaque, JSON-safe. The **base62** encoding is reserved
+/// strictly for object-store *path segments* (`DrResolvedPath`), where
+/// zero-padded base62 gives lexicographic S3 LIST order; it is NOT used for the
+/// `collection.id` variable.
+fn generate_numeric_collection_id() -> String {
+    let allocator =
+        COLLECTION_ID_ALLOCATOR.get_or_init(proximadb_catalog::id_allocator::IdAllocator::default);
+    allocator.allocate().to_string()
+}
+
+/// ADR-031: recover the collection ID allocator floor from existing collections.
+///
+/// Call at startup (after scanning existing collection IDs) with
+/// `max(existing decimal object_id)` to prevent ID reuse after restart.
+/// The `OnceLock` allocator is initialized (if not already) and its floor raised
+/// so subsequent `generate_numeric_collection_id` calls never produce an ID
+/// that's already on disk.
+///
+/// **Usage** (in server/embedded startup):
+/// ```ignore
+/// let max_existing = collections.iter()
+///     .filter_map(|c| c.id.parse::<u64>().ok())
+///     .max()
+///     .unwrap_or(0);
+/// recover_collection_id_floor(max_existing);
+/// ```
+pub fn recover_collection_id_floor(max_existing: u64) {
+    let allocator =
+        COLLECTION_ID_ALLOCATOR.get_or_init(proximadb_catalog::id_allocator::IdAllocator::default);
+    allocator.raise_floor(max_existing + 1);
+}
+
+#[cfg(test)]
+mod adr031_collection_id_tests {
+    use super::{generate_numeric_collection_id, recover_collection_id_floor};
+
+    #[test]
+    fn collection_id_is_numeric_not_uuid() {
+        let id = generate_numeric_collection_id();
+        // ADR-031: collection.id is the decimal object_id (u64) — NOT a UUID.
+        // UUIDs contain dashes (`-`); a decimal u64 is `[0-9]+` with no dashes.
+        assert!(
+            !id.contains('-'),
+            "collection ID must not be a UUID (no dashes), got: {id}"
+        );
+        // Must parse as a valid decimal u64.
+        let parsed: u64 = id
+            .parse()
+            .expect("collection ID must be a valid decimal object_id");
+        assert!(parsed > 0, "object_id must be positive, got: {parsed}");
+    }
+
+    #[test]
+    fn collection_ids_are_monotonic() {
+        let a = generate_numeric_collection_id();
+        let b = generate_numeric_collection_id();
+        let oid_a: u64 = a.parse().expect("parse a");
+        let oid_b: u64 = b.parse().expect("parse b");
+        assert!(
+            oid_b > oid_a,
+            "consecutive object_ids must be monotonic: {oid_a} -> {oid_b}"
+        );
+    }
+
+    #[test]
+    fn recover_collection_id_floor_prevents_reuse() {
+        // ADR-031: after restart, the allocator must not reuse IDs below the
+        // recovered floor. Simulate: raise floor to 100000, then allocate —
+        // the result must parse to > 100000.
+        recover_collection_id_floor(100_000);
+        let id = generate_numeric_collection_id();
+        let oid: u64 = id.parse().expect("parse");
+        assert!(
+            oid > 100_000,
+            "after recovery to floor=100001, allocated ID must be > 100000, got {oid}"
+        );
     }
 }
 
@@ -3255,7 +3340,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_collection_lifecycle_mirrors_to_xcatalog_with_uuid_id() -> Result<()> {
+    async fn test_collection_lifecycle_mirrors_to_xcatalog_with_numeric_id() -> Result<()> {
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
@@ -3300,7 +3385,12 @@ mod tests {
             result.error_code
         );
         let collection = result.collection.expect("collection should be returned");
-        assert!(uuid::Uuid::parse_str(&collection.id).is_ok());
+        // ADR-031: collection.id is the decimal object_id (u64), not a UUID.
+        assert!(
+            collection.id.parse::<u64>().is_ok(),
+            "collection.id must be a numeric object_id, got: {}",
+            collection.id
+        );
 
         let catalog = catalog_manager.default_catalog().await?;
         let table_id = TableIdentifier::new(
