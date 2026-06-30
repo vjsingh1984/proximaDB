@@ -13,11 +13,11 @@
 //! - In-memory: native types (u32/u16/i32 — compact for HashMaps, 1-cycle integer hash).
 //! - Wire/proto/JSON: native types (all < 2^31, JSON-safe — no base62 string needed for API).
 //! - Object-store path: `base62(type)` **zero-padded** to fixed width for lexicographic sort.
-
-use dashmap::DashMap;
-use std::sync::atomic::{AtomicI32, AtomicU16, AtomicU32, Ordering};
-
-const RELAXED: Ordering = Ordering::Relaxed;
+//!
+//! **Minting** lives in the catalog crate (`CatalogIdService`,
+//! `crates/control/proximadb-catalog/src/id_allocator.rs`) — the catalog owns ID allocation
+//! alongside `object_id`. This module owns only the **identity types + path encoding** (the
+//! path/encoding concerns consumed by the root crate's `DrPathBuilder`).
 
 /// Global customer identity (billing/auth). Assigned by the control plane.
 pub type AccountId = u32;
@@ -117,128 +117,6 @@ impl CollectionIdentity {
     }
 }
 
-// ---------------------------------------------------------------------------
-// CatalogIdService: per-scope typed-atomic ID allocation (no casts).
-// ---------------------------------------------------------------------------
-
-/// Per-scope stable-ID allocation using **typed atomics** (no u64 → type casts).
-///
-/// Each scoped type has a per-parent counter at the **exact atomic width** of the
-/// target type (AtomicU16 for namespace, AtomicU32 for collection/index/segment,
-/// AtomicI32 for column). `fetch_add` returns the correct type directly.
-///
-/// Global uniqueness is via the **composite** `(account, namespace, collection)`.
-/// Unscoped IDs (segment) are per-collection (scoped to the collection whose SST
-/// files they identify).
-pub struct CatalogIdService {
-    /// Per-account namespace counters (AtomicU16 → NamespaceId).
-    namespace_allocators: DashMap<AccountId, AtomicU16>,
-    /// Per-namespace collection counters (AtomicU32 → CollectionId).
-    collection_allocators: DashMap<(AccountId, NamespaceId), AtomicU32>,
-    /// Per-table column counters (AtomicI32 → ColumnId).
-    column_allocators: DashMap<CollectionId, AtomicI32>,
-    /// Per-collection index counters (AtomicU32 → IndexId).
-    index_allocators: DashMap<CollectionId, AtomicU32>,
-    /// Per-collection SST segment counters (AtomicU32 → SegmentId).
-    segment_allocators: DashMap<CollectionId, AtomicU32>,
-}
-
-impl Default for CatalogIdService {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl CatalogIdService {
-    pub fn new() -> Self {
-        Self {
-            namespace_allocators: DashMap::new(),
-            collection_allocators: DashMap::new(),
-            column_allocators: DashMap::new(),
-            index_allocators: DashMap::new(),
-            segment_allocators: DashMap::new(),
-        }
-    }
-
-    // ── Mint (typed atomics — no casts) ──────────────────────────────────
-
-    /// Mint a namespace ID (u16) scoped to `account_id`.
-    pub fn mint_namespace_id(&self, account_id: AccountId) -> NamespaceId {
-        self.namespace_allocators
-            .entry(account_id)
-            .or_insert(AtomicU16::new(1))
-            .fetch_add(1, RELAXED)
-    }
-
-    /// Mint a collection/table ID (u32) scoped to `(account_id, namespace_id)`.
-    pub fn mint_collection_id(
-        &self,
-        account_id: AccountId,
-        namespace_id: NamespaceId,
-    ) -> CollectionId {
-        self.collection_allocators
-            .entry((account_id, namespace_id))
-            .or_insert(AtomicU32::new(1))
-            .fetch_add(1, RELAXED)
-    }
-
-    /// Mint a column/field ID (i32) scoped to `collection_id`.
-    pub fn mint_column_id(&self, collection_id: CollectionId) -> ColumnId {
-        self.column_allocators
-            .entry(collection_id)
-            .or_insert(AtomicI32::new(1))
-            .fetch_add(1, RELAXED)
-    }
-
-    /// Mint an index ID (u32) scoped to `collection_id`.
-    pub fn mint_index_id(&self, collection_id: CollectionId) -> IndexId {
-        self.index_allocators
-            .entry(collection_id)
-            .or_insert(AtomicU32::new(1))
-            .fetch_add(1, RELAXED)
-    }
-
-    /// Mint an SST segment ID (u32) scoped to `collection_id`.
-    /// Each collection has its own file counter (1, 2, 3...).
-    pub fn mint_segment_id(&self, collection_id: CollectionId) -> SegmentId {
-        self.segment_allocators
-            .entry(collection_id)
-            .or_insert(AtomicU32::new(1))
-            .fetch_add(1, RELAXED)
-    }
-
-    // ── Per-scope recovery (typed — no casts) ────────────────────────────
-
-    /// Recover the namespace allocator floor for `account_id`.
-    pub fn recover_namespace_floor(&self, account_id: AccountId, max_existing: u16) {
-        self.namespace_allocators
-            .entry(account_id)
-            .or_insert(AtomicU16::new(1))
-            .fetch_max(max_existing + 1, RELAXED);
-    }
-
-    /// Recover the collection allocator floor.
-    pub fn recover_collection_floor(
-        &self,
-        account_id: AccountId,
-        namespace_id: NamespaceId,
-        max_existing: u32,
-    ) {
-        self.collection_allocators
-            .entry((account_id, namespace_id))
-            .or_insert(AtomicU32::new(1))
-            .fetch_max(max_existing + 1, RELAXED);
-    }
-
-    /// Recover the segment allocator floor for a collection.
-    pub fn recover_segment_floor(&self, collection_id: CollectionId, max_existing: u32) {
-        self.segment_allocators
-            .entry(collection_id)
-            .or_insert(AtomicU32::new(1))
-            .fetch_max(max_existing + 1, RELAXED);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,6 +160,7 @@ mod tests {
     // ── CollectionIdentity segment-encoding tests ───────────────────────
     // (Full-path construction tests live in path_resolver.rs, where
     // DrResolvedPath::typed_root_prefix composes the canonical prefix.)
+    // (Per-scope minting tests live in the catalog crate's id_allocator.rs.)
 
     #[test]
     fn path_segments_are_fixed_width() {
@@ -310,70 +189,4 @@ mod tests {
         // Fixed-width → the 3 segments total exactly 15 chars always.
         assert_eq!(acct.len() + ns.len() + coll.len(), 15);
     }
-
-    // ── Per-scope typed-atomic CatalogIdService tests ────────────────────
-
-    #[test]
-    fn namespace_ids_are_compact_per_account() {
-        let svc = CatalogIdService::new();
-        assert_eq!(svc.mint_namespace_id(1), 1);
-        assert_eq!(svc.mint_namespace_id(1), 2);
-        assert_eq!(svc.mint_namespace_id(1), 3);
-    }
-
-    #[test]
-    fn different_accounts_restart_namespace_at_one() {
-        let svc = CatalogIdService::new();
-        assert_eq!(svc.mint_namespace_id(1), 1);
-        assert_eq!(svc.mint_namespace_id(2), 1, "account 2 restarts at 1");
-        assert_eq!(svc.mint_namespace_id(1), 2);
-        assert_eq!(svc.mint_namespace_id(2), 2);
-    }
-
-    #[test]
-    fn collection_ids_are_compact_per_namespace() {
-        let svc = CatalogIdService::new();
-        assert_eq!(svc.mint_collection_id(1, 1), 1);
-        assert_eq!(svc.mint_collection_id(1, 1), 2);
-        assert_eq!(
-            svc.mint_collection_id(1, 2),
-            1,
-            "different namespace restarts at 1"
-        );
-    }
-
-    #[test]
-    fn segment_ids_are_per_collection() {
-        let svc = CatalogIdService::new();
-        // Collection 1: segments 1, 2.
-        assert_eq!(svc.mint_segment_id(1), 1);
-        assert_eq!(svc.mint_segment_id(1), 2);
-        // Collection 2: restarts at 1.
-        assert_eq!(
-            svc.mint_segment_id(2),
-            1,
-            "different collection restarts at 1"
-        );
-    }
-
-    #[test]
-    fn per_scope_recovery_prevents_reuse() {
-        let svc = CatalogIdService::new();
-        svc.mint_namespace_id(1);
-        svc.mint_namespace_id(1);
-        svc.recover_namespace_floor(1, 100);
-        let next = svc.mint_namespace_id(1);
-        assert!(next > 100, "after recovery, next must be >100, got {next}");
-    }
-
-    #[test]
-    fn column_ids_are_compact_per_table() {
-        let svc = CatalogIdService::new();
-        assert_eq!(svc.mint_column_id(1), 1);
-        assert_eq!(svc.mint_column_id(1), 2);
-        assert_eq!(svc.mint_column_id(2), 1, "different table restarts at 1");
-    }
-
-    // The 27-char fixed-width full-path test (`typed_root_prefix_is_27_chars`)
-    // lives in path_resolver.rs — full path construction is DrResolvedPath's job.
 }
