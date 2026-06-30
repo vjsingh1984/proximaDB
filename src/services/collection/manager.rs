@@ -2193,9 +2193,31 @@ fn generate_base62_collection_id() -> String {
     proximadb_kernel::base62::encode(oid)
 }
 
+/// ADR-031: recover the collection ID allocator floor from existing collections.
+///
+/// Call at startup (after scanning existing collection IDs) with
+/// `max(existing base62-decoded object_id)` to prevent ID reuse after restart.
+/// The `OnceLock` allocator is initialized (if not already) and its floor raised
+/// so subsequent `generate_base62_collection_id` calls never produce an ID that's
+/// already on disk.
+///
+/// **Usage** (in server/embedded startup):
+/// ```ignore
+/// let max_existing = collections.iter()
+///     .filter_map(|c| proximadb_kernel::base62::decode(&c.id).ok())
+///     .max()
+///     .unwrap_or(0);
+/// recover_collection_id_floor(max_existing);
+/// ```
+pub fn recover_collection_id_floor(max_existing: u64) {
+    let allocator =
+        COLLECTION_ID_ALLOCATOR.get_or_init(proximadb_catalog::id_allocator::IdAllocator::default);
+    allocator.raise_floor(max_existing + 1);
+}
+
 #[cfg(test)]
 mod adr031_collection_id_tests {
-    use super::generate_base62_collection_id;
+    use super::{generate_base62_collection_id, recover_collection_id_floor};
 
     #[test]
     fn collection_id_is_base62_not_uuid() {
@@ -2221,6 +2243,20 @@ mod adr031_collection_id_tests {
         assert!(
             oid_b > oid_a,
             "consecutive object_ids must be monotonic: {oid_a} -> {oid_b}"
+        );
+    }
+
+    #[test]
+    fn recover_collection_id_floor_prevents_reuse() {
+        // ADR-031: after restart, the allocator must not reuse IDs below the
+        // recovered floor. Simulate: raise floor to 100000, then allocate —
+        // the result must decode to > 100000.
+        recover_collection_id_floor(100_000);
+        let id = generate_base62_collection_id();
+        let oid = proximadb_kernel::base62::decode(&id).expect("decode");
+        assert!(
+            oid > 100_000,
+            "after recovery to floor=100001, allocated ID must be > 100000, got {oid}"
         );
     }
 }
