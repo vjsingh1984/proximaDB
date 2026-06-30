@@ -18,10 +18,17 @@
 //! counts / column stats). This crate owns the *atomicity*, not the manifest schema.
 
 use bytes::Bytes;
+use chrono::{DateTime, Utc};
 use object_store::path::Path;
 use proximadb_kernel::error::StorageError;
 use proximadb_object_store::ProximaObjectStore;
 pub use proximadb_storage_common::object_store_bridge::CommitOutcome;
+
+/// Floor for [`ManifestCommitter::prune_retention`]'s `keep_k`. Below this the log
+/// would collapse to little more than the tip, eliminating the concurrency window in
+/// which a reader may still hold a just-read parent and leaving a single point of
+/// failure for the generation fence.
+const MIN_PRUNE_KEEP_K: usize = 2;
 
 /// Atomic, optimistic-concurrency manifest committer over a [`ProximaObjectStore`].
 ///
@@ -140,6 +147,102 @@ impl ManifestCommitter {
     pub async fn read_fenced(&self, version: u64) -> Result<(u64, Bytes), StorageError> {
         Ok(decode_fenced(&self.read_manifest(version).await?))
     }
+
+    /// Best-effort retention prune of superseded manifest objects.
+    ///
+    /// The manifest log is append-only — every commit creates a new `v{N}.manifest`
+    /// via a create-only put, and historically **nothing reclaimed the stale tail**.
+    /// A long-lived lease renewed every few seconds therefore grows without bound
+    /// (observed: ~48k objects per collection, ~562 MB), which made every
+    /// [`latest_version`](Self::latest_version) a full O(n) `list` that pinned a CPU
+    /// core; on a cloud store each such `list` is a paginated HTTP LIST that grows
+    /// slower and costlier as `n` grows. Pruning the tail caps `n` — which is *itself*
+    /// the read-path fix, so no mutable tip pointer is needed (a pointer would
+    /// reintroduce the lost-update/ABA hazard the create-only-put protocol avoids).
+    ///
+    /// # Safety
+    ///
+    /// Only the **tip** (the max version) is ever read — by
+    /// [`commit_fenced`](Self::commit_fenced), [`read_fenced`](Self::read_fenced) and
+    /// the version CAS — so it is **never deleted**. A version becomes eligible only
+    /// when it is **both**:
+    ///
+    /// - ranked `keep_k` or more behind the tip (rank is the position in the sorted
+    ///   version list, **not** `tip - v` arithmetic, so a log with gaps from a prior
+    ///   partial prune is still ranked correctly), **and**
+    /// - at least `min_age` old (a grace window that protects the recent burst and the
+    ///   tombstone a release publishes at `generation + 1`).
+    ///
+    /// `keep_k` is clamped to [`MIN_PRUNE_KEEP_K`]. A future-dated `last_modified`
+    /// (cloud clock skew) is treated as not-yet-of-age and never reaped early. Deletes
+    /// are best-effort: a transient error — including [`StorageError::NotFound`] for an
+    /// object a concurrent pass already removed — is logged and the pass continues. A
+    /// crash mid-pass leaves the log half-pruned; the next pass recomputes from a fresh
+    /// `list`. Returns the number of objects deleted.
+    pub async fn prune_retention(
+        &self,
+        keep_k: usize,
+        min_age: std::time::Duration,
+    ) -> Result<usize, StorageError> {
+        // Defense in depth — the call sites clamp too, but never let the log collapse
+        // past the tip-plus-predecessor concurrency window.
+        let keep_k = keep_k.max(MIN_PRUNE_KEEP_K);
+        let min_age = chrono::Duration::from_std(min_age).unwrap_or(chrono::Duration::zero());
+
+        let prefix = Path::from(self.prefix.as_str());
+        let mut entries: Vec<(u64, DateTime<Utc>)> = self
+            .store
+            .list(Some(&prefix))
+            .await?
+            .into_iter()
+            .filter_map(|m| {
+                let version = Self::parse_version(m.location.filename()?)?;
+                Some((version, m.last_modified))
+            })
+            .collect();
+        if entries.len() <= keep_k {
+            return Ok(0);
+        }
+
+        // Oldest first; the tip is the last element and is never eligible.
+        entries.sort_unstable_by_key(|(v, _)| *v);
+        let now = Utc::now();
+        let count = entries.len();
+
+        let mut deleted = 0usize;
+        for (idx, (version, last_modified)) in entries.iter().enumerate() {
+            // rank 0 == the tip; rank grows toward the head of the list. Newer entries
+            // have smaller rank, so once rank drops below `keep_k` everything that
+            // remains is within the keep window — stop early.
+            let rank_from_tip = count - 1 - idx;
+            if rank_from_tip < keep_k {
+                break;
+            }
+            // `age < min_age` also covers a future-dated mtime (negative age) from cloud
+            // clock skew — such an object is never reaped early.
+            let age = now.signed_duration_since(*last_modified);
+            if age < min_age {
+                continue;
+            }
+            // Delete via the canonical `manifest_path(version)` — the same form `get` /
+            // `put_if_absent` address. A list-returned `location` is not always
+            // delete-safe across backends (the local store returns a root-relative form
+            // that `delete` would double-prefix), but the constructed path round-trips.
+            match self.store.delete(&self.manifest_path(*version)).await {
+                Ok(()) => deleted += 1,
+                // A concurrent pass (or a cross-pod owner) already removed it.
+                Err(StorageError::NotFound(_)) => {}
+                Err(e) => tracing::warn!(
+                    target: "proximadb::manifest::prune",
+                    prefix = %self.prefix,
+                    version,
+                    error = %e,
+                    "best-effort manifest delete failed; continuing pass"
+                ),
+            }
+        }
+        Ok(deleted)
+    }
 }
 
 /// Prepend the 8-byte big-endian `generation` header to `payload`.
@@ -164,8 +267,10 @@ fn decode_fenced(bytes: &Bytes) -> (u64, Bytes) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use object_store::ObjectStoreExt;
     use object_store::memory::InMemory;
     use std::sync::Arc;
+    use std::time::Duration;
 
     fn committer() -> ManifestCommitter {
         ManifestCommitter::new(
@@ -322,5 +427,178 @@ mod tests {
         let c = committer();
         c.commit(None, Bytes::from_static(b"plain")).await.unwrap();
         assert_eq!(c.read_fenced(0).await.unwrap().0, 0);
+    }
+
+    // ---- prune_retention ----
+
+    fn committer_with_store() -> (ManifestCommitter, Arc<InMemory>) {
+        let backend = Arc::new(InMemory::new());
+        let c = ManifestCommitter::new(
+            ProximaObjectStore::new(backend.clone()),
+            "data/t/ns/_manifests",
+        );
+        (c, backend)
+    }
+
+    /// Seed `n` fenced commits at a fixed generation; returns the final version.
+    async fn seed_fenced(c: &ManifestCommitter, n: u64, generation: u64) -> u64 {
+        let mut parent: Option<u64> = None;
+        let mut last = 0;
+        for v in 0..n {
+            assert_eq!(
+                c.commit_fenced(parent, generation, Bytes::from_static(b"g"))
+                    .await
+                    .unwrap(),
+                CommitOutcome::Committed(v)
+            );
+            parent = Some(v);
+            last = v;
+        }
+        last
+    }
+
+    /// Pruning deletes only the stale tail; the tip is always retained and readable.
+    #[tokio::test]
+    async fn prune_never_deletes_tip() {
+        let (c, _backend) = committer_with_store();
+        let tip = seed_fenced(&c, 50, 5).await;
+        assert_eq!(tip, 49);
+
+        let deleted = c.prune_retention(10, Duration::ZERO).await.unwrap();
+        assert_eq!(deleted, 40, "keep newest 10 of 50");
+        assert_eq!(c.latest_version().await.unwrap(), Some(49));
+        let (tip_gen, _bytes) = c.read_fenced(49).await.unwrap();
+        assert_eq!(tip_gen, 5, "tip still decodes after prune");
+    }
+
+    /// After pruning, the owner can still commit a fenced successor — the tip's
+    /// generation header survives. This is the load-bearing fence test.
+    #[tokio::test]
+    async fn prune_preserves_fenced_commit_after_prune() {
+        let (c, _backend) = committer_with_store();
+        let tip = seed_fenced(&c, 50, 5).await;
+        assert_eq!(c.prune_retention(5, Duration::ZERO).await.unwrap(), 45);
+
+        let out = c
+            .commit_fenced(Some(tip), 5, Bytes::from_static(b"next"))
+            .await
+            .unwrap();
+        assert_eq!(out, CommitOutcome::Committed(50));
+    }
+
+    /// A stale writer (generation below the tip's) is still fenced after pruning.
+    #[tokio::test]
+    async fn prune_then_stale_writer_still_fenced() {
+        let (c, _backend) = committer_with_store();
+        let tip = seed_fenced(&c, 50, 5).await;
+        c.prune_retention(5, Duration::ZERO).await.unwrap();
+
+        let out = c
+            .commit_fenced(Some(tip), 4, Bytes::from_static(b"stale"))
+            .await
+            .unwrap();
+        // Fenced at the generation check *before* any slot is claimed — the tip (still
+        // 49 after pruning) is returned, and no v50 is created.
+        assert_eq!(out, CommitOutcome::Conflict { latest: Some(tip) });
+        assert_eq!(c.latest_version().await.unwrap(), Some(tip));
+    }
+
+    /// `min_age` grants recent history a grace window: a large `min_age` reaps nothing,
+    /// then dropping it to zero reaps the stale tail while the keep window stays intact.
+    #[tokio::test]
+    async fn prune_respects_min_age_grace_window() {
+        let (c, _backend) = committer_with_store();
+        seed_fenced(&c, 50, 5).await;
+
+        // Everything was written moments ago → all within the grace window.
+        assert_eq!(
+            c.prune_retention(2, Duration::from_secs(3600))
+                .await
+                .unwrap(),
+            0,
+            "min_age=1h keeps the recent burst"
+        );
+        // Drop the age gate; keep only the newest 2.
+        assert_eq!(
+            c.prune_retention(2, Duration::ZERO).await.unwrap(),
+            48,
+            "keep newest 2 of 50"
+        );
+        assert_eq!(c.latest_version().await.unwrap(), Some(49));
+        assert!(c.read_manifest(48).await.is_ok(), "predecessor retained");
+    }
+
+    /// Rank is the position in the sorted version list, so a log with gaps (from a
+    /// prior partial prune) is still ranked correctly — not by `tip - v` arithmetic.
+    #[tokio::test]
+    async fn prune_rank_robust_to_gaps() {
+        let (c, backend) = committer_with_store();
+        seed_fenced(&c, 50, 5).await;
+        // Simulate a prior partial prune that already removed v25.
+        let gap_path = c.manifest_path(25);
+        backend.delete(&gap_path).await.unwrap();
+        assert!(c.read_manifest(25).await.is_err());
+
+        // 49 remaining; keep newest 5 by rank (v45..v49) → delete 44.
+        let deleted = c.prune_retention(5, Duration::ZERO).await.unwrap();
+        assert_eq!(deleted, 44);
+        for v in 45..50u64 {
+            assert!(c.read_manifest(v).await.is_ok(), "v{v} retained");
+        }
+        assert_eq!(c.latest_version().await.unwrap(), Some(49));
+    }
+
+    /// Pruning concurrently with commits never breaks the fence: the commit outcome is
+    /// always well-formed and the tip stays readable.
+    #[tokio::test]
+    async fn prune_concurrent_with_commit_fenced_is_safe() {
+        let (c, _backend) = committer_with_store();
+        let mut tip = seed_fenced(&c, 40, 5).await;
+
+        for _ in 0..20 {
+            let (pruned, committed) = tokio::join!(
+                c.prune_retention(5, Duration::ZERO),
+                c.commit_fenced(Some(tip), 5, Bytes::from_static(b"r")),
+            );
+            let pruned = pruned.unwrap();
+            let committed = committed.unwrap();
+            assert!(
+                matches!(committed, CommitOutcome::Committed(_)),
+                "commit must not error under concurrent prune (got {committed:?}, pruned {pruned})"
+            );
+            if let CommitOutcome::Committed(v) = committed {
+                tip = v;
+            }
+        }
+        assert_eq!(c.latest_version().await.unwrap(), Some(tip));
+        let (tip_gen, _) = c.read_fenced(tip).await.unwrap();
+        assert_eq!(tip_gen, 5);
+    }
+
+    /// An empty log is a no-op (never errors, deletes nothing).
+    #[tokio::test]
+    async fn prune_empty_log_is_noop() {
+        let (c, _backend) = committer_with_store();
+        assert_eq!(
+            c.prune_retention(10, Duration::from_secs(60))
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(c.latest_version().await.unwrap(), None);
+    }
+
+    /// `keep_k` below the floor is clamped, not honored — the log never collapses past
+    /// the tip-plus-predecessor window.
+    #[tokio::test]
+    async fn prune_clamps_keep_k_below_minimum() {
+        let (c, _backend) = committer_with_store();
+        seed_fenced(&c, 10, 5).await;
+        // keep_k=0 → clamped to MIN_PRUNE_KEEP_K (2): delete 8, keep newest 2.
+        let deleted = c.prune_retention(0, Duration::ZERO).await.unwrap();
+        assert_eq!(deleted, 8);
+        assert_eq!(c.latest_version().await.unwrap(), Some(9));
+        assert!(c.read_manifest(8).await.is_ok(), "predecessor retained");
+        assert!(c.read_manifest(7).await.is_err(), "v7 reaped");
     }
 }
