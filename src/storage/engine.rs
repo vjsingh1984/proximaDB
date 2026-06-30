@@ -355,6 +355,7 @@ impl StorageEngine {
                 self.storage_write_fence.as_ref(),
                 None,
                 true,
+                Some(&self.axis_index_manager),
             )
             .await
             {

@@ -2347,12 +2347,17 @@ impl EmbeddedProximaDB {
                     // free_wal=true preserves embedded's existing behavior (delete the
                     // WAL after flush — no 2× overhead). Its cold-read recall gap is the
                     // same dependent TD as the server's.
+                    let axis_manager = self
+                        .shared_services
+                        .vector_operations_service
+                        .axis_index_manager();
                     match crate::storage::flush_materializer::materialize_collection(
                         &write_buffer,
                         &plan,
                         None,
                         Some(fallback_engine),
                         true,
+                        Some(&axis_manager),
                     )
                     .await
                     {

@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
+use crate::index::AxisManager;
 use crate::proto::proximadb_v1::{
     Collection, CollectionConfig, StorageAssignment, StorageEngine as ProtoStorageEngine,
 };
@@ -78,12 +79,22 @@ pub struct CollectionFlushOutcome {
 /// `false` keeps the WAL so recovery replays it into the FP32 memtable (exact recall
 /// that bypasses the cold SST path) — the escape hatch if a cold-read regression
 /// ever resurfaces. No caller uses `false` today.
+///
+/// `axis_index_manager` is the AxisManager whose in-memory `collection_vectors`
+/// projection must be reaped after the segment is durable (TD-FLUSH-1). Inserted
+/// vectors live in two places pre-flush — the WAL batches AND this projection — and
+/// before TD-FLUSH-1 only the WAL was cleared, so the projection grew unbounded
+/// (OOM) and warm GETs served from the stale copy (masked cold-read bugs). Pass
+/// `None` only when no AxisManager owns this collection (recovery / tests); the
+/// projection is then left as-is (caller's responsibility). Failure to reap is
+/// logged and non-fatal — the durable segment is the source of truth post-flush.
 pub async fn materialize_collection(
     write_buffer: &Arc<WALBehaviorWrapper>,
     plan: &CollectionFlushPlan,
     fence: Option<&Arc<dyn StorageWriteFence>>,
     fallback_engine: Option<Arc<dyn UnifiedStorageFormat>>,
     free_wal: bool,
+    axis_index_manager: Option<&AxisManager>,
 ) -> Result<Option<CollectionFlushOutcome>> {
     // A6 storage-write fence — reject a displaced pod before touching storage.
     if write_fencing_enabled() {
@@ -221,6 +232,23 @@ pub async fn materialize_collection(
         tracing::debug!(
             "flush: kept WAL for '{}' (free_wal=false) — recovery replays it for exact recall",
             plan.wal_key
+        );
+    }
+
+    // TD-FLUSH-1: reap the AxisManager's in-memory `collection_vectors` projection
+    // for this collection now that the durable segment is written. The WAL cleanup
+    // above only clears the memtable batches — inserted vectors ALSO live in the
+    // AxisManager projection (used for warm reads + cold-index hydration), and
+    // leaving it resident caused unbounded memory growth (OOM) and masked cold-read
+    // bugs (warm GETs served from the stale copy). Non-fatal: the segment is the
+    // source of truth post-flush, so a reap failure is logged, not fatal.
+    if let Some(axis) = axis_index_manager
+        && let Err(e) = axis.clear_collection_vectors(&plan.canonical_id).await
+    {
+        tracing::warn!(
+            "flush: failed to clear in-memory collection_vectors for '{}': {}",
+            plan.canonical_id,
+            e
         );
     }
 

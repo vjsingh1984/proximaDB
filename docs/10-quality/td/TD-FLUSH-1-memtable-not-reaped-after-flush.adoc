@@ -6,7 +6,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open**
+| Status | **Partial** — Phase 1 (AXIS `collection_vectors` reap) resolved; Phase 2 (block-cache invalidation) deferred.
 | Severity | Critical — unbounded memory growth → OOM for large/long-running workloads; also masks the warm-path I/O measurement (warm GETs = 0 because the unreaped memtable serves everything).
 | Component | Flush path — `src/storage/flush_materializer.rs`; AXIS `collection_vectors` — `src/index/axis/management/`
 | Tracked-by | link:../../12-design/STORAGE_FORMAT_DECISION_FRAMEWORK_2026_06_29.adoc[Storage-Format Decision Framework] (PR #553)
@@ -61,3 +61,39 @@ measurable via `CountingFileSystem`).
 - **Unblocks**: TD-IOTRACE-1 (warm-path GET measurement meaningful only after the memtable is reaped).
 - Related: TD-163 (PR #393, `free_wal=true` for the server flush) — the server path already sets
   `free_wal=true`; the embedded path does too, but the `collection_vectors` reap is missing in both.
+
+== Resolution (Phase 1 — AXIS `collection_vectors` reap)
+
+Phase 1 shipped. After a successful storage flush, the AxisManager's in-memory
+`collection_vectors` projection for the flushed collection is now reaped, mirroring
+the WAL-batch reap that already ran.
+
+*Added:* `AxisManager::clear_collection_vectors(collection_id)` — acquires the
+`collection_vectors` write lock, `.remove()`s the collection's entire in-memory
+`ProximaRecord` map (and drops its `global_id_index` entries, defense-in-depth). This
+is the in-memory projection only — it does NOT drop the persistent HNSW/IVF/metadata
+indexes (built from the flushed vectors, must stay servable). Use `drop_collection`
+for full teardown.
+
+*Wired into the shared flush core:* `materialize_collection` gained an
+`axis_index_manager: Option<&AxisManager>` parameter; both callers (server
+`StorageEngine::flush_memtable_to_storage` + embedded `EmbeddedProximaDB::flush`)
+thread their `Arc<AxisManager>` through. The reap runs after the WAL cleanup, keyed by
+the canonical collection UUID (`plan.canonical_id`) — the same key
+`handle_flushed_vectors` uses to populate the projection at flush time, so the reap
+removes exactly what was inserted. Failure to reap is logged and non-fatal (the
+durable segment is the source of truth post-flush).
+
+*Tests:* 3 focused unit tests in
+`src/index/axis/management/manager.rs::clear_collection_vectors_tests` — the core
+regression (projection emptied after flush; sibling collection untouched),
+idempotency on an unknown collection, and repopulation-after-reap (the projection is
+a cache, not the durable store, so a fresh post-flush insert must land back in it).
+
+== Phase 2 (deferred) — block-cache invalidation
+
+The 1 GiB block cache (DashMap/moka) still retains entries for the flushed
+collection. These are read-side caches over durable SST segments, so they are
+correctness-neutral (a stale cache entry points at the same durable bytes), but they
+hold memory that could be reclaimed. Deferred to a follow-up TD: the block cache has
+no per-collection eviction API today, so adding one is its own scoped change.
