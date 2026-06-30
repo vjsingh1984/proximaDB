@@ -207,6 +207,15 @@ struct ObjectIndexEntry {
     name: String,
 }
 
+/// ADR-031 Phase 4b: durable account-string → u32 registry sidecar
+/// (`_syscat/account_registry.json`). Keeps the typed path's account segment
+/// stable across restarts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct AccountRegistryFile {
+    #[serde(default)]
+    entries: Vec<(String, u32)>,
+}
+
 /// TD-181 P3 (S2a): marker recording that this catalog has begun writing
 /// object_id-keyed metadata under `_syscat/objects/{oid}.json`. Written once
 /// when the first oid-keyed object is persisted. A reader uses its presence to
@@ -253,7 +262,7 @@ impl NativeCatalog {
     /// registry-derived value, numeric in-memory). Returns `None` for an
     /// empty/absent account string (legacy/anonymous namespaces get no typed
     /// identity — mixed-read-safe).
-    fn account_u32(&self, account_str: &str) -> Option<u32> {
+    async fn account_u32(&self, account_str: &str) -> Option<u32> {
         if account_str.is_empty() {
             return None;
         }
@@ -264,6 +273,13 @@ impl NativeCatalog {
             .account_floor
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.account_registry.insert(account_str.to_string(), next);
+        // ADR-031 Phase 4b: persist the new account-string→u32 mapping so the
+        // typed object-store path is stable across restarts (best-effort,
+        // mirrors `object_name_index`). The lookup path above is read-only → no
+        // save; only the mint branch writes.
+        if let Err(e) = self.save_account_registry().await {
+            warn!("account-registry persist failed (continuing in-memory): {e}");
+        }
         Some(next)
     }
 
@@ -273,13 +289,13 @@ impl NativeCatalog {
     /// otherwise the schema keeps `None` for both (legacy path, mixed-read-safe).
     /// The namespace u16 is STABLE per namespace (every collection in the same
     /// `namespace_key` gets the same u16) via the transient `namespace_registry`.
-    fn mint_stable_identity(
+    async fn mint_stable_identity(
         &self,
         account_str: &str,
         namespace_key: &str,
         schema: &mut CatalogTableSchema,
     ) {
-        let Some(account) = self.account_u32(account_str) else {
+        let Some(account) = self.account_u32(account_str).await else {
             return; // no account → no typed identity (legacy)
         };
         let ns = schema.stable_namespace_id.unwrap_or_else(|| {
@@ -301,13 +317,13 @@ impl NativeCatalog {
     /// schema's persisted typed identity, so a restart never reuses them. The
     /// load-path inverse of `mint_stable_identity`. Re-derives the namespace u16
     /// into the transient `namespace_registry` so siblings share it.
-    fn recover_stable_identity(
+    async fn recover_stable_identity(
         &self,
         account_str: &str,
         namespace_key: &str,
         schema: &CatalogTableSchema,
     ) {
-        let Some(account) = self.account_u32(account_str) else {
+        let Some(account) = self.account_u32(account_str).await else {
             return;
         };
         if let Some(ns) = schema.stable_namespace_id {
@@ -387,6 +403,12 @@ impl NativeCatalog {
 
         // Load existing namespaces
         catalog.load_namespaces().await?;
+
+        // ADR-031 Phase 4b: load the durable account-string → u32 registry
+        // BEFORE any `load_table` (which recovers typed identities via
+        // `account_u32`), so a persisted account u32 is reused, not re-minted
+        // (a re-mint would drift the typed object-store path → data loss).
+        catalog.load_account_registry().await?;
 
         // TD-181 P1: load the durable table object_id index eagerly (rebuilding
         // it from the authoritative object files if it is absent — first boot
@@ -556,6 +578,48 @@ impl NativeCatalog {
             "Rebuilt durable object_id index from {} object file(s)",
             entries.len()
         );
+        Ok(())
+    }
+
+    // ── ADR-031 Phase 4b: durable account-string → u32 registry ──────────
+    // Mirrors `object_name_index` (`_syscat/index.json`): a sidecar JSON the
+    // catalog loads eagerly at startup + writes on every new account mint, so
+    // the typed object-store path segment for an account is stable across
+    // restarts (a drift would silently relocate every typed-path object).
+
+    fn account_registry_rel() -> String {
+        "_syscat/account_registry.json".to_string()
+    }
+
+    /// Persist the current account-string → u32 map (called on every mint).
+    async fn save_account_registry(&self) -> Result<()> {
+        let entries: Vec<(String, u32)> = self
+            .account_registry
+            .iter()
+            .map(|kv| (kv.key().clone(), *kv.value()))
+            .collect();
+        let data = serde_json::to_vec_pretty(&AccountRegistryFile { entries })?;
+        self.io_write(&Self::account_registry_rel(), &data).await
+    }
+
+    /// Load the durable account registry eagerly. MUST run before any
+    /// `load_table` (which recovers typed identities + calls `account_u32`),
+    /// so the persisted u32 for an account is reused, not re-minted. Absent on
+    /// first boot → no-op (mixed-read-safe).
+    async fn load_account_registry(&self) -> Result<()> {
+        let Some(data) = self.io_read_opt(&Self::account_registry_rel()).await? else {
+            return Ok(()); // first boot — nothing to load
+        };
+        let file: AccountRegistryFile = serde_json::from_slice(&data)?;
+        for (account, u) in &file.entries {
+            self.account_registry.insert(account.clone(), *u);
+        }
+        // Raise the floor above the max persisted u32 so the next mint is new.
+        if let Some(max) = file.entries.iter().map(|(_, u)| *u).max() {
+            self.account_floor
+                .fetch_max(max + 1, std::sync::atomic::Ordering::Relaxed);
+        }
+        debug!("Loaded {} account-registry entries", file.entries.len());
         Ok(())
     }
 
@@ -1015,7 +1079,8 @@ impl NativeCatalog {
             if let Some(ns) = self.namespaces.read().await.get(&ns_key)
                 && let Some(account) = ns.account_id.as_deref()
             {
-                self.recover_stable_identity(account, &ns_key, &meta.schema);
+                self.recover_stable_identity(account, &ns_key, &meta.schema)
+                    .await;
             }
         }
         if let Some(id) = meta.schema.object_id {
@@ -1286,6 +1351,12 @@ impl Catalog for NativeCatalog {
             .ok_or_else(|| anyhow!("Namespace '{}' not found", key))
     }
 
+    async fn account_id_u32(&self, account: &str) -> Result<Option<u32>> {
+        // Thin public wrapper over the private registry lookup-or-mint. The
+        // root path-resolver calls this to compose a `CollectionIdentity`.
+        Ok(self.account_u32(account).await)
+    }
+
     async fn update_namespace_properties(
         &self,
         namespace: &[String],
@@ -1355,7 +1426,8 @@ impl Catalog for NativeCatalog {
         // (mixed-read-safe — the typed path is opt-in, env-gated).
         let ns = self.get_namespace(&identifier.namespace).await?;
         if let Some(account) = ns.account_id.as_deref() {
-            self.mint_stable_identity(account, &identifier.namespace.join("."), &mut schema);
+            self.mint_stable_identity(account, &identifier.namespace.join("."), &mut schema)
+                .await;
         }
 
         // Check table doesn't exist
@@ -1888,19 +1960,19 @@ mod tests {
 
         // No account → legacy, no typed identity (mixed-read-safe).
         let mut legacy = CatalogTableSchema::new("legacy");
-        cat.mint_stable_identity("", "ns", &mut legacy);
+        cat.mint_stable_identity("", "ns", &mut legacy).await;
         assert!(legacy.stable_namespace_id.is_none());
         assert!(legacy.stable_collection_id.is_none());
 
         // Account present → per-scope compact ids minted.
         let mut a1 = CatalogTableSchema::new("a1");
-        cat.mint_stable_identity("acct", "ns1", &mut a1);
+        cat.mint_stable_identity("acct", "ns1", &mut a1).await;
         assert_eq!(a1.stable_namespace_id, Some(1), "first ns in acct = 1");
         assert_eq!(a1.stable_collection_id, Some(1), "first coll = 1");
 
         // Same namespace, new collection → SAME namespace id, NEXT collection id.
         let mut a2 = CatalogTableSchema::new("a2");
-        cat.mint_stable_identity("acct", "ns1", &mut a2);
+        cat.mint_stable_identity("acct", "ns1", &mut a2).await;
         assert_eq!(
             a2.stable_namespace_id,
             Some(1),
@@ -1910,7 +1982,7 @@ mod tests {
 
         // Different namespace → NEXT namespace id, collection restarts at 1.
         let mut b1 = CatalogTableSchema::new("b1");
-        cat.mint_stable_identity("acct", "ns2", &mut b1);
+        cat.mint_stable_identity("acct", "ns2", &mut b1).await;
         assert_eq!(b1.stable_namespace_id, Some(2), "new ns = 2");
         assert_eq!(
             b1.stable_collection_id,
@@ -1924,14 +1996,53 @@ mod tests {
         let (cat, _d) = catalog_in_tempdir().await;
         // Same account string → same account u32 (registry lookup-or-mint).
         let mut a = CatalogTableSchema::new("a");
-        cat.mint_stable_identity("acct", "ns", &mut a);
-        let acct_u32_a = cat.account_u32("acct").expect("account resolved");
+        cat.mint_stable_identity("acct", "ns", &mut a).await;
+        let acct_u32_a = cat.account_u32("acct").await.expect("account resolved");
         // A second call for the same account must NOT re-mint a different u32.
-        let acct_u32_b = cat.account_u32("acct").expect("account resolved");
+        let acct_u32_b = cat.account_u32("acct").await.expect("account resolved");
         assert_eq!(acct_u32_a, acct_u32_b, "account u32 stable within a run");
         // And namespace siblings share the namespace id (covered above) because
         // they share the account u32.
         assert_eq!(a.stable_namespace_id, Some(1));
+    }
+
+    #[tokio::test]
+    async fn account_registry_survives_restart() {
+        // ADR-031 Phase 4b: the account-string → u32 mapping MUST persist across
+        // restarts, else the typed object-store path drifts → silent data loss.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cfg = || NativeCatalogConfig {
+            storage_url: format!("file://{}/cat", dir.path().display()),
+            metadata_format: "json".into(),
+            versioned: false,
+            max_versions: 100,
+        };
+        let cache = || Arc::new(crate::cache::CatalogCache::new(64, 60));
+
+        // First instance: mint account "acct" → u32 (persists the sidecar).
+        let cat1 = NativeCatalog::new("t".into(), cfg(), cache())
+            .await
+            .expect("construct cat1");
+        let first = cat1.account_u32("acct").await.expect("minted");
+        assert_eq!(first, 1, "first account mints u32 1");
+        drop(cat1);
+
+        // Second instance from the SAME dir: load_account_registry must reuse u32
+        // 1 (not re-mint 2) + raise the floor above it.
+        let cat2 = NativeCatalog::new("t".into(), cfg(), cache())
+            .await
+            .expect("construct cat2");
+        let second = cat2
+            .account_u32("acct")
+            .await
+            .expect("lookup after restart");
+        assert_eq!(
+            first, second,
+            "account u32 must be stable across restart (durable registry)"
+        );
+        // A genuinely new account mints above the recovered floor (2, not 1).
+        let new_acct = cat2.account_u32("other").await.expect("mint new");
+        assert_eq!(new_acct, 2, "new account mints above recovered floor");
     }
 
     // Note: These tests require a mock filesystem or temp directory
