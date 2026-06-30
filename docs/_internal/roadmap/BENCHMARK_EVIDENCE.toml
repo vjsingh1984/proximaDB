@@ -52,7 +52,7 @@ id = "vector_search_latency"
 claim = "~8 ms avg, ~15 ms p99 search latency (HNSW, M=32)"
 metric = "search_latency_ms"
 status = "unverified"
-asserted_in = ["README.adoc:97", "docs/10-quality/benchmarks/BENCHMARKS.adoc:16"]
+asserted_in = ["docs/10-quality/benchmarks/BENCHMARKS.adoc:16"]
 bench_source = "benches/bench_04_storage_unified.rs"
 bench_command = "cargo bench --bench bench_04_storage_unified"
 artifact = ""
@@ -66,7 +66,7 @@ id = "ingest_throughput"
 claim = "~125K vectors/sec ingest (small-batch WAL path)"
 metric = "ingest_vectors_per_sec"
 status = "unverified"
-asserted_in = ["README.adoc:98", "docs/10-quality/benchmarks/BENCHMARKS.adoc:17"]
+asserted_in = ["docs/10-quality/benchmarks/BENCHMARKS.adoc:17"]
 bench_source = "benches/bench_08_quantization_sst.rs"
 bench_command = "cargo bench --bench bench_08_quantization_sst"
 artifact = ""
@@ -80,7 +80,7 @@ id = "recall_at_10"
 claim = "~97% Recall@10 (HNSW, M=32)"
 metric = "recall_at_10_pct"
 status = "measured"
-asserted_in = ["README.adoc:99", "docs/10-quality/benchmarks/BENCHMARKS.adoc:18"]
+asserted_in = ["README.adoc:97", "docs/10-quality/benchmarks/BENCHMARKS.adoc:18"]
 bench_source = "benches/bench_24_recall_at_k_engine.rs"
 bench_command = "PROXIMADB_BENCH_ENGINE=sst PROXIMADB_BENCH_VECTOR_COUNT=100000 cargo bench --bench bench_24_recall_at_k_engine"
 artifact = "docs/_internal/status/TD_096_S1_RECALL_RECONCILIATION_2026_06_28.adoc"
@@ -94,7 +94,7 @@ id = "hybrid_search_latency"
 claim = "~8 ms hybrid search (vector + BM25, RRF fusion)"
 metric = "hybrid_search_latency_ms"
 status = "unverified"
-asserted_in = ["README.adoc:101"]
+asserted_in = ["docs/10-quality/benchmarks/BENCHMARKS.adoc:110"]
 bench_source = "benches/bench_21_hybrid_search_fusion.rs"
 bench_command = "cargo bench --bench bench_21_hybrid_search_fusion"
 artifact = ""
