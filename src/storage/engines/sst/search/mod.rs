@@ -40,7 +40,7 @@ use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::engines::core::formats::arrow_block::ArrowBlockReader;
 use crate::storage::engines::sst::{SstEngine, SstError};
-use crate::storage::traits::StorageQueryContext;
+use crate::storage::traits::{StorageQueryContext, UnifiedStorageFormat};
 use proximadb_distance_kernel::DistanceMetric;
 use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 use proximadb_index_traits::{
@@ -480,21 +480,24 @@ impl SstEngine {
             _ => return,
         };
 
-        // An engine writes a single block format, so dispatch once rather than
-        // detecting per file.
-        let block_format =
-            crate::storage::engines::sst::block_format::BlockFormat::parse_block_format(
-                &self.config().block_format,
-            );
-        let mut records: Vec<proximadb_records::ProximaRecord> = Vec::new();
-        for file in &files {
-            match self.read_segment_records(file, block_format).await {
-                Ok(mut recs) => records.append(&mut recs),
-                Err(e) => {
-                    tracing::warn!("TD-112 rebuild: failed reading segment {file}: {e}");
-                }
+        // Read all records from the durable SST segments via the storage trait's
+        // `read_all_records` (UnifiedSSTReader::read_batch). The per-segment
+        // `read_segment_records` / `read_all_records_for_compaction` path returned
+        // EMPTY for a single ProximaBlocks segment (its `apply_strategy` produced
+        // 0 data blocks from the minimal compaction context), which left the AXIS
+        // store unrepopulated after an index-store loss (TD-184).
+        let records = match self
+            .read_all_records(collection_id, Some(storage_url))
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(
+                    "TD-112 rebuild: read_all_records failed for '{collection_id}': {e}"
+                );
+                return;
             }
-        }
+        };
         if records.is_empty() {
             return;
         }

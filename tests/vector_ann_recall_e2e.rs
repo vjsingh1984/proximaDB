@@ -485,3 +485,6 @@ async fn vector_ann_recall_under_deletes_and_compaction() {
     );
     let _ = (mean_a, mean_b, mean_c);
 }
+
+// Risk-coverage scenario (docs/10-quality/RISK_CONTRACT.toml :: dead-record-filtering):
+//   scenario: tombstone-suppression — deleted/expired records excluded from ANN search results
