@@ -1110,7 +1110,13 @@ impl ViperEngine {
             "🔍 VIPER Engine: Looking up vector {} in collection {} at {}",
             vector_id, collection_id, base_path
         );
-        // Get all Parquet files from {base_path}/{collection_id}/data
+        // Get all Parquet files from {base_path}/{collection_id}/data.
+        // TODO ADR-031 Phase 4d: when `PROXIMADB_TYPED_PATHS=1`, this must resolve
+        // the typed account-rooted path (`accounts/{base62}/…/data`) via
+        // `collection_data_path_typed` using the collection's pre-minted
+        // `CollectionIdentity` (threaded from the catalog's `stable_*_id` +
+        // account u32). Until then the env gate stays OFF and this legacy path
+        // is byte-identical to the typed helper's `None` branch (mixed-read-safe).
         let data_dir = StoragePath::collection_data_path(base_path, collection_id);
         let parquet_files = self.list_parquet_files_in_dir(&data_dir).await?;
         if parquet_files.is_empty() {

@@ -286,6 +286,43 @@ async fn test_axismanager_hmgi_enablement() {
     assert!(!manager.is_hmgi_enabled("test_collection").await);
 }
 
+/// TD-AXIS-1 regression guard: HMGI enablement is keyed by the **canonical
+/// collection id** (post-ADR-031, the decimal `object_id`) at BOTH enable and query
+/// time. The original bug keyed the query on the collection *name*, which never
+/// matched the id used at enable time → `is_hmgi_enabled` returned false → IVF
+/// fallback → 0 ANN results (the production Approximate path served nothing). #557
+/// fixed the query to pass `collection.id`. This locks the keying contract so a
+/// future id-shape migration can't silently re-break it: the set is keyed by the
+/// exact id string, so a name passed at query time must NOT match an id used at
+/// enable time.
+#[tokio::test]
+async fn test_hmgi_enablement_keyed_by_canonical_id_td_axis_1() {
+    use proximadb::index::axis::types::AxisConfig;
+
+    let config = AxisConfig::default();
+    let mut manager = AxisManager::new(config).await.unwrap();
+    manager.init_hmgi(Some("_modality".to_string())).unwrap();
+
+    // Post-ADR-031, collection.id is a decimal object_id (e.g. "10437291").
+    let canonical_id = "10437291";
+    manager
+        .enable_hmgi(canonical_id, Some("_modality".to_string()), 123)
+        .await
+        .unwrap();
+
+    // Query path must key on the SAME canonical id (the #557 fix) → enabled.
+    assert!(
+        manager.is_hmgi_enabled(canonical_id).await,
+        "HMGI must be enabled when queried with the canonical id used at enable time"
+    );
+    // The pre-#557 failure mode: query keyed on the collection NAME, which is NOT
+    // the canonical id → would return false → IVF fallback → 0 results.
+    assert!(
+        !manager.is_hmgi_enabled("my_collection_name").await,
+        "HMGI keying must NOT match a collection name against the canonical id (TD-AXIS-1)"
+    );
+}
+
 /// Test AxisManager HMGI insert
 #[tokio::test]
 async fn test_axismanager_hmgi_insert() {

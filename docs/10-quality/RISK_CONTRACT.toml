@@ -47,3 +47,26 @@ must_run_in_tier = "rust-integration-test-query"
 # intentionally #[ignore]d while ADR-011 filtered-ANN is Beta (TD-073). It is NOT
 # declared here until it actually runs in CI — add an "ann-recall" risk class
 # when TD-073 un-ignores it.
+
+[[risk]]
+class = "cache-coherence"          # writes must invalidate the query cache (read-after-write)
+surface = ["src/**/cache*", "src/**/query_cache*", "src/core/cache/**"]
+required_tests = ["query_cache_test"]
+required_scenarios = ["write-invalidates-cache"]
+must_run_in_tier = "rust-integration-test-query"
+# cold-read-recall was blocked by TD-184 (AXIS rebuild-from-SST); now FIXED.
+# dead-record-filtering's candidate test was orphaned; now wired explicitly.
+
+[[risk]]
+class = "cold-read-recall"          # post-flush recall + AXIS rebuild from SST (TD-184 fixed)
+surface = ["src/storage/engines/sst/**", "src/index/axis/**"]
+required_tests = ["td112_postflush_recall_e2e"]
+required_scenarios = ["postflush-recall-band"]
+must_run_in_tier = "rust-integration-test-storage"
+
+[[risk]]
+class = "dead-record-filtering"     # deleted/expired records excluded from ANN search
+surface = ["src/storage/**", "src/core/search/**"]
+required_tests = ["vector_ann_recall_e2e"]
+required_scenarios = ["tombstone-suppression"]
+must_run_in_tier = "rust-integration-test-query"

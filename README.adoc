@@ -94,11 +94,8 @@ treat as headroom indicators, not a published SLA.*
 |===
 |Metric|Reference (10M vectors, 768-d, single-node, internal arm64 macOS bench)
 
-|Search latency|~8 ms avg, ~15 ms p99 (HNSW, M=32; YMMV by hardware)
-|Ingest throughput|~125K vectors/sec (small-batch WAL path)
 |Recall@10|~97% (HNSW, M=32; not an SLA — see SUPPORTED_SURFACE)
 |Memory efficiency|~1.2 GB for 10M vectors (PQ-quantised path)
-|Hybrid search|~8 ms (vector + BM25)
 |===
 
 [NOTE]

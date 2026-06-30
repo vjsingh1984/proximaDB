@@ -837,9 +837,13 @@ impl EmbeddedProximaDB {
             );
         }
 
-        // Create tokio runtime for async operations
+        // Create tokio runtime for async operations.
+        // 8MB worker stack: correlated subqueries (TPC-H Q2/Q20-Q22) produce
+        // deep-but-finite async call chains through join/predicate evaluation
+        // that overflow the default ~2MB stack. 8MB passes all 22 TPC-H queries.
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(num_cpus::get().min(4))
+            .thread_stack_size(8 * 1024 * 1024)
             .enable_all()
             .build()?;
 

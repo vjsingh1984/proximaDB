@@ -967,9 +967,32 @@ impl SstCompactor {
 
         match block_format {
             super::block_format::BlockFormat::PaxBlock => {
-                // PAX segment compaction lands in P3 Phase E. Fail closed until then.
-                // (Unreachable today: detect_format only yields Arrow/ProximaBlocks.)
-                anyhow::bail!("PAX segment compaction not yet supported (P3 Phase E)");
+                // P3 Phase E: compact to a `.pax` segment, re-encoding the merged
+                // records with RaBitQ. Reachable once PAX write-default is on (the
+                // output path's `.pax` extension makes `detect_format` return Pax).
+                let path = std::path::Path::new(output_path);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                let collection_id = output_path
+                    .split('/')
+                    .nth(1)
+                    .unwrap_or("default")
+                    .to_string();
+                let records: Vec<ProximaRecord> = records.iter().map(ProximaRecord::from).collect();
+                crate::storage::engines::sst::segment_format::write_pax_segment(
+                    path,
+                    &records,
+                    &collection_id,
+                    records.len(),
+                    proximadb_block_format::VectorQuant::RaBitQ,
+                    None,
+                )?;
+                stats.records_written += records.len() as u64;
+                info!(
+                    "✅ SST_COMPACTOR: Wrote {} records to PAX segment",
+                    records.len()
+                );
             }
             super::block_format::BlockFormat::ArrowBlock => {
                 // Use ArrowBlockWriter for Arrow IPC format

@@ -20,8 +20,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::catalog::CatalogManager;
+use crate::core::stable_id::CollectionIdentity;
 use crate::index::IndexLocationResolver;
-use crate::storage::trait_components::path_resolver::ann_index_locations;
+use crate::storage::trait_components::path_resolver::{ann_index_locations, typed_paths_enabled};
 
 /// Resolves a collection's ANN index location from the catalog on demand — the
 /// control-layer implementation of AXIS's [`IndexLocationResolver`] read-port.
@@ -52,9 +53,33 @@ impl IndexLocationResolver for CatalogIndexLocationResolver {
             .ok()?;
         let namespace = catalog.get_namespace(&table_id.namespace).await.ok()?;
         let schema = catalog.get_table(&table_id).await.ok()?;
+        // ADR-031 Phase 4b: compose the typed identity when the env gate is ON
+        // and the schema + namespace carry the stable ids + account string.
+        // Legacy collections (missing any id) or env OFF → None → legacy path.
+        let typed_identity = if typed_paths_enabled() {
+            match (
+                namespace.account_id.as_deref(),
+                schema.stable_namespace_id,
+                schema.stable_collection_id,
+            ) {
+                (Some(acct), Some(ns), Some(coll)) => catalog
+                    .account_id_u32(acct)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|a| CollectionIdentity {
+                        account_id: a,
+                        namespace_id: ns,
+                        collection_id: coll,
+                    }),
+                _ => None,
+            }
+        } else {
+            None
+        };
         // A collection has at most one ANN projection in AXIS's per-collection
         // index model; take the first resolved location (or None to fall back).
-        ann_index_locations(&namespace, &schema, self.migrate)
+        ann_index_locations(&namespace, &schema, self.migrate, typed_identity)
             .into_iter()
             .next()
             .map(|(_collection, location)| location)

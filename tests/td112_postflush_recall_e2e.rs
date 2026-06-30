@@ -11,7 +11,7 @@
 //! of the approximate index's internals; the band below is the regression gate.
 
 use proximadb::compute::distance_computation::DistanceMetric;
-use proximadb::core::search::{BlockPruneConfig, BlockPruneMode, SearchParams};
+use proximadb::core::search::{BlockPruneConfig, BlockPruneMode, SearchMode, SearchParams};
 use proximadb::index::axis::management::manager::AxisManager;
 use proximadb::index::axis::types::AxisConfig;
 use proximadb::proto::proximadb_v1::{
@@ -128,6 +128,11 @@ async fn search(engine: &SstEngine, collection: &Collection, query: Vec<f32>) ->
         query_vectors: Some(vec![query]),
         top_k: Some(TOP_K),
         distance_metric: Some(DistanceMetric::Euclidean),
+        // TD-184: use Approximate so the search takes the AXIS/orchestrated path,
+        // which triggers the rebuild-from-SST when the in-memory index is absent.
+        // The default Adaptive mode routes small collections to an Exact segment
+        // scan that bypasses AXIS entirely — so the rebuild never runs.
+        search_mode: SearchMode::Approximate { nprobe: None },
         block_prune: BlockPruneConfig {
             force_exact: false,
             mode: BlockPruneMode::Ratio,
@@ -267,3 +272,6 @@ async fn axis_index_rebuilt_from_sst_after_loss() {
         "the AXIS store must be rebuilt from SST after the recovering search"
     );
 }
+
+// Risk-coverage scenario (docs/10-quality/RISK_CONTRACT.toml :: cold-read-recall):
+//   scenario: postflush-recall-band — post-flush recall stays in band + AXIS rebuilds from SST (TD-184)

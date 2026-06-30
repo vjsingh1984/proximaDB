@@ -2507,6 +2507,102 @@ impl PartitionLeaseManager {
             }
         })
     }
+
+    /// Prune the stale tail of every lease manifest log this pod owns. Best-effort and
+    /// idempotent: a transient object-store error is logged and the pass continues, and
+    /// a log visited twice in one pass (a collection acquired via both the legacy and
+    /// `ResourceKey` APIs shares one manifest log) is a harmless no-op the second time.
+    /// See [`ManifestCommitter::prune_retention`] for the safety invariants.
+    pub async fn prune_held(&self, keep_k: usize, min_age: std::time::Duration) -> Result<usize> {
+        let mut total = 0usize;
+
+        // Legacy (tenant, collection) leases this pod owns.
+        for (tenant_id, collection_id, binding) in self.registry.list() {
+            if binding.pod != self.self_pod_id {
+                continue;
+            }
+            let committer = self.store.committer(&tenant_id, &collection_id);
+            match committer.prune_retention(keep_k, min_age).await {
+                Ok(n) => total += n,
+                Err(e) => tracing::warn!(
+                    tenant = %tenant_id,
+                    collection = %collection_id,
+                    error = %e,
+                    "partition-lease manifest prune failed; retrying next interval"
+                ),
+            }
+        }
+
+        // Full-key leases (tables / graphs / models / collection-via-ResourceKey) this
+        // pod owns. Collect first so no DashMap shard read-guard is held across an await.
+        let held: Vec<ResourceKey> = self
+            .held_resource_keys
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        for key in held {
+            let path = key.to_path();
+            let committer = match self.store.committer_for_key(&key) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(
+                        key = %path,
+                        error = %e,
+                        "prune: skipping unaddressable held key"
+                    );
+                    continue;
+                }
+            };
+            match committer.prune_retention(keep_k, min_age).await {
+                Ok(n) => total += n,
+                Err(e) => tracing::warn!(
+                    key = %path,
+                    error = %e,
+                    "partition-lease manifest prune failed; retrying next interval"
+                ),
+            }
+        }
+
+        Ok(total)
+    }
+
+    /// Spawn a low-priority background task that prunes the stale tail of each lease
+    /// manifest log this pod owns, every `interval`. Drop the returned [`JoinHandle`]
+    /// as a temporary so the task runs detached — matches [`spawn_renew_loop`].
+    ///
+    /// Capping the manifest count per log is *itself* the read-path fix: every
+    /// `latest_version()` (a full `list`) stays cheap once `n` is bounded, instead of
+    /// growing O(n) per lease op and O(n²) over a pod's lifetime (the observed failure
+    /// was ~48k manifests/collection pinning a CPU core). See
+    /// [`ManifestCommitter::prune_retention`] for the safety invariants.
+    ///
+    /// **Scope / safety.** Only logs for resources this pod owns are pruned
+    /// (`binding.pod == self_pod_id`, same gate as [`renew_held`]); the held set is
+    /// re-read fresh each tick, so a key lost between ticks is not pruned again.
+    /// `prune_retention` is fence-safe by construction (it never deletes the tip — the
+    /// only object the generation fence reads), so even a displaced owner that prunes
+    /// for one extra tick before the renew loop steps it down can only delete non-tip
+    /// history, never break the fence. Detached, like the renew loop: process exit
+    /// tears the runtime down and aborts the task; a graceful SIGTERM flush races only
+    /// idempotent manifest deletes.
+    pub fn spawn_prune_loop(
+        self: Arc<Self>,
+        interval: std::time::Duration,
+        keep_k: usize,
+        min_age: std::time::Duration,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            ticker.tick().await; // consume the immediate first tick
+            loop {
+                ticker.tick().await;
+                if let Err(e) = self.prune_held(keep_k, min_age).await {
+                    tracing::warn!(error = %e, "partition-lease prune loop pass failed");
+                }
+            }
+        })
+    }
 }
 
 /// Lease-aware write gate: `consult_for_write` over a registry the

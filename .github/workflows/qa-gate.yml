@@ -66,6 +66,10 @@ jobs:
     name: Integration tests (TPC-H/DS pgwire + PAX recall)
     runs-on: ubuntu-latest
     timeout-minutes: 100
+    env:
+      # 8MB worker stack: correlated subqueries + recall ratchets produce
+      # deep-but-finite async call chains that overflow the default ~2MB.
+      RUST_MIN_STACK: "8388608"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -88,6 +92,10 @@ jobs:
             --test td112_postflush_recall_e2e --test raptor_recall_test \
             --test helix_cold_search_recall_test --no-run
       - name: Run TPC-H over pgwire
+        env:
+          # 8MB worker stack: correlated subqueries (Q2/Q20-Q22) produce
+          # deep-but-finite async call chains that overflow the default ~2MB.
+          RUST_MIN_STACK: "8388608"
         run: cargo test --test tpch_pgwire_e2e -- --nocapture
       - name: Run TPC-DS over pgwire
         run: cargo test --test tpcds_pgwire_e2e -- --nocapture

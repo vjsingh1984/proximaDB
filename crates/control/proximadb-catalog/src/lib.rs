@@ -591,6 +591,21 @@ pub struct CatalogTableSchema {
     /// cuts over (ADR-031 O2).
     #[serde(default)]
     pub object_id: Option<u64>,
+    /// ADR-031 Phase 4a per-scope compact numeric identity for the typed
+    /// object-store path. `stable_namespace_id` (u16, per-account) and
+    /// `stable_collection_id` (u32, per-namespace) are minted by the catalog's
+    /// `CatalogIdService` at create time and persisted here. The **account** u32
+    /// is NOT stored (it would duplicate `account_id`); it's derived from the
+    /// account string via a registry at path-build time. Legacy rows load as
+    /// `None` (mixed-read-safe — the typed path is opt-in, env-gated
+    /// `PROXIMADB_TYPED_PATHS`). The root crate composes these primitives into a
+    /// `CollectionIdentity` at the path boundary (layering: the catalog cannot
+    /// import that root type). All values are numeric in-memory; base62 is
+    /// applied only to path segments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_namespace_id: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_collection_id: Option<u32>,
     /// Table columns
     pub columns: Vec<CatalogColumn>,
     /// Primary key columns (by name)
@@ -749,6 +764,8 @@ impl Default for CatalogTableSchema {
         Self {
             name: String::new(),
             object_id: None,
+            stable_namespace_id: None,
+            stable_collection_id: None,
             columns: Vec::new(),
             primary_key: Vec::new(),
             indexes: Vec::new(),
@@ -4401,6 +4418,38 @@ pub trait Catalog: Send + Sync {
     ) -> anyhow::Result<Vec<CatalogNamespace>>;
     async fn namespace_exists(&self, namespace: &[String]) -> anyhow::Result<bool>;
     async fn get_namespace(&self, namespace: &[String]) -> anyhow::Result<CatalogNamespace>;
+    /// ADR-031 Phase 4b: resolve the numeric account u32 for an account string
+    /// (lookup in the durable account registry; mints+persists on first sight).
+    /// Returns `None` for an empty/absent account. The root path-resolver uses
+    /// this to compose a `CollectionIdentity` for the typed object-store path.
+    /// Default `None` — only the native catalog mints; federated/external
+    /// catalogs have no typed identity (legacy paths).
+    async fn account_id_u32(&self, _account: &str) -> anyhow::Result<Option<u32>> {
+        Ok(None)
+    }
+    /// ADR-031 allocator unification: the highest persisted `object_id` across
+    /// all tables (from the durable `object_name_index`). The root startup path
+    /// uses this to raise the collection-id allocator floor above every existing
+    /// object_id, so a freshly minted collection id can never collide with a
+    /// legacy (pre-unification) `schema.object_id` → no oid-index corruption.
+    /// Default `None` (federated catalogs have no native object_ids).
+    async fn max_object_id(&self) -> anyhow::Result<Option<u64>> {
+        Ok(None)
+    }
+    /// ADR-031 Phase 4c: pre-mint the typed identity triple
+    /// `(account_u32, namespace_u16, collection_u32)` for a collection being
+    /// created under `account`/`namespace_key`, BEFORE storage-dir creation.
+    /// The root composes a `CollectionIdentity` from it for the typed DATA path.
+    /// `None` when no account is known (legacy, mixed-safe). Idempotent with the
+    /// later `create_table`→`mint_stable_identity` (preserves pre-stamped values
+    /// via the shared `resolve_typed_triple`). Default `None`.
+    async fn mint_collection_typed_identity(
+        &self,
+        _account: &str,
+        _namespace_key: &str,
+    ) -> anyhow::Result<Option<(u32, u16, u32)>> {
+        Ok(None)
+    }
     async fn update_namespace_properties(
         &self,
         namespace: &[String],

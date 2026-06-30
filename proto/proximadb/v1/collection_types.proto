@@ -85,6 +85,13 @@ message CollectionConfig {
   // PAX quant without a global flip (ADR-026/027). Precedence at flush:
   // per-collection pax_vector_quant > env > default-off.
   optional string pax_vector_quant = 29;
+
+  // Phase C: per-collection PAX *format* on/off is encoded as a TAG on `tags`
+  // (convention `pax_vector_format:on|off`), not a typed field, to avoid manual
+  // proto regen (same reason `recall_target` is a tag). Read at SST flush via
+  // `pax_vector_format_tag`. Precedence: kill-switch
+  // `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE` > this tag > global
+  // `PROXIMADB_PAX_VECTOR_SEGMENTS` default (flipped on in Phase F).
 }
 
 // Canonical scalar type for a collection's embedding column. Mirrors

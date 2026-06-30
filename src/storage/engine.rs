@@ -6,7 +6,6 @@ use crate::storage::{
     persistence::disk_manager::DiskManager,
 };
 use proximadb_records::{EmbeddingCell, ProximaRecord};
-use proximadb_storage_common::storage_path::StoragePath;
 // Import ProximaBlockCollectionMetadata from the appropriate location
 use crate::storage::engines::core::formats::proximablocks::header_metadata::ProximaBlockCollectionMetadata;
 use dashmap::DashMap;
@@ -750,14 +749,41 @@ impl StorageEngine {
         collection_id: String,
         base_location: String,
     ) -> crate::storage::Result<()> {
+        // ADR-031 Phase 4c: this low-level entrypoint has no catalog/schema
+        // handle, so it cannot resolve a typed identity. Delegates to the
+        // typed-aware inner with `None` → byte-identical legacy paths. The
+        // authoritative create path (`CollectionService::create_storage_directories`)
+        // threads the pre-minted identity and creates the typed dirs; this path
+        // is a fallback that stays legacy (mixed-read-safe).
+        self.create_collection_with_storage_typed(collection_id, base_location, None)
+            .await
+    }
+
+    /// ADR-031 Phase 4c: typed-aware storage create. `Some(identity)` creates
+    /// the data/wal/index dirs at the account-rooted typed path
+    /// (`{base}/accounts/{base62}/…/{sub}`); `None` is byte-identical legacy.
+    /// Callers that hold a pre-minted [`CollectionIdentity`] (resolved from the
+    /// catalog's `stable_*_id` + account u32) pass it here so the engine writes
+    /// to the same typed path the catalog asset records.
+    pub async fn create_collection_with_storage_typed(
+        &self,
+        collection_id: String,
+        base_location: String,
+        typed_identity: Option<crate::core::stable_id::CollectionIdentity>,
+    ) -> crate::storage::Result<()> {
         // NOTE: Collection metadata should be managed by CollectionService
         // Storage layer should only handle storage concerns, not metadata
         tracing::debug!("💾 Creating storage for collection: {}", collection_id);
 
-        // Create directory paths based on base_location
-        let data_url = StoragePath::collection_data_path(&base_location, &collection_id);
-        let write_buffer_url = StoragePath::collection_wal_path(&base_location, &collection_id);
-        let index_url = StoragePath::collection_index_path(&base_location, &collection_id);
+        // Create directory paths based on base_location. The typed helper's
+        // `None` branch is byte-identical to the legacy `StoragePath::collection_*_path`.
+        use crate::storage::trait_components::path_resolver::{
+            collection_data_path_typed, collection_index_path_typed, collection_wal_path_typed,
+        };
+        let data_url = collection_data_path_typed(&base_location, &collection_id, typed_identity);
+        let write_buffer_url =
+            collection_wal_path_typed(&base_location, &collection_id, typed_identity);
+        let index_url = collection_index_path_typed(&base_location, &collection_id, typed_identity);
 
         // Create all required directories for the collection
         // This ensures directories exist before any writes occur

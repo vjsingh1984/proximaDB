@@ -71,8 +71,13 @@ use tracing::{debug, error, info, warn};
 // Using String directly instead of String alias for proto-first architecture
 use crate::catalog::CatalogManager;
 use crate::core::config::StorageConfig;
+use crate::core::stable_id::CollectionIdentity;
 use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageEngine};
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::trait_components::path_resolver::{
+    collection_data_path_typed, collection_index_path_typed, collection_wal_path_typed,
+    typed_paths_enabled,
+};
 use proximadb_storage_common::storage_path::StoragePath;
 
 // Proto-first architecture - use crate::proto::proximadb_v1::Collection directly
@@ -1019,10 +1024,36 @@ impl CollectionService {
                 .clone()
         };
 
+        // ADR-031 Phase 4c: pre-mint the typed collection identity
+        // `(account, namespace, collection)` BEFORE storage-dir creation, so the
+        // DATA/WAL/index dirs are created at the typed account-rooted path
+        // (`accounts/{base62}/…`) when `PROXIMADB_TYPED_PATHS=1` AND an account
+        // is known. The same triple is threaded to `upsert_collection_catalog_asset`
+        // so the persisted schema's `stable_namespace_id`/`stable_collection_id`
+        // match the path (create_table→`mint_stable_identity` then preserves them
+        // — idempotent, no double-mint). `None` when env OFF or no account → every
+        // path is byte-identical legacy (mixed-read-safe per-collection).
+        //
+        // The account string is derived from the tenant context inside
+        // `mint_typed_identity_for_collection` (Phase 4 collapses tenant into
+        // account; see the helper for the rationale + the Phase 5 forward-note).
+        let typed_identity = if typed_paths_enabled() {
+            self.mint_typed_identity_for_collection(tenant_context, &enriched_config.name, &uuid)
+                .await
+        } else {
+            None
+        };
+
         // Create storage directories (tenant-isolated if multi-tenant mode)
         let tenant_id = tenant_context.map(|ctx| ctx.tenant_id.as_str());
         let _storage_created = self
-            .create_storage_directories(&base_location, &enriched_config.name, &uuid, tenant_id)
+            .create_storage_directories(
+                &base_location,
+                &enriched_config.name,
+                &uuid,
+                tenant_id,
+                typed_identity,
+            )
             .await
             .context("Failed to create storage directories")?;
 
@@ -1054,7 +1085,7 @@ impl CollectionService {
         };
 
         if let Err(e) = self
-            .upsert_collection_catalog_asset(&proto_collection)
+            .upsert_collection_catalog_asset(&proto_collection, typed_identity)
             .await
         {
             return Ok(CollectionServiceResponse::error(
@@ -1546,7 +1577,7 @@ impl CollectionService {
             }
             record.updated_at = chrono::Utc::now().timestamp_millis();
 
-            self.upsert_collection_catalog_asset(&record).await?;
+            self.upsert_collection_catalog_asset(&record, None).await?;
         } else {
             warn!(
                 "⚠️ Attempted to update stats for non-existent collection: {}",
@@ -1692,7 +1723,7 @@ impl CollectionService {
                 .context("Failed to remove previous collection catalog asset")?;
         }
 
-        self.upsert_collection_catalog_asset(&record)
+        self.upsert_collection_catalog_asset(&record, None)
             .await
             .context("Failed to update collection catalog metadata")?;
 
@@ -1818,7 +1849,7 @@ impl CollectionService {
         }
 
         // Store the updated collection in the catalog (the sole authority).
-        self.upsert_collection_catalog_asset(&updated_collection)
+        self.upsert_collection_catalog_asset(&updated_collection, None)
             .await
             .context("Failed to update collection compression in catalog")?;
 
@@ -1872,15 +1903,80 @@ impl CollectionService {
         Ok(())
     }
 
+    /// ADR-031 Phase 4c: pre-mint the typed collection identity
+    /// `(account_u32, namespace_u16, collection_u32)` for a collection being
+    /// created, BEFORE storage-dir creation. The catalog mints the triple from
+    /// the SAME `stable_ids` allocators that `create_table`→`mint_stable_identity`
+    /// later hits, so the values are preserved (idempotent — no double-mint).
+    ///
+    /// Returns `None` when:
+    /// * no `catalog_manager` is configured (no catalog to mint against), or
+    /// * the tenant context carries no `account_id` (single-tenant / anonymous —
+    ///   the typed path is account-rooted, so no account ⇒ no typed path), or
+    /// * the catalog returns `None` (e.g. account registry lookup fails).
+    ///
+    /// `None` ⇒ the caller uses legacy byte-identical paths (mixed-read-safe).
+    async fn mint_typed_identity_for_collection(
+        &self,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
+        collection_name: &str,
+        _collection_id: &str,
+    ) -> Option<CollectionIdentity> {
+        let catalog_manager = self.catalog_manager.as_ref()?;
+        // The account string is the SaaS billing/isolation tier — the top of the
+        // typed path (`accounts/{base62}/…`). ADR-031 Phase 4 collapses the
+        // tenant tier into the account, so the collection's owning TENANT (the
+        // `tenant_context.tenant_id`, mirroring `collection_tenant_id` /
+        // `tenant_id_of`) serves as the account string for typed-path minting.
+        // `None` when no tenant context ⇒ single-tenant/anonymous ⇒ no typed
+        // path (legacy, mixed-read-safe). NOTE: the network-layer
+        // `MiddlewareTenantContext.account_id` is a separate (Phase 5) field not
+        // threaded to the storage-layer `StorageTenantContext` yet; when it is,
+        // prefer it here. Until then the tenant IS the account (Phase 4 collapse).
+        let account = tenant_context.map(|ctx| ctx.tenant_id.as_str())?;
+        if account.is_empty() {
+            return None;
+        }
+        // Derive the namespace_key the SAME way `upsert_collection_catalog_asset`
+        // → `collection_table_identifier` scopes the asset: parse the qualified
+        // name, default the namespace to `["default"]` when bare (mirrors
+        // `collection_table_identifier`). Joined on '.' → the catalog namespace
+        // key, so the pre-minted namespace u16 matches the schema's landing ns.
+        let parsed = crate::catalog::TableIdentifier::parse(collection_name);
+        let namespace_key = if parsed.namespace.is_empty() {
+            "default".to_string()
+        } else {
+            parsed.namespace.join(".")
+        };
+
+        let catalog = catalog_manager.default_catalog().await.ok()?;
+        let triple = catalog
+            .mint_collection_typed_identity(account, &namespace_key)
+            .await
+            .ok()
+            .flatten()?;
+        Some(CollectionIdentity {
+            account_id: triple.0,
+            namespace_id: triple.1,
+            collection_id: triple.2,
+        })
+    }
+
     /// Create storage directories for a new collection
     ///
     /// For multi-tenant deployments, paths are isolated under `{base}/tenants/{tenant_id}/`.
+    /// ADR-031 Phase 4c: when `typed_identity` is `Some`, the data/wal/index
+    /// dirs are created at the typed account-rooted path
+    /// (`{base}/accounts/{base62}/…/{sub}`) instead of the tenant/legacy path.
+    /// `None` keeps the legacy `StoragePath::collection_*_path_with_tenant`
+    /// (byte-identical, mixed-read-safe).
     async fn create_storage_directories(
         &self,
         base_location: &str,
         collection_name: &str,
         collection_uuid: &str,
         tenant_id: Option<&str>,
+        typed_identity: Option<CollectionIdentity>,
     ) -> Result<Vec<StorageComponentType>> {
         let tenant_info = tenant_id.unwrap_or("(default)");
         info!(
@@ -1890,19 +1986,37 @@ impl CollectionService {
 
         let mut created_components = Vec::new();
 
-        // Build paths under base location using StoragePath utility (tenant-aware)
-        let write_buffer_dir =
-            StoragePath::collection_wal_path_with_tenant(base_location, tenant_id, collection_uuid);
-        let data_dir = StoragePath::collection_data_path_with_tenant(
-            base_location,
-            tenant_id,
-            collection_uuid,
-        );
-        let indexes_dir = StoragePath::collection_index_path_with_tenant(
-            base_location,
-            tenant_id,
-            collection_uuid,
-        );
+        // ADR-031 Phase 4c: typed path short-circuits the tenant/legacy layout.
+        // The typed helper's `None` branch is byte-identical to the legacy
+        // `StoragePath::collection_*_path` (non-tenant) — but the create path
+        // here historically used the `_with_tenant` variant. To preserve that
+        // exactly when no typed identity is set, fall through to the tenant-aware
+        // StoragePath calls below for `None`. For `Some`, use the typed helpers
+        // (the typed path has NO tenant slot — Phase 4 hierarchy collapse).
+        let (write_buffer_dir, data_dir, indexes_dir) = match typed_identity {
+            Some(id) => (
+                collection_wal_path_typed(base_location, collection_uuid, Some(id)),
+                collection_data_path_typed(base_location, collection_uuid, Some(id)),
+                collection_index_path_typed(base_location, collection_uuid, Some(id)),
+            ),
+            None => (
+                StoragePath::collection_wal_path_with_tenant(
+                    base_location,
+                    tenant_id,
+                    collection_uuid,
+                ),
+                StoragePath::collection_data_path_with_tenant(
+                    base_location,
+                    tenant_id,
+                    collection_uuid,
+                ),
+                StoragePath::collection_index_path_with_tenant(
+                    base_location,
+                    tenant_id,
+                    collection_uuid,
+                ),
+            ),
+        };
 
         // Create directories
         if let Ok(filesystem) = self.filesystem_factory.get_filesystem(base_location) {
@@ -2039,7 +2153,11 @@ impl CollectionService {
         Ok(cleaned_components)
     }
 
-    async fn upsert_collection_catalog_asset(&self, collection: &Collection) -> Result<()> {
+    async fn upsert_collection_catalog_asset(
+        &self,
+        collection: &Collection,
+        typed_identity: Option<CollectionIdentity>,
+    ) -> Result<()> {
         let Some(catalog_manager) = &self.catalog_manager else {
             return Ok(());
         };
@@ -2080,9 +2198,34 @@ impl CollectionService {
                 .await?;
         }
 
-        let schema = crate::storage::metadata::collection_mapping::catalog_schema_from_collection(
-            collection,
-        )?;
+        let mut schema =
+            crate::storage::metadata::collection_mapping::catalog_schema_from_collection(
+                collection,
+            )?;
+        // ADR-031 allocator unification: pre-set `schema.object_id` from the
+        // collection's numeric id so `create_table` ADOPTS it
+        // (`mint_object_id(Some)` raises the floor + returns the id) instead of
+        // minting a separate one. Result: `schema.object_id == collection.id`'s
+        // oid — one identity per collection, not two divergent ones.
+        // Only the fresh-create path (`create_table(schema)` below) is affected;
+        // the existing-table path preserves its already-minted object_id. Legacy
+        // UUID collection.ids don't parse → leave None (create_table mints fresh,
+        // un-unified — mixed-read-safe).
+        if let Ok(oid) = collection.id.parse::<u64>() {
+            schema.object_id = Some(oid);
+        }
+        // ADR-031 Phase 4c: stamp the pre-minted typed identity onto the schema
+        // so the persisted `stable_namespace_id`/`stable_collection_id` match
+        // the typed DATA path that `create_storage_directories` just created.
+        // `create_table`→`mint_stable_identity` then preserves these (idempotent
+        // via `resolve_typed_triple`'s `existing_*` short-circuit — no double-mint).
+        // `None` (update/import paths, or env OFF) leaves them unset → legacy path
+        // (mixed-read-safe). This is the ONLY channel from the manager's pre-mint
+        // into the catalog schema (the proto `Collection` carries no properties map).
+        if let Some(id) = typed_identity {
+            schema.stable_namespace_id = Some(id.namespace_id);
+            schema.stable_collection_id = Some(id.collection_id);
+        }
         if catalog.table_exists(&identifier).await? {
             let mut existing = catalog.get_table(&identifier).await?;
             if existing
@@ -3399,6 +3542,13 @@ mod tests {
         );
         let schema = catalog.get_table(&table_id).await?;
         assert_eq!(schema.properties.get("collection.id"), Some(&collection.id));
+        // ADR-031 allocator unification: schema.object_id must equal collection.id's
+        // oid (create_table adopted it) — one identity, not two divergent ones.
+        assert_eq!(
+            schema.object_id,
+            collection.id.parse::<u64>().ok(),
+            "schema.object_id must equal collection.id's oid (unified identity)"
+        );
         assert_eq!(
             schema.properties.get("asset.capability.vector"),
             Some(&"true".to_string())
