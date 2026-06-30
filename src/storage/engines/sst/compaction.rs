@@ -1165,11 +1165,38 @@ impl Compaction {
 
             match block_format {
                 BlockFormat::PaxBlock => {
-                    // PAX segment compaction lands in P3 Phase E (reads mixed formats,
-                    // rewrites to the configured format). Fail closed until then.
-                    return Err(crate::core::StorageError::SstEngine(
-                        "PAX segment compaction not yet supported (P3 Phase E)".into(),
-                    ));
+                    // P3 Phase E: compact to a `.pax` segment, re-encoding the merged
+                    // records with RaBitQ. Mixed-read-safe — source segments may be
+                    // legacy `.sst` or `.pax` (btree_records already merged them); the
+                    // rewrite emits the configured PAX format. The output filename is
+                    // format-aware (`.pax`) via `generate_output_file_path`, so
+                    // discovery + the cascade dispatch route it correctly.
+                    let collection_id = self
+                        .extract_collection_id_from_paths(&task.input_files)
+                        .unwrap_or_else(|_| "default".to_string());
+                    let records: Vec<ProximaRecord> =
+                        btree_records.values().map(ProximaRecord::from).collect();
+                    if let Some(parent) = staging_file_path.parent() {
+                        std::fs::create_dir_all(parent)
+                            .map_err(crate::core::StorageError::DiskIO)?;
+                    }
+                    crate::storage::engines::sst::segment_format::write_pax_segment(
+                        &staging_file_path,
+                        &records,
+                        &collection_id,
+                        records.len(),
+                        proximadb_block_format::VectorQuant::RaBitQ,
+                        None,
+                    )
+                    .map_err(|e| {
+                        crate::core::StorageError::SstEngine(format!(
+                            "PAX compaction write failed: {e}"
+                        ))
+                    })?;
+                    info!(
+                        "✅ COMPACTION: Wrote {} records to PAX segment",
+                        records.len()
+                    );
                 }
                 BlockFormat::ArrowBlock => {
                     // Use ArrowBlockWriter for Arrow IPC format
@@ -1286,10 +1313,34 @@ impl Compaction {
 
             match block_format {
                 BlockFormat::PaxBlock => {
-                    // PAX segment compaction lands in P3 Phase E. Fail closed until then.
-                    return Err(crate::core::StorageError::SstEngine(
-                        "PAX segment compaction not yet supported (P3 Phase E)".into(),
-                    ));
+                    // P3 Phase E: compact to a `.pax` segment (re-encode RaBitQ).
+                    // See the atomic arm above; this is the non-atomic direct-write path.
+                    let collection_id = self
+                        .extract_collection_id_from_paths(&task.input_files)
+                        .unwrap_or_else(|_| "default".to_string());
+                    let records: Vec<ProximaRecord> =
+                        btree_records.values().map(ProximaRecord::from).collect();
+                    if let Some(parent) = task.output_file.parent() {
+                        std::fs::create_dir_all(parent)
+                            .map_err(crate::core::StorageError::DiskIO)?;
+                    }
+                    crate::storage::engines::sst::segment_format::write_pax_segment(
+                        &task.output_file,
+                        &records,
+                        &collection_id,
+                        records.len(),
+                        proximadb_block_format::VectorQuant::RaBitQ,
+                        None,
+                    )
+                    .map_err(|e| {
+                        crate::core::StorageError::SstEngine(format!(
+                            "PAX compaction write failed: {e}"
+                        ))
+                    })?;
+                    info!(
+                        "✅ COMPACTION (non-atomic): Wrote {} records to PAX segment",
+                        records.len()
+                    );
                 }
                 BlockFormat::ArrowBlock => {
                     // Use ArrowBlockWriter for Arrow IPC format
