@@ -27,6 +27,7 @@
 //     "actual_scan_gb": <f64>,   "estimated_scan_gb": <f64>,
 //     "gls_score":    <f64>,     "failure_class": "<...>",
 //     "tier":         "free|community|business|enterprise"
+//     "object_store_gets": <int>,  "object_store_bytes_read": <int>
 //   }
 //
 // Only fields whose underlying value is `Some` are emitted (matching the
@@ -36,6 +37,7 @@
 
 use serde_json::{Map, Value, json};
 
+use crate::observability::io_trace::IoTraceSnapshot;
 use crate::observability::search_plan_trace::SearchPlanTrace;
 
 /// One metering event ready to POST to the operator-configured
@@ -75,6 +77,14 @@ pub struct MeteringInputs<'a> {
     /// ISO-8601 timestamp (UTC). The caller supplies this — the builder
     /// doesn't import a clock so the unit tests stay deterministic.
     pub occurred_at: String,
+    /// Per-query object-store I/O trace snapshot (co-design KOU dimension —
+    /// the dominant cloud cost term). When `Some`, its `get_ops` and
+    /// `bytes_read` are surfaced on the KRU event as `object_store_gets`
+    /// and `object_store_bytes_read` so the per-tenant metering collection
+    /// carries the measured GET-request count alongside the scanned-byte
+    /// quantity. `None` (the default for older call sites) omits both
+    /// fields, preserving the event's pre-existing shape.
+    pub io_trace: Option<&'a IoTraceSnapshot>,
 }
 
 /// Build the KRU billing event from a populated trace.
@@ -118,6 +128,17 @@ pub fn build_kru(inputs: &MeteringInputs<'_>) -> MeteringEvent {
     metadata.insert("cache_hits".into(), json!(stats.cache_hits));
     metadata.insert("cache_misses".into(), json!(stats.cache_misses));
     metadata.insert("latency_ms".into(), json!(trace.latency_ms));
+    // KOU dimension (co-design §2.1): object-store GET count + bytes read,
+    // sourced from the per-query io-trace snapshot. The GET-request count is
+    // the dominant cloud cost term (per-request fee × N round-trips), so it
+    // is surfaced on the per-tenant metering event for chargeback — alongside
+    // the scanned-byte quantity above, not instead of it. Only emitted when
+    // the snapshot was passed in; older call sites that leave `io_trace`
+    // `None` keep the pre-existing event shape.
+    if let Some(snap) = inputs.io_trace {
+        metadata.insert("object_store_gets".into(), json!(snap.get_ops));
+        metadata.insert("object_store_bytes_read".into(), json!(snap.bytes_read));
+    }
     // Trace-spine block (LLD §10).
     metadata.insert("block_fill_pct".into(), json!(stats.block_fill_pct));
     metadata.insert("tunneled_nodes".into(), json!(stats.tunneled_nodes));
@@ -273,6 +294,7 @@ mod tests {
             corpus_gb: 1.0,
             total_vectors: 1_000_000,
             occurred_at: "2026-05-21T15:00:00Z".into(),
+            io_trace: None,
         }
     }
 
@@ -319,6 +341,39 @@ mod tests {
         // Default (free same-AZ) path → 0.0, still present for a stable shape.
         let ev0 = build_kru(&inputs(&trace_template()));
         assert_eq!(ev0.metadata["actual_egress_gb"], 0.0);
+    }
+
+    #[test]
+    fn io_trace_get_ops_surface_on_the_metering_event() {
+        // TD-IOTRACE-2 / KOU dimension (co-design §2.1): the per-query
+        // object-store GET count is the dominant cloud cost term. When the
+        // caller passes an IoTraceSnapshot with non-zero get_ops, the KRU
+        // event must surface object_store_gets + object_store_bytes_read so
+        // the per-tenant metering collection carries the measured GET count.
+        use crate::observability::io_trace::IoTraceSnapshot;
+        let t = trace_template();
+        let snap = IoTraceSnapshot {
+            get_ops: 42,
+            bytes_read: 8_388_608, // 8 MiB
+            range_gets: 4,
+            ..Default::default()
+        };
+        let mut i = inputs(&t);
+        i.io_trace = Some(&snap);
+        let ev = build_kru(&i);
+        assert_eq!(ev.metadata["object_store_gets"], 42);
+        assert_eq!(ev.metadata["object_store_bytes_read"], 8_388_608);
+    }
+
+    #[test]
+    fn io_trace_fields_omitted_when_snapshot_is_none() {
+        // Older call sites that don't pass a snapshot keep the pre-existing
+        // event shape — the KOU fields are absent, not zero, so a downstream
+        // consumer distinguishing "unset" from "measured zero" can do so.
+        let t = trace_template();
+        let ev = build_kru(&inputs(&t)); // io_trace: None
+        assert!(ev.metadata.get("object_store_gets").is_none());
+        assert!(ev.metadata.get("object_store_bytes_read").is_none());
     }
 
     #[test]
