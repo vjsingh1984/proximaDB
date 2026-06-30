@@ -289,16 +289,22 @@ impl NativeCatalog {
     /// otherwise the schema keeps `None` for both (legacy path, mixed-read-safe).
     /// The namespace u16 is STABLE per namespace (every collection in the same
     /// `namespace_key` gets the same u16) via the transient `namespace_registry`.
-    async fn mint_stable_identity(
+    /// ADR-031 Phase 4c: the single mint path for the typed identity triple
+    /// `(account_u32, namespace_u16, collection_u32)`. Shared by
+    /// [`mint_stable_identity`] (create_table) and the public
+    /// [`Catalog::mint_collection_typed_identity`] (pre-mint before storage-dir
+    /// creation) so both hit the SAME `stable_ids` allocators — pre-stamped
+    /// values are preserved (`existing_*` via `unwrap_or_else`), no double-mint.
+    /// Returns `None` when no account is known (legacy/anonymous → no typed path).
+    async fn resolve_typed_triple(
         &self,
         account_str: &str,
         namespace_key: &str,
-        schema: &mut CatalogTableSchema,
-    ) {
-        let Some(account) = self.account_u32(account_str).await else {
-            return; // no account → no typed identity (legacy)
-        };
-        let ns = schema.stable_namespace_id.unwrap_or_else(|| {
+        existing_ns: Option<u16>,
+        existing_coll: Option<u32>,
+    ) -> Option<(u32, u16, u32)> {
+        let account = self.account_u32(account_str).await?; // None → legacy
+        let ns = existing_ns.unwrap_or_else(|| {
             // First collection in this namespace (this run) → mint a per-account
             // namespace u16 + remember it so siblings reuse it.
             *self
@@ -306,11 +312,36 @@ impl NativeCatalog {
                 .entry(namespace_key.to_string())
                 .or_insert_with(|| self.stable_ids.mint_namespace_id(account))
         });
-        schema.stable_namespace_id = Some(ns);
-        let coll = schema
-            .stable_collection_id
-            .unwrap_or_else(|| self.stable_ids.mint_collection_id(account, ns));
-        schema.stable_collection_id = Some(coll);
+        let coll = existing_coll.unwrap_or_else(|| self.stable_ids.mint_collection_id(account, ns));
+        Some((account, ns, coll))
+    }
+
+    /// ADR-031 Phase 4a: mint the per-scope typed identity (`stable_namespace_id`
+    /// u16, `stable_collection_id` u32) for a collection being created under
+    /// `account_str` in `namespace_key`. Minted only when an account is known;
+    /// otherwise the schema keeps `None` for both (legacy path, mixed-read-safe).
+    /// The namespace u16 is STABLE per namespace (every collection in the same
+    /// `namespace_key` gets the same u16) via the transient `namespace_registry`.
+    /// Idempotent: pre-stamped `stable_*_id` (e.g. from a Phase 4c pre-mint) are
+    /// preserved — `resolve_typed_triple` short-circuits, no re-mint/drift.
+    async fn mint_stable_identity(
+        &self,
+        account_str: &str,
+        namespace_key: &str,
+        schema: &mut CatalogTableSchema,
+    ) {
+        if let Some((_acct, ns, coll)) = self
+            .resolve_typed_triple(
+                account_str,
+                namespace_key,
+                schema.stable_namespace_id,
+                schema.stable_collection_id,
+            )
+            .await
+        {
+            schema.stable_namespace_id = Some(ns);
+            schema.stable_collection_id = Some(coll);
+        }
     }
 
     /// ADR-031 Phase 4a: recover the per-scope allocator floors from a loaded
@@ -1364,6 +1395,20 @@ impl Catalog for NativeCatalog {
         Ok(self.object_name_index.read().await.values().copied().max())
     }
 
+    async fn mint_collection_typed_identity(
+        &self,
+        account: &str,
+        namespace_key: &str,
+    ) -> Result<Option<(u32, u16, u32)>> {
+        // Phase 4c pre-mint: a fresh typed triple (no existing values) via the
+        // shared `resolve_typed_triple`. The caller stamps it onto the schema
+        // before create_table, whose `mint_stable_identity` then preserves it
+        // (idempotent — no double-mint).
+        Ok(self
+            .resolve_typed_triple(account, namespace_key, None, None)
+            .await)
+    }
+
     async fn update_namespace_properties(
         &self,
         namespace: &[String],
@@ -2050,6 +2095,69 @@ mod tests {
         // A genuinely new account mints above the recovered floor (2, not 1).
         let new_acct = cat2.account_u32("other").await.expect("mint new");
         assert_eq!(new_acct, 2, "new account mints above recovered floor");
+    }
+
+    #[tokio::test]
+    async fn mint_collection_typed_identity_is_idempotent_with_mint_stable_identity() {
+        // ADR-031 Phase 4c: the pre-mint (`mint_collection_typed_identity`) and
+        // the create_table mint (`mint_stable_identity`) MUST agree — the
+        // pre-minted values are preserved (no double-mint / drift), because both
+        // hit the SAME `resolve_typed_triple` with `existing_*` short-circuits.
+        // This is the correctness invariant that lets the manager pre-mint for
+        // the typed DATA path before create_table stamps the schema.
+        use crate::Catalog; // trait method in scope
+        let (cat, _d) = catalog_in_tempdir().await;
+
+        // Phase 4c pre-mint: a fresh typed triple (no existing values).
+        let triple = cat
+            .mint_collection_typed_identity("acct", "ns1")
+            .await
+            .expect("mint ok")
+            .expect("Some triple");
+        let (acct, ns, coll) = triple;
+
+        // Stamp the pre-minted values onto a schema (as the manager does via
+        // `__typed_identity` → `schema.stable_*_id`).
+        let mut schema = CatalogTableSchema::new("col1");
+        schema.stable_namespace_id = Some(ns);
+        schema.stable_collection_id = Some(coll);
+
+        // create_table's mint path: `mint_stable_identity` MUST preserve the
+        // pre-stamped values (idempotent) — not re-mint new ones.
+        cat.mint_stable_identity("acct", "ns1", &mut schema).await;
+        assert_eq!(
+            schema.stable_namespace_id,
+            Some(ns),
+            "ns id preserved (no double-mint)"
+        );
+        assert_eq!(
+            schema.stable_collection_id,
+            Some(coll),
+            "coll id preserved (no double-mint)"
+        );
+
+        // And the account u32 matches what the pre-mint used.
+        assert_eq!(cat.account_u32("acct").await, Some(acct));
+
+        // A SECOND collection in the same namespace reuses the ns u16 but mints
+        // a new collection u32 (the pre-mint for col1 did NOT consume col2's id
+        // — `resolve_typed_triple` mints per-collection only when unset).
+        let triple2 = cat
+            .mint_collection_typed_identity("acct", "ns1")
+            .await
+            .expect("mint ok")
+            .expect("Some triple");
+        assert_eq!(triple2.1, ns, "same namespace → same ns u16");
+        assert_eq!(triple2.2, coll + 1, "next collection → coll u32 + 1");
+    }
+
+    #[tokio::test]
+    async fn mint_collection_typed_identity_returns_none_for_no_account() {
+        // Legacy/anonymous → None (no typed path; mixed-read-safe).
+        use crate::Catalog;
+        let (cat, _d) = catalog_in_tempdir().await;
+        let triple = cat.mint_collection_typed_identity("", "ns").await;
+        assert!(triple.unwrap().is_none(), "empty account → None");
     }
 
     // Note: These tests require a mock filesystem or temp directory

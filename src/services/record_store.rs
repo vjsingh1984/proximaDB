@@ -278,6 +278,12 @@ fn object_store_write_base_path(
     schema: &CatalogTableSchema,
     tenant_context: Option<&TenantContext>,
 ) -> String {
+    // TODO ADR-031 Phase 4d: thread the collection's pre-minted
+    // `CollectionIdentity` (from `schema.stable_namespace_id` /
+    // `stable_collection_id` + the account u32) into `DrPathBuilder::build_from_identity`
+    // when `typed_paths_enabled()`, so Parquet exports land at the typed
+    // account-rooted path (`accounts/{base62}/…/`). Today this builds the legacy
+    // string-resolved path (mixed-read-safe; env gate OFF).
     let tenant_id = tenant_context
         .map(|tc| tc.tenant_id.as_str())
         .unwrap_or("default_tenant");
