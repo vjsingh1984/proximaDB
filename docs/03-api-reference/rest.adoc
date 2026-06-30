@@ -165,7 +165,7 @@ curl -X POST http://localhost:5678/api/v1/collections \
 The proto enum discriminants are: 1=`fp32`, 2=`fp16`, 3=`bf16`,
 4=`int8`, 5=`uint8`. String forms (`"fp16"`, `"EMBEDDING_PRECISION_FP16"`)
 are accepted via the same field. Once set on a collection, every
-ingest path — REST `vectors/batch`, gRPC, Arrow Flight `do_action`,
+ingest path — REST `vectors/batch`, gRPC, Arrow Flight `do_action` (experimental),
 the async embedding drainer — coerces records to the collection's
 canonical precision before WAL append, and compaction preserves it
 through rewrites.

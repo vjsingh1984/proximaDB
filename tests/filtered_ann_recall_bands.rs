@@ -492,3 +492,7 @@ async fn filtered_search_under_top_k_surfaces_predicate_shortfall() {
         "predicate_shortfall must NOT be present when the full top_k is returned: {unfiltered_json}"
     );
 }
+
+// Risk-coverage scenarios (docs/10-quality/RISK_CONTRACT.toml :: filtered-ann-shortfall):
+//   scenario: predicate-shortfall — filtered search under top_k surfaces predicate shortfall
+//   (the recall-SLA test in this file is intentionally #[ignore]d while ADR-011 is Beta — TD-073)

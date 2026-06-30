@@ -24,19 +24,15 @@ flowchart TB
     MEM[Memtables]
     CACHE[Block Cache]
 
-    subgraph Engines["Storage Engines"]
+    subgraph Engines["Storage Engines<br/>(SST, VIPER, HELIX, NOVA)"]
       SST[SST]
       HELIX[HELIX]
       VIPER[VIPER]
-      SWIFT[SWIFT]
       NOVA[NOVA]
-      RAPTOR[RAPTOR]
     end
 
-    subgraph GraphEngines["Graph Engines"]
+    subgraph GraphEngines["Graph Engine (ORION)"]
       ORION[ORION]
-      PULSAR[PULSAR]
-      QUASAR[QUASAR]
     end
   end
 
@@ -64,9 +60,10 @@ Single port (`5678`) for multiple protocols:
 |----------|----------|---------|
 | **REST** | Web apps, curl | `POST /api/v2/collections` |
 | **gRPC** | High-performance services | `proximadb.v2.ProximaRecordService` |
-| **Arrow Flight** | Data analytics, BI tools | `do_put()` streaming |
+| **Arrow Flight** _(experimental)_ | Data analytics, BI tools | `do_put()` streaming |
 
-Plus PostgreSQL wire protocol on port `5433` for SQL clients.
+Plus PostgreSQL wire protocol on port `5433` for SQL clients. (Arrow Flight as a
+customer-facing transport is **experimental**; REST/gRPC are the supported surfaces.)
 
 **Why it matters:** One connection, any protocol. No need to run multiple services.
 
@@ -105,12 +102,10 @@ All writes (vectors, documents, graphs, logs) go through a single WAL:
 flowchart TB
   subgraph Write["Write-Optimized"]
     SST[SST<br/>~5ms]
-    SWIFT[SWIFT<br/>~95ms]
   end
 
   subgraph Read["Read-Optimized"]
     HELIX[HELIX<br/>~13ms]
-    RAPTOR[RAPTOR<br/>~9ms]
   end
 
   subgraph Analytics["Analytics"]
@@ -119,21 +114,19 @@ flowchart TB
   end
 
   style SST fill:#27ae60,color:#fff
-  style SWIFT fill:#27ae60,color:#fff
   style HELIX fill:#e67e22,color:#fff
-  style RAPTOR fill:#e67e22,color:#fff
   style VIPER fill:#9b59b6,color:#fff
   style NOVA fill:#9b59b6,color:#fff
 ```
 
-6 specialized engines for different workloads:
+4 supported storage engines for different workloads (SWIFT and RAPTOR also exist
+but are **experimental**, off by default behind the `experimental-engines` cargo
+feature — not part of the supported surface):
 
 | Engine | Best For | Performance |
 |--------|----------|-------------|
 | **SST** | Real-time, write-heavy | Fastest writes |
-| **SWIFT** | Ultra-low latency (<5K vectors) | Small datasets |
 | **HELIX** | Locality-optimized reads | Spatial queries |
-| **RAPTOR** | Adaptive, dynamic workloads | Auto-tuning |
 | **VIPER** | Columnar analytics | Aggregations |
 | **NOVA** | Mixed workloads | Balanced |
 
@@ -146,32 +139,28 @@ flowchart TB
 ```mermaid
 %%{init: {"theme": "neutral"}}%%
 flowchart LR
-  subgraph GraphEngines["Graph Engines"]
-    ORION[ORION<br/>In-Memory]
-    PULSAR[PULSAR<br/>Distributed]
-    QUASAR[QUASAR<br/>Hybrid]
+  subgraph GraphEngines["Graph Engine"]
+    ORION[ORION<br/>In-Memory CSR]
   end
 
   subgraph Cap["Capabilities"]
     C1[1M+ edges/sec]
-    C2[Shard-aware]
-    C3[Vector + Graph]
+    C2[Vector + Graph]
   end
 
   ORION --> C1
-  PULSAR --> C2
-  QUASAR --> C3
+  ORION --> C2
 
   style ORION fill:#e74c3c,color:#fff
-  style PULSAR fill:#3498db,color:#fff
-  style QUASAR fill:#9b59b6,color:#fff
 ```
+
+ORION is the only graph engine (PULSAR and QUASAR names are **retired** — former
+distributed/tiered behavior now lives in the relational distributed substrate
+and xCatalog/storage projection policy).
 
 | Engine | Scale | Features |
 |--------|-------|----------|
 | **ORION** | Single node | Fastest, in-memory CSR |
-| **PULSAR** | Distributed | Shard-aware, scalable |
-| **QUASAR** | Hybrid | Vector + graph unified |
 
 **Why it matters:** Graph relationships without a separate graph database.
 

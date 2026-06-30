@@ -68,7 +68,7 @@ CREATE TABLE docs_fp16 (
 ) WITH (canonical_embedding_precision = 'fp16');
 ----
 
-| Arrow Flight `do_action("create_collection", ...)`
+| Arrow Flight _(experimental)_ `do_action("create_collection", ...)`
 a|
 [source,json]
 ----

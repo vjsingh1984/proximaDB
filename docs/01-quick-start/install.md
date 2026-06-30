@@ -227,7 +227,7 @@ The default config file is installed at:
 
 | Port | Protocol | Purpose |
 |------|----------|---------|
-| **5678** | HTTP/2 | Unified REST + gRPC + Arrow Flight |
+| **5678** | HTTP/2 | Unified REST + gRPC (+ Arrow Flight, experimental) |
 | **5433** | PostgreSQL | SQL wire protocol |
 
 ### Minimal Config

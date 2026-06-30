@@ -9,7 +9,7 @@ Source artifact: `artifacts/python_embedded_modalities_search_sql_uql_cypher_202
 | Workload | Choose | Why |
 |---|---|---|
 | Highest-throughput in-process vector or record insert | Python embedded native batch APIs | Avoids network and protocol overhead; preserves `ProximaRecord` shape. |
-| Bulk dataframe/table ingest | Arrow embedded or Arrow Flight | Columnar transfer, good for analytics pipelines and ETL. |
+| Bulk dataframe/table ingest | Arrow embedded or Arrow Flight (experimental) | Columnar transfer, good for analytics pipelines and ETL. |
 | Lowest-latency in-process vector search from Python | NumPy-native search | Avoids Python list/object conversion on the query vector. |
 | Application-facing semantic search over server | REST/gRPC or SQL `VECTOR_SEARCH` | Stable multi-client surface with server-side policy/catalog enforcement. |
 | Cross-model query composition | SQL extensions or UQL | One query can combine vector, document, graph, and observability sources. |
