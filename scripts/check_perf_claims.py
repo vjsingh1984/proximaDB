@@ -11,11 +11,11 @@ guard checks the *cross-doc* contract in two directions:
      (.adoc/.md) must actually contain the claim's number on/near the cited line.
      Catches docs that drifted past their refs (the number moved/was removed but
      the ledger still points at the old line).
-  2. ASPIRATIONAL-LEAK: an `aspirational` claim (a target/acceptance criterion,
-     NOT a measured result) must NOT be cited in a customer-facing CAPABILITY doc
-     (README/concepts/guides/quick-start/api-reference) as if it were a current
-     capability. PRD/VISION (requirements/roadmap) and _internal are exempt —
-     targets belong there.
+  2. MEASURED-ONLY: a customer-facing CAPABILITY doc (README/concepts/guides/
+     quick-start/api-reference) may cite ONLY `measured` claims — `unverified` and
+     `aspirational` are not citable there as current results (measure them, or drop
+     the citation). PRD/VISION (requirements/roadmap) and _internal are exempt —
+     targets/unverified belong there.
 
 Exit 0 = clean, 1 = violation(s), 2 = usage error.
 """
@@ -68,12 +68,13 @@ def check_ref(claim_id: str, status: str, claim: str, ref: str, errors: list[str
     file_path, line_no = parse_reference(ref)
     rel = ref.rsplit(":", 1)[0] if ":" in ref else ref
 
-    # ASPIRATIONAL-LEAK: a target cited in a customer-facing capability doc.
-    if status == "aspirational" and _is_capability(rel):
+    # MEASURED-ONLY: only measured claims may be cited in a customer-facing
+    # capability doc (unverified/aspirational are not citable as current results).
+    if status != "measured" and _is_capability(rel):
         errors.append(
-            f"[{claim_id}] aspirational claim (a target, not a result) cited in "
-            f"capability doc {rel!r} — move it to PRD/VISION/roadmap, or change "
-            f"the claim to measured/unverified once substantiated"
+            f"[{claim_id}] {status!r} claim cited in capability doc {rel!r} — only "
+            f"measured claims are citable in customer-facing docs. Measure it "
+            f"(promote to status='measured' with an artifact) or drop the citation."
         )
 
     # FORWARD: only for narrative docs with a line number.
