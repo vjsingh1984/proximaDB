@@ -552,10 +552,12 @@ mod tests {
         // Cool-tier proof object_store cannot surface. The emulator is ephemeral.
     }
 
-    /// AWS S3 (MinIO) via the production `from_url` + env path. MinIO *accepts* the
-    /// `x-amz-storage-class: STANDARD_IA` header but does not persist the class
-    /// (best-effort S3 compat) — so this proves the header is accepted (no 4xx) +
-    /// round-trip. Set by CI: `AWS_ENDPOINT`, `AWS_ALLOW_HTTP=true`,
+    /// AWS S3 (MinIO) via the production `from_url` + env path. Default MinIO
+    /// *rejects* `x-amz-storage-class: STANDARD_IA` (InvalidStorageClass) unless
+    /// object tiering/ILM is configured — impractical for a CI emulator — so this
+    /// best-effort-skips on that rejection (real AWS S3 accepts it; the header
+    /// mapping is unit-tested via `native_tier`). It still hard-fails on a
+    /// non-storage-class error. Set by CI: `AWS_ENDPOINT`, `AWS_ALLOW_HTTP=true`,
     /// `AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false`, `AWS_ACCESS_KEY_ID/SECRET/REGION`.
     #[cfg(feature = "aws")]
     #[tokio::test]
@@ -570,9 +572,27 @@ mod tests {
             .expect("open MinIO/S3 store via from_url");
         assert_eq!(os.backend(), ObjectBackendKind::S3);
         let p = Path::from("cold/probe-s3.bin");
-        os.put_with_tier(&p, Bytes::from_static(b"cool-s3"), ObjectAccessTier::Cool)
+        // Best-effort: skip on the emulator's STANDARD_IA rejection (mirrors the
+        // GCS pattern); fail on other errors. The header mapping itself is
+        // unit-tested (`native_tier(ObjectAccessTier::Cool) == "STANDARD_IA"`).
+        match os
+            .put_with_tier(&p, Bytes::from_static(b"cool-s3"), ObjectAccessTier::Cool)
             .await
-            .expect("S3/MinIO must accept x-amz-storage-class: STANDARD_IA");
+        {
+            Ok(()) => {}
+            Err(e) => {
+                let msg = format!("{e:?}");
+                if msg.contains("InvalidStorageClass") {
+                    eprintln!(
+                        "skip (best-effort): MinIO emulator rejected STANDARD_IA \
+                         (InvalidStorageClass) — real AWS S3 accepts it; the \
+                         put_with_tier mapping is unit-tested separately. err: {msg}"
+                    );
+                    return;
+                }
+                panic!("MinIO/S3 put_with_tier failed (non-storage-class error): {msg}");
+            }
+        }
         assert_eq!(&os.get(&p).await.expect("get")[..], b"cool-s3");
         let _ = os.delete(&p).await;
     }
