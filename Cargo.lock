@@ -7084,6 +7084,7 @@ dependencies = [
  "arrow-schema",
  "async-trait",
  "bytes",
+ "chrono",
  "futures",
  "object_store",
  "parquet",
@@ -7095,6 +7096,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

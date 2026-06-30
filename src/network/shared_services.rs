@@ -35,6 +35,45 @@ use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactor
 use proximadb_graph_query::service::{GraphExecutionService, GraphQueryService};
 use proximadb_kernel::uuid::Uuid;
 
+// ---- TD-MANIFEST-1: lease manifest retention knobs (parsed once per boot) ----
+// Manifests are append-only and were never pruned, so a long-lived lease grew ~48k
+// objects (562 MB) and made every `latest_version()` an O(n) full `list`. A
+// low-priority prune of the stale tail caps n — itself the read-path fix. Default ON
+// with conservative knobs; set PROXIMADB_LEASE_MANIFEST_RETENTION=0 to disable.
+
+/// Whether the lease manifest prune loop runs (default ON).
+fn lease_manifest_retention_enabled() -> bool {
+    std::env::var("PROXIMADB_LEASE_MANIFEST_RETENTION")
+        .ok()
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(true)
+}
+
+/// Number of newest manifests to keep per lease log (the committer clamps this to ≥2).
+fn lease_manifest_keep_k() -> usize {
+    std::env::var("PROXIMADB_LEASE_MANIFEST_KEEP")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(32)
+}
+
+/// Minimum age (seconds) a superseded manifest must reach before it is eligible to
+/// prune — a grace window that protects the recent burst and release tombstones.
+fn lease_manifest_min_age_secs() -> u64 {
+    std::env::var("PROXIMADB_LEASE_MANIFEST_MIN_AGE_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(900)
+}
+
+/// How often the prune loop sweeps each held lease log (seconds).
+fn lease_manifest_prune_interval_secs() -> u64 {
+    std::env::var("PROXIMADB_LEASE_MANIFEST_PRUNE_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(300)
+}
+
 /// Which consumer is constructing the shared service core.
 ///
 /// The core (catalog, collection, vector/doc/graph compute, storage/WAL,
@@ -1955,6 +1994,23 @@ impl SharedServices {
                     manager
                         .clone()
                         .spawn_renew_loop(std::time::Duration::from_millis(5_000));
+
+                    // TD-MANIFEST-1: cap the lease manifest log. Manifests are
+                    // append-only and were never pruned, so a long-lived lease grew
+                    // ~48k objects (562 MB) and made every `latest_version()` an O(n)
+                    // full `list` that pinned a CPU core (and on a cloud store is a
+                    // paginated LIST that gets slower/costlier as n grows). A
+                    // low-priority prune of the stale tail caps n — itself the
+                    // read-path fix, since the tip scan stays cheap once bounded.
+                    // Default ON with conservative knobs; set
+                    // PROXIMADB_LEASE_MANIFEST_RETENTION=0 to disable.
+                    if lease_manifest_retention_enabled() {
+                        manager.clone().spawn_prune_loop(
+                            std::time::Duration::from_secs(lease_manifest_prune_interval_secs()),
+                            lease_manifest_keep_k(),
+                            std::time::Duration::from_secs(lease_manifest_min_age_secs()),
+                        );
+                    }
                     let lock_service = Arc::new(DmlLockService::new(manager.clone(), pod_id));
                     let _ = lock_service.spawn_reconciliation_loop(5_000);
                     // Surface the manager so RecordOpsService can lease-on-write:

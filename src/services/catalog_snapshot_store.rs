@@ -86,6 +86,18 @@ pub trait CatalogSnapshotStore: Send + Sync {
         Ok(None)
     }
 
+    /// Best-effort retention prune of superseded snapshot manifests. Default no-op —
+    /// the local single-pod store keeps one rotating blob. The object-store
+    /// implementation caps the manifest log; see
+    /// [`ManifestCommitter::prune_retention`]. Returns the count pruned.
+    async fn prune_retention(
+        &self,
+        _keep_k: usize,
+        _min_age: std::time::Duration,
+    ) -> Result<usize> {
+        Ok(0)
+    }
+
     /// Human-readable location, for logs and error context.
     fn describe(&self) -> String;
 }
@@ -246,7 +258,27 @@ impl CatalogSnapshotStore for ObjectStoreSnapshotStore {
             .await
             .with_context(|| format!("committing catalog snapshot {}", self.label))?
         {
-            CommitOutcome::Committed(version) => Ok(SnapshotWrite::Published { version }),
+            CommitOutcome::Committed(version) => {
+                // TD-MANIFEST-1: catalog snapshots are large full-catalog blobs and
+                // were never pruned, so the manifest log grows one-per-checkpoint
+                // forever. Prune the stale tail opportunistically after each publish
+                // (checkpoints are infrequent, so this is cheap and avoids a separate
+                // background task). `keep_k` is small — followers tail the tip, never
+                // history. Best-effort: a prune failure must not fail the publish.
+                if catalog_snapshot_retention_enabled() {
+                    let min_age = std::time::Duration::from_secs(catalog_snapshot_min_age_secs());
+                    if let Err(e) = self
+                        .prune_retention(catalog_snapshot_keep_k(), min_age)
+                        .await
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            "catalog snapshot prune failed (best-effort); publish unaffected"
+                        );
+                    }
+                }
+                Ok(SnapshotWrite::Published { version })
+            }
             // Fenced (stale generation) or lost the version CAS race — either way
             // this writer did not publish; it must re-read and step down/retry.
             CommitOutcome::Conflict { .. } => Ok(SnapshotWrite::Fenced),
@@ -260,9 +292,45 @@ impl CatalogSnapshotStore for ObjectStoreSnapshotStore {
             .with_context(|| format!("probing catalog snapshot version {}", self.label))
     }
 
+    async fn prune_retention(&self, keep_k: usize, min_age: std::time::Duration) -> Result<usize> {
+        self.committer
+            .prune_retention(keep_k, min_age)
+            .await
+            .with_context(|| format!("pruning catalog snapshot log {}", self.label))
+    }
+
     fn describe(&self) -> String {
         self.label.clone()
     }
+}
+
+// ---- TD-MANIFEST-1: catalog snapshot manifest retention knobs (parsed per write) ----
+// Catalog snapshots are large full-catalog blobs, so keep only a tiny history (the
+// tip + a couple of predecessors); followers tail the tip, never old snapshots.
+
+/// Whether catalog snapshot manifest pruning runs (default ON). Set
+/// `PROXIMADB_CATALOG_SNAPSHOT_RETENTION=0` to disable.
+fn catalog_snapshot_retention_enabled() -> bool {
+    std::env::var("PROXIMADB_CATALOG_SNAPSHOT_RETENTION")
+        .ok()
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(true)
+}
+
+/// Number of newest catalog snapshots to keep (the committer clamps this to ≥2).
+fn catalog_snapshot_keep_k() -> usize {
+    std::env::var("PROXIMADB_CATALOG_SNAPSHOT_KEEP")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(3)
+}
+
+/// Minimum age (seconds) a superseded snapshot must reach before it is pruned.
+fn catalog_snapshot_min_age_secs() -> u64 {
+    std::env::var("PROXIMADB_CATALOG_SNAPSHOT_MIN_AGE_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(900)
 }
 
 #[cfg(test)]
