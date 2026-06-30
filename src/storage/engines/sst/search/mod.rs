@@ -228,6 +228,80 @@ impl SstEngine {
         .await
     }
 
+    /// PAX RaBitQ→SQ8 cascade attempt for a `.pax` segment — the co-designed
+    /// approximate read path (P3 C.2: metadata pre-prune → RaBitQ candidate rank
+    /// → SQ8 rerank, full f32 never decoded). Returns `Ok(Some)` when the cascade
+    /// served, or `Ok(None)`/`Err` when it doesn't apply (segment isn't PAX, has no
+    /// RaBitQ-coded embedding, or a transient I/O error). The caller falls back to
+    /// the generic materialize-and-score scan in all of those cases, so this is
+    /// additive and mixed-read-safe.
+    ///
+    /// **Metric gate.** Serves only Euclidean collections — the cascade's rerank is
+    /// L2-validated (recall 0.932 @ N=100k). Other metrics stay on the generic scan
+    /// until the cascade is metric-generalized + re-validated (follow-up).
+    async fn try_pax_cascade(
+        &self,
+        sstable_path: &str,
+        query_vector: &[f32],
+        filter_expression: Option<&FilterExpression>,
+        k: usize,
+    ) -> anyhow::Result<Option<Vec<OptimizedSearchRecord>>> {
+        use crate::storage::engines::sst::segment_format::{
+            MetaPrune, pax_field_to_col, rabitq_search_segment,
+        };
+        // Read the segment bytes once; the generic-scan branch uses the sstable
+        // reader instead, so this read is exclusive to the cascade (no double-read).
+        let fs = self
+            .filesystem()
+            .get_filesystem(sstable_path)
+            .map_err(|e| anyhow::anyhow!("opening PAX segment {sstable_path}: {e}"))?;
+        let bytes = fs
+            .read(sstable_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("reading PAX segment {sstable_path}: {e}"))?;
+        let pool = Self::pax_rabitq_pool_for_top_k(k);
+        let prune = filter_expression.map(|filter| MetaPrune {
+            filter,
+            field_to_col: &pax_field_to_col,
+        });
+        let Some(hits) = rabitq_search_segment(&bytes, query_vector, k, pool, prune)? else {
+            return Ok(None); // not PAX / no RaBitQ → caller falls back
+        };
+        let metric = DistanceMetric::Euclidean;
+        let records = hits
+            .into_iter()
+            .map(|h| {
+                OptimizedSearchRecord::new(
+                    h.oid,
+                    OptimizedSearchRecord::standardized_distance_to_similarity(h.distance, &metric),
+                )
+            })
+            .collect();
+        Ok(Some(records))
+    }
+
+    /// Default RaBitQ candidate-pool size for top-`k` (recall: pool=200→0.708,
+    /// 1000→0.932 @ N=100k). `max(k * mult, min)`; the defaults (mult=100,
+    /// min=1000) reproduce the largest validated config (pool=1000 @ N=100k) at
+    /// k=10 and scale up for larger k, so recall holds across segment sizes until
+    /// the SIFT1M real-dataset validation lands. Env-overridable via
+    /// `PROXIMADB_PAX_RABITQ_POOL_MULT` / `_MIN`.
+    fn pax_rabitq_pool_for_top_k(k: usize) -> usize {
+        static C: std::sync::OnceLock<(usize, usize)> = std::sync::OnceLock::new();
+        let (mult, min) = C.get_or_init(|| {
+            let mult = std::env::var("PROXIMADB_PAX_RABITQ_POOL_MULT")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(100);
+            let min = std::env::var("PROXIMADB_PAX_RABITQ_POOL_MIN")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(1000);
+            (mult, min)
+        });
+        k.saturating_mul(*mult).max(*min)
+    }
+
     /// Main unified search implementation with orchestration
     ///
     /// This is the primary search entry point that implements intelligent
@@ -846,8 +920,37 @@ impl SstEngine {
                 block_prune.force_exact
             );
 
-            // Dispatch based on file format (Arrow vs ProximaBlocks)
-            let search_result = if sstable_path.ends_with(".arrow") {
+            // PAX RaBitQ→SQ8 cascade (PAX Phase 2 read-side wiring): try it first
+            // for `.pax` segments under the validated Euclidean metric. The generic
+            // dispatch below handles every other case — `.arrow`, legacy `.sst`, AND
+            // `.pax` under other metrics or any cascade miss (not-PAX / no RaBitQ /
+            // error) — so this is additive and mixed-read-safe.
+            let pax_cascade: Option<Vec<OptimizedSearchRecord>> =
+                if sstable_path.ends_with(".pax") && distance_metric == DistanceMetric::Euclidean {
+                    match self
+                        .try_pax_cascade(sstable_path, query_vector, filter_expression, k)
+                        .await
+                    {
+                        Ok(Some(records)) => Some(records),
+                        Ok(None) => None,
+                        Err(e) => {
+                            warn!(
+                                file = %sstable_path,
+                                error = %e,
+                                "PAX cascade unavailable; falling back to generic scan"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+            // Dispatch based on file format (Arrow vs ProximaBlocks); the PAX
+            // cascade short-circuits above when it applies.
+            let search_result = if let Some(records) = pax_cascade {
+                Ok(records)
+            } else if sstable_path.ends_with(".arrow") {
                 // Use ArrowBlockReader for Arrow format files
                 self.search_arrow_file(
                     sstable_path,
@@ -1260,7 +1363,9 @@ impl SstEngine {
                 entry.metadata.is_directory
             );
             if !entry.metadata.is_directory
-                && (entry.name.ends_with(".sst") || entry.name.ends_with(".arrow"))
+                && (entry.name.ends_with(".sst")
+                    || entry.name.ends_with(".arrow")
+                    || entry.name.ends_with(".pax"))
             {
                 files.push(entry.url);
                 tracing::debug!("[SST] Found data file: {}", entry.name);
@@ -1321,7 +1426,9 @@ impl SstEngine {
         if let Ok(mut entries) = tokio::fs::read_dir(data_dir).await {
             while let Some(entry) = entries.next_entry().await? {
                 if let Some(name) = entry.file_name().to_str()
-                    && (name.ends_with(".sst") || name.ends_with(".arrow"))
+                    && (name.ends_with(".sst")
+                        || name.ends_with(".arrow")
+                        || name.ends_with(".pax"))
                 {
                     sstable_files.push(format!("{}/{}", data_dir, name));
                 }
