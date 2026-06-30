@@ -591,6 +591,21 @@ pub struct CatalogTableSchema {
     /// cuts over (ADR-031 O2).
     #[serde(default)]
     pub object_id: Option<u64>,
+    /// ADR-031 Phase 4a per-scope compact numeric identity for the typed
+    /// object-store path. `stable_namespace_id` (u16, per-account) and
+    /// `stable_collection_id` (u32, per-namespace) are minted by the catalog's
+    /// `CatalogIdService` at create time and persisted here. The **account** u32
+    /// is NOT stored (it would duplicate `account_id`); it's derived from the
+    /// account string via a registry at path-build time. Legacy rows load as
+    /// `None` (mixed-read-safe — the typed path is opt-in, env-gated
+    /// `PROXIMADB_TYPED_PATHS`). The root crate composes these primitives into a
+    /// `CollectionIdentity` at the path boundary (layering: the catalog cannot
+    /// import that root type). All values are numeric in-memory; base62 is
+    /// applied only to path segments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_namespace_id: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_collection_id: Option<u32>,
     /// Table columns
     pub columns: Vec<CatalogColumn>,
     /// Primary key columns (by name)
@@ -749,6 +764,8 @@ impl Default for CatalogTableSchema {
         Self {
             name: String::new(),
             object_id: None,
+            stable_namespace_id: None,
+            stable_collection_id: None,
             columns: Vec::new(),
             primary_key: Vec::new(),
             indexes: Vec::new(),

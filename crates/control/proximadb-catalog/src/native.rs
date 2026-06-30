@@ -42,9 +42,11 @@
 //! let catalog = NativeCatalog::new("default", config, cache).await?;
 //! ```
 
+use dashmap::DashMap;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
 use std::time::Instant;
 
 use anyhow::{Result, anyhow};
@@ -134,6 +136,24 @@ pub struct NativeCatalog {
     /// process-stable deployment setting, not a per-write toggle); interior
     /// mutability so tests can force it deterministically without env races.
     oid_paths: std::sync::atomic::AtomicBool,
+    /// ADR-031 Phase 4a: per-scope typed-atomic allocator — mints
+    /// `stable_namespace_id` (u16, per-account) and `stable_collection_id`
+    /// (u32, per-namespace) persisted on schemas. Account-scoped via the
+    /// numeric `account_registry` below (numerics in-memory; no string keys).
+    stable_ids: crate::id_allocator::CatalogIdService,
+    /// ADR-031 Phase 4a: transient account-string → u32 registry. The account
+    /// u32 is NOT persisted on the namespace (it would duplicate `account_id`);
+    /// it's minted on first sight per run and used to scope `stable_ids`.
+    /// Phase 4b makes it durable (for path stability); in 4a it only keys
+    /// in-memory minting.
+    account_registry: DashMap<String, u32>,
+    account_floor: AtomicU32,
+    /// ADR-031 Phase 4a: transient namespace-key → u16 map, so every collection
+    /// in the same namespace gets the SAME `stable_namespace_id` (per-account,
+    /// compact). Keyed by the namespace levels joined (`a.b`). Rebuilt from
+    /// persisted schemas on load (the u16 lives denormalized on each schema).
+    namespace_registry: DashMap<String, u16>,
+    namespace_floor: AtomicU32,
 }
 
 /// Table metadata stored in storage
@@ -227,6 +247,82 @@ impl NativeCatalog {
         }
     }
 
+    /// ADR-031 Phase 4a: resolve the numeric account u32 for an account string.
+    /// Lookup-or-mint against the transient `account_registry` (the account u32
+    /// is NOT stored on the namespace — it would duplicate `account_id`; it's a
+    /// registry-derived value, numeric in-memory). Returns `None` for an
+    /// empty/absent account string (legacy/anonymous namespaces get no typed
+    /// identity — mixed-read-safe).
+    fn account_u32(&self, account_str: &str) -> Option<u32> {
+        if account_str.is_empty() {
+            return None;
+        }
+        if let Some(entry) = self.account_registry.get(account_str) {
+            return Some(*entry.value());
+        }
+        let next = self
+            .account_floor
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.account_registry.insert(account_str.to_string(), next);
+        Some(next)
+    }
+
+    /// ADR-031 Phase 4a: mint the per-scope typed identity (`stable_namespace_id`
+    /// u16, `stable_collection_id` u32) for a collection being created under
+    /// `account_str` in `namespace_key`. Minted only when an account is known;
+    /// otherwise the schema keeps `None` for both (legacy path, mixed-read-safe).
+    /// The namespace u16 is STABLE per namespace (every collection in the same
+    /// `namespace_key` gets the same u16) via the transient `namespace_registry`.
+    fn mint_stable_identity(
+        &self,
+        account_str: &str,
+        namespace_key: &str,
+        schema: &mut CatalogTableSchema,
+    ) {
+        let Some(account) = self.account_u32(account_str) else {
+            return; // no account → no typed identity (legacy)
+        };
+        let ns = schema.stable_namespace_id.unwrap_or_else(|| {
+            // First collection in this namespace (this run) → mint a per-account
+            // namespace u16 + remember it so siblings reuse it.
+            *self
+                .namespace_registry
+                .entry(namespace_key.to_string())
+                .or_insert_with(|| self.stable_ids.mint_namespace_id(account))
+        });
+        schema.stable_namespace_id = Some(ns);
+        let coll = schema
+            .stable_collection_id
+            .unwrap_or_else(|| self.stable_ids.mint_collection_id(account, ns));
+        schema.stable_collection_id = Some(coll);
+    }
+
+    /// ADR-031 Phase 4a: recover the per-scope allocator floors from a loaded
+    /// schema's persisted typed identity, so a restart never reuses them. The
+    /// load-path inverse of `mint_stable_identity`. Re-derives the namespace u16
+    /// into the transient `namespace_registry` so siblings share it.
+    fn recover_stable_identity(
+        &self,
+        account_str: &str,
+        namespace_key: &str,
+        schema: &CatalogTableSchema,
+    ) {
+        let Some(account) = self.account_u32(account_str) else {
+            return;
+        };
+        if let Some(ns) = schema.stable_namespace_id {
+            self.stable_ids.recover_namespace_floor(account, ns);
+            self.namespace_floor
+                .fetch_max(ns as u32 + 1, std::sync::atomic::Ordering::Relaxed);
+            self.namespace_registry
+                .entry(namespace_key.to_string())
+                .or_insert(ns);
+            if let Some(coll) = schema.stable_collection_id {
+                self.stable_ids.recover_collection_floor(account, ns, coll);
+            }
+        }
+    }
+
     /// Create a new native catalog backed by local `tokio::fs` (the default,
     /// back-compat path). Equivalent to `new_with_filesystem(.., None)`.
     pub async fn new(
@@ -279,6 +375,11 @@ impl NativeCatalog {
             namespace_object_id_index: RwLock::new(HashMap::new()),
             object_name_index: RwLock::new(HashMap::new()),
             oid_paths: std::sync::atomic::AtomicBool::new(Self::object_id_paths_enabled()),
+            stable_ids: crate::id_allocator::CatalogIdService::new(),
+            account_registry: DashMap::new(),
+            account_floor: AtomicU32::new(1),
+            namespace_registry: DashMap::new(),
+            namespace_floor: AtomicU32::new(1),
         };
 
         // Ensure the base location exists (local mkdir; object-store no-op).
@@ -905,6 +1006,18 @@ impl NativeCatalog {
         // from persisted ids so a restart never reuses an id and object_id → table
         // resolution survives (best-effort as tables load on demand).
         self.raise_object_id_floor(meta.schema.object_id);
+        // ADR-031 Phase 4a: recover the per-scope typed-identity floors so a
+        // restart never reuses a persisted `stable_namespace_id` /
+        // `stable_collection_id`. Account u32 is re-derived from the transient
+        // registry (durable in 4b).
+        {
+            let ns_key = identifier.namespace.join(".");
+            if let Some(ns) = self.namespaces.read().await.get(&ns_key)
+                && let Some(account) = ns.account_id.as_deref()
+            {
+                self.recover_stable_identity(account, &ns_key, &meta.schema);
+            }
+        }
         if let Some(id) = meta.schema.object_id {
             // TD-181 P1: opportunistically heal the durable index if this object
             // file isn't indexed yet (an orphan from a crash between object-write
@@ -1234,6 +1347,15 @@ impl Catalog for NativeCatalog {
                 "Namespace '{}' does not exist",
                 identifier.namespace.join(".")
             ));
+        }
+
+        // ADR-031 Phase 4a: mint the per-scope typed identity
+        // (`stable_namespace_id` u16, `stable_collection_id` u32) when the
+        // namespace carries an account. Legacy/anonymous namespaces keep `None`
+        // (mixed-read-safe — the typed path is opt-in, env-gated).
+        let ns = self.get_namespace(&identifier.namespace).await?;
+        if let Some(account) = ns.account_id.as_deref() {
+            self.mint_stable_identity(account, &identifier.namespace.join("."), &mut schema);
         }
 
         // Check table doesn't exist
@@ -1739,6 +1861,78 @@ impl Catalog for NativeCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── ADR-031 Phase 4a: typed-identity minting ────────────────────────
+
+    async fn catalog_in_tempdir() -> (NativeCatalog, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cfg = NativeCatalogConfig {
+            storage_url: format!("file://{}", dir.path().join("cat").display()),
+            metadata_format: "json".into(),
+            versioned: false,
+            max_versions: 100,
+        };
+        let cat = NativeCatalog::new(
+            "t".into(),
+            cfg,
+            Arc::new(crate::cache::CatalogCache::new(64, 60)),
+        )
+        .await
+        .expect("construct catalog");
+        (cat, dir)
+    }
+
+    #[tokio::test]
+    async fn stable_identity_is_per_scope_and_legacy_safe() {
+        let (cat, _d) = catalog_in_tempdir().await;
+
+        // No account → legacy, no typed identity (mixed-read-safe).
+        let mut legacy = CatalogTableSchema::new("legacy");
+        cat.mint_stable_identity("", "ns", &mut legacy);
+        assert!(legacy.stable_namespace_id.is_none());
+        assert!(legacy.stable_collection_id.is_none());
+
+        // Account present → per-scope compact ids minted.
+        let mut a1 = CatalogTableSchema::new("a1");
+        cat.mint_stable_identity("acct", "ns1", &mut a1);
+        assert_eq!(a1.stable_namespace_id, Some(1), "first ns in acct = 1");
+        assert_eq!(a1.stable_collection_id, Some(1), "first coll = 1");
+
+        // Same namespace, new collection → SAME namespace id, NEXT collection id.
+        let mut a2 = CatalogTableSchema::new("a2");
+        cat.mint_stable_identity("acct", "ns1", &mut a2);
+        assert_eq!(
+            a2.stable_namespace_id,
+            Some(1),
+            "same namespace → same ns id"
+        );
+        assert_eq!(a2.stable_collection_id, Some(2), "second coll in ns1 = 2");
+
+        // Different namespace → NEXT namespace id, collection restarts at 1.
+        let mut b1 = CatalogTableSchema::new("b1");
+        cat.mint_stable_identity("acct", "ns2", &mut b1);
+        assert_eq!(b1.stable_namespace_id, Some(2), "new ns = 2");
+        assert_eq!(
+            b1.stable_collection_id,
+            Some(1),
+            "new ns → coll restarts at 1"
+        );
+    }
+
+    #[tokio::test]
+    async fn account_registry_is_stable_within_run() {
+        let (cat, _d) = catalog_in_tempdir().await;
+        // Same account string → same account u32 (registry lookup-or-mint).
+        let mut a = CatalogTableSchema::new("a");
+        cat.mint_stable_identity("acct", "ns", &mut a);
+        let acct_u32_a = cat.account_u32("acct").expect("account resolved");
+        // A second call for the same account must NOT re-mint a different u32.
+        let acct_u32_b = cat.account_u32("acct").expect("account resolved");
+        assert_eq!(acct_u32_a, acct_u32_b, "account u32 stable within a run");
+        // And namespace siblings share the namespace id (covered above) because
+        // they share the account u32.
+        assert_eq!(a.stable_namespace_id, Some(1));
+    }
 
     // Note: These tests require a mock filesystem or temp directory
     // Full integration tests should be in the tests/ directory

@@ -13,7 +13,10 @@
 //! never hand out an id already on disk. `0` is reserved as "unset" (so
 //! `Option<u64>::None` / `0` both mean "no id yet"); the first real id is `1`.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use dashmap::DashMap;
+use std::sync::atomic::{AtomicI32, AtomicU16, AtomicU32, AtomicU64, Ordering};
+
+const RELAXED: Ordering = Ordering::Relaxed;
 
 /// Lock-free monotonic allocator for one object-type's stable `u64` id space.
 #[derive(Debug)]
@@ -80,9 +83,133 @@ impl StableIdAllocator for IdAllocator {
     }
 }
 
+// ---------------------------------------------------------------------------
+// CatalogIdService: per-scope typed-atomic ID allocation (ADR-031 Phase 4a).
+// ---------------------------------------------------------------------------
+
+/// Per-scope stable-ID allocation using **typed atomics** (no `u64` casts).
+///
+/// Each scoped type has a per-parent counter at the **exact atomic width** of
+/// the target type (`AtomicU16` for namespace, `AtomicU32` for
+/// collection/index/segment, `AtomicI32` for column). `fetch_add` returns the
+/// correct type directly.
+///
+/// **Global uniqueness** is via the composite `(account, namespace, collection)`.
+/// Bare IDs reuse across scopes (namespace 1 in account A ≠ namespace 1 in
+/// account B) — the composite resolves them. This is the minting source for the
+/// typed identity stored on `CatalogTableSchema` (`stable_account_id` /
+/// `stable_namespace_id` / `stable_collection_id`); the root crate composes those
+/// primitives into a `CollectionIdentity` at the path boundary.
+///
+/// Uses plain `u32`/`u16`/`i32` (the catalog crate cannot import the root's type
+/// aliases — layering); the values are identical to `AccountId`/`NamespaceId`/…
+/// defined in `src/core/stable_id.rs`.
+pub struct CatalogIdService {
+    /// Per-account namespace counters (AtomicU16 → namespace u16).
+    namespace_allocators: DashMap<u32, AtomicU16>,
+    /// Per-(account, namespace) collection counters (AtomicU32 → collection u32).
+    collection_allocators: DashMap<(u32, u16), AtomicU32>,
+    /// Per-collection column counters (AtomicI32 → column i32).
+    column_allocators: DashMap<u32, AtomicI32>,
+    /// Per-collection index counters (AtomicU32 → index u32).
+    index_allocators: DashMap<u32, AtomicU32>,
+    /// Per-collection SST segment counters (AtomicU32 → segment u32).
+    segment_allocators: DashMap<u32, AtomicU32>,
+}
+
+impl Default for CatalogIdService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CatalogIdService {
+    pub fn new() -> Self {
+        Self {
+            namespace_allocators: DashMap::new(),
+            collection_allocators: DashMap::new(),
+            column_allocators: DashMap::new(),
+            index_allocators: DashMap::new(),
+            segment_allocators: DashMap::new(),
+        }
+    }
+
+    // ── Mint (typed atomics — no casts) ──────────────────────────────────
+
+    /// Mint a namespace id (u16) scoped to `account_id` (1, 2, 3 within account).
+    pub fn mint_namespace_id(&self, account_id: u32) -> u16 {
+        self.namespace_allocators
+            .entry(account_id)
+            .or_insert(AtomicU16::new(1))
+            .fetch_add(1, RELAXED)
+    }
+
+    /// Mint a collection id (u32) scoped to `(account_id, namespace_id)`.
+    pub fn mint_collection_id(&self, account_id: u32, namespace_id: u16) -> u32 {
+        self.collection_allocators
+            .entry((account_id, namespace_id))
+            .or_insert(AtomicU32::new(1))
+            .fetch_add(1, RELAXED)
+    }
+
+    /// Mint a column id (i32) scoped to `collection_id`.
+    pub fn mint_column_id(&self, collection_id: u32) -> i32 {
+        self.column_allocators
+            .entry(collection_id)
+            .or_insert(AtomicI32::new(1))
+            .fetch_add(1, RELAXED)
+    }
+
+    /// Mint an index id (u32) scoped to `collection_id`.
+    pub fn mint_index_id(&self, collection_id: u32) -> u32 {
+        self.index_allocators
+            .entry(collection_id)
+            .or_insert(AtomicU32::new(1))
+            .fetch_add(1, RELAXED)
+    }
+
+    /// Mint an SST segment id (u32) scoped to `collection_id` (1, 2, 3 …).
+    pub fn mint_segment_id(&self, collection_id: u32) -> u32 {
+        self.segment_allocators
+            .entry(collection_id)
+            .or_insert(AtomicU32::new(1))
+            .fetch_add(1, RELAXED)
+    }
+
+    // ── Per-scope recovery (typed — no casts) ────────────────────────────
+
+    /// Recover the namespace allocator floor for `account_id`. Call at startup
+    /// with `max(existing namespace u16 in this account)` so a restart never
+    /// reuses a persisted id.
+    pub fn recover_namespace_floor(&self, account_id: u32, max_existing: u16) {
+        self.namespace_allocators
+            .entry(account_id)
+            .or_insert(AtomicU16::new(1))
+            .fetch_max(max_existing + 1, RELAXED);
+    }
+
+    /// Recover the collection allocator floor for `(account_id, namespace_id)`.
+    pub fn recover_collection_floor(&self, account_id: u32, namespace_id: u16, max_existing: u32) {
+        self.collection_allocators
+            .entry((account_id, namespace_id))
+            .or_insert(AtomicU32::new(1))
+            .fetch_max(max_existing + 1, RELAXED);
+    }
+
+    /// Recover the segment allocator floor for `collection_id`.
+    pub fn recover_segment_floor(&self, collection_id: u32, max_existing: u32) {
+        self.segment_allocators
+            .entry(collection_id)
+            .or_insert(AtomicU32::new(1))
+            .fetch_max(max_existing + 1, RELAXED);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── IdAllocator tests ───────────────────────────────────────────────
 
     #[test]
     fn allocates_monotonic_distinct_ids_from_one() {
@@ -127,5 +254,66 @@ mod tests {
         assert_eq!(tables.allocate(), 1);
         assert_eq!(tables.allocate(), 2);
         assert_eq!(namespaces.allocate(), 1, "independent type space");
+    }
+
+    // ── CatalogIdService per-scope tests ────────────────────────────────
+
+    #[test]
+    fn namespace_ids_are_compact_per_account() {
+        let svc = CatalogIdService::new();
+        assert_eq!(svc.mint_namespace_id(1), 1);
+        assert_eq!(svc.mint_namespace_id(1), 2);
+        assert_eq!(svc.mint_namespace_id(1), 3);
+    }
+
+    #[test]
+    fn different_accounts_restart_namespace_at_one() {
+        let svc = CatalogIdService::new();
+        assert_eq!(svc.mint_namespace_id(1), 1);
+        assert_eq!(svc.mint_namespace_id(2), 1, "account 2 restarts at 1");
+        assert_eq!(svc.mint_namespace_id(1), 2);
+        assert_eq!(svc.mint_namespace_id(2), 2);
+    }
+
+    #[test]
+    fn collection_ids_are_compact_per_namespace() {
+        let svc = CatalogIdService::new();
+        assert_eq!(svc.mint_collection_id(1, 1), 1);
+        assert_eq!(svc.mint_collection_id(1, 1), 2);
+        assert_eq!(
+            svc.mint_collection_id(1, 2),
+            1,
+            "different namespace restarts at 1"
+        );
+    }
+
+    #[test]
+    fn segment_ids_are_per_collection() {
+        let svc = CatalogIdService::new();
+        assert_eq!(svc.mint_segment_id(1), 1);
+        assert_eq!(svc.mint_segment_id(1), 2);
+        assert_eq!(
+            svc.mint_segment_id(2),
+            1,
+            "different collection restarts at 1"
+        );
+    }
+
+    #[test]
+    fn per_scope_recovery_prevents_reuse() {
+        let svc = CatalogIdService::new();
+        svc.mint_namespace_id(1);
+        svc.mint_namespace_id(1);
+        svc.recover_namespace_floor(1, 100);
+        let next = svc.mint_namespace_id(1);
+        assert!(next > 100, "after recovery, next must be >100, got {next}");
+    }
+
+    #[test]
+    fn column_ids_are_compact_per_table() {
+        let svc = CatalogIdService::new();
+        assert_eq!(svc.mint_column_id(1), 1);
+        assert_eq!(svc.mint_column_id(1), 2);
+        assert_eq!(svc.mint_column_id(2), 1, "different table restarts at 1");
     }
 }

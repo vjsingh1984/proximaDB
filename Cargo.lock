@@ -6809,6 +6809,7 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-glue",
+ "dashmap",
  "parking_lot",
  "proximadb-compression-types",
  "proximadb-data-model",
