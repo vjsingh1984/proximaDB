@@ -308,8 +308,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Lint customer-facing docs vs the support contract
         run: python3 scripts/check_doc_authority.py
+<<<<<<< HEAD
       - name: Cross-check perf claims vs BENCHMARK_EVIDENCE.toml
         run: python3 scripts/check_perf_claims.py
+=======
+>>>>>>> origin/qa
 
   risk-coverage:
     name: Risk-Coverage Contract
