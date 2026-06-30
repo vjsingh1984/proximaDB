@@ -310,8 +310,8 @@ async fn unified_port_auth_converged_recall_tune_e2e() {
     let create_json: serde_json::Value =
         serde_json::from_str(&body_text).expect("create json parse");
     // v2 CreateCollectionV2Response echoes the name + a canonical collection_id
-    // (UUID) on success (ADR-031 O3 / ADR-044 P2 — collection_id is the object
-    // UUID, not the name). Assert the echoed name + that a collection_id is present.
+    // on success. ADR-031: collection_id is the numeric object_id (decimal u64),
+    // not the collection name ("ivf_auth_e2e"). Assert the echoed name + numeric id.
     assert_eq!(
         create_json.get("name").and_then(|v| v.as_str()),
         Some("ivf_auth_e2e"),
@@ -322,9 +322,9 @@ async fn unified_port_auth_converged_recall_tune_e2e() {
         create_json
             .get("collection_id")
             .and_then(|v| v.as_str())
-            .map(|s| !s.is_empty())
+            .map(|s| s.parse::<u64>().is_ok())
             .unwrap_or(false),
-        "v2 create response must include a collection_id (UUID): {:?}",
+        "v2 create response must include a numeric collection_id: {:?}",
         create_json
     );
 
