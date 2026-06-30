@@ -1245,8 +1245,17 @@ impl NativeCatalog {
             // (DrPathBuilder). `tenant_id` is the owning tenant when created in a
             // tenant scope; together they make the namespace DR-addressable.
             namespace_id: Some(Self::new_namespace_id()),
-            tenant_id,
-            account_id: None,
+            tenant_id: tenant_id.clone(),
+            // ADR-031 Phase 5 (tenant→account collapse): account_id mirrors
+            // tenant_id — they are the same identity in the Phase-4 model
+            // (account is the single billing/isolation tier; tenant was its
+            // sub-org, now collapsed). Setting it here ACTIVATES the typed-id
+            // minting: `mint_stable_identity` (create_table) reads account_id →
+            // mints stable_namespace_id/stable_collection_id + the account_u32
+            // registry entry. With PROXIMADB_TYPED_PATHS off (default) the ids
+            // are persisted but inert (no typed path reads them) — forward-prep.
+            // `create_namespace` (no tenant) keeps account_id = None (legacy).
+            account_id: tenant_id,
             region_home: None,
             default_dr_region_pair_id: None,
             storage_pool_class: Default::default(),
@@ -2158,6 +2167,79 @@ mod tests {
         let (cat, _d) = catalog_in_tempdir().await;
         let triple = cat.mint_collection_typed_identity("", "ns").await;
         assert!(triple.unwrap().is_none(), "empty account → None");
+    }
+
+    #[tokio::test]
+    async fn tenant_scoped_namespace_activates_typed_identity() {
+        // ADR-031 Phase 5: create_namespace_for_tenant sets account_id = tenant
+        // (the Phase-4 collapse), which activates mint_stable_identity in
+        // create_table → the collection gets stable_namespace_id /
+        // stable_collection_id minted. (create_namespace with no tenant →
+        // account_id None → no typed identity, legacy.)
+        use crate::{Catalog, CatalogTableSchema, TableIdentifier};
+        let (cat, _d) = catalog_in_tempdir().await;
+
+        // Tenant-scoped namespace → account_id mirrors tenant.
+        let ns = cat
+            .create_namespace_for_tenant(
+                &["tnt_acme".to_string()],
+                HashMap::new(),
+                Some("tnt_acme"),
+            )
+            .await
+            .expect("create tenant namespace");
+        assert_eq!(
+            ns.account_id.as_deref(),
+            Some("tnt_acme"),
+            "account_id mirrors tenant_id (Phase-4 collapse)"
+        );
+
+        // A collection under it → create_table mints the stable ids.
+        let schema = CatalogTableSchema::new("orders").with_column(crate::CatalogColumn::new(
+            1,
+            "id",
+            proximadb_data_model::ProximaType::Int64,
+        ));
+        let created = cat
+            .create_table(
+                &TableIdentifier::new(vec!["tnt_acme".to_string()], "orders"),
+                schema,
+            )
+            .await
+            .expect("create_table");
+        assert!(
+            created.stable_namespace_id.is_some(),
+            "tenant-scoped collection mints stable_namespace_id (account_id set)"
+        );
+        assert!(
+            created.stable_collection_id.is_some(),
+            "tenant-scoped collection mints stable_collection_id"
+        );
+
+        // Tenant-less namespace → account_id None → no typed identity (legacy).
+        let legacy_ns = cat
+            .create_namespace(&["legacy".to_string()], HashMap::new())
+            .await
+            .expect("create legacy namespace");
+        assert!(
+            legacy_ns.account_id.is_none(),
+            "no-tenant namespace has no account"
+        );
+        let legacy_schema = CatalogTableSchema::new("legacy_tbl").with_column(
+            crate::CatalogColumn::new(1, "id", proximadb_data_model::ProximaType::Int64),
+        );
+        let legacy_created = cat
+            .create_table(
+                &TableIdentifier::new(vec!["legacy".to_string()], "legacy_tbl"),
+                legacy_schema,
+            )
+            .await
+            .expect("create_table legacy");
+        assert!(
+            legacy_created.stable_namespace_id.is_none()
+                && legacy_created.stable_collection_id.is_none(),
+            "tenant-less collection has no typed identity (legacy, mixed-read-safe)"
+        );
     }
 
     // Note: These tests require a mock filesystem or temp directory
