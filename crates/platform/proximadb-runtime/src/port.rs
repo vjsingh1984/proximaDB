@@ -16,6 +16,7 @@ use proximadb_proto::v1::{
     CollectionRequest, CollectionResponse, ExecuteQueryResponse, HybridSearchRequest,
     HybridSearchResponse, VectorBatchRequest, VectorOperationResponse, VectorSearchRequest,
 };
+use serde::{Deserialize, Serialize};
 
 /// Runtime-native schema metadata for v2 collection/schema handlers.
 ///
@@ -23,7 +24,7 @@ use proximadb_proto::v1::{
 /// may still adapt to older persisted metadata, but protocol adapters should
 /// depend on this v2-shaped contract instead of constructing v1 collection
 /// operation requests.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CollectionSchemaMetadata {
     pub collection_id: String,
     pub created_at_ms: i64,
@@ -36,7 +37,7 @@ pub struct CollectionSchemaMetadata {
     pub columns: Vec<CollectionSchemaColumn>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CollectionSchemaUpdate {
     pub schema_id: String,
     pub schema_version: String,
@@ -45,7 +46,7 @@ pub struct CollectionSchemaUpdate {
     pub columns: Vec<CollectionSchemaColumn>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CollectionSchemaColumn {
     pub name: String,
     pub data_type: ProximaType,
@@ -56,13 +57,13 @@ pub struct CollectionSchemaColumn {
     pub max_length: Option<u32>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CollectionTextStorage {
     Inline,
     Large,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CollectionSchemaEnforcement {
     Strict,
     Flexible,

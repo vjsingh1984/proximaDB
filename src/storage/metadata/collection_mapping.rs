@@ -22,6 +22,15 @@ use crate::proto::proximadb_v1::{
     IndexConfig, IndexingAlgorithm, StorageAssignment, StorageEngine,
 };
 
+/// Catalog-asset property key holding the canonical ProximaType columns
+/// (ADR-047 / TD-TBL-1). The narrow v1 `CollectionConfig` cannot represent the
+/// full `ProximaType` vocabulary (UInt/Struct/Map/Sparse/BinaryVector …), so the
+/// canonical `Vec<CollectionSchemaColumn>` is persisted as a neutral JSON sidecar
+/// here — the authority for rich types, with the narrow config remaining the
+/// legacy read view. Written by `CollectionService::set_collection_schema_columns`,
+/// preserved across unrelated `upsert_collection_catalog_asset` rebuilds.
+pub(crate) const CANONICAL_SCHEMA_PROPERTY: &str = "collection.canonical_schema";
+
 pub(crate) fn collection_from_catalog_schema(
     table_id: &TableIdentifier,
     schema: &CatalogTableSchema,

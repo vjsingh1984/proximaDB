@@ -26,6 +26,7 @@ use crate::proto::proximadb_v1::{
     CollectionConfig, HnswConfig, IndexConfig, IndexPolicy, IvfConfig, QuantizationConfig,
     RecordSchemaConfig, TextStorageConfig,
 };
+use proximadb_runtime::CollectionSchemaColumn;
 
 /// Catalog-bag key holding the neutral per-index config array.
 pub const INDEX_CONFIGS_KEY: &str = "index_configs";
@@ -403,6 +404,39 @@ pub(crate) fn apply_record_schema_from_json(config: &mut CollectionConfig, json:
         .collect();
 }
 
+// --- Canonical ProximaType schema columns (ADR-047 authority) -----------------
+//
+// ADR-047 / TD-TBL-1: the narrow v1 `CollectionConfig` cannot represent the full
+// `ProximaType` vocabulary (UInt/Struct/Map/Sparse/BinaryVector …), so the
+// canonical `Vec<CollectionSchemaColumn>` is persisted verbatim as a neutral JSON
+// sidecar on the catalog asset (`collection.canonical_schema`), mirroring the
+// `collection.config_json` / `collection.record_schema` idiom. The narrow config
+// stays the legacy read view; this sidecar is the authority for rich types.
+
+/// Serialize the canonical ProximaType columns to a neutral JSON string for the
+/// catalog asset property bag.
+pub(crate) fn canonical_schema_columns_to_json(
+    columns: &[CollectionSchemaColumn],
+) -> Result<String> {
+    serde_json::to_string(columns)
+        .map_err(|e| anyhow::anyhow!("serialize canonical_schema columns for catalog asset: {e}"))
+}
+
+/// Reconstruct the canonical ProximaType columns from a neutral JSON string, or
+/// `None` on a decode error (legacy/corrupt asset) so the caller keeps its
+/// narrow-derived default (mixed-read-safe).
+pub(crate) fn canonical_schema_columns_from_json(
+    json: &str,
+) -> Option<Vec<CollectionSchemaColumn>> {
+    match serde_json::from_str(json) {
+        Ok(columns) => Some(columns),
+        Err(e) => {
+            tracing::warn!("⚠️ catalog-asset canonical_schema decode failed, ignoring: {e}");
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -520,5 +554,77 @@ mod tests {
         assert_eq!(restored.text_storage_configs.len(), 1);
         assert_eq!(restored.text_storage_configs[0].column_name, "body");
         assert_eq!(restored.text_storage_configs[0].chunk_size, 512);
+    }
+
+    #[test]
+    fn canonical_schema_columns_round_trip_across_proxima_type_variants() {
+        use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
+
+        let col = |name: &str, data_type: ProximaType| CollectionSchemaColumn {
+            name: name.to_string(),
+            data_type,
+            nullable: true,
+            indexed: false,
+            filterable: true,
+            text_storage: None,
+            max_length: None,
+        };
+
+        let columns = vec![
+            col("s", ProximaType::String),
+            col("u", ProximaType::UInt64),
+            col(
+                "d",
+                ProximaType::Decimal {
+                    precision: 38,
+                    scale: 18,
+                },
+            ),
+            col(
+                "st",
+                ProximaType::Struct {
+                    fields: vec![("a".to_string(), ProximaType::Int64)],
+                },
+            ),
+            col(
+                "m",
+                ProximaType::Map {
+                    key: Box::new(ProximaType::String),
+                    value: Box::new(ProximaType::Int64),
+                },
+            ),
+            col(
+                "sv",
+                ProximaType::SparseVector {
+                    element: VectorElement::Float32,
+                },
+            ),
+            col("bv", ProximaType::BinaryVector { dim: 1024 }),
+            col(
+                "dv",
+                ProximaType::DenseVector {
+                    element: VectorElement::Float32,
+                    dim: 128,
+                },
+            ),
+            col("arr", ProximaType::Array(Box::new(ProximaType::String))),
+            col("ts", ProximaType::Timestamp(TimeUnit::Nanosecond)),
+        ];
+
+        let json = canonical_schema_columns_to_json(&columns).expect("serialize");
+        let restored = canonical_schema_columns_from_json(&json).expect("deserialize");
+        assert_eq!(restored.len(), columns.len());
+        assert_eq!(
+            restored, columns,
+            "every ProximaType variant must round-trip losslessly through the catalog sidecar"
+        );
+
+        // Decode-failure safety → None (mixed-read-safe for legacy/corrupt assets).
+        assert!(canonical_schema_columns_from_json("{not valid json").is_none());
+        assert_eq!(
+            canonical_schema_columns_from_json("[]"),
+            Some(Vec::new()),
+            "an empty sidecar deserializes to an empty column set"
+        );
     }
 }

@@ -11,6 +11,7 @@
 //! service is responsible for resolving that string to its internal `TenantContext` and
 //! enforcing access control.  No tenant context type leaks through the port boundary.
 
+use crate::port::CollectionSchemaColumn;
 use anyhow::Result;
 use async_trait::async_trait;
 use proximadb_proto::v1::{
@@ -59,6 +60,32 @@ pub trait CollectionPort: Send + Sync {
 
     /// Resolve a collection name or UUID to its canonical internal ID.
     async fn resolve_collection_id(&self, identifier: &str) -> Result<Option<String>>;
+
+    /// Persist the canonical ProximaType columns for a collection (ADR-047 /
+    /// TD-TBL-1 authority). The narrow v1 `CollectionConfig` cannot represent
+    /// the full `ProximaType` vocabulary, so these are stored as a catalog-asset
+    /// sidecar. An empty slice clears them. The default no-op keeps ports without
+    /// a catalog (mocks, `NoopCollectionPort`) compiling; `CollectionService`
+    /// overrides to actually persist.
+    async fn set_collection_schema_columns(
+        &self,
+        _id: &str,
+        _columns: &[CollectionSchemaColumn],
+        _tenant_id: Option<&str>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Read back the canonical ProximaType columns, or `None` when the collection
+    /// has none (legacy collection → caller falls back to the narrow-derived view).
+    /// Default no-op returns `None`.
+    async fn get_collection_schema_columns(
+        &self,
+        _id: &str,
+        _tenant_id: Option<&str>,
+    ) -> Result<Option<Vec<CollectionSchemaColumn>>> {
+        Ok(None)
+    }
 }
 
 // ── Vector operations ─────────────────────────────────────────────────────────

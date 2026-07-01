@@ -256,11 +256,11 @@ fn schema_metadata_from_collection(collection: &Collection) -> CollectionSchemaM
 
 fn apply_schema_update(
     config: &mut CollectionConfig,
-    update: CollectionSchemaUpdate,
+    update: &CollectionSchemaUpdate,
 ) -> Result<()> {
     config.record_schema = Some(RecordSchemaConfig {
-        schema_id: update.schema_id,
-        schema_version: update.schema_version,
+        schema_id: update.schema_id.clone(),
+        schema_version: update.schema_version.clone(),
         enforcement: enforcement_to_i32(update.enforcement),
         auto_evolve: update.auto_evolve,
         columns: Vec::new(),
@@ -305,16 +305,22 @@ fn apply_schema_update(
         })
         .collect();
 
+    // ADR-047 / TD-TBL-1: the narrow v1 projection above is best-effort — it can
+    // only carry text + the `FilterableDataType` vocabulary. Columns it cannot
+    // represent (UInt/Struct/Map/Sparse/BinaryVector …) are preserved verbatim
+    // in the canonical sidecar written by `set_collection_schema_columns`; they
+    // are no longer rejected, so the canonical authority is never lossy.
     for column in &update.columns {
         let storable_text = matches!(column.data_type, ProximaType::String);
         let storable_filterable =
             column.filterable && proxima_type_to_filterable_type(&column.data_type).is_some();
         if !storable_text && !storable_filterable {
-            return Err(anyhow!(
-                "legacy collection metadata cannot preserve schema column '{}' with type {:?}",
+            tracing::debug!(
+                "schema column '{}' (type {:?}) preserved only in canonical sidecar \
+                 (not representable in the narrow v1 collection config)",
                 column.name,
                 column.data_type
-            ));
+            );
         }
     }
     Ok(())
@@ -517,7 +523,20 @@ impl ApiHandlersPort for UnifiedHandlers {
             .collection
             .get_collection(collection_id, tenant_id)
             .await?;
-        Ok(collection.as_ref().map(schema_metadata_from_collection))
+        let Some(collection) = collection else {
+            return Ok(None);
+        };
+        let mut metadata = schema_metadata_from_collection(&collection);
+        // ADR-047 / TD-TBL-1: the canonical sidecar (if present) is authoritative;
+        // otherwise keep the narrow-derived view (legacy collection fallback).
+        if let Some(canonical) = self
+            .collection
+            .get_collection_schema_columns(collection_id, tenant_id)
+            .await?
+        {
+            metadata.columns = canonical;
+        }
+        Ok(Some(metadata))
     }
 
     async fn update_collection_schema_metadata(
@@ -532,12 +551,21 @@ impl ApiHandlersPort for UnifiedHandlers {
             .await?
             .ok_or_else(|| anyhow!("collection not found: {collection_id}"))?;
         let mut config = collection.config.clone().unwrap_or_default();
-        apply_schema_update(&mut config, update)?;
+        // Narrow projection (best-effort); the canonical columns are persisted
+        // verbatim via the sidecar below so rich ProximaType variants survive.
+        apply_schema_update(&mut config, &update)?;
         let updated = self
             .collection
             .update_collection(collection_id, config, tenant_id)
             .await?;
-        Ok(schema_metadata_from_collection(&updated))
+        self.collection
+            .set_collection_schema_columns(collection_id, &update.columns, tenant_id)
+            .await?;
+        // Return the canonical columns as the authoritative view (the narrow
+        // config above cannot represent them, so re-deriving would lose them).
+        let mut metadata = schema_metadata_from_collection(&updated);
+        metadata.columns = update.columns;
+        Ok(metadata)
     }
 
     async fn handle_vector_search_v1_for_tenant(
