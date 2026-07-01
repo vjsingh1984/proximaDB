@@ -1,7 +1,7 @@
 = Architecture Decision Records
 :toc: left
 :icons: font
-:last-updated: 2026-06-29
+:last-updated: 2026-06-30
 
 [.lead]
 This directory contains Architecture Decision Records (ADRs) governing ProximaDB's implementation across all open issues (#25-#61). Each ADR defines canonical contracts, interfaces, and file plans that implementation must follow.
@@ -164,6 +164,16 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Stable, line-independent symbol object_id — the correlated-CPG join key
 | Proposed
 | Cross-product audit 2026-06-28: the symbol `oid` is minted **3 different ways** across proximaDB / victor-codegraph / anvaiops and all embed the line number in identity, so a line move churns a symbol's vector + node + row — breaking fuse-on-shared-oid and forcing full re-index. *Decision:* one canonical, **line-independent** symbol oid minted once in `victor-codegraph`'s adapter and consumed verbatim by the SDK, connector, and substrate; identity = structural coordinates (`repo‖language‖module_path‖FQN‖overload-discriminator`), with line/col and body-hash as metadata, not identity. Extends ADR-031's tenet (stable id, mutable coordinate is metadata) to the symbol layer ADR-031 explicitly excluded. Mixed-read-safe, default-OFF. Tracked: TD-CG
+
+| link:ADR-045-pax-durable-core-vs-serving-metadata.adoc[ADR-045]
+| PAX Durable-Open Core vs Rebuildable Serving Metadata
+| Proposed
+| Stratify the PAX segment into a **durable open core** (stripes + MVCC; ships 1:1 to Iceberg) vs a **rebuildable serving-metadata layer** (row-dir, ColumnMeta, bloom, deletion vector, zone summaries). The ProximaDB-native form of Lakebase's "separate durability from visibility" — needs no transcode seam because PAX already co-locates row-directory + stripes; co-location of filter+vector stripes is inviolable (the ANN cascade must keep working with no extra GET). Enables LTAP single-copy export + fast cold-start (regenerate serving metadata without re-reading vectors). Grounded in Aurora "log is the database" (SIGMOD'17), PAX page-internal orthogonality (VLDB'01), Iceberg 3-FS-op immutable files. Refines ADR-010 Layer-2. Tracked: TD-LTAP-1
+
+| link:ADR-046-lsn-coherent-merge-read.adoc[ADR-046]
+| LSN-Coherent Single-Copy Analytics Read (LTAP without CDC)
+| Proposed
+| Analytical read obtains the WAL LSN, reads the materialized Parquet/VIPER arm as-of-LSN, then merges the un-materialized WAL-tail delta (MVCC-visible) — a consistent fresh read from ONE governed copy with zero tx impact. The ProximaDB-native LTAP: unify at the storage layer (one WAL authority + one durable core) with specialized compute (ADR-039). Research found Lakebase's *shipping* analytics freshness (CDF) is actually CDC (a second ~15s-synced copy), so a true single-copy LSN-merge is genuinely better. Reuses ADR-020/033/039 + the existing `search_unflushed` merge. Small-table skip. Tracked: TD-LTAP-2
 |===
 
 NOTE: ADR-010 through ADR-013 exist in this directory but are not yet
