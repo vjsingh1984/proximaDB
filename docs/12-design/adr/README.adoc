@@ -175,6 +175,11 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Proposed
 | Analytical read obtains the WAL LSN, reads the materialized Parquet/VIPER arm as-of-LSN, then merges the un-materialized WAL-tail delta (MVCC-visible) — a consistent fresh read from ONE governed copy with zero tx impact. The ProximaDB-native LTAP: unify at the storage layer (one WAL authority + one durable core) with specialized compute (ADR-039). Research found Lakebase's *shipping* analytics freshness (CDF) is actually CDC (a second ~15s-synced copy), so a true single-copy LSN-merge is genuinely better. Reuses ADR-020/033/039 + the existing `search_unflushed` merge. Small-table skip. Tracked: TD-LTAP-2
 
+| link:ADR-047-collection-as-table-canonical-schema-multivector.adoc[ADR-047]
+| Collection-as-Table — Canonical ProximaType Schema Authority, Multi-Vector, Per-Column Quantization
+| Proposed
+| Make the canonical `ProximaType`-native `CatalogTableSchema` the single persisted schema authority for collections and tables (reinforces ADR-009); demote the narrow `CollectionConfig` schema fields to a legacy read-adapter and fix the `StoredSchema` non-text-column drop; add multi-vector columns (one `AxisIndex` per column), per-column quantization, and complex-type (Map/Array/Struct) columns. `collection ≡ table` (no rename). Phased TD-TBL-1..5; retires the ADR-019 backing-collection shim in Phase 5.
+
 | link:ADR-050-statistics-fed-datafusion-route-selection.adoc[ADR-050]
 | Statistics-fed cost-based routing into the DataFusion OLAP arm
 | Proposed
