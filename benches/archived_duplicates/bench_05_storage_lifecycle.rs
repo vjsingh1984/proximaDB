@@ -327,6 +327,7 @@ fn bench_engine_flush_with_compression(c: &mut Criterion) {
                                 engine_config: HashMap::new(),
                                 base_location: format!("/tmp/proximadb_bench/{}", engine_name),
                                 assigned_at: 0,
+                ..Default::default()
                             }),
                         };
 

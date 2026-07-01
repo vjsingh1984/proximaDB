@@ -163,6 +163,7 @@ async fn benchmark_engine_configuration(
             engine: engine_enum,
             engine_config: Default::default(),
             assigned_at: chrono::Utc::now().timestamp(),
+            ..Default::default()
         }),
         ..Default::default()
     };

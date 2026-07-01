@@ -233,6 +233,7 @@ impl UnifiedTestEnvironment {
                 // so engines can append collection_id to get /tmp/proximadb_unified_tests/<collection_id>/data/
                 base_location: self.persistent_base.to_str().unwrap().to_string(),
                 assigned_at: chrono::Utc::now().timestamp_millis(),
+                ..Default::default()
             }),
         }
     }
@@ -581,6 +582,7 @@ impl UnifiedTestEnvironment {
                 engine_config: std::collections::HashMap::new(),
                 base_location: _base_location,
                 assigned_at: chrono::Utc::now().timestamp(),
+                ..Default::default()
             }),
         }
     }
@@ -1042,6 +1044,7 @@ pub fn create_test_collection_with_storage(name: &str, base_location: String) ->
             engine_config: std::collections::HashMap::new(),
             base_location: base_location.clone(),
             assigned_at: chrono::Utc::now().timestamp_micros(),
+            ..Default::default()
         }),
     }
 }
@@ -1138,6 +1141,7 @@ pub async fn flush_sst_with_block_stats(
             engine_config: std::collections::HashMap::new(),
             base_location: environment.persistent_base.to_str().unwrap().to_string(),
             assigned_at: chrono::Utc::now().timestamp(),
+            ..Default::default()
         }),
         config: Some(CollectionConfig {
             name: "test_collection".to_string(),

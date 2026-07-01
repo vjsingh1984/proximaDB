@@ -1556,6 +1556,7 @@ impl ViperEngine {
                 engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
                 engine_config: Default::default(),
                 assigned_at: 0,
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -2074,6 +2075,7 @@ impl UnifiedStorageFormat for ViperEngine {
                 engine_config: std::collections::HashMap::new(),
                 base_location: base_path.to_string(),
                 assigned_at: 0,
+                ..Default::default()
             }),
         });
 
@@ -3307,6 +3309,7 @@ mod minimal_compaction_tests {
                 engine_config: std::collections::HashMap::new(),
                 base_location: base_path.to_string(),
                 assigned_at: chrono::Utc::now().timestamp_micros(),
+                ..Default::default()
             }),
         });
 

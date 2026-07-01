@@ -185,6 +185,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
             // base_location should point to the parent directory where collection directories are
             base_location: format!("{}", env.persistent_base.display()),
             assigned_at: chrono::Utc::now().timestamp_micros(),
+            ..Default::default()
         }),
     });
 

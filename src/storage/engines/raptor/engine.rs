@@ -2331,6 +2331,7 @@ impl UnifiedStorageFormat for RaptorEngine {
                 engine_config: std::collections::HashMap::new(),
                 base_location: base_path.to_string(),
                 assigned_at: 0,
+                ..Default::default()
             }),
         });
 

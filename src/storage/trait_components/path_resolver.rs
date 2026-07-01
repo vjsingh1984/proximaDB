@@ -529,6 +529,45 @@ pub fn typed_paths_enabled() -> bool {
     })
 }
 
+/// ADR-031 Phase 4d: recover a [`CollectionIdentity`] from a proto
+/// [`StorageAssignment`](crate::proto::proximadb_v1::StorageAssignment)'s typed
+/// triple, for the **catalog-free engine read paths**.
+///
+/// Engines resolve data/wal/index paths deep in the search/flush stack with no
+/// catalog/schema access — the typed identity cannot be re-minted at read time,
+/// so it is carried on the proto collection (set at create by the manager when
+/// `PROXIMADB_TYPED_PATHS=1`) and reconstituted here. All three fields are `Some`
+/// together (the manager sets them atomically) or all `None` (env OFF / legacy
+/// collection created before 4d) → `None` → the typed path helpers fall back to
+/// the byte-identical legacy path (mixed-read-safe per-collection).
+///
+/// `namespace_id` is a `u16` in the typed identity but stored as `uint32` in
+/// proto (proto has no `uint16`); it is narrowed here. Values > `u16::MAX` are
+/// impossible by construction (the catalog mints `NamespaceId = u16`), so the
+/// narrowing is infallible in practice — `None` is returned defensively if a
+/// future caller somehow stored an out-of-range value.
+pub fn typed_identity_from_storage_assignment(
+    storage_assignment: Option<&crate::proto::proximadb_v1::StorageAssignment>,
+) -> Option<CollectionIdentity> {
+    let sa = storage_assignment?;
+    let account_id = sa.typed_account_id?;
+    let namespace_id = sa.typed_namespace_id?;
+    let collection_id = sa.typed_collection_id?;
+    // Proto has no uint16; narrow back to the typed NamespaceId (u16).
+    let namespace_id = if namespace_id <= u32::from(u16::MAX) {
+        namespace_id as u16
+    } else {
+        // Defensive: out-of-range means the triple wasn't minted by the catalog
+        // — treat as legacy rather than truncate silently.
+        return None;
+    };
+    Some(CollectionIdentity {
+        account_id,
+        namespace_id,
+        collection_id,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // ADR-031 Phase 4c: typed collection DATA subpaths.
 // ---------------------------------------------------------------------------
