@@ -281,10 +281,12 @@ pub fn rabitq_search_segment(
         io_trace::record_bytes_read(codes_len + cand.len() as u64 * dim);
         io_trace::record_range_gets(1);
 
-        // Stage 2: SQ8 cascade rerank over ONLY the candidate rows (no f32 GET).
-        // Without a co-located SQ8 column, keep the RaBitQ-coarse order.
+        // Stage 2 rerank over ONLY the candidate rows. Prefer the EXACT-f32 tier
+        // when present (P3 Phase D: recall ≈ 1.0), else the co-located SQ8 rerank
+        // column, else keep the RaBitQ-coarse order.
         let scored = block
-            .rerank_rows(0, query, &cand, metric)
+            .rerank_rows_f32_exact(0, query, &cand, metric)
+            .or_else(|| block.rerank_rows(0, query, &cand, metric))
             .unwrap_or_else(|| {
                 cand.iter()
                     .enumerate()
