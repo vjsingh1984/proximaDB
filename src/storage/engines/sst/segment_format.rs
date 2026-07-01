@@ -118,6 +118,31 @@ pub fn write_pax_segment(
     quant: VectorQuant,
     target_block: Option<usize>,
 ) -> Result<SegmentMeta> {
+    write_pax_segment_with_f32_tier(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        false,
+        target_block,
+    )
+}
+
+/// Like [`write_pax_segment`] but optionally emits the exact-f32 tier (P3 Phase
+/// D). When `f32_tier` is true (and the quant is RaBitQ), each embedding also
+/// gets a co-located raw-f32 stripe at `col_id::F32_TIER_BASE + i` for an exact
+/// final rerank / `include_vectors`. The flush path calls this with the resolved
+/// `pax_f32_tier` opt-in; compaction/tests use [`write_pax_segment`] (no tier).
+pub fn write_pax_segment_with_f32_tier(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+) -> Result<SegmentMeta> {
     let mut writer = PaxSegmentWriter::new(
         path,
         BlockMode::Pax,
@@ -127,7 +152,8 @@ pub fn write_pax_segment(
         embedding_count.max(1),
         target_block,
     )
-    .with_quant(quant);
+    .with_quant(quant)
+    .with_f32_tier(f32_tier);
     for record in records {
         writer.add_record(record)?;
     }

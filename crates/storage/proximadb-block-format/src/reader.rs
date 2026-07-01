@@ -1184,6 +1184,65 @@ mod tests {
         (corpus, writer.flush().unwrap())
     }
 
+    /// P3 Phase D f32 tier: with `with_f32_tier(true)` + RaBitQ, the block ALSO
+    /// carries an exact-f32 column at `F32_TIER_BASE` (read lazily). It
+    /// round-trips the EXACT original vectors (vs the SQ8 rerank column's
+    /// approximation), and the RaBitQ hot + SQ8 rerank columns are still present.
+    #[test]
+    fn pax_block_f32_tier_round_trips_exact_vectors() {
+        let corpus = [lcg_vec(1, 64), lcg_vec(2, 64), lcg_vec(3, 64)];
+
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+            .with_quant(crate::writer::VectorQuant::RaBitQ)
+            .with_f32_tier(true);
+        for (i, v) in corpus.iter().enumerate() {
+            writer
+                .add_record(&make_record_with_embedding(
+                    &format!("r{i}"),
+                    "t",
+                    1000 + i as i64,
+                    v.clone(),
+                ))
+                .unwrap();
+        }
+        let block = writer.flush().unwrap();
+        let reader = PaxBlockReader::open(&block).unwrap();
+
+        // The f32 tier column is present + RAW_F32.
+        let entry = reader
+            .vector_params()
+            .get(col_id::F32_TIER_BASE)
+            .expect("f32 tier column present");
+        assert_eq!(entry.quant_kind, crate::vparam::QUANT_RAW_F32);
+        // The RaBitQ hot + SQ8 rerank columns are still present.
+        assert_eq!(
+            reader
+                .vector_params()
+                .get(col_id::EMBED_BASE)
+                .unwrap()
+                .quant_kind,
+            crate::vparam::QUANT_RABITQ_RESERVED
+        );
+        assert_eq!(
+            reader
+                .vector_params()
+                .get(crate::col_id::RERANK_BASE)
+                .unwrap()
+                .quant_kind,
+            QUANT_SQ8
+        );
+
+        // The f32 tier decodes the EXACT original vectors (row-for-row).
+        let f32_vecs = reader
+            .decode_f32_vec_stripe(col_id::F32_TIER_BASE)
+            .expect("f32 tier decodes");
+        assert_eq!(f32_vecs.len(), corpus.len());
+        for (got, want) in f32_vecs.iter().zip(corpus.iter()) {
+            let got = got.as_ref().expect("non-null f32 row");
+            assert_eq!(got.as_slice(), want.as_slice(), "f32 tier must be exact");
+        }
+    }
+
     /// Run the RaBitQ→SQ8 cold-scan cascade over `q` deterministic near-neighbor
     /// queries against `corpus` (read back via `reader`), returning mean recall@k
     /// vs the exact-f32 top-k. `refine` is the stage-1 RaBitQ candidate pool size.

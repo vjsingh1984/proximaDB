@@ -49,6 +49,16 @@ pub mod col_id {
     /// f32 rerank is added only if the recall gate can't be met on SQ8. Chosen
     /// well above `USER_BASE` so it never collides with catalog-driven columns.
     pub const RERANK_BASE: i32 = 1000;
+    /// First column ID for the OPTIONAL exact-f32 tier (f32_tier_0, …).
+    ///
+    /// Opt-in only (`pax_f32_tier:on` tag / `PROXIMADB_PAX_F32_TIER` env, default
+    /// OFF): when enabled on a RaBitQ collection, the writer ALSO emits the raw
+    /// f32 embedding at `F32_TIER_BASE + i`. The column is read LAZILY — normal
+    /// id+score queries never touch it (zero scan/egress cost); it is decoded
+    /// only for an exact final rerank (→ recall ≈ 1.0) or `include_vectors`. This
+    /// is the storage/egress trade for exact-vector fidelity. Well above
+    /// `RERANK_BASE` so it never collides.
+    pub const F32_TIER_BASE: i32 = 2000;
 }
 
 /// Descriptor for a single column stripe in a PAX block.

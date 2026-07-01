@@ -433,7 +433,7 @@ impl SstEngine {
                 // object-store) URL. Reads are mixed-format-safe via
                 // `segment_format::read_segment_records` (magic-byte detection), so no
                 // manifest/reader change is required for this segment to be read back.
-                use crate::storage::engines::sst::segment_format::write_pax_segment;
+                use crate::storage::engines::sst::segment_format::write_pax_segment_with_f32_tier;
                 let staging_path = staging_url.strip_prefix("file://").unwrap_or(&staging_url);
                 if let Some(parent) = std::path::Path::new(staging_path).parent() {
                     tokio::fs::create_dir_all(parent)
@@ -460,12 +460,17 @@ impl SstEngine {
                 let target_block = std::env::var("PROXIMADB_PAX_BLOCK_SIZE")
                     .ok()
                     .and_then(|v| v.parse::<usize>().ok());
-                let meta = write_pax_segment(
+                // P3 Phase D f32 tier (opt-in): per-collection `pax_f32_tier` tag >
+                // env `PROXIMADB_PAX_F32_TIER` > default off. Emits an exact-f32
+                // stripe (read lazily) for an exact final rerank + include_vectors.
+                let f32_tier = resolve_pax_f32_tier(params.collection_config.as_ref());
+                let meta = write_pax_segment_with_f32_tier(
                     std::path::Path::new(staging_path),
                     &records,
                     collection_id,
                     embedding_count,
                     quant,
+                    f32_tier,
                     target_block,
                 )
                 .context("Failed to write PAX vector segment")?;
@@ -898,6 +903,40 @@ fn resolve_pax_vector_quant(
             _ => VectorQuant::RaBitQ,
         },
     }
+}
+
+/// Tag prefix encoding the per-collection f32-tier opt-in on
+/// `CollectionConfig.tags` — mirrors `pax_vector_format:`. `on`/`off`.
+const PAX_F32_TIER_TAG_PREFIX: &str = "pax_f32_tier:";
+
+/// Read the per-collection `pax_f32_tier:on|off` tag (last wins; an unrecognized
+/// value keeps the prior resolution). Mirrors `pax_vector_format_tag`.
+fn pax_f32_tier_tag(config: &crate::proto::proximadb_v1::CollectionConfig) -> Option<bool> {
+    let mut latest: Option<bool> = None;
+    for tag in &config.tags {
+        if let Some(rest) = tag.strip_prefix(PAX_F32_TIER_TAG_PREFIX) {
+            latest = match rest.trim().to_ascii_lowercase().as_str() {
+                "on" | "true" | "1" | "yes" => Some(true),
+                "off" | "false" | "0" | "no" => Some(false),
+                _ => latest,
+            };
+        }
+    }
+    latest
+}
+
+/// Resolve whether a flush should ALSO emit the exact-f32 tier (P3 Phase D).
+/// Precedence: per-collection `pax_f32_tier` tag > env `PROXIMADB_PAX_F32_TIER` >
+/// default OFF. The tier is read lazily (exact final rerank / `include_vectors`),
+/// so the only always-paid cost is the storage bytes — not scan/egress.
+fn resolve_pax_f32_tier(
+    collection_config: Option<&crate::proto::proximadb_v1::Collection>,
+) -> bool {
+    let per_collection = collection_config
+        .as_ref()
+        .and_then(|c| c.config.as_ref())
+        .and_then(pax_f32_tier_tag);
+    per_collection.unwrap_or_else(|| env_truthy("PROXIMADB_PAX_F32_TIER"))
 }
 
 #[cfg(test)]
