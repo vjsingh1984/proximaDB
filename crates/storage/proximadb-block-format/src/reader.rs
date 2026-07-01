@@ -44,6 +44,20 @@ pub struct PaxBlockReader<'a> {
     rowgroups: RowGroupBlock,
 }
 
+/// Metric for the PAX cascade's ranking stages. Kept local to this crate to
+/// avoid pulling `DistanceMetric` (proximadb-distance-kernel) into the low-level
+/// block-format crate; the SST engine maps `DistanceMetric` → `RankMetric` at the
+/// dispatch seam. Both stage-1 (RaBitQ prefilter) and stage-2 (SQ8 rerank) key
+/// off this.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RankMetric {
+    /// Squared L2 distance (lower = nearer) — the validated default (recall 0.932).
+    L2,
+    /// Cosine: stage-1 ranks by inner product (`ip_rank_score`), stage-2 computes
+    /// the exact cosine distance `1 − cos_sim` on SQ8-decoded vectors.
+    Cosine,
+}
+
 impl<'a> PaxBlockReader<'a> {
     /// Parse the block header and footer from `data`.
     ///
@@ -326,11 +340,19 @@ impl<'a> PaxBlockReader<'a> {
     /// RaBitQ-quantized. The caller reranks the returned rows against the full-precision
     /// source (decoupled rerank) before taking the final top-k — this is the seam Phase C
     /// wires into the cold scan.
-    pub fn rabitq_rank(&self, query: &[f32], pool: usize) -> Option<Vec<usize>> {
+    pub fn rabitq_rank(
+        &self,
+        query: &[f32],
+        pool: usize,
+        metric: RankMetric,
+    ) -> Option<Vec<usize>> {
         let (params, codes) = self.decode_rabitq_codes(crate::col_id::EMBED_BASE)?;
         let rotation = rabitq::build_rotation(params.dim, params.seed);
         let q_rotated = rabitq::rotate_query(query, &params, &rotation);
-        Some(rabitq::rank_candidates(&q_rotated, &codes, pool))
+        Some(match metric {
+            RankMetric::L2 => rabitq::rank_candidates(&q_rotated, &codes, pool),
+            RankMetric::Cosine => rabitq::rank_candidates_ip(&q_rotated, &codes, pool),
+        })
     }
 
     /// Stage-2 of the cascade: rerank a RaBitQ candidate `rows` set for embedding
@@ -345,6 +367,7 @@ impl<'a> PaxBlockReader<'a> {
         emb_idx: usize,
         query: &[f32],
         rows: &[usize],
+        metric: RankMetric,
     ) -> Option<Vec<(usize, f32)>> {
         let column_id = crate::col_id::RERANK_BASE + emb_idx as i32;
         let entry = self.vparams.get(column_id)?;
@@ -376,11 +399,26 @@ impl<'a> PaxBlockReader<'a> {
             }
             decoded.clear();
             sq8::decode_into(&payload[off..end], &entry.params, &mut decoded);
-            let dist = decoded
-                .iter()
-                .zip(query)
-                .map(|(x, q)| (x - q) * (x - q))
-                .sum::<f32>();
+            let dist = match metric {
+                // Squared L2 (lower = nearer).
+                RankMetric::L2 => decoded
+                    .iter()
+                    .zip(query)
+                    .map(|(x, q)| (x - q) * (x - q))
+                    .sum::<f32>(),
+                // Cosine distance 1 − cos_sim (∈ [0, 2]; lower = nearer). Exact on
+                // the SQ8-decoded vector + query (handles non-normalized data).
+                RankMetric::Cosine => {
+                    let dot = decoded.iter().zip(query).map(|(x, q)| x * q).sum::<f32>();
+                    let norm_x = decoded.iter().map(|x| x * x).sum::<f32>().sqrt();
+                    let norm_q = query.iter().map(|q| q * q).sum::<f32>().sqrt();
+                    if norm_x > 0.0 && norm_q > 0.0 {
+                        1.0 - (dot / (norm_x * norm_q))
+                    } else {
+                        1.0 // zero vector: maximally dissimilar
+                    }
+                }
+            };
             scored.push((row, dist));
         }
         scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -1219,11 +1257,102 @@ mod tests {
                 .collect();
 
             // Stage 1: RaBitQ candidate prefilter; Stage 2: SQ8 rerank over the pool.
-            let cand = reader.rabitq_rank(&query, refine).unwrap();
-            let reranked = reader.rerank_rows(0, &query, &cand).unwrap();
+            let cand = reader.rabitq_rank(&query, refine, RankMetric::L2).unwrap();
+            let reranked = reader
+                .rerank_rows(0, &query, &cand, RankMetric::L2)
+                .unwrap();
             let got: std::collections::HashSet<usize> =
                 reranked.into_iter().take(k).map(|(row, _)| row).collect();
 
+            let truth = exact_topk(&query);
+            let hits = truth.iter().filter(|i| got.contains(i)).count();
+            recalls.push(hits as f32 / k as f32);
+        }
+        recalls.iter().sum::<f32>() / recalls.len() as f32
+    }
+
+    /// Phase E — normalized-corpus variant of `build_cold_recall_corpus_and_block`:
+    /// L2-normalized DIM=64 vectors, the regime `RankMetric::Cosine` is validated on
+    /// (for unit vectors cosine similarity == inner product).
+    fn build_cold_recall_corpus_and_block_normalized(n: usize) -> (Vec<Vec<f32>>, Vec<u8>) {
+        const DIM: usize = 64;
+        let normalize = |v: Vec<f32>| -> Vec<f32> {
+            let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm > 0.0 {
+                v.iter().map(|x| x / norm).collect()
+            } else {
+                v
+            }
+        };
+        let corpus: Vec<Vec<f32>> = (0..n).map(|i| normalize(lcg_vec(i as u64, DIM))).collect();
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+            .with_quant(crate::writer::VectorQuant::RaBitQ);
+        for (i, v) in corpus.iter().enumerate() {
+            writer
+                .add_record(&make_record_with_embedding(
+                    &format!("r{i}"),
+                    "t",
+                    1000 + i as i64,
+                    v.clone(),
+                ))
+                .unwrap();
+        }
+        (corpus, writer.flush().unwrap())
+    }
+
+    /// Phase E — cosine analog of `cold_cascade_recall_mean`: stage-1
+    /// `RankMetric::Cosine` (RaBitQ `ip_rank_score`) → stage-2 exact cosine rerank,
+    /// scored vs the exact-cosine top-k. Query is a perturbed, re-normalized corpus
+    /// vector so its true cosine-NN is well-defined.
+    fn cold_cascade_recall_mean_cosine(
+        reader: &PaxBlockReader,
+        corpus: &[Vec<f32>],
+        q: usize,
+        k: usize,
+        refine: usize,
+    ) -> f32 {
+        let n = corpus.len();
+        let dim = corpus[0].len();
+        let cos_dist = |a: &[f32], b: &[f32]| -> f32 {
+            let dot = a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
+            let na = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let nb = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if na > 0.0 && nb > 0.0 {
+                1.0 - dot / (na * nb)
+            } else {
+                1.0
+            }
+        };
+        let exact_topk = |qv: &[f32]| -> std::collections::HashSet<usize> {
+            let mut idx: Vec<usize> = (0..n).collect();
+            idx.sort_by(|&a, &b| {
+                cos_dist(&corpus[a], qv)
+                    .partial_cmp(&cos_dist(&corpus[b], qv))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            idx.into_iter().take(k).collect()
+        };
+        let mut recalls = Vec::with_capacity(q);
+        for qi in 0..q {
+            let base = (qi * (n / q)) % n;
+            let noise = lcg_vec((qi as u64).wrapping_add(7_000_000), dim);
+            let mut query: Vec<f32> = corpus[base]
+                .iter()
+                .zip(&noise)
+                .map(|(v, nn)| v + nn * 0.01)
+                .collect();
+            let qnorm: f32 = query.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if qnorm > 0.0 {
+                query = query.iter().map(|x| x / qnorm).collect();
+            }
+            let cand = reader
+                .rabitq_rank(&query, refine, RankMetric::Cosine)
+                .unwrap();
+            let reranked = reader
+                .rerank_rows(0, &query, &cand, RankMetric::Cosine)
+                .unwrap();
+            let got: std::collections::HashSet<usize> =
+                reranked.into_iter().take(k).map(|(row, _)| row).collect();
             let truth = exact_topk(&query);
             let hits = truth.iter().filter(|i| got.contains(i)).count();
             recalls.push(hits as f32 / k as f32);
@@ -1283,6 +1412,45 @@ mod tests {
             "P3 Phase G: RaBitQ→SQ8 cascade recall@{K} at N={N} = {mean:.3} < ratchet \
              {RATCHET}. Recall regressed — add an f32 rerank column rather than lowering \
              the ratchet."
+        );
+    }
+
+    /// Phase E — cosine cold-recall ratchet at N=1000. The RaBitQ→SQ8 cascade under
+    /// `RankMetric::Cosine` (stage-1 `ip_rank_score` → stage-2 exact cosine rerank)
+    /// must hold recall@10 vs the exact-cosine top-k on a normalized corpus. Gates
+    /// the cosine path opened in `try_pax_cascade`. On normalized data cosine ranking
+    /// coincides with L2 (‖a−b‖² = 2−2cos), so this lands near the L2 ratchet; the
+    /// ratchet starts at 0.90 and only goes up.
+    #[test]
+    fn rabitq_cold_recall_harness_cosine_n1000_recall_at_10() {
+        const N: usize = 1000;
+        const Q: usize = 50;
+        const K: usize = 10;
+        const REFINE: usize = 100;
+        const RATCHET: f32 = 0.90;
+
+        let (corpus, block) = build_cold_recall_corpus_and_block_normalized(N);
+        let reader = PaxBlockReader::open(&block).unwrap();
+
+        // The cosine path uses the same RaBitQ + SQ8 columns as L2.
+        let emb = reader.vector_params().get(col_id::EMBED_BASE).unwrap();
+        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ_RESERVED);
+        assert_eq!(
+            reader
+                .vector_params()
+                .get(crate::col_id::RERANK_BASE)
+                .unwrap()
+                .quant_kind,
+            QUANT_SQ8
+        );
+
+        let mean = cold_cascade_recall_mean_cosine(&reader, &corpus, Q, K, REFINE);
+        eprintln!("[recall-ratchet/cosine] N={N} REFINE={REFINE} mean recall@{K} = {mean:.4}");
+        assert!(
+            mean >= RATCHET,
+            "Phase E: cosine RaBitQ→SQ8 cascade recall@{K} at N={N} = {mean:.3} < ratchet \
+             {RATCHET}. The cosine stage-1 proxy (ip_rank_score) needs tuning \
+             (pool/REFINE) or an f32 rerank column."
         );
     }
 

@@ -255,6 +255,16 @@ impl RaBitQCode {
         let r = self.dist_to_centroid;
         r * r - 2.0 * r * self.estimate_unit_ip(q_rotated)
     }
+
+    /// Inner-product ranking score against a rotated query (lower = higher IP =
+    /// nearer) — the cosine / max-IP analog of [`l2_rank_score`]. Ranks by the
+    /// residual inner product `‖r‖·⟨r̂, q̃⟩`; the centroid·q term is dropped, as in
+    /// the L2 proxy (a ranking approximation validated empirically by the cosine
+    /// recall ratchet). Negated so the shared ascending "lower = nearer" order
+    /// selects max inner-product first.
+    pub fn ip_rank_score(&self, q_rotated: &[f32]) -> f32 {
+        -self.dist_to_centroid * self.estimate_unit_ip(q_rotated)
+    }
 }
 
 /// Stage-1 RaBitQ candidate ranking: score every present code with the binary L2
@@ -268,6 +278,25 @@ pub fn rank_candidates(q_rotated: &[f32], codes: &[Option<RaBitQCode>], pool: us
         .iter()
         .enumerate()
         .filter_map(|(i, c)| c.as_ref().map(|c| (i, c.l2_rank_score(q_rotated))))
+        .collect();
+    scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(pool);
+    scored.into_iter().map(|(i, _)| i).collect()
+}
+
+/// Stage-1 RaBitQ candidate ranking by **inner product** (cosine / max-IP):
+/// mirror of [`rank_candidates`] using [`RaBitQCode::ip_rank_score`] so the
+/// ascending "lower score = nearer" order surfaces the max-IP candidates first.
+/// Stage-2 rerank then computes the exact metric on the SQ8-decoded vectors.
+pub fn rank_candidates_ip(
+    q_rotated: &[f32],
+    codes: &[Option<RaBitQCode>],
+    pool: usize,
+) -> Vec<usize> {
+    let mut scored: Vec<(usize, f32)> = codes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| c.as_ref().map(|c| (i, c.ip_rank_score(q_rotated))))
         .collect();
     scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(pool);
