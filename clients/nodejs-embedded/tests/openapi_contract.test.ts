@@ -173,6 +173,41 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("OpenAPI contract gate", () => {
+  it("applies timeout signals to generated transport requests", async () => {
+    vi.useFakeTimers();
+    const abortStates: boolean[] = [];
+    const stub = vi.fn(
+      async (_url: string, init?: RequestInit): Promise<Response> =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal;
+          expect(signal).toBeDefined();
+          signal?.addEventListener("abort", () => {
+            abortStates.push(signal.aborted);
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).fetch = stub;
+
+    try {
+      const client = new ProximaDBClient({
+        url: "http://contract.test",
+        timeoutMs: 5,
+        maxRetries: 0,
+      });
+
+      const request = expect(client.healthLive()).rejects.toThrow("aborted");
+      await vi.advanceTimersByTimeAsync(5);
+
+      await request;
+      expect(abortStates).toEqual([true]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("healthLive() matches GET /health/live (getLiveness)", async () => {
     const captured = installFetchStub({ status: "ok" });
     const client = makeClient();

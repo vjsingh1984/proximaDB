@@ -287,6 +287,24 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn epoch_millis_accepts_seconds_millis_micros_and_nanos() {
+        assert_eq!(Compaction::epoch_millis(1_782_912_345), 1_782_912_345_000);
+        assert_eq!(
+            Compaction::epoch_millis(1_782_912_345_678),
+            1_782_912_345_678
+        );
+        assert_eq!(
+            Compaction::epoch_millis(1_782_912_345_678_000),
+            1_782_912_345_678
+        );
+        assert_eq!(
+            Compaction::epoch_millis(1_782_912_345_678_000_000),
+            1_782_912_345_678
+        );
+        assert_eq!(Compaction::epoch_millis(0), 0);
+    }
+
     /// With a CanonicalPrecisionResolver wired in and a fp16 collection
     /// in the catalog, Compaction::check_compaction_needed must stamp
     /// produced CompactionTask.precision_hint = Some(Fp16). The two

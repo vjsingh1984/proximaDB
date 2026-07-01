@@ -228,6 +228,23 @@ use crate::services::{
 };
 use crate::storage::document::DocumentService;
 
+/// # ⚠️ Legacy v1-proto-bridge handler — slated for retirement
+///
+/// This is the *legacy* of two same-named handler types. It is currently the
+/// default `AppState.api_handlers` (TD-104: cast to its `ApiHandlersPort` impl),
+/// but its impl bridges the runtime port contract to v1 `CollectionRequest` /
+/// `CollectionOperation` proto operations rather than speaking the runtime
+/// ports directly.
+///
+/// **Do not extend this type for new schema/port work.** The canonical seam is
+/// `proximadb_runtime::UnifiedHandlers`, which delegates to `CollectionPort` /
+/// `VectorOpsPort` and speaks the runtime-native `CollectionSchemaMetadata`
+/// (`ProximaType`) schema contract (its trait still bridges v1-proto methods
+/// too, pending TD-123). New methods go there; prod wiring flips to it via
+/// `with_api_handlers`. This type and its duplicated
+/// v1-bridge schema helpers (the `runtime_*` fns below) retire once that flip
+/// lands and handlers/ports finish aligning to the new direction.
+///
 /// Unified handlers that implement all business logic for API operations
 ///
 /// **Performance Enhancement**: Uses optimized VectorOperationsService for 40-60% faster vector operations
@@ -3836,6 +3853,246 @@ impl proximadb_runtime::RecordOpsPort for UnifiedHandlers {
     }
 }
 
+// ── Legacy v1-bridge schema helpers ─────────────────────────────────────────
+// These `runtime_*` fns translate between the canonical
+// `CollectionSchemaMetadata` / `CollectionSchemaUpdate` (`ProximaType`) contract
+// and the v1 `CollectionConfig` proto persisted shape. They are the bridge that
+// lets the legacy `UnifiedHandlers` (above) satisfy `ApiHandlersPort` today.
+// They DUPLICATE the runtime-native mapping in `proximadb_runtime::handlers` and
+// retire together with this handler once prod wiring flips to
+// `proximadb_runtime::UnifiedHandlers` — do not extend.
+fn runtime_schema_metadata_from_v1_collection(
+    collection: &crate::proto::proximadb_v1::Collection,
+) -> proximadb_runtime::CollectionSchemaMetadata {
+    let Some(config) = collection.config.as_ref() else {
+        return proximadb_runtime::CollectionSchemaMetadata {
+            collection_id: collection.id.clone(),
+            created_at_ms: collection.created_at,
+            updated_at_ms: collection.updated_at,
+            ..Default::default()
+        };
+    };
+
+    let mut columns = config
+        .text_columns
+        .iter()
+        .map(|name| proximadb_runtime::CollectionSchemaColumn {
+            name: name.clone(),
+            data_type: proximadb_data_model::ProximaType::String,
+            nullable: true,
+            indexed: false,
+            filterable: true,
+            text_storage: Some(proximadb_runtime::CollectionTextStorage::Inline),
+            max_length: None,
+        })
+        .collect::<Vec<_>>();
+    for text_config in &config.text_storage_configs {
+        if let Some(existing) = columns
+            .iter_mut()
+            .find(|column| column.name == text_config.column_name)
+        {
+            existing.text_storage = Some(proximadb_runtime::CollectionTextStorage::Large);
+            existing.max_length = Some(text_config.chunk_size);
+        } else {
+            columns.push(proximadb_runtime::CollectionSchemaColumn {
+                name: text_config.column_name.clone(),
+                data_type: proximadb_data_model::ProximaType::String,
+                nullable: true,
+                indexed: false,
+                filterable: false,
+                text_storage: Some(proximadb_runtime::CollectionTextStorage::Large),
+                max_length: Some(text_config.chunk_size),
+            });
+        }
+    }
+
+    columns.extend(config.filterable_columns.iter().filter_map(|column| {
+        runtime_filterable_to_proxima_type(column.data_type).map(|data_type| {
+            proximadb_runtime::CollectionSchemaColumn {
+                name: column.name.clone(),
+                data_type,
+                nullable: true,
+                indexed: column.indexed,
+                filterable: true,
+                text_storage: None,
+                max_length: None,
+            }
+        })
+    }));
+    let record_schema = config.record_schema.as_ref();
+
+    proximadb_runtime::CollectionSchemaMetadata {
+        collection_id: collection.id.clone(),
+        created_at_ms: collection.created_at,
+        updated_at_ms: collection.updated_at,
+        schema_id: record_schema.map(|schema| schema.schema_id.clone()),
+        schema_version: record_schema.map(|schema| schema.schema_version.clone()),
+        enforcement: record_schema.map(|schema| runtime_enforcement_from_i32(schema.enforcement)),
+        auto_evolve: record_schema.is_none_or(|schema| schema.auto_evolve),
+        enabled: config.enable_proxima_record.unwrap_or(false) || record_schema.is_some(),
+        columns,
+    }
+}
+
+fn apply_runtime_schema_update_to_v1_config(
+    config: &mut crate::proto::proximadb_v1::CollectionConfig,
+    update: proximadb_runtime::CollectionSchemaUpdate,
+) -> anyhow::Result<()> {
+    config.record_schema = Some(crate::proto::proximadb_v1::RecordSchemaConfig {
+        schema_id: update.schema_id,
+        schema_version: update.schema_version,
+        enforcement: runtime_enforcement_to_i32(update.enforcement),
+        auto_evolve: update.auto_evolve,
+        columns: Vec::new(),
+    });
+    config.enable_proxima_record = Some(true);
+    config.text_columns = update
+        .columns
+        .iter()
+        .filter(|column| matches!(column.data_type, proximadb_data_model::ProximaType::String))
+        .map(|column| column.name.clone())
+        .collect();
+    config.text_storage_configs = update
+        .columns
+        .iter()
+        .filter(|column| {
+            matches!(column.data_type, proximadb_data_model::ProximaType::String)
+                && matches!(
+                    column.text_storage,
+                    Some(proximadb_runtime::CollectionTextStorage::Large)
+                )
+        })
+        .map(|column| crate::proto::proximadb_v1::TextStorageConfig {
+            column_name: column.name.clone(),
+            strategy: 1,
+            inline_threshold: 4096,
+            chunked_threshold: 1_048_576,
+            chunk_size: column.max_length.unwrap_or(512),
+            ..Default::default()
+        })
+        .collect();
+    let mut filterable_columns = Vec::new();
+    for column in update.columns {
+        if matches!(column.data_type, proximadb_data_model::ProximaType::String) {
+            continue;
+        }
+        if let Some(data_type) = runtime_proxima_type_to_v1_filterable(&column.data_type) {
+            if column.filterable {
+                filterable_columns.push(crate::proto::proximadb_v1::FilterableColumnSpec {
+                    name: column.name,
+                    data_type,
+                    indexed: column.indexed,
+                    supports_range: runtime_supports_range_filter(&column.data_type),
+                    estimated_cardinality: None,
+                });
+            }
+            continue;
+        }
+        return Err(anyhow::anyhow!(
+            "legacy collection metadata cannot preserve schema column '{}' with canonical type {:?}",
+            column.name,
+            column.data_type
+        ));
+    }
+    config.filterable_columns = filterable_columns;
+    Ok(())
+}
+
+fn runtime_enforcement_from_i32(value: i32) -> proximadb_runtime::CollectionSchemaEnforcement {
+    match value {
+        1 => proximadb_runtime::CollectionSchemaEnforcement::Strict,
+        2 => proximadb_runtime::CollectionSchemaEnforcement::Flexible,
+        _ => proximadb_runtime::CollectionSchemaEnforcement::Hybrid,
+    }
+}
+
+fn runtime_enforcement_to_i32(value: proximadb_runtime::CollectionSchemaEnforcement) -> i32 {
+    match value {
+        proximadb_runtime::CollectionSchemaEnforcement::Strict => 1,
+        proximadb_runtime::CollectionSchemaEnforcement::Flexible => 2,
+        proximadb_runtime::CollectionSchemaEnforcement::Hybrid => 3,
+    }
+}
+
+fn runtime_filterable_to_proxima_type(value: i32) -> Option<proximadb_data_model::ProximaType> {
+    use crate::proto::proximadb_v1::FilterableDataType as F;
+    match F::try_from(value).ok()? {
+        F::FilterableInteger => Some(proximadb_data_model::ProximaType::Int64),
+        F::FilterableFloat => Some(proximadb_data_model::ProximaType::Float64),
+        F::FilterableDecimal => Some(proximadb_data_model::ProximaType::Decimal {
+            precision: 38,
+            scale: 18,
+        }),
+        F::FilterableBoolean => Some(proximadb_data_model::ProximaType::Boolean),
+        F::FilterableDatetime => Some(proximadb_data_model::ProximaType::Timestamp(
+            proximadb_data_model::TimeUnit::Nanosecond,
+        )),
+        F::FilterableTimestampTz => Some(proximadb_data_model::ProximaType::TimestampTz(
+            proximadb_data_model::TimeUnit::Nanosecond,
+        )),
+        F::FilterableDate => Some(proximadb_data_model::ProximaType::Date),
+        F::FilterableTime => Some(proximadb_data_model::ProximaType::Time(
+            proximadb_data_model::TimeUnit::Nanosecond,
+        )),
+        F::FilterableUuid => Some(proximadb_data_model::ProximaType::Uuid),
+        _ => None,
+    }
+}
+
+fn runtime_proxima_type_to_v1_filterable(value: &proximadb_data_model::ProximaType) -> Option<i32> {
+    use crate::proto::proximadb_v1::FilterableDataType as F;
+    let data_type = match value {
+        proximadb_data_model::ProximaType::Int8
+        | proximadb_data_model::ProximaType::Int16
+        | proximadb_data_model::ProximaType::Int32
+        | proximadb_data_model::ProximaType::Int64
+        | proximadb_data_model::ProximaType::UInt8
+        | proximadb_data_model::ProximaType::UInt16
+        | proximadb_data_model::ProximaType::UInt32
+        | proximadb_data_model::ProximaType::UInt64 => F::FilterableInteger,
+        proximadb_data_model::ProximaType::Float16
+        | proximadb_data_model::ProximaType::Float32
+        | proximadb_data_model::ProximaType::Float64 => F::FilterableFloat,
+        proximadb_data_model::ProximaType::Decimal { .. } => F::FilterableDecimal,
+        proximadb_data_model::ProximaType::Boolean => F::FilterableBoolean,
+        proximadb_data_model::ProximaType::Timestamp(_) => F::FilterableDatetime,
+        proximadb_data_model::ProximaType::TimestampTz(_) => F::FilterableTimestampTz,
+        proximadb_data_model::ProximaType::Date => F::FilterableDate,
+        proximadb_data_model::ProximaType::Time(_) => F::FilterableTime,
+        proximadb_data_model::ProximaType::Uuid => F::FilterableUuid,
+        _ => return None,
+    };
+    Some(data_type as i32)
+}
+
+fn runtime_supports_range_filter(value: &proximadb_data_model::ProximaType) -> bool {
+    matches!(
+        value,
+        proximadb_data_model::ProximaType::Int8
+            | proximadb_data_model::ProximaType::Int16
+            | proximadb_data_model::ProximaType::Int32
+            | proximadb_data_model::ProximaType::Int64
+            | proximadb_data_model::ProximaType::UInt8
+            | proximadb_data_model::ProximaType::UInt16
+            | proximadb_data_model::ProximaType::UInt32
+            | proximadb_data_model::ProximaType::UInt64
+            | proximadb_data_model::ProximaType::Float16
+            | proximadb_data_model::ProximaType::Float32
+            | proximadb_data_model::ProximaType::Float64
+            | proximadb_data_model::ProximaType::Decimal { .. }
+            | proximadb_data_model::ProximaType::Timestamp(_)
+            | proximadb_data_model::ProximaType::TimestampTz(_)
+            | proximadb_data_model::ProximaType::Date
+            | proximadb_data_model::ProximaType::Time(_)
+    )
+}
+
+// LEGACY v1-bridge impl (see the deprecation notice on `UnifiedHandlers`
+// above). Each method adapts the runtime `ApiHandlersPort` contract onto v1
+// proto CollectionRequest/CollectionOperation. This is the default prod handler
+// today but NOT the canonical seam — new schema/port methods belong on
+// `proximadb_runtime::UnifiedHandlers` instead. Keep this block compiling only
+// until the default flips via `with_api_handlers`.
 #[async_trait::async_trait]
 impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
     async fn handle_collection_operation_for_tenant(
@@ -3845,6 +4102,74 @@ impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
     ) -> anyhow::Result<crate::proto::proximadb_v1::CollectionResponse> {
         // Inherent method has the same signature — delegate directly.
         UnifiedHandlers::handle_collection_operation_for_tenant(self, request, tenant_id).await
+    }
+
+    async fn get_collection_schema_metadata(
+        &self,
+        collection_id: &str,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<Option<proximadb_runtime::CollectionSchemaMetadata>> {
+        let response = UnifiedHandlers::handle_collection_operation_for_tenant(
+            self,
+            crate::proto::proximadb_v1::CollectionRequest {
+                operation: crate::proto::proximadb_v1::CollectionOperation::CollectionGet as i32,
+                collection_id: Some(collection_id.to_string()),
+                collection_config: None,
+                query_params: Default::default(),
+                options: Default::default(),
+                migration_config: Default::default(),
+            },
+            tenant_id,
+        )
+        .await?;
+        Ok(response
+            .collection
+            .as_ref()
+            .map(runtime_schema_metadata_from_v1_collection))
+    }
+
+    async fn update_collection_schema_metadata(
+        &self,
+        collection_id: &str,
+        update: proximadb_runtime::CollectionSchemaUpdate,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<proximadb_runtime::CollectionSchemaMetadata> {
+        let get_response = UnifiedHandlers::handle_collection_operation_for_tenant(
+            self,
+            crate::proto::proximadb_v1::CollectionRequest {
+                operation: crate::proto::proximadb_v1::CollectionOperation::CollectionGet as i32,
+                collection_id: Some(collection_id.to_string()),
+                collection_config: None,
+                query_params: Default::default(),
+                options: Default::default(),
+                migration_config: Default::default(),
+            },
+            tenant_id,
+        )
+        .await?;
+        let collection = get_response
+            .collection
+            .ok_or_else(|| anyhow::anyhow!("collection not found: {collection_id}"))?;
+        let mut config = collection.config.clone().unwrap_or_default();
+        apply_runtime_schema_update_to_v1_config(&mut config, update)?;
+
+        let update_response = UnifiedHandlers::handle_collection_operation_for_tenant(
+            self,
+            crate::proto::proximadb_v1::CollectionRequest {
+                operation: crate::proto::proximadb_v1::CollectionOperation::CollectionUpdate as i32,
+                collection_id: Some(collection_id.to_string()),
+                collection_config: Some(config),
+                query_params: Default::default(),
+                options: Default::default(),
+                migration_config: Default::default(),
+            },
+            tenant_id,
+        )
+        .await?;
+        let updated = update_response
+            .collection
+            .ok_or_else(|| anyhow::anyhow!("collection update returned no collection"))?;
+        Ok(runtime_schema_metadata_from_v1_collection(&updated))
     }
 
     async fn handle_vector_search_v1_for_tenant(

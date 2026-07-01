@@ -44,6 +44,7 @@ use crate::storage::engines::core::ops::performance_optimization::{
 // VectorMemoryPool now managed by universal optimizer
 use super::types::*;
 use crate::core::String;
+use crate::core::search::SearchMode;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
@@ -2267,12 +2268,17 @@ impl UnifiedStorageFormat for ViperEngine {
         // PHASE 0: TRY AXIS-BASED SEARCH FIRST (HNSW/IVF) - FASTEST PATH
         // ========================================================================
         // Use AXIS manager if available for O(log N) approximate search
+        let exact_mode = matches!(ctx.search_params.search_mode, SearchMode::Exact);
         let has_axis_manager = self.axis_manager().is_some();
         if has_axis_manager {
             tracing::debug!("🔍 VIPER: AXIS manager is available for HNSW/IVF search");
         }
 
-        if let Some(axis_manager) = self.axis_manager() {
+        if exact_mode {
+            tracing::debug!(
+                "🎯 VIPER: SearchMode::Exact requested; skipping approximate AXIS path"
+            );
+        } else if let Some(axis_manager) = self.axis_manager() {
             tracing::info!(
                 "🔗 VIPER: AXIS manager available, attempting HNSW index search for collection {}",
                 collection_id

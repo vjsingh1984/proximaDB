@@ -953,23 +953,21 @@ impl Compaction {
         let mut deleted_vector_ids = Vec::new();
         let mut merged_vectors = Vec::new();
 
-        // Get current time in seconds for consistent comparison
-        let current_time_secs = current_time / 1000;
-
         for vector_record in &resolved_records {
             // Tombstone detection: empty vector + expires_at in past (including 0)
             // expires_at = 0 means "epoch time" which is always in the past = tombstone marker
             let is_tombstone = vector_record.vector.is_empty()
                 && vector_record
                     .expires_at
-                    .is_some_and(|e| e <= current_time_secs);
+                    .is_some_and(|e| Self::epoch_millis(e) <= current_time);
 
             // Check if record is expired (TTL-based expiry for non-tombstones)
             // This is different from tombstones - these are regular records that have expired
             let is_expired = !is_tombstone
-                && vector_record
-                    .expires_at
-                    .is_some_and(|expires_at| expires_at > 0 && expires_at < current_time_secs);
+                && vector_record.expires_at.is_some_and(|expires_at| {
+                    let expires_at_ms = Self::epoch_millis(expires_at);
+                    expires_at_ms > 0 && expires_at_ms < current_time
+                });
 
             // Skip expired records completely - they are physically deleted
             if is_expired {
@@ -980,8 +978,8 @@ impl Compaction {
             }
             let should_keep = if is_tombstone {
                 // Keep tombstones that are less than 1 hour old
-                let age = (current_time / 1000) - vector_record.timestamp.unwrap_or(0); // Both in seconds
-                let keep_tombstone = age < (60 * 60); // 1 hour in seconds
+                let age = current_time - Self::epoch_millis(vector_record.timestamp.unwrap_or(0));
+                let keep_tombstone = age < (60 * 60 * 1000); // 1 hour in milliseconds
 
                 if !keep_tombstone {
                     tombstones_removed_count += 1;
@@ -1015,13 +1013,13 @@ impl Compaction {
         }
 
         // OPTIMIZED: Sort VectorRecords by metadata for optimal encoding (no conversions)
-        let resolved_records_len = resolved_records.len();
+        let vector_records_len = vector_records.len();
         info!(
             "🔄 UNIFIED COMPACTION: Sorting {} VectorRecords by metadata for optimal encoding",
-            resolved_records_len
+            vector_records_len
         );
         let (sorted_vectors, sort_stats) =
-            Self::sort_vectors_for_compaction(resolved_records).await?;
+            Self::sort_vectors_for_compaction(vector_records).await?;
         info!(
             "✅ UNIFIED COMPACTION: Sorted records (estimated compression improvement: {:.1}%)",
             sort_stats.compression_estimate * 100.0
@@ -1515,7 +1513,7 @@ impl Compaction {
             bytes_read / 1024 / 1024,
             bytes_written / 1024 / 1024,
             compression_ratio,
-            resolved_records_len,
+            vector_records_len,
             expired_records_count,
             tombstones_removed_count
         );
@@ -1940,6 +1938,21 @@ impl Compaction {
         );
 
         Ok((sorted_records, sort_stats))
+    }
+
+    fn epoch_millis(timestamp: i64) -> i64 {
+        let abs = timestamp.unsigned_abs();
+        if timestamp == 0 {
+            0
+        } else if abs < 10_000_000_000 {
+            timestamp * 1000
+        } else if abs > 10_000_000_000_000_000 {
+            timestamp / 1_000_000
+        } else if abs > 10_000_000_000_000 {
+            timestamp / 1000
+        } else {
+            timestamp
+        }
     }
 }
 

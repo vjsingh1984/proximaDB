@@ -57,8 +57,11 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         from ..config import load_config
         from ..protocols.rest_sync import ProximaDBClient
 
-        # Load config with provided parameters
-        config = load_config(url=url, api_key=api_key, timeout=timeout, **kwargs)
+        # Reuse the caller's resolved config when available so auth/custom headers
+        # are not dropped by the unified client adapter boundary.
+        config = kwargs.pop("config", None) or load_config(
+            url=url, api_key=api_key, timeout=timeout, **kwargs
+        )
 
         # Create the underlying REST client
         self._client = ProximaDBClient(config=config)

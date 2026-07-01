@@ -1064,21 +1064,11 @@ impl RestServer {
         tracing::info!(
             "   POST   /api/v2/collections/:id/records/batch - Canonical ProximaRecord writes"
         );
-        tracing::info!("Compatibility endpoints:");
-        tracing::info!(
-            "   POST   /api/v1/search                    - Deprecated vector search adapter"
-        );
-        tracing::info!(
-            "   POST   /api/v1/vectors/batch             - Deprecated alias over record writes"
-        );
+        tracing::info!("Auxiliary endpoints:");
         tracing::info!("   POST   /api/v1/progressive/search/:id    - Progressive search (JSON)");
-        tracing::info!(
-            "   POST   /api/v1/collections               - Deprecated collection compatibility"
-        );
-        tracing::info!("   GET    /api/v1/collections               - List collections");
-        tracing::info!("   GET    /api/v1/collections/:id           - Get collection by ID");
-        tracing::info!("   DELETE /api/v1/collections/:id           - Delete collection");
-        tracing::info!("   POST   /api/v1/search/with_metadata      - Vector search with metadata");
+        // Legacy /api/v1 vector/collection/search REST surfaces are removed;
+        // those paths return a /api/v2 migration hint (see `v1_replacement_for`).
+        // Do not re-advertise them here.
         tracing::info!("   WS     /ws/insert                        - WebSocket vector streaming");
         tracing::info!(
             "   WS     /ws/subscribe                     - WebSocket live query subscription"

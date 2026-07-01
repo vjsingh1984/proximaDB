@@ -83,7 +83,8 @@ pub(crate) mod test_support {
         VectorSearchRequest,
     };
     use proximadb_runtime::{
-        ApiHandlersPort, CollectionPort, QueryAdapterPort, UnifiedHandlers, VectorOpsPort,
+        ApiHandlersPort, CollectionPort, CollectionSchemaMetadata, CollectionSchemaUpdate,
+        QueryAdapterPort, UnifiedHandlers, VectorOpsPort,
     };
     use serde_json::Value as JsonValue;
 
@@ -93,6 +94,15 @@ pub(crate) mod test_support {
             operation: i32,
             tenant_id: Option<String>,
             collection_id: Option<String>,
+        },
+        SchemaGet {
+            tenant_id: Option<String>,
+            collection_id: String,
+        },
+        SchemaUpdate {
+            tenant_id: Option<String>,
+            collection_id: String,
+            schema_id: String,
         },
         VectorSearch {
             tenant_id: Option<String>,
@@ -122,6 +132,7 @@ pub(crate) mod test_support {
     pub(crate) struct RecordingApiPort {
         calls: Mutex<Vec<ApiCall>>,
         pub(crate) collection_response: Mutex<CollectionResponse>,
+        pub(crate) schema_metadata_response: Mutex<Option<CollectionSchemaMetadata>>,
         pub(crate) vector_response: Mutex<VectorOperationResponse>,
         pub(crate) sql_response: Mutex<ExecuteQueryResponse>,
     }
@@ -131,6 +142,7 @@ pub(crate) mod test_support {
             Arc::new(Self {
                 calls: Mutex::new(Vec::new()),
                 collection_response: Mutex::new(CollectionResponse::default()),
+                schema_metadata_response: Mutex::new(None),
                 vector_response: Mutex::new(VectorOperationResponse::default()),
                 sql_response: Mutex::new(ExecuteQueryResponse::default()),
             })
@@ -154,6 +166,43 @@ pub(crate) mod test_support {
                 collection_id: request.collection_id.clone(),
             });
             Ok(self.collection_response.lock().unwrap().clone())
+        }
+
+        async fn get_collection_schema_metadata(
+            &self,
+            collection_id: &str,
+            tenant_id: Option<&str>,
+        ) -> Result<Option<CollectionSchemaMetadata>> {
+            self.calls.lock().unwrap().push(ApiCall::SchemaGet {
+                tenant_id: tenant_id.map(ToOwned::to_owned),
+                collection_id: collection_id.to_string(),
+            });
+            Ok(self.schema_metadata_response.lock().unwrap().clone())
+        }
+
+        async fn update_collection_schema_metadata(
+            &self,
+            collection_id: &str,
+            update: CollectionSchemaUpdate,
+            tenant_id: Option<&str>,
+        ) -> Result<CollectionSchemaMetadata> {
+            self.calls.lock().unwrap().push(ApiCall::SchemaUpdate {
+                tenant_id: tenant_id.map(ToOwned::to_owned),
+                collection_id: collection_id.to_string(),
+                schema_id: update.schema_id.clone(),
+            });
+            let metadata = CollectionSchemaMetadata {
+                collection_id: collection_id.to_string(),
+                schema_id: Some(update.schema_id),
+                schema_version: Some(update.schema_version),
+                enforcement: Some(update.enforcement),
+                auto_evolve: update.auto_evolve,
+                enabled: true,
+                columns: update.columns,
+                ..CollectionSchemaMetadata::default()
+            };
+            *self.schema_metadata_response.lock().unwrap() = Some(metadata.clone());
+            Ok(metadata)
         }
 
         async fn handle_vector_search_v1_for_tenant(

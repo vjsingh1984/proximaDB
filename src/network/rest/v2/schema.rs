@@ -43,8 +43,13 @@ use utoipa::ToSchema;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
+use proximadb_data_model::ProximaType;
+use proximadb_runtime::{
+    CollectionSchemaColumn, CollectionSchemaEnforcement, CollectionSchemaMetadata,
+    CollectionSchemaUpdate, CollectionTextStorage,
+};
 
-use super::collections::{ColumnDefinition, SchemaDefinition};
+use super::collections::{ColumnDefinition, SchemaDefinition, parse_rest_data_type};
 
 /// Schema response with metadata
 #[derive(Debug, Serialize, ToSchema)]
@@ -108,161 +113,52 @@ pub async fn get_schema(
         ));
     }
 
-    // Step 1: Verify collection exists and get metadata
-    let collection_request = crate::proto::proximadb_v1::CollectionRequest {
-        operation: crate::proto::proximadb_v1::CollectionOperation::CollectionGet as i32,
-        collection_id: Some(collection_id.clone()),
-        collection_config: None,
-        query_params: Default::default(),
-        options: Default::default(),
-        migration_config: Default::default(),
-    };
-
-    let collection_response = state
+    let metadata = state
         .api_handlers
-        .handle_collection_operation_for_tenant(collection_request, Some(&tenant.tenant_id))
+        .get_collection_schema_metadata(&collection_id, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
             if e.to_string().contains("not found") {
                 ApiError::CollectionNotFound(collection_id.clone())
             } else {
-                ApiError::Internal(format!("Failed to get collection: {}", e))
+                ApiError::Internal(format!("Failed to get collection schema: {}", e))
             }
-        })?;
-
-    let collection = collection_response
-        .collection
+        })?
         .ok_or_else(|| ApiError::CollectionNotFound(collection_id.clone()))?;
 
-    let config = collection
-        .config
-        .ok_or_else(|| ApiError::Internal("Collection has no configuration".to_string()))?;
+    if !metadata.enabled {
+        return Err(ApiError::CollectionNotFound(format!(
+            "No schema defined for collection '{}'. Enable ProximaRecord to use schemas.",
+            collection_id
+        )));
+    }
 
-    // Step 2: Check if ProximaRecord is enabled
-    let proxima_record_enabled = config.enable_proxima_record.unwrap_or(false);
+    let schema_id = metadata
+        .schema_id
+        .clone()
+        .filter(|id| !id.is_empty())
+        .unwrap_or_else(|| format!("schema_{}", collection_id));
+    let schema_version = metadata
+        .schema_version
+        .clone()
+        .filter(|version| !version.is_empty())
+        .unwrap_or_else(|| "1.0.0".to_string());
+    let schema_def = schema_definition_from_metadata(&metadata);
 
-    // Step 3: Load schema from collection metadata
-    let record_schema_config = config.record_schema;
-
-    // Convert stored schema to response format
-    let (schema_id, schema_version, parent_schema_id, schema_def) =
-        if let Some(ref schema_config) = record_schema_config {
-            // We have a schema configuration stored
-            let schema_id = if schema_config.schema_id.is_empty() {
-                // Generate a deterministic ID based on collection
-                format!("schema_{}", collection_id)
-            } else {
-                schema_config.schema_id.clone()
-            };
-
-            let version = if schema_config.schema_version.is_empty() {
-                "1.0.0".to_string()
-            } else {
-                schema_config.schema_version.clone()
-            };
-
-            // Build schema definition from text_columns if available
-            let columns: Vec<ColumnDefinition> = config
-                .text_columns
-                .iter()
-                .map(|col_name| ColumnDefinition {
-                    name: col_name.clone(),
-                    data_type: "text".to_string(),
-                    nullable: Some(true),
-                    indexed: Some(false),
-                    filterable: Some(true),
-                    max_length: None,
-                    precision: None,
-                    scale: None,
-                    vector_dimension: None,
-                })
-                .collect();
-
-            // Also add columns from text_storage_configs
-            let mut all_columns = columns;
-            for text_config in &config.text_storage_configs {
-                if !all_columns
-                    .iter()
-                    .any(|c| c.name == text_config.column_name)
-                {
-                    all_columns.push(ColumnDefinition {
-                        name: text_config.column_name.clone(),
-                        data_type: "text_large".to_string(),
-                        nullable: Some(true),
-                        indexed: Some(false),
-                        filterable: Some(false),
-                        max_length: Some(text_config.chunk_size),
-                        precision: None,
-                        scale: None,
-                        vector_dimension: None,
-                    });
-                }
-            }
-
-            // Map enforcement level from proto
-            let enforcement = match schema_config.enforcement {
-                1 => "strict",
-                2 => "flexible",
-                3 => "hybrid",
-                _ => "hybrid",
-            };
-
-            let schema_def = SchemaDefinition {
-                columns: all_columns,
-                enforcement: Some(enforcement.to_string()),
-                allow_additional_fields: Some(schema_config.auto_evolve),
-            };
-
-            (schema_id, version, None, schema_def)
-        } else if proxima_record_enabled {
-            // ProximaRecord enabled but no explicit schema - create default
-            let schema_id = format!("schema_{}", collection_id);
-            let columns: Vec<ColumnDefinition> = config
-                .text_columns
-                .iter()
-                .map(|col_name| ColumnDefinition {
-                    name: col_name.clone(),
-                    data_type: "text".to_string(),
-                    nullable: Some(true),
-                    indexed: Some(false),
-                    filterable: Some(true),
-                    max_length: None,
-                    precision: None,
-                    scale: None,
-                    vector_dimension: None,
-                })
-                .collect();
-
-            let schema_def = SchemaDefinition {
-                columns,
-                enforcement: Some("hybrid".to_string()),
-                allow_additional_fields: Some(true),
-            };
-
-            (schema_id, "1.0.0".to_string(), None, schema_def)
-        } else {
-            // No schema defined and ProximaRecord not enabled
-            return Err(ApiError::CollectionNotFound(format!(
-                "No schema defined for collection '{}'. Enable ProximaRecord to use schemas.",
-                collection_id
-            )));
-        };
-
-    // Step 4: Return schema with version info
     let response = SchemaResponse {
         schema_id,
         schema_version,
         collection_id: collection_id.clone(),
         schema: schema_def,
-        created_at: chrono::DateTime::from_timestamp(collection.created_at / 1000, 0)
+        created_at: chrono::DateTime::from_timestamp(metadata.created_at_ms / 1000, 0)
             .map_or_else(|| chrono::Utc::now().to_rfc3339(), |dt| dt.to_rfc3339()),
-        updated_at: if collection.updated_at != collection.created_at {
-            chrono::DateTime::from_timestamp(collection.updated_at / 1000, 0)
+        updated_at: if metadata.updated_at_ms != metadata.created_at_ms {
+            chrono::DateTime::from_timestamp(metadata.updated_at_ms / 1000, 0)
                 .map(|dt| dt.to_rfc3339())
         } else {
             None
         },
-        parent_schema_id,
+        parent_schema_id: None,
     };
 
     info!(
@@ -412,95 +308,31 @@ pub async fn update_schema(
         }
     }
 
-    // Validate columns
-    let valid_types = [
-        "text",
-        "text_large",
-        "integer",
-        "float",
-        "decimal",
-        "boolean",
-        "timestamp",
-        "timestamp_tz",
-        "date",
-        "time",
-        "uuid",
-        "binary",
-        "json",
-        "array_text",
-        "array_integer",
-        "array_float",
-        "array_boolean",
-        "map_string_string",
-        "map_string_any",
-        "geo_point",
-        "vector",
-    ];
-
     for column in &schema.columns {
         if column.name.is_empty() {
             return Err(ApiError::InvalidArgument(
                 "Column name cannot be empty".to_string(),
             ));
         }
-
-        if !valid_types.contains(&column.data_type.as_str()) {
-            return Err(ApiError::InvalidArgument(format!(
-                "Invalid data type '{}' for column '{}'. Valid types: {:?}",
-                column.data_type, column.name, valid_types
-            )));
-        }
-
-        // Validate decimal precision/scale
-        if column.data_type == "decimal" && (column.precision.is_none() || column.scale.is_none()) {
-            return Err(ApiError::InvalidArgument(format!(
-                "Column '{}' with type 'decimal' requires precision and scale",
-                column.name
-            )));
-        }
-
-        // Validate vector dimension
-        if column.data_type == "vector" && column.vector_dimension.is_none() {
-            return Err(ApiError::InvalidArgument(format!(
-                "Column '{}' with type 'vector' requires vector_dimension",
-                column.name
-            )));
-        }
+        let _ = parse_rest_data_type(column)?;
     }
 
-    // Step 1: Load current collection and schema
-    let collection_request = crate::proto::proximadb_v1::CollectionRequest {
-        operation: crate::proto::proximadb_v1::CollectionOperation::CollectionGet as i32,
-        collection_id: Some(collection_id.clone()),
-        collection_config: None,
-        query_params: Default::default(),
-        options: Default::default(),
-        migration_config: Default::default(),
-    };
-
-    let collection_response = state
+    let existing_metadata = state
         .api_handlers
-        .handle_collection_operation_for_tenant(collection_request, Some(&tenant.tenant_id))
+        .get_collection_schema_metadata(&collection_id, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
             if e.to_string().contains("not found") {
                 ApiError::CollectionNotFound(collection_id.clone())
             } else {
-                ApiError::Internal(format!("Failed to get collection: {}", e))
+                ApiError::Internal(format!("Failed to get collection schema: {}", e))
             }
-        })?;
-
-    let collection = collection_response
-        .collection
+        })?
         .ok_or_else(|| ApiError::CollectionNotFound(collection_id.clone()))?;
 
-    let mut config = collection
-        .config
-        .clone()
-        .ok_or_else(|| ApiError::Internal("Collection has no configuration".to_string()))?;
-
-    // Get existing schema for evolution validation
-    let existing_schema = build_existing_schema(&config);
+    let existing_schema = existing_metadata
+        .enabled
+        .then(|| schema_definition_from_metadata(&existing_metadata));
 
     // Step 2: Validate schema evolution rules
     let validation_result = validate_schema(schema, existing_schema.as_ref());
@@ -625,41 +457,30 @@ pub async fn update_schema(
     }
 
     // Step 4: Create new schema version
-    let previous_schema_id = config.record_schema.as_ref().map_or_else(
-        || format!("schema_{}_v0", collection_id),
-        |s| s.schema_id.clone(),
-    );
+    let previous_schema_id = existing_metadata
+        .schema_id
+        .clone()
+        .filter(|id| !id.is_empty())
+        .unwrap_or_else(|| format!("schema_{}_v0", collection_id));
 
     let new_schema_id = format!("schema_{}_{}", collection_id, uuid::Uuid::new_v4());
     let new_version = increment_version(
-        config
-            .record_schema
-            .as_ref()
-            .map_or("0.0.0", |s| s.schema_version.as_str()),
+        existing_metadata
+            .schema_version
+            .as_deref()
+            .filter(|version| !version.is_empty())
+            .unwrap_or("0.0.0"),
     );
 
-    // Step 5: Build and store updated schema configuration via the shared
-    // SchemaDefinition → proto mapping (inverse of build_existing_schema).
-    apply_schema_definition(
-        &mut config,
+    let update = runtime_schema_update_from_schema_definition(
         schema,
         new_schema_id.clone(),
         new_version.clone(),
-    );
-
-    // Step 6: Persist the updated collection
-    let update_request = crate::proto::proximadb_v1::CollectionRequest {
-        operation: crate::proto::proximadb_v1::CollectionOperation::CollectionUpdate as i32,
-        collection_id: Some(collection_id.clone()),
-        collection_config: Some(config),
-        query_params: Default::default(),
-        options: Default::default(),
-        migration_config: Default::default(),
-    };
+    )?;
 
     state
         .api_handlers
-        .handle_collection_operation_for_tenant(update_request, Some(&tenant.tenant_id))
+        .update_collection_schema_metadata(&collection_id, update, Some(&tenant.tenant_id))
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to update collection schema: {}", e)))?;
 
@@ -680,6 +501,156 @@ pub async fn update_schema(
         warnings,
         updated_at: now,
     }))
+}
+
+fn schema_definition_from_metadata(metadata: &CollectionSchemaMetadata) -> SchemaDefinition {
+    let columns = metadata
+        .columns
+        .iter()
+        .map(|column| ColumnDefinition {
+            name: column.name.clone(),
+            data_type: rest_data_type_from_proxima(&column.data_type, column.text_storage)
+                .to_string(),
+            nullable: Some(column.nullable),
+            indexed: Some(column.indexed),
+            filterable: Some(column.filterable),
+            max_length: column.max_length,
+            precision: match &column.data_type {
+                ProximaType::Decimal { precision, .. } => Some(*precision),
+                _ => None,
+            },
+            scale: match &column.data_type {
+                ProximaType::Decimal { scale, .. } => Some(*scale),
+                _ => None,
+            },
+            vector_dimension: match &column.data_type {
+                ProximaType::DenseVector { dim, .. } | ProximaType::BinaryVector { dim } => {
+                    Some(*dim as u32)
+                }
+                _ => None,
+            },
+        })
+        .collect::<Vec<_>>();
+
+    SchemaDefinition {
+        columns,
+        enforcement: metadata.enforcement.map(runtime_enforcement_to_rest),
+        allow_additional_fields: Some(metadata.auto_evolve),
+    }
+}
+
+fn runtime_schema_update_from_schema_definition(
+    schema: &SchemaDefinition,
+    schema_id: String,
+    schema_version: String,
+) -> ApiResult<CollectionSchemaUpdate> {
+    let columns = schema
+        .columns
+        .iter()
+        .map(|column| {
+            let data_type = parse_rest_data_type(column)?;
+            let text_storage = match column.data_type.as_str() {
+                "text" => Some(CollectionTextStorage::Inline),
+                "text_large" => Some(CollectionTextStorage::Large),
+                _ => None,
+            };
+            let filterable = column.filterable.unwrap_or(
+                matches!(text_storage, Some(CollectionTextStorage::Inline))
+                    || !matches!(data_type, ProximaType::String),
+            );
+            Ok(CollectionSchemaColumn {
+                name: column.name.clone(),
+                data_type,
+                nullable: column.nullable.unwrap_or(true),
+                indexed: column.indexed.unwrap_or(false),
+                filterable,
+                text_storage,
+                max_length: column.max_length,
+            })
+        })
+        .collect::<ApiResult<Vec<_>>>()?;
+
+    Ok(CollectionSchemaUpdate {
+        schema_id,
+        schema_version,
+        enforcement: runtime_enforcement_from_rest(schema.enforcement.as_deref()),
+        auto_evolve: schema.allow_additional_fields.unwrap_or(true),
+        columns,
+    })
+}
+
+fn runtime_enforcement_from_rest(value: Option<&str>) -> CollectionSchemaEnforcement {
+    match value {
+        Some("strict") => CollectionSchemaEnforcement::Strict,
+        Some("flexible") => CollectionSchemaEnforcement::Flexible,
+        _ => CollectionSchemaEnforcement::Hybrid,
+    }
+}
+
+fn runtime_enforcement_to_rest(value: CollectionSchemaEnforcement) -> String {
+    match value {
+        CollectionSchemaEnforcement::Strict => "strict",
+        CollectionSchemaEnforcement::Flexible => "flexible",
+        CollectionSchemaEnforcement::Hybrid => "hybrid",
+    }
+    .to_string()
+}
+
+fn rest_data_type_from_proxima(
+    data_type: &ProximaType,
+    text_storage: Option<CollectionTextStorage>,
+) -> &'static str {
+    match data_type {
+        ProximaType::String => match text_storage {
+            Some(CollectionTextStorage::Large) => "text_large",
+            _ => "text",
+        },
+        ProximaType::Int8 => "int8",
+        ProximaType::Int16 => "int16",
+        ProximaType::Int32 => "int32",
+        ProximaType::Int64
+        | ProximaType::UInt8
+        | ProximaType::UInt16
+        | ProximaType::UInt32
+        | ProximaType::UInt64 => "integer",
+        ProximaType::Float16 | ProximaType::Float32 => "float32",
+        ProximaType::Float64 => "float",
+        ProximaType::Decimal { .. } => "decimal",
+        ProximaType::Boolean => "boolean",
+        ProximaType::Timestamp(_) => "timestamp",
+        ProximaType::TimestampTz(_) => "timestamp_tz",
+        ProximaType::Date => "date",
+        ProximaType::Time(_) => "time",
+        ProximaType::Uuid => "uuid",
+        ProximaType::ULID => "ulid",
+        ProximaType::Binary => "binary",
+        ProximaType::Json => "json",
+        ProximaType::Jsonb => "jsonb",
+        ProximaType::Array(inner) => match inner.as_ref() {
+            ProximaType::String => "array_text",
+            ProximaType::Int64 => "array_integer",
+            ProximaType::Float64 => "array_float",
+            ProximaType::Boolean => "array_boolean",
+            ProximaType::Uuid => "array_uuid",
+            _ => "array_any",
+        },
+        ProximaType::Map { key, value } => match (key.as_ref(), value.as_ref()) {
+            (ProximaType::String, ProximaType::String) => "map_string_string",
+            (ProximaType::String, ProximaType::Int64) => "map_string_integer",
+            (ProximaType::String, ProximaType::Float64) => "map_string_float",
+            (ProximaType::String, _) => "map_string_any",
+            _ => "map_string_any",
+        },
+        ProximaType::Struct { .. } => "struct",
+        ProximaType::Point | ProximaType::GeographyPoint => "geo_point",
+        ProximaType::DenseVector { .. } => "vector",
+        ProximaType::SparseVector { .. } => "sparse_vector",
+        ProximaType::BinaryVector { .. } => "binary_vector",
+        ProximaType::Symbol => "symbol",
+        ProximaType::Duration(_) => "duration",
+        ProximaType::Interval(_) => "interval",
+        ProximaType::Null => "json",
+    }
 }
 
 /// Map a REST schema-enforcement string to the proto `SchemaEnforcement`
@@ -841,6 +812,27 @@ pub(crate) fn build_existing_schema(
                 vector_dimension: None,
             });
         }
+    }
+
+    // Add scalar typed columns persisted in CollectionConfig.filterable_columns.
+    // apply_schema_definition writes integer/float/temporal/bool/uuid schema
+    // columns here so metadata filters can push down; GET must invert that
+    // mapping or schema round-trips silently lose all non-text columns.
+    for filterable in &config.filterable_columns {
+        if filterable.name.is_empty() || columns.iter().any(|c| c.name == filterable.name) {
+            continue;
+        }
+        columns.push(ColumnDefinition {
+            name: filterable.name.clone(),
+            data_type: filterable_type_to_rest(filterable.data_type).to_string(),
+            nullable: Some(true),
+            indexed: Some(filterable.indexed),
+            filterable: Some(true),
+            max_length: None,
+            precision: None,
+            scale: None,
+            vector_dimension: None,
+        });
     }
 
     // Get enforcement mode from record_schema if available
@@ -1330,6 +1322,88 @@ mod tests {
         assert!(!active.indexed);
         assert!(!active.supports_range);
         assert!(!config.filterable_columns.iter().any(|c| c.name == "secret"));
+    }
+
+    #[test]
+    fn build_existing_schema_round_trips_filterable_scalar_columns() {
+        use crate::proto::proximadb_v1::{FilterableColumnSpec, FilterableDataType as F};
+
+        let schema = SchemaDefinition {
+            columns: vec![
+                ColumnDefinition {
+                    name: "body".to_string(),
+                    data_type: "text".to_string(),
+                    ..blank_col()
+                },
+                ColumnDefinition {
+                    name: "price".to_string(),
+                    data_type: "float".to_string(),
+                    indexed: Some(true),
+                    filterable: Some(true),
+                    ..blank_col()
+                },
+                ColumnDefinition {
+                    name: "created_on".to_string(),
+                    data_type: "date".to_string(),
+                    filterable: Some(true),
+                    ..blank_col()
+                },
+            ],
+            enforcement: Some("hybrid".to_string()),
+            allow_additional_fields: Some(true),
+        };
+        let mut config = crate::proto::proximadb_v1::CollectionConfig::default();
+        apply_schema_definition(
+            &mut config,
+            &schema,
+            "schema_products_1".to_string(),
+            "1.0.0".to_string(),
+        );
+
+        let rebuilt = build_existing_schema(&config).expect("schema should rebuild");
+        let names_and_types = rebuilt
+            .columns
+            .iter()
+            .map(|c| {
+                (
+                    c.name.as_str(),
+                    c.data_type.as_str(),
+                    c.indexed,
+                    c.filterable,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert!(names_and_types.contains(&("body", "text", Some(false), Some(true))));
+        assert!(names_and_types.contains(&("price", "float", Some(true), Some(true))));
+        assert!(names_and_types.contains(&("created_on", "date", Some(false), Some(true))));
+
+        let mut legacy_config = crate::proto::proximadb_v1::CollectionConfig {
+            enable_proxima_record: Some(true),
+            filterable_columns: vec![FilterableColumnSpec {
+                name: "score".to_string(),
+                data_type: F::FilterableFloat as i32,
+                indexed: true,
+                supports_range: true,
+                estimated_cardinality: None,
+            }],
+            ..Default::default()
+        };
+        legacy_config.record_schema = Some(crate::proto::proximadb_v1::RecordSchemaConfig {
+            schema_id: "legacy".to_string(),
+            schema_version: "1.0.0".to_string(),
+            enforcement: 3,
+            auto_evolve: true,
+            columns: vec![],
+        });
+
+        let legacy = build_existing_schema(&legacy_config).expect("legacy schema should rebuild");
+        assert!(
+            legacy
+                .columns
+                .iter()
+                .any(|c| c.name == "score" && c.data_type == "float")
+        );
     }
 
     fn blank_col() -> ColumnDefinition {

@@ -29,11 +29,21 @@ from proximadb_sdk.models import (
 class FakeGrpcClient:
     """Stand-in for ProximaDBSyncGrpcClient that never opens a channel."""
 
-    def __init__(self, server_address, timeout=60.0, pool_size=5, max_message_size=0):
+    def __init__(
+        self,
+        server_address,
+        timeout=60.0,
+        pool_size=5,
+        max_message_size=0,
+        metadata=None,
+        use_tls=False,
+    ):
         self.server_address = server_address
         self.timeout = timeout
         self.pool_size = pool_size
         self.max_message_size = max_message_size
+        self.metadata = metadata
+        self.use_tls = use_tls
         self.closed = False
 
     def close(self):
@@ -94,6 +104,18 @@ def test_init_config_ignored_when_explicit_address():
     cfg = SimpleNamespace(url="http://example.com:9999", base_url=None)
     a = GrpcProtocolAdapter(server_address="custom:1234", config=cfg)
     assert a._server_address == "custom:1234"
+
+
+def test_init_forwards_config_metadata_and_tls():
+    cfg = SimpleNamespace(
+        url="https://secure.example:5679",
+        base_url=None,
+        tls=SimpleNamespace(verify=True),
+        get_grpc_metadata=lambda: [("authorization", "Bearer token")],
+    )
+    a = GrpcProtocolAdapter(config=cfg)
+    assert a._client.metadata == [("authorization", "Bearer token")]
+    assert a._client.use_tls is True
 
 
 # ---------------------------------------------------------------------------
