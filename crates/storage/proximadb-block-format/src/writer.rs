@@ -143,6 +143,12 @@ pub struct PaxBlockWriter {
     /// retained. Default from `PROXIMADB_PAX_DROP_TENANT_COL` (off) so the write
     /// format only changes once readers that stamp tenant are deployed.
     drop_tenant_col: bool,
+    /// Opt-in exact-f32 tier (P3 Phase D): when true + RaBitQ quant, the writer
+    /// ALSO emits the raw f32 embedding at `col_id::F32_TIER_BASE + i` (one
+    /// stripe per embedding column). Read LAZILY — only an exact final rerank or
+    /// `include_vectors` decodes it; id+score queries never touch it (zero scan /
+    /// egress cost when unused). Default OFF (set via `with_f32_tier`).
+    include_f32_tier: bool,
 
     // Accumulated column data
     oids: Vec<String>,
@@ -184,6 +190,7 @@ impl PaxBlockWriter {
             embedding_count,
             quant: VectorQuant::Auto,
             drop_tenant_col: drop_tenant_col_enabled(),
+            include_f32_tier: false,
             oids: Vec::new(),
             tenant_ids: Vec::new(),
             created_at: Vec::new(),
@@ -217,6 +224,15 @@ impl PaxBlockWriter {
     /// comes from `PROXIMADB_PAX_DROP_TENANT_COL`.
     pub fn with_drop_tenant_col(mut self, enabled: bool) -> Self {
         self.drop_tenant_col = enabled;
+        self
+    }
+
+    /// Enable (or disable) the optional exact-f32 tier (P3 Phase D). When true,
+    /// each RaBitQ-coded embedding also gets a co-located raw-f32 stripe at
+    /// `col_id::F32_TIER_BASE + i` for an exact final rerank / `include_vectors`.
+    /// Default OFF; the flush path enables it from the `pax_f32_tier` tag / env.
+    pub fn with_f32_tier(mut self, enabled: bool) -> Self {
+        self.include_f32_tier = enabled;
         self
     }
 
@@ -446,6 +462,17 @@ impl PaxBlockWriter {
                         self.build_sq8_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?;
                     stripes.push(rerank_stripe);
                     vparam_entries.push(rerank_entry);
+                }
+                // P3 Phase D f32 tier (opt-in): an exact-f32 copy of the embedding
+                // at `F32_TIER_BASE + i`, for an exact final rerank (→ recall ≈ 1.0)
+                // and exact `include_vectors`. The stripe is read LAZILY — id+score
+                // queries never decode it — so the only always-paid cost is the
+                // storage bytes (the egress/scan cost is paid only when used).
+                if self.include_f32_tier && is_rabitq {
+                    let (f32_stripe, f32_entry) =
+                        self.build_raw_f32_vec_stripe(col_id::F32_TIER_BASE + i as i32, &refs)?;
+                    stripes.push(f32_stripe);
+                    vparam_entries.push(f32_entry);
                 }
             }
         }
@@ -773,6 +800,55 @@ impl PaxBlockWriter {
             column_id: id,
             dim,
             quant_kind: QUANT_SQ8,
+            params,
+        };
+        Ok((ColumnStripe::new(meta, data), entry))
+    }
+
+    /// Build a raw-f32 vector stripe unconditionally (the optional exact-f32
+    /// tier). Mirrors [`build_sq8_vec_stripe`] but emits `QUANT_RAW_F32` (no
+    /// quantization) so the cascade can do an exact final rerank or
+    /// `include_vectors` can return exact vectors. Emitted only when the writer's
+    /// `include_f32_tier` flag is set (one stripe per embedding column).
+    fn build_raw_f32_vec_stripe(
+        &self,
+        id: i32,
+        vals: &[Option<&[f32]>],
+    ) -> Result<(ColumnStripe, VectorParamEntry)> {
+        let dim = vector_column_dim(vals)?;
+        let flat: Vec<f32> = vals
+            .iter()
+            .flatten()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        let params = functions::sq8::fit_params(&flat);
+        let data = encode_f32_vec_raw_v2(vals, dim);
+        let null_count = vals.iter().filter(|v| v.is_none()).count() as u32;
+        let meta = ColumnMeta {
+            column_id: id,
+            role: ColumnRole::Vector,
+            data_type_id: 0x01, // F32
+            encoding_id: ProximaScheme::Raw.to_marker(),
+            nullable: true,
+            has_bloom: false,
+            is_sorted: false,
+            stripe_offset: 0,
+            stripe_len: data.len() as u32,
+            null_count,
+            distinct_hint: vals
+                .iter()
+                .filter(|value| value.is_some())
+                .count()
+                .min(u32::MAX as usize) as u32,
+            min_val: [0u8; 16],
+            max_val: [0u8; 16],
+            bloom_offset: 0,
+            bloom_len: 0,
+        };
+        let entry = VectorParamEntry {
+            column_id: id,
+            dim,
+            quant_kind: QUANT_RAW_F32,
             params,
         };
         Ok((ColumnStripe::new(meta, data), entry))

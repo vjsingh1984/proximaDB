@@ -502,6 +502,9 @@ pub struct PaxSegmentWriter {
     block_size_threshold: usize,
     /// Vector quantization strategy for every block in this segment (P3 Phase D).
     quant: VectorQuant,
+    /// Opt-in exact-f32 tier (P3 Phase D) — re-applied to every block writer so
+    /// each block carries the f32 stripe when enabled.
+    f32_tier: bool,
 
     current_writer: PaxBlockWriter,
     index: SegmentIndex,
@@ -546,6 +549,7 @@ impl PaxSegmentWriter {
             embedding_count,
             block_size_threshold: threshold,
             quant: VectorQuant::Auto,
+            f32_tier: false,
             current_writer: writer,
             index: SegmentIndex { blocks: Vec::new() },
             block_stats: Vec::new(),
@@ -566,7 +570,26 @@ impl PaxSegmentWriter {
             self.schema_fingerprint,
             self.embedding_count,
         )
-        .with_quant(quant);
+        .with_quant(quant)
+        .with_f32_tier(self.f32_tier);
+        self
+    }
+
+    /// Enable (or disable) the optional exact-f32 tier (P3 Phase D) for every
+    /// block in this segment. Builder form mirroring [`with_quant`]; rebuilds the
+    /// (still-empty) current block writer so it applies from the first record.
+    /// Default OFF; the flush path enables it from the `pax_f32_tier` tag / env.
+    pub fn with_f32_tier(mut self, enabled: bool) -> Self {
+        self.f32_tier = enabled;
+        self.current_writer = PaxBlockWriter::new(
+            self.mode,
+            self.compression,
+            &self.collection_id,
+            self.schema_fingerprint,
+            self.embedding_count,
+        )
+        .with_quant(self.quant)
+        .with_f32_tier(enabled);
         self
     }
 
@@ -623,7 +646,7 @@ impl PaxSegmentWriter {
         self.file_buf.extend_from_slice(&block_bytes);
         self.block_stats.push(stats);
 
-        // Reset writer for the next block (preserving the segment's quant strategy).
+        // Reset writer for the next block (preserving the segment's quant + f32-tier strategy).
         self.current_writer = PaxBlockWriter::new(
             self.mode,
             self.compression,
@@ -631,7 +654,8 @@ impl PaxSegmentWriter {
             self.schema_fingerprint,
             self.embedding_count,
         )
-        .with_quant(self.quant);
+        .with_quant(self.quant)
+        .with_f32_tier(self.f32_tier);
         Ok(())
     }
 
