@@ -758,7 +758,7 @@ mod tests {
 
         // Baseline: no prune — scans every block.
         let baseline = rt.block_on(crate::observability::io_trace::scope(async {
-            let hits = rabitq_search_segment(&bytes, &query, K, POOL, None)
+            let hits = rabitq_search_segment(&bytes, &query, K, POOL, RankMetric::L2, None)
                 .unwrap()
                 .expect("PAX+RaBitQ segment");
             let snap = crate::observability::io_trace::snapshot().unwrap();
