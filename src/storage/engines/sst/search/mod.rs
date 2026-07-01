@@ -245,9 +245,21 @@ impl SstEngine {
         query_vector: &[f32],
         filter_expression: Option<&FilterExpression>,
         k: usize,
+        distance_metric: DistanceMetric,
     ) -> anyhow::Result<Option<Vec<OptimizedSearchRecord>>> {
         use crate::storage::engines::sst::segment_format::{
             MetaPrune, pax_field_to_col, rabitq_search_segment,
+        };
+        use proximadb_block_format::RankMetric;
+        // Map the query metric to a cascade rank metric. Dot/max-IP and exotic
+        // metrics stay on the generic scan (unvalidated recall / score polarity);
+        // the caller gate only routes Euclidean + Cosine here.
+        let Some(rank_metric) = (match distance_metric {
+            DistanceMetric::Euclidean => Some(RankMetric::L2),
+            DistanceMetric::Cosine => Some(RankMetric::Cosine),
+            _ => None,
+        }) else {
+            return Ok(None);
         };
         // Read the segment bytes once; the generic-scan branch uses the sstable
         // reader instead, so this read is exclusive to the cascade (no double-read).
@@ -264,16 +276,19 @@ impl SstEngine {
             filter,
             field_to_col: &pax_field_to_col,
         });
-        let Some(hits) = rabitq_search_segment(&bytes, query_vector, k, pool, prune)? else {
+        let Some(hits) = rabitq_search_segment(&bytes, query_vector, k, pool, rank_metric, prune)?
+        else {
             return Ok(None); // not PAX / no RaBitQ → caller falls back
         };
-        let metric = DistanceMetric::Euclidean;
         let records = hits
             .into_iter()
             .map(|h| {
                 OptimizedSearchRecord::new(
                     h.oid,
-                    OptimizedSearchRecord::standardized_distance_to_similarity(h.distance, &metric),
+                    OptimizedSearchRecord::standardized_distance_to_similarity(
+                        h.distance,
+                        &distance_metric,
+                    ),
                 )
             })
             .collect();
@@ -924,30 +939,39 @@ impl SstEngine {
             );
 
             // PAX RaBitQ→SQ8 cascade (PAX Phase 2 read-side wiring): try it first
-            // for `.pax` segments under the validated Euclidean metric. The generic
-            // dispatch below handles every other case — `.arrow`, legacy `.sst`, AND
-            // `.pax` under other metrics or any cascade miss (not-PAX / no RaBitQ /
-            // error) — so this is additive and mixed-read-safe.
-            let pax_cascade: Option<Vec<OptimizedSearchRecord>> =
-                if sstable_path.ends_with(".pax") && distance_metric == DistanceMetric::Euclidean {
-                    match self
-                        .try_pax_cascade(sstable_path, query_vector, filter_expression, k)
-                        .await
-                    {
-                        Ok(Some(records)) => Some(records),
-                        Ok(None) => None,
-                        Err(e) => {
-                            warn!(
-                                file = %sstable_path,
-                                error = %e,
-                                "PAX cascade unavailable; falling back to generic scan"
-                            );
-                            None
-                        }
+            // for `.pax` segments under a validated metric (Euclidean or Cosine).
+            // The generic dispatch below handles every other case — `.arrow`, legacy
+            // `.sst`, AND `.pax` under Dot/other metrics or any cascade miss
+            // (not-PAX / no RaBitQ / error) — so this is additive and mixed-read-safe.
+            let pax_cascade: Option<Vec<OptimizedSearchRecord>> = if sstable_path.ends_with(".pax")
+                && matches!(
+                    distance_metric,
+                    DistanceMetric::Euclidean | DistanceMetric::Cosine
+                ) {
+                match self
+                    .try_pax_cascade(
+                        sstable_path,
+                        query_vector,
+                        filter_expression,
+                        k,
+                        distance_metric,
+                    )
+                    .await
+                {
+                    Ok(Some(records)) => Some(records),
+                    Ok(None) => None,
+                    Err(e) => {
+                        warn!(
+                            file = %sstable_path,
+                            error = %e,
+                            "PAX cascade unavailable; falling back to generic scan"
+                        );
+                        None
                     }
-                } else {
-                    None
-                };
+                }
+            } else {
+                None
+            };
 
             // Dispatch based on file format (Arrow vs ProximaBlocks); the PAX
             // cascade short-circuits above when it applies.

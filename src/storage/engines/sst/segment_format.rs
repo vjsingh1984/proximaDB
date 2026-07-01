@@ -22,7 +22,9 @@ use std::path::Path;
 
 use anyhow::Result;
 use proximadb_block_format::prune::{FieldToColumn, PruneResult, evaluate_block};
-use proximadb_block_format::{BLOCK_MAGIC, BlockCompression, BlockMode, VectorQuant, col_id};
+use proximadb_block_format::{
+    BLOCK_MAGIC, BlockCompression, BlockMode, RankMetric, VectorQuant, col_id,
+};
 use proximadb_filter_expression::FilterExpression;
 use proximadb_records::ProximaRecord;
 use proximadb_storage_common::pax_block::{
@@ -232,6 +234,7 @@ pub fn rabitq_search_segment(
     query: &[f32],
     k: usize,
     pool: usize,
+    metric: RankMetric,
     prune: Option<MetaPrune<'_>>,
 ) -> Result<Option<Vec<CascadeHit>>> {
     use crate::observability::io_trace;
@@ -257,7 +260,7 @@ pub fn rabitq_search_segment(
         // Stage 1: RaBitQ candidate prefilter on the hot codes column. A block
         // whose EMBED_BASE isn't RaBitQ-encoded yields `None` and is skipped
         // (mixed-quant segments stay safe).
-        let Some(cand) = block.rabitq_rank(query, pool) else {
+        let Some(cand) = block.rabitq_rank(query, pool, metric) else {
             continue;
         };
         any_rabitq = true;
@@ -280,12 +283,14 @@ pub fn rabitq_search_segment(
 
         // Stage 2: SQ8 cascade rerank over ONLY the candidate rows (no f32 GET).
         // Without a co-located SQ8 column, keep the RaBitQ-coarse order.
-        let scored = block.rerank_rows(0, query, &cand).unwrap_or_else(|| {
-            cand.iter()
-                .enumerate()
-                .map(|(rank, &row)| (row, rank as f32))
-                .collect()
-        });
+        let scored = block
+            .rerank_rows(0, query, &cand, metric)
+            .unwrap_or_else(|| {
+                cand.iter()
+                    .enumerate()
+                    .map(|(rank, &row)| (row, rank as f32))
+                    .collect()
+            });
         let oids = block.decode_str_stripe(col_id::OID);
         for (row, dist) in scored.into_iter().take(k) {
             let oid = oids
@@ -648,7 +653,7 @@ mod tests {
                     .map(|(v, n)| v + n * 0.01)
                     .collect();
 
-                let hits = rabitq_search_segment(&bytes, &query, K, POOL, None)
+                let hits = rabitq_search_segment(&bytes, &query, K, POOL, RankMetric::L2, None)
                     .unwrap()
                     .expect("PAX+RaBitQ segment must run the cascade");
                 let got: std::collections::HashSet<String> =
@@ -687,7 +692,7 @@ mod tests {
         .serialize()
         .unwrap();
         assert!(
-            rabitq_search_segment(&legacy, &vec![0.0; DIM], K, POOL, None)
+            rabitq_search_segment(&legacy, &vec![0.0; DIM], K, POOL, RankMetric::L2, None)
                 .unwrap()
                 .is_none(),
             "non-PAX input must return None (caller falls back)"
@@ -779,7 +784,7 @@ mod tests {
 
         // Baseline: no prune — scans every block.
         let baseline = rt.block_on(crate::observability::io_trace::scope(async {
-            let hits = rabitq_search_segment(&bytes, &query, K, POOL, None)
+            let hits = rabitq_search_segment(&bytes, &query, K, POOL, RankMetric::L2, None)
                 .unwrap()
                 .expect("PAX+RaBitQ segment");
             let snap = crate::observability::io_trace::snapshot().unwrap();
@@ -792,7 +797,7 @@ mod tests {
                 filter: &filter,
                 field_to_col: &f2c,
             };
-            let hits = rabitq_search_segment(&bytes, &query, K, POOL, Some(mp))
+            let hits = rabitq_search_segment(&bytes, &query, K, POOL, RankMetric::L2, Some(mp))
                 .unwrap()
                 .expect("PAX+RaBitQ segment");
             let snap = crate::observability::io_trace::snapshot().unwrap();
