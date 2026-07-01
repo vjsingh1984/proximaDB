@@ -309,6 +309,7 @@ docs/log/
 !config/tier-config.json
 !config/tier-config.example.json
 !docs/_internal/roadmap/PANIC_POLICY_BASELINE.json
+!docs/_internal/roadmap/V1_PROTO_USAGE_BASELINE.json
 !clients/**/package.json
 !clients/**/tsconfig.json
 !clients/**/tsconfig.*.json
