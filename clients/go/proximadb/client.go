@@ -549,6 +549,9 @@ func withRetry[T any](ctx context.Context, config *Config, fn func() (T, error))
 	var err error
 
 	delay := config.RetryDelay
+	if config.MaxRetryDelay > 0 && delay > config.MaxRetryDelay {
+		delay = config.MaxRetryDelay
+	}
 	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
 		result, err = fn()
 		if err == nil {
@@ -577,6 +580,9 @@ func withRetry[T any](ctx context.Context, config *Config, fn func() (T, error))
 			case <-timer.C:
 				// Exponential backoff
 				delay *= 2
+				if config.MaxRetryDelay > 0 && delay > config.MaxRetryDelay {
+					delay = config.MaxRetryDelay
+				}
 			}
 		}
 	}

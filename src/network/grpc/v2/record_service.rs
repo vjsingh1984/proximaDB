@@ -44,8 +44,13 @@ use crate::services::operations::BatchOperationResult;
 use crate::services::{
     WriteDurabilityRequirement, WriteIntent, WriteLaneRouter, WriteOperationKind,
 };
+use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
 use proximadb_records::proto_v2::{
     proto_record_to_envelope, proxima_value_to_typed_value, typed_value_to_proxima,
+};
+use proximadb_runtime::{
+    CollectionSchemaColumn, CollectionSchemaEnforcement, CollectionSchemaMetadata,
+    CollectionSchemaUpdate, CollectionTextStorage,
 };
 
 /// gRPC V2 ProximaRecord service implementation
@@ -126,6 +131,303 @@ fn check_primary_pod_gate(
             };
             Err(api_err.into())
         }
+    }
+}
+
+fn grpc_record_schema_to_runtime_update(
+    collection_id: &str,
+    schema: proximadb_v2::RecordSchema,
+) -> Result<CollectionSchemaUpdate, Status> {
+    let schema_id = if schema.schema_id.is_empty() {
+        format!("schema_{}_{}", collection_id, uuid::Uuid::new_v4())
+    } else {
+        schema.schema_id
+    };
+    let schema_version = if schema.schema_version.is_empty() {
+        "1.0.0".to_string()
+    } else {
+        schema.schema_version
+    };
+
+    let mut columns = Vec::with_capacity(schema.columns.len());
+    for column in schema.columns {
+        let name = column.name.clone();
+        let (data_type, text_storage) = grpc_column_type_to_proxima_type(&column)?;
+        columns.push(CollectionSchemaColumn {
+            name,
+            data_type,
+            nullable: column.nullable,
+            indexed: column.indexed,
+            filterable: column.filterable,
+            text_storage,
+            max_length: column.max_length,
+        });
+    }
+
+    Ok(CollectionSchemaUpdate {
+        schema_id,
+        schema_version,
+        enforcement: grpc_enforcement_to_runtime(schema.enforcement_mode),
+        auto_evolve: schema.allow_additional_fields,
+        columns,
+    })
+}
+
+fn runtime_metadata_to_grpc_schema(
+    metadata: &CollectionSchemaMetadata,
+) -> proximadb_v2::RecordSchema {
+    let columns = metadata
+        .columns
+        .iter()
+        .map(|column| proximadb_v2::TypedColumn {
+            name: column.name.clone(),
+            data_type: proxima_type_to_grpc_column_type(&column.data_type, column.text_storage)
+                as i32,
+            nullable: column.nullable,
+            indexed: column.indexed,
+            filterable: column.filterable,
+            unique: false,
+            max_length: column.max_length,
+            min_length: None,
+            min_value: None,
+            max_value: None,
+            min_float_value: None,
+            max_float_value: None,
+            regex_pattern: None,
+            default_value: None,
+            decimal_precision: match &column.data_type {
+                ProximaType::Decimal { precision, .. } => Some(*precision as u32),
+                _ => None,
+            },
+            decimal_scale: match &column.data_type {
+                ProximaType::Decimal { scale, .. } => Some(*scale as u32),
+                _ => None,
+            },
+            array_max_items: None,
+            json_max_depth: None,
+            json_schema: None,
+            timezone: None,
+            text_storage_strategy: None,
+            enable_fulltext_index: None,
+            enable_ngram_bloom: None,
+            ngram_size: None,
+            description: None,
+            annotations: HashMap::new(),
+        })
+        .collect::<Vec<_>>();
+
+    proximadb_v2::RecordSchema {
+        schema_id: metadata
+            .schema_id
+            .clone()
+            .unwrap_or_else(|| format!("schema_{}", metadata.collection_id)),
+        schema_version: metadata
+            .schema_version
+            .clone()
+            .unwrap_or_else(|| "1.0.0".to_string()),
+        schema_name: String::new(),
+        columns,
+        enforcement_mode: runtime_enforcement_to_grpc(metadata.enforcement.unwrap_or_default())
+            as i32,
+        allow_additional_fields: metadata.auto_evolve,
+        parent_schema_id: None,
+        evolution_rules: Vec::new(),
+        created_at: metadata.created_at_ms,
+        created_by: None,
+        description: None,
+        annotations: HashMap::new(),
+    }
+}
+
+fn grpc_enforcement_to_runtime(value: i32) -> CollectionSchemaEnforcement {
+    match proximadb_v2::SchemaEnforcementMode::try_from(value)
+        .unwrap_or(proximadb_v2::SchemaEnforcementMode::Hybrid)
+    {
+        proximadb_v2::SchemaEnforcementMode::Strict => CollectionSchemaEnforcement::Strict,
+        proximadb_v2::SchemaEnforcementMode::Flexible => CollectionSchemaEnforcement::Flexible,
+        _ => CollectionSchemaEnforcement::Hybrid,
+    }
+}
+
+fn runtime_enforcement_to_grpc(
+    value: CollectionSchemaEnforcement,
+) -> proximadb_v2::SchemaEnforcementMode {
+    match value {
+        CollectionSchemaEnforcement::Strict => proximadb_v2::SchemaEnforcementMode::Strict,
+        CollectionSchemaEnforcement::Flexible => proximadb_v2::SchemaEnforcementMode::Flexible,
+        CollectionSchemaEnforcement::Hybrid => proximadb_v2::SchemaEnforcementMode::Hybrid,
+    }
+}
+
+fn grpc_column_type_to_proxima_type(
+    column: &proximadb_v2::TypedColumn,
+) -> Result<(ProximaType, Option<CollectionTextStorage>), Status> {
+    let data_type = proximadb_v2::ColumnDataType::try_from(column.data_type)
+        .unwrap_or(proximadb_v2::ColumnDataType::ColumnTypeUnspecified);
+    let ty = match data_type {
+        proximadb_v2::ColumnDataType::ColumnTypeUnspecified => {
+            return Err(Status::invalid_argument(format!(
+                "Schema column '{}' has unspecified datatype",
+                column.name
+            )));
+        }
+        proximadb_v2::ColumnDataType::Text => {
+            return Ok((ProximaType::String, Some(CollectionTextStorage::Inline)));
+        }
+        proximadb_v2::ColumnDataType::TextLarge => {
+            return Ok((ProximaType::String, Some(CollectionTextStorage::Large)));
+        }
+        proximadb_v2::ColumnDataType::Integer => ProximaType::Int64,
+        proximadb_v2::ColumnDataType::Float => ProximaType::Float64,
+        proximadb_v2::ColumnDataType::Decimal => {
+            let precision = column.decimal_precision.unwrap_or(38);
+            let scale = column.decimal_scale.unwrap_or(18);
+            if precision == 0 || precision > 38 {
+                return Err(Status::invalid_argument(format!(
+                    "Schema column '{}' decimal precision must be between 1 and 38",
+                    column.name
+                )));
+            }
+            if scale > precision {
+                return Err(Status::invalid_argument(format!(
+                    "Schema column '{}' decimal scale cannot exceed precision",
+                    column.name
+                )));
+            }
+            ProximaType::Decimal {
+                precision: precision as u8,
+                scale: scale as u8,
+            }
+        }
+        proximadb_v2::ColumnDataType::Boolean => ProximaType::Boolean,
+        proximadb_v2::ColumnDataType::Timestamp => ProximaType::Timestamp(TimeUnit::Nanosecond),
+        proximadb_v2::ColumnDataType::TimestampTz => ProximaType::TimestampTz(TimeUnit::Nanosecond),
+        proximadb_v2::ColumnDataType::Date => ProximaType::Date,
+        proximadb_v2::ColumnDataType::Time => ProximaType::Time(TimeUnit::Nanosecond),
+        proximadb_v2::ColumnDataType::Duration => ProximaType::Duration(TimeUnit::Nanosecond),
+        proximadb_v2::ColumnDataType::Interval => ProximaType::Interval(TimeUnit::Nanosecond),
+        proximadb_v2::ColumnDataType::Uuid => ProximaType::Uuid,
+        proximadb_v2::ColumnDataType::Binary | proximadb_v2::ColumnDataType::BinaryLarge => {
+            ProximaType::Binary
+        }
+        proximadb_v2::ColumnDataType::Json => ProximaType::Json,
+        proximadb_v2::ColumnDataType::ArrayText => {
+            ProximaType::Array(Box::new(ProximaType::String))
+        }
+        proximadb_v2::ColumnDataType::ArrayInteger => {
+            ProximaType::Array(Box::new(ProximaType::Int64))
+        }
+        proximadb_v2::ColumnDataType::ArrayFloat => {
+            ProximaType::Array(Box::new(ProximaType::Float64))
+        }
+        proximadb_v2::ColumnDataType::ArrayBoolean => {
+            ProximaType::Array(Box::new(ProximaType::Boolean))
+        }
+        proximadb_v2::ColumnDataType::ArrayUuid => ProximaType::Array(Box::new(ProximaType::Uuid)),
+        proximadb_v2::ColumnDataType::ArrayAny => ProximaType::Array(Box::new(ProximaType::Json)),
+        proximadb_v2::ColumnDataType::MapStringString => ProximaType::Map {
+            key: Box::new(ProximaType::String),
+            value: Box::new(ProximaType::String),
+        },
+        proximadb_v2::ColumnDataType::MapStringAny => ProximaType::Map {
+            key: Box::new(ProximaType::String),
+            value: Box::new(ProximaType::Json),
+        },
+        proximadb_v2::ColumnDataType::MapStringInteger => ProximaType::Map {
+            key: Box::new(ProximaType::String),
+            value: Box::new(ProximaType::Int64),
+        },
+        proximadb_v2::ColumnDataType::MapStringFloat => ProximaType::Map {
+            key: Box::new(ProximaType::String),
+            value: Box::new(ProximaType::Float64),
+        },
+        proximadb_v2::ColumnDataType::GeoPoint => ProximaType::Point,
+        proximadb_v2::ColumnDataType::GeoPolygon => ProximaType::GeographyPoint,
+        proximadb_v2::ColumnDataType::Vector => ProximaType::DenseVector {
+            element: VectorElement::Float32,
+            dim: 0,
+        },
+        proximadb_v2::ColumnDataType::SparseVector => ProximaType::SparseVector {
+            element: VectorElement::Float32,
+        },
+        proximadb_v2::ColumnDataType::Int8 => ProximaType::Int8,
+        proximadb_v2::ColumnDataType::Int16 => ProximaType::Int16,
+        proximadb_v2::ColumnDataType::Int32 => ProximaType::Int32,
+        proximadb_v2::ColumnDataType::Uint8 => ProximaType::UInt8,
+        proximadb_v2::ColumnDataType::Uint16 => ProximaType::UInt16,
+        proximadb_v2::ColumnDataType::Uint32 => ProximaType::UInt32,
+        proximadb_v2::ColumnDataType::Uint64 => ProximaType::UInt64,
+        proximadb_v2::ColumnDataType::Float32 => ProximaType::Float32,
+        proximadb_v2::ColumnDataType::Symbol => ProximaType::Symbol,
+        proximadb_v2::ColumnDataType::Jsonb => ProximaType::Jsonb,
+        proximadb_v2::ColumnDataType::Ulid => ProximaType::ULID,
+        proximadb_v2::ColumnDataType::Struct => ProximaType::Struct { fields: Vec::new() },
+        proximadb_v2::ColumnDataType::BinaryVector => ProximaType::BinaryVector { dim: 0 },
+    };
+    Ok((ty, None))
+}
+
+fn proxima_type_to_grpc_column_type(
+    value: &ProximaType,
+    text_storage: Option<CollectionTextStorage>,
+) -> proximadb_v2::ColumnDataType {
+    match value {
+        ProximaType::String => match text_storage {
+            Some(CollectionTextStorage::Large) => proximadb_v2::ColumnDataType::TextLarge,
+            _ => proximadb_v2::ColumnDataType::Text,
+        },
+        ProximaType::Int8 => proximadb_v2::ColumnDataType::Int8,
+        ProximaType::Int16 => proximadb_v2::ColumnDataType::Int16,
+        ProximaType::Int32 => proximadb_v2::ColumnDataType::Int32,
+        ProximaType::Int64 => proximadb_v2::ColumnDataType::Integer,
+        ProximaType::UInt8 => proximadb_v2::ColumnDataType::Uint8,
+        ProximaType::UInt16 => proximadb_v2::ColumnDataType::Uint16,
+        ProximaType::UInt32 => proximadb_v2::ColumnDataType::Uint32,
+        ProximaType::UInt64 => proximadb_v2::ColumnDataType::Uint64,
+        ProximaType::Float16 | ProximaType::Float32 => proximadb_v2::ColumnDataType::Float32,
+        ProximaType::Float64 => proximadb_v2::ColumnDataType::Float,
+        ProximaType::Decimal { .. } => proximadb_v2::ColumnDataType::Decimal,
+        ProximaType::Boolean => proximadb_v2::ColumnDataType::Boolean,
+        ProximaType::Timestamp(_) => proximadb_v2::ColumnDataType::Timestamp,
+        ProximaType::TimestampTz(_) => proximadb_v2::ColumnDataType::TimestampTz,
+        ProximaType::Date => proximadb_v2::ColumnDataType::Date,
+        ProximaType::Time(_) => proximadb_v2::ColumnDataType::Time,
+        ProximaType::Duration(_) => proximadb_v2::ColumnDataType::Duration,
+        ProximaType::Interval(_) => proximadb_v2::ColumnDataType::Interval,
+        ProximaType::Uuid => proximadb_v2::ColumnDataType::Uuid,
+        ProximaType::ULID => proximadb_v2::ColumnDataType::Ulid,
+        ProximaType::Binary => proximadb_v2::ColumnDataType::Binary,
+        ProximaType::Json => proximadb_v2::ColumnDataType::Json,
+        ProximaType::Jsonb => proximadb_v2::ColumnDataType::Jsonb,
+        ProximaType::Array(inner) => match inner.as_ref() {
+            ProximaType::String => proximadb_v2::ColumnDataType::ArrayText,
+            ProximaType::Int64 => proximadb_v2::ColumnDataType::ArrayInteger,
+            ProximaType::Float64 => proximadb_v2::ColumnDataType::ArrayFloat,
+            ProximaType::Boolean => proximadb_v2::ColumnDataType::ArrayBoolean,
+            ProximaType::Uuid => proximadb_v2::ColumnDataType::ArrayUuid,
+            _ => proximadb_v2::ColumnDataType::ArrayAny,
+        },
+        ProximaType::Map { key, value } => match (key.as_ref(), value.as_ref()) {
+            (ProximaType::String, ProximaType::String) => {
+                proximadb_v2::ColumnDataType::MapStringString
+            }
+            (ProximaType::String, ProximaType::Int64) => {
+                proximadb_v2::ColumnDataType::MapStringInteger
+            }
+            (ProximaType::String, ProximaType::Float64) => {
+                proximadb_v2::ColumnDataType::MapStringFloat
+            }
+            (ProximaType::String, _) => proximadb_v2::ColumnDataType::MapStringAny,
+            _ => proximadb_v2::ColumnDataType::MapStringAny,
+        },
+        ProximaType::Struct { .. } => proximadb_v2::ColumnDataType::Struct,
+        ProximaType::Point => proximadb_v2::ColumnDataType::GeoPoint,
+        ProximaType::GeographyPoint => proximadb_v2::ColumnDataType::GeoPolygon,
+        ProximaType::DenseVector { .. } => proximadb_v2::ColumnDataType::Vector,
+        ProximaType::SparseVector { .. } => proximadb_v2::ColumnDataType::SparseVector,
+        ProximaType::BinaryVector { .. } => proximadb_v2::ColumnDataType::BinaryVector,
+        ProximaType::Symbol => proximadb_v2::ColumnDataType::Symbol,
+        ProximaType::Null => proximadb_v2::ColumnDataType::Json,
     }
 }
 
@@ -1560,49 +1862,23 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let req = request.into_inner();
         info!("V2 gRPC: CreateSchema - collection='{}'", req.collection_id);
 
-        // Get collection to verify it exists
-        let collection_request = CollectionRequest {
-            operation: CollectionOperation::CollectionGet as i32,
-            collection_id: Some(req.collection_id.clone()),
-            collection_config: None,
-            query_params: Default::default(),
-            options: Default::default(),
-            migration_config: Default::default(),
-        };
+        let schema = req
+            .schema
+            .ok_or_else(|| Status::invalid_argument("schema is required"))?;
+        let update = grpc_record_schema_to_runtime_update(&req.collection_id, schema)?;
+        let schema_id = update.schema_id.clone();
 
-        let collection_response = self
-            .api_handlers
-            .handle_collection_operation_for_tenant(collection_request, tenant_id.as_deref())
+        self.api_handlers
+            .update_collection_schema_metadata(&req.collection_id, update, tenant_id.as_deref())
             .await
             .map_err(|e| {
                 if e.to_string().contains("not found") {
                     Status::not_found(format!("Collection not found: {}", req.collection_id))
                 } else {
-                    Status::internal(format!("Failed to get collection: {}", e))
+                    Status::internal(format!("Failed to create schema: {}", e))
                 }
             })?;
 
-        if collection_response.collection.is_none() {
-            return Err(Status::not_found(format!(
-                "Collection not found: {}",
-                req.collection_id
-            )));
-        }
-
-        // Generate schema ID
-        let schema_id = req.schema.as_ref().map_or_else(
-            || format!("schema_{}_{}", req.collection_id, uuid::Uuid::new_v4()),
-            |s| {
-                if s.schema_id.is_empty() {
-                    format!("schema_{}_{}", req.collection_id, uuid::Uuid::new_v4())
-                } else {
-                    s.schema_id.clone()
-                }
-            },
-        );
-
-        // For now, we don't persist the schema separately - it's stored in collection config
-        // A full implementation would update the collection's record_schema config
         Ok(Response::new(CreateSchemaResponse {
             success: true,
             schema_id,
@@ -1619,61 +1895,29 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let req = request.into_inner();
         debug!("V2 gRPC: GetSchema - collection='{}'", req.collection_id);
 
-        // Get collection to retrieve schema
-        let collection_request = CollectionRequest {
-            operation: CollectionOperation::CollectionGet as i32,
-            collection_id: Some(req.collection_id.clone()),
-            collection_config: None,
-            query_params: Default::default(),
-            options: Default::default(),
-            migration_config: Default::default(),
-        };
-
-        let collection_response = self
+        let metadata = self
             .api_handlers
-            .handle_collection_operation_for_tenant(collection_request, tenant_id.as_deref())
+            .get_collection_schema_metadata(&req.collection_id, tenant_id.as_deref())
             .await
             .map_err(|e| {
                 if e.to_string().contains("not found") {
                     Status::not_found(format!("Collection not found: {}", req.collection_id))
                 } else {
-                    Status::internal(format!("Failed to get collection: {}", e))
+                    Status::internal(format!("Failed to get collection schema: {}", e))
                 }
+            })?
+            .ok_or_else(|| {
+                Status::not_found(format!("Collection not found: {}", req.collection_id))
             })?;
 
-        let collection = collection_response.collection.ok_or_else(|| {
-            Status::not_found(format!("Collection not found: {}", req.collection_id))
-        })?;
-
-        let config = collection
-            .config
-            .ok_or_else(|| Status::internal("Collection has no configuration"))?;
-
-        // Build schema from collection config
-        if !config.enable_proxima_record.unwrap_or(false) && config.record_schema.is_none() {
+        if !metadata.enabled {
             return Err(Status::not_found(format!(
                 "No schema defined for collection '{}'. Enable ProximaRecord to use schemas.",
                 req.collection_id
             )));
         }
 
-        // Build schema from record_schema config
-        let schema = config.record_schema.map(|schema_config| {
-            proximadb_v2::RecordSchema {
-                schema_id: schema_config.schema_id,
-                schema_version: schema_config.schema_version,
-                schema_name: String::new(),
-                columns: vec![], // Would need to convert columns
-                enforcement_mode: schema_config.enforcement,
-                allow_additional_fields: schema_config.auto_evolve,
-                parent_schema_id: None,
-                evolution_rules: vec![],
-                created_at: collection.created_at,
-                created_by: None,
-                description: None,
-                annotations: HashMap::new(),
-            }
-        });
+        let schema = Some(runtime_metadata_to_grpc_schema(&metadata));
 
         Ok(Response::new(GetSchemaResponse {
             success: true,
@@ -1687,34 +1931,31 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ListSchemasRequest>,
     ) -> Result<Response<ListSchemasResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let req = request.into_inner();
         debug!("V2 gRPC: ListSchemas - collection='{}'", req.collection_id);
 
-        // Get collection schema (currently only one schema per collection)
-        let get_req = GetSchemaRequest {
-            collection_id: req.collection_id.clone(),
-            schema_id: None,
-        };
+        let metadata = self
+            .api_handlers
+            .get_collection_schema_metadata(&req.collection_id, tenant_id.as_deref())
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("not found") {
+                    Status::not_found(format!("Collection not found: {}", req.collection_id))
+                } else {
+                    Status::internal(format!("Failed to list schemas: {}", e))
+                }
+            })?;
 
-        match self.get_schema(Request::new(get_req)).await {
-            Ok(resp) => {
-                let schemas = resp.into_inner().schema.into_iter().collect::<Vec<_>>();
-                let total_count = schemas.len() as i64;
-
-                Ok(Response::new(ListSchemasResponse {
-                    schemas,
-                    total_count,
-                }))
-            }
-            Err(e) if e.code() == tonic::Code::NotFound => {
-                // No schema defined - return empty list
-                Ok(Response::new(ListSchemasResponse {
-                    schemas: vec![],
-                    total_count: 0,
-                }))
-            }
-            Err(e) => Err(e),
-        }
+        let schemas = metadata
+            .filter(|metadata| metadata.enabled)
+            .map(|metadata| vec![runtime_metadata_to_grpc_schema(&metadata)])
+            .unwrap_or_default();
+        let total_count = schemas.len() as i64;
+        Ok(Response::new(ListSchemasResponse {
+            schemas,
+            total_count,
+        }))
     }
 
     /// Evolve schema with compatibility checks

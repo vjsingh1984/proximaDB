@@ -2277,32 +2277,26 @@ impl PartitionLeaseManager {
     /// A6 storage-write fence decision: is THIS pod fenced out of writing
     /// `(tenant, collection)` to shared storage at `now_ms`?
     ///
-    /// Returns `true` iff a *live* lease (not released, not expired) is held by a
+    /// Returns `Ok(true)` iff a *live* lease (not released, not expired) is held by a
     /// **different** pod — i.e. a takeover has displaced this pod, so a flush from
-    /// it would publish stale data and must be rejected. Fail-open (`false`) when
-    /// no lease exists, the lease is released/expired, or the durable read errors:
-    /// the lease stack's bootstrap posture is fail-open, and the registry/admission
-    /// layer (lease-on-write) is the first line — this is the boundary backstop.
+    /// it would publish stale data and must be rejected. Durable read errors are
+    /// propagated so the storage fence can fail closed when enforcement is enabled.
     ///
     /// NOTE: this is the fence *primitive*. Wiring it at the live storage-write
     /// boundary is gated on the flush-path convergence (the server vector-flush
     /// path is currently stubbed; see the A6 TD / LEASE_FENCE_REREVIEW doc).
-    pub async fn is_fenced_out(&self, tenant_id: &str, collection_id: &str, now_ms: i64) -> bool {
+    pub async fn is_fenced_out(
+        &self,
+        tenant_id: &str,
+        collection_id: &str,
+        now_ms: i64,
+    ) -> Result<bool> {
         match self.current_holder(tenant_id, collection_id).await {
-            Ok(Some((_version, lease))) => {
-                !lease.released && !lease.is_expired(now_ms) && lease.holder_pod != self.self_pod_id
-            }
-            Ok(None) => false,
-            Err(e) => {
-                tracing::warn!(
-                    target: "proximadb.fence",
-                    tenant_id = %tenant_id,
-                    collection_id = %collection_id,
-                    error = %e,
-                    "A6 fence: durable lease read failed; failing open"
-                );
-                false
-            }
+            Ok(Some((_version, lease))) => Ok(!lease.released
+                && !lease.is_expired(now_ms)
+                && lease.holder_pod != self.self_pod_id),
+            Ok(None) => Ok(false),
+            Err(e) => Err(e),
         }
     }
 
@@ -3187,18 +3181,18 @@ mod tests {
         let mgr_b = test_manager(&backing, "B");
 
         // No lease yet → fail-open: nobody is fenced.
-        assert!(!mgr_a.is_fenced_out("t", "c", 0).await);
-        assert!(!mgr_b.is_fenced_out("t", "c", 0).await);
+        assert!(!mgr_a.is_fenced_out("t", "c", 0).await?);
+        assert!(!mgr_b.is_fenced_out("t", "c", 0).await?);
 
         // A acquires (t,c): A (holder) is not fenced; B (different pod) IS fenced
         // out while A's lease is live.
         assert!(mgr_a.acquire("t", "c", 0).await?);
         assert!(
-            !mgr_a.is_fenced_out("t", "c", 1).await,
+            !mgr_a.is_fenced_out("t", "c", 1).await?,
             "the leaseholder is never fenced out of its own partition"
         );
         assert!(
-            mgr_b.is_fenced_out("t", "c", 1).await,
+            mgr_b.is_fenced_out("t", "c", 1).await?,
             "a non-holder is fenced while another pod holds a live lease"
         );
 
@@ -3207,11 +3201,11 @@ mod tests {
         let after = LEASE_MS + 1;
         assert!(mgr_b.acquire("t", "c", after).await?);
         assert!(
-            mgr_a.is_fenced_out("t", "c", after + 1).await,
+            mgr_a.is_fenced_out("t", "c", after + 1).await?,
             "displaced A is fenced out after B's takeover (would resurrect stale data)"
         );
         assert!(
-            !mgr_b.is_fenced_out("t", "c", after + 1).await,
+            !mgr_b.is_fenced_out("t", "c", after + 1).await?,
             "new holder B is not fenced"
         );
         Ok(())
@@ -3684,13 +3678,13 @@ mod tests {
         assert!(mgr_a.acquire("t", "c", 0).await?);
         // A holds the live lease → A is not fenced; B (a different pod) IS fenced
         // out and must not flush.
-        assert!(!mgr_a.is_fenced_out("t", "c", 1).await);
-        assert!(mgr_b.is_fenced_out("t", "c", 1).await);
+        assert!(!mgr_a.is_fenced_out("t", "c", 1).await?);
+        assert!(mgr_b.is_fenced_out("t", "c", 1).await?);
         // No lease for an unrelated collection → fail-open (not fenced).
-        assert!(!mgr_b.is_fenced_out("t", "other", 1).await);
+        assert!(!mgr_b.is_fenced_out("t", "other", 1).await?);
         // Once A's lease expires with no renewal it is no longer live → B is no
         // longer fenced (it could legitimately take over).
-        assert!(!mgr_b.is_fenced_out("t", "c", LEASE_MS + 1).await);
+        assert!(!mgr_b.is_fenced_out("t", "c", LEASE_MS + 1).await?);
         // current_holder still surfaces the (now-stale) record for inspection.
         let held = mgr_b.current_holder("t", "c").await?;
         assert_eq!(held.map(|(_, l)| l.holder_pod), Some("A".to_string()));

@@ -7,7 +7,26 @@ Depending on your identity, read the corresponding mandate file first:
 *   **Gemini Models:** Read `GEMINI.md`
 *   **Anthropic/Claude Models:** Read `CLAUDE.md`
 
+Agent runtimes that only support the singular root filename may read
+`AGENT.md`; it is a short compatibility alias for this `AGENTS.md` index and the
+model-specific guides above.
+
 **Filing a TD or ADR:** follow the canonical, collision-free convention in `docs/12-design/HOW_TO_FILE_TD_AND_ADR.adoc` (one file per entry; prefer a topic-scoped id like `TD-CAT-1`; never reuse a number already on `develop`; the `td-adr-unique` CI guard backstops). That in-repo doc is the single source of truth — these per-agent rule files only point to it, so concurrent sessions/machines never drift.
+
+## Mandatory Worktree Workflow
+
+Every implementation or audit-followup task must run in its own git worktree and branch off `origin/develop`. Do not edit, stash, reset, checkout, commit, or branch-force in the shared main checkout, and do not touch another worktree's branch or uncommitted work.
+
+Required flow:
+
+1. Start from the main checkout and run `eval "$(scripts/worktree.sh new <type/topic>)"`.
+2. `cd` into the printed worktree and run `scripts/worktree.sh guard` before editing.
+3. Keep the branch short-lived: rebase onto `origin/develop` before PR handoff, and rebase daily or within 48 hours for active work.
+4. If you inherit changes already made in the main checkout, preserve them as a patch, create a task worktree from `origin/develop`, apply the patch there, then clean only those copied files from the main checkout.
+5. Run verification from the task worktree. Avoid sharing the root `target/` with unrelated long-running cargo jobs when possible; prefer the helper's `CARGO_INCREMENTAL=0`/`sccache` setup.
+6. After the PR merges, remove the worktree with `scripts/worktree.sh rm <type/topic>`. Periodically reclaim landed worktrees with `scripts/worktree.sh clean --dry-run` then `scripts/worktree.sh clean`; use `scripts/worktree.sh gc` for incremental-cache bloat in kept worktrees.
+
+When continuing "next steps", first identify the active worktree/branch, confirm it is based on current `origin/develop`, and continue there. If no appropriate worktree exists, create one before editing.
 
 ## 🚨 Active Development Trajectory (2026-06-04 Pivot) 🚨
 

@@ -1,7 +1,7 @@
 // NOVA Engine: Next-gen Optimized Vector Analytics with columnar quantization
 // Implements UnifiedStorageFormat trait for integration with ProximaDB
 
-use crate::core::search::DataFreshnessTier;
+use crate::core::search::{DataFreshnessTier, SearchMode};
 use crate::proto::proximadb_v1::VectorRecord;
 // Import column constants from columnar module
 use crate::storage::engines::core::formats::columnar::FIELD_ID;
@@ -1613,12 +1613,15 @@ impl UnifiedStorageFormat for NovaEngine {
         // PHASE 0: TRY AXIS-BASED SEARCH FIRST (HNSW/IVF) - FASTEST PATH
         // ========================================================================
         // Use AXIS manager if available for O(log N) approximate search
+        let exact_mode = matches!(ctx.search_params.search_mode, SearchMode::Exact);
         let has_axis_manager = self.axis_manager().is_some();
         if has_axis_manager {
             tracing::debug!("🔍 NOVA: AXIS manager is available for HNSW/IVF search");
         }
 
-        if let Some(axis_manager) = self.axis_manager() {
+        if exact_mode {
+            tracing::debug!("🎯 NOVA: SearchMode::Exact requested; skipping approximate AXIS path");
+        } else if let Some(axis_manager) = self.axis_manager() {
             tracing::debug!(
                 "🔍 NOVA: Attempting AXIS search for collection='{}', top_k={}, dimension={}",
                 collection_id,

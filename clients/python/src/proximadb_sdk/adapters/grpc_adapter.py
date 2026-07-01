@@ -59,7 +59,8 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         from ..protocols.grpc_sync import ProximaDBSyncGrpcClient
 
         config = kwargs.pop("config", None)
-        kwargs.pop("auth", None)
+        api_key = kwargs.pop("api_key", None)
+        auth = kwargs.pop("auth", None)
         kwargs.pop("url", None)
         kwargs.pop("base_url", None)
 
@@ -72,12 +73,24 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
                     str(config_url).replace("http://", "").replace("https://", "")
                 )
 
+        metadata = config.get_grpc_metadata() if hasattr(config, "get_grpc_metadata") else None
+        if not metadata and api_key:
+            metadata = [("authorization", f"Bearer {api_key}")]
+        if not metadata and auth:
+            metadata = [("authorization", f"Bearer {auth}")]
+        use_tls = bool(str(server_address).startswith("https://")) or bool(
+            getattr(getattr(config, "tls", None), "verify", False)
+            and str(getattr(config, "url", "")).startswith("https://")
+        )
+
         # Create the underlying gRPC client
         self._client = ProximaDBSyncGrpcClient(
             server_address=server_address,
             timeout=timeout,
             pool_size=pool_size,
             max_message_size=max_message_size,
+            metadata=metadata,
+            use_tls=use_tls,
         )
         self._server_address = server_address
         self._connected = True

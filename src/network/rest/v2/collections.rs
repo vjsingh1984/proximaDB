@@ -392,7 +392,15 @@ pub fn parse_rest_data_type(
     use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
     let ty = match column.data_type.as_str() {
         "text" | "text_large" => ProximaType::String,
+        "int8" => ProximaType::Int8,
+        "int16" => ProximaType::Int16,
+        "int32" => ProximaType::Int32,
         "integer" => ProximaType::Int64,
+        "uint8" => ProximaType::UInt8,
+        "uint16" => ProximaType::UInt16,
+        "uint32" => ProximaType::UInt32,
+        "uint64" => ProximaType::UInt64,
+        "float32" => ProximaType::Float32,
         "float" => ProximaType::Float64,
         "decimal" => {
             let precision = column.precision.ok_or_else(|| {
@@ -426,13 +434,20 @@ pub fn parse_rest_data_type(
         "timestamp_tz" => ProximaType::TimestampTz(TimeUnit::Nanosecond),
         "date" => ProximaType::Date,
         "time" => ProximaType::Time(TimeUnit::Nanosecond),
+        "duration" => ProximaType::Duration(TimeUnit::Nanosecond),
+        "interval" => ProximaType::Interval(TimeUnit::Nanosecond),
         "uuid" => ProximaType::Uuid,
-        "binary" => ProximaType::Binary,
+        "ulid" => ProximaType::ULID,
+        "binary" | "binary_large" => ProximaType::Binary,
         "json" => ProximaType::Json,
+        "jsonb" => ProximaType::Jsonb,
+        "symbol" => ProximaType::Symbol,
         "array_text" => ProximaType::Array(Box::new(ProximaType::String)),
         "array_integer" => ProximaType::Array(Box::new(ProximaType::Int64)),
         "array_float" => ProximaType::Array(Box::new(ProximaType::Float64)),
         "array_boolean" => ProximaType::Array(Box::new(ProximaType::Boolean)),
+        "array_uuid" => ProximaType::Array(Box::new(ProximaType::Uuid)),
+        "array_any" => ProximaType::Array(Box::new(ProximaType::Json)),
         "map_string_string" => ProximaType::Map {
             key: Box::new(ProximaType::String),
             value: Box::new(ProximaType::String),
@@ -441,7 +456,17 @@ pub fn parse_rest_data_type(
             key: Box::new(ProximaType::String),
             value: Box::new(ProximaType::Json),
         },
+        "map_string_integer" => ProximaType::Map {
+            key: Box::new(ProximaType::String),
+            value: Box::new(ProximaType::Int64),
+        },
+        "map_string_float" => ProximaType::Map {
+            key: Box::new(ProximaType::String),
+            value: Box::new(ProximaType::Float64),
+        },
+        "struct" => ProximaType::Struct { fields: Vec::new() },
         "geo_point" => ProximaType::Point,
+        "geo_polygon" => ProximaType::GeographyPoint,
         "vector" => {
             let dim = column.vector_dimension.ok_or_else(|| {
                 ApiError::InvalidArgument(format!(
@@ -453,6 +478,18 @@ pub fn parse_rest_data_type(
                 element: VectorElement::Float32,
                 dim,
             }
+        }
+        "sparse_vector" => ProximaType::SparseVector {
+            element: VectorElement::Float32,
+        },
+        "binary_vector" => {
+            let dim = column.vector_dimension.ok_or_else(|| {
+                ApiError::InvalidArgument(format!(
+                    "Column '{}' with type 'binary_vector' requires vector_dimension",
+                    column.name
+                ))
+            })? as usize;
+            ProximaType::BinaryVector { dim }
         }
         other => {
             return Err(ApiError::InvalidArgument(format!(

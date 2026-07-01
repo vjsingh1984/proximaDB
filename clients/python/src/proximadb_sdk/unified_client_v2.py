@@ -103,6 +103,7 @@ class ProximaDBClient:
             self._adapter = create_adapter(
                 "grpc",
                 server_address=grpc_url,
+                config=self.config,
                 timeout=self._timeout,
                 pool_size=self._pool_size,
                 **self._kwargs,
@@ -113,6 +114,7 @@ class ProximaDBClient:
             self._adapter = create_adapter(
                 "rest",
                 url=self._url or "http://localhost:5678",
+                config=self.config,
                 timeout=self._timeout,
                 **self._kwargs,
             )
@@ -125,6 +127,7 @@ class ProximaDBClient:
                 self._adapter = create_adapter(
                     "grpc",
                     server_address=grpc_url,
+                    config=self.config,
                     timeout=self._timeout,
                     pool_size=self._pool_size,
                     **self._kwargs,
@@ -135,6 +138,7 @@ class ProximaDBClient:
                 self._adapter = create_adapter(
                     "rest",
                     url=self._url or "http://localhost:5678",
+                    config=self.config,
                     timeout=self._timeout,
                     **self._kwargs,
                 )

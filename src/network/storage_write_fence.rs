@@ -8,6 +8,7 @@
 //! `PartitionLeaseManager` instance the write-gates use. See
 //! `crate::storage::write_fence` for the A6 rationale.
 
+use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -28,7 +29,12 @@ impl LeaseStorageWriteFence {
 
 #[async_trait]
 impl StorageWriteFence for LeaseStorageWriteFence {
-    async fn is_fenced_out(&self, tenant_id: &str, collection_id: &str, now_ms: i64) -> bool {
+    async fn is_fenced_out(
+        &self,
+        tenant_id: &str,
+        collection_id: &str,
+        now_ms: i64,
+    ) -> Result<bool> {
         // Ground truth across pods: delegates to the durable lease read (#346).
         self.lease_manager
             .is_fenced_out(tenant_id, collection_id, now_ms)
