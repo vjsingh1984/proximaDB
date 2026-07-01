@@ -1312,6 +1312,12 @@ jobs:
       !inputs.skip_tests &&
       needs.changes.outputs.test_tier == 'true' &&
       needs.changes.outputs.pgwire_accuracy_changes == 'true'
+    env:
+      # 8MB worker stack: events_tsbs_pgwire_e2e (and correlated-subquery pgwire
+      # paths) produce deep-but-finite async call chains that overflow the
+      # default ~2MB tokio worker stack. Mirrors qa-gate (b87d05a31); ci.yml's
+      # integration-test jobs previously lacked this.
+      RUST_MIN_STACK: "8388608"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
