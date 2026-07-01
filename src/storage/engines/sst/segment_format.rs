@@ -162,6 +162,31 @@ pub fn write_pax_segment_with_f32_tier(
     writer.finish()
 }
 
+/// True if any input `.pax` segment carries the opt-in exact-f32 tier
+/// (`F32_TIER_BASE`). Compaction calls this to PRESERVE the tier across
+/// re-encoding — otherwise [`write_pax_segment`] drops it. Reads each `.pax`
+/// input's block metadata only; the inputs are page-cached (just read into
+/// records), so this is cheap. Correct for both env- and tag-opt-in (the source
+/// segment reflects whatever the collection wrote).
+pub fn pax_inputs_have_f32_tier(input_files: &[std::path::PathBuf]) -> bool {
+    use proximadb_block_format::{PaxBlockReader, col_id};
+    for f in input_files {
+        if f.extension().and_then(|e| e.to_str()) != Some("pax") {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(f) else {
+            continue;
+        };
+        let Ok(reader) = PaxBlockReader::open(&bytes) else {
+            continue;
+        };
+        if reader.vector_params().get(col_id::F32_TIER_BASE).is_some() {
+            return true;
+        }
+    }
+    false
+}
+
 /// One scored hit from a RaBitQ cascade segment scan: the record's `oid` and its
 /// L2 distance to the query (smaller = nearer), reranked against the co-located
 /// SQ8 column.
@@ -169,6 +194,10 @@ pub fn write_pax_segment_with_f32_tier(
 pub struct CascadeHit {
     pub oid: String,
     pub distance: f32,
+    /// Exact f32 vector (from the opt-in f32 tier) for `include_vectors`
+    /// materialization. `None` when no f32 tier is present (the caller gets
+    /// id+score only, as before). Populated lazily for the top-k rows only.
+    pub vector: Option<Vec<f32>>,
 }
 
 /// A metadata pre-prune for the cascade scan: a [`FilterExpression`] plus the
@@ -294,14 +323,22 @@ pub fn rabitq_search_segment(
                     .collect()
             });
         let oids = block.decode_str_stripe(col_id::OID);
-        for (row, dist) in scored.into_iter().take(k) {
+        // include_vectors: when the f32 tier is present, decode the top-k exact
+        // vectors (top-k rows only — lazy, read-budget-tight) and attach them so
+        // the caller can materialize exact vectors without a second segment scan.
+        let topk: Vec<(usize, f32)> = scored.into_iter().take(k).collect();
+        let topk_rows: Vec<usize> = topk.iter().map(|(r, _)| *r).collect();
+        let f32_vecs = block.decode_f32_tier_rows(0, &topk_rows);
+        for (i, (row, dist)) in topk.into_iter().enumerate() {
             let oid = oids
                 .as_ref()
                 .and_then(|o| o.get(row).cloned().flatten())
                 .unwrap_or_default();
+            let vector = f32_vecs.as_ref().and_then(|v| v.get(i).cloned().flatten());
             hits.push(CascadeHit {
                 oid,
                 distance: dist,
+                vector,
             });
         }
     }
@@ -708,6 +745,82 @@ mod tests {
     /// skipped before the vector pass), and (2) stay SOUND — a vector in a surviving
     /// block is still returned. This is the cheap pre-vector filter that moves the
     /// dominant cost term (I/O round-trips), measured by the I/O trace, not asserted.
+    /// Phase D completion: when the opt-in f32 tier is present, the cascade
+    /// materializes the EXACT f32 vector for each top-k hit (`include_vectors`).
+    /// Without the tier, hits carry `vector = None` (id+score only).
+    #[test]
+    fn rabitq_search_segment_materializes_vectors_when_f32_tier_present() {
+        const DIM: usize = 64;
+        const N: usize = 256;
+        const K: usize = 10;
+        const POOL: usize = 100;
+
+        let gen_vec = |seed: u64| -> Vec<f32> {
+            let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+            (0..DIM)
+                .map(|_| {
+                    s ^= s >> 30;
+                    s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                    s ^= s >> 27;
+                    ((s >> 11) as f32 / (1u64 << 53) as f32) * 2.0 - 1.0
+                })
+                .collect()
+        };
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| gen_vec(i as u64)).collect();
+        let by_oid = |oid: &str| -> Vec<f32> {
+            let i = oid[1..].parse::<usize>().unwrap();
+            corpus[i].clone()
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                rec(
+                    &format!("v{i}"),
+                    1_700_000_000_000_000_000 + i as i64,
+                    v.clone(),
+                )
+            })
+            .collect();
+
+        // WITH the f32 tier → hits carry their exact f32 vector.
+        let path = dir.path().join("f32_tier.pax");
+        write_pax_segment_with_f32_tier(&path, &records, "col", 1, VectorQuant::RaBitQ, true, None)
+            .unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let query = corpus[0].clone();
+        let hits = rabitq_search_segment(&bytes, &query, K, POOL, RankMetric::L2, None)
+            .unwrap()
+            .expect("PAX+RaBitQ+tier segment runs the cascade");
+        assert!(!hits.is_empty(), "cascade must return top-k");
+        for h in &hits {
+            let v = h
+                .vector
+                .as_ref()
+                .expect("hit carries exact f32 vector when the tier is present");
+            assert_eq!(
+                v,
+                &by_oid(&h.oid),
+                "materialized vector must be exact for {}",
+                h.oid
+            );
+        }
+
+        // WITHOUT the tier → hits carry no vector (id+score only).
+        let path2 = dir.path().join("no_tier.pax");
+        write_pax_segment(&path2, &records, "col", 1, VectorQuant::RaBitQ, None).unwrap();
+        let bytes2 = std::fs::read(&path2).unwrap();
+        let hits2 = rabitq_search_segment(&bytes2, &query, K, POOL, RankMetric::L2, None)
+            .unwrap()
+            .expect("cascade runs");
+        assert!(
+            hits2.iter().all(|h| h.vector.is_none()),
+            "no f32 tier → hits must not carry vectors"
+        );
+    }
+
     #[test]
     fn rabitq_search_segment_metadata_pruning_skips_blocks() {
         use proximadb_filter_expression::ComparisonOperator;

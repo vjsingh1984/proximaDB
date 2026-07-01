@@ -283,13 +283,19 @@ impl SstEngine {
         let records = hits
             .into_iter()
             .map(|h| {
-                OptimizedSearchRecord::new(
+                let mut r = OptimizedSearchRecord::new(
                     h.oid,
                     OptimizedSearchRecord::standardized_distance_to_similarity(
                         h.distance,
                         &distance_metric,
                     ),
-                )
+                );
+                // include_vectors: attach the exact f32 vector when the tier
+                // provided one (filter_search_results strips it if not requested).
+                if let Some(v) = h.vector {
+                    r = r.add_vector(v);
+                }
+                r
             })
             .collect();
         Ok(Some(records))
