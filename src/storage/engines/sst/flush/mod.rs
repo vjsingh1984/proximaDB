@@ -166,12 +166,13 @@ impl SstEngine {
         //      adoption; mirrors the `recall_target:` tag convention; stored as a
         //      tag rather than a typed field because proto regen is manual — see
         //      collection_types.proto).
-        //   3. Global default `PROXIMADB_PAX_VECTOR_SEGMENTS` (env today; Phase F
-        //      flips the absence case to enabled).
+        //   3. Global default: explicit opt-in `PROXIMADB_PAX_VECTOR_SEGMENTS` OR
+        //      the Phase F default-on arm `PROXIMADB_PAX_DEFAULT_ON` (ships OFF;
+        //      per-deployment arm per mandate #8; gated on WS8 N=1M recall).
         if resolve_pax_segments_enabled(
             env_truthy(PAX_VECTOR_SEGMENTS_DISABLE_ENV),
             collection_pax_format_tag(params.collection_config.as_ref()),
-            env_truthy(PAX_VECTOR_SEGMENTS_ENV),
+            env_truthy(PAX_VECTOR_SEGMENTS_ENV) || env_truthy(PAX_VECTOR_DEFAULT_ON_ENV),
         ) {
             block_format = BlockFormat::PaxBlock;
         }
@@ -433,7 +434,6 @@ impl SstEngine {
                 // `segment_format::read_segment_records` (magic-byte detection), so no
                 // manifest/reader change is required for this segment to be read back.
                 use crate::storage::engines::sst::segment_format::write_pax_segment;
-                use proximadb_block_format::VectorQuant;
                 let staging_path = staging_url.strip_prefix("file://").unwrap_or(&staging_url);
                 if let Some(parent) = std::path::Path::new(staging_path).parent() {
                     tokio::fs::create_dir_all(parent)
@@ -446,34 +446,12 @@ impl SstEngine {
                     .unwrap_or(1);
                 let records: Vec<_> = sorted_vectors.into_iter().map(|(_, rec)| rec).collect();
                 let collection_id = params.collection_id.as_deref().unwrap_or("default");
-                // P3 Phase D / TD-155: vector quantization strategy. Precedence:
-                // per-collection pax_vector_quant (catalog config) > deployment env
-                // PROXIMADB_PAX_VECTOR_QUANT > default (Auto). This is the staged-
-                // adoption mechanism — operators opt individual collections into PAX
-                // quant without a global flip (ADR-026/027).
-                let quant = match params
-                    .collection_config
-                    .as_ref()
-                    .and_then(|c| c.config.as_ref())
-                    .and_then(|cfg| cfg.pax_vector_quant.as_deref())
-                    .map(|s| s.to_ascii_lowercase())
-                {
-                    Some(s) => match s.as_str() {
-                        "rabitq" => VectorQuant::RaBitQ,
-                        "sq8" => VectorQuant::Sq8,
-                        _ => VectorQuant::Auto,
-                    },
-                    // Fall back to the deployment env.
-                    None => match std::env::var("PROXIMADB_PAX_VECTOR_QUANT")
-                        .unwrap_or_default()
-                        .to_ascii_lowercase()
-                        .as_str()
-                    {
-                        "rabitq" => VectorQuant::RaBitQ,
-                        "sq8" => VectorQuant::Sq8,
-                        _ => VectorQuant::Auto,
-                    },
-                };
+                // P3 Phase D / TD-155 + Phase F: vector-quantization strategy.
+                // Precedence: per-collection pax_vector_quant > env
+                // PROXIMADB_PAX_VECTOR_QUANT > default RaBitQ (Phase F: the
+                // cascade's stage-1 ranks RaBitQ-coded segments). See
+                // `resolve_pax_vector_quant`.
+                let quant = resolve_pax_vector_quant(params.collection_config.as_ref());
                 // TD-156 / ADR-026: configurable PAX block geometry. `None` keeps
                 // the writer default; a larger value (e.g. 8-16 MiB for object
                 // storage) coalesces rows into fewer blocks, cutting the per-block
@@ -811,9 +789,17 @@ fn tokenize_into(text: &str, out: &mut Vec<String>) {
 // PAX vector-segment resolution (Phase C escape hatches).
 // ---------------------------------------------------------------------------
 
-/// Global default-on env. Today opt-in (absent → off); Phase F flips the
-/// absence case to enabled.
+/// Explicit per-deployment PAX opt-in env (absent → off).
 const PAX_VECTOR_SEGMENTS_ENV: &str = "PROXIMADB_PAX_VECTOR_SEGMENTS";
+
+/// Phase F default-on arm. A truthy value makes PAX the DEFAULT segment format
+/// for every collection (unless the kill-switch fires or a collection opts out
+/// via the `pax_vector_format:off` tag) — without needing
+/// `PROXIMADB_PAX_VECTOR_SEGMENTS`. Ships OFF (absent → off) per storage-format
+/// mandate #8 (ship default-OFF one release window, then arm): arming is a
+/// per-deployment env flip (qa/staging first), no release required. The arm is
+/// GATED on the WS8 N=1M canonical recall artifact (qa-gate `sift-pax-recall`).
+const PAX_VECTOR_DEFAULT_ON_ENV: &str = "PROXIMADB_PAX_DEFAULT_ON";
 
 /// Global kill-switch. Any truthy value forces legacy `.sst` for EVERY
 /// collection regardless of the per-collection tag or the default-on flip — the
@@ -877,6 +863,40 @@ fn resolve_pax_segments_enabled(
         false
     } else {
         per_collection.unwrap_or(global_default)
+    }
+}
+
+/// Resolve the PAX vector-quantization strategy. Precedence: per-collection
+/// `pax_vector_quant` (catalog config) > env `PROXIMADB_PAX_VECTOR_QUANT` >
+/// default `RaBitQ` (Phase F: the cascade's stage-1 ranks RaBitQ-coded segments,
+/// so the default-on quant is RaBitQ, not `Auto`). An unrecognized per-collection
+/// value falls back to `Auto` (defensive against a typo'd config); only the
+/// deployment default (no config, no env) is RaBitQ.
+fn resolve_pax_vector_quant(
+    collection_config: Option<&crate::proto::proximadb_v1::Collection>,
+) -> proximadb_block_format::VectorQuant {
+    use proximadb_block_format::VectorQuant;
+    const ENV: &str = "PROXIMADB_PAX_VECTOR_QUANT";
+    match collection_config
+        .as_ref()
+        .and_then(|c| c.config.as_ref())
+        .and_then(|cfg| cfg.pax_vector_quant.as_deref())
+        .map(|s| s.to_ascii_lowercase())
+    {
+        Some(s) => match s.as_str() {
+            "rabitq" => VectorQuant::RaBitQ,
+            "sq8" => VectorQuant::Sq8,
+            _ => VectorQuant::Auto,
+        },
+        None => match std::env::var(ENV)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "rabitq" => VectorQuant::RaBitQ,
+            "sq8" => VectorQuant::Sq8,
+            _ => VectorQuant::RaBitQ,
+        },
     }
 }
 
@@ -1248,5 +1268,143 @@ mod tests {
         unsafe {
             std::env::remove_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV);
         }
+    }
+
+    // ---- Phase F: default-on arm (ships OFF; env `PROXIMADB_PAX_DEFAULT_ON`) ----
+
+    /// The default-on arm enables PAX WITHOUT the explicit
+    /// `PROXIMADB_PAX_VECTOR_SEGMENTS` opt-in — the staged flip mechanism (mandate
+    /// #8: ships OFF, armed per-deployment). Here only the default-on env is set.
+    #[tokio::test]
+    async fn pax_default_on_env_writes_pax_without_segments_env() {
+        unsafe {
+            std::env::remove_var(PAX_VECTOR_SEGMENTS_ENV);
+            std::env::remove_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV);
+            std::env::set_var(PAX_VECTOR_DEFAULT_ON_ENV, "1");
+        }
+        let engine = create_test_engine().await;
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let base = temp_dir.path().to_str().unwrap();
+        let records = vec![
+            create_test_vector("v0", vec![1.0, 0.0, 0.0, 0.0]),
+            create_test_vector("v1", vec![0.0, 1.0, 0.0, 0.0]),
+        ];
+        let exts = flush_segment_exts(&engine, "pax_default_on", base, vec![], records).await;
+        unsafe {
+            std::env::remove_var(PAX_VECTOR_DEFAULT_ON_ENV);
+        }
+        assert!(
+            exts.contains("pax"),
+            "default-on env should write a .pax segment without PROXIMADB_PAX_VECTOR_SEGMENTS (got {exts:?})"
+        );
+    }
+
+    /// The kill-switch overrides default-on — the reversal valve holds even when
+    /// the default-on arm is armed.
+    #[tokio::test]
+    async fn pax_kill_switch_overrides_default_on() {
+        unsafe {
+            std::env::set_var(PAX_VECTOR_DEFAULT_ON_ENV, "1");
+            std::env::set_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV, "1");
+        }
+        let engine = create_test_engine().await;
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let base = temp_dir.path().to_str().unwrap();
+        let records = vec![
+            create_test_vector("v0", vec![1.0, 0.0, 0.0, 0.0]),
+            create_test_vector("v1", vec![0.0, 1.0, 0.0, 0.0]),
+        ];
+        let exts = flush_segment_exts(&engine, "pax_default_on_kill", base, vec![], records).await;
+        unsafe {
+            std::env::remove_var(PAX_VECTOR_DEFAULT_ON_ENV);
+            std::env::remove_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV);
+        }
+        assert!(
+            exts.contains("sst") && !exts.contains("pax"),
+            "kill-switch must force legacy .sst even under default-on (got {exts:?})"
+        );
+    }
+
+    /// A per-collection `pax_vector_format:off` tag opts OUT even when default-on
+    /// is armed — granular escape from the cluster-wide flip.
+    #[tokio::test]
+    async fn pax_default_on_collection_optout_tag_writes_sst() {
+        unsafe {
+            std::env::set_var(PAX_VECTOR_DEFAULT_ON_ENV, "1");
+            std::env::remove_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV);
+        }
+        let engine = create_test_engine().await;
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let base = temp_dir.path().to_str().unwrap();
+        let records = vec![
+            create_test_vector("v0", vec![1.0, 0.0, 0.0, 0.0]),
+            create_test_vector("v1", vec![0.0, 1.0, 0.0, 0.0]),
+        ];
+        let exts = flush_segment_exts(
+            &engine,
+            "pax_default_on_optout",
+            base,
+            vec!["pax_vector_format:off".to_string()],
+            records,
+        )
+        .await;
+        unsafe {
+            std::env::remove_var(PAX_VECTOR_DEFAULT_ON_ENV);
+        }
+        assert!(
+            exts.contains("sst") && !exts.contains("pax"),
+            "opt-out tag should force legacy .sst even under default-on (got {exts:?})"
+        );
+    }
+
+    /// Phase F quant default is RaBitQ (the cascade's stage-1 ranks RaBitQ-coded
+    /// segments). Precedence: per-collection pax_vector_quant > env > default RaBitQ.
+    #[test]
+    fn resolve_pax_vector_quant_default_and_precedence() {
+        use crate::proto::proximadb_v1::{Collection, CollectionConfig};
+        use proximadb_block_format::VectorQuant;
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_QUANT");
+        }
+        let none: Option<&Collection> = None;
+        // default → RaBitQ
+        assert_eq!(resolve_pax_vector_quant(none), VectorQuant::RaBitQ);
+        // env overrides the default
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "sq8");
+        }
+        assert_eq!(resolve_pax_vector_quant(none), VectorQuant::Sq8);
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_QUANT");
+        }
+        // per-collection overrides env + default
+        let coll_sq8 = Collection {
+            config: Some(CollectionConfig {
+                pax_vector_quant: Some("sq8".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(resolve_pax_vector_quant(Some(&coll_sq8)), VectorQuant::Sq8);
+        let coll_rabitq = Collection {
+            config: Some(CollectionConfig {
+                pax_vector_quant: Some("rabitq".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_pax_vector_quant(Some(&coll_rabitq)),
+            VectorQuant::RaBitQ
+        );
+        // unrecognized per-collection value → Auto (defensive), NOT the RaBitQ default
+        let coll_bad = Collection {
+            config: Some(CollectionConfig {
+                pax_vector_quant: Some("nonsense".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(resolve_pax_vector_quant(Some(&coll_bad)), VectorQuant::Auto);
     }
 }
