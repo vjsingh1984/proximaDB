@@ -2017,10 +2017,10 @@ impl VectorOperationsService {
             .unwrap_or("");
         let engine = self.get_engine_for_collection(collection_id).await?;
 
-        Ok(engine
-            .vector_by_id(collection_id, base_path, record_id)
+        Ok(!engine
+            .point_lookup(collection_id, base_path, &[record_id.to_string()], None)
             .await?
-            .is_some())
+            .is_empty())
     }
 
     /// Return lightweight, default planning/pruning hints without executing search.

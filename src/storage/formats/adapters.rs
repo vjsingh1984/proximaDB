@@ -261,11 +261,13 @@ impl<E: UnifiedStorageFormat + 'static> InternalFormat for InternalFormatAdapter
         // Extract collection_id from path (path format: {base}/{collection_id}/data)
         let collection_id = extract_collection_id_from_path(path)?;
 
-        // Use engine's vector_by_id method
+        // Use engine's point_lookup method (batch-capable; identity None for now)
         match self
             .engine
-            .vector_by_id(&collection_id, path, vector_id)
+            .point_lookup(&collection_id, path, &[vector_id.to_string()], None)
             .await?
+            .into_iter()
+            .next()
         {
             Some(record) => {
                 // Convert canonical ProximaRecord to the legacy VectorBatch adapter shape.
