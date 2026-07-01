@@ -296,3 +296,18 @@ contract and Iceberg type coercion impact.
 |`crates/storage/proximadb-block-format/src/writer.rs`|PaxBlockWriter, BlockFooter (32B), flush() with crc32 checksum
 |`crates/storage/proximadb-block-format/src/reader.rs`|PaxBlockReader, block-level pruning, stripe decode helpers
 |===
+
+== Reconciliation & amendments (2026-06-30)
+
+* **Stratified Layer 2 (ADR-045).** The "Stacked Durability Alignment" Layer-2 unit is refined by
+  link:ADR-045-pax-durable-core-vs-serving-metadata.adoc[ADR-045] into a **durable open core**
+  (Layer 2a: stripes + MVCC columns; ships 1:1 to Iceberg) and a **rebuildable serving-metadata
+  layer** (Layer 2b: `RowDirectory`, `ColumnMeta` stats/bloom, header zone summaries, `BlockFooter`/
+  `SegmentIndex`, `PDV1` deletion vector). The "Iceberg / Arrow Flight Integration" mapping becomes
+  precise: the *core* is the Iceberg data-file content; serving metadata is not published and is
+  regenerable from (core + WAL) on cold-start. Tracked:
+  link:../../10-quality/td/TD-LTAP-1-pax-durable-core-serving-metadata-split.adoc[TD-LTAP-1].
+* **PAX co-location is load-bearing (research).** VLDB'01 (Ailamaki/DeWitt/Hill/Skounakis) confirms
+  PAX co-locates filter + vector attributes in one page with no storage penalty and no I/O beyond the
+  page — validating that the ANN cascade (filter → RaBitQ → SQ8 rerank) must keep filter + vector
+  stripes together in the durable core. Source: https://www.vldb.org/conf/2001/P169.pdf.
