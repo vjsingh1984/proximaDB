@@ -629,7 +629,12 @@ impl std::fmt::Debug for UnifiedDistanceCompute {
 
 impl Default for UnifiedDistanceCompute {
     fn default() -> Self {
-        Self::new(DistanceMetric::Euclidean)
+        // P2: align the compute default with the product default (Cosine). Every
+        // other layer — collection create, proto Unspecified→Cosine,
+        // StorageQueryContext, the SIMD dispatcher — agrees on Cosine; this was
+        // the lone Euclidean outlier. Production code should still pass the
+        // collection metric explicitly per call (distance_with_metric).
+        Self::new(DistanceMetric::Cosine)
     }
 }
 
@@ -2304,15 +2309,19 @@ mod tests {
 
     #[test]
     fn test_default_unified_distance_compute() {
+        // P2: the default metric is now Cosine (the product default), aligning
+        // UnifiedDistanceCompute with the collection/proto + SIMD-dispatcher
+        // default. Production code should still pass the collection metric
+        // explicitly per call (distance_with_metric / calculate_distance).
         let compute = UnifiedDistanceCompute::default();
-        // Default is Euclidean
-        let a = vec![0.0, 0.0];
-        let b = vec![3.0, 4.0];
+        let a = vec![1.0, 0.0];
+        let b = vec![1.0, 1.0];
         let distance = compute.distance(&a, &b);
+        // cosine distance = 1 − (1·1 + 0·1) / (1 · √2) = 1 − 1/√2 ≈ 0.29289
+        let expected = 1.0 - 1.0 / 2.0_f32.sqrt();
         assert!(
-            (distance - 5.0).abs() < 1e-5,
-            "Default should be Euclidean, got {}",
-            distance
+            (distance - expected).abs() < 1e-5,
+            "default-Compute should use Cosine; got {distance}, expected {expected}"
         );
     }
 
