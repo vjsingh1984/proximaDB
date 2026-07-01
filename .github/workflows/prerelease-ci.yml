@@ -229,14 +229,14 @@ jobs:
 
           if [ "${{ matrix.cross }}" = "true" ]; then
             cross build --release --target ${{ matrix.target }} $FEATURES_FLAG \
-              --bin proximadb-server \
-              --bin proximadb-bench \
-              --bin proximadb-migrate
+              -p proximadb-server \
+              -p proximadb-bench \
+              -p proximadb-migrate
           else
             cargo build --release --target ${{ matrix.target }} $FEATURES_FLAG \
-              --bin proximadb-server \
-              --bin proximadb-bench \
-              --bin proximadb-migrate
+              -p proximadb-server \
+              -p proximadb-bench \
+              -p proximadb-migrate
           fi
         shell: bash
 
