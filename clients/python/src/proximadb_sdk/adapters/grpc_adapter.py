@@ -73,7 +73,9 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
                     str(config_url).replace("http://", "").replace("https://", "")
                 )
 
-        metadata = config.get_grpc_metadata() if hasattr(config, "get_grpc_metadata") else None
+        metadata = (
+            config.get_grpc_metadata() if hasattr(config, "get_grpc_metadata") else None
+        )
         if not metadata and api_key:
             metadata = [("authorization", f"Bearer {api_key}")]
         if not metadata and auth:

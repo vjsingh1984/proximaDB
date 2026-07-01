@@ -710,7 +710,10 @@ class ProximaDBSyncGrpcClient:
             # This verifies the server is responding and the connection pool works
             with GrpcChannelContext(self._connection_pool) as channel:
                 # v2: lightweight health probe via ProximaRecordService.ListCollections.
-                stub = _StubWithDefaultRpcKwargs(v2_record_pb2_grpc.ProximaRecordServiceStub(channel), self._rpc_kwargs())
+                stub = _StubWithDefaultRpcKwargs(
+                    v2_record_pb2_grpc.ProximaRecordServiceStub(channel),
+                    self._rpc_kwargs(),
+                )
                 req = v2_record_pb2.V2ListCollectionsRequest(limit=1)
                 stub.ListCollections(req, timeout=self.timeout)
 
@@ -772,7 +775,9 @@ class ProximaDBSyncGrpcClient:
             )
 
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs()
+            )
             algo_enum = {
                 "DIJKSTRA": v2_graph_pb2.GRAPH_SHORTEST_PATH_ALGORITHM_DIJKSTRA,
                 "ASTAR": v2_graph_pb2.GRAPH_SHORTEST_PATH_ALGORITHM_ASTAR,
@@ -840,7 +845,10 @@ class ProximaDBSyncGrpcClient:
                 # QueryService is flag-gated off). Note: parameterized params,
                 # rows_scanned and column_types are not carried by the v2 query
                 # messages yet; values arrive as decoded TypedValue.
-                stub = _StubWithDefaultRpcKwargs(v2_record_pb2_grpc.ProximaRecordServiceStub(channel), self._rpc_kwargs())
+                stub = _StubWithDefaultRpcKwargs(
+                    v2_record_pb2_grpc.ProximaRecordServiceStub(channel),
+                    self._rpc_kwargs(),
+                )
                 req = v2_record_pb2.V2QueryRequest(
                     query=query, collection_id=collection or ""
                 )
@@ -877,7 +885,10 @@ class ProximaDBSyncGrpcClient:
         description: str | None = None,
     ):
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v1_collection_pb2_grpc.CollectionServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v1_collection_pb2_grpc.CollectionServiceStub(channel),
+                self._rpc_kwargs(),
+            )
             cfg = v1_collection_types_pb2.CollectionConfig(
                 name=name,
                 dimension=dimension,
@@ -892,7 +903,10 @@ class ProximaDBSyncGrpcClient:
 
     def get_collection_v1(self, collection_id: str):
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v1_collection_pb2_grpc.CollectionServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v1_collection_pb2_grpc.CollectionServiceStub(channel),
+                self._rpc_kwargs(),
+            )
             req = v1_collection_types_pb2.GetCollectionRequest(
                 collection_id=collection_id
             )
@@ -907,7 +921,10 @@ class ProximaDBSyncGrpcClient:
         include_stats: bool | None = None,
     ):
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v1_collection_pb2_grpc.CollectionServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v1_collection_pb2_grpc.CollectionServiceStub(channel),
+                self._rpc_kwargs(),
+            )
             req = v1_collection_types_pb2.ListCollectionsRequest(
                 limit=limit or 0,
                 offset=offset or 0,
@@ -919,7 +936,10 @@ class ProximaDBSyncGrpcClient:
 
     def delete_collection_v1(self, collection_id: str):
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v1_collection_pb2_grpc.CollectionServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v1_collection_pb2_grpc.CollectionServiceStub(channel),
+                self._rpc_kwargs(),
+            )
             req = v1_collection_types_pb2.DeleteCollectionRequest(
                 collection_id=collection_id
             )
@@ -1670,7 +1690,9 @@ class ProximaDBSyncGrpcClient:
             )
 
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs()
+            )
 
             node_properties = {}
             if properties:
@@ -1729,7 +1751,9 @@ class ProximaDBSyncGrpcClient:
             )
 
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs()
+            )
 
             edge_properties = {}
             if properties:
@@ -1795,7 +1819,9 @@ class ProximaDBSyncGrpcClient:
             )
 
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs()
+            )
 
             # Map algorithm string to enum
             algorithm_enum = v2_graph_pb2.GRAPH_TRAVERSAL_ALGORITHM_BFS
@@ -1892,7 +1918,9 @@ class ProximaDBSyncGrpcClient:
             )
 
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs()
+            )
 
             filters = []
             if properties:
@@ -1957,7 +1985,9 @@ class ProximaDBSyncGrpcClient:
             )
 
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs()
+            )
 
             filters = []
             if properties:
@@ -2023,7 +2053,9 @@ class ProximaDBSyncGrpcClient:
             )
 
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs()
+            )
             request = v2_graph_pb2.GetGraphNodeRequest(
                 graph_id=graph_id, node_id=node_id
             )
@@ -2096,7 +2128,9 @@ class ProximaDBSyncGrpcClient:
             )
 
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs()
+            )
             request = v2_graph_pb2.DeleteGraphNodeRequest(
                 graph_id=graph_id, node_id=node_id
             )
@@ -2142,7 +2176,9 @@ class ProximaDBSyncGrpcClient:
             )
 
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs()
+            )
             proto_nodes = []
             for node in nodes:
                 node_properties = {}
@@ -2203,7 +2239,9 @@ class ProximaDBSyncGrpcClient:
             )
 
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs()
+            )
             proto_edges = []
             for edge in edges:
                 edge_properties = {}
@@ -2256,7 +2294,9 @@ class ProximaDBSyncGrpcClient:
             )
 
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs()
+            )
             request = v2_graph_pb2.GraphConnectedComponentsRequest(graph_id=graph_id)
             response = stub.GetConnectedComponents(request, timeout=self.timeout)
             return [list(component.node_ids) for component in response.components]
@@ -2288,7 +2328,9 @@ class ProximaDBSyncGrpcClient:
             )
 
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs()
+            )
             request = v2_graph_pb2.GraphHasCycleRequest(graph_id=graph_id)
             response = stub.HasCycle(request, timeout=self.timeout)
             return response.has_cycle
@@ -2346,7 +2388,9 @@ class ProximaDBSyncGrpcClient:
             )
 
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs()
+            )
             request = v2_graph_pb2.GraphUniqueConstraintRequest(
                 graph_id=graph_id, label=label, property=property
             )
@@ -2390,7 +2434,9 @@ class ProximaDBSyncGrpcClient:
             )
 
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs()
+            )
 
             algorithm_enum = v2_graph_pb2.GRAPH_TRAVERSAL_ALGORITHM_BFS
             if algorithm.upper() == "DFS":
@@ -2463,7 +2509,9 @@ class ProximaDBSyncGrpcClient:
             )
 
         def _op(channel):
-            stub = _StubWithDefaultRpcKwargs(v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs())
+            stub = _StubWithDefaultRpcKwargs(
+                v2_graph_pb2_grpc.ProximaGraphServiceStub(channel), self._rpc_kwargs()
+            )
             language_enum = v2_graph_pb2.GRAPH_QUERY_LANGUAGE_CYPHER
             if language.upper() == "NATIVE":
                 language_enum = v2_graph_pb2.GRAPH_QUERY_LANGUAGE_NATIVE
