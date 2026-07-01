@@ -497,6 +497,53 @@ impl<'a> PaxBlockReader<'a> {
         Some(scored)
     }
 
+    /// Decode the exact-f32 tier vectors for a specific set of `rows` (the
+    /// cascade's top-k), reading ONLY those rows' bytes from the `F32_TIER_BASE`
+    /// stripe — not the whole column (keeps the cascade's read budget tight).
+    /// Returns `None` if no f32-tier column is present; per-row `None` for
+    /// null/out-of-range rows. This is the `include_vectors` materialization path.
+    pub fn decode_f32_tier_rows(
+        &self,
+        emb_idx: usize,
+        rows: &[usize],
+    ) -> Option<Vec<Option<Vec<f32>>>> {
+        let column_id = crate::col_id::F32_TIER_BASE + emb_idx as i32;
+        let entry = self.vparams.get(column_id)?;
+        if entry.quant_kind != QUANT_RAW_F32 {
+            return None;
+        }
+        let raw = self.read_stripe_raw(column_id)?;
+        let n = self.row_count() as usize;
+        let dim = entry.dim as usize;
+        let bm_len = n.div_ceil(8);
+        if raw.len() < bm_len {
+            return None;
+        }
+        let bitmap = &raw[..bm_len];
+        let payload = &raw[bm_len..];
+        let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
+        let stride = dim * 4; // one little-endian f32 per dimension
+        let mut out = Vec::with_capacity(rows.len());
+        for &row in rows {
+            if row >= n || !is_present(row) {
+                out.push(None);
+                continue;
+            }
+            let off = row * stride;
+            let end = off + stride;
+            if end > payload.len() {
+                out.push(None);
+                continue;
+            }
+            let v: Vec<f32> = payload[off..end]
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                .collect();
+            out.push(Some(v));
+        }
+        Some(out)
+    }
+
     /// Decode opaque byte blobs from a raw length-prefixed binary stripe — the
     /// inverse of the writer's `build_bytes_stripe` (used for the msgpack `PROPS`
     /// and `LABELS` columns). Each value is a 4-byte little-endian length prefix

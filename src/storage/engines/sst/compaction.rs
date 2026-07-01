@@ -1180,12 +1180,17 @@ impl Compaction {
                         std::fs::create_dir_all(parent)
                             .map_err(crate::core::StorageError::DiskIO)?;
                     }
-                    crate::storage::engines::sst::segment_format::write_pax_segment(
+                    let f32_tier =
+                        crate::storage::engines::sst::segment_format::pax_inputs_have_f32_tier(
+                            &task.input_files,
+                        );
+                    crate::storage::engines::sst::segment_format::write_pax_segment_with_f32_tier(
                         &staging_file_path,
                         &records,
                         &collection_id,
                         records.len(),
                         proximadb_block_format::VectorQuant::RaBitQ,
+                        f32_tier,
                         None,
                     )
                     .map_err(|e| {
@@ -1324,12 +1329,17 @@ impl Compaction {
                         std::fs::create_dir_all(parent)
                             .map_err(crate::core::StorageError::DiskIO)?;
                     }
-                    crate::storage::engines::sst::segment_format::write_pax_segment(
+                    let f32_tier =
+                        crate::storage::engines::sst::segment_format::pax_inputs_have_f32_tier(
+                            &task.input_files,
+                        );
+                    crate::storage::engines::sst::segment_format::write_pax_segment_with_f32_tier(
                         &task.output_file,
                         &records,
                         &collection_id,
                         records.len(),
                         proximadb_block_format::VectorQuant::RaBitQ,
+                        f32_tier,
                         None,
                     )
                     .map_err(|e| {
