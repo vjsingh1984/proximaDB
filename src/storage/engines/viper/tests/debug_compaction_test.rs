@@ -142,6 +142,7 @@ fn create_test_collection(
             engine_config: std::collections::HashMap::new(),
             base_location: format!("file://{}", base_path),
             assigned_at: chrono::Utc::now().timestamp(),
+            ..Default::default()
         }),
     }
 }

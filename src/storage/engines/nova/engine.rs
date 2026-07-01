@@ -1232,6 +1232,7 @@ impl NovaEngine {
                 engine: crate::proto::proximadb_v1::StorageEngine::Nova as i32,
                 engine_config: Default::default(),
                 assigned_at: 0,
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -1446,6 +1447,7 @@ impl UnifiedStorageFormat for NovaEngine {
                 engine_config: std::collections::HashMap::new(),
                 base_location: base_path.to_string(),
                 assigned_at: 0,
+                ..Default::default()
             }),
         });
 

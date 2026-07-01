@@ -250,6 +250,13 @@ message StorageAssignment {
   // Additional fields for compatibility
   string base_location = 5;
   int64 assigned_at = 6;
+  // ADR-031 Phase 4d: the typed collection identity triple, set at create when
+  // PROXIMADB_TYPED_PATHS=1 so catalog-free engines can resolve the typed
+  // account-rooted read path. All three are Some or all three are None.
+  // uint32 in proto (no uint16); namespace_id is a u16 in Rust.
+  optional uint32 typed_account_id = 7;
+  optional uint32 typed_namespace_id = 8;
+  optional uint32 typed_collection_id = 9;
 }
 
 message GetCollectionRequest {

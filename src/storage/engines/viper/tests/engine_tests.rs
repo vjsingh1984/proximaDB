@@ -147,6 +147,7 @@ mod tests {
                 engine_config: std::collections::HashMap::new(),
                 base_location: format!("file://{}", base_path),
                 assigned_at: chrono::Utc::now().timestamp(),
+                ..Default::default()
             }),
         }
     }
@@ -252,6 +253,7 @@ mod tests {
                 engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
                 engine_config: Default::default(),
                 assigned_at: 0,
+                ..Default::default()
             }),
             ..Default::default()
         });

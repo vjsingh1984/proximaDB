@@ -104,6 +104,7 @@ fn create_test_collection(
             engine_config: HashMap::new(),
             base_location: base_path.to_string(),
             assigned_at: chrono::Utc::now().timestamp(),
+            ..Default::default()
         }),
     }
 }
@@ -1602,6 +1603,7 @@ async fn test_compaction_with_metadata_filtering() {
             engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
             engine_config: Default::default(),
             assigned_at: 0,
+            ..Default::default()
         });
         Arc::new(col)
     };

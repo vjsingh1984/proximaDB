@@ -205,6 +205,7 @@ async fn test_collection_service_dependency_injection() {
             engine_config: std::collections::HashMap::new(),
             base_location: format!("{}", temp_dir.path().display()),
             assigned_at: chrono::Utc::now().timestamp_micros(),
+                ..Default::default()
         }),
     };
 
@@ -330,6 +331,7 @@ async fn test_metadata_backend_persistence() {
                     engine_config: std::collections::HashMap::new(),
                     base_location: format!("{}", temp_dir.path().display()),
                     assigned_at: chrono::Utc::now().timestamp_micros(),
+                ..Default::default()
                 }),
             };
 
@@ -469,6 +471,7 @@ async fn test_metadata_backend_deletion() {
                 engine_config: std::collections::HashMap::new(),
                 base_location: format!("{}", temp_dir.path().display()),
                 assigned_at: chrono::Utc::now().timestamp_micros(),
+                ..Default::default()
             }),
         };
 
@@ -592,6 +595,7 @@ async fn test_concurrent_metadata_operations() {
                     engine_config: std::collections::HashMap::new(),
                     base_location: temp_dir_path,
                     assigned_at: chrono::Utc::now().timestamp_micros(),
+                ..Default::default()
                 }),
             };
 
@@ -696,6 +700,7 @@ async fn test_metadata_backend_updates() {
             engine_config: std::collections::HashMap::new(),
             base_location: format!("{}", temp_dir.path().display()),
             assigned_at: chrono::Utc::now().timestamp_micros(),
+                ..Default::default()
         }),
     };
 
@@ -916,6 +921,7 @@ async fn test_metadata_backend_trait_implementation() {
             engine_config: std::collections::HashMap::new(),
             base_location: format!("{}", temp_dir.path().display()),
             assigned_at: chrono::Utc::now().timestamp_micros(),
+                ..Default::default()
         }),
     };
 

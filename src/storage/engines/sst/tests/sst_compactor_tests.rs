@@ -164,6 +164,7 @@ mod tests {
             storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
                 base_location: format!("file://{}", base_path),
                 assigned_at: chrono::Utc::now().timestamp(),
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -1091,6 +1092,7 @@ mod tests {
             storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
                 base_location: format!("file://{}", base_path.to_str().unwrap()),
                 assigned_at: chrono::Utc::now().timestamp(),
+                ..Default::default()
             }),
             ..Default::default()
         };

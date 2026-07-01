@@ -500,6 +500,7 @@ mod tests {
                 engine_config: std::collections::HashMap::new(),
                 base_location: format!("{}", temp_dir.path().display()),
                 assigned_at: chrono::Utc::now().timestamp_micros(),
+                ..Default::default()
             }),
         }
     }

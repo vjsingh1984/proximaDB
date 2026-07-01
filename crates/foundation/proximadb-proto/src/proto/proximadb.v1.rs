@@ -6366,6 +6366,15 @@ pub struct StorageAssignment {
     pub base_location: ::prost::alloc::string::String,
     #[prost(int64, tag = "6")]
     pub assigned_at: i64,
+    /// ADR-031 Phase 4d: typed collection identity triple, set at create when
+    /// PROXIMADB_TYPED_PATHS=1 so catalog-free engines can resolve the typed
+    /// account-rooted read path. All three are Some or all three are None.
+    #[prost(uint32, optional, tag = "7")]
+    pub typed_account_id: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "8")]
+    pub typed_namespace_id: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "9")]
+    pub typed_collection_id: ::core::option::Option<u32>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetCollectionRequest {

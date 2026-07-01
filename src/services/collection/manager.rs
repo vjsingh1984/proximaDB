@@ -1063,6 +1063,21 @@ impl CollectionService {
             None => base_location.clone(),
         };
 
+        // ADR-031 Phase 4d: when a typed identity was minted (env ON + account
+        // known), carry the triple on the proto `StorageAssignment` so the
+        // catalog-free engines can resolve the account-rooted read path
+        // (`accounts/{acct}/{ns}/{coll}/…`) at read time — they have no catalog
+        // access and can't mint it themselves. All three are Some together, or
+        // all None (env OFF / no account → legacy byte-identical path).
+        let (typed_account_id, typed_namespace_id, typed_collection_id) = match typed_identity {
+            Some(id) => (
+                Some(id.account_id),
+                Some(id.namespace_id as u32),
+                Some(id.collection_id),
+            ),
+            None => (None, None, None),
+        };
+
         // Create proto collection with stats and storage assignment
         let proto_collection = Collection {
             id: uuid.clone(),
@@ -1081,6 +1096,9 @@ impl CollectionService {
                 engine_config: std::collections::HashMap::new(),
                 base_location: tenant_base_location.clone(), // Tenant-prefixed path
                 assigned_at: chrono::Utc::now().timestamp_micros(),
+                typed_account_id,
+                typed_namespace_id,
+                typed_collection_id,
             }),
         };
 
