@@ -311,6 +311,11 @@ pub struct TypedColumn {
     /// For TIMESTAMP_TZ default
     #[prost(string, optional, tag = "23")]
     pub timezone: ::core::option::Option<::prost::alloc::string::String>,
+    /// VECTOR-specific options
+    ///
+    /// For DENSE_VECTOR / BINARY_VECTOR dimension
+    #[prost(uint32, optional, tag = "24")]
+    pub vector_dimension: ::core::option::Option<u32>,
     /// TEXT-specific options
     #[prost(enumeration = "TextStorageStrategy", optional, tag = "30")]
     pub text_storage_strategy: ::core::option::Option<i32>,

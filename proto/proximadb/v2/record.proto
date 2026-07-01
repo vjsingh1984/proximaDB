@@ -281,6 +281,9 @@ message TypedColumn {
   optional string json_schema = 22;          // JSON Schema for validation
   optional string timezone = 23;             // For TIMESTAMP_TZ default
 
+  // VECTOR-specific options
+  optional uint32 vector_dimension = 24;     // For DENSE_VECTOR / BINARY_VECTOR dimension
+
   // TEXT-specific options
   optional TextStorageStrategy text_storage_strategy = 30;
   optional bool enable_fulltext_index = 31;  // Create fulltext index

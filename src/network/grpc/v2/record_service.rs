@@ -207,6 +207,12 @@ fn runtime_metadata_to_grpc_schema(
             json_max_depth: None,
             json_schema: None,
             timezone: None,
+            vector_dimension: match &column.data_type {
+                ProximaType::DenseVector { dim, .. } | ProximaType::BinaryVector { dim } => {
+                    Some(*dim as u32)
+                }
+                _ => None,
+            },
             text_storage_strategy: None,
             enable_fulltext_index: None,
             enable_ngram_bloom: None,
@@ -345,7 +351,7 @@ fn grpc_column_type_to_proxima_type(
         proximadb_v2::ColumnDataType::GeoPolygon => ProximaType::GeographyPoint,
         proximadb_v2::ColumnDataType::Vector => ProximaType::DenseVector {
             element: VectorElement::Float32,
-            dim: 0,
+            dim: column.vector_dimension.unwrap_or(0) as usize,
         },
         proximadb_v2::ColumnDataType::SparseVector => ProximaType::SparseVector {
             element: VectorElement::Float32,
@@ -362,7 +368,9 @@ fn grpc_column_type_to_proxima_type(
         proximadb_v2::ColumnDataType::Jsonb => ProximaType::Jsonb,
         proximadb_v2::ColumnDataType::Ulid => ProximaType::ULID,
         proximadb_v2::ColumnDataType::Struct => ProximaType::Struct { fields: Vec::new() },
-        proximadb_v2::ColumnDataType::BinaryVector => ProximaType::BinaryVector { dim: 0 },
+        proximadb_v2::ColumnDataType::BinaryVector => ProximaType::BinaryVector {
+            dim: column.vector_dimension.unwrap_or(0) as usize,
+        },
     };
     Ok((ty, None))
 }
@@ -2346,6 +2354,74 @@ mod tests {
     fn test_typed_value_conversion() {
         // Test would require mocking UnifiedHandlers
         // For now, just verify the module compiles
+    }
+
+    #[test]
+    fn grpc_schema_round_trips_vector_dimension() {
+        // TypedColumn now carries vector_dimension, so Dense/BinaryVector dims
+        // survive metadata -> RecordSchema -> CollectionSchemaUpdate (the path
+        // that previously dropped dim to 0).
+        let dense = CollectionSchemaColumn {
+            name: "dense".to_string(),
+            data_type: ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim: 128,
+            },
+            nullable: true,
+            indexed: false,
+            filterable: false,
+            text_storage: None,
+            max_length: None,
+        };
+        let binary = CollectionSchemaColumn {
+            name: "binary".to_string(),
+            data_type: ProximaType::BinaryVector { dim: 256 },
+            nullable: true,
+            indexed: false,
+            filterable: false,
+            text_storage: None,
+            max_length: None,
+        };
+        let metadata = CollectionSchemaMetadata {
+            collection_id: "c".to_string(),
+            enabled: true,
+            columns: vec![dense, binary],
+            ..Default::default()
+        };
+
+        let schema = runtime_metadata_to_grpc_schema(&metadata);
+        // Forward map must stamp vector_dimension onto the wire.
+        assert_eq!(
+            schema
+                .columns
+                .iter()
+                .find(|c| c.name == "dense")
+                .unwrap()
+                .vector_dimension,
+            Some(128)
+        );
+        assert_eq!(
+            schema
+                .columns
+                .iter()
+                .find(|c| c.name == "binary")
+                .unwrap()
+                .vector_dimension,
+            Some(256)
+        );
+
+        // Inverse map must read it back into the canonical ProximaType.
+        let update = grpc_record_schema_to_runtime_update("c", schema).unwrap();
+        let dense = update.columns.iter().find(|c| c.name == "dense").unwrap();
+        let binary = update.columns.iter().find(|c| c.name == "binary").unwrap();
+        assert!(matches!(
+            &dense.data_type,
+            ProximaType::DenseVector { dim, .. } if *dim == 128
+        ));
+        assert!(matches!(
+            &binary.data_type,
+            ProximaType::BinaryVector { dim } if *dim == 256
+        ));
     }
 
     #[test]
