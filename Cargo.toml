@@ -1,6 +1,6 @@
 [package]
 name = "proximadb"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 autobenches = false
 authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
@@ -112,7 +112,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
