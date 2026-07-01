@@ -213,6 +213,13 @@ fn runtime_metadata_to_grpc_schema(
                 }
                 _ => None,
             },
+            vector_element_type: match &column.data_type {
+                ProximaType::DenseVector { element, .. }
+                | ProximaType::SparseVector { element } => {
+                    Some(proxima_vector_element_to_grpc(*element) as i32)
+                }
+                _ => None,
+            },
             text_storage_strategy: None,
             enable_fulltext_index: None,
             enable_ngram_bloom: None,
@@ -350,11 +357,11 @@ fn grpc_column_type_to_proxima_type(
         proximadb_v2::ColumnDataType::GeoPoint => ProximaType::Point,
         proximadb_v2::ColumnDataType::GeoPolygon => ProximaType::GeographyPoint,
         proximadb_v2::ColumnDataType::Vector => ProximaType::DenseVector {
-            element: VectorElement::Float32,
+            element: grpc_vector_element_to_proxima(column.vector_element_type),
             dim: column.vector_dimension.unwrap_or(0) as usize,
         },
         proximadb_v2::ColumnDataType::SparseVector => ProximaType::SparseVector {
-            element: VectorElement::Float32,
+            element: grpc_vector_element_to_proxima(column.vector_element_type),
         },
         proximadb_v2::ColumnDataType::Int8 => ProximaType::Int8,
         proximadb_v2::ColumnDataType::Int16 => ProximaType::Int16,
@@ -373,6 +380,34 @@ fn grpc_column_type_to_proxima_type(
         },
     };
     Ok((ty, None))
+}
+
+/// Map the wire `VectorElementType` (optional) into the canonical
+/// `VectorElement`. `None`/`Unspecified` fall back to `Float32` to preserve the
+/// historical default (pre-field behavior).
+fn grpc_vector_element_to_proxima(value: Option<i32>) -> VectorElement {
+    use proximadb_v2::VectorElementType as E;
+    match value
+        .and_then(|v| E::try_from(v).ok())
+        .unwrap_or(E::VectorElementFloat32)
+    {
+        E::VectorElementFloat16 => VectorElement::Float16,
+        E::VectorElementBfloat16 => VectorElement::BFloat16,
+        E::VectorElementFloat64 => VectorElement::Float64,
+        E::VectorElementInt8 => VectorElement::Int8,
+        E::VectorElementFloat32 | E::Unspecified => VectorElement::Float32,
+    }
+}
+
+fn proxima_vector_element_to_grpc(value: VectorElement) -> proximadb_v2::VectorElementType {
+    use proximadb_v2::VectorElementType as E;
+    match value {
+        VectorElement::Float16 => E::VectorElementFloat16,
+        VectorElement::BFloat16 => E::VectorElementBfloat16,
+        VectorElement::Float32 => E::VectorElementFloat32,
+        VectorElement::Float64 => E::VectorElementFloat64,
+        VectorElement::Int8 => E::VectorElementInt8,
+    }
 }
 
 fn proxima_type_to_grpc_column_type(
@@ -2357,15 +2392,27 @@ mod tests {
     }
 
     #[test]
-    fn grpc_schema_round_trips_vector_dimension() {
-        // TypedColumn now carries vector_dimension, so Dense/BinaryVector dims
-        // survive metadata -> RecordSchema -> CollectionSchemaUpdate (the path
-        // that previously dropped dim to 0).
+    fn grpc_schema_round_trips_vector_dim_and_element() {
+        // TypedColumn now carries vector_dimension + vector_element_type, so
+        // Dense/Sparse/Binary vector columns round-trip dim and element across
+        // metadata -> RecordSchema -> CollectionSchemaUpdate (previously dim
+        // dropped to 0 and element was hardcoded Float32).
         let dense = CollectionSchemaColumn {
             name: "dense".to_string(),
             data_type: ProximaType::DenseVector {
-                element: VectorElement::Float32,
+                element: VectorElement::Float16,
                 dim: 128,
+            },
+            nullable: true,
+            indexed: false,
+            filterable: false,
+            text_storage: None,
+            max_length: None,
+        };
+        let sparse = CollectionSchemaColumn {
+            name: "sparse".to_string(),
+            data_type: ProximaType::SparseVector {
+                element: VectorElement::Int8,
             },
             nullable: true,
             indexed: false,
@@ -2385,38 +2432,39 @@ mod tests {
         let metadata = CollectionSchemaMetadata {
             collection_id: "c".to_string(),
             enabled: true,
-            columns: vec![dense, binary],
+            columns: vec![dense, sparse, binary],
             ..Default::default()
         };
 
         let schema = runtime_metadata_to_grpc_schema(&metadata);
-        // Forward map must stamp vector_dimension onto the wire.
+        // Forward map stamps dimension + element onto the wire.
+        let wire = |n: &str| schema.columns.iter().find(|c| c.name == n).unwrap();
+        assert_eq!(wire("dense").vector_dimension, Some(128));
         assert_eq!(
-            schema
-                .columns
-                .iter()
-                .find(|c| c.name == "dense")
-                .unwrap()
-                .vector_dimension,
-            Some(128)
+            wire("dense").vector_element_type,
+            Some(proximadb_v2::VectorElementType::VectorElementFloat16 as i32)
         );
+        assert_eq!(wire("sparse").vector_dimension, None);
         assert_eq!(
-            schema
-                .columns
-                .iter()
-                .find(|c| c.name == "binary")
-                .unwrap()
-                .vector_dimension,
-            Some(256)
+            wire("sparse").vector_element_type,
+            Some(proximadb_v2::VectorElementType::VectorElementInt8 as i32)
         );
+        assert_eq!(wire("binary").vector_dimension, Some(256));
+        assert_eq!(wire("binary").vector_element_type, None);
 
-        // Inverse map must read it back into the canonical ProximaType.
+        // Inverse map reads them back into the canonical ProximaType.
         let update = grpc_record_schema_to_runtime_update("c", schema).unwrap();
         let dense = update.columns.iter().find(|c| c.name == "dense").unwrap();
+        let sparse = update.columns.iter().find(|c| c.name == "sparse").unwrap();
         let binary = update.columns.iter().find(|c| c.name == "binary").unwrap();
         assert!(matches!(
             &dense.data_type,
-            ProximaType::DenseVector { dim, .. } if *dim == 128
+            ProximaType::DenseVector { element, dim }
+                if *element == VectorElement::Float16 && *dim == 128
+        ));
+        assert!(matches!(
+            &sparse.data_type,
+            ProximaType::SparseVector { element } if *element == VectorElement::Int8
         ));
         assert!(matches!(
             &binary.data_type,

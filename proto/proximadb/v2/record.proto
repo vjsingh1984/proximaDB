@@ -252,6 +252,17 @@ message SparseVector {
   uint32 dimension = 3;  // Total dimension of sparse space
 }
 
+// Element type for dense/sparse vector columns. Value names are prefixed to
+// avoid proto3 value-name collisions with ColumnDataType (FLOAT32/INT8/...).
+enum VectorElementType {
+  VECTOR_ELEMENT_TYPE_UNSPECIFIED = 0;
+  VECTOR_ELEMENT_FLOAT16 = 1;
+  VECTOR_ELEMENT_BFLOAT16 = 2;
+  VECTOR_ELEMENT_FLOAT32 = 3;
+  VECTOR_ELEMENT_FLOAT64 = 4;
+  VECTOR_ELEMENT_INT8 = 5;
+}
+
 // =============================================================================
 // TypedColumn: Column definition with validation constraints
 // =============================================================================
@@ -283,6 +294,7 @@ message TypedColumn {
 
   // VECTOR-specific options
   optional uint32 vector_dimension = 24;     // For DENSE_VECTOR / BINARY_VECTOR dimension
+  optional VectorElementType vector_element_type = 25;  // For DENSE_VECTOR / SPARSE_VECTOR element
 
   // TEXT-specific options
   optional TextStorageStrategy text_storage_strategy = 30;
