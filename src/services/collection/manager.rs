@@ -2244,8 +2244,18 @@ impl CollectionService {
             schema.stable_namespace_id = Some(id.namespace_id);
             schema.stable_collection_id = Some(id.collection_id);
         }
+        // ADR-047 / TD-TBL-1: the fresh `schema` above is rebuilt from the narrow
+        // `Collection` config, which cannot carry the canonical ProximaType
+        // columns. Capture any existing canonical-schema sidecar here so it can
+        // be re-attached below — otherwise an unrelated `update_collection`
+        // (e.g. an index-param tweak) would silently drop the canonical schema.
+        let mut preserved_canonical_schema: Option<String> = None;
         if catalog.table_exists(&identifier).await? {
             let mut existing = catalog.get_table(&identifier).await?;
+            preserved_canonical_schema = existing
+                .properties
+                .get(crate::storage::metadata::collection_mapping::CANONICAL_SCHEMA_PROPERTY)
+                .cloned();
             if existing
                 .properties
                 .get("asset.kind")
@@ -2280,6 +2290,12 @@ impl CollectionService {
             }
 
             let _ = catalog.drop_table(&identifier, false).await?;
+        }
+        if let Some(canonical) = preserved_canonical_schema {
+            schema.properties.insert(
+                crate::storage::metadata::collection_mapping::CANONICAL_SCHEMA_PROPERTY.to_string(),
+                canonical,
+            );
         }
         catalog.create_table(&identifier, schema).await?;
         Ok(())
@@ -3713,6 +3729,215 @@ mod tests {
         assert_eq!(quant.enabled, Some(true));
         assert_eq!(quant.strategy, Some(Strategy::Aggressive as i32));
     }
+
+    /// Build a canonical schema column (non-filterable, non-indexed) for the
+    /// round-trip tests. Fully-qualified types so it needs no test-fn imports.
+    fn canonical_col(
+        name: &str,
+        data_type: proximadb_data_model::ProximaType,
+    ) -> proximadb_runtime::CollectionSchemaColumn {
+        proximadb_runtime::CollectionSchemaColumn {
+            name: name.to_string(),
+            data_type,
+            nullable: true,
+            indexed: false,
+            filterable: false,
+            text_storage: None,
+            max_length: None,
+        }
+    }
+
+    /// ADR-047 / TD-TBL-1: canonical ProximaType columns (incl. UInt/Struct/Map/
+    /// Sparse/BinaryVector — none representable in the narrow v1 config) must
+    /// survive create → set → catalog restart → read-back.
+    #[tokio::test]
+    async fn canonical_schema_columns_survive_catalog_restart() -> Result<()> {
+        use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
+        use proximadb_runtime::CollectionPort;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("temp dir")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+
+        let columns = vec![
+            canonical_col("u", ProximaType::UInt64),
+            canonical_col(
+                "st",
+                ProximaType::Struct {
+                    fields: vec![("a".to_string(), ProximaType::Int64)],
+                },
+            ),
+            canonical_col(
+                "m",
+                ProximaType::Map {
+                    key: Box::new(ProximaType::String),
+                    value: Box::new(ProximaType::Int64),
+                },
+            ),
+            canonical_col(
+                "sv",
+                ProximaType::SparseVector {
+                    element: VectorElement::Float32,
+                },
+            ),
+            canonical_col("bv", ProximaType::BinaryVector { dim: 256 }),
+            canonical_col(
+                "dv",
+                ProximaType::DenseVector {
+                    element: VectorElement::Float32,
+                    dim: 128,
+                },
+            ),
+            canonical_col("ts", ProximaType::Timestamp(TimeUnit::Nanosecond)),
+        ];
+
+        let name = "canon_rt";
+        // Instance A: create the collection, then persist the canonical sidecar.
+        let mgr_a = Arc::new(CatalogManager::new());
+        mgr_a
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("create test catalog A")?;
+        let svc_a = CollectionService::new(StorageConfig::default())
+            .await
+            .context("collection service A")?
+            .with_catalog_manager(mgr_a);
+        let config = CollectionConfig {
+            name: name.to_string(),
+            dimension: 8,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
+            ..Default::default()
+        };
+        assert!(
+            svc_a
+                .create_collection(&config)
+                .await
+                .context("create collection A")?
+                .success
+        );
+        svc_a
+            .set_collection_schema_columns(name, &columns, None)
+            .await
+            .context("set canonical columns")?;
+        drop(svc_a);
+
+        // Instance B: a fresh service + catalog manager on the SAME on-disk dir
+        // simulates a restart (the canonical sidecar must be read from disk).
+        let mgr_b = Arc::new(CatalogManager::new());
+        mgr_b
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("create test catalog B")?;
+        let svc_b = CollectionService::new(StorageConfig::default())
+            .await
+            .context("collection service B")?
+            .with_catalog_manager(mgr_b);
+
+        let restored = svc_b
+            .get_collection_schema_columns(name, None)
+            .await
+            .context("read canonical columns after restart")?
+            .expect("canonical columns persisted across catalog restart");
+        assert_eq!(restored.len(), columns.len());
+        assert_eq!(
+            restored, columns,
+            "every canonical ProximaType variant round-trips through the catalog"
+        );
+
+        // Legacy collection (no canonical sidecar) → None (mixed-read-safe).
+        let legacy = CollectionConfig {
+            name: "canon_legacy".to_string(),
+            dimension: 4,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
+            ..Default::default()
+        };
+        assert!(
+            svc_b
+                .create_collection(&legacy)
+                .await
+                .context("create legacy collection")?
+                .success
+        );
+        assert_eq!(
+            svc_b
+                .get_collection_schema_columns("canon_legacy", None)
+                .await?,
+            None,
+            "collection without a canonical sidecar returns None"
+        );
+
+        Ok(())
+    }
+
+    /// ADR-047 / TD-TBL-1: an unrelated `update_collection` (e.g. a description
+    /// tweak) must NOT drop the canonical sidecar — the sticky-preserve in
+    /// `upsert_collection_catalog_asset` carries it across the narrow rebuild.
+    #[tokio::test]
+    async fn canonical_schema_columns_survive_unrelated_update_collection() -> Result<()> {
+        use proximadb_data_model::ProximaType;
+        use proximadb_runtime::CollectionPort;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("temp dir")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        let mgr = Arc::new(CatalogManager::new());
+        mgr.create_native_catalog("default", &temp_path)
+            .await
+            .context("create test catalog")?;
+        let svc = CollectionService::new(StorageConfig::default())
+            .await
+            .context("collection service")?
+            .with_catalog_manager(mgr);
+
+        let name = "canon_sticky";
+        let config = CollectionConfig {
+            name: name.to_string(),
+            dimension: 8,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
+            ..Default::default()
+        };
+        assert!(
+            svc.create_collection(&config)
+                .await
+                .context("create collection")?
+                .success
+        );
+
+        let columns = vec![canonical_col(
+            "s",
+            ProximaType::Struct {
+                fields: vec![("a".to_string(), ProximaType::Int64)],
+            },
+        )];
+        svc.set_collection_schema_columns(name, &columns, None)
+            .await
+            .context("set canonical columns")?;
+
+        // Unrelated config change — rebuilds the catalog asset from the narrow
+        // config, which must re-attach the preserved canonical sidecar.
+        let update = CollectionConfig {
+            description: Some("tweaked".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            svc.update_collection(name, Some(update))
+                .await
+                .context("unrelated update_collection")?
+                .success
+        );
+
+        let restored = svc
+            .get_collection_schema_columns(name, None)
+            .await
+            .context("read canonical after update")?
+            .expect("canonical sidecar survived unrelated update_collection");
+        assert_eq!(restored, columns);
+
+        Ok(())
+    }
 }
 
 // ── CollectionPort impl ───────────────────────────────────────────────────────
@@ -3780,5 +4005,84 @@ impl proximadb_runtime::CollectionPort for CollectionService {
 
     async fn resolve_collection_id(&self, identifier: &str) -> anyhow::Result<Option<String>> {
         CollectionService::resolve_collection_id(self, identifier).await
+    }
+
+    async fn set_collection_schema_columns(
+        &self,
+        id: &str,
+        columns: &[proximadb_runtime::CollectionSchemaColumn],
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        // ADR-047 / TD-TBL-1: persist the canonical ProximaType columns as a
+        // catalog-asset sidecar. Resolve the SAME asset `upsert_collection_catalog_asset`
+        // writes (config → table identifier → tenant-scoped) so the sidecar lands
+        // on the exact table the narrow config lives on. Best-effort no-op when
+        // there is no catalog or no such collection (preserves the trait default).
+        let Some(catalog_manager) = &self.catalog_manager else {
+            return Ok(());
+        };
+        let Some(collection) = self.get_collection(id, tenant_id).await? else {
+            return Ok(());
+        };
+        let Some(config) = collection.config.as_ref() else {
+            return Ok(());
+        };
+        let catalog = catalog_manager.default_catalog().await?;
+        let identifier = Self::tenant_scoped_identifier(
+            self.tenant_namespaces_on(),
+            Self::collection_tenant_id(&collection).as_deref(),
+            crate::storage::metadata::collection_mapping::collection_table_identifier(config),
+        );
+        if !catalog.table_exists(&identifier).await.unwrap_or(false) {
+            return Ok(());
+        }
+        let mut schema = catalog.get_table(&identifier).await?;
+        if columns.is_empty() {
+            schema
+                .properties
+                .remove(crate::storage::metadata::collection_mapping::CANONICAL_SCHEMA_PROPERTY);
+        } else {
+            schema.properties.insert(
+                crate::storage::metadata::collection_mapping::CANONICAL_SCHEMA_PROPERTY.to_string(),
+                crate::storage::metadata::catalog_config::canonical_schema_columns_to_json(
+                    columns,
+                )?,
+            );
+        }
+        let _ = catalog.drop_table(&identifier, false).await?;
+        catalog.create_table(&identifier, schema).await?;
+        Ok(())
+    }
+
+    async fn get_collection_schema_columns(
+        &self,
+        id: &str,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<Option<Vec<proximadb_runtime::CollectionSchemaColumn>>> {
+        let Some(catalog_manager) = &self.catalog_manager else {
+            return Ok(None);
+        };
+        let Some(collection) = self.get_collection(id, tenant_id).await? else {
+            return Ok(None);
+        };
+        let Some(config) = collection.config.as_ref() else {
+            return Ok(None);
+        };
+        let catalog = catalog_manager.default_catalog().await?;
+        let identifier = Self::tenant_scoped_identifier(
+            self.tenant_namespaces_on(),
+            Self::collection_tenant_id(&collection).as_deref(),
+            crate::storage::metadata::collection_mapping::collection_table_identifier(config),
+        );
+        if !catalog.table_exists(&identifier).await.unwrap_or(false) {
+            return Ok(None);
+        }
+        let schema = catalog.get_table(&identifier).await?;
+        Ok(schema
+            .properties
+            .get(crate::storage::metadata::collection_mapping::CANONICAL_SCHEMA_PROPERTY)
+            .and_then(|json| {
+                crate::storage::metadata::catalog_config::canonical_schema_columns_from_json(json)
+            }))
     }
 }

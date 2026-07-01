@@ -3988,11 +3988,19 @@ fn apply_runtime_schema_update_to_v1_config(
             }
             continue;
         }
-        return Err(anyhow::anyhow!(
-            "legacy collection metadata cannot preserve schema column '{}' with canonical type {:?}",
+        // ADR-047 / TD-TBL-1 (legacy twin): this v1-bridge path is the dormant
+        // fallback (used only when no runtime port is wired, `ports: None`). It
+        // has no `CollectionPort` and so cannot persist the canonical sidecar;
+        // columns the narrow v1 config cannot represent are dropped here rather
+        // than rejected — best-effort, matching the canonical path's no-longer-
+        // fail-closed stance. The active runtime path persists them via the
+        // canonical sidecar (`set_collection_schema_columns`).
+        tracing::debug!(
+            "legacy v1 config cannot preserve schema column '{}' (canonical type {:?}); \
+             dropped from the narrow projection on this dormant fallback path",
             column.name,
             column.data_type
-        ));
+        );
     }
     config.filterable_columns = filterable_columns;
     Ok(())
