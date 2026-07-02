@@ -13,6 +13,7 @@
 
 use anyhow::Result;
 use proximadb_proto::proximadb_v1::Collection;
+use proximadb_storage_common::StorageEngineType;
 
 /// Read access to collection metadata that storage needs at flush/compaction
 /// time (fetch the proto `Collection` for a name or UUID).
@@ -27,4 +28,37 @@ pub trait CollectionMetadataPort: Send + Sync {
     /// Fetch the full proto collection (with all metadata) by name or UUID.
     /// Returns `Ok(None)` when the collection does not exist.
     async fn collection(&self, identifier: &str) -> Result<Option<Collection>>;
+}
+
+/// Event-log operations that storage needs when flush/compaction publishes
+/// index-maintenance work.
+///
+/// Inverts the storage dependency on AXIS event-log concrete types. Storage
+/// emits storage-native facts (collection, files, engine, quantization flags);
+/// higher layers translate them into AXIS `IndexEvent`s.
+#[async_trait::async_trait]
+pub trait StorageEventLogPort: Send + Sync {
+    /// Record a flush event and wait until the event log acknowledges it.
+    async fn notify_flush(
+        &self,
+        collection_id: &str,
+        flushed_files: Vec<String>,
+        vector_count: usize,
+        storage_engine: StorageEngineType,
+        has_quantized: bool,
+        has_fp32: bool,
+    ) -> Result<()>;
+
+    /// Record a completed compaction event.
+    async fn notify_compaction(
+        &self,
+        collection_id: &str,
+        output_files: Vec<String>,
+        vector_count: usize,
+        storage_engine: StorageEngineType,
+    ) -> Result<()>;
+
+    /// Return whether a file can be compacted. Implementations should fail
+    /// open when the event log is unavailable.
+    async fn can_compact(&self, collection_id: &str, file_path: &str) -> Result<bool>;
 }

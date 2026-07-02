@@ -11,8 +11,9 @@
 use std::sync::Arc;
 use tracing::{debug, trace};
 
-use crate::index::axis::eventlog::{EventLogService, IndexEventBuilder, StorageEngineType};
+use crate::core::types::StorageEngineType;
 use crate::storage::engines::{CompactionParameters, FlushParameters};
+use proximadb_storage_ports::StorageEventLogPort;
 
 /// Helper trait for storage engines to notify EventLog
 #[async_trait::async_trait]
@@ -41,11 +42,11 @@ pub trait EventLogNotifier {
 
 /// SST engine event log integration
 pub struct SstEventLogNotifier {
-    event_log: Arc<dyn EventLogService>,
+    event_log: Arc<dyn StorageEventLogPort>,
 }
 
 impl SstEventLogNotifier {
-    pub fn new(event_log: Arc<dyn EventLogService>) -> Self {
+    pub fn new(event_log: Arc<dyn StorageEventLogPort>) -> Self {
         Self { event_log }
     }
 }
@@ -60,17 +61,16 @@ impl EventLogNotifier for SstEventLogNotifier {
         has_quantized: bool,
         has_fp32: bool,
     ) -> Result<(), anyhow::Error> {
-        let event = IndexEventBuilder::flush_event(
-            collection_id.to_string(),
-            flushed_files,
-            vector_count,
-            StorageEngineType::SST,
-            has_quantized,
-            has_fp32,
-        );
-
-        // Block until EventLog acknowledges
-        self.event_log.add_event(event).await?;
+        self.event_log
+            .notify_flush(
+                collection_id,
+                flushed_files,
+                vector_count,
+                StorageEngineType::SST,
+                has_quantized,
+                has_fp32,
+            )
+            .await?;
 
         trace!("EventLog acknowledged SST flush for {}", collection_id);
         Ok(())
@@ -82,15 +82,14 @@ impl EventLogNotifier for SstEventLogNotifier {
         output_files: Vec<String>,
         vector_count: usize,
     ) -> Result<(), anyhow::Error> {
-        let event = IndexEventBuilder::compaction_event(
-            collection_id.to_string(),
-            output_files,
-            vector_count,
-            StorageEngineType::SST,
-        );
-
-        // Block until EventLog acknowledges
-        self.event_log.add_event(event).await?;
+        self.event_log
+            .notify_compaction(
+                collection_id,
+                output_files,
+                vector_count,
+                StorageEngineType::SST,
+            )
+            .await?;
 
         trace!("EventLog acknowledged SST compaction for {}", collection_id);
         Ok(())
@@ -119,11 +118,11 @@ impl EventLogNotifier for SstEventLogNotifier {
 
 /// VIPER engine event log integration
 pub struct ViperEventLogNotifier {
-    event_log: Arc<dyn EventLogService>,
+    event_log: Arc<dyn StorageEventLogPort>,
 }
 
 impl ViperEventLogNotifier {
-    pub fn new(event_log: Arc<dyn EventLogService>) -> Self {
+    pub fn new(event_log: Arc<dyn StorageEventLogPort>) -> Self {
         Self { event_log }
     }
 }
@@ -138,17 +137,16 @@ impl EventLogNotifier for ViperEventLogNotifier {
         has_quantized: bool,
         has_fp32: bool,
     ) -> Result<(), anyhow::Error> {
-        let event = IndexEventBuilder::flush_event(
-            collection_id.to_string(),
-            flushed_files,
-            vector_count,
-            StorageEngineType::VIPER,
-            has_quantized,
-            has_fp32,
-        );
-
-        // Block until EventLog acknowledges
-        self.event_log.add_event(event).await?;
+        self.event_log
+            .notify_flush(
+                collection_id,
+                flushed_files,
+                vector_count,
+                StorageEngineType::VIPER,
+                has_quantized,
+                has_fp32,
+            )
+            .await?;
 
         trace!("EventLog acknowledged VIPER flush for {}", collection_id);
         Ok(())
@@ -160,15 +158,14 @@ impl EventLogNotifier for ViperEventLogNotifier {
         output_files: Vec<String>,
         vector_count: usize,
     ) -> Result<(), anyhow::Error> {
-        let event = IndexEventBuilder::compaction_event(
-            collection_id.to_string(),
-            output_files,
-            vector_count,
-            StorageEngineType::VIPER,
-        );
-
-        // Block until EventLog acknowledges
-        self.event_log.add_event(event).await?;
+        self.event_log
+            .notify_compaction(
+                collection_id,
+                output_files,
+                vector_count,
+                StorageEngineType::VIPER,
+            )
+            .await?;
 
         trace!(
             "EventLog acknowledged VIPER compaction for {}",
@@ -201,19 +198,19 @@ pub struct EventLogNotifierFactory;
 
 impl EventLogNotifierFactory {
     /// Create SST notifier
-    pub fn create_sst_notifier(event_log: Arc<dyn EventLogService>) -> SstEventLogNotifier {
+    pub fn create_sst_notifier(event_log: Arc<dyn StorageEventLogPort>) -> SstEventLogNotifier {
         SstEventLogNotifier::new(event_log)
     }
 
-    /// Create VIPER notifier  
-    pub fn create_viper_notifier(event_log: Arc<dyn EventLogService>) -> ViperEventLogNotifier {
+    /// Create VIPER notifier
+    pub fn create_viper_notifier(event_log: Arc<dyn StorageEventLogPort>) -> ViperEventLogNotifier {
         ViperEventLogNotifier::new(event_log)
     }
 
     /// Create notifier based on engine type
     pub fn create_notifier(
         engine_type: &str,
-        event_log: Arc<dyn EventLogService>,
+        event_log: Arc<dyn StorageEventLogPort>,
     ) -> Result<Box<dyn EventLogNotifier + Send + Sync>, anyhow::Error> {
         match engine_type.to_lowercase().as_str() {
             "sst" => Ok(Box::new(Self::create_sst_notifier(event_log))),
@@ -290,42 +287,57 @@ impl CompactionParametersExt for CompactionParameters {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::axis::eventlog::{EventLogConfig, EventLogServiceAdapter};
-    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-    use dashmap::DashMap;
-    use tempfile::TempDir;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    async fn create_test_notifier() -> (SstEventLogNotifier, Arc<dyn EventLogService>, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
-        let base_url = format!("file://{}", temp_dir.path().display());
+    #[derive(Default)]
+    struct FakeEventLogPort {
+        flush_count: AtomicUsize,
+    }
 
-        let mut fs_config = FilesystemConfig::default();
-        fs_config.default_fs = Some(base_url.clone());
+    #[async_trait::async_trait]
+    impl StorageEventLogPort for FakeEventLogPort {
+        async fn notify_flush(
+            &self,
+            _collection_id: &str,
+            flushed_files: Vec<String>,
+            _vector_count: usize,
+            _storage_engine: StorageEngineType,
+            _has_quantized: bool,
+            _has_fp32: bool,
+        ) -> anyhow::Result<()> {
+            self.flush_count
+                .fetch_add(flushed_files.len(), Ordering::SeqCst);
+            Ok(())
+        }
 
-        let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
+        async fn notify_compaction(
+            &self,
+            _collection_id: &str,
+            _output_files: Vec<String>,
+            _vector_count: usize,
+            _storage_engine: StorageEngineType,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
 
-        let collection_cache = Arc::new(DashMap::new());
+        async fn can_compact(
+            &self,
+            _collection_id: &str,
+            _file_path: &str,
+        ) -> anyhow::Result<bool> {
+            Ok(true)
+        }
+    }
 
-        let config = EventLogConfig {
-            base_storage_url: base_url,
-            max_events_in_memory: 100,
-            cleanup_interval_secs: 60,
-            enable_recovery: true,
-        };
-
-        let event_log =
-            EventLogServiceAdapter::embedded(config, filesystem_factory, collection_cache)
-                .await
-                .unwrap();
-
+    fn create_test_notifier() -> (SstEventLogNotifier, Arc<FakeEventLogPort>) {
+        let event_log = Arc::new(FakeEventLogPort::default());
         let notifier = SstEventLogNotifier::new(event_log.clone());
-
-        (notifier, event_log, temp_dir)
+        (notifier, event_log)
     }
 
     #[tokio::test]
     async fn test_notify_flush_blocks_until_acknowledged() {
-        let (notifier, event_log, _dir) = create_test_notifier().await;
+        let (notifier, event_log) = create_test_notifier();
 
         // Notification blocks until EventLog acknowledges
         let start = std::time::Instant::now();
@@ -340,14 +352,7 @@ mod tests {
                 )
                 .await;
 
-            // Handle collection not found error gracefully in test environment
-            if let Err(e) = result {
-                if e.to_string().contains("not found") {
-                    trace!("Skipping test: Collection not found (expected in test environment)");
-                    return;
-                }
-                panic!("Flush notification failed: {}", e);
-            }
+            result.expect("flush notification should succeed");
         }
         let elapsed = start.elapsed();
 
@@ -358,17 +363,15 @@ mod tests {
             elapsed
         );
 
-        // Verify the event log service is responding
-        let health = event_log.get_health().await;
         assert!(
-            health.is_ok(),
-            "Event log service should be responsive after flush notifications"
+            event_log.flush_count.load(Ordering::SeqCst) == 10,
+            "fake event log should observe every flush notification"
         );
     }
 
     #[tokio::test]
     async fn test_can_compact_check() {
-        let (notifier, _event_log, _dir) = create_test_notifier().await;
+        let (notifier, _event_log) = create_test_notifier();
 
         // Unknown files can be compacted
         let can_compact = notifier

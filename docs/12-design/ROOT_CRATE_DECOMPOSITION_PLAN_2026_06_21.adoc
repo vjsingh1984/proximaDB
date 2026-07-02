@@ -212,8 +212,8 @@ upward edges into root subsystems (`compute`, `persistence`, `engines`, `core`, 
 cache and the large engine slices.
 
 Current measured Slice-D baseline from
-`python3 scripts/check_workspace_boundaries.py --storage-up-edges`: 275 remaining storage
-up-edges (`compute` 239, `index` 16, `query` 10, `services` 10). This is now the enforced
+`python3 scripts/check_workspace_boundaries.py --storage-up-edges`: 273 remaining storage
+up-edges (`compute` 239, `index` 14, `query` 10, `services` 10). This is now the enforced
 non-regression ceiling in `scripts/check-layering.sh`. That is the parallelization ground truth:
 do not move an engine crate while these edges still point at root modules; first split independent
 worktrees by edge class:

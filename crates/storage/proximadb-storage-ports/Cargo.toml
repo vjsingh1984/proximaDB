@@ -17,6 +17,7 @@ path = "src/lib.rs"
 anyhow.workspace = true
 async-trait.workspace = true
 proximadb-proto.workspace = true
+proximadb-storage-common.workspace = true
 
 [lints]
 workspace = true
