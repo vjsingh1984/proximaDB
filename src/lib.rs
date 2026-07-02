@@ -26,13 +26,23 @@
 // Suppress warnings that require significant API redesign (tracked separately)
 #![allow(clippy::too_many_arguments)] // Needs config-struct refactor
 #![allow(clippy::type_complexity)] // Needs type-alias extraction
-#![allow(clippy::result_large_err)] // Needs error-type refactor
-// Enforce error handling best practices
-#![warn(clippy::unwrap_used)]
-#![warn(clippy::expect_used)]
-#![warn(clippy::panic)]
-#![warn(clippy::unimplemented)]
-#![warn(clippy::todo)]
+#![allow(clippy::result_large_err)]
+// Needs error-type refactor
+// Enforce error-handling discipline in PRODUCTION code only. The unwrap_used,
+// expect_used, panic, unimplemented, and todo restriction lints all fire
+// heavily on the test suite (match-arm assertions, placeholder stubs), so they
+// are scoped to non-test builds via cfg_attr below — otherwise ~10k test call
+// sites drown out real findings under --all-targets. CI's --lib --bins gate
+// still ENFORCES every one of them in production (prod is currently clean of
+// all five), so this only quiets the test-suite noise. large_enum_variant stays
+// warned in every build (a variant-size blowup matters regardless of build).
+// (NB: keep this comment free of literal unwrap/expect call syntax — the
+// panic-policy scanner in CI counts those patterns in source, comments included.)
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), warn(clippy::expect_used))]
+#![cfg_attr(not(test), warn(clippy::panic))]
+#![cfg_attr(not(test), warn(clippy::unimplemented))]
+#![cfg_attr(not(test), warn(clippy::todo))]
 #![warn(clippy::large_enum_variant)]
 
 //! # ProximaDB - Cloud-Native Vector Database
