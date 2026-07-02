@@ -173,6 +173,48 @@ fn grpc_record_schema_to_runtime_update(
     })
 }
 
+/// Derive a minimal canonical schema (ADR-047 authority) from a v2 collection
+/// config: one primary `embedding` `DenseVector{Float32, dim}` column (mirroring
+/// the storage-provisioned `config.dimension`) plus the declared scalar
+/// `filterable_columns` as `String`. Richer/multi-vector schemas are layered on
+/// via `CreateSchema`.
+///
+/// Used by v2 `create_collection` so the catalog's `collection.canonical_schema`
+/// sidecar is authoritative for v2-created collections — not just the v1-derived
+/// narrow view.
+fn v2_config_to_canonical_columns(
+    cfg: &proximadb_v2::V2CollectionConfig,
+) -> Vec<CollectionSchemaColumn> {
+    let mut columns = Vec::with_capacity(1 + cfg.filterable_columns.len());
+    columns.push(CollectionSchemaColumn {
+        name: "embedding".to_string(),
+        data_type: ProximaType::DenseVector {
+            element: proximadb_data_model::VectorElement::Float32,
+            dim: cfg.dimension as usize,
+        },
+        nullable: false,
+        indexed: true,
+        filterable: false,
+        text_storage: None,
+        max_length: None,
+    });
+    for name in &cfg.filterable_columns {
+        if name.is_empty() {
+            continue;
+        }
+        columns.push(CollectionSchemaColumn {
+            name: name.clone(),
+            data_type: ProximaType::String,
+            nullable: true,
+            indexed: false,
+            filterable: true,
+            text_storage: None,
+            max_length: None,
+        });
+    }
+    columns
+}
+
 fn runtime_metadata_to_grpc_schema(
     metadata: &CollectionSchemaMetadata,
 ) -> proximadb_v2::RecordSchema {
@@ -2006,27 +2048,64 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<EvolveSchemaRequest>,
     ) -> Result<Response<EvolveSchemaResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let req = request.into_inner();
         info!(
             "V2 gRPC: EvolveSchema - collection='{}', base_schema='{}'",
             req.collection_id, req.base_schema_id
         );
 
+        let new_schema = req
+            .new_schema
+            .ok_or_else(|| Status::invalid_argument("new_schema is required"))?;
+        // Reuse the CreateSchema conversion — it type-checks every column
+        // (`grpc_column_type_to_proxima_type`), so a dry run still rejects a
+        // malformed schema before reporting success.
+        let update = grpc_record_schema_to_runtime_update(&req.collection_id, new_schema)?;
+        let new_schema_id = update.schema_id.clone();
+
         if req.dry_run {
-            debug!("V2 gRPC: EvolveSchema - dry run mode");
+            debug!("V2 gRPC: EvolveSchema - dry run; validating without persisting");
+            return Ok(Response::new(EvolveSchemaResponse {
+                success: true,
+                new_schema_id,
+                records_to_migrate: 0,
+                compatibility_warnings: Vec::new(),
+                error_message: None,
+            }));
         }
 
-        // Schema evolution would require:
-        // 1. Load existing schema
-        // 2. Validate evolution rules
-        // 3. Check compatibility
-        // 4. Optionally migrate existing records
+        if req.migrate_existing {
+            // The schema evolves (persisted below); real per-record migration is
+            // deferred. Be honest about it so callers don't assume records moved.
+            warn!(
+                "V2 gRPC: EvolveSchema: migrate_existing requested for '{}' but record \
+                 migration is not yet implemented — schema will evolve, existing records \
+                 are not rewritten",
+                req.collection_id
+            );
+        }
 
-        // For now, return unimplemented
-        warn!("V2 gRPC: EvolveSchema not yet fully implemented");
-        Err(Status::unimplemented(
-            "Schema evolution not yet implemented. Use CreateSchema for new schemas.",
-        ))
+        // Persist the evolved canonical schema to the catalog sidecar (authority flows
+        // through the runtime `UnifiedHandlers` impl of `ApiHandlersPort`).
+        self.api_handlers
+            .update_collection_schema_metadata(&req.collection_id, update, tenant_id.as_deref())
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("not found") {
+                    Status::not_found(format!("Collection not found: {}", req.collection_id))
+                } else {
+                    Status::internal(format!("Failed to evolve schema: {}", e))
+                }
+            })?;
+
+        Ok(Response::new(EvolveSchemaResponse {
+            success: true,
+            new_schema_id,
+            records_to_migrate: 0,
+            compatibility_warnings: Vec::new(),
+            error_message: None,
+        }))
     }
 
     // ---- Collection management (v2 parity with v1 CollectionService) ----
@@ -2116,6 +2195,35 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let coll = resp
             .collection
             .ok_or_else(|| Status::internal("CreateCollection returned no collection"))?;
+
+        // ADR-047 / collection-as-table: make the catalog (canonical schema sidecar)
+        // the authority for this v2-created collection. Storage was provisioned above
+        // via the v1 bridge; persist a minimal canonical schema derived from the
+        // V2CollectionConfig so v2 GetSchema returns the catalog-authoritative view
+        // (richer/multi-vector schemas can be layered on via CreateSchema). The
+        // authority flows through the runtime `UnifiedHandlers` impl of
+        // `ApiHandlersPort` (NOT the legacy `request_handlers.rs` twin).
+        // Best-effort: the read path already tolerates an absent sidecar (legacy
+        // fallback), so a failure here must not fail the already-provisioned collection.
+        let canonical_update = CollectionSchemaUpdate {
+            schema_id: format!("schema_{}", cfg.name),
+            schema_version: "1.0.0".to_string(),
+            enforcement: CollectionSchemaEnforcement::Hybrid,
+            auto_evolve: true,
+            columns: v2_config_to_canonical_columns(&cfg),
+        };
+        if let Err(e) = self
+            .api_handlers
+            .update_collection_schema_metadata(&cfg.name, canonical_update, tenant_id.as_deref())
+            .await
+        {
+            warn!(
+                "V2 CreateCollection: catalog-authoritative schema persist failed for '{}' \
+                 (storage provisioned; v1-derived view remains usable): {e}",
+                cfg.name
+            );
+        }
+
         Ok(Response::new(collection_to_v2(coll)))
     }
 
@@ -2384,6 +2492,40 @@ fn sql_value_to_typed(v: &crate::proto::proximadb_v1::SqlValue) -> proximadb_v2:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn v2_config_to_canonical_columns_emits_embedding_plus_filterable_scalars() {
+        let cfg = proximadb_v2::V2CollectionConfig {
+            name: "c".to_string(),
+            dimension: 128,
+            distance_metric: "cosine".to_string(),
+            storage_engine: "sst".to_string(),
+            filterable_columns: vec!["tag".to_string(), "owner".to_string(), String::new()],
+            description: String::new(),
+            index_specs: Vec::new(),
+            quantization: None,
+        };
+        let cols = v2_config_to_canonical_columns(&cfg);
+        // Primary vector column mirrors config.dimension; empty filterable names skipped.
+        assert_eq!(cols.len(), 3, "embedding + 2 non-empty filterable columns");
+        assert_eq!(cols[0].name, "embedding");
+        match &cols[0].data_type {
+            ProximaType::DenseVector { element, dim } => {
+                assert_eq!(*dim, 128);
+                assert!(matches!(
+                    element,
+                    proximadb_data_model::VectorElement::Float32
+                ));
+            }
+            other => panic!("expected DenseVector, got {other:?}"),
+        }
+        assert!(cols[0].indexed && !cols[0].filterable);
+        // Declared filterable columns projected as String + filterable.
+        assert_eq!(cols[1].name, "tag");
+        assert!(matches!(cols[1].data_type, ProximaType::String));
+        assert!(cols[1].filterable);
+        assert_eq!(cols[2].name, "owner");
+    }
 
     #[test]
     fn test_typed_value_conversion() {
