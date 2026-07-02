@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check docs-claim-check release-smoke cloud-emulator-test
+.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline v1-proto-usage-report v1-proto-usage-no-regression v1-proto-usage-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check docs-claim-check release-smoke cloud-emulator-test
 
 # Default target
 all: build test
@@ -8,6 +8,8 @@ all: build test
 PANIC_POLICY_BASELINE ?= docs/_internal/roadmap/PANIC_POLICY_BASELINE.json
 PANIC_POLICY_ARTIFACT ?= artifacts/panic_policy/latest_metrics.json
 PANIC_POLICY_CRITICAL_MODULES ?= network_rest,api_handlers,graph,query
+V1_PROTO_USAGE_BASELINE ?= docs/_internal/roadmap/V1_PROTO_USAGE_BASELINE.json
+V1_PROTO_USAGE_ARTIFACT ?= artifacts/v1_proto_usage/latest_metrics.json
 PYTHON ?= python3
 
 # Build targets
@@ -213,6 +215,27 @@ panic-policy-baseline:
 	bash scripts/count_panic_patterns.sh --mode report --format json --write $(PANIC_POLICY_BASELINE)
 	@echo "Updated baseline: $(PANIC_POLICY_BASELINE)"
 
+# TD-123: ratchet proximadb.v1 proto usage downward as the v1->v2 message-type
+# migration proceeds. v1 proto is the legacy internal domain model; this gate
+# fails on any net INCREASE so the migration only moves one direction. It does
+# not migrate anything itself — it is the measurement gate TD-123 requires
+# before the hard v1 removal (TD-121). Refresh the baseline only for intentional
+# increases: `make v1-proto-usage-baseline`.
+v1-proto-usage-report:
+	@echo "🧹 TD-123 v1 proto usage report (non-blocking)..."
+	@mkdir -p artifacts/v1_proto_usage
+	python3 scripts/check_v1_proto_usage.py --mode report --baseline $(V1_PROTO_USAGE_BASELINE) --format text --write $(V1_PROTO_USAGE_ARTIFACT)
+
+v1-proto-usage-no-regression:
+	@echo "🧹 TD-123 v1 proto usage no-regression check..."
+	@mkdir -p artifacts/v1_proto_usage
+	python3 scripts/check_v1_proto_usage.py --mode no-regression --baseline $(V1_PROTO_USAGE_BASELINE) --format text --write $(V1_PROTO_USAGE_ARTIFACT)
+
+v1-proto-usage-baseline:
+	@echo "🧹 Refreshing TD-123 v1 proto usage baseline..."
+	python3 scripts/check_v1_proto_usage.py --mode report --format json --write $(V1_PROTO_USAGE_BASELINE)
+	@echo "Updated baseline: $(V1_PROTO_USAGE_BASELINE)"
+
 # Release targets
 release: clean build-server test benchmark
 	@echo "🎯 Release build completed successfully"
@@ -385,6 +408,11 @@ help:
 	@echo "  panic-policy-no-regression - Fail on total panic-pattern regression"
 	@echo "  panic-policy-module-guard - Fail on critical module panic regression"
 	@echo "  panic-policy-baseline - Refresh panic-policy baseline artifact"
+	@echo ""
+	@echo "TD-123 v1 proto ratchet:"
+	@echo "  v1-proto-usage-report - v1 proto usage metrics (non-blocking)"
+	@echo "  v1-proto-usage-no-regression - Fail on v1 proto usage increase"
+	@echo "  v1-proto-usage-baseline - Refresh v1 proto usage baseline"
 	@echo ""
 	@echo "Release:"
 	@echo "  release            - Full release build with tests"
