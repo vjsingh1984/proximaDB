@@ -147,7 +147,7 @@ notes = "qa-gate ratchet (develop→qa promotion). Deterministic seeded LCG corp
 
 [[claims]]
 id = "pax_rabitq_sq8_sift1m_recall_at_10"
-claim = "PAX RaBitQ→SQ8 cascade recall@10 on real SIFT (128-d, Euclidean): N=100k indicative 0.9905; N=1M canonical pending qa-gate — WS8 default-on gate"
+claim = "PAX RaBitQ→SQ8 cascade recall@10 on real SIFT (128-d, Euclidean): N=100k 0.9905; N=1M 0.9920 (local indicative, provided GT) — WS8 gate PASSED"
 metric = "recall_at_10"
 status = "measured"
 asserted_in = ["tests/sift_pax_recall_ratchet_test.rs", ".github/workflows/qa-gate.yml"]
