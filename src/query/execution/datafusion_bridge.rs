@@ -475,10 +475,9 @@ mod tests {
 
     #[test]
     fn test_is_datafusion_available() {
-        // Without the feature flag, should return false
-        let available = DataFusionWindowExecutor::is_datafusion_available();
-        // We just check it returns a bool without panicking
-        assert!(available || !available);
+        // Smoke test: the contract is that the probe returns without panicking.
+        // The value is feature-dependent, so there is nothing meaningful to assert.
+        let _ = DataFusionWindowExecutor::is_datafusion_available();
     }
 
     #[test]

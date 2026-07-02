@@ -1186,8 +1186,9 @@ mod tests {
         let docker_available = detector.is_docker_available().await.unwrap();
         println!("Docker available: {}", docker_available);
 
-        // Should detect at least one platform
-        assert!(k8s_available || docker_available || true); // Always pass since we might not have either in test
+        // Smoke test only: the contract is that both detectors run without
+        // panicking (asserted via .unwrap() above). We may have neither in CI,
+        // so there is nothing meaningful to assert on the bool results.
     }
 
     #[tokio::test]

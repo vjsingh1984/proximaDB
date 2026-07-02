@@ -893,11 +893,10 @@ mod hive_catalog_tests {
             .await
             .unwrap();
 
-        // Health check without actual server should indicate unhealthy or handle gracefully
-        let health = catalog.health_check().await.unwrap();
-        // We expect unhealthy since there's no actual Thrift server
-        // But the catalog creation itself should still work
-        assert!(!health.is_healthy || health.is_healthy); // Accept either state
+        // Health check without actual server should indicate unhealthy or handle gracefully.
+        // This is a smoke test — the only contract is that health_check() returns without
+        // panicking (the .unwrap() above asserts no error); the health value is discarded.
+        let _ = catalog.health_check().await.unwrap();
     }
 }
 

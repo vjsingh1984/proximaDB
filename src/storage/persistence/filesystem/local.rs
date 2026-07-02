@@ -1058,18 +1058,20 @@ impl FilesystemFile for LocalFile {
 mod tests {
     use super::*;
     use once_cell::sync::Lazy;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
     use tempfile::TempDir;
     use tracing::{debug, error, info};
 
-    /// Mutex to serialize tests that change the current working directory
-    /// This prevents race conditions when tests run in parallel
-    static CWD_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+    /// Async mutex to serialize tests that change the current working directory.
+    /// `tokio::sync::Mutex` so the guard may be held across `.await` without
+    /// blocking the runtime (clears clippy::await_holding_lock); each test is a
+    /// single task, so holding it for the test body serializes the suite safely.
+    static CWD_MUTEX: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
 
     #[tokio::test]
     async fn test_relative_path_url_handling() {
         // Serialize tests that change the current working directory
-        let _cwd_guard = CWD_MUTEX.lock().unwrap();
+        let _cwd_guard = CWD_MUTEX.lock().await;
 
         // Save current directory to restore later
         let original_dir = std::env::current_dir().unwrap();
@@ -1314,7 +1316,7 @@ mod tests {
     #[tokio::test]
     async fn test_filesystem_without_root_dir() {
         // Serialize tests that change the current working directory
-        let _cwd_guard = CWD_MUTEX.lock().unwrap();
+        let _cwd_guard = CWD_MUTEX.lock().await;
 
         // Test that filesystem without root_dir handles URLs correctly
         let temp_dir = TempDir::new().unwrap();
@@ -1394,7 +1396,7 @@ mod tests {
     #[tokio::test]
     async fn test_prevent_double_relative_path_resolution() {
         // Serialize tests that change the current working directory
-        let _cwd_guard = CWD_MUTEX.lock().unwrap();
+        let _cwd_guard = CWD_MUTEX.lock().await;
 
         // This test verifies that paths are used as-is without root_dir resolution
         // Previously there was a bug where paths were being resolved against root_dir
@@ -1571,7 +1573,7 @@ mod tests {
     #[tokio::test]
     async fn test_exists_method_without_root_dir() {
         // Serialize tests that change the current working directory
-        let _cwd_guard = CWD_MUTEX.lock().unwrap();
+        let _cwd_guard = CWD_MUTEX.lock().await;
 
         // Save current directory to restore later
         let original_dir = std::env::current_dir().unwrap();
