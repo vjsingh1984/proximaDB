@@ -283,7 +283,9 @@ impl UnifiedStorageFormat for SstEngine {
         if let Ok(entries) = fs.list(storage_url).await {
             for entry in &entries {
                 if !entry.metadata.is_directory
-                    && (entry.url.ends_with(".sst") || entry.url.ends_with(".proximablock"))
+                    && (entry.url.ends_with(".sst")
+                        || entry.url.ends_with(".proximablock")
+                        || entry.url.ends_with(".pax"))
                 {
                     files.push(entry.url.clone());
                 }
@@ -299,7 +301,27 @@ impl UnifiedStorageFormat for SstEngine {
         )?;
         let mut all = Vec::new();
         for file in &files {
-            all.extend(reader.read_batch(file).await?);
+            if file.ends_with(".pax") {
+                // M1-1b (ADR-049): PAX segments decode via the mixed-format reader
+                // (`read_segment_records`, magic-detected) — the ProximaBlocks
+                // compaction reader (`read_batch`) cannot decode `.pax`. This is
+                // the path TD-112 AXIS-rebuild-from-SST uses, so it must read
+                // `.pax` or the index stays empty after a loss.
+                let bytes = fs
+                    .read(file)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("read_all_records: read pax {file}: {e}"))?;
+                all.extend(
+                    crate::storage::engines::sst::segment_format::read_segment_records(
+                        &bytes,
+                        &[],
+                        &[],
+                        None,
+                    )?,
+                );
+            } else {
+                all.extend(reader.read_batch(file).await?);
+            }
         }
         Ok(all)
     }
