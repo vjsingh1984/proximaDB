@@ -347,7 +347,7 @@ impl<'a> PaxBlockReader<'a> {
         metric: RankMetric,
     ) -> Option<Vec<usize>> {
         let (params, codes) = self.decode_rabitq_codes(crate::col_id::EMBED_BASE)?;
-        let rotation = rabitq::build_rotation(params.dim, params.seed);
+        let rotation = rabitq::build_rotation_cached(params.dim, params.seed);
         let q_rotated = rabitq::rotate_query(query, &params, &rotation);
         Some(match metric {
             RankMetric::L2 => rabitq::rank_candidates(&q_rotated, &codes, pool),

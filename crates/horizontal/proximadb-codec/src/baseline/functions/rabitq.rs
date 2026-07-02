@@ -102,6 +102,30 @@ pub fn build_rotation(dim: usize, seed: u64) -> Vec<Vec<f32>> {
     rows
 }
 
+/// Cached `build_rotation` — the rotation is deterministic from `(dim, seed)`,
+/// so it's identical across all blocks + queries. Without caching it was rebuilt
+/// per-block-per-query (30ms each, O(dim³) Gram-Schmidt + Box-Muller) → dominated
+/// the cascade search cost (~87%). The thread_local cache builds ONCE, then clones
+/// (~64KB memcpy) — a 1000×+ amortized win.
+pub fn build_rotation_cached(dim: usize, seed: u64) -> Vec<Vec<f32>> {
+    type RotCache = std::cell::RefCell<Option<((usize, u64), Vec<Vec<f32>>)>>;
+    thread_local! {
+        static CACHE: RotCache = const { std::cell::RefCell::new(None) };
+    }
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if let Some(((cd, cs), rot)) = c.as_ref()
+            && *cd == dim
+            && *cs == seed
+        {
+            return rot.clone();
+        }
+        let rot = build_rotation(dim, seed);
+        *c = Some(((dim, seed), rot.clone()));
+        rot
+    })
+}
+
 /// Apply a rotation matrix to a vector: `out = P · v`.
 pub fn apply_rotation(rotation: &[Vec<f32>], v: &[f32]) -> Vec<f32> {
     rotation
@@ -227,18 +251,29 @@ pub fn rotate_query(query: &[f32], params: &RaBitQParams, rotation: &[Vec<f32>])
 
 impl RaBitQCode {
     /// `⟨x̄, q̃⟩` — the sign-weighted sum of the rotated query, the cheap core of
-    /// the estimator (one add/sub per dim, no multiply).
+    /// the estimator. Branchless + per-byte (8 dims/iteration) so the inner loop
+    /// auto-vectorizes — the prior per-dim `if set { += q } else { -= q }` was a
+    /// data-dependent branch (128 mispredicted branches/code) that dominated the
+    /// cascade search cost (~90% at N=100k).
     fn binary_dot(&self, q_rotated: &[f32]) -> f32 {
         let dim = q_rotated.len();
         let inv_sqrt_d = 1.0 / (dim as f32).sqrt();
         let mut acc = 0.0f32;
-        for (i, &q) in q_rotated.iter().enumerate() {
-            let set = self.bits[i / 8] & (1u8 << (i % 8)) != 0;
-            if set {
-                acc += q;
-            } else {
-                acc -= q;
+        let n_full_bytes = dim / 8;
+        for b in 0..n_full_bytes {
+            let byte = self.bits[b];
+            let qs = &q_rotated[b * 8..b * 8 + 8];
+            // Branchless: bit → sign ±1.0, multiply-add. The fixed 8-iter loop
+            // over contiguous `qs` lets the compiler unroll + vectorize.
+            for bit in 0..8 {
+                let sign = 2.0 * ((byte >> bit) & 1) as f32 - 1.0;
+                acc += sign * qs[bit];
             }
+        }
+        // Tail (dim not a multiple of 8).
+        for i in (n_full_bytes * 8)..dim {
+            let sign = 2.0 * ((self.bits[i >> 3] >> (i & 7)) & 1) as f32 - 1.0;
+            acc += sign * q_rotated[i];
         }
         acc * inv_sqrt_d
     }
