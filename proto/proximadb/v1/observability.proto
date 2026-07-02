@@ -658,6 +658,8 @@ message QueryMetricsResponse {
 
 // Observability gRPC service
 service ObservabilityService {
+  // Deprecated (ADR-049 / TD-121): v1 surface. Removed in M4; migrate to proximadb.v2.
+  option deprecated = true;
   // Namespace management
   rpc CreateNamespace(CreateObservabilityNamespaceRequest) returns (CreateObservabilityNamespaceResponse);
   rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);

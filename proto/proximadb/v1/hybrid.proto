@@ -213,6 +213,8 @@ message ListFusionStrategiesResponse {
 // Provides gRPC endpoints for hybrid search combining BM25 full-text
 // search with vector similarity search using configurable fusion strategies.
 service HybridSearchService {
+  // Deprecated (ADR-049 / TD-121): v1 surface. Removed in M4; migrate to proximadb.v2.
+  option deprecated = true;
   // Execute hybrid search combining BM25 and vector search
   //
   // Combines full-text BM25 search with vector similarity search using

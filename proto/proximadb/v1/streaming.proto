@@ -21,6 +21,8 @@ import "proximadb/v1/types.proto";
 
 // StreamingService provides real-time vector streaming capabilities
 service StreamingService {
+  // Deprecated (ADR-049 / TD-121): v1 surface. Removed in M4; migrate to proximadb.v2.
+  option deprecated = true;
     // Bidirectional streaming for vector ingestion
     // Client sends vectors, server responds with acknowledgments and backpressure signals
     rpc StreamInsert(stream StreamInsertRequest) returns (stream StreamInsertResponse);
