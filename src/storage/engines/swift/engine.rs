@@ -1261,7 +1261,7 @@ impl UnifiedStorageFormat for SwiftEngine {
                     params.vector_records.len(),
                     has_quantized,
                     true, // SWIFT always stores FP32
-                    crate::index::axis::eventlog::StorageEngineType::SWIFT,
+                    crate::core::types::StorageEngineType::SWIFT,
                 )
                 .await
             {
@@ -1383,7 +1383,7 @@ impl UnifiedStorageFormat for SwiftEngine {
                 &collection_id,
                 vec![output_path],
                 merged_file.header.total_records as usize,
-                crate::index::axis::eventlog::StorageEngineType::SWIFT,
+                crate::core::types::StorageEngineType::SWIFT,
             );
         }
 

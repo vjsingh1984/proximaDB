@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::debug;
 
-use crate::index::axis::eventlog::StorageEngineType;
+use crate::core::types::StorageEngineType;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;

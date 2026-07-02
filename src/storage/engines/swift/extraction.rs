@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::debug;
 
-use crate::index::axis::eventlog::StorageEngineType;
+use crate::core::types::StorageEngineType;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use crate::storage::trait_components::extractor::{
