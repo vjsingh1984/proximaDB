@@ -230,8 +230,8 @@ legacy separate-port layout.
 * **v1 (`/api/v1/*`)** — deprecated compatibility facades. Responses carry
   `Deprecation: true` + `X-ProximaDB-API-Status: deprecated-compatibility`.
   Sunset: 2026-06-30. Use v2.
-* **v3 (`/api/v3/*`)** — 308 permanent redirect → v2 (e.g.
-  `POST /api/v3/collections/{id}/documents` → v2). Clients must NOT rely on v3.
+* **v3 (`/api/v3/*`)** — **removed**. The document-ingest handler is canonically at
+  `/api/v2/collections/{id}/documents`; the v3 alias was deleted. Target `/api/v2`.
 * **gRPC v1** — off by default; opt-in via `enable_grpc_v1_compat`. Sunset
   2026-06-30. Use gRPC v2.
 

@@ -121,7 +121,7 @@ the optimal LSM ingestion pattern differs by batch size.
                                    ▼
                    ┌────────────────────────────────┐
                    │ ProximaDB request handlers     │
-                   │ (REST /v3/documents, Arrow     │
+                   │ (REST /v2/documents, Arrow     │
                    │  Flight DoPut, gRPC Insert)    │
                    └────────────────────────────────┘
                           │                   │
@@ -379,7 +379,7 @@ delivery with no cross-instance traffic in the steady state.
 | Cross-process partition leases | 🔜 (currently in-process via DashMap) |
 | Strict-mode `fsync_at` is *guaranteed* (currently approximated) | 🔜 |
 | Embedding drainer wired to `embed-ingest` topic | 🔜 |
-| REST `/v3/documents?mode=async` rewires to `producer.send` | 🔜 |
+| REST `/v2/documents?mode=async` rewires to `producer.send` | 🔜 |
 
 The first four columns ship as focused follow-up commits; each integration
 piece (drainer, REST async-mode rewire) lands after the disk tier is

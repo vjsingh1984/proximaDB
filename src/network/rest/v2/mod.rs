@@ -44,6 +44,7 @@
 
 pub mod collections;
 pub mod discovery;
+pub mod documents;
 pub mod entities;
 pub mod external_collection;
 pub mod graphs;
@@ -144,11 +145,10 @@ pub fn create_v2_router() -> Router<AppState> {
             get(records::get_changes),
         )
         // Document ingest (text-only / native server-side embedding). Folded in
-        // from the former v3 surface; v3 now 308-redirects here. The handler is
-        // re-exported from `crate::network::rest::v3::documents::ingest_documents`.
+        // from the former v3 surface (v3 is removed; this is the canonical route).
         .route(
             "/collections/{collection_id}/documents",
-            post(crate::network::rest::v3::documents::ingest_documents),
+            post(documents::ingest_documents),
         )
         // Query facade operations
         .route("/query", post(query::execute_query))
