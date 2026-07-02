@@ -22,7 +22,7 @@
 //!
 //! ## Message contract
 //!
-//! Producers (REST `/v3/documents?mode=async` in Phase 2H) serialize
+//! Producers (REST `/v2/documents?mode=async` in Phase 2H) serialize
 //! [`EmbedIngestPayload`] as JSON into the queue `Message.payload`.
 //! The drainer deserializes, embeds the text records via
 //! `EmbeddingService::embed_sync`, and forwards the populated

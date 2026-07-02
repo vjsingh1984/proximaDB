@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  */
 
-//! `POST /api/v3/collections/{collection_id}/documents`
+//! `POST /api/v2/collections/{collection_id}/documents`
 //!
 //! Text-only ingest endpoint. Accepts records without vector fields; the
 //! server populates them via the in-process EmbeddingService singleton
