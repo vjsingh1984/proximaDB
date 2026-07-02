@@ -389,11 +389,46 @@ impl MultiServer {
         ))
     }
 
+    /// Spawn the in-process reference MCP transport (ADR-037 Decision 5) when
+    /// `[api].mcp_port` is configured; a no-op (MCP off) otherwise. The
+    /// [`EngineBackend`](crate::network::mcp::EngineBackend) projects existing
+    /// surfaces — catalog via `ApiHandlersPort`, statistics via the registry,
+    /// explain/search via a `UnifiedQueryPort` built over the shared
+    /// `QueryFacadeAdapter` — by calling the services directly (no self-hop).
+    fn spawn_mcp_surface(&self) {
+        let Some(mcp_port) = self.config.api_config.as_ref().and_then(|c| c.mcp_port) else {
+            return;
+        };
+        let svc = self.shared_services.clone();
+        let query_port = Arc::new(
+            crate::query::UnifiedQueryPortImpl::new(svc.query_adapter.clone())
+                .with_catalog_manager(svc.catalog_manager.clone()),
+        ) as Arc<dyn proximadb_runtime::UnifiedQueryPort>;
+        let backend = Arc::new(crate::network::mcp::EngineBackend::new(
+            svc.api_handlers.clone(),
+            Some(query_port),
+            None,
+        ));
+        let addr = SocketAddr::new(self.config.http_bind_address().ip(), mcp_port);
+        info!("🧠 In-process reference MCP surface enabled on {addr}");
+        tokio::spawn(async move {
+            if let Err(e) = crate::network::mcp::serve(addr, backend).await {
+                tracing::error!("MCP reference server failed: {e}");
+            }
+        });
+    }
+
     /// Start all configured servers
     ///
     /// In unified mode: All protocols (REST, gRPC, Arrow Flight) on single port (default 5678)
     /// In legacy mode: gRPC on 5679, Arrow IPC on 5680, REST on 5678 (separate ports)
     pub async fn start(&mut self) -> Result<()> {
+        // In-process reference MCP transport (ADR-037 Decision 5). Bound only when
+        // `[api].mcp_port` is configured (off by default) — spawned here, before the
+        // unified/legacy branch, so it runs regardless of port mode. The backend
+        // calls the engine's services directly (no REST/gRPC self-hop).
+        self.spawn_mcp_surface();
+
         // Check for unified mode (Phase 14)
         if self.config.is_unified_mode() {
             return self.start_unified().await;
