@@ -153,10 +153,14 @@ impl SstEngine {
         // P3 Phase B / Phase C: PAX vector segments. Reads stay mixed-format-
         // safe — see
         // `segment_format::mixed_format_legacy_and_pax_segments_coexist_and_read_back`
-        // — so enabling PAX only changes newly written segments; existing
-        // ProximaBlocks segments still read back. STAGED ROLLOUT: default OFF in
-        // v0.2; the develop→qa recall ratchet (qa-gate `pax-recall-ratchet`,
-        // recall@10 >= 0.90 at N=100k) gates the v0.3 flip to default ON.
+        // — and the search path's exact PAX scan (`search_pax_file_exact`) now
+        // makes a `.pax` file searchable under every metric/quant, so enabling PAX
+        // only changes newly written segments; existing ProximaBlocks segments
+        // still read back AND every new `.pax` segment is queryable. STAGED
+        // ROLLOUT: default OFF in v0.2; the develop→qa recall ratchet (qa-gate
+        // `pax-recall-ratchet`, recall@10 >= 0.90 at N=100k) gates the v0.3 flip
+        // to default ON. The exact PAX scan is the prerequisite that makes that
+        // flip safe — M1-1b flips the default once the integration tier is migrated.
         //
         // Resolution (Phase C escape hatches — see `resolve_pax_segments_enabled`):
         //   1. Global kill-switch `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE` forces

@@ -993,6 +993,21 @@ impl SstEngine {
                     distance_metric,
                 )
                 .await
+            } else if sstable_path.ends_with(".pax") {
+                // A `.pax` segment the RaBitQ cascade did not cover (non-L2/Cosine
+                // metric, non-RaBitQ quant, or a cascade miss/error). Exact
+                // materialize-and-rank via the mixed-format reader so `.pax` is
+                // searchable under every metric/quant — this is what makes the PAX
+                // write-default flip safe (otherwise the ProximaBlocks-only
+                // `sstable_reader` below would fail to decode a `.pax` file).
+                self.search_pax_file_exact(
+                    sstable_path,
+                    query_vector,
+                    filter_expression.cloned(),
+                    k,
+                    distance_metric,
+                )
+                .await
             } else {
                 // Use SSTable reader for ProximaBlocks format
                 // Choose execution strategy based on flags (TD-041, TD-039, TD-031)
@@ -1554,6 +1569,98 @@ impl SstEngine {
         candidates.truncate(limit);
 
         debug!("🏹 Arrow search found {} candidates", candidates.len());
+        Ok(candidates)
+    }
+
+    /// Exact materialize-and-rank search over a `.pax` segment that the RaBitQ
+    /// cascade did not cover — a non-L2/Cosine metric (Dot / inner-product /
+    /// exotic), a non-RaBitQ quant (RawF32 / SQ8), or a cascade miss/error. The
+    /// segment is decoded back to `ProximaRecord`s via the mixed-format reader
+    /// (`segment_format::read_segment_records`, magic-detected) and ranked by
+    /// exact distance for the requested metric, so a `.pax` file is searchable
+    /// under EVERY metric and quant. This is the property that makes the PAX
+    /// write-default flip safe: the L2/Cosine fast path still takes the RaBitQ
+    /// cascade; everything else falls here instead of hitting the
+    /// ProximaBlocks-only `sstable_reader` (which cannot decode `.pax`). Recall
+    /// is exact for `RawF32` quant and dequantization-bound for `RaBitQ`/`SQ8`.
+    async fn search_pax_file_exact(
+        &self,
+        pax_path: &str,
+        query_vector: &[f32],
+        filter_expression: Option<FilterExpression>,
+        limit: usize,
+        distance_metric: DistanceMetric,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        use proximadb_distance_kernel::engine::{SimilarityResult, UnifiedDistanceCompute};
+        use std::sync::Arc;
+
+        debug!("📦 Exact PAX scan: {}", pax_path);
+
+        let local_path = pax_path.strip_prefix("file://").unwrap_or(pax_path);
+        let bytes = tokio::fs::read(local_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("read pax segment {pax_path}: {e}"))?;
+        let records = crate::storage::engines::sst::segment_format::read_segment_records(
+            &bytes,
+            &[],
+            &[],
+            None,
+        )
+        .map_err(|e| anyhow::anyhow!("decode pax segment {pax_path}: {e}"))?;
+        trace!(
+            "📦 PAX segment {} decoded to {} records",
+            pax_path,
+            records.len()
+        );
+
+        let distance_computer = UnifiedDistanceCompute::new(distance_metric);
+        let mut candidates: Vec<OptimizedSearchRecord> =
+            Vec::with_capacity(records.len().min(limit));
+
+        for record in &records {
+            // Apply the metadata filter at record level (canonical props), mirroring
+            // the ProximaBlocks scan path — PAX is the default format, so filter
+            // support here is required, not optional (the Arrow path skips it).
+            if let Some(filter_expr) = &filter_expression
+                && !crate::core::search::sql_value_filter::evaluate_filter_proxima(
+                    filter_expr,
+                    &record.props,
+                )
+            {
+                continue;
+            }
+
+            let Some(embedding) = record.embeddings.first() else {
+                continue;
+            };
+            if embedding.values.is_empty() {
+                continue;
+            }
+
+            let raw_distance = distance_computer.distance(query_vector, &embedding.as_fp32_cow());
+            let similarity_result = SimilarityResult::new(raw_distance, distance_metric);
+            let metadata = proximadb_records::conversions::proxima_tree_to_value_map(&record.props);
+
+            candidates.push(OptimizedSearchRecord {
+                id: record.oid.clone(),
+                vector_id: Some(record.oid.clone()),
+                score: similarity_result.normalized_score,
+                similarity: Some(similarity_result.normalized_score),
+                vector: Some(Arc::new(embedding.values.to_fp32_owned())),
+                metadata,
+                ..Default::default()
+            });
+        }
+
+        // Sort by score descending (higher normalized_score = more similar = better).
+        candidates.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        candidates.truncate(limit);
+
+        debug!("📦 Exact PAX scan found {} candidates", candidates.len());
         Ok(candidates)
     }
 }
