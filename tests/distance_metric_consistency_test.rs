@@ -48,6 +48,11 @@ fn collection(id: &str, metric: DistanceMetric, temp_dir: &TempDir) -> Collectio
             dimension: DIM as u32,
             distance_metric: Some(metric as i32),
             storage_engine: Some(StorageEngine::Sst as i32),
+            // M1-1b: this test asserts EXACT metric ranking against a brute-force
+            // oracle over 4 vectors. The RaBitQ cascade is degenerate at that scale
+            // (RaBitQ needs many vectors), so opt out of the PAX default to the
+            // exact ProximaBlocks scan the oracle assumes.
+            tags: vec!["pax_vector_format:off".to_string()],
             ..Default::default()
         }),
         storage_assignment: Some(StorageAssignment {

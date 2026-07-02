@@ -110,6 +110,9 @@ async fn test_sst_with_bge_768_embeddings() -> anyhow::Result<()> {
             dimension: 768,
             distance_metric: Some(DistanceMetric::Cosine as i32),
             storage_engine: Some(StorageEngine::Sst as i32),
+            // M1-1b: this test exercises the ProximaBlocks adaptive-PCA flush arm,
+            // so opt out of the PAX default back to legacy `.sst`.
+            tags: vec!["pax_vector_format:off".to_string()],
             ..Default::default()
         }),
         storage_assignment: Some(StorageAssignment {
@@ -241,6 +244,9 @@ async fn test_sst_with_openai_1536_embeddings() -> anyhow::Result<()> {
             dimension: 1536,
             distance_metric: Some(DistanceMetric::Cosine as i32),
             storage_engine: Some(StorageEngine::Sst as i32),
+            // M1-1b: exercises the ProximaBlocks adaptive-PCA flush arm — opt out
+            // of the PAX default back to legacy `.sst`.
+            tags: vec!["pax_vector_format:off".to_string()],
             ..Default::default()
         }),
         storage_assignment: Some(StorageAssignment {

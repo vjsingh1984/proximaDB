@@ -43,6 +43,14 @@ fn collection_config(id: &str, temp_dir: &TempDir) -> Collection {
             dimension: DIMENSION as u32,
             distance_metric: Some(DistanceMetric::Euclidean as i32),
             storage_engine: Some(StorageEngine::Sst as i32),
+            // M1-1b: opt out of the PAX default. AXIS rebuild-from-SST reads
+            // durable segments; a RaBitQ-PAX segment reconstructs COARSE vectors
+            // (reader.rs: "RaBitQ is a search representation; reconstruction is
+            // coarse"), so an index rebuilt from it has lower recall than the
+            // exact vectors the flush path indexes. These tests assert exact
+            // rebuild/recall, so they stay on legacy `.sst`. The RaBitQ-PAX
+            // rebuild-recall concern is tracked as a follow-up.
+            tags: vec!["pax_vector_format:off".to_string()],
             ..Default::default()
         }),
         storage_assignment: Some(StorageAssignment {
