@@ -1215,7 +1215,7 @@ mod tests {
         let stats = scheduler.get_stats().await;
         assert!(stats.completed >= 1);
         assert!(stats.avg_duration_ms >= 0.0);
-        assert!(scheduler.completed_history.read().await.len() >= 1);
+        assert!(!scheduler.completed_history.read().await.is_empty());
 
         assert_eq!(
             scheduler

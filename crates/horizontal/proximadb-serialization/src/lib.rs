@@ -713,8 +713,7 @@ mod tests {
 
         let all_results: Vec<_> = handles
             .into_iter()
-            .map(|h| h.join().unwrap())
-            .flatten()
+            .flat_map(|h| h.join().unwrap())
             .collect();
 
         assert_eq!(all_results.len(), num_threads * vectors_per_thread);

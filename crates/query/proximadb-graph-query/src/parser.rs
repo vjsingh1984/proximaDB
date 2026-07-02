@@ -1487,7 +1487,7 @@ mod tests {
 
         assert_eq!(compiled.return_spec.order_by.len(), 1);
         assert_eq!(compiled.return_spec.order_by[0].0, "p");
-        assert_eq!(compiled.return_spec.order_by[0].1, true); // ASC
+        assert!(compiled.return_spec.order_by[0].1); // ASC
     }
 
     #[test]

@@ -509,7 +509,7 @@ impl RelationalReader for InMemoryReader {
 mod tests {
     use super::*;
     use proximadb_data_model::ProximaType;
-    use proximadb_relational_algebra::{LogicalNode, TableId};
+    use proximadb_relational_algebra::TableId;
     use proximadb_relational_executor::{ExecutionContext, build_executor, collect};
     use proximadb_relational_planner::{Planner, StaticCapabilities};
     use proximadb_relational_reader::ReaderCapabilities as RC;
