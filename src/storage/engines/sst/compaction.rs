@@ -180,6 +180,34 @@ impl std::fmt::Debug for Compaction {
     }
 }
 
+/// Decide a compaction output segment's format from its INPUT segments —
+/// format-preserving compaction (M1, ADR-049). A PAX collection's `.pax` inputs
+/// compact to `.pax` (so compaction doesn't regress the PAX default back to
+/// legacy `.sst`); a legacy / `pax_vector_format:off` collection's `.sst` inputs
+/// compact to `.sst`; Arrow inputs stay Arrow. Mixed inputs consolidate to the
+/// richest format present (PAX > Arrow). The flush-side kill-switch and
+/// per-collection tag are honoured indirectly: they decide what gets flushed,
+/// and compaction follows the resulting inputs (compaction has no
+/// `CollectionConfig`, so it can't read the per-collection tag directly).
+fn compaction_output_format<P: AsRef<std::path::Path>>(
+    input_files: &[P],
+    config_block_format: &str,
+) -> BlockFormat {
+    if input_files
+        .iter()
+        .any(|f| f.as_ref().extension().is_some_and(|e| e == "pax"))
+    {
+        return BlockFormat::PaxBlock;
+    }
+    if input_files
+        .iter()
+        .any(|f| f.as_ref().extension().is_some_and(|e| e == "arrow"))
+    {
+        return BlockFormat::ArrowBlock;
+    }
+    BlockFormat::parse_block_format(config_block_format)
+}
+
 impl Compaction {
     /// Extract collection ID from file paths
     #[allow(dead_code)]
@@ -569,11 +597,17 @@ impl Compaction {
             // Convert unified task to SST SstCompactionTask
             let input_files: Vec<PathBuf> =
                 task.input_files.into_iter().map(PathBuf::from).collect();
+            // M1: compaction output format follows the INPUT segments' format
+            // (PAX collection → `.pax`, opt-out/legacy → `.sst`), so the output
+            // filename extension matches the writer chosen at the write site.
+            let output_block_format =
+                compaction_output_format(&input_files, &self.config.block_format);
 
             let output_file = self.generate_output_file_path(
                 collection_id,
                 collection_dir,
                 task.target_level as u8,
+                output_block_format,
             );
 
             let priority = if input_files.len() >= (self.config.compaction_threshold * 2) as usize {
@@ -1158,7 +1192,8 @@ impl Compaction {
             debug!("Writing to staging path: {}", staging_file_path.display());
 
             // Check block format and use appropriate writer
-            let block_format = BlockFormat::parse_block_format(&self.config.block_format);
+            let block_format =
+                compaction_output_format(&task.input_files, &self.config.block_format);
             debug!("🔍 COMPACTION: Using block format: {:?}", block_format);
 
             match block_format {
@@ -1308,7 +1343,8 @@ impl Compaction {
             debug!("Writing directly to: {}", task.output_file.display());
 
             // Check block format and use appropriate writer
-            let block_format = BlockFormat::parse_block_format(&self.config.block_format);
+            let block_format =
+                compaction_output_format(&task.input_files, &self.config.block_format);
             debug!(
                 "🔍 COMPACTION (non-atomic): Using block format: {:?}",
                 block_format
@@ -1849,14 +1885,11 @@ impl Compaction {
         _collection_id: &str,
         collection_dir: &Path,
         level: u8,
+        block_format: BlockFormat,
     ) -> PathBuf {
-        // Use unified FilenameCodec directly from compaction framework
-        use super::block_format::BlockFormat;
         use crate::storage::common::compaction_orchestrator::FilenameCodec;
 
         let codec = FilenameCodec::new();
-        // Check block_format from config and use appropriate extension
-        let block_format = BlockFormat::parse_block_format(&self.config.block_format);
         let extension = match block_format {
             BlockFormat::ArrowBlock => "arrow",
             BlockFormat::ProximaBlocks => "sst",
@@ -1986,3 +2019,45 @@ impl Drop for Compaction {
 #[cfg(test)]
 #[cfg_attr(test, path = "compaction_tests.rs")]
 mod tests;
+
+#[cfg(test)]
+mod compaction_format_tests {
+    use super::BlockFormat;
+    use super::compaction_output_format;
+
+    /// M1 (ADR-049): compaction output format follows the INPUT segments' format,
+    /// so a PAX collection's `.pax` inputs compact to `.pax` (no regression to
+    /// legacy) while a legacy / `pax_vector_format:off` collection's `.sst` inputs
+    /// compact to `.sst`. Mixed inputs consolidate to PAX (the migration target).
+    #[test]
+    fn compaction_output_format_preserves_input_format() {
+        // PAX input → PAX.
+        assert_eq!(
+            compaction_output_format(&["/c/x.pax".to_string()], "ProximaBlocks"),
+            BlockFormat::PaxBlock
+        );
+        // Legacy / opt-out `.sst` input → config default (ProximaBlocks).
+        assert_eq!(
+            compaction_output_format(&["/c/x.sst".to_string()], "ProximaBlocks"),
+            BlockFormat::ProximaBlocks
+        );
+        // Mixed `.sst` + `.pax` → consolidate to PAX.
+        assert_eq!(
+            compaction_output_format(
+                &["/c/a.sst".to_string(), "/c/b.pax".to_string()],
+                "ProximaBlocks"
+            ),
+            BlockFormat::PaxBlock
+        );
+        // Arrow input → Arrow.
+        assert_eq!(
+            compaction_output_format(&["/c/x.arrow".to_string()], "ProximaBlocks"),
+            BlockFormat::ArrowBlock
+        );
+        // No recognized inputs → fall back to the configured format.
+        assert_eq!(
+            compaction_output_format(&[] as &[String], "PaxBlock"),
+            BlockFormat::PaxBlock
+        );
+    }
+}
