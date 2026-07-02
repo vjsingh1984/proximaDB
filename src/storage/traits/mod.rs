@@ -863,9 +863,9 @@ pub trait UnifiedStorageFormat: Send + Sync {
     ///
     /// Default implementation provides capability sets based on engine strategy.
     /// Engines can override this method to customize their declared capabilities.
-    fn capabilities(&self) -> crate::query::capability::CapabilitySet {
-        use crate::query::capability::{Capability, CapabilitySet};
+    fn capabilities(&self) -> proximadb_query_capability::CapabilitySet {
         use crate::storage::traits::StorageEngineStrategy;
+        use proximadb_query_capability::{Capability, CapabilitySet};
 
         match self.strategy() {
             StorageEngineStrategy::Sst => CapabilitySet::from_capabilities(&[
