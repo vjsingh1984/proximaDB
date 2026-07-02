@@ -404,23 +404,14 @@ pub(crate) fn apply_record_schema_from_json(config: &mut CollectionConfig, json:
         .collect();
 }
 
-// --- Canonical ProximaType schema columns (ADR-047 authority) -----------------
+// --- Canonical ProximaType schema columns (ADR-047 / ADR-048) -----------------
 //
-// ADR-047 / TD-TBL-1: the narrow v1 `CollectionConfig` cannot represent the full
-// `ProximaType` vocabulary (UInt/Struct/Map/Sparse/BinaryVector …), so the
-// canonical `Vec<CollectionSchemaColumn>` is persisted verbatim as a neutral JSON
-// sidecar on the catalog asset (`collection.canonical_schema`), mirroring the
-// `collection.config_json` / `collection.record_schema` idiom. The narrow config
-// stays the legacy read view; this sidecar is the authority for rich types.
-
-/// Serialize the canonical ProximaType columns to a neutral JSON string for the
-/// catalog asset property bag.
-pub(crate) fn canonical_schema_columns_to_json(
-    columns: &[CollectionSchemaColumn],
-) -> Result<String> {
-    serde_json::to_string(columns)
-        .map_err(|e| anyhow::anyhow!("serialize canonical_schema columns for catalog asset: {e}"))
-}
+// ADR-048 P1: the canonical `Vec<CollectionSchemaColumn>` is now the TYPED
+// `CatalogTableSchema.columns` (200+ band) — the catalog's native authority (see
+// `collection_mapping::collection_schema_columns_to_catalog_columns`). The legacy
+// `collection.canonical_schema` JSON sidecar survives only as a transitional READ
+// fallback for catalogs written before P1 (mixed-read-safe); `_from_json` decodes
+// it. The write side was retired with P1 — new writes go to the typed columns.
 
 /// Reconstruct the canonical ProximaType columns from a neutral JSON string, or
 /// `None` on a decode error (legacy/corrupt asset) so the caller keeps its
@@ -611,7 +602,7 @@ mod tests {
             col("ts", ProximaType::Timestamp(TimeUnit::Nanosecond)),
         ];
 
-        let json = canonical_schema_columns_to_json(&columns).expect("serialize");
+        let json = serde_json::to_string(&columns).expect("serialize");
         let restored = canonical_schema_columns_from_json(&json).expect("deserialize");
         assert_eq!(restored.len(), columns.len());
         assert_eq!(
