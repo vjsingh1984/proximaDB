@@ -1380,6 +1380,58 @@ impl SstableWriter {
             .await
     }
 
+    /// Write `records` as a native PAX segment (ADR-049 M1-2). ProximaRecord-native:
+    /// no ProximaRecord→VectorRecord→streaming round-trip — records go straight to
+    /// the PAX encoder. PAX encodes via `std::fs` to a local staging file, then we
+    /// promote to the target URL through the filesystem abstraction (handles
+    /// `file://` + object store), mirroring the flush PaxBlock arm. Replaces the
+    /// wrong-way `write_sorted_proxima_records` adapter at the storage/index/tier
+    /// call sites (AXIS stores, tier data movement).
+    pub async fn write_pax_segment<I>(&self, records: I, collection_id: &str) -> Result<()>
+    where
+        I: Iterator<Item = proximadb_records::ProximaRecord> + Send,
+    {
+        use crate::storage::engines::sst::segment_format::write_pax_segment_with_f32_tier;
+        use proximadb_block_format::VectorQuant;
+
+        let recs: Vec<proximadb_records::ProximaRecord> = records.collect();
+        if recs.is_empty() {
+            return Ok(());
+        }
+        let embedding_count = recs.first().map(|r| r.embeddings.len().max(1)).unwrap_or(1);
+
+        // Resolve the target URL (bare path → file://) so the filesystem
+        // abstraction handles both local and object-store destinations.
+        let path_str = self.path.to_string_lossy().to_string();
+        let fs_url = if path_str.contains("://") {
+            path_str
+        } else {
+            format!("file://{}", path_str)
+        };
+        // PAX writes via std::fs to a local staging file, then we promote.
+        let staging = std::env::temp_dir().join(format!(
+            "proximadb-pax-{}.pax",
+            proximadb_kernel::uuid::Uuid::new_v4()
+        ));
+        write_pax_segment_with_f32_tier(
+            &staging,
+            &recs,
+            collection_id,
+            embedding_count,
+            VectorQuant::RaBitQ,
+            false,
+            None,
+        )?;
+        let bytes = std::fs::read(&staging)
+            .map_err(|e| anyhow::anyhow!("read PAX staging {}: {e}", staging.display()))?;
+        let _ = std::fs::remove_file(&staging);
+        self.filesystem
+            .write(&fs_url, &bytes, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("promote PAX segment to {fs_url}: {e}"))?;
+        Ok(())
+    }
+
     /// Legacy v1 wire-record entrypoint - delegates to write_sorted_vector_records.
     pub async fn write_sorted_records<I>(
         &self,

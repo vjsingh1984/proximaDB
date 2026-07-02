@@ -342,12 +342,10 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                         ..proximadb_records::ProximaRecord::default()
                     },
                 );
-                // Write records using streaming approach for production consistency
-                let record_count = records.len();
+                // M1-2 (ADR-049): write a native PAX segment (ProximaRecord→PAX, no
+                // VectorRecord round-trip). Reads stay mixed-format-safe.
                 let sorted_records_iter = records.into_values(); // Extract values from BTreeMap
-                writer
-                    .write_sorted_proxima_records(sorted_records_iter, record_count)
-                    .await?;
+                writer.write_pax_segment(sorted_records_iter, id).await?;
             }
             StorageEngine::VIPER => {
                 // Write as VIPER (Parquet)
@@ -524,12 +522,10 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     ..proximadb_records::ProximaRecord::default()
                 };
                 records.insert(id.to_string(), record);
-                // Write records using streaming approach for production consistency
-                let record_count = records.len();
+                // M1-2 (ADR-049): write a native PAX segment (ProximaRecord→PAX, no
+                // VectorRecord round-trip). Reads stay mixed-format-safe.
                 let sorted_records_iter = records.into_values(); // Extract values from BTreeMap
-                writer
-                    .write_sorted_proxima_records(sorted_records_iter, record_count)
-                    .await?;
+                writer.write_pax_segment(sorted_records_iter, id).await?;
             }
             StorageEngine::VIPER => {
                 // Write VIPER format
