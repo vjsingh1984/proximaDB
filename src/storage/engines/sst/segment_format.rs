@@ -523,6 +523,65 @@ mod tests {
         assert_eq!(back.len(), records.len());
     }
 
+    /// M1 (ADR-049): a `VectorQuant::RawF32` PAX segment carries no RaBitQ codes,
+    /// so the RaBitQ cascade (`rabitq_search_segment`) returns `None` for it. The
+    /// search dispatch then takes the exact PAX scan (`search_pax_file_exact`),
+    /// which materialises records via `read_segment_records`. This proves the two
+    /// foundations of that path: a RawF32 PAX segment round-trips to EXACT f32
+    /// vectors (recall 1.0), and the cascade correctly reports it as a miss.
+    #[test]
+    fn rawf32_pax_segment_round_trips_exact_and_misses_rabitq_cascade() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rawf32.pax");
+        let records: Vec<ProximaRecord> = (0..8)
+            .map(|i| {
+                rec(
+                    &format!("v{i}"),
+                    1_700_000_000_000_000_000 + i,
+                    (0..16).map(|d| (i as f32 + d as f32) * 0.1).collect(),
+                )
+            })
+            .collect();
+        write_pax_segment(&path, &records, "col", 1, VectorQuant::RawF32, None).unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(SegmentFormat::detect(&bytes), SegmentFormat::Pax);
+
+        // Round-trip: RawF32 decodes to the EXACT input vectors (not an
+        // approximation, unlike RaBitQ/SQ8 reconstruction).
+        let back = read_segment_records(&bytes, &[], &[], None).unwrap();
+        assert_eq!(back.len(), records.len());
+        for (got, want) in back.iter().zip(records.iter()) {
+            assert_eq!(got.oid, want.oid, "oid must round-trip");
+            let got_vec = got
+                .embeddings
+                .first()
+                .expect("RawF32 segment must reconstruct its embedding");
+            let want_vec = want.embeddings.first().expect("input embedding");
+            assert_eq!(
+                got_vec.as_fp32_slice(),
+                want_vec.as_fp32_slice(),
+                "RawF32 PAX must reconstruct the exact vector for {}",
+                want.oid
+            );
+        }
+
+        // The RaBitQ cascade must report a miss (no RaBitQ codes) — the exact
+        // PAX scan in the search dispatch handles this segment instead.
+        let query = records[0]
+            .embeddings
+            .first()
+            .expect("query embedding")
+            .as_fp32_slice()
+            .to_vec();
+        assert!(
+            rabitq_search_segment(&bytes, &query, 4, 8, RankMetric::L2, None)
+                .unwrap()
+                .is_none(),
+            "RawF32 PAX has no RaBitQ codes → cascade must return None (exact scan handles it)"
+        );
+    }
+
     /// Mixed-read-safe coexistence (storage-format mandate #8). A store rolling
     /// PAX quantization on will have BOTH legacy `ProximaBlocks` segments (written
     /// before the flip) and new PAX segments side by side. The magic-byte router
