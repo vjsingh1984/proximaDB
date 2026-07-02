@@ -13,11 +13,13 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
+use crate::core::types::StorageEngineType;
 use crate::index::axis::eventlog::{
     EventLogConfig, EventLogService as EventLogServiceTrait, EventLogServiceFactory, ServiceMode,
 };
 use crate::proto::proximadb_v1::Collection;
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_storage_ports::StorageEventLogPort;
 
 /// EventLog service that coordinates between storage and AXIS indexing
 /// This is initialized at server startup like CollectionService and VectorOperationsService
@@ -149,7 +151,7 @@ impl EventLogService {
         vector_count: usize,
         has_quantized: bool,
         has_fp32: bool,
-        storage_engine: crate::index::axis::eventlog::StorageEngineType,
+        storage_engine: StorageEngineType,
     ) -> Result<()> {
         let event = crate::index::axis::eventlog::IndexEventBuilder::flush_event(
             collection_id.to_string(),
@@ -183,7 +185,7 @@ impl EventLogService {
         collection_id: &str,
         output_files: Vec<String>,
         vector_count: usize,
-        storage_engine: crate::index::axis::eventlog::StorageEngineType,
+        storage_engine: StorageEngineType,
     ) {
         let event = crate::index::axis::eventlog::IndexEventBuilder::compaction_event(
             collection_id.to_string(),
@@ -237,6 +239,51 @@ impl EventLogService {
     pub async fn shutdown(&self) -> Result<()> {
         info!("Shutting down EventLog service");
         self.inner.shutdown().await
+    }
+}
+
+#[async_trait::async_trait]
+impl StorageEventLogPort for EventLogService {
+    async fn notify_flush(
+        &self,
+        collection_id: &str,
+        flushed_files: Vec<String>,
+        vector_count: usize,
+        storage_engine: StorageEngineType,
+        has_quantized: bool,
+        has_fp32: bool,
+    ) -> Result<()> {
+        EventLogService::notify_flush(
+            self,
+            collection_id,
+            flushed_files,
+            vector_count,
+            has_quantized,
+            has_fp32,
+            storage_engine,
+        )
+        .await
+    }
+
+    async fn notify_compaction(
+        &self,
+        collection_id: &str,
+        output_files: Vec<String>,
+        vector_count: usize,
+        storage_engine: StorageEngineType,
+    ) -> Result<()> {
+        EventLogService::notify_compaction(
+            self,
+            collection_id,
+            output_files,
+            vector_count,
+            storage_engine,
+        );
+        Ok(())
+    }
+
+    async fn can_compact(&self, collection_id: &str, file_path: &str) -> Result<bool> {
+        Ok(EventLogService::can_compact(self, collection_id, file_path).await)
     }
 }
 
