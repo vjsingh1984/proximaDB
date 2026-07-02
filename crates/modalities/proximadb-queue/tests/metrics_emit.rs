@@ -125,7 +125,7 @@ async fn backpressure_emits_counter_on_hard_pressure() {
     // Either "hard" or "soft" counter must have moved; check both.
     let soft_counter = QUEUE_BACKPRESSURE.with_label_values(&[topic, "soft"]);
     let total_after = hard_counter.get() + soft_counter.get();
-    let total_before = before + 0; // soft started at 0 too (distinct topic name)
+    let total_before = before; // soft started at 0 too (distinct topic name)
     assert!(
         total_after > total_before,
         "QUEUE_BACKPRESSURE (hard+soft) must increment when sends are rejected"

@@ -330,7 +330,7 @@ fn test_tst_downsample_intervals() {
 
     for interval in intervals {
         let config = DownsampleConfig {
-            interval: interval,
+            interval,
             aggregation: DownsampleAggregation::OHLC,
         };
 

@@ -2218,7 +2218,7 @@ mod tests {
         let quantized = engine.quantize(&test_vector, &level).await?;
 
         // Binary quantization: 1 bit per value, packed into bytes
-        let expected_bytes = (test_vector.len() + 7) / 8;
+        let expected_bytes = test_vector.len().div_ceil(8);
         assert_eq!(quantized.data.len(), expected_bytes);
 
         // Test sign-based binary quantization
@@ -2440,7 +2440,7 @@ mod tests {
                 sign_based: true,
             })),
         };
-        assert_eq!(binary.bytes_per_vector(dimension), (dimension + 7) / 8);
+        assert_eq!(binary.bytes_per_vector(dimension), dimension.div_ceil(8));
 
         // Product Quantization
         let pq = UnifiedQuantizationLevel::pq8(16);

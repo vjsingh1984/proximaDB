@@ -447,7 +447,7 @@ mod tests {
         cache.put_statistics("default", &id, CatalogTableStatistics::default());
         cache.put_namespace(
             "default",
-            &vec!["db".into()],
+            &["db".into()],
             CatalogNamespace::new(vec!["db".into()]),
         );
         assert_eq!(cache.size(), 4);
@@ -460,7 +460,7 @@ mod tests {
         expired.put_statistics("default", &id, CatalogTableStatistics::default());
         expired.put_namespace(
             "default",
-            &vec!["db".into()],
+            &["db".into()],
             CatalogNamespace::new(vec!["db".into()]),
         );
         std::thread::sleep(Duration::from_millis(1));

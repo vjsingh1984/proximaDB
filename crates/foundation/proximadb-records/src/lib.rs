@@ -1386,7 +1386,7 @@ mod tests {
         // strictly dominates fp16. This is the compaction read+rewrite
         // case: source block is fp16, intermediate flattens to fp32,
         // writer coerces back to fp16 — must match the original bits.
-        let src_fp32 = vec![1.0_f32, -2.5, 65504.0, 0.0001, 100.25, -0.5, 42.0, 7.125];
+        let src_fp32 = [1.0_f32, -2.5, 65504.0, 0.0001, 100.25, -0.5, 42.0, 7.125];
         let original_fp16: Vec<half::f16> =
             src_fp32.iter().map(|&x| half::f16::from_f32(x)).collect();
 

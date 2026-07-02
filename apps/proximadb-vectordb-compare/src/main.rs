@@ -327,6 +327,22 @@ impl ComparisonRunner {
     }
 }
 
+fn main() {
+    println!("VectorDB Comparison Runner");
+    println!("========================");
+    println!();
+    println!("This binary compares ProximaDB performance against competitors.");
+    println!("It requires external databases to be running with default configurations.");
+    println!();
+    println!("Usage: cargo run --bin vectordb_comparison -- <command>");
+    println!();
+    println!("Commands:");
+    println!("  benchmark    Run comparison benchmarks");
+    println!("  compare     Compare against specific competitor");
+    println!();
+    println!("Note: This is a development tool for performance analysis.");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -426,20 +442,4 @@ mod tests {
         let speedup = runner.calculate_speedup(&results);
         assert_eq!(speedup.get("Qdrant"), Some(&2.0));
     }
-}
-
-fn main() {
-    println!("VectorDB Comparison Runner");
-    println!("========================");
-    println!();
-    println!("This binary compares ProximaDB performance against competitors.");
-    println!("It requires external databases to be running with default configurations.");
-    println!();
-    println!("Usage: cargo run --bin vectordb_comparison -- <command>");
-    println!();
-    println!("Commands:");
-    println!("  benchmark    Run comparison benchmarks");
-    println!("  compare     Compare against specific competitor");
-    println!();
-    println!("Note: This is a development tool for performance analysis.");
 }

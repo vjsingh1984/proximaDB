@@ -838,7 +838,7 @@ mod tests {
         assert_eq!(config.postgres_config.active_bind_address().port(), 5433);
 
         // Verify all ports are distinct
-        let ports = vec![
+        let ports = [
             http_addr.port(),
             grpc_addr.port(),
             config.arrow_ipc_config.port,

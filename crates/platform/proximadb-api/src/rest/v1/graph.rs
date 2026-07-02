@@ -2650,7 +2650,7 @@ mod tests {
         );
 
         let _router = create_graph_router();
-        let _graph_handler = GraphHandler::default();
+        let _graph_handler = GraphHandler;
         let _traversal_handler = GraphTraversalHandler::new();
     }
 }
