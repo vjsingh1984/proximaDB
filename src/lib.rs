@@ -28,17 +28,19 @@
 #![allow(clippy::type_complexity)] // Needs type-alias extraction
 #![allow(clippy::result_large_err)]
 // Needs error-type refactor
-// Enforce error-handling discipline. `.unwrap()`/`.expect()` are idiomatic in
-// tests, so scope those two lints to non-test builds — otherwise the test suite
-// (~9.6k call sites) drowns out real findings under `--all-targets`, and CI
-// already enforces them in production via the `--lib --bins` gate. `panic` /
-// `unimplemented` / `todo` stay warned in EVERY build (tests included): a panic
-// in a test can mask a real failure, and these are correctness issues, not style.
+// Enforce error-handling discipline in PRODUCTION code. `.unwrap()`/`.expect()`
+// and `panic!`/`unimplemented!`/`todo!` are all common in tests (match-arm
+// assertions like `_ => panic!("Expected X")`, placeholder stubs), so scope all
+// five lints to non-test builds — otherwise ~10k test call sites drown out real
+// findings under `--all-targets`. CI's `--lib --bins` gate still ENFORCES every
+// one of them in production (prod is currently clean of all five), so this only
+// quiets the test-suite noise. `large_enum_variant` stays warned in every build
+// (a variant-size blowup matters regardless of build kind).
 #![cfg_attr(not(test), warn(clippy::unwrap_used))]
 #![cfg_attr(not(test), warn(clippy::expect_used))]
-#![warn(clippy::panic)]
-#![warn(clippy::unimplemented)]
-#![warn(clippy::todo)]
+#![cfg_attr(not(test), warn(clippy::panic))]
+#![cfg_attr(not(test), warn(clippy::unimplemented))]
+#![cfg_attr(not(test), warn(clippy::todo))]
 #![warn(clippy::large_enum_variant)]
 
 //! # ProximaDB - Cloud-Native Vector Database
