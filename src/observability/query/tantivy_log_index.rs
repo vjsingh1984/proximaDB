@@ -856,7 +856,7 @@ mod tests {
             .expect("Failed to search phrase");
 
         // Only log1 has exact phrase "connection timeout"
-        assert!(results.len() >= 1);
+        assert!(!results.is_empty());
     }
 
     #[test]

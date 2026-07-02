@@ -230,7 +230,7 @@ mod tests {
 
         // Should have at least the vectors we wrote
         assert!(
-            read_vectors.len() >= 1,
+            !read_vectors.is_empty(),
             "Should have read at least 1 vector, got {}",
             read_vectors.len()
         );

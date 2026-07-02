@@ -429,7 +429,7 @@ mod sst_filename_tests {
         let level = 3;
 
         // Test that the generated filename can be properly parsed back
-        let filename = FilenameCodec::new().generate(level as u32, "sst");
+        let filename = FilenameCodec::new().generate(level, "sst");
 
         assert!(FilenameCodec::new().is_tiered_filename(&filename, "sst"));
         assert_eq!(FilenameCodec::new().parse_level(&filename), level);
@@ -2123,7 +2123,7 @@ mod bplustree_tests {
 
         // Check structure
         assert_eq!(tree.fanout, 16);
-        assert_eq!(tree.leaves.len(), (100 + 15) / 16); // Ceiling division
+        assert_eq!(tree.leaves.len(), 100_usize.div_ceil(16)); // Ceiling division
         assert_eq!(tree.root.len(), tree.leaves.len());
 
         // Check leaf ranges
@@ -2198,7 +2198,7 @@ mod bplustree_tests {
 
         // Range within single leaf
         let leaves = tree.range_leaves("key_00000", "key_00010");
-        assert!(leaves.len() >= 1);
+        assert!(!leaves.is_empty());
 
         // Full range
         let leaves = tree.range_leaves("key_00000", "key_00099");
@@ -2262,7 +2262,7 @@ mod bplustree_tests {
         let tree = BPlusTreeIndex::build(&entries, 128);
 
         assert_eq!(tree.fanout, 128);
-        assert_eq!(tree.leaves.len(), (1000 + 127) / 128);
+        assert_eq!(tree.leaves.len(), 1000_usize.div_ceil(128));
 
         // Verify all entries are covered
         let total_covered: usize = tree.leaves.iter().map(|l| l.len).sum();
@@ -2362,7 +2362,7 @@ mod compression_tests_unified {
 
         for (algorithm, expected_marker) in algorithms_and_markers {
             let config = BlockCompressionConfig {
-                algorithm: algorithm.clone(),
+                algorithm,
                 compression_level: 3,
                 enable_vector_compression: false, // Disable to avoid vector decompression complexity
                 enable_metadata_compression: false, // Disable to avoid metadata decompression complexity
@@ -2427,7 +2427,7 @@ mod compression_tests_unified {
 
         for algorithm in compression_algorithms {
             let config = BlockCompressionConfig {
-                algorithm: algorithm.clone(),
+                algorithm,
                 compression_level: 6,
                 enable_vector_compression: false, // Disable to avoid vector decompression complexity
                 enable_metadata_compression: false, // Disable to avoid metadata decompression complexity
@@ -2510,7 +2510,7 @@ mod compression_tests_unified {
     #[test]
     fn test_unified_compression_mixed_deserialization() {
         // Test that blocks compressed with different algorithms can be deserialized together
-        let algorithms = vec![
+        let algorithms = [
             UnifiedCompressionAlgorithm::None,
             UnifiedCompressionAlgorithm::Zstd,
             UnifiedCompressionAlgorithm::Lz4,
@@ -2522,7 +2522,7 @@ mod compression_tests_unified {
         for (i, algorithm) in algorithms.iter().enumerate() {
             let records = vec![create_test_record(&format!("test_{}", i), 128)];
             let config = BlockCompressionConfig {
-                algorithm: algorithm.clone(),
+                algorithm: *algorithm,
                 compression_level: 3,
                 enable_vector_compression: false, // Disable to avoid vector decompression complexity
                 enable_metadata_compression: false, // Disable to avoid metadata decompression complexity
@@ -2534,7 +2534,7 @@ mod compression_tests_unified {
             let block = ProximaDataBlock::new(records, config.clone());
 
             let serialized = block.serialize_with_config(&config).unwrap();
-            serialized_blocks.push((serialized, algorithm.clone()));
+            serialized_blocks.push((serialized, *algorithm));
         }
 
         // Deserialize all blocks and verify
@@ -2597,7 +2597,7 @@ mod bloom_filter_tests {
 
         // With 10 bits per key, false positive rate should be approximately 0.0095
         // Note: An empty bloom filter should have 0.0 false positive rate
-        assert!(calculated_rate >= 0.0 && calculated_rate < 0.02);
+        assert!((0.0..0.02).contains(&calculated_rate));
     }
 
     #[test]
@@ -2743,7 +2743,7 @@ mod bloom_filter_tests {
 
         // Serialize
         let serialized_data = filter.serialize().unwrap();
-        assert!(serialized_data.len() > 0);
+        assert!(!serialized_data.is_empty());
 
         // Create SerializedBloomFilter for deserialization
         let serialized = crate::core::bloom::SerializedBloomFilter {
@@ -3170,7 +3170,7 @@ mod decompression_cache_tests {
                 };
 
                 let config = BlockCompressionConfig {
-                    algorithm: algo.clone(),
+                    algorithm: *algo,
                     compression_level: 6,
                     enable_vector_compression: true,
                     enable_metadata_compression: true,
@@ -3576,7 +3576,7 @@ mod compression_tests {
     #[test]
     fn test_mixed_compression_deserialization() {
         // Create blocks with different compression algorithms
-        let blocks_data = vec![
+        let blocks_data = [
             (CompressionAlgorithm::CompressionNone, MARKER_UNCOMPRESSED),
             (CompressionAlgorithm::CompressionZstd, MARKER_ZSTD),
             (CompressionAlgorithm::CompressionLz4, MARKER_LZ4),

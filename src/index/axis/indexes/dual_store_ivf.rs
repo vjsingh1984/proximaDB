@@ -2907,7 +2907,7 @@ mod tests {
         // Search
         let results = index.search(&[1.0, 0.0, 0.0, 0.0], 2, None).await.unwrap();
         assert!(
-            results.len() >= 1,
+            !results.is_empty(),
             "Should find at least 1 result, got {}",
             results.len()
         );

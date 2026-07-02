@@ -995,7 +995,7 @@ async fn test_retry_policy_jitter() {
     for delay in &delays {
         let ms = delay.as_millis();
         assert!(
-            ms >= 80 && ms <= 120,
+            (80..=120).contains(&ms),
             "Delay {}ms outside expected range 80-120ms",
             ms
         );
@@ -1287,7 +1287,7 @@ async fn test_raft_consensus_random_election_timeout() {
         let timeout = consensus.random_election_timeout();
         let ms = timeout.as_millis() as u64;
         assert!(
-            ms >= 100 && ms <= 200,
+            (100..=200).contains(&ms),
             "Timeout {}ms outside expected range 100-200ms",
             ms
         );

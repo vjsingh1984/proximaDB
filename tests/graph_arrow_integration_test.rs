@@ -186,7 +186,7 @@ mod graph_arrow_integration_tests {
         // search results in a federated query using Arrow format
 
         // Simulate graph query results
-        let graph_results = vec![
+        let graph_results = [
             HashMap::from([
                 ("node_id".to_string(), serde_json::json!("node1")),
                 ("label".to_string(), serde_json::json!("Person")),
@@ -198,7 +198,7 @@ mod graph_arrow_integration_tests {
         ];
 
         // Simulate vector search results
-        let vector_results = vec![
+        let vector_results = [
             HashMap::from([
                 ("id".to_string(), serde_json::json!("doc1")),
                 ("score".to_string(), serde_json::json!(0.95)),

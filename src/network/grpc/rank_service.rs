@@ -487,7 +487,7 @@ mod tests {
             rank_profile: Some("ghost".into()),
             rank_overrides: None,
         });
-        let status = handler.rank_search(req).await.err().expect("must error");
+        let status = handler.rank_search(req).await.expect_err("must error");
         assert_eq!(status.code(), tonic::Code::NotFound);
         assert!(status.message().contains("ghost"));
     }

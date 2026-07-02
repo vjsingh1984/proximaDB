@@ -85,7 +85,7 @@ async fn test_id_less_storage_warning() {
     let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let dir = tempdir().unwrap();
-    let file_name = format!("test_id_less_warning.parquet");
+    let file_name = "test_id_less_warning.parquet".to_string();
     let file_url = format!("file://{}/{}", dir.path().to_str().unwrap(), file_name);
 
     // Test with id_less_storage = true (should trigger warning)
@@ -906,7 +906,7 @@ async fn test_customer_api_compatibility() {
 
     // Single ID lookup
     // Deferred: Implement optimized_batch_id_lookup method
-    let single_result = vec![{
+    let single_result = [{
         let values: Vec<f32> = (0..384).map(|i| (i + 100) as f32 * 0.01).collect();
         let dim = values.len() as u32;
         let mut r = ProximaRecord {
@@ -932,7 +932,7 @@ async fn test_customer_api_compatibility() {
 
     // Batch ID lookup
     // Deferred: Implement optimized_batch_id_lookup method
-    let batch_result = vec![
+    let batch_result = [
         {
             let values: Vec<f32> = (0..384).map(|i| i as f32 * 0.01).collect();
             let dim = values.len() as u32;
@@ -1045,7 +1045,7 @@ async fn test_row_group_offset_optimization() {
     .unwrap();
 
     // Deferred: Implement optimized_batch_id_lookup method
-    let lookup_result = vec![{
+    let lookup_result = [{
         let values: Vec<f32> = (0..128).map(|j| (50 + j) as f32 * 0.01).collect();
         let dim = values.len() as u32;
         let mut r = ProximaRecord {
@@ -1118,7 +1118,7 @@ async fn test_schema_evolution_with_id_column() {
     let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Test that schema evolution preserves ID column requirement
-    let quantization_configs = vec![
+    let quantization_configs = [
         QuantizationConfig {
             enable_binary: Some(false),
             enable_int8: Some(false),

@@ -296,7 +296,7 @@ static TEST_ASSIGNMENTS: std::sync::OnceLock<PersistentTestAssignments> =
 
 /// Get the global test assignments instance
 pub fn get_test_assignments() -> &'static PersistentTestAssignments {
-    TEST_ASSIGNMENTS.get_or_init(|| PersistentTestAssignments::new())
+    TEST_ASSIGNMENTS.get_or_init(PersistentTestAssignments::new)
 }
 
 /// Setup storage assignment for a collection with persistent directory management

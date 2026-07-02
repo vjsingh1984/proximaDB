@@ -191,7 +191,7 @@ mod tests {
         let footer_size = footer.len() as u64;
 
         let mut data = Vec::new();
-        data.extend_from_slice(&vec![0u8; 100]); // Some file content
+        data.extend_from_slice(&[0u8; 100]); // Some file content
         data.extend_from_slice(footer);
         data.extend_from_slice(&footer_size.to_le_bytes());
 

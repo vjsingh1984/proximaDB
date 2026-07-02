@@ -546,7 +546,7 @@ mod tests {
             let fp_rate = manager.estimate_false_positive_rate(bloom.as_ref(), 1000);
             // FP rate should be a valid probability
             assert!(
-                fp_rate >= 0.0 && fp_rate <= 1.0,
+                (0.0..=1.0).contains(&fp_rate),
                 "FP rate {} out of range",
                 fp_rate
             );

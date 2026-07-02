@@ -162,10 +162,8 @@ async fn test_sst_with_bge_768_embeddings() -> anyhow::Result<()> {
         info!("📁 Data directory exists: {:?}", data_dir);
         let entries: Vec<_> = std::fs::read_dir(&data_dir)?.collect();
         info!("📄 Data directory has {} entries", entries.len());
-        for entry in entries {
-            if let Ok(entry) = entry {
-                info!("  - {:?}", entry.path());
-            }
+        for entry in entries.into_iter().flatten() {
+            info!("  - {:?}", entry.path());
         }
     } else {
         info!("⚠️ Data directory does not exist at {:?}", data_dir);
@@ -296,10 +294,8 @@ async fn test_sst_with_openai_1536_embeddings() -> anyhow::Result<()> {
         info!("📁 Data directory exists: {:?}", data_dir);
         let entries: Vec<_> = std::fs::read_dir(&data_dir)?.collect();
         info!("📄 Data directory has {} entries", entries.len());
-        for entry in entries {
-            if let Ok(entry) = entry {
-                info!("  - {:?}", entry.path());
-            }
+        for entry in entries.into_iter().flatten() {
+            info!("  - {:?}", entry.path());
         }
     } else {
         info!("⚠️ Data directory does not exist at {:?}", data_dir);

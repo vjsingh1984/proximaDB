@@ -291,7 +291,7 @@ mod tests {
 
         let batch = WALVectorBatch {
             batch_id: crate::storage::persistence::write_ahead_log::BatchId::new(),
-            vector_records: Arc::new(vectors.into_iter().map(Into::into).collect()),
+            vector_records: Arc::new(vectors.into_iter().collect()),
             timestamp: std::time::SystemTime::now(),
             total_size_bytes: 1024,
             is_flushed: false,

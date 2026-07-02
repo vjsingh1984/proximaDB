@@ -570,7 +570,7 @@ mod tests {
 
         let collection_id = "test_collection";
         let text_query = "machine learning algorithms";
-        let query_vector = vec![0.1, 0.2, 0.3, 0.4, 0.5];
+        let query_vector = [0.1, 0.2, 0.3, 0.4, 0.5];
         let top_k = 10;
         let _fusion_strategy = FusionStrategy::ReciprocalRank { k: 60 };
 

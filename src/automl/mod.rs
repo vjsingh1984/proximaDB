@@ -210,7 +210,7 @@ mod tests {
         }
 
         // Verify all OptimizationGoal variants
-        let goals = vec![
+        let goals = [
             OptimizationGoal::MinimizeLatency,
             OptimizationGoal::MaximizeThroughput,
             OptimizationGoal::MinimizeMemory,
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn test_workload_prediction_config() {
         // Verify WorkloadPattern variants
-        let patterns = vec![
+        let patterns = [
             WorkloadPattern::ReadHeavy,
             WorkloadPattern::WriteHeavy,
             WorkloadPattern::Balanced,
@@ -248,7 +248,7 @@ mod tests {
 
         // Verify PredictionModel enum has the expected variant names (cannot construct
         // directly since model structs have private fields, so we verify via TargetMetric)
-        let target_variants = vec![
+        let target_variants = [
             prediction::TargetMetric::QueryLatency(10.0),
             prediction::TargetMetric::Throughput(1000.0),
             prediction::TargetMetric::MemoryUsage(512.0),

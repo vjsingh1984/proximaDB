@@ -745,17 +745,16 @@ impl MultiModalQueryExecutor {
         metrics: &mut QueryPerformanceMetrics,
     ) -> Result<Vec<QueryRow>> {
         #[cfg(test)]
-        if let Some(map) = TEST_SIMILAR_RESULTS.get() {
-            if let Ok(guard) = map.lock() {
-                if let Some(rows) = guard.get(collection_id) {
-                    // Update performance metrics for test data
-                    metrics.vectors_scanned = rows.len();
-                    metrics.metadata_lookups += rows.len(); // Each result involves metadata access
+        if let Some(map) = TEST_SIMILAR_RESULTS.get()
+            && let Ok(guard) = map.lock()
+            && let Some(rows) = guard.get(collection_id)
+        {
+            // Update performance metrics for test data
+            metrics.vectors_scanned = rows.len();
+            metrics.metadata_lookups += rows.len(); // Each result involves metadata access
 
-                    // Avoid clone by using Arc for shared test data
-                    return Ok(rows.clone());
-                }
-            }
+            // Avoid clone by using Arc for shared test data
+            return Ok(rows.clone());
         }
         // Convert FilterExpression to VOS-compatible format
         // The FilterExpression already represents HashMap.get() patterns from lowering
@@ -1328,14 +1327,13 @@ impl MultiModalQueryExecutor {
     ) -> Result<Vec<QueryRow>> {
         // Check for test mock data first
         #[cfg(test)]
-        if let Some(map) = TEST_GRAPH_RESULTS.get() {
-            if let Ok(guard) = map.lock() {
-                if let Some(rows) = guard.get("test_graph") {
-                    // Update performance metrics for test data
-                    metrics.graph_nodes_visited = rows.len();
-                    return Ok(rows.clone());
-                }
-            }
+        if let Some(map) = TEST_GRAPH_RESULTS.get()
+            && let Ok(guard) = map.lock()
+            && let Some(rows) = guard.get("test_graph")
+        {
+            // Update performance metrics for test data
+            metrics.graph_nodes_visited = rows.len();
+            return Ok(rows.clone());
         }
 
         // Minimal traversal: depth-1 neighbors via the extracted traversal contract; track cache accesses
@@ -1456,14 +1454,12 @@ impl MultiModalQueryExecutor {
     ) -> Result<Vec<QueryRow>> {
         #[cfg(test)]
         {
-            if let ExecutionOperation::VectorQuery { collection_id, .. } = operation {
-                if let Some(map) = TEST_VECTOR_RESULTS.get() {
-                    if let Some(guard) = map.lock().ok() {
-                        if let Some(rows) = guard.get(collection_id) {
-                            return Ok(rows.clone());
-                        }
-                    }
-                }
+            if let ExecutionOperation::VectorQuery { collection_id, .. } = operation
+                && let Some(map) = TEST_VECTOR_RESULTS.get()
+                && let Ok(guard) = map.lock()
+                && let Some(rows) = guard.get(collection_id)
+            {
+                return Ok(rows.clone());
             }
         }
         if let ExecutionOperation::VectorQuery {
@@ -1475,12 +1471,11 @@ impl MultiModalQueryExecutor {
         } = operation
         {
             #[cfg(test)]
-            if let Some(map) = TEST_VECTOR_RESULTS.get() {
-                if let Ok(guard) = map.lock() {
-                    if let Some(rows) = guard.get(collection_id) {
-                        return Ok(rows.clone());
-                    }
-                }
+            if let Some(map) = TEST_VECTOR_RESULTS.get()
+                && let Ok(guard) = map.lock()
+                && let Some(rows) = guard.get(collection_id)
+            {
+                return Ok(rows.clone());
             }
             self.execute_vector_search_operation(
                 collection_id,
@@ -2275,7 +2270,7 @@ mod executor_tests {
         );
         let wal_config = WALConfig::default();
         let strategy = WALBatchFactory::create_batch_serialization_strategy(
-            wal_config.strategy_type.clone(),
+            wal_config.strategy_type,
             &wal_config,
             filesystem,
         )
@@ -2358,7 +2353,7 @@ mod executor_tests {
         );
         let wal_config = WALConfig::default();
         let strategy = WALBatchFactory::create_batch_serialization_strategy(
-            wal_config.strategy_type.clone(),
+            wal_config.strategy_type,
             &wal_config,
             filesystem,
         )

@@ -1469,7 +1469,7 @@ mod tests {
         assert_eq!(total_records, 2);
 
         // Check that records are enriched with tenant/domain metadata
-        for (_, shard_records) in &partitioned {
+        for shard_records in partitioned.values() {
             for record in shard_records {
                 assert_eq!(
                     record.metadata.get("tenant_id"),

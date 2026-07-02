@@ -26,10 +26,7 @@ fn run_command(command: &str, args: &[&str]) -> Result<String, String> {
 
 /// Test helper to check if a resource exists
 fn resource_exists(resource_type: &str, resource_name: &str) -> bool {
-    match run_command("kubectl", &["get", resource_type, resource_name]) {
-        Ok(_) => true,
-        Err(_) => false,
-    }
+    run_command("kubectl", &["get", resource_type, resource_name]).is_ok()
 }
 
 /// Test helper to wait for a condition

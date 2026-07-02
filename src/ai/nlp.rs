@@ -739,7 +739,7 @@ mod tests {
             .unwrap();
 
         // Should recognize "risk" and "portfolio" entities
-        assert!(entities.len() >= 1);
+        assert!(!entities.is_empty());
         assert!(entities.iter().any(|e| e.entity_name == "risk"));
     }
 

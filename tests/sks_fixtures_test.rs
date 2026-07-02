@@ -12,14 +12,14 @@ use common::sks_fixtures::TestKnowledgeGraph;
 fn test_small_graph() {
     let graph = TestKnowledgeGraph::small();
     assert_eq!(graph.entities.len(), 100);
-    assert!(graph.relations.len() > 0);
+    assert!(!graph.relations.is_empty());
 }
 
 #[test]
 fn test_medium_graph() {
     let graph = TestKnowledgeGraph::medium();
     assert_eq!(graph.entities.len(), 1000);
-    assert!(graph.relations.len() > 0);
+    assert!(!graph.relations.is_empty());
 }
 
 #[test]

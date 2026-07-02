@@ -1007,7 +1007,7 @@ mod tests {
     fn test_federated_context_creation() {
         let storage = Arc::new(MultiModelStorageFacade::new());
         let ctx = FederatedQueryContext::new(storage);
-        assert!(ctx.parser.supported_extensions().len() > 0);
+        assert!(!ctx.parser.supported_extensions().is_empty());
     }
 
     #[test]

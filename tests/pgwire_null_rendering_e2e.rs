@@ -177,7 +177,7 @@ async fn pgwire_renders_sql_null_over_simple_query() {
         .expect("SELECT IS NULL");
     let is_null_ids: Vec<String> = col_ordered(&is_null_rows, "id")
         .into_iter()
-        .filter_map(|v| v)
+        .flatten()
         .collect();
     assert_eq!(
         is_null_ids,
@@ -194,7 +194,7 @@ async fn pgwire_renders_sql_null_over_simple_query() {
         .expect("SELECT IS NOT NULL");
     let not_null_ids: Vec<String> = col_ordered(&not_null_rows, "id")
         .into_iter()
-        .filter_map(|v| v)
+        .flatten()
         .collect();
     assert_eq!(
         not_null_ids,
@@ -213,7 +213,7 @@ async fn pgwire_renders_sql_null_over_simple_query() {
         .expect("SELECT ORDER BY");
     let ordered_ids: Vec<String> = col_ordered(&ordered_rows, "id")
         .into_iter()
-        .filter_map(|v| v)
+        .flatten()
         .collect();
     assert_eq!(
         ordered_ids.len(),

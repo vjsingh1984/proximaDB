@@ -137,7 +137,7 @@ fn test_proximadatablock_with_proximacodec() {
             enable_metadata_compression: true,
             compression_threshold_bytes: 256,
             dictionary_compression: false,
-            vector_layout: strategy.clone(),
+            vector_layout: strategy,
             metadata_algorithm: None,
         };
 

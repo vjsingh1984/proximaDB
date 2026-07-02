@@ -1196,7 +1196,7 @@ async fn test_partition_records_with_tenant_context() {
     let total: usize = partitioned.values().map(|v| v.len()).sum();
     assert_eq!(total, 2);
 
-    for (_shard_id, shard_records) in &partitioned {
+    for shard_records in partitioned.values() {
         for record in shard_records {
             assert!(record.metadata.contains_key("tenant_id"));
             assert!(record.metadata.contains_key("domain_id"));

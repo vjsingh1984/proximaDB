@@ -57,18 +57,18 @@ async fn debug_parquet_file(file_path: &str, label: &str) -> Result<()> {
                                 }
 
                                 // Print first few IDs if available
-                                if let Some(id_column) = batch.column_by_name("id") {
-                                    if let Some(id_array) = id_column
+                                if let Some(id_column) = batch.column_by_name("id")
+                                    && let Some(id_array) = id_column
                                         .as_any()
                                         .downcast_ref::<arrow_array::StringArray>(
-                                    ) {
-                                        debug!("    📝 First few IDs:");
-                                        for i in 0..std::cmp::min(5, id_array.len()) {
-                                            if id_array.is_valid(i) {
-                                                debug!("      [{}]: {}", i, id_array.value(i));
-                                            } else {
-                                                debug!("      [{}]: NULL", i);
-                                            }
+                                    )
+                                {
+                                    debug!("    📝 First few IDs:");
+                                    for i in 0..std::cmp::min(5, id_array.len()) {
+                                        if id_array.is_valid(i) {
+                                            debug!("      [{}]: {}", i, id_array.value(i));
+                                        } else {
+                                            debug!("      [{}]: NULL", i);
                                         }
                                     }
                                 }
@@ -203,9 +203,9 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
 
     // Set up storage assignment
     use tokio::fs;
-    let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+    let data_dir = StoragePath::collection_data_path(base_path, collection_id);
     fs::create_dir_all(&data_dir).await?;
-    let temp_dir = StoragePath::data_file_path(base_path, &collection_id, "___temp");
+    let temp_dir = StoragePath::data_file_path(base_path, collection_id, "___temp");
     fs::create_dir_all(&temp_dir).await?;
 
     // Storage assignment is now handled internally by CollectionService
@@ -216,7 +216,7 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
 
     let data_url = format!(
         "file://{}",
-        StoragePath::collection_data_path(base_path, &collection_id)
+        StoragePath::collection_data_path(base_path, collection_id)
     );
     debug!("📍 Data directory: {}", data_url);
 
@@ -329,7 +329,7 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
 
     let storage_url = format!(
         "file://{}",
-        StoragePath::collection_data_path(base_path, &collection_id)
+        StoragePath::collection_data_path(base_path, collection_id)
     );
     let search_results = engine
         .search_vectors(collection_id, &storage_url, &vec![0.5; 128], 10)

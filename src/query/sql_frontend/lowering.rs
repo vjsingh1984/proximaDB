@@ -1080,10 +1080,10 @@ mod lowering_tests {
             Query::Select(select) => {
                 assert_eq!(select.projection.len(), 2);
                 assert_eq!(select.limit, Some(10));
-                assert!(select.from.len() > 0);
+                assert!(!select.from.is_empty());
 
                 // Verify projection contains expected fields
-                if let Some(item) = select.projection.get(0) {
+                if let Some(item) = select.projection.first() {
                     assert!(matches!(item.expr, Expr::Identifier(ref id) if id == "id"));
                 }
                 if let Some(item) = select.projection.get(1) {

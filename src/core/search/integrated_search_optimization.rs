@@ -1213,6 +1213,10 @@ impl Default for IntegratedOptimizationConfig {
     }
 }
 
+// Re-export types needed by other modules
+// Re-export from the smart_execution_strategy module
+pub use crate::core::search::smart_execution_strategy::ExecutionStrategy;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1251,7 +1255,3 @@ mod tests {
         }
     }
 }
-
-// Re-export types needed by other modules
-// Re-export from the smart_execution_strategy module
-pub use crate::core::search::smart_execution_strategy::ExecutionStrategy;

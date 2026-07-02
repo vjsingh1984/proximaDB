@@ -897,7 +897,7 @@ mod tests {
 
     #[test]
     fn test_column_value_variants() {
-        let values = vec![
+        let values = [
             ColumnValue::Null,
             ColumnValue::Int(-42),
             ColumnValue::UInt(42),
