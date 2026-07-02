@@ -31,6 +31,102 @@ use crate::proto::proximadb_v1::{
 /// preserved across unrelated `upsert_collection_catalog_asset` rebuilds.
 pub(crate) const CANONICAL_SCHEMA_PROPERTY: &str = "collection.canonical_schema";
 
+/// ADR-048: column-id base for canonical schema columns. The v1-derived
+/// `catalog_schema_from_collection` reserves ids 0–199 (system 0/1/2/3/8,
+/// embedding 20, v1 filterable 100+); canonical ProximaType columns live at
+/// 200+ so they never collide and stay invisible to the v1 read path (which
+/// reconstructs `filterable_columns` from `id >= 100`).
+pub(crate) const CANONICAL_COLUMN_ID_BASE: i32 = 200;
+
+/// ADR-048 P1: map canonical `CollectionSchemaColumn`s to typed `CatalogColumn`s
+/// in the 200+ band. `name`/`data_type`/`nullable` become the typed column; the
+/// per-column hints (indexed/filterable/text_storage/max_length) round-trip via
+/// the column's `properties` — the declared per-column extension surface (D7).
+pub(crate) fn collection_schema_columns_to_catalog_columns(
+    columns: &[proximadb_runtime::CollectionSchemaColumn],
+) -> Vec<CatalogColumn> {
+    columns
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let mut col = CatalogColumn::new(
+                CANONICAL_COLUMN_ID_BASE + i as i32,
+                c.name.clone(),
+                c.data_type.clone(),
+            )
+            .nullable(c.nullable);
+            col.properties
+                .insert("proxima.indexed".to_string(), c.indexed.to_string());
+            col.properties
+                .insert("proxima.filterable".to_string(), c.filterable.to_string());
+            if let Some(ts) = c.text_storage {
+                col.properties.insert(
+                    "proxima.text_storage".to_string(),
+                    match ts {
+                        proximadb_runtime::CollectionTextStorage::Inline => "Inline",
+                        proximadb_runtime::CollectionTextStorage::Large => "Large",
+                    }
+                    .to_string(),
+                );
+            }
+            if let Some(ml) = c.max_length {
+                col.properties
+                    .insert("proxima.max_length".to_string(), ml.to_string());
+            }
+            // Catalog validation (schema.rs) requires vector columns to carry a
+            // "dimension" property. DenseVector/BinaryVector carry theirs;
+            // SparseVector has no fixed dim → 0 (unused on read-back, which reads
+            // the dim from the ProximaType itself).
+            match &c.data_type {
+                ProximaType::DenseVector { dim, .. } | ProximaType::BinaryVector { dim } => {
+                    col.properties
+                        .insert("dimension".to_string(), dim.to_string());
+                }
+                ProximaType::SparseVector { .. } => {
+                    col.properties
+                        .insert("dimension".to_string(), "0".to_string());
+                }
+                _ => {}
+            }
+            col
+        })
+        .collect()
+}
+
+/// ADR-048 P1: reverse — read the canonical schema from the typed 200+ columns
+/// (reserved v1 columns are excluded). Returns an empty vec when no canonical
+/// columns exist (legacy collection → caller falls back to the transitional
+/// sidecar read).
+pub(crate) fn catalog_columns_to_collection_schema_columns(
+    columns: &[CatalogColumn],
+) -> Vec<proximadb_runtime::CollectionSchemaColumn> {
+    columns
+        .iter()
+        .filter(|c| c.id >= CANONICAL_COLUMN_ID_BASE)
+        .map(|c| {
+            let bool_prop = |k: &str| c.properties.get(k).is_some_and(|v| v == "true");
+            proximadb_runtime::CollectionSchemaColumn {
+                name: c.name.clone(),
+                data_type: c.data_type.clone(),
+                nullable: c.nullable,
+                indexed: bool_prop("proxima.indexed"),
+                filterable: bool_prop("proxima.filterable"),
+                text_storage: c.properties.get("proxima.text_storage").and_then(|s| {
+                    match s.as_str() {
+                        "Inline" => Some(proximadb_runtime::CollectionTextStorage::Inline),
+                        "Large" => Some(proximadb_runtime::CollectionTextStorage::Large),
+                        _ => None,
+                    }
+                }),
+                max_length: c
+                    .properties
+                    .get("proxima.max_length")
+                    .and_then(|s| s.parse().ok()),
+            }
+        })
+        .collect()
+}
+
 pub(crate) fn collection_from_catalog_schema(
     table_id: &TableIdentifier,
     schema: &CatalogTableSchema,
