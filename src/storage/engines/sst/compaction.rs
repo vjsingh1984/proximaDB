@@ -1182,12 +1182,19 @@ impl Compaction {
                         crate::storage::engines::sst::segment_format::pax_inputs_have_f32_tier(
                             &task.input_files,
                         );
-                    crate::storage::engines::sst::segment_format::write_pax_segment_with_f32_tier(
+                    // Preserve the source segments' tier-2 rerank quant (SQ8/FP16/f32)
+                    // through compaction — see `pax_inputs_rerank_quant`.
+                    let rerank_quant =
+                        crate::storage::engines::sst::segment_format::pax_inputs_rerank_quant(
+                            &task.input_files,
+                        );
+                    crate::storage::engines::sst::segment_format::write_pax_segment_full(
                         &staging_file_path,
                         &records,
                         &collection_id,
                         records.len(),
                         proximadb_block_format::VectorQuant::RaBitQ,
+                        rerank_quant,
                         f32_tier,
                         None,
                     )
@@ -1331,12 +1338,19 @@ impl Compaction {
                         crate::storage::engines::sst::segment_format::pax_inputs_have_f32_tier(
                             &task.input_files,
                         );
-                    crate::storage::engines::sst::segment_format::write_pax_segment_with_f32_tier(
+                    // Preserve the source segments' tier-2 rerank quant (SQ8/FP16/f32)
+                    // through compaction — see `pax_inputs_rerank_quant`.
+                    let rerank_quant =
+                        crate::storage::engines::sst::segment_format::pax_inputs_rerank_quant(
+                            &task.input_files,
+                        );
+                    crate::storage::engines::sst::segment_format::write_pax_segment_full(
                         &task.output_file,
                         &records,
                         &collection_id,
                         records.len(),
                         proximadb_block_format::VectorQuant::RaBitQ,
+                        rerank_quant,
                         f32_tier,
                         None,
                     )
