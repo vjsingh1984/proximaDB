@@ -150,33 +150,37 @@ impl SstEngine {
         // Generate SSTable filename with appropriate extension based on block format
         let codec = FilenameCodec::new();
         let mut block_format = BlockFormat::parse_block_format(&self.config().block_format);
-        // P3 Phase B / Phase C: PAX vector segments. Reads stay mixed-format-
-        // safe — see
+        // P3 Phase B / Phase C / M1-1b (ADR-049): PAX vector segments are the
+        // DEFAULT write format. Reads stay mixed-format-safe — see
         // `segment_format::mixed_format_legacy_and_pax_segments_coexist_and_read_back`
-        // — and the search path's exact PAX scan (`search_pax_file_exact`) now
-        // makes a `.pax` file searchable under every metric/quant, so enabling PAX
-        // only changes newly written segments; existing ProximaBlocks segments
-        // still read back AND every new `.pax` segment is queryable. STAGED
-        // ROLLOUT: default OFF in v0.2; the develop→qa recall ratchet (qa-gate
-        // `pax-recall-ratchet`, recall@10 >= 0.90 at N=100k) gates the v0.3 flip
-        // to default ON. The exact PAX scan is the prerequisite that makes that
-        // flip safe — M1-1b flips the default once the integration tier is migrated.
+        // — and the search path's exact PAX scan (`search_pax_file_exact`) makes a
+        // `.pax` file searchable under every metric/quant, so existing
+        // ProximaBlocks segments still read back AND every new `.pax` segment is
+        // queryable. The default-on flip is gated by the develop→qa recall ratchet
+        // (qa-gate `pax-recall-ratchet`, recall@10 >= 0.90 at N=100k, met by the
+        // default RaBitQ pool=1000); the deeper mandate-#8 sign-off is the WS8
+        // N=1M canonical recall artifact.
         //
-        // Resolution (Phase C escape hatches — see `resolve_pax_segments_enabled`):
+        // Resolution (escape hatches — see `resolve_pax_segments_enabled`):
         //   1. Global kill-switch `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE` forces
         //      legacy `.sst` for EVERY collection (the default-on reversal valve).
-        //   2. Per-collection `pax_vector_format:on|off` tag on
-        //      `CollectionConfig.tags` — explicit opt-in / opt-out (staged
-        //      adoption; mirrors the `recall_target:` tag convention; stored as a
+        //   2. Per-collection `pax_vector_format:off` tag on `CollectionConfig.tags`
+        //      opts a collection back to legacy `.sst` — used by tests that target
+        //      ProximaBlocks-specific scan/flush features (vector-bounds pruning,
+        //      adaptive PCA, Z-order clustering). `on` is redundant under
+        //      default-on (mirrors the `recall_target:` tag convention; stored as a
         //      tag rather than a typed field because proto regen is manual — see
         //      collection_types.proto).
-        //   3. Global default: explicit opt-in `PROXIMADB_PAX_VECTOR_SEGMENTS` OR
-        //      the Phase F default-on arm `PROXIMADB_PAX_DEFAULT_ON` (ships OFF;
-        //      per-deployment arm per mandate #8; gated on WS8 N=1M recall).
+        // The pre-default opt-in envs `PROXIMADB_PAX_VECTOR_SEGMENTS` /
+        // `PROXIMADB_PAX_DEFAULT_ON` are retained for back-compat but no longer
+        // gate the decision (PAX is already the default).
+        if env_truthy(PAX_VECTOR_SEGMENTS_ENV) || env_truthy(PAX_VECTOR_DEFAULT_ON_ENV) {
+            debug!("PAX opt-in env set (redundant: PAX is the default write format)");
+        }
         if resolve_pax_segments_enabled(
             env_truthy(PAX_VECTOR_SEGMENTS_DISABLE_ENV),
             collection_pax_format_tag(params.collection_config.as_ref()),
-            env_truthy(PAX_VECTOR_SEGMENTS_ENV) || env_truthy(PAX_VECTOR_DEFAULT_ON_ENV),
+            true, // M1-1b (ADR-049): PAX is the default write format.
         ) {
             block_format = BlockFormat::PaxBlock;
         }

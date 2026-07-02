@@ -81,6 +81,9 @@ async fn test_sst_zorder_pruning_effectiveness() -> anyhow::Result<()> {
             dimension: 128,
             distance_metric: Some(DistanceMetric::Euclidean as i32),
             storage_engine: Some(StorageEngine::Sst as i32),
+            // M1-1b: this test targets ProximaBlocks Z-order/clustering pruning,
+            // so opt out of the PAX default back to legacy `.sst`.
+            tags: vec!["pax_vector_format:off".to_string()],
             ..Default::default()
         }),
         storage_assignment: Some(StorageAssignment {
@@ -211,6 +214,8 @@ async fn test_sst_pruning_modes() -> anyhow::Result<()> {
             dimension: 128,
             distance_metric: Some(DistanceMetric::Euclidean as i32),
             storage_engine: Some(StorageEngine::Sst as i32),
+            // M1-1b: targets ProximaBlocks pruning modes — opt out of PAX default.
+            tags: vec!["pax_vector_format:off".to_string()],
             ..Default::default()
         }),
         storage_assignment: Some(StorageAssignment {

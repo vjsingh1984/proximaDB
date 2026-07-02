@@ -40,6 +40,10 @@ fn collection_config(id: &str, temp_dir: &TempDir, metric: DistanceMetric) -> Co
             dimension: DIMENSION as u32,
             distance_metric: Some(metric as i32),
             storage_engine: Some(StorageEngine::Sst as i32),
+            // M1-1b: this test targets the ProximaBlocks vector-bounds pruner
+            // (`VectorBoundsPruner::should_prune_l2`), so opt the collection out
+            // of the PAX default back to legacy `.sst`.
+            tags: vec!["pax_vector_format:off".to_string()],
             ..Default::default()
         }),
         storage_assignment: Some(StorageAssignment {
