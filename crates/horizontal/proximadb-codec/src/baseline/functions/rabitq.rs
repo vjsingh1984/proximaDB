@@ -80,7 +80,7 @@ impl SplitMix64 {
 /// Build a `dim × dim` orthonormal rotation matrix (row-major) from `seed` via a
 /// seeded Gaussian matrix + modified Gram–Schmidt. Deterministic: the same
 /// `(dim, seed)` always yields the same matrix, so decode regenerates it.
-pub fn build_rotation(dim: usize, seed: u64) -> Vec<Vec<f32>> {
+pub fn build_rotation(dim: usize, seed: u64) -> Vec<f32> {
     let mut rng = SplitMix64(seed ^ 0xA5A5_5A5A_DEAD_BEEF);
     let mut rows: Vec<Vec<f32>> = (0..dim)
         .map(|_| (0..dim).map(|_| rng.next_gaussian()).collect())
@@ -99,7 +99,8 @@ pub fn build_rotation(dim: usize, seed: u64) -> Vec<Vec<f32>> {
             rows[i][k] *= inv;
         }
     }
-    rows
+    // Flatten to row-major contiguous for cache-friendly apply_rotation.
+    rows.into_iter().flatten().collect()
 }
 
 /// Cached `build_rotation` — the rotation is deterministic from `(dim, seed)`,
@@ -107,8 +108,8 @@ pub fn build_rotation(dim: usize, seed: u64) -> Vec<Vec<f32>> {
 /// per-block-per-query (30ms each, O(dim³) Gram-Schmidt + Box-Muller) → dominated
 /// the cascade search cost (~87%). The thread_local cache builds ONCE, then clones
 /// (~64KB memcpy) — a 1000×+ amortized win.
-pub fn build_rotation_cached(dim: usize, seed: u64) -> Vec<Vec<f32>> {
-    type RotCache = std::cell::RefCell<Option<((usize, u64), Vec<Vec<f32>>)>>;
+pub fn build_rotation_cached(dim: usize, seed: u64) -> Vec<f32> {
+    type RotCache = std::cell::RefCell<Option<((usize, u64), Vec<f32>)>>;
     thread_local! {
         static CACHE: RotCache = const { std::cell::RefCell::new(None) };
     }
@@ -127,21 +128,23 @@ pub fn build_rotation_cached(dim: usize, seed: u64) -> Vec<Vec<f32>> {
 }
 
 /// Apply a rotation matrix to a vector: `out = P · v`.
-pub fn apply_rotation(rotation: &[Vec<f32>], v: &[f32]) -> Vec<f32> {
+pub fn apply_rotation(rotation: &[f32], v: &[f32]) -> Vec<f32> {
+    let dim = v.len();
     rotation
-        .iter()
+        .chunks(dim)
         .map(|row| row.iter().zip(v).map(|(a, b)| a * b).sum())
         .collect()
 }
 
 /// Apply the inverse (transpose) rotation: `out = Pᵀ · v`. For an orthonormal
 /// `P`, `Pᵀ = P⁻¹`, so this maps a rotated vector back to the original basis.
-pub fn apply_rotation_transpose(rotation: &[Vec<f32>], v: &[f32]) -> Vec<f32> {
+pub fn apply_rotation_transpose(rotation: &[f32], v: &[f32]) -> Vec<f32> {
     let dim = v.len();
     let mut out = vec![0.0f32; dim];
     for (i, &vi) in v.iter().enumerate() {
         // row i of P contributes vi to every output column (Pᵀ column i = P row i).
-        for (o, &r) in out.iter_mut().zip(rotation[i].iter()) {
+        let row = &rotation[i * dim..(i + 1) * dim];
+        for (o, &r) in out.iter_mut().zip(row) {
             *o += vi * r;
         }
     }
@@ -151,7 +154,7 @@ pub fn apply_rotation_transpose(rotation: &[Vec<f32>], v: &[f32]) -> Vec<f32> {
 /// Coarse full-vector reconstruction from a binary code (lossy — RaBitQ is a
 /// search representation, not an exact codec). Rebuilds `centroid + ‖r‖ · Pᵀx̄`
 /// where `x̄ᵢ = ±1/√D`. Direction is preserved far better than magnitude.
-pub fn reconstruct(code: &RaBitQCode, params: &RaBitQParams, rotation: &[Vec<f32>]) -> Vec<f32> {
+pub fn reconstruct(code: &RaBitQCode, params: &RaBitQParams, rotation: &[f32]) -> Vec<f32> {
     let dim = params.dim;
     let inv_sqrt_d = 1.0 / (dim as f32).sqrt();
     let x_rotated: Vec<f32> = (0..dim)
@@ -201,7 +204,7 @@ fn packed_len(dim: usize) -> usize {
 
 /// Encode one vector to a [`RaBitQCode`] using a prebuilt `rotation`
 /// (`build_rotation(params.dim, params.seed)`).
-pub fn encode(vector: &[f32], params: &RaBitQParams, rotation: &[Vec<f32>]) -> RaBitQCode {
+pub fn encode(vector: &[f32], params: &RaBitQParams, rotation: &[f32]) -> RaBitQCode {
     let dim = params.dim;
     // residual = v - centroid
     let residual: Vec<f32> = vector
@@ -240,7 +243,7 @@ pub fn encode(vector: &[f32], params: &RaBitQParams, rotation: &[Vec<f32>]) -> R
 }
 
 /// Rotate a query's residual once per query: `q̃ = P · (query − centroid)`.
-pub fn rotate_query(query: &[f32], params: &RaBitQParams, rotation: &[Vec<f32>]) -> Vec<f32> {
+pub fn rotate_query(query: &[f32], params: &RaBitQParams, rotation: &[f32]) -> Vec<f32> {
     let residual: Vec<f32> = query
         .iter()
         .zip(params.centroid.iter())
@@ -364,10 +367,14 @@ mod tests {
         let rot = build_rotation(dim, 12345);
         // rows are unit-norm and mutually orthogonal.
         for i in 0..dim {
-            let norm: f32 = rot[i].iter().map(|v| v * v).sum::<f32>().sqrt();
+            let norm: f32 = rot[i * dim..(i + 1) * dim]
+                .iter()
+                .map(|v| v * v)
+                .sum::<f32>()
+                .sqrt();
             assert!((norm - 1.0).abs() < 1e-3, "row {i} norm {norm}");
         }
-        let d01: f32 = (0..dim).map(|k| rot[0][k] * rot[1][k]).sum();
+        let d01: f32 = (0..dim).map(|k| rot[k] * rot[dim + k]).sum();
         assert!(d01.abs() < 1e-3, "rows 0,1 not orthogonal: {d01}");
         // rotation preserves norm.
         let v: Vec<f32> = (0..dim).map(|i| (i as f32 * 0.13).sin()).collect();
