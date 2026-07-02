@@ -30,6 +30,7 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 use proximadb_kernel::uuid::Uuid;
+use proximadb_storage_ports::StorageEventLogPort;
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -299,7 +300,7 @@ pub struct CompactionCoordinator {
     ///
     /// This guarantees that flushed files are not prematurely picked up by compaction
     /// before indexes are fully hydrated, preventing index inconsistencies.
-    event_log_service: Option<Arc<dyn crate::index::axis::eventlog::EventLogService>>,
+    event_log_service: Option<Arc<dyn StorageEventLogPort>>,
     /// Track deferred compactions due to index processing
     deferred_compactions: DashMap<CollectionId, DeferredCompaction>,
 }
@@ -322,7 +323,7 @@ impl CompactionCoordinator {
     /// compacted until all indexes have been properly hydrated.
     pub fn new_with_event_log(
         config: OrchestratorCompactionConfig,
-        event_log_service: Arc<dyn crate::index::axis::eventlog::EventLogService>,
+        event_log_service: Arc<dyn StorageEventLogPort>,
     ) -> Self {
         Self {
             active_operations: DashMap::new(),
