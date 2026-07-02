@@ -686,7 +686,7 @@ mod tests {
 
         let response = result.unwrap().into_inner();
         // Default behavior: default_deny = false, so unassigned users are allowed
-        assert_eq!(response.allowed, true);
+        assert!(response.allowed);
     }
 
     /// ADR-016 / Task #69: lock in the lossy-projection semantics so

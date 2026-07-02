@@ -228,7 +228,7 @@ mod tests {
         assert!(extracted.is_some());
 
         let extracted_bytes = extracted.unwrap();
-        assert!(extracted_bytes.len() > 0);
+        assert!(!extracted_bytes.is_empty());
     }
 
     #[test]

@@ -3255,7 +3255,7 @@ mod minimal_compaction_tests {
 
         // Set up storage assignment
         use tokio::fs;
-        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+        let data_dir = StoragePath::collection_data_path(base_path, collection_id);
         fs::create_dir_all(&data_dir).await?;
 
         // Storage assignment is now handled internally by CollectionService

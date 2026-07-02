@@ -1872,7 +1872,7 @@ mod tests {
         // Zero-padded base62 ⇒ S3 LIST lexicographic order == numeric order.
         use crate::core::stable_id::CollectionIdentity;
         let ids: Vec<u32> = vec![1, 2, 3, 10, 11, 100];
-        let mut prefixes: Vec<String> = ids
+        let prefixes: Vec<String> = ids
             .iter()
             .map(|&c| {
                 DrPathBuilder::build_from_identity(

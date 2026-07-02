@@ -437,14 +437,14 @@ mod helix_prune_debug {
         eprintln!("\n🔍 Key differences identified:");
         eprintln!("   SST:   dimension mismatch → distance 0.0 (SAFE fallback, block included)");
         eprintln!("   HELIX: dimension mismatch → distance INFINITY (block PRUNED!)");
-        eprintln!("");
+        eprintln!();
         eprintln!("   SST:   file-level pruning first, then block-level");
         eprintln!("   HELIX: block-level pruning only");
-        eprintln!("");
+        eprintln!();
         eprintln!("   Default BlockPruneConfig:");
         eprintln!("     mode: Sqrt (select sqrt(n) blocks)");
         eprintln!("     min_keep: 1 (too aggressive for random data)");
-        eprintln!("");
+        eprintln!();
         eprintln!("   With 5000 vectors, 128 vectors/block:");
         eprintln!("     ~39 blocks, sqrt(39) = ~6 blocks selected = 16% of data!");
 
@@ -588,7 +588,7 @@ mod helix_prune_debug {
         eprintln!("\n========================================");
         eprintln!("TEST: HELIX with Clustered Data");
         eprintln!("========================================");
-        eprintln!("");
+        eprintln!();
         eprintln!("This test verifies that HELIX's centroid-based pruning");
         eprintln!("works well for spatially clustered data (its design target).");
 

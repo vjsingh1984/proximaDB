@@ -50,28 +50,26 @@ mod helix_integration_tests {
         }
 
         // Clean system temp directory (macOS: /var/folders, Linux: /tmp)
-        if cfg!(target_os = "macos") {
-            if let Ok(entries) = fs::read_dir("/var/folders") {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    // Search in /var/folders/*/T/ directories
-                    let temp_path = path.join("T");
-                    if temp_path.exists() {
-                        if let Ok(temp_entries) = fs::read_dir(&temp_path) {
-                            for temp_entry in temp_entries.flatten() {
-                                let temp_file = temp_entry.path();
-                                if let Some(name) = temp_file.file_name() {
-                                    let name_str = name.to_string_lossy();
-                                    if name_str.starts_with("helix_test_")
-                                        || name_str.ends_with(".helix")
-                                    {
-                                        let _ = if temp_file.is_dir() {
-                                            fs::remove_dir_all(&temp_file)
-                                        } else {
-                                            fs::remove_file(&temp_file)
-                                        };
-                                    }
-                                }
+        if cfg!(target_os = "macos")
+            && let Ok(entries) = fs::read_dir("/var/folders")
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                // Search in /var/folders/*/T/ directories
+                let temp_path = path.join("T");
+                if temp_path.exists()
+                    && let Ok(temp_entries) = fs::read_dir(&temp_path)
+                {
+                    for temp_entry in temp_entries.flatten() {
+                        let temp_file = temp_entry.path();
+                        if let Some(name) = temp_file.file_name() {
+                            let name_str = name.to_string_lossy();
+                            if name_str.starts_with("helix_test_") || name_str.ends_with(".helix") {
+                                let _ = if temp_file.is_dir() {
+                                    fs::remove_dir_all(&temp_file)
+                                } else {
+                                    fs::remove_file(&temp_file)
+                                };
                             }
                         }
                     }

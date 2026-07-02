@@ -325,16 +325,6 @@ impl ExecutionPlanner {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_hybrid_fusion_weights_follow_runtime_config() {
-        assert_eq!(default_hybrid_fusion_weights(), vec![0.6, 0.4]);
-    }
-}
-
 /// Simple cost model for execution planning
 struct CostModel;
 
@@ -354,5 +344,15 @@ impl CostModel {
             ExecutionOperation::Project { columns, .. } => columns.len() as f64 * 0.01,
             _ => 1.0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_hybrid_fusion_weights_follow_runtime_config() {
+        assert_eq!(default_hybrid_fusion_weights(), vec![0.6, 0.4]);
     }
 }

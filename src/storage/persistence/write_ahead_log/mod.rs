@@ -3237,11 +3237,11 @@ mod simple_context_tests {
 
         // Test row group size optimization for VIPER
         let row_group_size = viper_context.row_group_size();
-        assert!(row_group_size >= 1000 && row_group_size <= 50000);
+        assert!((1000..=50000).contains(&row_group_size));
 
         // Test flush threshold optimization
         let flush_threshold = viper_context.flush_threshold();
-        assert!(flush_threshold >= 10000 && flush_threshold <= 100000);
+        assert!((10000..=100000).contains(&flush_threshold));
 
         info!("✅ Context performance configuration test passed");
     }

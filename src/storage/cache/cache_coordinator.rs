@@ -533,7 +533,7 @@ mod tests {
             .unwrap();
 
         let graph = coordinator.dependency_graph.read().await;
-        assert!(graph.dependencies.len() > 0);
+        assert!(!graph.dependencies.is_empty());
     }
 
     #[tokio::test]

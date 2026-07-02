@@ -600,7 +600,7 @@ mod tests {
             IndexAlgorithm::IVF { nlist, nprobe, .. } => {
                 assert_eq!(nlist, 317); // sqrt(100K) ceiling
                 assert!(
-                    nprobe >= 10 && nprobe <= 50,
+                    (10..=50).contains(&nprobe),
                     "nprobe {} should land in [10, 50] for r=0.60",
                     nprobe
                 );

@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn test_sidecar_path_generation() {
         let parquet_path = Path::new("/data/collection/segment_001.parquet");
-        let sidecar_path = ViperCodebookSidecarManager::sidecar_path(&parquet_path);
+        let sidecar_path = ViperCodebookSidecarManager::sidecar_path(parquet_path);
         assert_eq!(
             sidecar_path.file_name().unwrap().to_str().unwrap(),
             "segment_001.codebook.json"

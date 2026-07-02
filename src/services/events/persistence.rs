@@ -495,7 +495,7 @@ mod tests {
 
         // Should have at least 1 WAL file (rotation creates a new current file)
         assert!(
-            wal_files.len() >= 1,
+            !wal_files.is_empty(),
             "Should have at least 1 WAL file after rotation, got {}",
             wal_files.len()
         );

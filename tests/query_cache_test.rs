@@ -818,7 +818,7 @@ fn test_concurrent_cache_access() {
     }
 
     // Cache should have entries (exact count depends on timing)
-    assert!(cache.len() > 0);
+    assert!(!cache.is_empty());
 
     let stats = cache.stats();
     assert!(stats.inserts > 0);

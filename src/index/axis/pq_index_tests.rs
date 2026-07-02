@@ -85,9 +85,9 @@ mod tests {
             // Calculate theoretical compression ratio
             let original_size = 128 * 4; // 128 floats * 4 bytes
             let compressed_size = if nbits == 8 {
-                m * 1 // m bytes for 8-bit codes
+                m // m bytes for 8-bit codes
             } else {
-                (m * nbits as u32) / 8 // bits to bytes
+                (m * nbits) / 8 // bits to bytes
             };
             let ratio = original_size as f32 / compressed_size as f32;
 

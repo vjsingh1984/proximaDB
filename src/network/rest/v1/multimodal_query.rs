@@ -2151,7 +2151,7 @@ mod tests {
             json["records"][0].get("metadata").is_none()
                 || json["records"][0]["metadata"]
                     .as_object()
-                    .map_or(false, |m| m.is_empty()),
+                    .is_some_and(|m| m.is_empty()),
             "empty metadata should be skipped or empty"
         );
         assert!((json["metrics"]["total_time_ms"].as_f64().unwrap() - 12.5).abs() < f64::EPSILON);

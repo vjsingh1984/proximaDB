@@ -1296,7 +1296,7 @@ mod tests {
             Ok(data) => data,
             Err(_) => {
                 // If normalized entry URL doesn't work, try the entry URL as-is
-                match fs.read(&entry_url).await {
+                match fs.read(entry_url).await {
                     Ok(data) => data,
                     Err(_) => {
                         // Final fallback: try the original file_url

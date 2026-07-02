@@ -247,7 +247,7 @@ mod tests {
         // Create mock Parquet file data
         let mut data = Vec::new();
         data.extend_from_slice(b"PAR1"); // Magic bytes at start
-        data.extend_from_slice(&vec![0u8; 100]); // Some data
+        data.extend_from_slice(&[0u8; 100]); // Some data
         let footer = b"footer_content";
         data.extend_from_slice(footer);
         data.extend_from_slice(&(footer.len() as u32).to_le_bytes()); // Footer size

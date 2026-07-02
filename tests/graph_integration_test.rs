@@ -543,12 +543,12 @@ async fn test_graph_stats() {
         stats.total_edges
     );
     assert!(
-        stats.label_stats.len() > 0,
+        !stats.label_stats.is_empty(),
         "Expected label stats, got {}",
         stats.label_stats.len()
     );
     assert!(
-        stats.edge_type_stats.len() > 0,
+        !stats.edge_type_stats.is_empty(),
         "Expected edge type stats, got {}",
         stats.edge_type_stats.len()
     );

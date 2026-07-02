@@ -13,7 +13,6 @@ use proximadb::proto::proximadb_v1::{
     VectorRecord, VectorSearchRequest, filter_clause, sql_value,
 };
 use std::time::Duration;
-use tokio;
 
 #[cfg(test)]
 mod api_consistency_tests {

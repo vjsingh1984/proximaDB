@@ -481,7 +481,10 @@ mod tests {
 
         // Should identify that a and b can run in parallel
         // and that (a join b) and c can run in parallel
-        assert!(stages.len() >= 1, "Should find at least one parallel stage");
+        assert!(
+            !stages.is_empty(),
+            "Should find at least one parallel stage"
+        );
     }
 
     #[test]

@@ -48,7 +48,7 @@ mod tests {
                 .contains_key("access_pattern.correlation_hit_rate")
         );
         let hit_rate = sample.values["access_pattern.correlation_hit_rate"];
-        assert!(hit_rate >= 0.0 && hit_rate <= 1.0);
+        assert!((0.0..=1.0).contains(&hit_rate));
     }
 
     #[tokio::test]

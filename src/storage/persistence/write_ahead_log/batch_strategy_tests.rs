@@ -564,7 +564,7 @@ mod write_ahead_log_batch_strategy_tests {
             Err(e) => {
                 // Expected failure - verify error message is informative
                 let error_msg = e.to_string();
-                assert!(error_msg.len() > 0);
+                assert!(!error_msg.is_empty());
                 // Could contain "Invalid cloud URL" or "Failed to get filesystem"
                 assert!(error_msg.contains("Invalid") || error_msg.contains("Failed"));
             }
@@ -596,7 +596,7 @@ mod write_ahead_log_batch_strategy_tests {
                 }
                 Err(e) => {
                     // Also acceptable - error due to invalid URL or no credentials
-                    assert!(e.to_string().len() > 0);
+                    assert!(!e.to_string().is_empty());
                 }
             }
         }
