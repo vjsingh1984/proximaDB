@@ -26,6 +26,8 @@ import "proximadb/v1/vector_types.proto";
 // coordination. This handles leader election, log replication, and membership
 // changes for cluster metadata.
 service ConsensusService {
+  // Deprecated (ADR-049 / TD-121): v1 surface. Removed in M4; migrate to proximadb.v2.
+  option deprecated = true;
     // RequestVote is called by candidates to gather votes during leader election.
     // Implements Raft Section 5.2: Leader Election
     rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse);
@@ -198,6 +200,8 @@ message PreVoteResponse {
 // This is separate from Raft consensus and handles the actual vector data
 // replication with configurable consistency levels.
 service ReplicationService {
+  // Deprecated (ADR-049 / TD-121): v1 surface. Removed in M4; migrate to proximadb.v2.
+  option deprecated = true;
     // Replicate sends a single replication entry to a replica
     rpc Replicate(ReplicateRequest) returns (ReplicateResponse);
 
@@ -333,6 +337,8 @@ message AckReplicationResponse {
 // SearchFanoutService handles distributed search and write forwarding.
 // This implements the scatter-gather pattern for distributed queries.
 service SearchFanoutService {
+  // Deprecated (ADR-049 / TD-121): v1 surface. Removed in M4; migrate to proximadb.v2.
+  option deprecated = true;
     // ShardSearch executes a search on a specific shard
     rpc ShardSearch(ShardSearchRequest) returns (ShardSearchResponse);
 
@@ -509,6 +515,8 @@ message ForwardWriteBatchResponse {
 // HealthService provides health checking for inter-node communication.
 // This follows the gRPC Health Checking Protocol with extensions.
 service HealthService {
+  // Deprecated (ADR-049 / TD-121): v1 surface. Removed in M4; migrate to proximadb.v2.
+  option deprecated = true;
     // Check performs a health check (compatible with grpc.health.v1.Health)
     rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
 

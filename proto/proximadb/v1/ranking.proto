@@ -81,5 +81,7 @@ message RankSearchResponse {
 
 // gRPC service — handler wiring lands in R-7c.4a.1.
 service RankService {
+  // Deprecated (ADR-049 / TD-121): v1 surface. Removed in M4; migrate to proximadb.v2.
+  option deprecated = true;
   rpc RankSearch(RankSearchRequest) returns (RankSearchResponse);
 }
