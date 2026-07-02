@@ -1527,7 +1527,7 @@ mod vector_bounds_prune_tests {
         // Queue fills (≥ k) → a finite, small provisional L2 threshold.
         let tau = vector_bounds_provisional_threshold(&seed_blocks, &query, 10)
             .expect("threshold is finite once the seed fills the queue");
-        assert!(tau.is_finite() && tau >= 0.0 && tau < 1.0, "tau={tau}");
+        assert!(tau.is_finite() && (0.0..1.0).contains(&tau), "tau={tau}");
 
         // A far bounding box ([100,101]^dim) cannot hold a top-k candidate ⇒ pruned.
         let far = VectorBoundsPruner::from_bounds(vec![100.0; dim], vec![101.0; dim]).unwrap();

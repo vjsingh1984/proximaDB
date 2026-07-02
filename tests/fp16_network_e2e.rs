@@ -403,12 +403,11 @@ async fn rest_insert_into_fp16_collection_increments_canonical_bytes_metric() {
         if !line.contains(&coll_fragment) || !line.contains(r#"precision="fp16""#) {
             continue;
         }
-        if let Some((_, tail)) = line.split_once('}') {
-            if let Ok(value) = tail.trim().parse::<i64>() {
+        if let Some((_, tail)) = line.split_once('}')
+            && let Ok(value) = tail.trim().parse::<i64>() {
                 observed = Some(value);
                 break;
             }
-        }
     }
     assert_eq!(
         observed,

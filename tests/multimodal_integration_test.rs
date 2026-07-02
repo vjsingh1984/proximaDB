@@ -795,7 +795,7 @@ async fn test_federated_query_via_rest() {
 
     // Check if server is running
     let health_check = client
-        .get(&format!("{}/health", REST_BASE_URL))
+        .get(format!("{}/health", REST_BASE_URL))
         .send()
         .await;
 
@@ -819,7 +819,7 @@ async fn test_federated_query_via_rest() {
     });
 
     let response = client
-        .post(&format!("{}/api/v1/unified/federated", REST_BASE_URL))
+        .post(format!("{}/api/v1/unified/federated", REST_BASE_URL))
         .json(&federated_request)
         .send()
         .await;
@@ -863,7 +863,7 @@ async fn test_multimodel_query_via_rest() {
 
     // Check if server is running
     let health_check = client
-        .get(&format!("{}/health", REST_BASE_URL))
+        .get(format!("{}/health", REST_BASE_URL))
         .send()
         .await;
 
@@ -904,7 +904,7 @@ async fn test_multimodel_query_via_rest() {
     });
 
     let response = client
-        .post(&format!("{}/api/v1/unified/multi-model", REST_BASE_URL))
+        .post(format!("{}/api/v1/unified/multi-model", REST_BASE_URL))
         .json(&multimodel_request)
         .send()
         .await;

@@ -346,7 +346,7 @@ impl UnifiedTestEnvironment {
         let entries = std::fs::read_dir(&data_dir)?;
         let sst_files: Vec<_> = entries
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "sst"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "sst"))
             .collect();
 
         if sst_files.is_empty() {
@@ -372,7 +372,7 @@ impl UnifiedTestEnvironment {
         let entries = std::fs::read_dir(&data_dir)?;
         let parquet_files: Vec<_> = entries
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "parquet"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "parquet"))
             .collect();
 
         if parquet_files.is_empty() {

@@ -130,7 +130,7 @@ async fn test_rl_learning_over_queries() {
 
     // Verify learning happened
     let stats = planner.get_action_stats().await;
-    assert!(stats.len() > 0, "Should have tracked some actions");
+    assert!(!stats.is_empty(), "Should have tracked some actions");
 }
 
 /// Test policy persistence and loading
@@ -220,7 +220,7 @@ async fn test_action_space_coverage() {
 
         // Should see at least some variety (with exploration)
         assert!(
-            actions_seen.len() >= 1,
+            !actions_seen.is_empty(),
             "Should select valid actions for engine {:?}",
             engine
         );

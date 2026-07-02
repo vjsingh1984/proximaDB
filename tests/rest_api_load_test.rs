@@ -80,7 +80,7 @@ fn test_json_serialization_performance() {
 
     for _ in 0..iterations {
         let serialized = serde_json::to_vec(&data).unwrap();
-        assert!(serialized.len() > 0);
+        assert!(!serialized.is_empty());
     }
 
     let elapsed = start.elapsed();
@@ -308,7 +308,7 @@ fn test_error_response_serialization_performance() {
     for error_response in &error_responses {
         for _ in 0..(iterations / error_responses.len()) {
             let serialized = serde_json::to_vec(error_response).unwrap();
-            assert!(serialized.len() > 0);
+            assert!(!serialized.is_empty());
         }
     }
 

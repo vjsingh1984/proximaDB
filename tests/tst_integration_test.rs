@@ -297,7 +297,7 @@ async fn test_tst_asof_join_tolerance() {
         .unwrap();
 
     // Should only match the close quote
-    assert!(results.len() >= 1);
+    assert!(!results.is_empty());
 }
 
 //
@@ -330,7 +330,7 @@ fn test_tst_downsample_intervals() {
 
     for interval in intervals {
         let config = DownsampleConfig {
-            interval: interval.clone(),
+            interval: interval,
             aggregation: DownsampleAggregation::OHLC,
         };
 
@@ -487,7 +487,7 @@ async fn test_tst_partition_duration() {
         let temp_dir = TempDir::new().unwrap();
         let config = TimeSeriesConfig {
             base_path: temp_dir.path().to_path_buf(),
-            partition_duration: duration.clone(),
+            partition_duration: duration,
             ..Default::default()
         };
 

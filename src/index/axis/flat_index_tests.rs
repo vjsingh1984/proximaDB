@@ -256,13 +256,11 @@ mod tests {
         let dimension = 64;
 
         // Create vectors with metadata
-        let vectors_with_metadata = vec![
-            ("vec1", vec![1.0; dimension], "category_a"),
+        let vectors_with_metadata = [("vec1", vec![1.0; dimension], "category_a"),
             ("vec2", vec![0.8; dimension], "category_b"),
             ("vec3", vec![0.6; dimension], "category_a"),
             ("vec4", vec![0.4; dimension], "category_b"),
-            ("vec5", vec![0.2; dimension], "category_a"),
-        ];
+            ("vec5", vec![0.2; dimension], "category_a")];
 
         let query = vec![0.7; dimension];
         let filter_category = "category_a";
@@ -314,7 +312,7 @@ mod tests {
         debug!("Vectors within radius {}: {:?}", radius, within_range);
 
         // Should find vectors within the radius
-        assert!(within_range.len() > 0);
+        assert!(!within_range.is_empty());
         for (_, dist) in &within_range {
             assert!(*dist <= radius);
         }

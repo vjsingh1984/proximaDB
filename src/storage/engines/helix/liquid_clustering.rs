@@ -446,6 +446,6 @@ mod tests {
             .calculate_clustering_quality(&records, &hilbert_keys)
             .await;
 
-        assert!(quality >= 0.0 && quality <= 1.0);
+        assert!((0.0..=1.0).contains(&quality));
     }
 }

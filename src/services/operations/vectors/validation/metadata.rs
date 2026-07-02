@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn test_default_pseudo_query_generator() {
-        let generator = DefaultPseudoQueryGenerator::default();
+        let generator = DefaultPseudoQueryGenerator;
         let mut metadata = HashMap::new();
         metadata.insert(
             "title".to_string(),

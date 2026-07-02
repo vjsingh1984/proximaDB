@@ -1364,7 +1364,7 @@ mod tests {
             // Drop half of them, checkpoint again.
             for round in 0..5 {
                 cat.drop_table(
-                    &TableIdentifier::new(nslevels(&["s"]), &format!("t_{round}_0")),
+                    &TableIdentifier::new(nslevels(&["s"]), format!("t_{round}_0")),
                     false,
                 )
                 .await?;

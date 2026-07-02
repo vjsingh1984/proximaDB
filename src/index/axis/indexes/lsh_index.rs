@@ -697,84 +697,6 @@ pub fn create_lsh_index_for_collection(
     )))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_lsh_basic_operations() {
-        let config = AxisLshConfig {
-            n_tables: 5,
-            n_hashes: 3,
-            hash_width: 2.0,
-            ..Default::default()
-        };
-
-        let index = AxisLshIndex::new(config, 4);
-
-        // Add vectors
-        let vectors = [
-            vec![1.0, 0.0, 0.0, 0.0],
-            vec![0.0, 1.0, 0.0, 0.0],
-            vec![0.0, 0.0, 1.0, 0.0],
-            vec![0.0, 0.0, 0.0, 1.0],
-            vec![0.9, 0.1, 0.0, 0.0], // Similar to first
-        ];
-
-        for (i, vector) in vectors.iter().enumerate() {
-            index
-                .add(format!("vec_{}", i), vector.clone())
-                .await
-                .unwrap();
-        }
-
-        // Search for similar to first vector
-        let query = vec![0.95, 0.05, 0.0, 0.0];
-        let results = index.search(&query, 3, None).await.unwrap();
-
-        assert!(!results.is_empty());
-        // Should find vec_0 and vec_4 as most similar
-        let result_ids: Vec<String> = results.iter().map(|(id, _)| id.clone()).collect();
-        assert!(
-            result_ids.contains(&"vec_0".to_string()) || result_ids.contains(&"vec_4".to_string())
-        );
-    }
-
-    #[tokio::test]
-    async fn test_lsh_binary_mode() {
-        let config = AxisLshConfig {
-            n_tables: 3,
-            n_hashes: 8,
-            binary_mode: true,
-            distance_metric: DistanceMetric::Hamming,
-            ..Default::default()
-        };
-
-        let index = AxisLshIndex::new(config, 8);
-
-        // Add binary vectors (represented as 0.0 or 1.0)
-        let vectors = [
-            vec![1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
-            vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-            vec![1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0],
-        ];
-
-        for (i, vector) in vectors.iter().enumerate() {
-            index
-                .add(format!("binary_{}", i), vector.clone())
-                .await
-                .unwrap();
-        }
-
-        // Search
-        let query = vec![1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]; // Similar to first
-        let results = index.search(&query, 2, None).await.unwrap();
-
-        assert!(!results.is_empty());
-        assert_eq!(results[0].0, "binary_0"); // Should find the most similar
-    }
-}
-
 // Implement AxisVectorIndex trait for deep AXIS integration
 #[async_trait]
 impl AxisVectorIndex for AxisLshIndex {
@@ -856,5 +778,83 @@ impl AxisVectorIndex for AxisLshIndex {
             memory_usage_bytes: lsh_stats.memory_usage_bytes,
             index_type: "LSH".to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_lsh_basic_operations() {
+        let config = AxisLshConfig {
+            n_tables: 5,
+            n_hashes: 3,
+            hash_width: 2.0,
+            ..Default::default()
+        };
+
+        let index = AxisLshIndex::new(config, 4);
+
+        // Add vectors
+        let vectors = [
+            vec![1.0, 0.0, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0, 0.0],
+            vec![0.0, 0.0, 1.0, 0.0],
+            vec![0.0, 0.0, 0.0, 1.0],
+            vec![0.9, 0.1, 0.0, 0.0], // Similar to first
+        ];
+
+        for (i, vector) in vectors.iter().enumerate() {
+            index
+                .add(format!("vec_{}", i), vector.clone())
+                .await
+                .unwrap();
+        }
+
+        // Search for similar to first vector
+        let query = vec![0.95, 0.05, 0.0, 0.0];
+        let results = index.search(&query, 3, None).await.unwrap();
+
+        assert!(!results.is_empty());
+        // Should find vec_0 and vec_4 as most similar
+        let result_ids: Vec<String> = results.iter().map(|(id, _)| id.clone()).collect();
+        assert!(
+            result_ids.contains(&"vec_0".to_string()) || result_ids.contains(&"vec_4".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lsh_binary_mode() {
+        let config = AxisLshConfig {
+            n_tables: 3,
+            n_hashes: 8,
+            binary_mode: true,
+            distance_metric: DistanceMetric::Hamming,
+            ..Default::default()
+        };
+
+        let index = AxisLshIndex::new(config, 8);
+
+        // Add binary vectors (represented as 0.0 or 1.0)
+        let vectors = [
+            vec![1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
+            vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+            vec![1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0],
+        ];
+
+        for (i, vector) in vectors.iter().enumerate() {
+            index
+                .add(format!("binary_{}", i), vector.clone())
+                .await
+                .unwrap();
+        }
+
+        // Search
+        let query = vec![1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]; // Similar to first
+        let results = index.search(&query, 2, None).await.unwrap();
+
+        assert!(!results.is_empty());
+        assert_eq!(results[0].0, "binary_0"); // Should find the most similar
     }
 }

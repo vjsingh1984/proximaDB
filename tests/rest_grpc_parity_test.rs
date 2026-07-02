@@ -295,7 +295,7 @@ impl ParityTestHarness {
         // Check REST server
         let rest_available = self
             .http_client
-            .get(&format!("{}/health", REST_BASE_URL))
+            .get(format!("{}/health", REST_BASE_URL))
             .send()
             .await
             .map(|r| r.status().is_success())
@@ -321,7 +321,7 @@ impl ParityTestHarness {
 
         let response = self
             .http_client
-            .post(&format!("{}/api/v1/collections", REST_BASE_URL))
+            .post(format!("{}/api/v1/collections", REST_BASE_URL))
             .json(&request)
             .send()
             .await?;
@@ -390,7 +390,7 @@ impl ParityTestHarness {
 
         let response = self
             .http_client
-            .post(&format!("{}/api/v1/vectors/batch", REST_BASE_URL))
+            .post(format!("{}/api/v1/vectors/batch", REST_BASE_URL))
             .json(&request)
             .send()
             .await?;
@@ -466,7 +466,7 @@ impl ParityTestHarness {
 
         let response = self
             .http_client
-            .post(&format!("{}/api/v1/search", REST_BASE_URL))
+            .post(format!("{}/api/v1/search", REST_BASE_URL))
             .json(&request)
             .send()
             .await?;
@@ -486,7 +486,7 @@ impl ParityTestHarness {
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|item| NormalizedSearchResult::from_json(item))
+                    .filter_map(NormalizedSearchResult::from_json)
                     .collect()
             })
             .unwrap_or_default();
@@ -544,7 +544,7 @@ impl ParityTestHarness {
 
         let response = self
             .http_client
-            .post(&format!("{}/api/v1/sql/execute", REST_BASE_URL))
+            .post(format!("{}/api/v1/sql/execute", REST_BASE_URL))
             .json(&request)
             .send()
             .await?;
@@ -603,7 +603,7 @@ impl ParityTestHarness {
 
         let response = self
             .http_client
-            .post(&format!("{}/api/v1/graph/nodes", REST_BASE_URL))
+            .post(format!("{}/api/v1/graph/nodes", REST_BASE_URL))
             .json(&request)
             .send()
             .await?;
@@ -664,7 +664,7 @@ impl ParityTestHarness {
     ) -> Result<Option<NormalizedNode>, Box<dyn std::error::Error>> {
         let response = self
             .http_client
-            .get(&format!(
+            .get(format!(
                 "{}/api/v1/graph/{}/nodes/{}",
                 REST_BASE_URL, self.test_graph_name, node_id
             ))
@@ -710,7 +710,7 @@ impl ParityTestHarness {
     async fn get_error_rest(&self, collection_id: &str) -> Result<u16, Box<dyn std::error::Error>> {
         let response = self
             .http_client
-            .get(&format!(
+            .get(format!(
                 "{}/api/v1/collections/{}",
                 REST_BASE_URL, collection_id
             ))
@@ -745,7 +745,7 @@ impl ParityTestHarness {
         // Try to delete test collection via REST
         let _ = self
             .http_client
-            .delete(&format!(
+            .delete(format!(
                 "{}/api/v1/collections/{}",
                 REST_BASE_URL, self.test_collection_name
             ))
@@ -980,7 +980,7 @@ async fn test_graph_query_parity() {
     // Create a test node via REST
     let node_id = format!(
         "test_node_{}",
-        uuid::Uuid::new_v4().to_string()[..8].to_string()
+        &uuid::Uuid::new_v4().to_string()[..8]
     );
     let labels = vec!["Person", "Employee"];
     let mut properties = HashMap::new();

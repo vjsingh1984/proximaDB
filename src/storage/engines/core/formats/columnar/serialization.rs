@@ -1131,7 +1131,7 @@ mod tests {
 
         let serializer = ColumnarSerializer::new(config).unwrap();
 
-        let vectors = vec![vec![1.0; 128], vec![2.0; 128], vec![3.0; 128]];
+        let vectors = [vec![1.0; 128], vec![2.0; 128], vec![3.0; 128]];
 
         let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
         let array = serializer.serialize_fp32_vectors(&vector_refs).unwrap();

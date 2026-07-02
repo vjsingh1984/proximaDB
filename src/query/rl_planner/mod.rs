@@ -289,7 +289,7 @@ mod tests {
         let action = planner.select_action(&state).await;
 
         // Should return a valid action
-        assert!(!matches!(action.index_strategy, None));
+        assert!(action.index_strategy.is_some());
     }
 
     #[tokio::test]

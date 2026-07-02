@@ -1478,7 +1478,7 @@ mod tests {
         assert!(risk.is_some());
         // Risk should be between 0 and 1
         let risk_value = risk.unwrap();
-        assert!(risk_value >= 0.0 && risk_value <= 1.0);
+        assert!((0.0..=1.0).contains(&risk_value));
     }
 
     // ==================== Integration Tests ====================

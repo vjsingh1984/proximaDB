@@ -1774,7 +1774,7 @@ mod tests {
         assert!(
             !search_results
                 .iter()
-                .any(|(_, record)| record.oid == "test_vector".to_string())
+                .any(|(_, record)| record.oid == "test_vector")
         );
 
         let all_vectors = memtable
@@ -1784,7 +1784,7 @@ mod tests {
         assert!(
             !all_vectors
                 .iter()
-                .any(|record| record.oid == "test_vector".to_string())
+                .any(|record| record.oid == "test_vector")
         );
     }
 
@@ -2409,7 +2409,7 @@ mod tests {
         assert!(
             !search_results
                 .iter()
-                .any(|(_, record)| record.oid == vector_id.to_string())
+                .any(|(_, record)| record.oid == vector_id)
         );
     }
 

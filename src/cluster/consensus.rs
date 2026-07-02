@@ -1887,7 +1887,7 @@ mod tests {
         for _ in 0..100 {
             let timeout = consensus.random_election_timeout();
             let ms = timeout.as_millis() as u64;
-            assert!(ms >= 100 && ms <= 200);
+            assert!((100..=200).contains(&ms));
         }
     }
 

@@ -1109,7 +1109,7 @@ mod tests {
             .unwrap();
 
         // Only log_1 has exact phrase "timeout error"
-        assert!(results.len() >= 1);
+        assert!(!results.is_empty());
     }
 
     #[tokio::test]

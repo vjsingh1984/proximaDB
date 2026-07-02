@@ -1191,14 +1191,12 @@ mod tests {
                 if let Some(comma_pos) = rest.find(',') {
                     let after_comma = rest[comma_pos + 1..].trim();
                     // Extract quoted string
-                    if after_comma.starts_with('\'') {
-                        let rest = &after_comma[1..];
-                        if let Some(end) = rest.find('\'') {
+                    if let Some(rest) = after_comma.strip_prefix('\'')
+                        && let Some(end) = rest.find('\'') {
                             let expr = &rest[..end];
                             assert_eq!(expr, "rate(http_requests_total[5m])");
                             return;
                         }
-                    }
                 }
             }
             panic!("Failed to extract PromQL expression");
@@ -1277,14 +1275,12 @@ mod tests {
                     let after_metric = &rest[metric_pos..];
                     if let Some(eq_pos) = after_metric.find('=') {
                         let value_part = after_metric[eq_pos + 1..].trim();
-                        if value_part.starts_with('\'') {
-                            let rest = &value_part[1..];
-                            if let Some(end) = rest.find('\'') {
+                        if let Some(rest) = value_part.strip_prefix('\'')
+                            && let Some(end) = rest.find('\'') {
                                 let name = &rest[..end];
                                 assert_eq!(name, "cpu_usage");
                                 return;
                             }
-                        }
                     }
                 }
             }
@@ -1312,16 +1308,14 @@ mod tests {
 
             if let Some(interval_pos) = upper.find("INTERVAL") {
                 let rest = &content[interval_pos + 8..].trim();
-                if rest.starts_with('\'') {
-                    let inner = &rest[1..];
-                    if let Some(end) = inner.find('\'') {
+                if let Some(inner) = rest.strip_prefix('\'')
+                    && let Some(end) = inner.find('\'') {
                         let duration_str = &inner[..end];
                         let duration = PromQLParser::parse_duration(duration_str).unwrap();
                         // 1 hour = 3,600,000,000,000 nanoseconds
                         assert_eq!(duration.nanoseconds, 3_600_000_000_000);
                         return;
                     }
-                }
             }
             panic!("Failed to extract interval duration");
         }

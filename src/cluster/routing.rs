@@ -1686,21 +1686,21 @@ mod tests {
         let num1: u32 = shard1
             .id()
             .split('_')
-            .last()
+            .next_back()
             .expect("shard ID should have _ delimiter")
             .parse()
             .expect("shard number should be valid u32");
         let num2: u32 = shard2
             .id()
             .split('_')
-            .last()
+            .next_back()
             .expect("shard ID should have _ delimiter")
             .parse()
             .expect("shard number should be valid u32");
         let num3: u32 = shard3
             .id()
             .split('_')
-            .last()
+            .next_back()
             .expect("shard ID should have _ delimiter")
             .parse()
             .expect("shard number should be valid u32");

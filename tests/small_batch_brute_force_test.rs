@@ -607,7 +607,7 @@ mod small_batch_tests {
 
             // Calculate expected blocks
             let block_size = 128; // HELIX default proxima_block_size
-            let num_blocks = (BENCHMARK_BATCH_SIZE + block_size - 1) / block_size;
+            let num_blocks = BENCHMARK_BATCH_SIZE.div_ceil(block_size);
             let sqrt_blocks = (num_blocks as f32).sqrt().ceil() as usize;
             eprintln!(
                 "Expected: {} blocks total, sqrt pruning selects ~{} blocks ({:.1}% pruned)",

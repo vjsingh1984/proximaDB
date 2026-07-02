@@ -157,7 +157,7 @@ fn test_ring_buffer_concurrent_access() {
         let deadline = Instant::now() + Duration::from_secs(5);
 
         while Instant::now() < deadline {
-            if let Some(_) = buf_consumer.try_pop() {
+            if buf_consumer.try_pop().is_some() {
                 consumed += 1;
             } else {
                 thread::yield_now();

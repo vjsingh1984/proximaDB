@@ -516,7 +516,7 @@ mod tests {
 
         // Center node (n0) should have highest score in this star topology
         // because it has the most outgoing links
-        for (_node_id, score) in &scores {
+        for score in scores.values() {
             assert!(*score > 0.0, "All scores should be positive");
         }
     }

@@ -82,7 +82,7 @@ impl V2ApiTestHarness {
     /// Check if REST server is available
     async fn check_server(&self) -> bool {
         self.http_client
-            .get(&format!("{}/health", REST_BASE_URL))
+            .get(format!("{}/health", REST_BASE_URL))
             .send()
             .await
             .map(|r| r.status().is_success())
@@ -108,7 +108,7 @@ impl V2ApiTestHarness {
 
         let response = self
             .http_client
-            .post(&format!("{}/api/v2/collections", REST_BASE_URL))
+            .post(format!("{}/api/v2/collections", REST_BASE_URL))
             .json(&request)
             .send()
             .await?;
@@ -174,7 +174,7 @@ impl V2ApiTestHarness {
     async fn get_collection(&self) -> Result<JsonValue, Box<dyn std::error::Error>> {
         let response = self
             .http_client
-            .get(&format!(
+            .get(format!(
                 "{}/api/v2/collections/{}",
                 REST_BASE_URL, self.test_collection_name
             ))
@@ -207,7 +207,7 @@ impl V2ApiTestHarness {
 
         let response = self
             .http_client
-            .post(&format!(
+            .post(format!(
                 "{}/api/v2/collections/{}/records/batch",
                 REST_BASE_URL, self.test_collection_name
             ))
@@ -251,7 +251,7 @@ impl V2ApiTestHarness {
 
         let response = self
             .http_client
-            .post(&format!(
+            .post(format!(
                 "{}/api/v2/collections/{}/search",
                 REST_BASE_URL, self.test_collection_name
             ))
@@ -276,7 +276,7 @@ impl V2ApiTestHarness {
     ) -> Result<(reqwest::StatusCode, JsonValue), Box<dyn std::error::Error>> {
         let response = self
             .http_client
-            .get(&format!(
+            .get(format!(
                 "{}/api/v2/collections/{}",
                 REST_BASE_URL, identifier
             ))
@@ -295,7 +295,7 @@ impl V2ApiTestHarness {
     ) -> Result<reqwest::StatusCode, Box<dyn std::error::Error>> {
         let response = self
             .http_client
-            .post(&format!(
+            .post(format!(
                 "{}/api/v2/collections/{}/records/batch",
                 REST_BASE_URL, identifier
             ))
@@ -314,7 +314,7 @@ impl V2ApiTestHarness {
     ) -> Result<reqwest::StatusCode, Box<dyn std::error::Error>> {
         let response = self
             .http_client
-            .post(&format!(
+            .post(format!(
                 "{}/api/v2/collections/{}/search",
                 REST_BASE_URL, identifier
             ))
@@ -331,7 +331,7 @@ impl V2ApiTestHarness {
     ) -> Result<reqwest::StatusCode, Box<dyn std::error::Error>> {
         let response = self
             .http_client
-            .delete(&format!(
+            .delete(format!(
                 "{}/api/v2/collections/{}",
                 REST_BASE_URL, identifier
             ))
@@ -345,7 +345,7 @@ impl V2ApiTestHarness {
         // Try to delete via V1 API (V2 may not have delete endpoint yet)
         let _ = self
             .http_client
-            .delete(&format!(
+            .delete(format!(
                 "{}/api/v1/collections/{}",
                 REST_BASE_URL, self.test_collection_name
             ))
@@ -697,7 +697,7 @@ async fn test_create_collection_invalid_engine() {
 
     let response = harness
         .http_client
-        .post(&format!("{}/api/v2/collections", REST_BASE_URL))
+        .post(format!("{}/api/v2/collections", REST_BASE_URL))
         .json(&request)
         .send()
         .await;
@@ -744,7 +744,7 @@ async fn test_create_collection_invalid_dimension() {
 
     let response = harness
         .http_client
-        .post(&format!("{}/api/v2/collections", REST_BASE_URL))
+        .post(format!("{}/api/v2/collections", REST_BASE_URL))
         .json(&request)
         .send()
         .await;
@@ -1034,7 +1034,7 @@ async fn test_get_collection_not_found() {
     // Try to get non-existent collection
     let response = harness
         .http_client
-        .get(&format!(
+        .get(format!(
             "{}/api/v2/collections/nonexistent_collection_xyz_123",
             REST_BASE_URL
         ))
@@ -1267,7 +1267,7 @@ async fn test_insert_records_empty_batch() {
 
     let response = harness
         .http_client
-        .post(&format!(
+        .post(format!(
             "{}/api/v2/collections/{}/records/batch",
             REST_BASE_URL, harness.test_collection_name
         ))
@@ -1428,15 +1428,14 @@ async fn test_search_with_eq_filter() {
             // All results should have category_0
             for result in results {
                 let typed_fields = result.get("typed_fields");
-                if let Some(fields) = typed_fields {
-                    if let Some(category) = fields.get("category") {
+                if let Some(fields) = typed_fields
+                    && let Some(category) = fields.get("category") {
                         assert_eq!(
                             category.as_str(),
                             Some("category_0"),
                             "Filtered results should only have category_0"
                         );
                     }
-                }
             }
 
             println!("test_search_with_eq_filter PASSED");
@@ -1561,15 +1560,14 @@ async fn test_search_include_vector() {
 
             for result in results {
                 let vector = result.get("vector");
-                if let Some(v) = vector {
-                    if let Some(arr) = v.as_array() {
+                if let Some(v) = vector
+                    && let Some(arr) = v.as_array() {
                         assert_eq!(
                             arr.len(),
                             TEST_DIMENSION as usize,
                             "Vector should have correct dimension"
                         );
                     }
-                }
             }
 
             println!("test_search_include_vector PASSED");
@@ -1612,7 +1610,7 @@ async fn test_search_empty_vector() {
 
     let response = harness
         .http_client
-        .post(&format!(
+        .post(format!(
             "{}/api/v2/collections/{}/search",
             REST_BASE_URL, harness.test_collection_name
         ))
@@ -1672,7 +1670,7 @@ async fn test_search_invalid_filter_operator() {
 
     let response = harness
         .http_client
-        .post(&format!(
+        .post(format!(
             "{}/api/v2/collections/{}/search",
             REST_BASE_URL, harness.test_collection_name
         ))
@@ -1732,7 +1730,7 @@ async fn test_search_between_filter_missing_upper() {
 
     let response = harness
         .http_client
-        .post(&format!(
+        .post(format!(
             "{}/api/v2/collections/{}/search",
             REST_BASE_URL, harness.test_collection_name
         ))

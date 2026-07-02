@@ -570,7 +570,7 @@ mod tests {
         // Sample should be in [0, 1]
         for _ in 0..100 {
             let sample = beta.sample();
-            assert!(sample >= 0.0 && sample <= 1.0);
+            assert!((0.0..=1.0).contains(&sample));
         }
     }
 

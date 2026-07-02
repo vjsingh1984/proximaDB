@@ -35,7 +35,7 @@ use proximadb::query::federated::optimizer::plan_calibration::{
 use proximadb::query::federated::optimizer::plan_v2_inference::{
     LinearV1FallbackInferencer, PlanInference, PlanInferencer,
 };
-use proximadb::query::federated::optimizer::plan_v2_training::{DimBucket, PlanFeatures};
+use proximadb::query::federated::optimizer::plan_v2_training::PlanFeatures;
 use proximadb::query::federated::optimizer::trace_replay::{ReplayInputs, replay, summarize};
 
 fn trace(

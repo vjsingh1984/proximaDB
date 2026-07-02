@@ -512,7 +512,7 @@ mod tests {
             entry
                 .source
                 .as_ref()
-                .map_or(false, |s| s.contains("Security"))
+                .is_some_and(|s| s.contains("Security"))
         );
     }
 
@@ -530,7 +530,7 @@ mod tests {
             entry
                 .source
                 .as_ref()
-                .map_or(false, |s| s.contains("Vendor"))
+                .is_some_and(|s| s.contains("Vendor"))
         );
     }
 

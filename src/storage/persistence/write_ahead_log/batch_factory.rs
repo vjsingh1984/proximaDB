@@ -348,7 +348,7 @@ mod tests {
             WriteBufferStrategyType::ProtoBatch,
         ] {
             let strategy = WALBatchFactory::create_batch_serialization_strategy(
-                strategy_type.clone(),
+                *strategy_type,
                 &config,
                 filesystem.clone(),
             )

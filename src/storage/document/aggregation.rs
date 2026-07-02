@@ -872,11 +872,9 @@ mod tests {
     fn test_aggregation_count() {
         let executor = AggregationExecutor::new();
 
-        let docs = vec![
-            tree_doc(vec![("name", pv_str("Alice")), ("age", pv_int(30))]),
+        let docs = [tree_doc(vec![("name", pv_str("Alice")), ("age", pv_int(30))]),
             tree_doc(vec![("name", pv_str("Bob")), ("age", pv_int(25))]),
-            tree_doc(vec![("name", pv_str("Charlie")), ("age", pv_int(35))]),
-        ];
+            tree_doc(vec![("name", pv_str("Charlie")), ("age", pv_int(35))])];
 
         let agg = Aggregation {
             output_field: "count".to_string(),
@@ -900,11 +898,9 @@ mod tests {
     fn test_aggregation_sum() {
         let executor = AggregationExecutor::new();
 
-        let docs = vec![
-            tree_doc(vec![("amount", pv_int(100))]),
+        let docs = [tree_doc(vec![("amount", pv_int(100))]),
             tree_doc(vec![("amount", pv_int(200))]),
-            tree_doc(vec![("amount", pv_int(300))]),
-        ];
+            tree_doc(vec![("amount", pv_int(300))])];
 
         let agg = Aggregation {
             output_field: "total".to_string(),
@@ -928,11 +924,9 @@ mod tests {
     fn test_aggregation_avg() {
         let executor = AggregationExecutor::new();
 
-        let docs = vec![
-            tree_doc(vec![("score", pv_int(80))]),
+        let docs = [tree_doc(vec![("score", pv_int(80))]),
             tree_doc(vec![("score", pv_int(90))]),
-            tree_doc(vec![("score", pv_int(100))]),
-        ];
+            tree_doc(vec![("score", pv_int(100))])];
 
         let agg = Aggregation {
             output_field: "avg_score".to_string(),
@@ -956,11 +950,9 @@ mod tests {
     fn test_aggregation_min_max() {
         let executor = AggregationExecutor::new();
 
-        let docs = vec![
-            tree_doc(vec![("value", pv_int(5))]),
+        let docs = [tree_doc(vec![("value", pv_int(5))]),
             tree_doc(vec![("value", pv_int(3))]),
-            tree_doc(vec![("value", pv_int(8))]),
-        ];
+            tree_doc(vec![("value", pv_int(8))])];
 
         let doc_refs: Vec<&ProximaTree> = docs.iter().collect();
 

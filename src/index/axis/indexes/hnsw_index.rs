@@ -1914,15 +1914,13 @@ mod tests {
         let index = AxisHnswIndex::new(config, 4).expect("Failed to create HNSW index");
 
         // Create a set of test vectors
-        let test_vectors = vec![
-            ("v1", vec![1.0, 0.0, 0.0, 0.0]),
+        let test_vectors = [("v1", vec![1.0, 0.0, 0.0, 0.0]),
             ("v2", vec![0.9, 0.1, 0.0, 0.0]),
             ("v3", vec![0.0, 1.0, 0.0, 0.0]),
             ("v4", vec![0.0, 0.0, 1.0, 0.0]),
             ("v5", vec![0.0, 0.0, 0.0, 1.0]),
             ("v6", vec![0.8, 0.2, 0.0, 0.0]),
-            ("v7", vec![0.7, 0.3, 0.0, 0.0]),
-        ];
+            ("v7", vec![0.7, 0.3, 0.0, 0.0])];
 
         for (id, vector) in test_vectors.iter() {
             index
@@ -1941,7 +1939,7 @@ mod tests {
         // v1, v2, v6, v7 should be closest (all have high first component)
         // With default config, should find at least 1 result
         assert!(
-            results.len() >= 1,
+            !results.is_empty(),
             "Expected at least 1 result, got {}",
             results.len()
         );
@@ -1987,7 +1985,7 @@ mod tests {
             .search(&query, 10, None)
             .await
             .expect("Failed to search");
-        assert!(results.len() > 0);
+        assert!(!results.is_empty());
     }
 
     #[tokio::test]
@@ -2016,7 +2014,7 @@ mod tests {
         // Should find neighbors despite pruning
         // With small M=5, graph connectivity may be limited, so just check we get some results
         assert!(
-            results.len() >= 1,
+            !results.is_empty(),
             "Expected at least 1 result, got {}",
             results.len()
         );

@@ -1278,7 +1278,7 @@ mod tests {
 
         // All documents should have scores (3, 2, 1, 0)
         let scores: Vec<_> = fused.iter().map(|r| r.fused_score).collect();
-        assert!(scores.iter().all(|&s| s >= 0.0 && s <= 4.0));
+        assert!(scores.iter().all(|&s| (0.0..=4.0).contains(&s)));
     }
 
     #[test]

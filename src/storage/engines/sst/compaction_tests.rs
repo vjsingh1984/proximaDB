@@ -179,8 +179,8 @@ mod tests {
 
         for (record_id, timestamp, expires_at) in mock_records {
             // This mirrors the logic in compaction methods
-            if let Some(expires_at) = expires_at {
-                if expires_at < current_time {
+            if let Some(expires_at) = expires_at
+                && expires_at < current_time {
                     expired_count += 1;
                     println!(
                         "⏰ Compaction: Skipping expired record {} (expired at {})",
@@ -188,7 +188,6 @@ mod tests {
                     );
                     continue;
                 }
-            }
 
             kept_records.push((record_id, timestamp, expires_at));
         }

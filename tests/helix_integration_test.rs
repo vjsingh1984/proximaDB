@@ -50,14 +50,14 @@ mod helix_integration_tests {
         }
 
         // Clean system temp directory (macOS: /var/folders, Linux: /tmp)
-        if cfg!(target_os = "macos") {
-            if let Ok(entries) = fs::read_dir("/var/folders") {
+        if cfg!(target_os = "macos")
+            && let Ok(entries) = fs::read_dir("/var/folders") {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     // Search in /var/folders/*/T/ directories
                     let temp_path = path.join("T");
-                    if temp_path.exists() {
-                        if let Ok(temp_entries) = fs::read_dir(&temp_path) {
+                    if temp_path.exists()
+                        && let Ok(temp_entries) = fs::read_dir(&temp_path) {
                             for temp_entry in temp_entries.flatten() {
                                 let temp_file = temp_entry.path();
                                 if let Some(name) = temp_file.file_name() {
@@ -74,10 +74,8 @@ mod helix_integration_tests {
                                 }
                             }
                         }
-                    }
                 }
             }
-        }
     }
 
     /// Helper to create test vectors

@@ -228,7 +228,7 @@ mod tests {
         let batch_size = selector.get_optimal_hardware_batch_size();
 
         // Should return reasonable batch size based on hardware
-        assert!(batch_size >= 16 && batch_size <= 128);
+        assert!((16..=128).contains(&batch_size));
     }
 
     #[test]
