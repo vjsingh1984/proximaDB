@@ -2,7 +2,7 @@
 :toc: left
 :toclevels: 3
 :icons: font
-:last-updated: 2026-05-28
+:last-updated: 2026-07-02
 
 [.lead]
 Current-state reconciliation of the release-facing design docs against the codebase. This is a
@@ -22,6 +22,26 @@ MVP is shippable only as a **narrow single-node release**:
 
 Do not cut the release with docs or dashboards claiming broader production readiness than
 `docs/SUPPORTED_SURFACE.adoc`.
+
+== Status Refresh -- 2026-07-02
+
+Several release-gate gaps identified in the original audit have moved from
+"missing structure" to "must run and verify on the candidate":
+
+* `make release-check` now exists and composes the release smoke path, proto
+  check, and server build. Treat it as the candidate release gate rather than a
+  future TODO.
+* The release smoke path now includes a non-ignored v2 smoke plus route health,
+  query optimizer, object-economy directory, graph branch merge, and gRPC hybrid
+  checks.
+* CI now has an explicit pgwire accuracy job in the success set, and the QA gate
+  runs vector recall ratchets. This closes part of the "tests exist but do not
+  gate" problem, while deeper document/time-series/graph value assertions remain
+  post-MVP hardening work.
+* MVP scope remains intentionally narrow: single-node canonical CRUD/search can
+  be considered for support; distributed execution, serverless elasticity,
+  cluster-wide locking, broad SQL parity, and multimodal production claims remain
+  Beta or Experimental unless `SUPPORTED_SURFACE` says otherwise.
 
 == Architecture Grounding
 
@@ -111,6 +131,14 @@ Release rule:
   planner paths still return explicit unsupported/not-yet-wired errors.
 | Keep pgwire Beta. Do not make SQL parity a release blocker unless release scope says SQL MVP.
 
+| `docs/12-design/adr/ADR-048-unified-system-catalog-native-authority.adoc`
+| Catalog-native typed schema authority.
+| Newly proposed direction: `CatalogTableSchema`/typed columns should become the source of truth and
+  v1 collection configs should become compatibility read views. Current code still has transitional
+  collection-mapping and properties-bag paths.
+| Correct architectural direction, not an MVP expansion. Keep schema/catalog-native claims Beta until
+  ADR-048 P1/P2 phases land and mixed-read-safe tests cover the transition.
+
 | `docs/12-design/SUPPORTED_SURFACES.adoc`
 | Technical API/projection matrix.
 | More optimistic than some live code; useful for architecture direction, not a customer support
@@ -165,9 +193,11 @@ Release rule:
 | Beta only. MVP release notes must name supported SQL subset.
 
 | Test gaps
-| Live-server parity and several benchmark/recall tests are ignored/manual; v2 insert/search index
-  E2E still has an ignored pre-existing gap.
-| Need a release smoke suite that runs without a pre-existing server plus one manual/live suite.
+| `make release-check` and pgwire/vector accuracy gates now cover part of the original gap. Some
+  live-server parity, benchmark, and deeper modality value-accuracy checks remain outside the MVP
+  hard gate.
+| Run `make release-check` on the release candidate and keep unfrozen/broad modalities Beta or
+  Experimental.
 |===
 
 == MVP Blockers
@@ -183,13 +213,13 @@ Release rule:
 
 | P0
 | Release gate is not explicit.
-| Add a single `make release-check` or documented command list covering `cargo fmt`, focused unit
-  suites, proto compatibility, REST/gRPC v2 record smoke, route-health smoke, and packaging build.
+| **Structurally closed.** Run `make release-check` for the release candidate and treat any failure
+  as a release blocker.
 
 | P0
 | v2 record insert/search contract has an ignored E2E noting insert does not feed v2 search index.
-| Either unignore/fix the E2E or document the exact path that is supported for insert-then-search.
-  This is a customer-facing vector MVP risk.
+| Release smoke now covers the v2 path, but the release owner must verify insert-then-search on the
+  candidate and document the exact supported freshness/indexing semantics.
 
 | P1
 | Route-health exposes unsupported write modes but APIs/protos contain optimistic version fields.
@@ -224,6 +254,7 @@ Release rule:
 1. Freeze product scope to `docs/SUPPORTED_SURFACE.adoc`.
 2. Fix or quarantine stale docs listed above.
 3. Run:
+   * `make release-check`
    * `cargo fmt`
    * `cargo test --lib route_health`
    * `cargo test --lib query_optimizer`
@@ -237,4 +268,3 @@ Release rule:
 4. Add one non-ignored REST/gRPC v2 record smoke that creates a collection, inserts records, searches,
    reads route-health, and deletes/tombstones a record.
 5. Publish release notes with the supported/beta/experimental split and known limitations.
-
