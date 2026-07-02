@@ -230,11 +230,10 @@ impl IvfClusterPostingListStorage {
                     );
                 }
 
-                // Write records using streaming approach for production consistency
-                let record_count = records.len();
+                // M1-2 (ADR-049): native PAX segment (no VectorRecord round-trip).
                 let sorted_records_iter = records.into_values(); // Extract values from BTreeMap
                 writer
-                    .write_sorted_proxima_records(sorted_records_iter, record_count)
+                    .write_pax_segment(sorted_records_iter, &format!("ivf_cluster_{cluster_id}"))
                     .await?;
                 debug!("Stored posting list {} to SST at {}", cluster_id, path);
                 Ok(())
