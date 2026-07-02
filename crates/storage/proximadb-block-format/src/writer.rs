@@ -35,8 +35,8 @@ use crate::{
     rowgroup::{RowGroupBlock, RowGroupEntry, f64_bounds, i64_bounds},
     stripe::{COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe},
     vparam::{
-        QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock,
-        VectorParamEntry,
+        QUANT_FP16, QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn,
+        VectorParamBlock, VectorParamEntry,
     },
 };
 
@@ -126,6 +126,9 @@ pub enum VectorQuant {
     Sq8,
     /// RaBitQ (~30×, lossy 1-bit) — requires a decoupled f32 rerank tier for recall.
     RaBitQ,
+    /// FP16 (2×, near-lossless). Suitable as a tier-2 rerank column when higher
+    /// fidelity than SQ8 is needed (recall ~0.999 vs ~0.98).
+    Fp16,
 }
 
 pub struct PaxBlockWriter {
@@ -149,6 +152,12 @@ pub struct PaxBlockWriter {
     /// `include_vectors` decodes it; id+score queries never touch it (zero scan /
     /// egress cost when unused). Default OFF (set via `with_f32_tier`).
     include_f32_tier: bool,
+    /// Quantization strategy for the co-located rerank column (RERANK_BASE).
+    /// Default `Sq8` (the validated tier-2); `Fp16` for near-lossless rerank;
+    /// `RawF32` for exact (equivalent to the f32 tier but at RERANK_BASE).
+    /// Only used when tier 1 is RaBitQ (the rerank column is emitted alongside
+    /// RaBitQ; non-RaBitQ tier 1 doesn't need a separate rerank column).
+    rerank_quant: VectorQuant,
 
     // Accumulated column data
     oids: Vec<String>,
@@ -191,6 +200,7 @@ impl PaxBlockWriter {
             quant: VectorQuant::Auto,
             drop_tenant_col: drop_tenant_col_enabled(),
             include_f32_tier: false,
+            rerank_quant: VectorQuant::Sq8,
             oids: Vec::new(),
             tenant_ids: Vec::new(),
             created_at: Vec::new(),
@@ -233,6 +243,14 @@ impl PaxBlockWriter {
     /// Default OFF; the flush path enables it from the `pax_f32_tier` tag / env.
     pub fn with_f32_tier(mut self, enabled: bool) -> Self {
         self.include_f32_tier = enabled;
+        self
+    }
+
+    /// Set the quantization strategy for the co-located rerank column
+    /// (RERANK_BASE). Default `Sq8`; `Fp16` for near-lossless; `RawF32` for
+    /// exact. Only used when tier 1 is RaBitQ.
+    pub fn with_rerank_quant(mut self, quant: VectorQuant) -> Self {
+        self.rerank_quant = quant;
         self
     }
 
@@ -452,14 +470,22 @@ impl PaxBlockWriter {
                 if let Some(rc) = rabitq_col {
                     vparam_rabitq.push(rc);
                 }
-                // P3 cascade: every RaBitQ-coded embedding gets a co-located SQ8
-                // rerank column at `RERANK_BASE + i`. RaBitQ codes drive the cheap
-                // candidate scan; the rerank pool is scored against this SQ8 copy
-                // (4× footprint, no GET to an external f32 tier) before the final
-                // top-k. f32 rerank is added only if the recall gate can't be met.
+                // P3 cascade: every RaBitQ-coded embedding gets a co-located rerank
+                // column at `RERANK_BASE + i`. The rerank quant strategy is
+                // configurable (default SQ8; Fp16 for near-lossless; RawF32 for
+                // exact). RaBitQ codes drive the cheap candidate scan; the rerank
+                // pool is scored against this co-located copy before the final top-k.
                 if is_rabitq {
-                    let (rerank_stripe, rerank_entry) =
-                        self.build_sq8_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?;
+                    let (rerank_stripe, rerank_entry) = match self.rerank_quant {
+                        VectorQuant::Fp16 => {
+                            self.build_fp16_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?
+                        }
+                        VectorQuant::RawF32 => {
+                            self.build_raw_f32_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?
+                        }
+                        // Default: SQ8 (the validated tier-2).
+                        _ => self.build_sq8_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?,
+                    };
                     stripes.push(rerank_stripe);
                     vparam_entries.push(rerank_entry);
                 }
@@ -695,7 +721,7 @@ impl PaxBlockWriter {
         let (use_rabitq, use_sq8) = match self.quant {
             VectorQuant::RaBitQ => (has_data, false),
             VectorQuant::Sq8 => (false, has_data),
-            VectorQuant::RawF32 => (false, false),
+            VectorQuant::RawF32 | VectorQuant::Fp16 => (false, false),
             VectorQuant::Auto => {
                 let r = has_data && rabitq_enabled();
                 (r, has_data && !r && !sq8_disabled())
@@ -849,6 +875,69 @@ impl PaxBlockWriter {
             column_id: id,
             dim,
             quant_kind: QUANT_RAW_F32,
+            params,
+        };
+        Ok((ColumnStripe::new(meta, data), entry))
+    }
+
+    /// Build an FP16-quantized vector stripe (2 bytes/value, near-lossless).
+    /// Used as a configurable tier-2 rerank column when higher fidelity than SQ8
+    /// is needed (recall ~0.999 vs ~0.98).
+    fn build_fp16_vec_stripe(
+        &self,
+        id: i32,
+        vals: &[Option<&[f32]>],
+    ) -> Result<(ColumnStripe, VectorParamEntry)> {
+        use half::f16;
+        let dim = vector_column_dim(vals)?;
+        let flat: Vec<f32> = vals
+            .iter()
+            .flatten()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        let params = functions::sq8::fit_params(&flat);
+        let mut data = vector_validity_bitmap(vals);
+        let stride = dim as usize * 2; // 2 bytes per f16 value
+        data.reserve(vals.len() * stride);
+        for v in vals {
+            match v {
+                Some(vec) => {
+                    for &x in vec.iter() {
+                        data.extend_from_slice(&f16::from_f32(x).to_le_bytes());
+                    }
+                }
+                None => {
+                    // Null: reserve stride bytes (will be skipped by the bitmap).
+                    data.extend(std::iter::repeat_n(0u8, stride));
+                }
+            }
+        }
+        let null_count = vals.iter().filter(|v| v.is_none()).count() as u32;
+        let meta = ColumnMeta {
+            column_id: id,
+            role: ColumnRole::Vector,
+            data_type_id: 0x01, // F32 (source type; encoding = FP16)
+            encoding_id: ProximaScheme::Raw.to_marker(),
+            nullable: true,
+            has_bloom: false,
+            is_sorted: false,
+            stripe_offset: 0,
+            stripe_len: data.len() as u32,
+            null_count,
+            distinct_hint: vals
+                .iter()
+                .filter(|value| value.is_some())
+                .count()
+                .min(u32::MAX as usize) as u32,
+            min_val: [0u8; 16],
+            max_val: [0u8; 16],
+            bloom_offset: 0,
+            bloom_len: 0,
+        };
+        let entry = VectorParamEntry {
+            column_id: id,
+            dim,
+            quant_kind: QUANT_FP16,
             params,
         };
         Ok((ColumnStripe::new(meta, data), entry))

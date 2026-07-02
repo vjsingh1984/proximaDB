@@ -35,6 +35,8 @@ pub const QUANT_RAW_F32: u8 = 0;
 pub const QUANT_SQ8: u8 = 1;
 /// Reserved for a future binary RaBitQ scheme (not yet implemented).
 pub const QUANT_RABITQ_RESERVED: u8 = 2;
+/// Vector stripe is stored as FP16 (2 bytes/value, near-lossless).
+pub const QUANT_FP16: u8 = 3;
 
 /// Bytes per [`VectorParamEntry`] on the wire.
 pub const ENTRY_SIZE: usize = 28;

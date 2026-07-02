@@ -505,6 +505,8 @@ pub struct PaxSegmentWriter {
     /// Opt-in exact-f32 tier (P3 Phase D) — re-applied to every block writer so
     /// each block carries the f32 stripe when enabled.
     f32_tier: bool,
+    /// Tier-2 rerank quant (default Sq8) — re-applied to every block writer.
+    rerank_quant: VectorQuant,
 
     current_writer: PaxBlockWriter,
     index: SegmentIndex,
@@ -550,6 +552,7 @@ impl PaxSegmentWriter {
             block_size_threshold: threshold,
             quant: VectorQuant::Auto,
             f32_tier: false,
+            rerank_quant: VectorQuant::Sq8,
             current_writer: writer,
             index: SegmentIndex { blocks: Vec::new() },
             block_stats: Vec::new(),
@@ -571,7 +574,8 @@ impl PaxSegmentWriter {
             self.embedding_count,
         )
         .with_quant(quant)
-        .with_f32_tier(self.f32_tier);
+        .with_f32_tier(self.f32_tier)
+        .with_rerank_quant(self.rerank_quant);
         self
     }
 
@@ -589,7 +593,26 @@ impl PaxSegmentWriter {
             self.embedding_count,
         )
         .with_quant(self.quant)
-        .with_f32_tier(enabled);
+        .with_f32_tier(enabled)
+        .with_rerank_quant(self.rerank_quant);
+        self
+    }
+
+    /// Set the tier-2 rerank quantization strategy for every block in this
+    /// segment. Default `Sq8` (the validated tier-2); `Fp16` for near-lossless;
+    /// `RawF32` for exact. Only used when tier 1 is RaBitQ.
+    pub fn with_rerank_quant(mut self, quant: VectorQuant) -> Self {
+        self.rerank_quant = quant;
+        self.current_writer = PaxBlockWriter::new(
+            self.mode,
+            self.compression,
+            &self.collection_id,
+            self.schema_fingerprint,
+            self.embedding_count,
+        )
+        .with_quant(self.quant)
+        .with_f32_tier(self.f32_tier)
+        .with_rerank_quant(quant);
         self
     }
 
@@ -646,7 +669,7 @@ impl PaxSegmentWriter {
         self.file_buf.extend_from_slice(&block_bytes);
         self.block_stats.push(stats);
 
-        // Reset writer for the next block (preserving the segment's quant + f32-tier strategy).
+        // Reset writer for the next block (preserving the segment's quant + f32-tier + rerank strategy).
         self.current_writer = PaxBlockWriter::new(
             self.mode,
             self.compression,
@@ -655,7 +678,8 @@ impl PaxSegmentWriter {
             self.embedding_count,
         )
         .with_quant(self.quant)
-        .with_f32_tier(self.f32_tier);
+        .with_f32_tier(self.f32_tier)
+        .with_rerank_quant(self.rerank_quant);
         Ok(())
     }
 

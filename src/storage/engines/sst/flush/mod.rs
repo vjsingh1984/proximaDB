@@ -441,7 +441,7 @@ impl SstEngine {
                 // object-store) URL. Reads are mixed-format-safe via
                 // `segment_format::read_segment_records` (magic-byte detection), so no
                 // manifest/reader change is required for this segment to be read back.
-                use crate::storage::engines::sst::segment_format::write_pax_segment_with_f32_tier;
+                use crate::storage::engines::sst::segment_format::write_pax_segment_full;
                 let staging_path = staging_url.strip_prefix("file://").unwrap_or(&staging_url);
                 if let Some(parent) = std::path::Path::new(staging_path).parent() {
                     tokio::fs::create_dir_all(parent)
@@ -472,12 +472,23 @@ impl SstEngine {
                 // env `PROXIMADB_PAX_F32_TIER` > default off. Emits an exact-f32
                 // stripe (read lazily) for an exact final rerank + include_vectors.
                 let f32_tier = resolve_pax_f32_tier(params.collection_config.as_ref());
-                let meta = write_pax_segment_with_f32_tier(
+                // Extract the tag list here (flush config is the legacy v1 proto
+                // type, already referenced by the calls above) so resolve_pax_rerank_quant
+                // stays v1-free — TD-123: don't add new v1-proto references.
+                let rerank_tags: &[String] = params
+                    .collection_config
+                    .as_ref()
+                    .and_then(|c| c.config.as_ref())
+                    .map(|cfg| cfg.tags.as_slice())
+                    .unwrap_or(&[]);
+                let rerank_quant = resolve_pax_rerank_quant(rerank_tags);
+                let meta = write_pax_segment_full(
                     std::path::Path::new(staging_path),
                     &records,
                     collection_id,
                     embedding_count,
                     quant,
+                    rerank_quant,
                     f32_tier,
                     target_block,
                 )
@@ -945,6 +956,47 @@ fn resolve_pax_f32_tier(
         .and_then(|c| c.config.as_ref())
         .and_then(pax_f32_tier_tag);
     per_collection.unwrap_or_else(|| env_truthy("PROXIMADB_PAX_F32_TIER"))
+}
+
+/// Tag prefix encoding the per-collection tier-2 rerank quant strategy.
+/// Mirrors the `pax_vector_quant:` convention. Values: `sq8`, `fp16`, `f32`.
+const PAX_RERANK_QUANT_TAG_PREFIX: &str = "pax_rerank_quant:";
+
+/// Read the per-collection `pax_rerank_quant:sq8|fp16|f32` tag from a tag list.
+/// Takes `&[String]` (not the v1 config type) so this does not add a v1-proto
+/// reference (TD-123 ratchet) — tag extraction happens at the call site.
+fn pax_rerank_quant_tag(tags: &[String]) -> Option<proximadb_block_format::VectorQuant> {
+    for tag in tags {
+        if let Some(rest) = tag.strip_prefix(PAX_RERANK_QUANT_TAG_PREFIX) {
+            return match rest.trim().to_ascii_lowercase().as_str() {
+                "sq8" | "sq_8" => Some(proximadb_block_format::VectorQuant::Sq8),
+                "fp16" | "f16" => Some(proximadb_block_format::VectorQuant::Fp16),
+                "f32" | "raw" | "raw_f32" => Some(proximadb_block_format::VectorQuant::RawF32),
+                _ => None,
+            };
+        }
+    }
+    None
+}
+
+/// Resolve the tier-2 rerank quant strategy. Precedence: per-collection
+/// `pax_rerank_quant` tag > env `PROXIMADB_PAX_RERANK_QUANT` > default `Sq8`
+/// (the validated tier-2). Only used when tier 1 is RaBitQ. Takes the resolved
+/// tag slice (extracted by the caller) to avoid a v1-proto reference (TD-123).
+fn resolve_pax_rerank_quant(tags: &[String]) -> proximadb_block_format::VectorQuant {
+    const ENV: &str = "PROXIMADB_PAX_RERANK_QUANT";
+    let per_collection = pax_rerank_quant_tag(tags);
+    per_collection.unwrap_or_else(|| {
+        match std::env::var(ENV)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "fp16" | "f16" => proximadb_block_format::VectorQuant::Fp16,
+            "f32" | "raw" | "raw_f32" => proximadb_block_format::VectorQuant::RawF32,
+            _ => proximadb_block_format::VectorQuant::Sq8,
+        }
+    })
 }
 
 #[cfg(test)]
@@ -1453,5 +1505,42 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(resolve_pax_vector_quant(Some(&coll_bad)), VectorQuant::Auto);
+    }
+
+    /// Tier-2 rerank quant default is SQ8 (the validated tier-2). Precedence:
+    /// per-collection `pax_rerank_quant` tag > env `PROXIMADB_PAX_RERANK_QUANT` >
+    /// default SQ8. Only the 3 valid values (sq8/fp16/f32) are accepted;
+    /// anything else falls back to the default.
+    #[test]
+    fn resolve_pax_rerank_quant_default_and_precedence() {
+        use proximadb_block_format::VectorQuant;
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_RERANK_QUANT");
+        }
+        // no tags → default Sq8
+        assert_eq!(resolve_pax_rerank_quant(&[]), VectorQuant::Sq8);
+        // env overrides the default
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_RERANK_QUANT", "fp16");
+        }
+        assert_eq!(resolve_pax_rerank_quant(&[]), VectorQuant::Fp16);
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_RERANK_QUANT", "f32");
+        }
+        assert_eq!(resolve_pax_rerank_quant(&[]), VectorQuant::RawF32);
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_RERANK_QUANT");
+        }
+        // per-collection tag overrides env + default
+        let tags_fp16 = ["pax_rerank_quant:fp16".to_string()];
+        assert_eq!(resolve_pax_rerank_quant(&tags_fp16), VectorQuant::Fp16);
+        let tags_f32 = ["pax_rerank_quant:f32".to_string()];
+        assert_eq!(resolve_pax_rerank_quant(&tags_f32), VectorQuant::RawF32);
+        let tags_sq8 = ["pax_rerank_quant:sq8".to_string()];
+        assert_eq!(resolve_pax_rerank_quant(&tags_sq8), VectorQuant::Sq8);
+        // unrecognized tag value → None → default Sq8 (RaBitQ rerank is invalid
+        // and rejected at the parser: the tag only accepts sq8/fp16/f32).
+        let tags_bad = ["pax_rerank_quant:rabitq".to_string()];
+        assert_eq!(resolve_pax_rerank_quant(&tags_bad), VectorQuant::Sq8);
     }
 }

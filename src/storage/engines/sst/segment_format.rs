@@ -145,6 +145,32 @@ pub fn write_pax_segment_with_f32_tier(
     f32_tier: bool,
     target_block: Option<usize>,
 ) -> Result<SegmentMeta> {
+    write_pax_segment_full(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        VectorQuant::Sq8,
+        f32_tier,
+        target_block,
+    )
+}
+
+/// Full PAX segment write with configurable tier-1 quant, tier-2 rerank quant,
+/// and optional f32 tier. This is the canonical write entry point; the legacy
+/// `write_pax_segment_with_f32_tier` delegates with `Sq8` rerank (the default).
+#[allow(clippy::too_many_arguments)]
+pub fn write_pax_segment_full(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+) -> Result<SegmentMeta> {
     let mut writer = PaxSegmentWriter::new(
         path,
         BlockMode::Pax,
@@ -155,7 +181,8 @@ pub fn write_pax_segment_with_f32_tier(
         target_block,
     )
     .with_quant(quant)
-    .with_f32_tier(f32_tier);
+    .with_f32_tier(f32_tier)
+    .with_rerank_quant(rerank_quant);
     for record in records {
         writer.add_record(record)?;
     }
@@ -169,7 +196,7 @@ pub fn write_pax_segment_with_f32_tier(
 /// records), so this is cheap. Correct for both env- and tag-opt-in (the source
 /// segment reflects whatever the collection wrote).
 pub fn pax_inputs_have_f32_tier(input_files: &[std::path::PathBuf]) -> bool {
-    use proximadb_block_format::{PaxBlockReader, col_id};
+    use proximadb_block_format::col_id;
     for f in input_files {
         if f.extension().and_then(|e| e.to_str()) != Some("pax") {
             continue;
@@ -177,7 +204,16 @@ pub fn pax_inputs_have_f32_tier(input_files: &[std::path::PathBuf]) -> bool {
         let Ok(bytes) = std::fs::read(f) else {
             continue;
         };
-        let Ok(reader) = PaxBlockReader::open(&bytes) else {
+        // Read block 0's column metadata via the segment scanner. A `.pax`
+        // SEGMENT file is laid out `[block(s)][segment_index][SEGMENT_MAGIC]`;
+        // `PaxBlockReader::open` parses a SINGLE block and reads its footer from
+        // the trailing `BLOCK_FOOTER_SIZE` bytes, so opening the whole file
+        // misreads the segment index/magic as a block footer. The scanner parses
+        // the trailing index + magic and hands back block 0 correctly.
+        let Ok(mut scanner) = PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default()) else {
+            continue;
+        };
+        let Some(reader) = scanner.next_block() else {
             continue;
         };
         if reader.vector_params().get(col_id::F32_TIER_BASE).is_some() {
@@ -185,6 +221,48 @@ pub fn pax_inputs_have_f32_tier(input_files: &[std::path::PathBuf]) -> bool {
         }
     }
     false
+}
+
+/// Detect the tier-2 rerank quant strategy of the source `.pax` segments, so
+/// compaction PRESERVES it when re-encoding (mirrors [`pax_inputs_have_f32_tier`]
+/// for the f32 tier). Returns the first detected strategy from the co-located
+/// `RERANK_BASE` column; defaults to [`VectorQuant::Sq8`] (the validated
+/// tier-2) when no `.pax` input carries a rerank column. Correct for both env-
+/// and tag-opt-in: the source segment reflects whatever the collection wrote,
+/// so preserving it keeps a configured FP16/f32 rerank from being silently
+/// downgraded to SQ8 on the first compaction.
+pub fn pax_inputs_rerank_quant(
+    input_files: &[std::path::PathBuf],
+) -> proximadb_block_format::VectorQuant {
+    use proximadb_block_format::vparam::{QUANT_FP16, QUANT_RAW_F32};
+    for f in input_files {
+        if f.extension().and_then(|e| e.to_str()) != Some("pax") {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(f) else {
+            continue;
+        };
+        // Read block 0's column metadata via the segment scanner — a `.pax`
+        // SEGMENT file is `[block(s)][segment_index][SEGMENT_MAGIC]`, so opening
+        // the whole file as a single block misreads the footer (see
+        // [`pax_inputs_have_f32_tier`]). The rerank column is co-located in every
+        // block, so block 0 suffices to detect the segment's tier-2 strategy.
+        let Ok(mut scanner) = PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default()) else {
+            continue;
+        };
+        let Some(reader) = scanner.next_block() else {
+            continue;
+        };
+        if let Some(entry) = reader.vector_params().get(col_id::RERANK_BASE) {
+            return match entry.quant_kind {
+                QUANT_FP16 => VectorQuant::Fp16,
+                QUANT_RAW_F32 => VectorQuant::RawF32,
+                // SQ8 (the default) or any unknown/reserved kind → Sq8.
+                _ => VectorQuant::Sq8,
+            };
+        }
+    }
+    VectorQuant::Sq8
 }
 
 /// One scored hit from a RaBitQ cascade segment scan: the record's `oid` and its
@@ -878,6 +956,81 @@ mod tests {
             hits2.iter().all(|h| h.vector.is_none()),
             "no f32 tier → hits must not carry vectors"
         );
+    }
+
+    /// `pax_inputs_rerank_quant` detects the tier-2 rerank quant of a `.pax`
+    /// source segment so compaction PRESERVES it (an FP16/f32 rerank stays
+    /// FP16/f32; only a missing rerank column → default Sq8). Mirrors the
+    /// f32-tier detection contract — guards against compaction silently
+    /// downgrading a configured higher-fidelity rerank tier to SQ8.
+    #[test]
+    fn pax_inputs_rerank_quant_detects_source_tier() {
+        let dir = tempfile::tempdir().unwrap();
+        let records: Vec<ProximaRecord> = (0..8)
+            .map(|i| {
+                let vec: Vec<f32> = (0..32).map(|j| (i * 32 + j) as f32 * 0.01).collect();
+                rec(&format!("v{i}"), 1_700_000_000_000_000_000 + i as i64, vec)
+            })
+            .collect();
+
+        // FP16 rerank → detected as Fp16.
+        let fp16_path = dir.path().join("fp16.pax");
+        write_pax_segment_full(
+            &fp16_path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Fp16,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            pax_inputs_rerank_quant(&[fp16_path.clone()]),
+            VectorQuant::Fp16
+        );
+
+        // f32 rerank → detected as RawF32.
+        let f32_path = dir.path().join("f32.pax");
+        write_pax_segment_full(
+            &f32_path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::RawF32,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            pax_inputs_rerank_quant(&[f32_path.clone()]),
+            VectorQuant::RawF32
+        );
+
+        // Default (Sq8) rerank → detected as Sq8.
+        let sq8_path = dir.path().join("sq8.pax");
+        write_pax_segment_full(
+            &sq8_path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            pax_inputs_rerank_quant(&[sq8_path.clone()]),
+            VectorQuant::Sq8
+        );
+
+        // No `.pax` input (or none with a rerank column) → default Sq8.
+        let non_pax = dir.path().join("notpax.sst");
+        std::fs::write(&non_pax, b"junk").unwrap();
+        assert_eq!(pax_inputs_rerank_quant(&[non_pax]), VectorQuant::Sq8);
     }
 
     #[test]

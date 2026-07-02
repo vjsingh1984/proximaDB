@@ -23,7 +23,9 @@ use crate::{
     row_dir::{ROW_ENTRY_SIZE, RowDirectory},
     rowgroup::RowGroupBlock,
     stripe::{COLUMN_META_SIZE, ColumnMeta},
-    vparam::{QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock},
+    vparam::{
+        QUANT_FP16, QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock,
+    },
     writer::{BLOCK_FOOTER_SIZE, BlockFooter},
 };
 use proximadb_codec::functions::{rabitq, sq8};
@@ -371,7 +373,9 @@ impl<'a> PaxBlockReader<'a> {
     ) -> Option<Vec<(usize, f32)>> {
         let column_id = crate::col_id::RERANK_BASE + emb_idx as i32;
         let entry = self.vparams.get(column_id)?;
-        if entry.quant_kind != QUANT_SQ8 {
+        // Accept SQ8 (default tier-2) or FP16 (near-lossless tier-2). Other
+        // quant kinds → return None (caller falls back to RaBitQ-coarse order).
+        if entry.quant_kind != QUANT_SQ8 && entry.quant_kind != QUANT_FP16 {
             return None;
         }
         let raw = self.read_stripe_raw(column_id)?;
@@ -384,7 +388,12 @@ impl<'a> PaxBlockReader<'a> {
         let bitmap = &raw[..bm_len];
         let payload = &raw[bm_len..];
         let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
-        let stride = dim; // one u8 SQ8 code per dimension
+        // FP16: 2 bytes/value; SQ8: 1 byte/value.
+        let stride = if entry.quant_kind == QUANT_FP16 {
+            dim * 2
+        } else {
+            dim
+        };
 
         let mut scored: Vec<(usize, f32)> = Vec::with_capacity(rows.len());
         let mut decoded: Vec<f32> = Vec::with_capacity(dim);
@@ -398,7 +407,14 @@ impl<'a> PaxBlockReader<'a> {
                 continue;
             }
             decoded.clear();
-            sq8::decode_into(&payload[off..end], &entry.params, &mut decoded);
+            if entry.quant_kind == QUANT_FP16 {
+                use half::f16;
+                for chunk in payload[off..end].chunks_exact(2) {
+                    decoded.push(f16::from_le_bytes([chunk[0], chunk[1]]).to_f32());
+                }
+            } else {
+                sq8::decode_into(&payload[off..end], &entry.params, &mut decoded);
+            }
             let dist = match metric {
                 // Squared L2 (lower = nearer).
                 RankMetric::L2 => decoded
@@ -1397,6 +1413,86 @@ mod tests {
         for (got, want) in f32_vecs.iter().zip(corpus.iter()) {
             let got = got.as_ref().expect("non-null f32 row");
             assert_eq!(got.as_slice(), want.as_slice(), "f32 tier must be exact");
+        }
+    }
+
+    /// Tier-2 rerank quant = FP16 (configurable tier-2, ADR-026 / TD-156 Phase 1):
+    /// with `.with_rerank_quant(Fp16)` + RaBitQ, the co-located `RERANK_BASE`
+    /// column is FP16-encoded (2 bytes/value, near-lossless) instead of the
+    /// default SQ8. `rerank_rows` decodes it and scores candidates against a
+    /// query; the FP16 distances must match the exact-f32 ground truth within
+    /// FP16 tolerance, and the ranking order is preserved (FP16 is
+    /// near-lossless → ordering unchanged for well-separated vectors).
+    #[test]
+    fn pax_block_fp16_rerank_round_trips_near_exact() {
+        // Well-separated DIM=64 vectors so FP16 rounding can't reorder near-ties.
+        let corpus = [
+            lcg_vec(1, 64),
+            lcg_vec(2, 64),
+            lcg_vec(3, 64),
+            lcg_vec(4, 64),
+        ];
+
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+            .with_quant(crate::writer::VectorQuant::RaBitQ)
+            .with_rerank_quant(crate::writer::VectorQuant::Fp16);
+        for (i, v) in corpus.iter().enumerate() {
+            writer
+                .add_record(&make_record_with_embedding(
+                    &format!("r{i}"),
+                    "t",
+                    1000 + i as i64,
+                    v.clone(),
+                ))
+                .unwrap();
+        }
+        let block = writer.flush().unwrap();
+        let reader = PaxBlockReader::open(&block).unwrap();
+
+        // The rerank column is present + FP16 (not the default SQ8).
+        let entry = reader
+            .vector_params()
+            .get(crate::col_id::RERANK_BASE)
+            .expect("rerank column present");
+        assert_eq!(entry.quant_kind, QUANT_FP16);
+        // The RaBitQ hot column is still present.
+        assert_eq!(
+            reader
+                .vector_params()
+                .get(crate::col_id::EMBED_BASE)
+                .unwrap()
+                .quant_kind,
+            crate::vparam::QUANT_RABITQ_RESERVED
+        );
+
+        // Rerank the full candidate set against a query; FP16 distances must
+        // match the exact-f32 squared-L2 within tolerance and preserve order.
+        let rows: Vec<usize> = (0..corpus.len()).collect();
+        let scored = reader
+            .rerank_rows(0, &corpus[0], &rows, RankMetric::L2)
+            .expect("FP16 rerank returns Some");
+
+        // Ground-truth squared-L2 from the original f32 vectors.
+        let l2 =
+            |a: &[f32], b: &[f32]| -> f32 { a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum() };
+        let mut truth: Vec<(usize, f32)> = rows
+            .iter()
+            .map(|&r| (r, l2(&corpus[r], &corpus[0])))
+            .collect();
+        truth.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Same ranking (FP16 is near-lossless → order preserved).
+        let got_order: Vec<usize> = scored.iter().map(|(r, _)| *r).collect();
+        let want_order: Vec<usize> = truth.iter().map(|(r, _)| *r).collect();
+        assert_eq!(got_order, want_order, "FP16 rerank reorders candidates");
+
+        // Distances within FP16 tolerance (relative ~5e-4/value; loose bound).
+        for ((_, got), (_, want)) in scored.iter().zip(truth.iter()) {
+            let tol = (want.abs() * 1e-2).max(1e-2);
+            assert!(
+                (got - want).abs() <= tol,
+                "FP16 dist {got} vs exact {want} exceeds tolerance {tol}"
+            );
         }
     }
 
