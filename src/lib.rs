@@ -26,10 +26,16 @@
 // Suppress warnings that require significant API redesign (tracked separately)
 #![allow(clippy::too_many_arguments)] // Needs config-struct refactor
 #![allow(clippy::type_complexity)] // Needs type-alias extraction
-#![allow(clippy::result_large_err)] // Needs error-type refactor
-// Enforce error handling best practices
-#![warn(clippy::unwrap_used)]
-#![warn(clippy::expect_used)]
+#![allow(clippy::result_large_err)]
+// Needs error-type refactor
+// Enforce error-handling discipline. `.unwrap()`/`.expect()` are idiomatic in
+// tests, so scope those two lints to non-test builds — otherwise the test suite
+// (~9.6k call sites) drowns out real findings under `--all-targets`, and CI
+// already enforces them in production via the `--lib --bins` gate. `panic` /
+// `unimplemented` / `todo` stay warned in EVERY build (tests included): a panic
+// in a test can mask a real failure, and these are correctness issues, not style.
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), warn(clippy::expect_used))]
 #![warn(clippy::panic)]
 #![warn(clippy::unimplemented)]
 #![warn(clippy::todo)]
