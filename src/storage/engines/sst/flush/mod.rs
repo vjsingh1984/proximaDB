@@ -472,7 +472,16 @@ impl SstEngine {
                 // env `PROXIMADB_PAX_F32_TIER` > default off. Emits an exact-f32
                 // stripe (read lazily) for an exact final rerank + include_vectors.
                 let f32_tier = resolve_pax_f32_tier(params.collection_config.as_ref());
-                let rerank_quant = resolve_pax_rerank_quant(params.collection_config.as_ref());
+                // Extract the tag list here (flush config is the legacy v1 proto
+                // type, already referenced by the calls above) so resolve_pax_rerank_quant
+                // stays v1-free — TD-123: don't add new v1-proto references.
+                let rerank_tags: &[String] = params
+                    .collection_config
+                    .as_ref()
+                    .and_then(|c| c.config.as_ref())
+                    .map(|cfg| cfg.tags.as_slice())
+                    .unwrap_or(&[]);
+                let rerank_quant = resolve_pax_rerank_quant(rerank_tags);
                 let meta = write_pax_segment_full(
                     std::path::Path::new(staging_path),
                     &records,
@@ -953,11 +962,11 @@ fn resolve_pax_f32_tier(
 /// Mirrors the `pax_vector_quant:` convention. Values: `sq8`, `fp16`, `f32`.
 const PAX_RERANK_QUANT_TAG_PREFIX: &str = "pax_rerank_quant:";
 
-/// Read the per-collection `pax_rerank_quant:sq8|fp16|f32` tag.
-fn pax_rerank_quant_tag(
-    config: &crate::proto::proximadb_v1::CollectionConfig,
-) -> Option<proximadb_block_format::VectorQuant> {
-    for tag in &config.tags {
+/// Read the per-collection `pax_rerank_quant:sq8|fp16|f32` tag from a tag list.
+/// Takes `&[String]` (not the v1 config type) so this does not add a v1-proto
+/// reference (TD-123 ratchet) — tag extraction happens at the call site.
+fn pax_rerank_quant_tag(tags: &[String]) -> Option<proximadb_block_format::VectorQuant> {
+    for tag in tags {
         if let Some(rest) = tag.strip_prefix(PAX_RERANK_QUANT_TAG_PREFIX) {
             return match rest.trim().to_ascii_lowercase().as_str() {
                 "sq8" | "sq_8" => Some(proximadb_block_format::VectorQuant::Sq8),
@@ -972,15 +981,11 @@ fn pax_rerank_quant_tag(
 
 /// Resolve the tier-2 rerank quant strategy. Precedence: per-collection
 /// `pax_rerank_quant` tag > env `PROXIMADB_PAX_RERANK_QUANT` > default `Sq8`
-/// (the validated tier-2). Only used when tier 1 is RaBitQ.
-fn resolve_pax_rerank_quant(
-    collection_config: Option<&crate::proto::proximadb_v1::Collection>,
-) -> proximadb_block_format::VectorQuant {
+/// (the validated tier-2). Only used when tier 1 is RaBitQ. Takes the resolved
+/// tag slice (extracted by the caller) to avoid a v1-proto reference (TD-123).
+fn resolve_pax_rerank_quant(tags: &[String]) -> proximadb_block_format::VectorQuant {
     const ENV: &str = "PROXIMADB_PAX_RERANK_QUANT";
-    let per_collection = collection_config
-        .as_ref()
-        .and_then(|c| c.config.as_ref())
-        .and_then(pax_rerank_quant_tag);
+    let per_collection = pax_rerank_quant_tag(tags);
     per_collection.unwrap_or_else(|| {
         match std::env::var(ENV)
             .unwrap_or_default()
@@ -1508,66 +1513,34 @@ mod tests {
     /// anything else falls back to the default.
     #[test]
     fn resolve_pax_rerank_quant_default_and_precedence() {
-        use crate::proto::proximadb_v1::{Collection, CollectionConfig};
         use proximadb_block_format::VectorQuant;
         unsafe {
             std::env::remove_var("PROXIMADB_PAX_RERANK_QUANT");
         }
-        let none: Option<&Collection> = None;
-        // default → Sq8
-        assert_eq!(resolve_pax_rerank_quant(none), VectorQuant::Sq8);
+        // no tags → default Sq8
+        assert_eq!(resolve_pax_rerank_quant(&[]), VectorQuant::Sq8);
         // env overrides the default
         unsafe {
             std::env::set_var("PROXIMADB_PAX_RERANK_QUANT", "fp16");
         }
-        assert_eq!(resolve_pax_rerank_quant(none), VectorQuant::Fp16);
+        assert_eq!(resolve_pax_rerank_quant(&[]), VectorQuant::Fp16);
         unsafe {
             std::env::set_var("PROXIMADB_PAX_RERANK_QUANT", "f32");
         }
-        assert_eq!(resolve_pax_rerank_quant(none), VectorQuant::RawF32);
+        assert_eq!(resolve_pax_rerank_quant(&[]), VectorQuant::RawF32);
         unsafe {
             std::env::remove_var("PROXIMADB_PAX_RERANK_QUANT");
         }
         // per-collection tag overrides env + default
-        let coll_fp16 = Collection {
-            config: Some(CollectionConfig {
-                tags: vec!["pax_rerank_quant:fp16".into()],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert_eq!(
-            resolve_pax_rerank_quant(Some(&coll_fp16)),
-            VectorQuant::Fp16
-        );
-        let coll_f32 = Collection {
-            config: Some(CollectionConfig {
-                tags: vec!["pax_rerank_quant:f32".into()],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert_eq!(
-            resolve_pax_rerank_quant(Some(&coll_f32)),
-            VectorQuant::RawF32
-        );
-        let coll_sq8 = Collection {
-            config: Some(CollectionConfig {
-                tags: vec!["pax_rerank_quant:sq8".into()],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert_eq!(resolve_pax_rerank_quant(Some(&coll_sq8)), VectorQuant::Sq8);
+        let tags_fp16 = ["pax_rerank_quant:fp16".to_string()];
+        assert_eq!(resolve_pax_rerank_quant(&tags_fp16), VectorQuant::Fp16);
+        let tags_f32 = ["pax_rerank_quant:f32".to_string()];
+        assert_eq!(resolve_pax_rerank_quant(&tags_f32), VectorQuant::RawF32);
+        let tags_sq8 = ["pax_rerank_quant:sq8".to_string()];
+        assert_eq!(resolve_pax_rerank_quant(&tags_sq8), VectorQuant::Sq8);
         // unrecognized tag value → None → default Sq8 (RaBitQ rerank is invalid
         // and rejected at the parser: the tag only accepts sq8/fp16/f32).
-        let coll_bad = Collection {
-            config: Some(CollectionConfig {
-                tags: vec!["pax_rerank_quant:rabitq".into()],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert_eq!(resolve_pax_rerank_quant(Some(&coll_bad)), VectorQuant::Sq8);
+        let tags_bad = ["pax_rerank_quant:rabitq".to_string()];
+        assert_eq!(resolve_pax_rerank_quant(&tags_bad), VectorQuant::Sq8);
     }
 }
