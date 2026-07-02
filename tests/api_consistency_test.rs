@@ -140,7 +140,6 @@ mod api_consistency_tests {
 
         // Verify REST response structure
         if let Ok(response) = rest_response {
-            assert!(response.success || !response.success); // Response should have success field
             assert!(response.operation >= 0); // Should have valid operation enum
 
             // Check for required fields
