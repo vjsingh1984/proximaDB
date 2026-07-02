@@ -1149,15 +1149,14 @@ mod tests {
             .with_storage_specialization(CatalogStorageSpecialization::PaxOltp);
         let plan =
             CopyIntoPlan::insert_select(LogicalTableRef::new("orders"), "SELECT * FROM staging");
-        let routed =
-            TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
-                target_schema: &schema,
-                target_stats: None,
-                source_schema: None,
-                source_stats: None,
-                write_intent_overrides: None,
-                plan: &plan,
-            });
+        let routed = TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: None,
+            plan: &plan,
+        });
 
         let result = PlannedOnlyTableWriteExecutor::new()
             .execute(TableWriteExecutionRequest {
@@ -1177,23 +1176,22 @@ mod tests {
     #[tokio::test]
     async fn planned_executor_rejects_routes_missing_core_guards() {
         let schema = CatalogTableSchema::new("orders");
-        let mut routed =
-            TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
-                target_schema: &schema,
-                target_stats: None,
-                source_schema: None,
-                source_stats: None,
-                write_intent_overrides: None,
-                plan: &CopyIntoPlan {
-                    source: crate::query::table_write_plan::ReadSource::QuerySql(
-                        "SELECT * FROM staging".to_string(),
-                    ),
-                    target: LogicalTableRef::new("orders"),
-                    write_mode: WriteMode::Append,
-                    conflict_policy: Default::default(),
-                    distribution: Default::default(),
-                },
-            });
+        let mut routed = TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: None,
+            plan: &CopyIntoPlan {
+                source: crate::query::table_write_plan::ReadSource::QuerySql(
+                    "SELECT * FROM staging".to_string(),
+                ),
+                target: LogicalTableRef::new("orders"),
+                write_mode: WriteMode::Append,
+                conflict_policy: Default::default(),
+                distribution: Default::default(),
+            },
+        });
         routed.required_guards.clear();
         routed.selected_path.guards.clear();
 
@@ -1275,15 +1273,14 @@ mod tests {
             .with_storage_specialization(CatalogStorageSpecialization::PaxOltp);
         let plan =
             CopyIntoPlan::insert_select(LogicalTableRef::new("orders"), "SELECT * FROM staging");
-        let routed =
-            TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
-                target_schema: &schema,
-                target_stats: None,
-                source_schema: None,
-                source_stats: None,
-                write_intent_overrides: None,
-                plan: &plan,
-            });
+        let routed = TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: None,
+            plan: &plan,
+        });
         assert_eq!(routed.backend, ComputeBackend::Native);
 
         let source = Arc::new(VecSourceReader::new(vec![
@@ -1421,15 +1418,14 @@ mod tests {
     fn fk_routed_plan(schema: &CatalogTableSchema) -> RoutedExecutionPlan {
         let plan =
             CopyIntoPlan::insert_select(LogicalTableRef::new("orders"), "SELECT * FROM staging");
-        let routed =
-            TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
-                target_schema: schema,
-                target_stats: None,
-                source_schema: None,
-                source_stats: None,
-                write_intent_overrides: None,
-                plan: &plan,
-            });
+        let routed = TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
+            target_schema: schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: None,
+            plan: &plan,
+        });
         assert_eq!(routed.backend, ComputeBackend::Native);
         routed
     }
@@ -1545,15 +1541,14 @@ mod tests {
             });
         let plan =
             CopyIntoPlan::insert_select(LogicalTableRef::new("members"), "SELECT * FROM staging");
-        let routed =
-            TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
-                target_schema: &schema,
-                target_stats: None,
-                source_schema: None,
-                source_stats: None,
-                write_intent_overrides: None,
-                plan: &plan,
-            });
+        let routed = TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: None,
+            plan: &plan,
+        });
         assert_eq!(routed.backend, ComputeBackend::Native);
 
         let with_email = |id: &str, email: &str| {
@@ -1652,15 +1647,14 @@ mod tests {
         let mut plan =
             CopyIntoPlan::insert_select(LogicalTableRef::new("orders"), "SELECT * FROM staging");
         plan.write_mode = WriteMode::Merge;
-        let routed =
-            TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
-                target_schema: &schema,
-                target_stats: None,
-                source_schema: None,
-                source_stats: None,
-                write_intent_overrides: None,
-                plan: &plan,
-            });
+        let routed = TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: None,
+            plan: &plan,
+        });
 
         let err = NativeTableWriteExecutor::new(
             Arc::new(VecSourceReader::new(vec![vec![test_record("r1")]])),
@@ -1724,15 +1718,14 @@ mod tests {
             .with_storage_specialization(CatalogStorageSpecialization::PaxOltp);
         let plan =
             CopyIntoPlan::insert_select(LogicalTableRef::new("orders"), "SELECT * FROM staging");
-        let routed =
-            TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
-                target_schema: &schema,
-                target_stats: None,
-                source_schema: None,
-                source_stats: None,
-                write_intent_overrides: None,
-                plan: &plan,
-            });
+        let routed = TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: None,
+            plan: &plan,
+        });
 
         let result = NativeTableWriteExecutor::new(
             Arc::new(VecSourceReader::new(vec![])),
@@ -1759,15 +1752,14 @@ mod tests {
             .with_storage_specialization(CatalogStorageSpecialization::PaxOltp);
         let plan =
             CopyIntoPlan::insert_select(LogicalTableRef::new("orders"), "SELECT * FROM staging");
-        let routed =
-            TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
-                target_schema: &schema,
-                target_stats: None,
-                source_schema: None,
-                source_stats: None,
-                write_intent_overrides: None,
-                plan: &plan,
-            });
+        let routed = TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: None,
+            plan: &plan,
+        });
 
         let err = NativeTableWriteExecutor::new(
             Arc::new(VecSourceReader::new(vec![vec![test_record("r1")]])),
@@ -1798,15 +1790,14 @@ mod tests {
             batch_local_constraints_sufficient: Some(true),
             ..Default::default()
         };
-        let mut routed =
-            TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
-                target_schema: &schema,
-                target_stats: None,
-                source_schema: None,
-                source_stats: None,
-                write_intent_overrides: Some(&overrides),
-                plan: &plan,
-            });
+        let mut routed = TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: Some(&overrides),
+            plan: &plan,
+        });
         assert_eq!(routed.write_lane_decision.lane, WriteLane::BulkAppendCommit);
         routed.backend = ComputeBackend::Native;
 
@@ -1835,15 +1826,14 @@ mod tests {
             .with_storage_specialization(CatalogStorageSpecialization::ColumnarAnalytics);
         let plan =
             CopyIntoPlan::insert_select(LogicalTableRef::new("facts"), "SELECT * FROM staging");
-        let routed =
-            TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
-                target_schema: &schema,
-                target_stats: None,
-                source_schema: None,
-                source_stats: None,
-                write_intent_overrides: None,
-                plan: &plan,
-            });
+        let routed = TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: None,
+            plan: &plan,
+        });
         assert_eq!(routed.backend, ComputeBackend::DataFusionLocal);
 
         let source = Arc::new(VecSourceReader::new(vec![
@@ -1888,15 +1878,14 @@ mod tests {
             batch_local_constraints_sufficient: Some(true),
             ..Default::default()
         };
-        let routed =
-            TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
-                target_schema: &schema,
-                target_stats: None,
-                source_schema: None,
-                source_stats: None,
-                write_intent_overrides: Some(&overrides),
-                plan: &plan,
-            });
+        let routed = TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: Some(&overrides),
+            plan: &plan,
+        });
         assert_eq!(routed.backend, ComputeBackend::DataFusionLocal);
         assert_eq!(routed.write_lane_decision.lane, WriteLane::BulkAppendCommit);
 
@@ -1946,15 +1935,14 @@ mod tests {
             batch_local_constraints_sufficient: Some(true),
             ..Default::default()
         };
-        let routed =
-            TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
-                target_schema: &schema,
-                target_stats: None,
-                source_schema: None,
-                source_stats: None,
-                write_intent_overrides: Some(&overrides),
-                plan: &plan,
-            });
+        let routed = TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: Some(&overrides),
+            plan: &plan,
+        });
         assert_eq!(routed.write_lane_decision.lane, WriteLane::BulkAppendCommit);
 
         let err = DataFusionTableWriteExecutor::new(
@@ -1992,15 +1980,14 @@ mod tests {
             batch_local_constraints_sufficient: Some(true),
             ..Default::default()
         };
-        let routed =
-            TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
-                target_schema: &schema,
-                target_stats: None,
-                source_schema: None,
-                source_stats: None,
-                write_intent_overrides: Some(&overrides),
-                plan: &plan,
-            });
+        let routed = TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: Some(&overrides),
+            plan: &plan,
+        });
 
         // Two source batches
         let source = Arc::new(VecSourceReader::new(vec![
@@ -2059,15 +2046,14 @@ mod tests {
             batch_local_constraints_sufficient: Some(true),
             ..Default::default()
         };
-        let routed =
-            TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
-                target_schema: &schema,
-                target_stats: None,
-                source_schema: None,
-                source_stats: None,
-                write_intent_overrides: Some(&overrides),
-                plan: &plan,
-            });
+        let routed = TableWriteRouter.route(crate::query::table_write_plan::RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: Some(&overrides),
+            plan: &plan,
+        });
 
         let source = Arc::new(VecSourceReader::new(vec![vec![test_record("r1")]]));
         // Bridge that never lets the writer win the CAS — the commit loop must give

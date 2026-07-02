@@ -978,10 +978,7 @@ async fn test_graph_query_parity() {
     }
 
     // Create a test node via REST
-    let node_id = format!(
-        "test_node_{}",
-        &uuid::Uuid::new_v4().to_string()[..8]
-    );
+    let node_id = format!("test_node_{}", &uuid::Uuid::new_v4().to_string()[..8]);
     let labels = vec!["Person", "Employee"];
     let mut properties = HashMap::new();
     properties.insert("name".to_string(), "Alice".to_string());

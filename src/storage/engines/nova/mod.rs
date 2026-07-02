@@ -612,12 +612,14 @@ mod tests {
 
         #[test]
         fn test_processing_stages() {
-            let stages = [ProcessingStage::BloomFilter,
+            let stages = [
+                ProcessingStage::BloomFilter,
                 ProcessingStage::ZoneMapPruning,
                 ProcessingStage::BinaryFilter,
                 ProcessingStage::Int8Filter,
                 ProcessingStage::PQ4Filter,
-                ProcessingStage::FullPrecision];
+                ProcessingStage::FullPrecision,
+            ];
 
             assert_eq!(stages.len(), 6);
             assert_eq!(stages[0], ProcessingStage::BloomFilter);

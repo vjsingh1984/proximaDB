@@ -1441,10 +1441,7 @@ mod tests {
 
         // Begin flush operation
         let metadata = viper_ops
-            .begin_flush_operation(
-                "test_collection",
-                &format!("file://{}", temp_path),
-            )
+            .begin_flush_operation("test_collection", &format!("file://{}", temp_path))
             .await
             .unwrap();
 

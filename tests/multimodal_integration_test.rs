@@ -794,10 +794,7 @@ async fn test_federated_query_via_rest() {
     };
 
     // Check if server is running
-    let health_check = client
-        .get(format!("{}/health", REST_BASE_URL))
-        .send()
-        .await;
+    let health_check = client.get(format!("{}/health", REST_BASE_URL)).send().await;
 
     match health_check {
         Ok(resp) if resp.status().is_success() => {
@@ -862,10 +859,7 @@ async fn test_multimodel_query_via_rest() {
     };
 
     // Check if server is running
-    let health_check = client
-        .get(format!("{}/health", REST_BASE_URL))
-        .send()
-        .await;
+    let health_check = client.get(format!("{}/health", REST_BASE_URL)).send().await;
 
     match health_check {
         Ok(resp) if resp.status().is_success() => {

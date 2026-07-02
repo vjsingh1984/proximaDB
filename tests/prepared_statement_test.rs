@@ -543,9 +543,10 @@ fn test_invalidate_for_collection() {
     for id in product_ids {
         let stmt = cache.get(&id);
         if let Ok(s) = stmt
-            && s.original_sql.contains("products") {
-                cache.drop_statement(&id).ok();
-            }
+            && s.original_sql.contains("products")
+        {
+            cache.drop_statement(&id).ok();
+        }
     }
 
     // products statements should be gone

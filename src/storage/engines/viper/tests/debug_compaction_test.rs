@@ -61,16 +61,17 @@ async fn debug_parquet_file(file_path: &str, label: &str) -> Result<()> {
                                     && let Some(id_array) = id_column
                                         .as_any()
                                         .downcast_ref::<arrow_array::StringArray>(
-                                    ) {
-                                        debug!("    📝 First few IDs:");
-                                        for i in 0..std::cmp::min(5, id_array.len()) {
-                                            if id_array.is_valid(i) {
-                                                debug!("      [{}]: {}", i, id_array.value(i));
-                                            } else {
-                                                debug!("      [{}]: NULL", i);
-                                            }
+                                    )
+                                {
+                                    debug!("    📝 First few IDs:");
+                                    for i in 0..std::cmp::min(5, id_array.len()) {
+                                        if id_array.is_valid(i) {
+                                            debug!("      [{}]: {}", i, id_array.value(i));
+                                        } else {
+                                            debug!("      [{}]: NULL", i);
                                         }
                                     }
+                                }
                             }
                             Err(e) => {
                                 debug!("  ❌ Error reading batch: {}", e);

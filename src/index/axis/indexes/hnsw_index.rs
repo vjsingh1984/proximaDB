@@ -1914,13 +1914,15 @@ mod tests {
         let index = AxisHnswIndex::new(config, 4).expect("Failed to create HNSW index");
 
         // Create a set of test vectors
-        let test_vectors = [("v1", vec![1.0, 0.0, 0.0, 0.0]),
+        let test_vectors = [
+            ("v1", vec![1.0, 0.0, 0.0, 0.0]),
             ("v2", vec![0.9, 0.1, 0.0, 0.0]),
             ("v3", vec![0.0, 1.0, 0.0, 0.0]),
             ("v4", vec![0.0, 0.0, 1.0, 0.0]),
             ("v5", vec![0.0, 0.0, 0.0, 1.0]),
             ("v6", vec![0.8, 0.2, 0.0, 0.0]),
-            ("v7", vec![0.7, 0.3, 0.0, 0.0])];
+            ("v7", vec![0.7, 0.3, 0.0, 0.0]),
+        ];
 
         for (id, vector) in test_vectors.iter() {
             index

@@ -285,28 +285,28 @@ async fn test_insert_flush_compact_flow() {
     // Step 4: Verify compacted file contents
     debug!("\n🔍 Step 4: Verifying compacted file...");
     if let Some(file_url) = compacted_file_url
-        && let Ok(data) = fs.read(&file_url).await {
-            debug!("  📊 File size: {} bytes", data.len());
+        && let Ok(data) = fs.read(&file_url).await
+    {
+        debug!("  📊 File size: {} bytes", data.len());
 
-            use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-            if let Ok(builder) = ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(data))
-            {
-                let reader = builder.build().unwrap();
-                let mut total_rows = 0;
-                for (i, batch) in reader.enumerate() {
-                    if let Ok(batch) = batch {
-                        debug!("  📊 Batch {}: {} rows", i, batch.num_rows());
-                        total_rows += batch.num_rows();
-                    }
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        if let Ok(builder) = ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(data)) {
+            let reader = builder.build().unwrap();
+            let mut total_rows = 0;
+            for (i, batch) in reader.enumerate() {
+                if let Ok(batch) = batch {
+                    debug!("  📊 Batch {}: {} rows", i, batch.num_rows());
+                    total_rows += batch.num_rows();
                 }
-                debug!("  📊 Total rows in compacted file: {}", total_rows);
-                assert_eq!(
-                    total_rows, 40,
-                    "Expected 40 rows in compacted file, got {}",
-                    total_rows
-                );
             }
+            debug!("  📊 Total rows in compacted file: {}", total_rows);
+            assert_eq!(
+                total_rows, 40,
+                "Expected 40 rows in compacted file, got {}",
+                total_rows
+            );
         }
+    }
 
     // Step 5: Verify data is still searchable
     debug!("\n🔍 Step 5: Verifying search after compaction...");

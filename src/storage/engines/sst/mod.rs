@@ -2510,10 +2510,12 @@ mod compression_tests_unified {
     #[test]
     fn test_unified_compression_mixed_deserialization() {
         // Test that blocks compressed with different algorithms can be deserialized together
-        let algorithms = [UnifiedCompressionAlgorithm::None,
+        let algorithms = [
+            UnifiedCompressionAlgorithm::None,
             UnifiedCompressionAlgorithm::Zstd,
             UnifiedCompressionAlgorithm::Lz4,
-            UnifiedCompressionAlgorithm::Snappy];
+            UnifiedCompressionAlgorithm::Snappy,
+        ];
 
         let mut serialized_blocks = Vec::new();
 
@@ -3574,10 +3576,12 @@ mod compression_tests {
     #[test]
     fn test_mixed_compression_deserialization() {
         // Create blocks with different compression algorithms
-        let blocks_data = [(CompressionAlgorithm::CompressionNone, MARKER_UNCOMPRESSED),
+        let blocks_data = [
+            (CompressionAlgorithm::CompressionNone, MARKER_UNCOMPRESSED),
             (CompressionAlgorithm::CompressionZstd, MARKER_ZSTD),
             (CompressionAlgorithm::CompressionLz4, MARKER_LZ4),
-            (CompressionAlgorithm::CompressionSnappy, MARKER_SNAPPY)];
+            (CompressionAlgorithm::CompressionSnappy, MARKER_SNAPPY),
+        ];
 
         let mut serialized_blocks = Vec::new();
 

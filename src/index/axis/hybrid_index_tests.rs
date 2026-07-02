@@ -239,10 +239,11 @@ mod tests {
             assert!(quantizer.is_some());
 
             if let Some(q) = quantizer
-                && let IndexAlgorithm::PQ { m, nbits, .. } = q.as_ref() {
-                    assert_eq!(*m, 8);
-                    assert_eq!(*nbits, 8);
-                }
+                && let IndexAlgorithm::PQ { m, nbits, .. } = q.as_ref()
+            {
+                assert_eq!(*m, 8);
+                assert_eq!(*nbits, 8);
+            }
         }
     }
 

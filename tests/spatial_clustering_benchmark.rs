@@ -85,10 +85,7 @@ fn compute_centroid(vectors: &[Vec<f32>]) -> Vec<f32> {
 
 /// Create blocks from vectors and compute their centroids
 fn create_blocks_with_centroids(vectors: &[Vec<f32>], block_size: usize) -> Vec<Vec<f32>> {
-    vectors
-        .chunks(block_size)
-        .map(compute_centroid)
-        .collect()
+    vectors.chunks(block_size).map(compute_centroid).collect()
 }
 
 #[test]

@@ -932,7 +932,8 @@ async fn test_customer_api_compatibility() {
 
     // Batch ID lookup
     // Deferred: Implement optimized_batch_id_lookup method
-    let batch_result = [{
+    let batch_result = [
+        {
             let values: Vec<f32> = (0..384).map(|i| i as f32 * 0.01).collect();
             let dim = values.len() as u32;
             let mut r = ProximaRecord {
@@ -967,7 +968,8 @@ async fn test_customer_api_compatibility() {
                 ..Default::default()
             });
             r
-        }];
+        },
+    ];
 
     assert_eq!(batch_result.len(), 2);
     let ids: Vec<String> = batch_result.iter().map(|r| r.oid.clone()).collect();
@@ -1116,7 +1118,8 @@ async fn test_schema_evolution_with_id_column() {
     let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Test that schema evolution preserves ID column requirement
-    let quantization_configs = [QuantizationConfig {
+    let quantization_configs = [
+        QuantizationConfig {
             enable_binary: Some(false),
             enable_int8: Some(false),
             enable_pq: Some(false),
@@ -1133,7 +1136,8 @@ async fn test_schema_evolution_with_id_column() {
             enable_int8: Some(true),
             enable_pq: Some(true),
             ..Default::default()
-        }];
+        },
+    ];
 
     for (i, quant_config) in quantization_configs.iter().enumerate() {
         let schema = create_columnar_schema(

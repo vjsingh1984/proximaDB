@@ -747,14 +747,15 @@ impl MultiModalQueryExecutor {
         #[cfg(test)]
         if let Some(map) = TEST_SIMILAR_RESULTS.get()
             && let Ok(guard) = map.lock()
-                && let Some(rows) = guard.get(collection_id) {
-                    // Update performance metrics for test data
-                    metrics.vectors_scanned = rows.len();
-                    metrics.metadata_lookups += rows.len(); // Each result involves metadata access
+            && let Some(rows) = guard.get(collection_id)
+        {
+            // Update performance metrics for test data
+            metrics.vectors_scanned = rows.len();
+            metrics.metadata_lookups += rows.len(); // Each result involves metadata access
 
-                    // Avoid clone by using Arc for shared test data
-                    return Ok(rows.clone());
-                }
+            // Avoid clone by using Arc for shared test data
+            return Ok(rows.clone());
+        }
         // Convert FilterExpression to VOS-compatible format
         // The FilterExpression already represents HashMap.get() patterns from lowering
         let search_config = crate::services::operations::vectors::UnifiedSearchConfig {
@@ -1328,11 +1329,12 @@ impl MultiModalQueryExecutor {
         #[cfg(test)]
         if let Some(map) = TEST_GRAPH_RESULTS.get()
             && let Ok(guard) = map.lock()
-                && let Some(rows) = guard.get("test_graph") {
-                    // Update performance metrics for test data
-                    metrics.graph_nodes_visited = rows.len();
-                    return Ok(rows.clone());
-                }
+            && let Some(rows) = guard.get("test_graph")
+        {
+            // Update performance metrics for test data
+            metrics.graph_nodes_visited = rows.len();
+            return Ok(rows.clone());
+        }
 
         // Minimal traversal: depth-1 neighbors via the extracted traversal contract; track cache accesses
         let mut rows = Vec::new();
@@ -1454,10 +1456,11 @@ impl MultiModalQueryExecutor {
         {
             if let ExecutionOperation::VectorQuery { collection_id, .. } = operation
                 && let Some(map) = TEST_VECTOR_RESULTS.get()
-                    && let Ok(guard) = map.lock()
-                        && let Some(rows) = guard.get(collection_id) {
-                            return Ok(rows.clone());
-                        }
+                && let Ok(guard) = map.lock()
+                && let Some(rows) = guard.get(collection_id)
+            {
+                return Ok(rows.clone());
+            }
         }
         if let ExecutionOperation::VectorQuery {
             collection_id,
@@ -1470,9 +1473,10 @@ impl MultiModalQueryExecutor {
             #[cfg(test)]
             if let Some(map) = TEST_VECTOR_RESULTS.get()
                 && let Ok(guard) = map.lock()
-                    && let Some(rows) = guard.get(collection_id) {
-                        return Ok(rows.clone());
-                    }
+                && let Some(rows) = guard.get(collection_id)
+            {
+                return Ok(rows.clone());
+            }
             self.execute_vector_search_operation(
                 collection_id,
                 query_vector.as_ref(),

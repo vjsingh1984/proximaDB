@@ -425,11 +425,13 @@ mod tests {
 
     #[test]
     fn test_security_clearance_all_levels() {
-        let levels = [SecurityClearance::Public,
+        let levels = [
+            SecurityClearance::Public,
             SecurityClearance::Internal,
             SecurityClearance::Confidential,
             SecurityClearance::Secret,
-            SecurityClearance::TopSecret];
+            SecurityClearance::TopSecret,
+        ];
 
         // Verify ordering
         for window in levels.windows(2) {

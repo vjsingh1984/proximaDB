@@ -495,7 +495,12 @@ mod tests {
 
         // All features should be normalized roughly to [0, 1]
         for (i, &f) in features.iter().enumerate() {
-            assert!((0.0..=10.0).contains(&f), "Feature {} = {} out of range", i, f);
+            assert!(
+                (0.0..=10.0).contains(&f),
+                "Feature {} = {} out of range",
+                i,
+                f
+            );
         }
     }
 

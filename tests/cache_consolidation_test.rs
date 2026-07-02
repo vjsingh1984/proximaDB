@@ -155,11 +155,13 @@ mod cache_consolidation_tests {
     #[test]
     fn test_cache_id_enumeration() {
         // Verify all cache IDs are defined
-        let cache_ids = [CacheId::VectorData,
+        let cache_ids = [
+            CacheId::VectorData,
             CacheId::Metadata,
             CacheId::QueryResult,
             CacheId::BitmapFilter,
-            CacheId::IndexNode];
+            CacheId::IndexNode,
+        ];
 
         // Should have at least 5 cache types
         assert!(cache_ids.len() >= 5);

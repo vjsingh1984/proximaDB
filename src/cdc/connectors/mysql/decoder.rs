@@ -897,12 +897,14 @@ mod tests {
 
     #[test]
     fn test_column_value_variants() {
-        let values = [ColumnValue::Null,
+        let values = [
+            ColumnValue::Null,
             ColumnValue::Int(-42),
             ColumnValue::UInt(42),
             ColumnValue::Float(3.5),
             ColumnValue::String("hello".to_string()),
-            ColumnValue::Bytes(vec![1, 2, 3])];
+            ColumnValue::Bytes(vec![1, 2, 3]),
+        ];
 
         assert_eq!(values.len(), 6);
     }

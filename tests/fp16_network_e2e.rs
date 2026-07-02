@@ -404,10 +404,11 @@ async fn rest_insert_into_fp16_collection_increments_canonical_bytes_metric() {
             continue;
         }
         if let Some((_, tail)) = line.split_once('}')
-            && let Ok(value) = tail.trim().parse::<i64>() {
-                observed = Some(value);
-                break;
-            }
+            && let Ok(value) = tail.trim().parse::<i64>()
+        {
+            observed = Some(value);
+            break;
+        }
     }
     assert_eq!(
         observed,

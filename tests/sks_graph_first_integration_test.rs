@@ -223,13 +223,15 @@ async fn test_relation_management_orion() {
             .and_then(|s| s.parse::<usize>().ok());
 
         if let (Some(src), Some(tgt)) = (source_idx, target_idx)
-            && src < 10 && tgt < 10 {
-                store
-                    .add_relation(relation.clone())
-                    .await
-                    .expect("Failed to add relation");
-                added_relations += 1;
-            }
+            && src < 10
+            && tgt < 10
+        {
+            store
+                .add_relation(relation.clone())
+                .await
+                .expect("Failed to add relation");
+            added_relations += 1;
+        }
     }
 
     // Query relations for first entity

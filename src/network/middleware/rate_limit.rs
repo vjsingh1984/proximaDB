@@ -642,13 +642,15 @@ enabled = false
 
         // Verify the structure can be parsed
         if let Some(network) = parsed.get("network")
-            && let Some(enabled) = network.get("enabled") {
-                assert_eq!(enabled.as_bool(), Some(false));
-            }
+            && let Some(enabled) = network.get("enabled")
+        {
+            assert_eq!(enabled.as_bool(), Some(false));
+        }
 
         if let Some(rate_limit) = parsed.get("rate_limit")
-            && let Some(enabled) = rate_limit.get("enabled") {
-                assert_eq!(enabled.as_bool(), Some(false));
-            }
+            && let Some(enabled) = rate_limit.get("enabled")
+        {
+            assert_eq!(enabled.as_bool(), Some(false));
+        }
     }
 }

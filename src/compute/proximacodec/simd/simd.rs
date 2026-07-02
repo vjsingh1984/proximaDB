@@ -1995,9 +1995,11 @@ mod tests {
     #[test]
     fn test_round_trip_delta_vs_baseline() {
         // Test that SIMD Delta encoding matches baseline Delta encoding
-        let test_values = [vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+        let test_values = [
+            vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
             vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-            vec![-5.0, -4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0]];
+            vec![-5.0, -4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
+        ];
 
         let codec = ProximaCodec::global();
 

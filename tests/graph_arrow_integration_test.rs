@@ -186,24 +186,28 @@ mod graph_arrow_integration_tests {
         // search results in a federated query using Arrow format
 
         // Simulate graph query results
-        let graph_results = [HashMap::from([
+        let graph_results = [
+            HashMap::from([
                 ("node_id".to_string(), serde_json::json!("node1")),
                 ("label".to_string(), serde_json::json!("Person")),
             ]),
             HashMap::from([
                 ("node_id".to_string(), serde_json::json!("node2")),
                 ("label".to_string(), serde_json::json!("Company")),
-            ])];
+            ]),
+        ];
 
         // Simulate vector search results
-        let vector_results = [HashMap::from([
+        let vector_results = [
+            HashMap::from([
                 ("id".to_string(), serde_json::json!("doc1")),
                 ("score".to_string(), serde_json::json!(0.95)),
             ]),
             HashMap::from([
                 ("id".to_string(), serde_json::json!("doc2")),
                 ("score".to_string(), serde_json::json!(0.87)),
-            ])];
+            ]),
+        ];
 
         // Verify both result sets are compatible for federated processing
         assert_eq!(graph_results.len(), 2);

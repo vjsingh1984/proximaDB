@@ -501,10 +501,12 @@ mod tests {
         let encoder = ZOrderSpatialEncoder::new(4, 8);
 
         // Create some block codes
-        let block_coords = [vec![0.1, 0.1, 0.1, 0.1],
+        let block_coords = [
+            vec![0.1, 0.1, 0.1, 0.1],
             vec![0.5, 0.5, 0.5, 0.5],
             vec![0.9, 0.9, 0.9, 0.9],
-            vec![0.2, 0.2, 0.2, 0.2]];
+            vec![0.2, 0.2, 0.2, 0.2],
+        ];
         let block_codes: Vec<SpatialCode> =
             block_coords.iter().map(|c| encoder.encode(c)).collect();
 

@@ -6773,7 +6773,7 @@ mod tests {
 
         let insert = |sql: &'static str| {
             let p = &parser;
-            
+
             p.parse_dml(sql).expect("parse dml").expect("dml")
         };
 

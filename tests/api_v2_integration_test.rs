@@ -1429,13 +1429,14 @@ async fn test_search_with_eq_filter() {
             for result in results {
                 let typed_fields = result.get("typed_fields");
                 if let Some(fields) = typed_fields
-                    && let Some(category) = fields.get("category") {
-                        assert_eq!(
-                            category.as_str(),
-                            Some("category_0"),
-                            "Filtered results should only have category_0"
-                        );
-                    }
+                    && let Some(category) = fields.get("category")
+                {
+                    assert_eq!(
+                        category.as_str(),
+                        Some("category_0"),
+                        "Filtered results should only have category_0"
+                    );
+                }
             }
 
             println!("test_search_with_eq_filter PASSED");
@@ -1561,13 +1562,14 @@ async fn test_search_include_vector() {
             for result in results {
                 let vector = result.get("vector");
                 if let Some(v) = vector
-                    && let Some(arr) = v.as_array() {
-                        assert_eq!(
-                            arr.len(),
-                            TEST_DIMENSION as usize,
-                            "Vector should have correct dimension"
-                        );
-                    }
+                    && let Some(arr) = v.as_array()
+                {
+                    assert_eq!(
+                        arr.len(),
+                        TEST_DIMENSION as usize,
+                        "Vector should have correct dimension"
+                    );
+                }
             }
 
             println!("test_search_include_vector PASSED");

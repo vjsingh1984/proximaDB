@@ -743,10 +743,12 @@ mod tests {
 
     #[test]
     fn test_multiple_compliance_frameworks() {
-        let frameworks = [ComplianceFramework::SOC2,
+        let frameworks = [
+            ComplianceFramework::SOC2,
             ComplianceFramework::SOX,
             ComplianceFramework::HIPAA,
-            ComplianceFramework::GDPR];
+            ComplianceFramework::GDPR,
+        ];
 
         assert_eq!(frameworks.len(), 4);
         assert!(frameworks.contains(&ComplianceFramework::GDPR));

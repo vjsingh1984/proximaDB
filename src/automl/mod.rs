@@ -210,12 +210,14 @@ mod tests {
         }
 
         // Verify all OptimizationGoal variants
-        let goals = [OptimizationGoal::MinimizeLatency,
+        let goals = [
+            OptimizationGoal::MinimizeLatency,
             OptimizationGoal::MaximizeThroughput,
             OptimizationGoal::MinimizeMemory,
             OptimizationGoal::MaximizeAccuracy,
             OptimizationGoal::Balanced,
-            OptimizationGoal::Custom(optimization::ObjectiveWeights::default())];
+            OptimizationGoal::Custom(optimization::ObjectiveWeights::default()),
+        ];
         assert_eq!(goals.len(), 6, "Expected 6 optimization goal variants");
 
         // Verify default ObjectiveWeights
@@ -229,13 +231,15 @@ mod tests {
     #[test]
     fn test_workload_prediction_config() {
         // Verify WorkloadPattern variants
-        let patterns = [WorkloadPattern::ReadHeavy,
+        let patterns = [
+            WorkloadPattern::ReadHeavy,
             WorkloadPattern::WriteHeavy,
             WorkloadPattern::Balanced,
             WorkloadPattern::BatchProcessing,
             WorkloadPattern::Streaming,
             WorkloadPattern::Analytics,
-            WorkloadPattern::Mixed];
+            WorkloadPattern::Mixed,
+        ];
         assert_eq!(patterns.len(), 7, "Expected 7 workload pattern variants");
 
         // Verify PartialEq is implemented
@@ -244,10 +248,12 @@ mod tests {
 
         // Verify PredictionModel enum has the expected variant names (cannot construct
         // directly since model structs have private fields, so we verify via TargetMetric)
-        let target_variants = [prediction::TargetMetric::QueryLatency(10.0),
+        let target_variants = [
+            prediction::TargetMetric::QueryLatency(10.0),
             prediction::TargetMetric::Throughput(1000.0),
             prediction::TargetMetric::MemoryUsage(512.0),
-            prediction::TargetMetric::IndexBuildTime(30.0)];
+            prediction::TargetMetric::IndexBuildTime(30.0),
+        ];
         assert_eq!(
             target_variants.len(),
             4,

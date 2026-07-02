@@ -135,7 +135,6 @@ mod tests {
     }
 
     fn warm_learner_for_low_cost() -> MismatchCostLearner {
-        
         MismatchCostLearner::new(MismatchConfig {
             similarity_floor: 0.5,
             allowed_cost: 0.5,

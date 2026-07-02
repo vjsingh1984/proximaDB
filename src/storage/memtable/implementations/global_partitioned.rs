@@ -1781,11 +1781,7 @@ mod tests {
             .get_collection_vectors(collection_id)
             .await
             .unwrap();
-        assert!(
-            !all_vectors
-                .iter()
-                .any(|record| record.oid == "test_vector")
-        );
+        assert!(!all_vectors.iter().any(|record| record.oid == "test_vector"));
     }
 
     #[tokio::test]
