@@ -117,7 +117,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::index::axis::eventlog::StorageEngineType;
+use crate::core::types::StorageEngineType;
 use crate::proto::proximadb_v1::{Collection, VectorRecord};
 use crate::storage::StorageFormatStrategy;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
