@@ -16,24 +16,38 @@
 ADR-051 D2 made **repeated** Strong queries cache-eligible (LSN-pinned). Two
 items remain to make Strong fully cheap and fully correct under concurrency.
 
-== Part A — Per-(collection, LSN) shared WAL-tail candidate pool (PERF, ADR-051 D3)
+== Part A — Distinct-query unflushed-scan allocation (PERF) — REFRAMED + DONE
 
-The #634 concurrency collapse was measured with **all-distinct** query vectors,
-which the D2 cache does not help. At a fixed LSN the unflushed WAL tail is
-immutable, yet every concurrent Strong read re-runs `get_unflushed_batches` +
-the linear scan independently (`src/storage/persistence/write_ahead_log/mod.rs:2396`,
-via `scan_wal_delta_if_needed`, `legacy.rs:1662`).
+**Reframe (cost audit 2026-07-03):** the ADR-051 D3 "shared per-(collection, lsn)
+WAL-tail pool" is **not** the fix. The #634 c16 collapse (all-distinct vectors)
+is an *allocator / memory-bandwidth contention* signature, and the dominant
+terms are not the retrieval D3 would share, nor the distance loop:
 
-*Sketch:* memoize the tail candidate retrieval per `(collection, lsn)` so N
-concurrent same-LSN reads share one batch retrieval/scan; the per-query distance
-computation stays per-query. Bound the memo by memory; invalidate on LSN advance
-(write) and on flush (tail shrinks — the memo for the old LSN is simply dropped).
-Single-flight the population so a thundering herd collapses to one scan.
+* **Fix A — reuse the ingest-built bloom filter.** `get_unflushed_batches`
+  (`src/storage/memtable/specialized/wal_behavior.rs:663`) discarded each batch's
+  bloom (`None`) then *rebuilt* it (hash every record×prop) on every read, and the
+  common no-metadata-filter search path throws it away unused. Clone the existing
+  bloom (bitset copy) instead of rebuilding.
+* **Fix B — defer result materialization past the top-k cut.** The scan loop
+  (`write_ahead_log/mod.rs` `search_unflushed_vectors`) built a full
+  `OptimizedSearchRecord` + cloned the per-record metadata HashMap for **all** N
+  tail records, then truncated to top_k — so ~99.7% of the allocations were
+  immediately discarded (the per-query firehose D3 cannot touch, being per-query).
+  Now the loop keeps only lightweight `(score, batch_idx, record_idx)` tuples and
+  materializes the full record for the ≤top_k survivors only. Deletion tombstones
+  (`valid_to_ns == Some(0)`) stay exempt from the cut (TD-188); exact sort/truncate
+  ordering is preserved.
 
-*Why deferred:* restructures the hot WAL-visibility path; needs careful
-concurrency (single-flight + lifecycle), a memory bound, and the full
-`vector_ann_recall`/`postflush` integration suites to prove no visibility
-regression.
+**Status: A + B landed** (the real distinct-query #634 fix). Validated by the
+`vector_ann_recall_e2e` (recall + no-leaks) and `filtered_ann_recall_bands`
+(filtered recall → the bloom path) suites, wired to run on WAL/memtable changes
+via the `query_changes` CI filter.
+
+*Still deferred — the shared pool itself:* only warranted if a residual same-LSN
+*retrieval* cost remains after A+B (re-measure c16 first). *Fix C — flush policy*
+(the 2GB default keeps small corpora unflushed forever, so every Strong search is
+an O(N) linear tail scan) is a separate structural lever that only pays off with
+TD-096 (HELIX block-skip on the flushed side).
 
 == Part B — Close the ungated query-cache read sites (SEC/correctness)
 
