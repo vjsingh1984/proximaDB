@@ -1302,6 +1302,29 @@ impl proximadb_runtime::GraphPort for GraphServiceImpl {
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
     }
 
+    /// v2-era JSON path: run the query through the shared `QueryFacadeAdapter` and
+    /// return the engine's raw `serde_json::Value` rows — no v1 `QueryValue`.
+    async fn execute_query_json(
+        &self,
+        graph_id: &str,
+        query: &str,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        let adapter = self
+            .query_adapter
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("graph query adapter not configured"))?;
+        let graph_name = (!graph_id.is_empty()).then_some(graph_id);
+        let result = adapter
+            .graph_query(query, graph_name)
+            .await
+            .map_err(|e| anyhow::anyhow!("graph query failed: {e}"))?;
+        Ok(match result.data {
+            crate::query::QueryResultData::Graph(g) => g.nodes,
+            crate::query::QueryResultData::Rows(rows) => rows,
+            _ => Vec::new(),
+        })
+    }
+
     async fn get_neighbors(&self, request: GetNeighborsRequest) -> anyhow::Result<BatchResponse> {
         self.get_neighbors(tonic::Request::new(request))
             .await

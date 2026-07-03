@@ -2009,6 +2009,13 @@ mod tests {
         ) -> anyhow::Result<crate::proto::v1::GraphQueryResponse> {
             anyhow::bail!("mock")
         }
+        async fn execute_query_json(
+            &self,
+            _graph_id: &str,
+            _query: &str,
+        ) -> anyhow::Result<Vec<serde_json::Value>> {
+            anyhow::bail!("mock")
+        }
         async fn get_neighbors(
             &self,
             _: crate::proto::v1::GetNeighborsRequest,

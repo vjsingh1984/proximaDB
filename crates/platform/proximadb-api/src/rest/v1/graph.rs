@@ -47,8 +47,8 @@ use proximadb_proto::v1::PropertyValue;
 use proximadb_proto::v1::{
     BatchEdgeRequest, BatchNodeRequest, CreateEdgeRequest, CreateGraphRequest, CreateNodeRequest,
     DeleteEdgeRequest, DeleteNodeRequest, Edge, EdgeQuery, EmbeddingVersion, GetEdgeRequest,
-    GetNeighborsRequest, GetNodeRequest, GetStatsRequest, GraphQueryRequest, GraphSchema, Node,
-    NodeQuery, PropertyFilter, PropertyFilterOperator, ShortestPathAlgorithm, TraversalAlgorithm,
+    GetNeighborsRequest, GetNodeRequest, GetStatsRequest, GraphSchema, Node, NodeQuery,
+    PropertyFilter, PropertyFilterOperator, ShortestPathAlgorithm, TraversalAlgorithm,
     TraversalRequest, UniqueConstraintRequest, UpdateEdgeRequest, UpdateNodeRequest,
     property_value,
 };
@@ -502,8 +502,13 @@ struct BatchCreateEdgesRequest {
 #[derive(Debug, Deserialize)]
 struct RestGraphQueryRequest {
     query: String,
+    // Accepted for wire compatibility (clients send `language: "cypher"`), but the
+    // query type is inferred by the shared query adapter from the query text; and
+    // `timeout_ms` is reserved for future per-query deadline plumbing (TD-GRAPH-2).
     #[serde(default = "default_query_language")]
+    #[allow(dead_code)]
     language: String,
+    #[allow(dead_code)]
     timeout_ms: Option<u32>,
 }
 
@@ -1130,38 +1135,12 @@ async fn execute_graph_query(
     Path(graph_id): Path<String>,
     Json(req): Json<RestGraphQueryRequest>,
 ) -> impl IntoResponse {
-    use proximadb_proto::v1::QueryLanguage;
-
-    let language = match req.language.to_ascii_lowercase().as_str() {
-        "cypher" => QueryLanguage::Cypher as i32,
-        "gremlin" => QueryLanguage::Gremlin as i32,
-        _ => QueryLanguage::Native as i32,
-    };
-
-    let proto_req = GraphQueryRequest {
-        graph_id,
-        language,
-        query: req.query,
-        parameters: HashMap::new(),
-        timeout_ms: req.timeout_ms,
-        options: None,
-    };
-
-    match s.graph_port.execute_query(proto_req).await {
-        Ok(resp) => {
-            // Convert result rows to JSON
-            let rows: Vec<serde_json::Value> = resp
-                .rows
-                .iter()
-                .map(|row| {
-                    let cols: serde_json::Map<String, serde_json::Value> = row
-                        .columns
-                        .keys()
-                        .map(|k| (k.clone(), serde_json::Value::Null))
-                        .collect();
-                    serde_json::Value::Object(cols)
-                })
-                .collect();
+    // v2-era path (TD-GRAPH-2): the engine yields result rows as `serde_json::Value`
+    // directly, so this REST surface bypasses the legacy v1 `QueryValue` /
+    // `GraphQueryResponse` wrapping entirely. The declarative language (cypher) is
+    // interpreted by the shared query adapter from the query text.
+    match s.graph_port.execute_query_json(&graph_id, &req.query).await {
+        Ok(rows) => {
             #[derive(Serialize)]
             struct QueryResult {
                 rows: Vec<serde_json::Value>,
@@ -1933,7 +1912,7 @@ mod tests {
 
         async fn execute_query(
             &self,
-            _request: GraphQueryRequest,
+            _request: proto::GraphQueryRequest,
         ) -> Result<proto::GraphQueryResponse> {
             let mut columns = HashMap::new();
             columns.insert("n".to_string(), proto::QueryValue::default());
@@ -1943,6 +1922,13 @@ mod tests {
                 query_plan: None,
                 error_message: None,
             })
+        }
+        async fn execute_query_json(
+            &self,
+            _graph_id: &str,
+            _query: &str,
+        ) -> Result<Vec<serde_json::Value>> {
+            self.ok_or_fail(vec![serde_json::json!({"n": {"id": "mock"}})])
         }
 
         async fn get_neighbors(
