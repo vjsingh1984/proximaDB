@@ -49,24 +49,28 @@ via the `query_changes` CI filter.
 an O(N) linear tail scan) is a separate structural lever that only pays off with
 TD-096 (HELIX block-skip on the flushed side).
 
-== Part B — Close the ungated query-cache read sites (SEC/correctness)
+== Part B — Close the ungated query-cache read sites (SEC/correctness) — DONE
 
-Two query-cache read sites carry **no freshness gate** — they serve any
-TTL-fresh entry regardless of `VectorFreshnessMode`, so a Strong read routed
-through them could be served a result that predates a write:
+**Reachability confirmed:** `unified_search` is called live from the RAG engine
+(`src/graph/rag/engine_impls.rs`) and forwards to `unified_search_with_tenant_context`,
+so a Strong read *can* reach the ungated cache — a real read-after-write gap, not
+just a doc note. The audit found **three** ungated `get_if_fresh` read sites (a
+third beyond the two originally listed):
 
-* `unified_search_with_tenant_context` — `src/services/operations/vectors/legacy.rs:2071`
-  (`get_if_fresh`, no gate).
-* `unified_search_with_hints` — `src/services/operations/vectors/legacy.rs:2640`
-  (`get_if_fresh`, no gate).
+* `unified_search_with_tenant_context`
+* `unified_search_with_hints`
+* `execute_search_internal`
 
-This is **pre-existing** (independent of ADR-051; the v1 core path
-`unified_search_v1_inner` is the one that gates). Action:
-1. Audit whether either path actually receives Strong reads on a live route (if
-   neither does, downgrade to a doc note).
-2. If so, extend the same LSN gate (`get_if_fresh_v1_at_lsn` +
-   `cache_with_dependencies_v1_at_lsn`, added in ADR-051 D2) to those sites, or
-   route them through the gated core.
+**Fix (landed):** each now gates the cache read on freshness — **Strong reads
+bypass the query cache** (recompute); only `StaleOk` / `BoundedStale` may be
+served a cached entry. Same invariant the ADR-051 D2 primary path enforces.
+Minimal-correct over full D2 LSN-caching: these are secondary paths, and bypass
+is the obviously-safe close of the gap (LSN-caching them for the repeated-query
+benefit is a possible later perf follow-up, not correctness).
+
+Test: `strong_read_bypasses_query_cache_on_tenant_context_path` seeds the cache
+with a sentinel and asserts a `StaleOk` read is served it while a `Strong` read
+bypasses it (runs via `cargo nextest run --lib` — gated on any `src/` change).
 
 == Done when
 

@@ -2067,8 +2067,19 @@ impl VectorOperationsService {
             filter_str.as_deref(),
         );
 
-        // Check cache first
-        if let Some(cached) = self.query_cache.get_if_fresh(&cache_key, 300).await {
+        // Only non-Strong (StaleOk / BoundedStale) reads may use the query
+        // cache — a Strong read could be served an entry that predates a
+        // concurrent write, violating read-after-write. Gate the cache read on
+        // freshness (mirrors unified_search_v1_inner); Strong reads recompute.
+        let freshness_mode = config
+            .as_ref()
+            .and_then(|c| c.freshness_mode.clone())
+            .unwrap_or_default();
+        if !matches!(
+            freshness_mode,
+            crate::core::search::VectorFreshnessMode::Strong
+        ) && let Some(cached) = self.query_cache.get_if_fresh(&cache_key, 300).await
+        {
             debug!(
                 "✅ Cache hit for unified search in collection {}",
                 collection_id
@@ -2662,7 +2673,17 @@ impl VectorOperationsService {
             filter_str.as_deref(),
         );
         let mut hints = SearchPlanHints::default();
-        if let Some(cached) = self.query_cache.get_if_fresh(&cache_key, 300).await {
+        // Strong reads bypass the query cache (read-after-write); only
+        // StaleOk / BoundedStale may be served a cached entry.
+        let freshness_mode = config
+            .as_ref()
+            .and_then(|c| c.freshness_mode.clone())
+            .unwrap_or_default();
+        if !matches!(
+            freshness_mode,
+            crate::core::search::VectorFreshnessMode::Strong
+        ) && let Some(cached) = self.query_cache.get_if_fresh(&cache_key, 300).await
+        {
             hints.cache_hit = true;
             return Ok((cached, hints));
         }
@@ -2791,8 +2812,14 @@ impl VectorOperationsService {
             filter_str.as_deref(),
         );
 
-        // Check cache first (5 minute TTL)
-        if let Some(cached_results) = self.query_cache.get_if_fresh(&cache_key, 300).await {
+        // Check cache first (5 minute TTL). Strong reads bypass the cache —
+        // a cached entry could predate a concurrent write (read-after-write);
+        // only StaleOk / BoundedStale may be served from it.
+        if !matches!(
+            freshness_mode,
+            crate::core::search::VectorFreshnessMode::Strong
+        ) && let Some(cached_results) = self.query_cache.get_if_fresh(&cache_key, 300).await
+        {
             debug!("✅ Cache hit for query in collection {}", collection_id);
             return Ok(cached_results);
         }
@@ -4846,6 +4873,98 @@ mod index_first_search_tests {
         assert!(
             err.to_string()
                 .contains("Query vector has dimension 2 but collection 'validation-collection' expects dimension 3")
+        );
+    }
+
+    // Part B (TD-STRONG-1): the secondary search entry points must respect
+    // freshness — a Strong read must NOT be served a query-cache entry that
+    // predates a write. Seed a sentinel the real search never returns: a StaleOk
+    // read is served it (proving the cache is consulted), a Strong read bypasses
+    // it (read-after-write). Same gate now applies to unified_search_with_hints
+    // and execute_search_internal.
+    #[tokio::test]
+    async fn strong_read_bypasses_query_cache_on_tenant_context_path() {
+        let (service, _temp_dir) = create_test_service().await.unwrap();
+        cache_test_collection(&service, "freshness-coll", 3);
+        service
+            .insert_records_with_tenant_context(
+                "freshness-coll",
+                vec![record_with_vector("real-1", vec![1.0, 2.0, 3.0])],
+                None,
+            )
+            .await
+            .unwrap();
+
+        let qv = vec![1.0f32, 2.0, 3.0];
+        let k = 5usize;
+        let cache_key = crate::storage::cache::specialized::query_cache::QueryKey::new(
+            "freshness-coll".to_string(),
+            &qv,
+            k as u32,
+            None,
+        );
+        // A sentinel the real search can never produce — marked via the
+        // response wrapper's `collection_id` field (v1 SearchResult is a
+        // {results, total_found, collection_id} envelope, not a record).
+        let stale = crate::proto::proximadb_v1::SearchResult {
+            results: Vec::new(),
+            total_found: 0,
+            collection_id: Some("SENTINEL-MARKER".to_string()),
+        };
+        service
+            .query_cache
+            .cache_with_dependencies(cache_key, vec![stale], Vec::new())
+            .await;
+
+        let mut stale_ok =
+            crate::services::operations::vectors::config::UnifiedSearchConfig::default();
+        stale_ok.freshness_mode = Some(crate::core::search::VectorFreshnessMode::StaleOk);
+        let mut strong =
+            crate::services::operations::vectors::config::UnifiedSearchConfig::default();
+        strong.freshness_mode = Some(crate::core::search::VectorFreshnessMode::Strong);
+
+        // StaleOk is served the seeded (stale) cache entry.
+        let served = service
+            .unified_search_with_tenant_context(
+                "freshness-coll",
+                qv.clone(),
+                k,
+                None,
+                Some(stale_ok),
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(
+            served
+                .iter()
+                .any(|r| r.collection_id.as_deref() == Some("SENTINEL-MARKER")),
+            "StaleOk read should be served the cached entry (proves the cache is consulted)"
+        );
+
+        // Strong bypasses the cache. It then runs the real search, which may
+        // error in this minimal harness — that's fine: the invariant is that a
+        // Strong read must NOT be served the seeded sentinel. If the gate were
+        // broken, `fresh` would be Ok([sentinel]); a bypass yields either Err or
+        // Ok(real-results-without-sentinel).
+        let fresh = service
+            .unified_search_with_tenant_context(
+                "freshness-coll",
+                qv.clone(),
+                k,
+                None,
+                Some(strong),
+                None,
+            )
+            .await;
+        let served_stale = matches!(
+            &fresh,
+            Ok(v) if v.iter().any(|r| r.collection_id.as_deref() == Some("SENTINEL-MARKER"))
+        );
+        assert!(
+            !served_stale,
+            "Strong read must bypass the stale cache entry (read-after-write); got Ok len {:?}",
+            fresh.as_ref().map(|v| v.len())
         );
     }
 
