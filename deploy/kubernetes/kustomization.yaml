@@ -16,5 +16,5 @@ commonLabels:
   app.kubernetes.io/managed-by: kustomize
 
 images:
-  - name: proximadb/proximadb
+  - name: vjsingh1984/proximadb
     newTag: "0.2.0"

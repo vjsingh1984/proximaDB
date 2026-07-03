@@ -26,7 +26,7 @@ Developer-first documentation for building multi-model applications on ProximaDB
 
 | link:00-product/VISION.adoc[Vision] | "The Context Database" — category definition, design principles, 3-year horizon
 | link:00-product/PRD.adoc[PRD] | MoSCoW feature requirements, quality targets, release milestones
-| link:00-product/COMPETITIVE_LANDSCAPE.adoc[Competitive Landscape] | Market sizing, competitor matrices, SWOT, positioning
+| link:00-product/COMPETITIVE_LANDSCAPE.adoc[Competitive Landscape] | Category comparison + honest positioning vs. adjacent systems (defers to SUPPORTED_SURFACE)
 |===
 
 ProximaDB development follows four phases:
