@@ -36,9 +36,14 @@ Each vertical directory holds three things:
 [cols="1,3"]
 |===
 | `generate_data.py` | A deterministic, **stdlib-only** synthetic dataset generator — no network, no proprietary data (these are public-site demos). Seeded, so it is reproducible.
-| `copilot_demo.py`      | A **self-contained, runnable** copilot transcript. It runs the analysis locally so it always works in a talk or on the site, and prints, per step, the equivalent ProximaDB SDK / MCP operation for the production path.
-| `README.adoc`      | The site narrative + the production wiring (ProximaDB SDK + the MCP tools) + the AnvaiOps governance framing.
+| `copilot_live.py`  | The **verified** copilot — issues real ProximaDB v2 REST calls against a running engine (a code-aligned Docker image, data mounted) and prints each call. This is the "it actually ran through the product" artifact.
+| `copilot_demo.py`  | A **self-contained** offline transcript. Runs the analysis locally (no server) so it always works in a talk, and prints the equivalent ProximaDB operation per step.
+| `README.adoc`      | The site narrative + the Docker run + production wiring + the AnvaiOps governance framing.
 |===
+
+NOTE: build the image from the *same* commit as the demo (`cargo build --release -p
+proximadb-server` → `docker build -f Dockerfile.prebuilt -t proximadb:develop .`) so
+the v2 API the demo calls matches the engine — a published/older image can drift.
 
 Two design rules keep them honest and safe:
 
