@@ -186,6 +186,11 @@ jobs:
               - 'src/query/**'
               - 'tests/*query*'
               - 'tests/*federated*'
+              # The unflushed-tail search path feeds vector recall — changes here
+              # must run the recall+leaks E2E (vector_ann_recall_e2e) in the query
+              # integration job, which the storage-only filter would otherwise miss.
+              - 'src/storage/persistence/write_ahead_log/**'
+              - 'src/storage/memtable/**'
             storage_changes:
               - 'src/storage/**'
               - 'tests/*storage*'

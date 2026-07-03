@@ -665,23 +665,21 @@ impl WALBehaviorWrapper {
         let unflushed_batches = unflushed_batch_refs
             .into_iter()
             .map(|batch_ref| {
-                // Create a new batch, handling bloom filter properly
-                let mut new_batch = WALVectorBatch {
+                // ZERO-COPY records (Arc) + REUSE the bloom filter built once at
+                // ingest instead of rebuilding it on every read. The old code set
+                // the filter to None then re-hashed every record×prop via
+                // create_bloom_filter() on each call — wasted work that the
+                // no-metadata-filter search path (the common vector search)
+                // discards entirely, and a per-query allocation source under
+                // concurrency. Cloning copies the bitset, not the records.
+                WALVectorBatch {
                     batch_id: batch_ref.batch_id,
                     vector_records: batch_ref.vector_records.clone(), // Arc clone (pointer copy)
                     timestamp: batch_ref.timestamp,
                     total_size_bytes: batch_ref.total_size_bytes,
                     is_flushed: batch_ref.is_flushed,
-                    metadata_bloom_filter: None, // Will recreate if needed
-                };
-
-                // Recreate bloom filter if it exists
-                if batch_ref.metadata_bloom_filter.is_some() {
-                    // Create bloom filter from the batch's vector records
-                    let _ = new_batch.create_bloom_filter();
+                    metadata_bloom_filter: batch_ref.metadata_bloom_filter.clone(),
                 }
-
-                new_batch
             })
             .collect();
 
