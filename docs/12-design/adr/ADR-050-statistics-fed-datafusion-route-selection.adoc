@@ -109,8 +109,8 @@ while keeping metering off the planning path.
   vector leg. Its concurrency behavior is governed by the ADR-011 `AnnFilteringMode`
   **default `PostFilter`** (`legacy.rs:2958`), the SST block-skip / object-store-GET cost
   (TD-096, "≈ full scan on diffuse data"), and index-policy routing (ADR-028) — plus the
-  fail-open short-read (TD-064) and deferred per-collection filtering policy (TD-069).
-  Fixing it is ADR-011 / ADR-028 + TD-064 / TD-069 work. **Framing it as a DataFusion
+  fail-open short-read (TD-064) and deferred per-collection filtering policy (TD-073).
+  Fixing it is ADR-011 / ADR-028 + TD-064 / TD-073 work. **Framing it as a DataFusion
   problem mis-diagnoses the code**; this ADR names the boundary so that mistake is not made.
 * **Expression / predicate-eval correctness is ADR-043's**, not re-decided here (the four
   cast mechanisms, silent-drop-on-eval-error, one-function-per-binding). D2 supplies
@@ -157,5 +157,5 @@ while keeping metering off the planning path.
 * `src/datafusion/schema_inference.rs` — the `ColumnStatistics::new_unknown()` stub D2 replaces.
 * ADR-039 (OLAP boundary), ADR-042 (SegmentStatistics contract), ADR-033/TD-161 (Parquet interim),
   ADR-034/ADR-030 (route cost + trace/meter), ADR-038 (freshness floor), ADR-046 (LSN-coherent merge).
-* ADR-011 / ADR-028 / TD-064 / TD-069 / TD-096 — the typed-vector-search scan cost (explicitly
+* ADR-011 / ADR-028 / TD-064 / TD-073 / TD-096 — the typed-vector-search scan cost (explicitly
   out of scope; see Non-goals).
