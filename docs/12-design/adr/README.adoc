@@ -179,6 +179,11 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Statistics-fed cost-based routing into the DataFusion OLAP arm
 | Proposed
 | Activates ADR-039's *declared-but-inert* DataFusion arm and makes its planning cost-based. Two moves: (1) `ComputeScheduler::route_select` stops hardcoding `Native(Volcano)` and routes analytical scan/join/aggregate over Parquet-backed tables to `DataFusionLocal` above a cost crossover (`SET compute_engine` override; strong-freshness stays Volcano) — realizes TD-115; (2) `schema_inference` feeds real DataFusion `ColumnStatistics` by projecting the ADR-042 mergeable `SegmentStatistics` (min/max/distinct/null) instead of `new_unknown()` — cost-based planning with **zero new scan**, the ADR-042 spine's second consumer. Stats are freshness-bounded hints (ADR-038) and calibrated by observed cost (ADR-030/034); the swap invariant (ADR-039) is preserved. **Explicitly disclaims the typed-vector-search scan cost** (#634 → ADR-011/028 + TD-064/073/096), which never enters DataFusion. Tracked: TD-115, TD-DFR-1
+
+| link:ADR-051-strong-freshness-default-cheap-under-concurrency.adoc[ADR-051]
+| Strong freshness stays the read default; make it cheap under concurrency
+| Proposed
+| Answers "should typed `/search` stop defaulting to Strong?" — **no.** D1: Strong stays the default (a deliberate, test-asserted read-after-write contract, `default()==Strong`, added because an INSERT→SEARCH visibility gap was a prod bug; matches turbopuffer); weakening globally is rejected — per-collection opt-out is TD-074. D2 (**implemented**): make Strong *cheap* by LSN-pinning cache eligibility — Strong reads (formerly 100% cache-bypassed) may serve a cached entry iff `computed_at_lsn == current_lsn`; any write advances the LSN (miss→recompute) AND evicts the collection, so read-after-write is preserved (belt-and-suspenders). Fixes repeated-query Strong concurrency. D3 (designed → TD-STRONG-1): per-`(collection,lsn)` shared WAL-tail scan for the distinct-query case (the #634 benchmark). **Disclaims** the SST directory-side scan cost (TD-096, the other #634 term). Tracked: TD-STRONG-1
 |===
 
 NOTE: ADR-010 through ADR-013 and ADR-048/ADR-049 exist in this directory but
