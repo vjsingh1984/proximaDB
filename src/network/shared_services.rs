@@ -126,6 +126,11 @@ pub struct SharedServices {
     pub observability_service: Arc<crate::observability::ObservabilityService>,
     /// Unified request handlers shared across all protocol layers
     pub request_handlers: Arc<UnifiedHandlers>,
+    /// ADR-022 auditable event log (append-only trail). The same
+    /// `Arc<EventLogEngine>` handed to the unified handlers; exposed here so
+    /// in-process surfaces (e.g. the reference MCP `event` tool) can append
+    /// directly. `None` when the engine failed to initialize.
+    pub event_log: Option<Arc<crate::storage::engines::eventlog::EventLogEngine>>,
     /// Optional metrics collector for Prometheus/monitoring integration
     pub metrics_collector: Option<Arc<MetricsCollector>>,
     /// Optional internal metrics updater for background metric publishing
@@ -1764,7 +1769,7 @@ impl SharedServices {
             vector_operations_service.clone(),
             document_service.clone(),
             observability_service.clone(),
-            event_log,
+            event_log.clone(),
             graph_collection_service.clone(), // SHARED instance
             graph_service.clone(),            // Concrete native graph operations service
         );
@@ -2385,6 +2390,7 @@ impl SharedServices {
                 document_service: document_service.clone(),
                 observability_service: observability_service.clone(),
                 request_handlers: request_handlers.clone(),
+                event_log,
                 metrics_collector,
                 metrics_updater: metrics_updater.clone(),
                 query_facade,

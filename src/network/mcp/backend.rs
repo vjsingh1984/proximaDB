@@ -6,23 +6,29 @@
 //! calling them **directly** (no REST/gRPC self-hop): catalog list/describe via
 //! [`ApiHandlersPort`], the statistics envelope via the resident
 //! `statistics_registry`, and explain/search via the [`UnifiedQueryPort`] (which
-//! already returns `serde_json::Value`). The agent-state tools
-//! (`memory`/`checkpoint`/`event`) are deferred to Stage 2 (threading
-//! `AgenticGrpcBackend` into `AppState`) — they return an explicit "not yet
-//! wired in-process" rather than fabricate.
+//! already returns `serde_json::Value`). The `event` tool appends to the ADR-022
+//! auditable `EventLogEngine` (shared from `SharedServices`). The remaining
+//! agent-state tools (`memory`/`checkpoint`) need a wired production agentic
+//! backend (see TD-MCP-1; memory ingest is LLM-gated, TD-101) — they return an
+//! explicit "not yet wired in-process" rather than fabricate.
 
 use crate::core::statistics::{StatisticsSummary, statistics_registry};
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
+use crate::storage::engines::eventlog::{Event, EventLogEngine};
 use async_trait::async_trait;
 use proximadb_mcp::{BackendError, ReferenceBackend};
 use proximadb_runtime::{ApiHandlersPort, UnifiedQueryPort};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A `ReferenceBackend` that calls the engine's in-process services directly.
 pub struct EngineBackend {
     api_handlers: Arc<dyn ApiHandlersPort>,
     query: Option<Arc<dyn UnifiedQueryPort>>,
+    /// ADR-022 auditable event log — backs the `event` tool. `None` disables it
+    /// (the engine failed to initialize), and `event` reports so explicitly.
+    event_log: Option<Arc<EventLogEngine>>,
     /// Tenant the MCP surface operates as. Stage 1 uses a single configured
     /// tenant (or the port default when `None`); per-request tenant scoping from
     /// MCP auth is a later refinement.
@@ -33,11 +39,13 @@ impl EngineBackend {
     pub fn new(
         api_handlers: Arc<dyn ApiHandlersPort>,
         query: Option<Arc<dyn UnifiedQueryPort>>,
+        event_log: Option<Arc<EventLogEngine>>,
         tenant: Option<String>,
     ) -> Self {
         Self {
             api_handlers,
             query,
+            event_log,
             tenant,
         }
     }
@@ -82,8 +90,8 @@ fn query_string(args: &Value) -> Result<String, BackendError> {
 
 fn not_wired(tool: &str) -> BackendError {
     BackendError::internal(format!(
-        "`{tool}` (ADR-022 agent state) is not yet wired in-process; Stage 2 threads \
-         AgenticGrpcBackend into AppState to enable it"
+        "`{tool}` (ADR-022 agent state) is not yet wired in-process — it needs a wired production \
+         agentic backend (see TD-MCP-1); memory ingest is additionally LLM-gated (TD-101)"
     ))
 }
 
@@ -174,7 +182,43 @@ impl ReferenceBackend for EngineBackend {
     async fn checkpoint(&self, _args: &Value) -> Result<Value, BackendError> {
         Err(not_wired("checkpoint"))
     }
-    async fn event(&self, _args: &Value) -> Result<Value, BackendError> {
-        Err(not_wired("event"))
+    async fn event(&self, args: &Value) -> Result<Value, BackendError> {
+        let log = self.event_log.as_ref().ok_or_else(|| {
+            BackendError::internal(
+                "event log unavailable (EventLogEngine failed to initialize)".to_string(),
+            )
+        })?;
+        // The entity/stream the event belongs to (accept `entity_id`, else `collection_id`).
+        let entity_id =
+            require_str(args, "entity_id").or_else(|_| require_str(args, "collection_id"))?;
+        let event_type = require_str(args, "event_type")?;
+        let data = args.get("data").cloned().unwrap_or(Value::Null);
+        let metadata = match args.get("metadata") {
+            Some(Value::Object(m)) => m.clone().into_iter().collect::<HashMap<String, Value>>(),
+            _ => HashMap::new(),
+        };
+        let causation_id = args
+            .get("causation_id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let event = Event {
+            sequence: 0, // assigned by append_event
+            entity_id,
+            event_type,
+            data,
+            timestamp: chrono::Utc::now(),
+            causation_id,
+            metadata,
+        };
+        let appended = log
+            .append_event(event)
+            .await
+            .map_err(|e| BackendError::internal(format!("append_event failed: {e}")))?;
+        Ok(json!({
+            "sequence": appended.sequence,
+            "entity_id": appended.entity_id,
+            "event_type": appended.event_type,
+            "timestamp": appended.timestamp.to_rfc3339(),
+        }))
     }
 }

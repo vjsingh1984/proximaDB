@@ -154,8 +154,21 @@ pub fn reference_tools() -> Vec<Tool> {
         },
         Tool {
             name: tool_name::EVENT.to_string(),
-            description: "Agent event log: append or list events (ADR-022).".to_string(),
-            input_schema: json!({ "type": "object", "additionalProperties": true }),
+            description: "Agent event log: append an event to the ADR-022 auditable trail."
+                .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "required": ["event_type"],
+                "properties": {
+                    "entity_id": { "type": "string", "description": "Entity/stream the event belongs to. Falls back to `collection_id` if omitted." },
+                    "collection_id": { "type": "string", "description": "Used as the entity/stream when `entity_id` is absent." },
+                    "event_type": { "type": "string", "description": "Event type/name." },
+                    "data": { "description": "Event payload (any JSON value)." },
+                    "metadata": { "type": "object", "description": "Optional key/value metadata." },
+                    "causation_id": { "type": "string", "description": "Optional id of the causing event." }
+                },
+                "additionalProperties": true
+            }),
         },
     ]
 }
