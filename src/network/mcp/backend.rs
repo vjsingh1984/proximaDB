@@ -7,15 +7,21 @@
 //! [`ApiHandlersPort`], the statistics envelope via the resident
 //! `statistics_registry`, and explain/search via the [`UnifiedQueryPort`] (which
 //! already returns `serde_json::Value`). The `event` tool appends to the ADR-022
-//! auditable `EventLogEngine` (shared from `SharedServices`). The remaining
-//! agent-state tools (`memory`/`checkpoint`) need a wired production agentic
-//! backend (see TD-MCP-1; memory ingest is LLM-gated, TD-101) — they return an
-//! explicit "not yet wired in-process" rather than fabricate.
+//! auditable `EventLogEngine`, and `memory` runs a scoped semantic search (read)
+//! over agent memory via a `VectorMemoryStore` — both shared from
+//! `SharedServices`. Memory *store*/put is LLM-gated (TD-101), and `checkpoint`
+//! needs a wired production backend (TD-MCP-1) — those return an explicit "not
+//! yet wired in-process" rather than fabricate.
 
 use crate::core::statistics::{StatisticsSummary, statistics_registry};
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
+use crate::services::VectorOperationsService;
+use crate::services::agent_memory::{
+    EmbeddingServiceEmbedder, ExtractedFact, MemoryStore, MemoryWriteScope, VectorMemoryStore,
+};
 use crate::storage::engines::eventlog::{Event, EventLogEngine};
 use async_trait::async_trait;
+use proximadb_data_model::MemoryType;
 use proximadb_mcp::{BackendError, ReferenceBackend};
 use proximadb_runtime::{ApiHandlersPort, UnifiedQueryPort};
 use serde_json::{Value, json};
@@ -29,6 +35,9 @@ pub struct EngineBackend {
     /// ADR-022 auditable event log — backs the `event` tool. `None` disables it
     /// (the engine failed to initialize), and `event` reports so explicitly.
     event_log: Option<Arc<EventLogEngine>>,
+    /// Vector operations service — backs the `memory` search (read) tool via a
+    /// `VectorMemoryStore`. `None` disables it.
+    vector_ops: Option<Arc<VectorOperationsService>>,
     /// Tenant the MCP surface operates as. Stage 1 uses a single configured
     /// tenant (or the port default when `None`); per-request tenant scoping from
     /// MCP auth is a later refinement.
@@ -40,12 +49,14 @@ impl EngineBackend {
         api_handlers: Arc<dyn ApiHandlersPort>,
         query: Option<Arc<dyn UnifiedQueryPort>>,
         event_log: Option<Arc<EventLogEngine>>,
+        vector_ops: Option<Arc<VectorOperationsService>>,
         tenant: Option<String>,
     ) -> Self {
         Self {
             api_handlers,
             query,
             event_log,
+            vector_ops,
             tenant,
         }
     }
@@ -90,8 +101,8 @@ fn query_string(args: &Value) -> Result<String, BackendError> {
 
 fn not_wired(tool: &str) -> BackendError {
     BackendError::internal(format!(
-        "`{tool}` (ADR-022 agent state) is not yet wired in-process — it needs a wired production \
-         agentic backend (see TD-MCP-1); memory ingest is additionally LLM-gated (TD-101)"
+        "`{tool}` (ADR-022 agent state) is not yet wired in-process — it needs a server-composed \
+         backend/store (see TD-MCP-1; the checkpoint store is embedded-only today)"
     ))
 }
 
@@ -176,8 +187,68 @@ impl ReferenceBackend for EngineBackend {
             .map_err(|e| BackendError::internal(format!("search failed: {e}")))
     }
 
-    async fn memory(&self, _args: &Value) -> Result<Value, BackendError> {
-        Err(not_wired("memory"))
+    async fn memory(&self, args: &Value) -> Result<Value, BackendError> {
+        // MCP-1b: semantic search (read) over agent memory via `VectorMemoryStore`
+        // (embeds the query, scoped vector search). Store/put is LLM-gated
+        // (TD-101) and remains unwired.
+        let vector_ops = self.vector_ops.as_ref().ok_or_else(|| {
+            BackendError::internal("vector operations service unavailable".to_string())
+        })?;
+        let collection = require_str(args, "collection_id")?;
+        let query = require_str(args, "query")?;
+        // Fail-closed: memory search MUST be tenant-scoped (shared-collection
+        // isolation), mirroring `MemoryAqlSource`.
+        let tenant_id = args
+            .get("tenant_id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| self.tenant.clone())
+            .filter(|t| !t.trim().is_empty())
+            .ok_or_else(|| {
+                BackendError::not_found(
+                    "memory search requires a non-empty `tenant_id` (fail-closed isolation)"
+                        .to_string(),
+                )
+            })?;
+        let session_id = args
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let actor = args
+            .get("actor")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let k = args.get("k").and_then(Value::as_u64).unwrap_or(10) as usize;
+
+        let store = VectorMemoryStore::new(vector_ops.clone(), Arc::new(EmbeddingServiceEmbedder));
+        let scope = MemoryWriteScope {
+            collection,
+            tenant_id,
+            actor,
+            session_id,
+        };
+        let fact = ExtractedFact {
+            text: query,
+            memory_type: MemoryType::Fact,
+        };
+        let hits = store
+            .retrieve_similar(&scope, &fact, k)
+            .await
+            .map_err(|e| BackendError::internal(format!("memory search failed: {e}")))?;
+        let items: Vec<Value> = hits
+            .into_iter()
+            .map(|h| {
+                json!({
+                    "id": h.id,
+                    "text": h.text,
+                    "score": h.score,
+                    "memory_type": h.memory_type.map(|t| format!("{t:?}")),
+                })
+            })
+            .collect();
+        Ok(json!({ "hits": items }))
     }
     async fn checkpoint(&self, _args: &Value) -> Result<Value, BackendError> {
         Err(not_wired("checkpoint"))

@@ -408,6 +408,7 @@ impl MultiServer {
             svc.api_handlers.clone(),
             Some(query_port),
             svc.event_log.clone(),
+            Some(svc.vector_operations_service.clone()),
             None,
         ));
         let addr = SocketAddr::new(self.config.http_bind_address().ip(), mcp_port);
