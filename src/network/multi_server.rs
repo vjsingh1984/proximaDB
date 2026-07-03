@@ -407,6 +407,7 @@ impl MultiServer {
         let backend = Arc::new(crate::network::mcp::EngineBackend::new(
             svc.api_handlers.clone(),
             Some(query_port),
+            svc.event_log.clone(),
             None,
         ));
         let addr = SocketAddr::new(self.config.http_bind_address().ip(), mcp_port);
