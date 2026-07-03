@@ -59,8 +59,9 @@ When changing a storage format, reader, codec, cache, or engine you MUST:
 - **Multi-Engine Storage:** SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR.
 
 ## 📂 Project Organization
-- `src/`: Core Rust crates (storage, graph, query, vector, api_handlers).
-- `src/bin/`: Main binaries (server, bench, migrate).
+- `src/`: Core Rust library crate (storage, graph, query, vector, api_handlers).
+- `apps/`: Main binaries (proximadb-server, bench, ann-bench, migrate, vectordb-compare).
+- `crates/`: Layered workspace crates (foundation → horizontal → storage/query/modalities → control/platform).
 - `tests/`: Integration, regression, and WAL persistence tests.
 - `benches/`: Performance benchmarks (Criterion).
 - `clients/`: SDKs for Python (PyO3/C FFI), Go, Java, and Node.js.
