@@ -268,6 +268,12 @@ class ProximaRecordServiceServicer(object):
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
 
+    def GetRecord(self, request, context):
+        """Point record get-by-id (v2 parity with v1 VectorService.VectorGet)"""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
 
 def add_ProximaRecordServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
