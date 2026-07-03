@@ -1,0 +1,63 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-STRONG-1: Strong-read concurrency follow-ups — shared WAL-tail pool + ungated cache sites
+
+[cols="1,3"]
+|===
+|Status|Open
+|Priority|MED
+|Scope|PERF + SEC
+|Date|2026-07-02
+|Relates to|ADR-051 (Strong stays default; D2 LSN-pinned cache landed, this tracks D3), TD-096 (SST block-skip — the other #634 term), TD-074 (per-collection freshness)
+|===
+
+== Context
+
+ADR-051 D2 made **repeated** Strong queries cache-eligible (LSN-pinned). Two
+items remain to make Strong fully cheap and fully correct under concurrency.
+
+== Part A — Per-(collection, LSN) shared WAL-tail candidate pool (PERF, ADR-051 D3)
+
+The #634 concurrency collapse was measured with **all-distinct** query vectors,
+which the D2 cache does not help. At a fixed LSN the unflushed WAL tail is
+immutable, yet every concurrent Strong read re-runs `get_unflushed_batches` +
+the linear scan independently (`src/storage/persistence/write_ahead_log/mod.rs:2396`,
+via `scan_wal_delta_if_needed`, `legacy.rs:1662`).
+
+*Sketch:* memoize the tail candidate retrieval per `(collection, lsn)` so N
+concurrent same-LSN reads share one batch retrieval/scan; the per-query distance
+computation stays per-query. Bound the memo by memory; invalidate on LSN advance
+(write) and on flush (tail shrinks — the memo for the old LSN is simply dropped).
+Single-flight the population so a thundering herd collapses to one scan.
+
+*Why deferred:* restructures the hot WAL-visibility path; needs careful
+concurrency (single-flight + lifecycle), a memory bound, and the full
+`vector_ann_recall`/`postflush` integration suites to prove no visibility
+regression.
+
+== Part B — Close the ungated query-cache read sites (SEC/correctness)
+
+Two query-cache read sites carry **no freshness gate** — they serve any
+TTL-fresh entry regardless of `VectorFreshnessMode`, so a Strong read routed
+through them could be served a result that predates a write:
+
+* `unified_search_with_tenant_context` — `src/services/operations/vectors/legacy.rs:2071`
+  (`get_if_fresh`, no gate).
+* `unified_search_with_hints` — `src/services/operations/vectors/legacy.rs:2640`
+  (`get_if_fresh`, no gate).
+
+This is **pre-existing** (independent of ADR-051; the v1 core path
+`unified_search_v1_inner` is the one that gates). Action:
+1. Audit whether either path actually receives Strong reads on a live route (if
+   neither does, downgrade to a doc note).
+2. If so, extend the same LSN gate (`get_if_fresh_v1_at_lsn` +
+   `cache_with_dependencies_v1_at_lsn`, added in ADR-051 D2) to those sites, or
+   route them through the gated core.
+
+== Done when
+
+* Part A: concurrent distinct same-LSN Strong reads share one tail scan; a
+  concurrency benchmark shows the p99-under-load term from the WAL delta removed;
+  recall/visibility suites green.
+* Part B: every query-cache read site that can serve a Strong read validates the
+  LSN (no stale-under-Strong path), asserted by a test.

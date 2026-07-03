@@ -2120,6 +2120,7 @@ impl VectorOperationsService {
             results: results.clone(),
             cached_at: std::time::SystemTime::now(),
             file_dependencies: Vec::new(), // No specific file dependencies for this query
+            computed_at_lsn: 0, // non-LSN-aware path (unified_search_with_tenant_context)
         };
         self.query_cache
             .put_with_hooks(cache_key, cached_result)
@@ -2276,20 +2277,40 @@ impl VectorOperationsService {
             k as u32,
             filter_str.as_deref(),
         );
-        // Strong-freshness reads must NEVER be served from the query cache —
-        // a cached result could predate a concurrent write and violate
-        // read-after-write. Only non-Strong (StaleOk / BoundedStale) reads
-        // may use the cache. Extract freshness here (before the cache check)
-        // so the gate is correct.
+        // Freshness gate for the query cache. Extract freshness here (before
+        // the cache check) so the gate is correct.
         let freshness_mode = config
             .as_ref()
             .and_then(|c| c.freshness_mode.clone())
             .unwrap_or_default();
-        if !matches!(
+        let is_strong = matches!(
             freshness_mode,
             crate::core::search::VectorFreshnessMode::Strong
-        ) && let Some(cached_v1) = self.query_cache.get_if_fresh_v1(&cache_key, 300).await
+        );
+        // Snapshot the canonical-WAL LSN once, up front — the anchor for both
+        // the Strong cache-read validity check and the cache-write stamp below.
+        // Cheap in-memory singleton read (same source the delta-merge uses).
+        let query_lsn = match crate::storage::persistence::write_ahead_log::manifest::get_service()
         {
+            Some(svc) => svc.current_lsn().await,
+            None => 0,
+        };
+        // Non-Strong (StaleOk / BoundedStale) reads use the TTL cache as before.
+        // Strong reads are cache-eligible ONLY when the cached entry was computed
+        // at the CURRENT LSN — i.e. no write has landed since, so read-after-write
+        // still holds. Any write both advances the LSN (→ miss → recompute) AND
+        // evicts the collection's entries (CacheInvalidationCoordinator), so a
+        // Strong read never serves a stale result. `query_lsn == 0` (LSN tracking
+        // unavailable) is never a Strong hit — it recomputes, matching the
+        // delta-merge's "scan anyway when the LSN is unknown" guard.
+        let cache_hit = if is_strong {
+            self.query_cache
+                .get_if_fresh_v1_at_lsn(&cache_key, 300, query_lsn)
+                .await
+        } else {
+            self.query_cache.get_if_fresh_v1(&cache_key, 300).await
+        };
+        if let Some(cached_v1) = cache_hit {
             // Phase 7.2: a process-local cache hit is the strongest
             // possible signal that this node owns the warm path for
             // the collection — record affinity here too.
@@ -2374,9 +2395,13 @@ impl VectorOperationsService {
         let v1_results =
             vec![self.optimized_results_to_proto_v1(merged_results, collection_id, true)];
 
-        // Cache v1 (via legacy conversion) for reuse
+        // Cache v1 (via legacy conversion) for reuse, stamped with the LSN this
+        // result was computed at so a later Strong read can validate it. If a
+        // write raced in during the search, the LSN has advanced past query_lsn,
+        // so this entry simply won't be served to a later Strong read (it will
+        // recompute) — conservative, never a stale hit.
         self.query_cache
-            .cache_with_dependencies_v1(cache_key, v1_results.clone(), Vec::new())
+            .cache_with_dependencies_v1_at_lsn(cache_key, v1_results.clone(), Vec::new(), query_lsn)
             .await;
 
         // Phase 7.2: record affinity on a successful v1 search.
