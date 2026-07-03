@@ -31,14 +31,12 @@ pub mod optimizer;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::engines::core::formats::arrow_block::{ArrowBlockConfig, ArrowBlockWriter};
 use crate::storage::engines::sst::block_format::BlockFormat;
 use crate::storage::engines::sst::utils::SortingStats;
-use crate::storage::engines::sst::writer::SstableWriter;
 use crate::storage::engines::sst::{SstEngine, SstError};
 use crate::storage::traits::{FlushParameters, FlushResult};
 use crate::storage::transaction_coordinator::{StagingConfig, TransactionStageType};
@@ -149,46 +147,28 @@ impl SstEngine {
 
         // Generate SSTable filename with appropriate extension based on block format
         let codec = FilenameCodec::new();
-        let mut block_format = BlockFormat::parse_block_format(&self.config().block_format);
-        // P3 Phase B / Phase C / M1-1b (ADR-049): PAX vector segments are the
-        // DEFAULT write format. Reads stay mixed-format-safe — see
-        // `segment_format::mixed_format_legacy_and_pax_segments_coexist_and_read_back`
-        // — and the search path's exact PAX scan (`search_pax_file_exact`) makes a
-        // `.pax` file searchable under every metric/quant, so existing
-        // ProximaBlocks segments still read back AND every new `.pax` segment is
-        // queryable. The default-on flip is gated by the develop→qa recall ratchet
-        // (qa-gate `pax-recall-ratchet`, recall@10 >= 0.90 at N=100k, met by the
-        // default RaBitQ pool=1000); the deeper mandate-#8 sign-off is the WS8
-        // N=1M canonical recall artifact.
-        //
-        // Resolution (escape hatches — see `resolve_pax_segments_enabled`):
-        //   1. Global kill-switch `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE` forces
-        //      legacy `.sst` for EVERY collection (the default-on reversal valve).
-        //   2. Per-collection `pax_vector_format:off` tag on `CollectionConfig.tags`
-        //      opts a collection back to legacy `.sst` — used by tests that target
-        //      ProximaBlocks-specific scan/flush features (vector-bounds pruning,
-        //      adaptive PCA, Z-order clustering). `on` is redundant under
-        //      default-on (mirrors the `recall_target:` tag convention; stored as a
-        //      tag rather than a typed field because proto regen is manual — see
-        //      collection_types.proto).
-        // The pre-default opt-in envs `PROXIMADB_PAX_VECTOR_SEGMENTS` /
-        // `PROXIMADB_PAX_DEFAULT_ON` are retained for back-compat but no longer
-        // gate the decision (PAX is already the default).
-        if env_truthy(PAX_VECTOR_SEGMENTS_ENV) || env_truthy(PAX_VECTOR_DEFAULT_ON_ENV) {
-            debug!("PAX opt-in env set (redundant: PAX is the default write format)");
-        }
-        if resolve_pax_segments_enabled(
-            env_truthy(PAX_VECTOR_SEGMENTS_DISABLE_ENV),
-            collection_pax_format_tag(params.collection_config.as_ref()),
-            true, // M1-1b (ADR-049): PAX is the default write format.
-        ) {
-            block_format = BlockFormat::PaxBlock;
-        }
-        let file_extension = match block_format {
-            BlockFormat::ArrowBlock => "arrow",
-            BlockFormat::ProximaBlocks => "sst",
-            BlockFormat::PaxBlock => "pax",
-        };
+        // M1-3 (ADR-049): PAX is the ONLY vector write format — the legacy v1
+        // streaming path (`write_sorted_proxima_records` → ProximaBlocks `.sst`) is
+        // retired from flush. A non-Arrow collection ALWAYS writes a `.pax`
+        // segment; the global kill-switch `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE`
+        // and the per-collection `pax_vector_format:off` tag no longer force
+        // legacy `.sst` — they select the recall-exact RawF32 quant instead (see
+        // `resolve_pax_vector_quant`), so such a segment is exact-scan searchable
+        // (`search_pax_file_exact`) rather than RaBitQ-dequantized. ArrowBlock
+        // stays a distinct configured format (`config.block_format = "ArrowBlock"`,
+        // exercised by `arrowblock_full_lifecycle_test`) — orthogonal to the
+        // PAX/streaming retirement. Legacy `.sst` segments still READ back
+        // (mixed-format-safe via magic-byte `is_pax_segment` + the extension /
+        // `read_segment_records` read path).
+        let (block_format, file_extension) =
+            match BlockFormat::parse_block_format(&self.config().block_format) {
+                BlockFormat::ArrowBlock => (BlockFormat::ArrowBlock, "arrow"),
+                // ProximaBlocks config (the default) now writes PAX — streaming is
+                // retired, so the legacy format selection is gone.
+                BlockFormat::ProximaBlocks | BlockFormat::PaxBlock => {
+                    (BlockFormat::PaxBlock, "pax")
+                }
+            };
         let sst_filename = codec.generate(0, file_extension); // Level 0 for flush
         debug!(
             "🔧 SST: Creating {} file: {} for collection: {}",
@@ -331,12 +311,14 @@ impl SstEngine {
         // Count entries for writing
         let entries_written = sorted_vectors.len() as u64;
 
-        // Captured outcome from the underlying writer when ProximaBlocks
-        // format is used. None for ArrowBlock writes (which don't expose
-        // index metadata yet — directory emission stays off for that
-        // branch until ArrowBlockWriter grows an equivalent outcome).
-        let mut write_outcome: Option<crate::storage::engines::sst::writer::SstableWriteOutcome> =
-            None;
+        // Captured outcome from the underlying writer. M1-3 (ADR-049): the only
+        // arm that populated this (legacy ProximaBlocks streaming) is retired, so
+        // it is always `None` today — the object-economy directory emission below
+        // stays dormant until the PAX writer grows an equivalent outcome
+        // (`write_pax_segment_full` returns `PaxSegmentMeta`, not
+        // `SstableWriteOutcome`). Kept wired so the directory hook revives
+        // unchanged when that lands.
+        let write_outcome: Option<crate::storage::engines::sst::writer::SstableWriteOutcome> = None;
 
         match block_format {
             BlockFormat::ArrowBlock => {
@@ -383,58 +365,12 @@ impl SstEngine {
 
                 tracing::debug!("Arrow block write operation completed");
             }
-            BlockFormat::ProximaBlocks => {
-                // Use SstableWriter for ProximaBlocks format
-                let block_size = (self.config().block_size_kb * 1024) as usize;
-
-                // Extract compression config from collection config if available
-                let compression_config = params
-                    .collection_config
-                    .as_ref()
-                    .and_then(|c| c.config.as_ref())
-                    .and_then(|cfg| cfg.storage_config.as_ref())
-                    .and_then(|sc| {
-                        use crate::proto::proximadb_v1::CompressionConfig;
-                        sc.compression.map(|compression_algo| CompressionConfig {
-                            algorithm: compression_algo,
-                            level: Some(6),
-                            adaptive: false,
-                            min_ratio: None,
-                            enable_quantization: false,
-                            quantization_type: None,
-                            normalization_method: None,
-                            block_size_kb: self.config().block_size_kb,
-                            dynamic_block_sizing: false,
-                        })
-                    });
-
-                let writer = SstableWriter::with_compression(
-                    &staging_url,
-                    block_size,
-                    Arc::clone(self.filesystem()),
-                    compression_config,
-                );
-
-                tracing::debug!(entries_written, "Writing vectors to SSTable");
-                if entries_written > 0 {
-                    let sorted_vec = sorted_vectors.clone();
-                    if let Some((id, rec)) = sorted_vec.first() {
-                        tracing::trace!(vector_id = %id, props = ?rec.props, "First record before write");
-                    }
-                }
-
-                let outcome = writer
-                    .write_sorted_proxima_records(
-                        sorted_vectors.into_iter().map(|(_, record)| record),
-                        entries_written as usize,
-                    )
-                    .await
-                    .context("Failed to write vectors to SSTable")?;
-
-                tracing::debug!("SSTable write operation completed");
-                write_outcome = Some(outcome);
-            }
-            BlockFormat::PaxBlock => {
+            // M1-3 (ADR-049): the legacy ProximaBlocks streaming write is retired.
+            // The flush gating above normalizes every non-Arrow collection to
+            // PaxBlock, so ProximaBlocks is unreachable here — it is folded into
+            // the PAX arm so the match stays exhaustive and any future ProximaBlocks
+            // request re-encodes as PAX (mixed-read-safe) rather than streaming.
+            BlockFormat::PaxBlock | BlockFormat::ProximaBlocks => {
                 // P3 Phase B: write a columnar PAX vector segment (flag-gated, default
                 // OFF). Mirrors the Arrow arm's local-staging approach — write to the
                 // local staging path; the atomic op promotes it to the final (possibly
@@ -454,11 +390,13 @@ impl SstEngine {
                     .unwrap_or(1);
                 let records: Vec<_> = sorted_vectors.into_iter().map(|(_, rec)| rec).collect();
                 let collection_id = params.collection_id.as_deref().unwrap_or("default");
-                // P3 Phase D / TD-155 + Phase F: vector-quantization strategy.
-                // Precedence: per-collection pax_vector_quant > env
-                // PROXIMADB_PAX_VECTOR_QUANT > default RaBitQ (Phase F: the
-                // cascade's stage-1 ranks RaBitQ-coded segments). See
-                // `resolve_pax_vector_quant`.
+                // P3 Phase D / TD-155 + Phase F + M1-3: vector-quantization
+                // strategy. Precedence (see `resolve_pax_vector_quant`): kill-switch
+                // / `pax_vector_format:off` → recall-exact RawF32 (M1-3: the legacy
+                // `.sst` escape is gone — RawF32-PAX is exact-scan searchable via
+                // `search_pax_file_exact`); else per-collection `pax_vector_quant` >
+                // env `PROXIMADB_PAX_VECTOR_QUANT` > default RaBitQ (Phase F: the
+                // cascade's stage-1 ranks RaBitQ-coded segments).
                 let quant = resolve_pax_vector_quant(params.collection_config.as_ref());
                 // TD-156 / ADR-026: configurable PAX block geometry. `None` keeps
                 // the writer default; a larger value (e.g. 8-16 MiB for object
@@ -810,25 +748,22 @@ fn tokenize_into(text: &str, out: &mut Vec<String>) {
 }
 
 // ---------------------------------------------------------------------------
-// PAX vector-segment resolution (Phase C escape hatches).
+// PAX vector-segment quant resolution (M1-3 / ADR-049): flush ALWAYS writes PAX;
+// the kill-switch / opt-out below select the recall-exact RawF32 quant, not the
+// retired legacy `.sst` streaming format.
 // ---------------------------------------------------------------------------
 
-/// Explicit per-deployment PAX opt-in env (absent → off).
+/// Explicit per-deployment PAX opt-in env. M1-3: vestigial — PAX is always the
+/// write format now, so this no longer gates anything. Retained for back-compat
+/// (a deployment that still sets it is a no-op, not an error); tests reference it
+/// to keep the process env clean.
 const PAX_VECTOR_SEGMENTS_ENV: &str = "PROXIMADB_PAX_VECTOR_SEGMENTS";
 
-/// Phase F default-on arm. A truthy value makes PAX the DEFAULT segment format
-/// for every collection (unless the kill-switch fires or a collection opts out
-/// via the `pax_vector_format:off` tag) — without needing
-/// `PROXIMADB_PAX_VECTOR_SEGMENTS`. Ships OFF (absent → off) per storage-format
-/// mandate #8 (ship default-OFF one release window, then arm): arming is a
-/// per-deployment env flip (qa/staging first), no release required. The arm is
-/// GATED on the WS8 N=1M canonical recall artifact (qa-gate `sift-pax-recall`).
-const PAX_VECTOR_DEFAULT_ON_ENV: &str = "PROXIMADB_PAX_DEFAULT_ON";
-
-/// Global kill-switch. Any truthy value forces legacy `.sst` for EVERY
-/// collection regardless of the per-collection tag or the default-on flip — the
-/// default-on reversal valve (Phase F safety). Follows the `PROXIMADB_DISABLE_*`
-/// convention (`PROXIMADB_DISABLE_SYSTEM_CATALOG`, `PROXIMADB_DISABLE_WAL`).
+/// Global kill-switch. Any truthy value selects the recall-exact `RawF32` quant
+/// for EVERY collection (M1-3: it used to force legacy `.sst`; with the streaming
+/// write path retired it now means RawF32-PAX, exact-scan searchable via
+/// `search_pax_file_exact`). Follows the `PROXIMADB_DISABLE_*` convention
+/// (`PROXIMADB_DISABLE_SYSTEM_CATALOG`, `PROXIMADB_DISABLE_WAL`).
 const PAX_VECTOR_SEGMENTS_DISABLE_ENV: &str = "PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE";
 
 /// Tag key prefix encoding the per-collection PAX-format override on
@@ -846,11 +781,12 @@ fn env_truthy(key: &str) -> bool {
 }
 
 /// Read the per-collection `pax_vector_format:on|off` tag from
-/// `CollectionConfig.tags`. `Some(true)` opts the collection INTO PAX even when
-/// the global default is off (staged adoption); `Some(false)` opts it OUT
-/// (legacy `.sst`) even when the global default flips on. Unrecognized values
-/// and absence → `None` (defer to the global default). The last matching tag
-/// wins, matching `parse_recall_target`'s last-wins semantics.
+/// `CollectionConfig.tags`. M1-3: `Some(true)` is redundant (PAX is always on);
+/// `Some(false)` opts the collection to the recall-exact `RawF32` quant (it used
+/// to force legacy `.sst`, but the streaming write path is retired — see
+/// `resolve_pax_vector_quant`). Unrecognized values and absence → `None` (defer
+/// to the default quant). The last matching tag wins, matching
+/// `parse_recall_target`'s last-wins semantics.
 fn pax_vector_format_tag(config: &crate::proto::proximadb_v1::CollectionConfig) -> Option<bool> {
     let mut latest: Option<bool> = None;
     for tag in &config.tags {
@@ -875,31 +811,29 @@ fn collection_pax_format_tag(
         .and_then(pax_vector_format_tag)
 }
 
-/// Resolve whether a flush should emit a PAX vector segment. Pure over its
-/// inputs so the precedence table is unit-testable without touching the process
-/// env. Precedence: kill-switch > per-collection tag > global default.
-fn resolve_pax_segments_enabled(
-    kill_switch: bool,
-    per_collection: Option<bool>,
-    global_default: bool,
-) -> bool {
-    if kill_switch {
-        false
-    } else {
-        per_collection.unwrap_or(global_default)
-    }
-}
-
-/// Resolve the PAX vector-quantization strategy. Precedence: per-collection
-/// `pax_vector_quant` (catalog config) > env `PROXIMADB_PAX_VECTOR_QUANT` >
-/// default `RaBitQ` (Phase F: the cascade's stage-1 ranks RaBitQ-coded segments,
-/// so the default-on quant is RaBitQ, not `Auto`). An unrecognized per-collection
-/// value falls back to `Auto` (defensive against a typo'd config); only the
-/// deployment default (no config, no env) is RaBitQ.
+/// Resolve the PAX vector-quantization strategy. M1-3 (ADR-049): the global
+/// kill-switch `PROXIMADB_PAX_VECTOR_SEGMENTS_DISABLE` and the per-collection
+/// `pax_vector_format:off` tag are no longer FORMAT escapes (flush always writes
+/// PAX) — they select the recall-exact `RawF32` quant instead, so such a segment
+/// is exact-scan searchable (`search_pax_file_exact`) rather than
+/// RaBitQ-dequantized. Otherwise precedence: per-collection `pax_vector_quant`
+/// (catalog config) > env `PROXIMADB_PAX_VECTOR_QUANT` > default `RaBitQ` (Phase
+/// F: the cascade's stage-1 ranks RaBitQ-coded segments, so the default quant is
+/// RaBitQ, not `Auto`). An unrecognized per-collection value falls back to `Auto`
+/// (defensive against a typo'd config); only the deployment default (no config,
+/// no env) is RaBitQ. The kill-switch / opt-out are mirrored here (not just at
+/// the flush call site) so the precedence is unit-testable.
 fn resolve_pax_vector_quant(
     collection_config: Option<&crate::proto::proximadb_v1::Collection>,
 ) -> proximadb_block_format::VectorQuant {
     use proximadb_block_format::VectorQuant;
+    // M1-3: the legacy `.sst` escapes now mean RawF32-PAX (recall-exact).
+    if env_truthy(PAX_VECTOR_SEGMENTS_DISABLE_ENV) {
+        return VectorQuant::RawF32;
+    }
+    if collection_pax_format_tag(collection_config) == Some(false) {
+        return VectorQuant::RawF32;
+    }
     const ENV: &str = "PROXIMADB_PAX_VECTOR_QUANT";
     match collection_config
         .as_ref()
@@ -910,6 +844,7 @@ fn resolve_pax_vector_quant(
         Some(s) => match s.as_str() {
             "rabitq" => VectorQuant::RaBitQ,
             "sq8" => VectorQuant::Sq8,
+            "rawf32" | "raw_f32" | "raw" | "f32" => VectorQuant::RawF32,
             _ => VectorQuant::Auto,
         },
         None => match std::env::var(ENV)
@@ -919,6 +854,7 @@ fn resolve_pax_vector_quant(
         {
             "rabitq" => VectorQuant::RaBitQ,
             "sq8" => VectorQuant::Sq8,
+            "rawf32" | "raw_f32" | "raw" | "f32" => VectorQuant::RawF32,
             _ => VectorQuant::RaBitQ,
         },
     }
@@ -1036,6 +972,7 @@ mod tests {
     use crate::storage::engines::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_sort_vectors_for_sstable_encoding() {
@@ -1220,20 +1157,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn resolve_pax_segments_enabled_precedence() {
-        // kill-switch dominates everything (the default-on reversal valve).
-        assert!(!resolve_pax_segments_enabled(true, Some(true), true));
-        assert!(!resolve_pax_segments_enabled(true, Some(false), true));
-        assert!(!resolve_pax_segments_enabled(true, None, true));
-        // per-collection tag overrides global default both ways.
-        assert!(resolve_pax_segments_enabled(false, Some(true), false));
-        assert!(!resolve_pax_segments_enabled(false, Some(false), true));
-        // absent per-collection tag → global default.
-        assert!(resolve_pax_segments_enabled(false, None, true));
-        assert!(!resolve_pax_segments_enabled(false, None, false));
-    }
-
     fn collect_exts(dir: &std::path::Path, out: &mut std::collections::HashSet<String>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
@@ -1334,10 +1257,13 @@ mod tests {
         );
     }
 
-    /// Global kill-switch forces legacy `.sst` even when the collection opts in
-    /// via tag — the default-on reversal valve.
+    /// Global kill-switch selects the recall-exact RawF32-PAX quant — M1-3: it
+    /// no longer forces legacy `.sst` (the streaming write path is retired); the
+    /// flushed segment is still `.pax`, just RawF32-coded so `search_pax_file_exact`
+    /// scans it exactly. The (now-redundant) opt-in tag is kept here to prove the
+    /// kill-switch still wins the quant decision.
     #[tokio::test]
-    async fn pax_kill_switch_forces_legacy_sst_even_with_optin_tag() {
+    async fn pax_kill_switch_writes_rawf32_pax_segment() {
         unsafe {
             std::env::set_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV, "1");
         }
@@ -1357,79 +1283,19 @@ mod tests {
         )
         .await;
         assert!(
-            exts.contains("sst"),
-            "kill-switch should force a legacy .sst segment (got {exts:?})"
-        );
-        assert!(
-            !exts.contains("pax"),
-            "kill-switch must suppress .pax even with an opt-in tag (got {exts:?})"
+            exts.contains("pax") && !exts.contains("sst"),
+            "kill-switch must still write a .pax segment (RawF32-PAX), not legacy .sst (got {exts:?})"
         );
         unsafe {
             std::env::remove_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV);
         }
     }
 
-    // ---- Phase F: default-on arm (ships OFF; env `PROXIMADB_PAX_DEFAULT_ON`) ----
-
-    /// The default-on arm enables PAX WITHOUT the explicit
-    /// `PROXIMADB_PAX_VECTOR_SEGMENTS` opt-in — the staged flip mechanism (mandate
-    /// #8: ships OFF, armed per-deployment). Here only the default-on env is set.
+    /// A per-collection `pax_vector_format:off` tag opts the collection to the
+    /// recall-exact RawF32-PAX quant — M1-3: it no longer forces legacy `.sst`.
     #[tokio::test]
-    async fn pax_default_on_env_writes_pax_without_segments_env() {
+    async fn pax_optout_tag_writes_rawf32_pax_segment() {
         unsafe {
-            std::env::remove_var(PAX_VECTOR_SEGMENTS_ENV);
-            std::env::remove_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV);
-            std::env::set_var(PAX_VECTOR_DEFAULT_ON_ENV, "1");
-        }
-        let engine = create_test_engine().await;
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let base = temp_dir.path().to_str().unwrap();
-        let records = vec![
-            create_test_vector("v0", vec![1.0, 0.0, 0.0, 0.0]),
-            create_test_vector("v1", vec![0.0, 1.0, 0.0, 0.0]),
-        ];
-        let exts = flush_segment_exts(&engine, "pax_default_on", base, vec![], records).await;
-        unsafe {
-            std::env::remove_var(PAX_VECTOR_DEFAULT_ON_ENV);
-        }
-        assert!(
-            exts.contains("pax"),
-            "default-on env should write a .pax segment without PROXIMADB_PAX_VECTOR_SEGMENTS (got {exts:?})"
-        );
-    }
-
-    /// The kill-switch overrides default-on — the reversal valve holds even when
-    /// the default-on arm is armed.
-    #[tokio::test]
-    async fn pax_kill_switch_overrides_default_on() {
-        unsafe {
-            std::env::set_var(PAX_VECTOR_DEFAULT_ON_ENV, "1");
-            std::env::set_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV, "1");
-        }
-        let engine = create_test_engine().await;
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let base = temp_dir.path().to_str().unwrap();
-        let records = vec![
-            create_test_vector("v0", vec![1.0, 0.0, 0.0, 0.0]),
-            create_test_vector("v1", vec![0.0, 1.0, 0.0, 0.0]),
-        ];
-        let exts = flush_segment_exts(&engine, "pax_default_on_kill", base, vec![], records).await;
-        unsafe {
-            std::env::remove_var(PAX_VECTOR_DEFAULT_ON_ENV);
-            std::env::remove_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV);
-        }
-        assert!(
-            exts.contains("sst") && !exts.contains("pax"),
-            "kill-switch must force legacy .sst even under default-on (got {exts:?})"
-        );
-    }
-
-    /// A per-collection `pax_vector_format:off` tag opts OUT even when default-on
-    /// is armed — granular escape from the cluster-wide flip.
-    #[tokio::test]
-    async fn pax_default_on_collection_optout_tag_writes_sst() {
-        unsafe {
-            std::env::set_var(PAX_VECTOR_DEFAULT_ON_ENV, "1");
             std::env::remove_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV);
         }
         let engine = create_test_engine().await;
@@ -1441,29 +1307,30 @@ mod tests {
         ];
         let exts = flush_segment_exts(
             &engine,
-            "pax_default_on_optout",
+            "pax_optout_tag",
             base,
             vec!["pax_vector_format:off".to_string()],
             records,
         )
         .await;
-        unsafe {
-            std::env::remove_var(PAX_VECTOR_DEFAULT_ON_ENV);
-        }
         assert!(
-            exts.contains("sst") && !exts.contains("pax"),
-            "opt-out tag should force legacy .sst even under default-on (got {exts:?})"
+            exts.contains("pax") && !exts.contains("sst"),
+            "opt-out tag should write a RawF32-PAX .pax segment, not legacy .sst (got {exts:?})"
         );
     }
 
-    /// Phase F quant default is RaBitQ (the cascade's stage-1 ranks RaBitQ-coded
-    /// segments). Precedence: per-collection pax_vector_quant > env > default RaBitQ.
+    /// Quant resolution. M1-3: kill-switch / `pax_vector_format:off` → RawF32
+    /// (recall-exact escape); else per-collection `pax_vector_quant` > env > default
+    /// RaBitQ (Phase F: the cascade's stage-1 ranks RaBitQ-coded segments). An
+    /// unrecognized per-collection value falls back to `Auto` (defensive), NOT the
+    /// RaBitQ default; only the deployment default (no config, no env) is RaBitQ.
     #[test]
     fn resolve_pax_vector_quant_default_and_precedence() {
         use crate::proto::proximadb_v1::{Collection, CollectionConfig};
         use proximadb_block_format::VectorQuant;
         unsafe {
             std::env::remove_var("PROXIMADB_PAX_VECTOR_QUANT");
+            std::env::remove_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV);
         }
         let none: Option<&Collection> = None;
         // default → RaBitQ
@@ -1473,6 +1340,10 @@ mod tests {
             std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "sq8");
         }
         assert_eq!(resolve_pax_vector_quant(none), VectorQuant::Sq8);
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rawf32");
+        }
+        assert_eq!(resolve_pax_vector_quant(none), VectorQuant::RawF32);
         unsafe {
             std::env::remove_var("PROXIMADB_PAX_VECTOR_QUANT");
         }
@@ -1485,6 +1356,18 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(resolve_pax_vector_quant(Some(&coll_sq8)), VectorQuant::Sq8);
+        // M1-3: per-collection rawf32 config is honored.
+        let coll_raw = Collection {
+            config: Some(CollectionConfig {
+                pax_vector_quant: Some("raw_f32".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_pax_vector_quant(Some(&coll_raw)),
+            VectorQuant::RawF32
+        );
         let coll_rabitq = Collection {
             config: Some(CollectionConfig {
                 pax_vector_quant: Some("rabitq".into()),
@@ -1505,6 +1388,31 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(resolve_pax_vector_quant(Some(&coll_bad)), VectorQuant::Auto);
+        // M1-3: the kill-switch selects RawF32 even when a collection asks for
+        // RaBitQ (the recall-exact escape outranks the per-collection quant).
+        unsafe {
+            std::env::set_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV, "1");
+        }
+        assert_eq!(
+            resolve_pax_vector_quant(Some(&coll_rabitq)),
+            VectorQuant::RawF32
+        );
+        unsafe {
+            std::env::remove_var(PAX_VECTOR_SEGMENTS_DISABLE_ENV);
+        }
+        // M1-3: a per-collection `pax_vector_format:off` tag also selects RawF32.
+        let coll_optout = Collection {
+            config: Some(CollectionConfig {
+                tags: vec!["pax_vector_format:off".into()],
+                pax_vector_quant: Some("rabitq".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_pax_vector_quant(Some(&coll_optout)),
+            VectorQuant::RawF32
+        );
     }
 
     /// Tier-2 rerank quant default is SQ8 (the validated tier-2). Precedence:
