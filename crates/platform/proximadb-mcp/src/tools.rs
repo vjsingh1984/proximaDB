@@ -144,8 +144,21 @@ pub fn reference_tools() -> Vec<Tool> {
         },
         Tool {
             name: tool_name::MEMORY.to_string(),
-            description: "Agent memory: store, get, or list memory entries (ADR-022).".to_string(),
-            input_schema: json!({ "type": "object", "additionalProperties": true }),
+            description: "Agent memory: semantic search (read) over stored memory entries (ADR-022). Writing memory is not yet available over this surface."
+                .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "required": ["collection_id", "query", "tenant_id"],
+                "properties": {
+                    "collection_id": { "type": "string", "description": "Memory collection to search." },
+                    "query": { "type": "string", "description": "Query text (embedded, then vector-searched)." },
+                    "tenant_id": { "type": "string", "description": "Tenant scope — required (fail-closed isolation)." },
+                    "session_id": { "type": "string", "description": "Optional session scope narrowing." },
+                    "actor": { "type": "string", "description": "Optional actor scope narrowing." },
+                    "k": { "type": "integer", "minimum": 1, "description": "Max hits to return (default 10)." }
+                },
+                "additionalProperties": true
+            }),
         },
         Tool {
             name: tool_name::CHECKPOINT.to_string(),
