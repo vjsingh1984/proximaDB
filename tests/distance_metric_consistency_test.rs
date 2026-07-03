@@ -22,18 +22,20 @@ use tempfile::TempDir;
 const DIM: usize = 4;
 const TOP_K: usize = 3;
 
-/// Vectors where Cosine and Euclidean rankings DIFFER:
-///   v0 = [3, 4, 0, 0]  (norm 5, same dir as query)
-///   v1 = [6, 8, 0, 0]  (norm 10, same dir as v0 — farther in L2 but identical cosine)
-///   v2 = [1, 0, 0, 0]  (norm 1 — closer in L2 than v1, but lower cosine)
-///   v3 = [0, 0, 3, 4]  (norm 5, orthogonal)
-/// Query = [3, 4, 0, 0].
+/// Well-separated vectors (no colinear pairs → no exact cosine ties) where
+/// Cosine and Euclidean rankings DIFFER. Query = [3, 4, 0, 0] (norm 5):
+///   v0 = [3, 4, 3, 0]  (cos ≈ 0.858, L2 = 3)
+///   v1 = [6, 8, 0, 0]  (cos = 1.0    , L2 = 5)   — far but aligned
+///   v2 = [1, 0, 0, 0]  (cos = 0.6    , L2 ≈ 4.47) — near in L2, low cosine
+///   v3 = [0, 0, 3, 4]  (cos = 0      , L2 ≈ 7.07)
 ///
-/// Cosine ranking:  v0 ≈ v1 (both sim 1.0), then v2 (sim 0.6), then v3 (sim 0).
-/// Euclidean ranking: v0 (L2=0), v2 (L2≈2.83), v1 (L2=5), v3 (L2=5).
-/// → position 2+ differ (v1 vs v2) — proves the metric is consulted.
+/// Cosine ranking:    v1 (1.0), v0 (0.858), v2 (0.6)   → [v1, v0, v2]
+/// Euclidean ranking: v0 (3)  , v2 (4.47) , v1 (5)     → [v0, v2, v1]
+/// → every position differs — proves the metric is consulted. All four cosines
+/// and all four L2 distances are distinct, so the exact ranking is unambiguous
+/// under either metric (no near-tie misrank — see the TD-163 lesson).
 const VECTORS: [[f32; DIM]; 4] = [
-    [3.0, 4.0, 0.0, 0.0],
+    [3.0, 4.0, 3.0, 0.0],
     [6.0, 8.0, 0.0, 0.0],
     [1.0, 0.0, 0.0, 0.0],
     [0.0, 0.0, 3.0, 4.0],
@@ -48,10 +50,14 @@ fn collection(id: &str, metric: DistanceMetric, temp_dir: &TempDir) -> Collectio
             dimension: DIM as u32,
             distance_metric: Some(metric as i32),
             storage_engine: Some(StorageEngine::Sst as i32),
-            // M1-1b: this test asserts EXACT metric ranking against a brute-force
-            // oracle over 4 vectors. The RaBitQ cascade is degenerate at that scale
-            // (RaBitQ needs many vectors), so opt out of the PAX default to the
-            // exact ProximaBlocks scan the oracle assumes.
+            // M1-3 (ADR-049): this test asserts EXACT metric ranking against a
+            // brute-force oracle over 4 vectors. RaBitQ is degenerate at that scale
+            // (it needs many vectors), so opt to the recall-exact RawF32-PAX quant
+            // via the `pax_vector_format:off` tag. The flushed `.pax` segment carries
+            // raw f32 vectors, and the search dispatch's exact PAX scan
+            // (`search_pax_file_exact`) reads them back losslessly — so the ranking
+            // matches the oracle exactly. (Pre-M1-3 this tag forced legacy
+            // ProximaBlocks `.sst`; the streaming write path is now retired.)
             tags: vec!["pax_vector_format:off".to_string()],
             ..Default::default()
         }),

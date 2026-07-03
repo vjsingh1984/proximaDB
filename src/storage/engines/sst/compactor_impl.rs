@@ -9,7 +9,6 @@
 //! during compaction operations, significantly improving performance for
 //! large-scale compactions.
 
-use super::SstableWriter; // OPTIMIZED: Removed SstRecord import
 use super::block_format::BlockFormatReader;
 use super::readers::sst_query_engine::{BlockIterator, SstDirectReader};
 use crate::core::search::mvcc_resolution::MvccResolver;
@@ -966,7 +965,11 @@ impl SstCompactor {
         );
 
         match block_format {
-            super::block_format::BlockFormat::PaxBlock => {
+            // M1-3 (ADR-049): ProximaBlocks is folded into PaxBlock — the legacy
+            // `.sst` streaming write is retired, so a `.sstable`/`.sst` output path
+            // (detect_format → ProximaBlocks) re-encodes as PAX here.
+            super::block_format::BlockFormat::PaxBlock
+            | super::block_format::BlockFormat::ProximaBlocks => {
                 // P3 Phase E: compact to a `.pax` segment, re-encoding the merged
                 // records with RaBitQ. Reachable once PAX write-default is on (the
                 // output path's `.pax` extension makes `detect_format` return Pax).
@@ -1025,49 +1028,6 @@ impl SstCompactor {
                     "✅ SST_COMPACTOR: Wrote {} records to Arrow block",
                     records.len()
                 );
-            }
-            super::block_format::BlockFormat::ProximaBlocks => {
-                // Use SstableWriter for ProximaBlocks format
-                debug!("🔍 SST_COMPACTOR: Creating SstableWriter");
-                let writer = if let Some(ref compression) = compression_config {
-                    debug!(
-                        "   ✅ WITH compression: algorithm={}, level={:?}",
-                        compression.algorithm, compression.level
-                    );
-                    debug!("   Block size passed to writer: {} bytes", self.block_size);
-                    SstableWriter::with_compression(
-                        output_path,
-                        self.block_size,
-                        self.filesystem_factory.clone(),
-                        Some(compression.clone()),
-                    )
-                } else {
-                    debug!("   ⚠️ NO compression - using default writer");
-                    debug!("   Block size passed to writer: {} bytes", self.block_size);
-                    SstableWriter::new(
-                        output_path,
-                        self.block_size,
-                        self.filesystem_factory.clone(),
-                    )
-                };
-
-                // Convert records to sorted format (id, record)
-                let sorted_records: Vec<(String, VectorRecord)> = records
-                    .into_iter()
-                    .map(|r| {
-                        let id = r.id.clone().clone();
-                        stats.records_written += 1;
-                        stats.bytes_written += bincode::serialized_size(&r).unwrap_or(0);
-                        (id, r)
-                    })
-                    .collect();
-
-                let record_count = sorted_records.len();
-
-                // Write using the streaming API
-                writer
-                    .write_sorted_vector_records(sorted_records.into_iter(), record_count)
-                    .await?;
             }
         }
 
