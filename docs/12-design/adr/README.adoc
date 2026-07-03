@@ -174,10 +174,15 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | LSN-Coherent Single-Copy Analytics Read (LTAP without CDC)
 | Proposed
 | Analytical read obtains the WAL LSN, reads the materialized Parquet/VIPER arm as-of-LSN, then merges the un-materialized WAL-tail delta (MVCC-visible) — a consistent fresh read from ONE governed copy with zero tx impact. The ProximaDB-native LTAP: unify at the storage layer (one WAL authority + one durable core) with specialized compute (ADR-039). Research found Lakebase's *shipping* analytics freshness (CDF) is actually CDC (a second ~15s-synced copy), so a true single-copy LSN-merge is genuinely better. Reuses ADR-020/033/039 + the existing `search_unflushed` merge. Small-table skip. Tracked: TD-LTAP-2
+
+| link:ADR-050-statistics-fed-datafusion-route-selection.adoc[ADR-050]
+| Statistics-fed cost-based routing into the DataFusion OLAP arm
+| Proposed
+| Activates ADR-039's *declared-but-inert* DataFusion arm and makes its planning cost-based. Two moves: (1) `ComputeScheduler::route_select` stops hardcoding `Native(Volcano)` and routes analytical scan/join/aggregate over Parquet-backed tables to `DataFusionLocal` above a cost crossover (`SET compute_engine` override; strong-freshness stays Volcano) — realizes TD-115; (2) `schema_inference` feeds real DataFusion `ColumnStatistics` by projecting the ADR-042 mergeable `SegmentStatistics` (min/max/distinct/null) instead of `new_unknown()` — cost-based planning with **zero new scan**, the ADR-042 spine's second consumer. Stats are freshness-bounded hints (ADR-038) and calibrated by observed cost (ADR-030/034); the swap invariant (ADR-039) is preserved. **Explicitly disclaims the typed-vector-search scan cost** (#634 → ADR-011/028 + TD-064/073/096), which never enters DataFusion. Tracked: TD-115, TD-DFR-1
 |===
 
-NOTE: ADR-010 through ADR-013 exist in this directory but are not yet
-indexed in the table above; that catalogue gap is separate cleanup work.
+NOTE: ADR-010 through ADR-013 and ADR-048/ADR-049 exist in this directory but
+are not yet indexed in the table above; that catalogue gap is separate cleanup work.
 
 == Relationship to Design Resolution Doc
 
