@@ -52,7 +52,7 @@ flowchart TB
 version: '3.8'
 services:
   proximadb:
-    image: proximadb/proximadb:latest
+    image: vjsingh1984/proximadb:latest
     ports:
       - "5678:5678"
       - "5433:5433"

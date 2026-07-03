@@ -4,9 +4,9 @@ description: A cloud-native vector database for AI applications
 type: application
 version: 0.2.0
 appVersion: "0.2.0"
-home: https://github.com/proximadb/proximadb
+home: https://github.com/vjsingh1984/proximadb
 sources:
-  - https://github.com/proximadb/proximadb
+  - https://github.com/vjsingh1984/proximadb
 maintainers:
   - name: ProximaDB Team
     email: team@proximadb.ai

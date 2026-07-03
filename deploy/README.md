@@ -54,7 +54,7 @@ docker run -d \
   -p 5678:5678 \
   -p 5679:5679 \
   -v proximadb-data:/data \
-  proximadb/proximadb:latest
+  vjsingh1984/proximadb:latest
 
 # Or build locally
 cd deploy/docker
@@ -334,5 +334,5 @@ curl http://localhost:5678/health
 ## Support
 
 - Documentation: https://docs.proximadb.io
-- Issues: https://github.com/proximadb/proximadb/issues
-- Discussions: https://github.com/proximadb/proximadb/discussions
+- Issues: https://github.com/vjsingh1984/proximadb/issues
+- Discussions: https://github.com/vjsingh1984/proximadb/discussions

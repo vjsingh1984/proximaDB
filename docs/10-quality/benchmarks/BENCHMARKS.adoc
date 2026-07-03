@@ -275,7 +275,7 @@ We welcome community benchmark submissions. To submit your results:
 
 1. Run benchmarks with `--output-json` flag
 2. Include hardware configuration
-3. Submit PR to `https://github.com/proximadb/proximadb`
+3. Submit PR to `https://github.com/vjsingh1984/proximadb`
 4. Results will be verified and added to public leaderboard
 
 == Transparency

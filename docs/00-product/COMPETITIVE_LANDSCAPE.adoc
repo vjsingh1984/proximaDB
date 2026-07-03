@@ -1,0 +1,69 @@
+= ProximaDB Competitive Landscape
+:toc: macro
+:icons: font
+
+[.lead]
+Where ProximaDB sits relative to adjacent systems, and where it honestly does not (yet).
+This is a positioning summary derived from link:VISION.adoc[Vision] and link:PRD.adoc[PRD];
+support claims defer to link:../SUPPORTED_SURFACE.adoc[the support contract].
+
+== The Thesis
+
+AI agents do not operate on a single data model. Assembling context for an agent means
+joining episodic events, semantic vectors, a relational graph, and operational documents —
+today that is four or five specialized stores stitched together with brittle ETL and
+application-side joins. ProximaDB's differentiation is multi-model in *one* engine: one
+deployable binary, one SQL-compatible query interface, cross-model joins in one query
+(see the Positioning Statement in link:PRD.adoc[PRD]).
+
+== Category Comparison
+
+[cols="1,2,2", options="header"]
+|===
+| Category | Representative systems | Limitation ProximaDB addresses
+
+| Vector database
+| Pinecone, Milvus, Weaviate
+| Single data model. Vectors are necessary but insufficient — agents need documents,
+graphs, and temporal data alongside embeddings. Forces application-side joins across
+systems.
+
+| Multi-model database
+| ArangoDB, SurrealDB
+| Generic approach without workload-specialized engines. One storage engine cannot
+optimize for both sub-millisecond vector search and high-throughput time-series
+ingestion simultaneously.
+
+| Data platform
+| Snowflake, Databricks
+| Too broad. Optimized for batch analytics and data warehousing, not for low-latency
+serving, embedded deployment, or real-time event processing at the edge.
+
+| Single-model specialists
+| Neo4j (graphs only), TimescaleDB (time-series only)
+| Best-in-class for their one model, but contextual workloads span models; each added
+store adds an ETL pipeline and an operational surface.
+|===
+
+*Migration path*: ProximaDB speaks the Postgres wire protocol with a pgvector-compatible
+distance operator, so pgvector-shaped workloads have a low-friction on-ramp.
+
+== Honest Positioning
+
+Per the link:../SUPPORTED_SURFACE.adoc[support contract]'s own positioning guidance,
+ProximaDB is currently a *developer-first context database*: one system for vectors,
+operational documents, graph context, and telemetry on the single-node developer path.
+It is "not yet a like-for-like replacement for best-in-class distributed vector, graph,
+document, or observability platforms." For petabyte-scale batch analytics, use a
+warehouse (Snowflake, BigQuery, Databricks) today; for general-purpose OLTP with complex
+multi-table transactions, use PostgreSQL today (see the Non-Goals section of
+link:VISION.adoc[Vision]).
+
+The bet is that agent memory does not need five best-in-class distributed systems — it
+needs episodic events + semantic vectors + relational graph + documents answered from one
+engine, in one query. That is the surface ProximaDB optimizes for.
+
+No benchmark numbers are claimed here; reproducible comparisons against Milvus, Qdrant,
+Weaviate, and Chroma are a stated roadmap milestone in link:VISION.adoc[Vision], and any
+published performance figure must trace to a measured entry in the benchmark evidence
+ledger referenced by the support contract.
