@@ -206,6 +206,18 @@ fn build_session_context(
         );
     }
 
+    // F5: the cross-modal moat, timeseries slice — `timeseries_range(collection, start_ms,
+    // end_ms)` as a joinable table, backed by the process time-series service (registered only
+    // when it is initialised). Lets the graph/relational ⋈ timeseries join the vertical copilots
+    // do client-side (fan out N series, intersect in the client) execute in one data-local
+    // DataFusion plan instead.
+    if let Some(ts) = crate::services::timeseries_service::timeseries_service() {
+        ctx.register_udtf(
+            "timeseries_range",
+            std::sync::Arc::new(cross_modal::TimeseriesRangeTableFunction::from_service(ts)),
+        );
+    }
+
     Ok(ctx)
 }
 

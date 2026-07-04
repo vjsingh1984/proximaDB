@@ -13,17 +13,23 @@
 //! §8: no competitor lets you filter-by-vector-similarity ⋈ relational-aggregate in
 //! one query.
 //!
-//! ## Scope (this slice)
-//! The conversion bridge + a proof that the join executes in one DataFusion plan. The
-//! next slices: (a) a `VectorOpsPort`-backed `TableProvider` whose `scan` runs the
-//! live search; (b) a frontend `VECTOR_SEARCH(...)` source + a
-//! `proximadb-relational-algebra` source node that lowers (via the P4
-//! `logical_lowering`) into the shared logical plane so the join is reachable from
-//! pgwire SQL. Both reuse [`vector_matches_to_batch`] below.
+//! ## Scope
+//! Two modalities are now joinable relations, both live-backed and reachable from the pgwire
+//! DataFusion path (registered by `build_session_context`):
+//!   * `vector_search(collection, query, k)` → `(id, score)` — via [`VectorSearchTableFunction`].
+//!   * `timeseries_range(collection, start_ms, end_ms)` → `(timestamp, metric, value)` — via
+//!     [`TimeseriesRangeTableFunction`]; the timeseries analogue, so a graph/relational ⋈
+//!     timeseries anomaly-scan executes in ONE data-local plan instead of a client-side fan-out
+//!     + intersect (ADR-053).
+//!
+//! Next slices (ADR-053): a `graph_traverse(graph, start, edge, depth)` source over the
+//! variable-length traversal (fixed `(node_id, depth)` schema), and a frontend source node that
+//! lowers (via the P4 `logical_lowering`) into the shared logical plane. All reuse the
+//! `*_to_batch` bridges below.
 
 use std::sync::Arc;
 
-use arrow_array::{Float32Array, RecordBatch, StringArray};
+use arrow_array::{Float32Array, Float64Array, Int64Array, RecordBatch, StringArray};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableFunctionImpl};
@@ -34,6 +40,7 @@ use datafusion::physical_plan::ExecutionPlan;
 use datafusion::scalar::ScalarValue;
 
 use crate::proto::proximadb_v1::{SearchQuery, SearchVectorRecord, VectorSearchRequest};
+use crate::services::timeseries_service::{TimeSeriesService, TsPoint};
 
 /// The lean Arrow schema a vector-search source exposes for joins: `(id, score)`.
 /// `id` joins against a relational key; `score` is the similarity the SQL can rank
@@ -244,6 +251,210 @@ fn parse_vector_literal(text: &str) -> Option<Vec<f32>> {
         .split(',')
         .map(|p| p.trim().parse::<f32>().ok())
         .collect()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Timeseries slice (§8 moat, second modality) — `timeseries_range(collection, start_ms,
+// end_ms)` as a joinable table. The timeseries analogue of `vector_search`: it turns a
+// time-range read into a DataFusion `(timestamp, metric, value)` relation so a SINGLE SQL
+// plan can join a timeseries anomaly-scan against relational/graph data — the graph⋈timeseries
+// root-cause join the vertical copilots do client-side today becomes one data-local query.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The Arrow schema a timeseries-range source exposes for joins: `(timestamp, metric, value)`
+/// in long form — one row per (point, value-column), so a collection with several value
+/// columns projects generically and SQL can `WHERE metric = '…'` + bucket/aggregate.
+pub fn timeseries_range_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        Field::new("timestamp", DataType::Int64, false),
+        Field::new("metric", DataType::Utf8, false),
+        Field::new("value", DataType::Float64, false),
+    ]))
+}
+
+/// Convert time-series points into a `(timestamp, metric, value)` [`RecordBatch`]. Value columns
+/// are emitted in sorted name order for deterministic output.
+pub fn timeseries_points_to_batch(points: &[TsPoint]) -> Result<RecordBatch, ArrowError> {
+    let mut timestamps: Vec<i64> = Vec::new();
+    let mut metrics: Vec<String> = Vec::new();
+    let mut values: Vec<f64> = Vec::new();
+    for point in points {
+        let mut cols: Vec<(&String, &f64)> = point.values.iter().collect();
+        cols.sort_by(|a, b| a.0.cmp(b.0));
+        for (metric, value) in cols {
+            timestamps.push(point.timestamp);
+            metrics.push(metric.clone());
+            values.push(*value);
+        }
+    }
+    RecordBatch::try_new(
+        timeseries_range_schema(),
+        vec![
+            Arc::new(Int64Array::from(timestamps)),
+            Arc::new(StringArray::from(metrics)),
+            Arc::new(Float64Array::from(values)),
+        ],
+    )
+}
+
+/// Port yielding time-series points for a `[start_ms, end_ms]` range of one collection — the
+/// timeseries analogue of `VectorOpsPort`. Kept as a trait so the table source is unit-testable
+/// with a fixed set of points, independent of the process time-series service.
+#[async_trait]
+pub trait TimeseriesScanPort: Send + Sync {
+    /// Read the points of `collection` in `[start_ms, end_ms]` (epoch millis).
+    async fn range(
+        &self,
+        collection: &str,
+        start_ms: i64,
+        end_ms: i64,
+    ) -> anyhow::Result<Vec<TsPoint>>;
+}
+
+/// Production adapter: the process [`TimeSeriesService`] as a [`TimeseriesScanPort`].
+struct TimeSeriesServiceScan(Arc<TimeSeriesService>);
+
+#[async_trait]
+impl TimeseriesScanPort for TimeSeriesServiceScan {
+    async fn range(
+        &self,
+        collection: &str,
+        start_ms: i64,
+        end_ms: i64,
+    ) -> anyhow::Result<Vec<TsPoint>> {
+        self.0.query(collection, start_ms, end_ms, None).await
+    }
+}
+
+/// A DataFusion [`TableProvider`] whose `scan` reads a live time range through a
+/// [`TimeseriesScanPort`] and exposes `(timestamp, metric, value)` rows — so a single SQL plan
+/// can join a timeseries scan against relational/graph data.
+pub struct TimeseriesRangeTableProvider {
+    scan: Arc<dyn TimeseriesScanPort>,
+    collection: String,
+    start_ms: i64,
+    end_ms: i64,
+}
+
+impl TimeseriesRangeTableProvider {
+    /// Build a provider for one parameterized time-range read.
+    pub fn new(
+        scan: Arc<dyn TimeseriesScanPort>,
+        collection: impl Into<String>,
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Self {
+        Self {
+            scan,
+            collection: collection.into(),
+            start_ms,
+            end_ms,
+        }
+    }
+}
+
+impl std::fmt::Debug for TimeseriesRangeTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TimeseriesRangeTableProvider")
+            .field("collection", &self.collection)
+            .field("start_ms", &self.start_ms)
+            .field("end_ms", &self.end_ms)
+            .finish_non_exhaustive()
+    }
+}
+
+#[async_trait]
+impl TableProvider for TimeseriesRangeTableProvider {
+    fn schema(&self) -> SchemaRef {
+        timeseries_range_schema()
+    }
+
+    fn table_type(&self) -> TableType {
+        TableType::Base
+    }
+
+    async fn scan(
+        &self,
+        state: &dyn Session,
+        projection: Option<&Vec<usize>>,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> DFResult<Arc<dyn ExecutionPlan>> {
+        let points = self
+            .scan
+            .range(&self.collection, self.start_ms, self.end_ms)
+            .await
+            .map_err(|e| DataFusionError::Execution(format!("timeseries range: {e}")))?;
+        let batch = timeseries_points_to_batch(&points).map_err(DataFusionError::from)?;
+        // Delegate to a `MemTable` so projection/filter/limit are honored uniformly.
+        let mem = MemTable::try_new(timeseries_range_schema(), vec![vec![batch]])?;
+        mem.scan(state, projection, filters, limit).await
+    }
+}
+
+/// DataFusion table-valued function `timeseries_range(collection, start_ms, end_ms)` returning a
+/// [`TimeseriesRangeTableProvider`] — makes the timeseries⋈relational/graph join expressible
+/// directly in SQL (and so reachable from the pgwire DataFusion path):
+/// `SELECT t.metric, MAX(t.value)
+///  FROM timeseries_range('sensor', 1700000000000, 1700003600000) t GROUP BY t.metric`.
+/// Register once per `SessionContext`:
+/// `ctx.register_udtf("timeseries_range", Arc::new(TimeseriesRangeTableFunction::new(port)))`.
+pub struct TimeseriesRangeTableFunction {
+    scan: Arc<dyn TimeseriesScanPort>,
+}
+
+impl TimeseriesRangeTableFunction {
+    /// Capture the scan port the function will read.
+    pub fn new(scan: Arc<dyn TimeseriesScanPort>) -> Self {
+        Self { scan }
+    }
+
+    /// Build the function backed by the process time-series service.
+    pub fn from_service(service: Arc<TimeSeriesService>) -> Self {
+        Self {
+            scan: Arc::new(TimeSeriesServiceScan(service)),
+        }
+    }
+}
+
+impl std::fmt::Debug for TimeseriesRangeTableFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TimeseriesRangeTableFunction")
+            .finish_non_exhaustive()
+    }
+}
+
+impl TableFunctionImpl for TimeseriesRangeTableFunction {
+    fn call(&self, args: &[Expr]) -> DFResult<Arc<dyn TableProvider>> {
+        let collection = arg_string(args, 0).ok_or_else(|| {
+            DataFusionError::Plan(
+                "timeseries_range(collection, start_ms, end_ms): arg 1 must be a collection-name string"
+                    .into(),
+            )
+        })?;
+        let start_ms = arg_i64(args, 1).ok_or_else(|| {
+            DataFusionError::Plan("timeseries_range: arg 2 must be an integer start_ms".into())
+        })?;
+        let end_ms = arg_i64(args, 2).ok_or_else(|| {
+            DataFusionError::Plan("timeseries_range: arg 3 must be an integer end_ms".into())
+        })?;
+        if collection.trim().is_empty() {
+            return Err(DataFusionError::Plan(
+                "timeseries_range: collection must not be empty".into(),
+            ));
+        }
+        if end_ms < start_ms {
+            return Err(DataFusionError::Plan(
+                "timeseries_range: end_ms must be >= start_ms".into(),
+            ));
+        }
+        Ok(Arc::new(TimeseriesRangeTableProvider::new(
+            self.scan.clone(),
+            collection,
+            start_ms,
+            end_ms,
+        )))
+    }
 }
 
 #[cfg(test)]
@@ -547,5 +758,132 @@ mod tests {
             .map(|b| b.num_rows())
             .sum();
         assert_eq!(n, 2);
+    }
+
+    // ── timeseries slice ────────────────────────────────────────────────────────
+    use std::collections::HashMap;
+
+    fn tp(timestamp: i64, metric: &str, value: f64) -> TsPoint {
+        TsPoint {
+            timestamp,
+            values: HashMap::from([(metric.to_string(), value)]),
+            tags: HashMap::new(),
+        }
+    }
+
+    /// A fixed `TimeseriesScanPort` returning canned points — stands in for the process
+    /// time-series service so the provider's `scan` path is exercised without engine state.
+    struct FixedTimeseriesScan {
+        points: Vec<TsPoint>,
+    }
+
+    #[async_trait]
+    impl TimeseriesScanPort for FixedTimeseriesScan {
+        async fn range(
+            &self,
+            _collection: &str,
+            _start_ms: i64,
+            _end_ms: i64,
+        ) -> anyhow::Result<Vec<TsPoint>> {
+            Ok(self.points.clone())
+        }
+    }
+
+    #[test]
+    fn timeseries_batch_has_timestamp_metric_value_schema() {
+        let batch =
+            timeseries_points_to_batch(&[tp(10, "amount", 1.5), tp(20, "amount", 2.5)]).unwrap();
+        assert_eq!(batch.num_rows(), 2);
+        assert_eq!(batch.schema().field(0).name(), "timestamp");
+        assert_eq!(batch.schema().field(1).name(), "metric");
+        assert_eq!(batch.schema().field(2).name(), "value");
+    }
+
+    /// The moat proof for the second modality: a timeseries scan JOINs a relational table in
+    /// ONE DataFusion SQL plan — the shape a pgwire client (or a copilot) writes instead of
+    /// fanning out N per-entity reads and intersecting them client-side.
+    #[tokio::test]
+    async fn timeseries_range_udtf_joins_relational_in_sql() {
+        let port: Arc<dyn TimeseriesScanPort> = Arc::new(FixedTimeseriesScan {
+            points: vec![
+                tp(1_000, "amount", 100.0),
+                tp(2_000, "amount", 9_000.0),
+                tp(3_000, "amount", 50.0),
+            ],
+        });
+        let ctx = SessionContext::new();
+        ctx.register_udtf(
+            "timeseries_range",
+            Arc::new(TimeseriesRangeTableFunction::new(port)),
+        );
+
+        // Relational side: an entity dimension the timeseries joins onto by metric name.
+        let dim_schema = Arc::new(Schema::new(vec![
+            Field::new("metric", DataType::Utf8, false),
+            Field::new("label", DataType::Utf8, false),
+        ]));
+        let dim = RecordBatch::try_new(
+            dim_schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["amount"])),
+                Arc::new(StringArray::from(vec!["claimed"])),
+            ],
+        )
+        .unwrap();
+        ctx.register_table(
+            "metrics",
+            Arc::new(MemTable::try_new(dim_schema, vec![vec![dim]]).unwrap()),
+        )
+        .unwrap();
+
+        // One SQL plan: the timeseries anomaly-scan (MAX per metric) ⋈ the relational dimension.
+        let batches = ctx
+            .sql(
+                "SELECT m.label, MAX(t.value) AS peak \
+                 FROM timeseries_range('ts_clmt_007', 0, 9999999) t \
+                 JOIN metrics m ON t.metric = m.metric \
+                 GROUP BY m.label",
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(rows, 1); // one metric group: 'claimed' with peak 9000
+        let peak = batches[0]
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap()
+            .value(0);
+        assert_eq!(peak, 9_000.0);
+    }
+
+    #[tokio::test]
+    async fn timeseries_range_udtf_rejects_invalid_inputs() {
+        let port: Arc<dyn TimeseriesScanPort> = Arc::new(FixedTimeseriesScan { points: vec![] });
+        let ctx = SessionContext::new();
+        ctx.register_udtf(
+            "timeseries_range",
+            Arc::new(TimeseriesRangeTableFunction::new(port)),
+        );
+
+        for (sql, expected) in [
+            (
+                "SELECT * FROM timeseries_range('', 0, 10)",
+                "collection must not be empty",
+            ),
+            (
+                "SELECT * FROM timeseries_range('ts', 10, 0)",
+                "end_ms must be >= start_ms",
+            ),
+        ] {
+            let error = ctx.sql(sql).await.expect_err("invalid timeseries_range");
+            assert!(
+                error.to_string().contains(expected),
+                "expected {expected:?} in {error}"
+            );
+        }
     }
 }
