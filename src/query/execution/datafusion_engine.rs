@@ -85,6 +85,7 @@ impl DataFusionLocalEngine {
         let ctx = crate::datafusion::create_session_context_with_ports(
             context.vector_ops.clone(),
             context.graph_ops.clone(),
+            context.tenant_id.clone(),
         )
         .map_err(|e| ExecutionError::Context(format!("session: {e}")))?;
 

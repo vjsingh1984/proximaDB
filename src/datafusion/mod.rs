@@ -155,7 +155,7 @@ use datafusion::prelude::*;
 /// - Custom vector distance functions (cosine, euclidean, dot_product)
 /// - Optimizer rules for predicate pushdown
 pub fn create_session_context() -> datafusion::error::Result<SessionContext> {
-    build_session_context(None, None)
+    build_session_context(None, None, None)
 }
 
 /// Like [`create_session_context`] but also registers the live `vector_search` table function
@@ -165,7 +165,7 @@ pub fn create_session_context() -> datafusion::error::Result<SessionContext> {
 pub fn create_session_context_with_vector_ops(
     vector_ops: std::sync::Arc<dyn proximadb_runtime::VectorOpsPort>,
 ) -> datafusion::error::Result<SessionContext> {
-    build_session_context(Some(vector_ops), None)
+    build_session_context(Some(vector_ops), None, None)
 }
 
 /// Like [`create_session_context_with_vector_ops`] but also registers the live `graph_traverse`
@@ -175,13 +175,21 @@ pub fn create_session_context_with_vector_ops(
 pub fn create_session_context_with_ports(
     vector_ops: Option<std::sync::Arc<dyn proximadb_runtime::VectorOpsPort>>,
     graph_ops: Option<std::sync::Arc<dyn proximadb_graph_query::service::GraphQueryReadService>>,
+    tenant: Option<String>,
 ) -> datafusion::error::Result<SessionContext> {
-    build_session_context(vector_ops, graph_ops)
+    build_session_context(vector_ops, graph_ops, tenant)
 }
 
+/// `tenant` is the resolved pgwire connection tenant (`pgwire_resolve_read_tenant`). It is
+/// applied to the `vector_search` (as the search `tenant_id`) and `timeseries_range` (folded
+/// into the `{tenant}::{collection}` key) UDTFs so a cross-modal read hits the same partition the
+/// REST write path wrote — otherwise those UDTFs read the unscoped partition and return 0 rows
+/// (TD-XMODAL-6). `graph_traverse` is tenant-agnostic today (the graph path applies no tenant on
+/// either side).
 fn build_session_context(
     vector_ops: Option<std::sync::Arc<dyn proximadb_runtime::VectorOpsPort>>,
     graph_ops: Option<std::sync::Arc<dyn proximadb_graph_query::service::GraphQueryReadService>>,
+    tenant: Option<String>,
 ) -> datafusion::error::Result<SessionContext> {
     let config = SessionConfig::new()
         .with_batch_size(8192)
@@ -218,7 +226,10 @@ fn build_session_context(
     if let Some(ops) = vector_ops {
         ctx.register_udtf(
             "vector_search",
-            std::sync::Arc::new(cross_modal::VectorSearchTableFunction::new(ops)),
+            std::sync::Arc::new(cross_modal::VectorSearchTableFunction::with_tenant(
+                ops,
+                tenant.clone(),
+            )),
         );
     }
 
@@ -230,7 +241,12 @@ fn build_session_context(
     if let Some(ts) = crate::services::timeseries_service::timeseries_service() {
         ctx.register_udtf(
             "timeseries_range",
-            std::sync::Arc::new(cross_modal::TimeseriesRangeTableFunction::from_service(ts)),
+            std::sync::Arc::new(
+                cross_modal::TimeseriesRangeTableFunction::from_service_with_tenant(
+                    ts,
+                    tenant.clone(),
+                ),
+            ),
         );
     }
 

@@ -171,12 +171,28 @@ impl TableProvider for VectorSearchTableProvider {
 /// `ctx.register_udtf("vector_search", Arc::new(VectorSearchTableFunction::new(ops)))`.
 pub struct VectorSearchTableFunction {
     vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
+    /// The connection tenant, forwarded to `VectorOpsPort::search` so the search runs under the
+    /// same `TenantContext` the REST write used. `None` ⇒ unscoped (reads only tenant-less data).
+    tenant: Option<String>,
 }
 
 impl VectorSearchTableFunction {
-    /// Capture the live vector service the function will search.
+    /// Capture the live vector service the function will search (no tenant scope).
     pub fn new(vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>) -> Self {
-        Self { vector_ops }
+        Self {
+            vector_ops,
+            tenant: None,
+        }
+    }
+
+    /// Capture the vector service AND the connection tenant — so the search reads the same
+    /// tenant partition a REST insert wrote. Without this the search runs `tenant_id=None` and
+    /// returns 0 rows for tenant-scoped data (TD-XMODAL-6).
+    pub fn with_tenant(
+        vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
+        tenant: Option<String>,
+    ) -> Self {
+        Self { vector_ops, tenant }
     }
 }
 
@@ -228,7 +244,7 @@ impl TableFunctionImpl for VectorSearchTableFunction {
             collection,
             query_vector,
             top_k as u32,
-            None,
+            self.tenant.clone(),
         )))
     }
 }
@@ -249,6 +265,19 @@ fn arg_i64(args: &[Expr], i: usize) -> Option<i64> {
         Expr::Literal(ScalarValue::Int32(Some(n)), _) => Some(*n as i64),
         Expr::Literal(ScalarValue::UInt64(Some(n)), _) => Some(*n as i64),
         _ => None,
+    }
+}
+
+/// Fold the connection tenant into the collection key exactly as the REST write path's
+/// `effective_collection` (`src/network/rest/v2/timeseries.rs`) does — `{tenant}::{collection}` —
+/// so a UDTF read hits the same partition a REST ingest wrote (TD-XMODAL-6). An empty/absent
+/// tenant yields the raw name, mirroring the REST rule so single-tenant reads still resolve.
+/// (Vectors are scoped by `TenantContext`, not by name, so they use the raw collection + the
+/// tenant id directly; this fold is the timeseries analogue.)
+fn tenant_scoped_collection(tenant: Option<&str>, collection: &str) -> String {
+    match tenant {
+        Some(t) if !t.is_empty() => format!("{t}::{collection}"),
+        _ => collection.to_string(),
     }
 }
 
@@ -412,18 +441,41 @@ impl TableProvider for TimeseriesRangeTableProvider {
 /// `ctx.register_udtf("timeseries_range", Arc::new(TimeseriesRangeTableFunction::new(port)))`.
 pub struct TimeseriesRangeTableFunction {
     scan: Arc<dyn TimeseriesScanPort>,
+    /// The connection tenant, folded into the collection key (`{tenant}::{collection}`) at
+    /// `call` time so the range read hits the same partition a REST ingest wrote. `None` ⇒ raw
+    /// collection name (single-tenant / tenant-less data).
+    tenant: Option<String>,
 }
 
 impl TimeseriesRangeTableFunction {
-    /// Capture the scan port the function will read.
+    /// Capture the scan port the function will read (no tenant scope).
     pub fn new(scan: Arc<dyn TimeseriesScanPort>) -> Self {
-        Self { scan }
+        Self { scan, tenant: None }
     }
 
-    /// Build the function backed by the process time-series service.
+    /// Capture the scan port AND the connection tenant, so the range read folds the collection
+    /// key the same way the REST write path does (TD-XMODAL-6).
+    pub fn with_tenant(scan: Arc<dyn TimeseriesScanPort>, tenant: Option<String>) -> Self {
+        Self { scan, tenant }
+    }
+
+    /// Build the function backed by the process time-series service (no tenant scope).
     pub fn from_service(service: Arc<TimeSeriesService>) -> Self {
         Self {
             scan: Arc::new(TimeSeriesServiceScan(service)),
+            tenant: None,
+        }
+    }
+
+    /// Build the function backed by the process time-series service, scoped to the connection
+    /// tenant — the pgwire OLAP route wiring that makes `timeseries_range` read REST-written data.
+    pub fn from_service_with_tenant(
+        service: Arc<TimeSeriesService>,
+        tenant: Option<String>,
+    ) -> Self {
+        Self {
+            scan: Arc::new(TimeSeriesServiceScan(service)),
+            tenant,
         }
     }
 }
@@ -459,6 +511,9 @@ impl TableFunctionImpl for TimeseriesRangeTableFunction {
                 "timeseries_range: end_ms must be >= start_ms".into(),
             ));
         }
+        // Fold the tenant into the collection key the same way the REST write path does, so the
+        // range read resolves the partition the ingest wrote (TD-XMODAL-6).
+        let collection = tenant_scoped_collection(self.tenant.as_deref(), &collection);
         Ok(Arc::new(TimeseriesRangeTableProvider::new(
             self.scan.clone(),
             collection,
@@ -602,6 +657,12 @@ pub struct GraphTraverseTableFunction {
 
 impl GraphTraverseTableFunction {
     /// Capture the live graph read service the function will traverse.
+    ///
+    /// Unlike `vector_search` / `timeseries_range`, this takes NO tenant: the graph write path
+    /// (`GraphPort`, the v1/v2 REST graph handlers) applies no tenant scoping today — the
+    /// `graph_id` is the sole scope key on both sides — so a UDTF read of the raw `graph_id`
+    /// already matches the write. Real graph tenant isolation (a tenant param on `GraphPort`,
+    /// applied on both write and this read) is a follow-up (see TD-XMODAL-6).
     pub fn new(graph_ops: Arc<dyn GraphQueryReadService>) -> Self {
         Self { graph_ops }
     }
@@ -1097,6 +1158,132 @@ mod tests {
                 "expected {expected:?} in {error}"
             );
         }
+    }
+
+    /// A `TimeseriesScanPort` that records the collection name it was asked to read — used to
+    /// prove `timeseries_range` folds the tenant into the collection key (TD-XMODAL-6).
+    struct RecordingTimeseriesScan {
+        seen: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl TimeseriesScanPort for RecordingTimeseriesScan {
+        async fn range(
+            &self,
+            collection: &str,
+            _start_ms: i64,
+            _end_ms: i64,
+        ) -> anyhow::Result<Vec<TsPoint>> {
+            self.seen.lock().unwrap().push(collection.to_string());
+            Ok(vec![tp(1_000, "amount", 1.0)])
+        }
+    }
+
+    /// TD-XMODAL-6: a tenant-scoped `timeseries_range` folds `{tenant}::{collection}` before the
+    /// read — matching the REST write path's `effective_collection` — so it hits the partition a
+    /// REST ingest wrote; an empty/absent tenant reads the raw name.
+    #[tokio::test]
+    async fn timeseries_range_udtf_folds_tenant_into_collection() {
+        for (tenant, expected) in [
+            (Some("acme".to_string()), "acme::sensor"),
+            (Some(String::new()), "sensor"),
+            (None, "sensor"),
+        ] {
+            let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let port: Arc<dyn TimeseriesScanPort> = Arc::new(RecordingTimeseriesScan {
+                seen: Arc::clone(&seen),
+            });
+            let ctx = SessionContext::new();
+            ctx.register_udtf(
+                "timeseries_range",
+                Arc::new(TimeseriesRangeTableFunction::with_tenant(port, tenant)),
+            );
+            let _ = ctx
+                .sql("SELECT * FROM timeseries_range('sensor', 0, 9999)")
+                .await
+                .unwrap()
+                .collect()
+                .await
+                .unwrap();
+            assert_eq!(seen.lock().unwrap().as_slice(), &[expected.to_string()]);
+        }
+    }
+
+    /// A `VectorOpsPort` that records the `tenant_id` its `search` was called with — proves
+    /// `vector_search` forwards the connection tenant (TD-XMODAL-6).
+    struct RecordingVectorOps {
+        seen: Arc<std::sync::Mutex<Vec<Option<String>>>>,
+    }
+
+    #[async_trait]
+    impl proximadb_runtime::VectorOpsPort for RecordingVectorOps {
+        async fn search(
+            &self,
+            _request: VectorSearchRequest,
+            tenant_id: Option<&str>,
+        ) -> anyhow::Result<VectorOperationResponse> {
+            self.seen
+                .lock()
+                .unwrap()
+                .push(tenant_id.map(str::to_string));
+            Ok(VectorOperationResponse {
+                results: Some(SearchResult {
+                    results: vec![],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        }
+        async fn batch_upsert(
+            &self,
+            _r: VectorBatchRequest,
+            _t: Option<&str>,
+        ) -> anyhow::Result<VectorOperationResponse> {
+            unimplemented!()
+        }
+        async fn get_vector(
+            &self,
+            _c: &str,
+            _v: &str,
+            _iv: bool,
+            _im: bool,
+            _t: Option<&str>,
+        ) -> anyhow::Result<VectorOperationResponse> {
+            unimplemented!()
+        }
+        async fn flush_all(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn metrics(&self) -> anyhow::Result<serde_json::Value> {
+            Ok(serde_json::Value::Null)
+        }
+    }
+
+    /// TD-XMODAL-6: a tenant-scoped `vector_search` forwards the connection tenant to the search
+    /// (vectors are `TenantContext`-partitioned, not name-folded), so it reads the tenant's data
+    /// instead of the unscoped partition.
+    #[tokio::test]
+    async fn vector_search_udtf_forwards_tenant_to_search() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let ops: Arc<dyn proximadb_runtime::VectorOpsPort> = Arc::new(RecordingVectorOps {
+            seen: Arc::clone(&seen),
+        });
+        let ctx = SessionContext::new();
+        ctx.register_udtf(
+            "vector_search",
+            Arc::new(VectorSearchTableFunction::with_tenant(
+                ops,
+                Some("acme".to_string()),
+            )),
+        );
+        let _ = ctx
+            .sql("SELECT * FROM vector_search('docs_vec', '[0.1,0.2]', 5)")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_eq!(seen.lock().unwrap().as_slice(), &[Some("acme".to_string())]);
     }
 
     // ── graph slice ───────────────────────────────────────────────────────────────
