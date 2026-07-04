@@ -1868,7 +1868,18 @@ fn collect_from_table_with_joins(twj: &TableWithJoins, out: &mut Vec<String>) {
 
 fn collect_from_table_factor(factor: &TableFactor, out: &mut Vec<String>) {
     match factor {
-        TableFactor::Table { name, .. } => out.push(name.to_string()),
+        // A `FROM name(args)` item is a table-valued function (cross-modal source:
+        // vector_search / timeseries_range / graph_traverse), NOT a catalog table.
+        // Collecting it as a table name makes catalog resolution decline the query to
+        // the legacy path AND breaks the parquet-backed route check. Skip it here and
+        // let the DataFusion `ctx.sql` fallback (which has the UDTFs registered) resolve it.
+        // Only a plain `name` (args: None) is a catalog table. A `FROM name(args)` item is a
+        // table-valued function (cross-modal source: vector_search / timeseries_range /
+        // graph_traverse) — it matches neither arm below, falls through to `_`, and is left for
+        // the DataFusion `ctx.sql` fallback (where the UDTFs are registered) to resolve.
+        TableFactor::Table {
+            name, args: None, ..
+        } => out.push(name.to_string()),
         TableFactor::Derived { subquery, .. } => collect_table_names(subquery, out),
         _ => {}
     }
