@@ -243,8 +243,8 @@ impl WALFlushCoordinator {
         // `PartitionLeaseManager` (#346 `is_fenced_out`) the gates consult.
         //
         // Co-design (Dim-1): at most one durable lease read per flush (amortized
-        // over the whole batch), never per row. Fail-open on unknown tenant / no
-        // fence wired — the gate is the first line of defense.
+        // over the whole batch), never per row. With fencing enabled, unknown
+        // tenant / no fence wired / lease-read errors fail closed.
         {
             use crate::storage::write_fence::{
                 FenceDecision, evaluate_fence, write_fencing_enabled,
@@ -1159,8 +1159,8 @@ mod fence_wiring_tests {
         struct Never;
         #[async_trait::async_trait]
         impl StorageWriteFence for Never {
-            async fn is_fenced_out(&self, _t: &str, _c: &str, _n: i64) -> bool {
-                false
+            async fn is_fenced_out(&self, _t: &str, _c: &str, _n: i64) -> anyhow::Result<bool> {
+                Ok(false)
             }
         }
         let mut coordinator = WALFlushCoordinator::new();

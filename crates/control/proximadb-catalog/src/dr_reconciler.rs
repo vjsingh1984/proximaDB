@@ -2117,7 +2117,7 @@ mod tests {
 
     use crate::collection_dr_policy::MockDrProviderAdapter;
     use crate::dr_reconciler::testing::MockDrPolicyStore;
-    use parking_lot::Mutex;
+
     use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
     fn make_driver(

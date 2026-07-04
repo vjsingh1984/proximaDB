@@ -850,8 +850,8 @@ mod tests {
             .as_any()
             .downcast_ref::<BooleanArray>()
             .unwrap();
-        assert_eq!(active.value(0), true);
-        assert_eq!(active.value(1), false);
+        assert!(active.value(0));
+        assert!(!active.value(1));
 
         let counts = arrays["count"]
             .as_any()

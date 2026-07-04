@@ -1368,9 +1368,8 @@ mod tests {
         for raw in [
             "true", "TRUE", "True", "1", "yes", "YES", "on", "ON", " true ",
         ] {
-            assert_eq!(
+            assert!(
                 parse_bool_flag(raw, "X").unwrap(),
-                true,
                 "expected {raw:?} to parse as true"
             );
         }
@@ -1379,9 +1378,8 @@ mod tests {
     #[test]
     fn parse_bool_flag_accepts_canonical_false_forms() {
         for raw in ["false", "FALSE", "0", "no", "NO", "off", "OFF", " false "] {
-            assert_eq!(
-                parse_bool_flag(raw, "X").unwrap(),
-                false,
+            assert!(
+                !parse_bool_flag(raw, "X").unwrap(),
                 "expected {raw:?} to parse as false"
             );
         }

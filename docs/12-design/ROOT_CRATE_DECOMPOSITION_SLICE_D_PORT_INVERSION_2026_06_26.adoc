@@ -142,6 +142,29 @@ then depends *down* on the trait crate, never *up* on the implementor.
 
 == D2 detailed spec — the measured port surface (2026-06-26)
 
+2026-07-02 measurement update: the source-level ratchet now lives in
+`scripts/check_workspace_boundaries.py --storage-up-edges`. Current checkout count is 271
+remaining `src/storage` up-edges (`compute` 239, `index` 12, `query` 10, `services` 10), and
+`scripts/check-layering.sh` enforces `--max-storage-up-edges 271` in CI. Use this count as the
+worktree baseline for Slice D. Each decomposition branch should reduce one edge class and lower the
+checked ceiling before handing off to the next branch.
+
+The 290 → 275 reduction was a pure re-export-path redirect: storage files that only needed
+`StorageEngineType` now import the canonical `crate::core::types::StorageEngineType` instead of
+walking through `crate::index::axis::eventlog::StorageEngineType`. This removes 15 index edges
+without touching the real event-log service or index-port surfaces, which remain separate D3/D4
+work.
+
+The 275 → 273 reduction added `StorageEventLogPort` to `proximadb-storage-ports`, rewired
+`storage::engines::event_log_integration` to depend on that port, and implemented the port on
+`services::events::log::EventLogService`. Storage now emits storage-native event facts while the
+service layer performs the AXIS `IndexEvent` translation.
+
+The 273 → 271 reduction retyped `storage::common::compaction_orchestrator::CompactionCoordinator`
+from AXIS `EventLogService` to `StorageEventLogPort`. The coordinator was already injection-based,
+so this removes a storage→index type dependency without changing service discovery or compaction
+readiness behavior.
+
 The mechanical phase (D0/D1) is **complete** (PRs #370, #377, #379, #386). The remaining
 D0 tail items are **not** clean Mechanism-A redirects and fold into Mechanism B:
 
@@ -222,10 +245,10 @@ first so the hot edits are mechanical.
 | Phase | Work | Risk
 | D0 | **Redirect-down (Mechanism A, existing crates).** Rewrite storage's `crate::compute::…DistanceMetric` / `crate::core::search::FilterExpression` / quant-types / config / hardware-caps / index-types references to the existing foundation crates. Pure path rewrites; verify each root path == leaf type. Several small mechanical PRs; collapses the edge count first. **DONE:** distance-kernel + FilterExpression (PR #370), hardware-caps + index-types (D0b, PR #377). **Mechanical phase complete** — the two remaining items are NOT clean redirects: quant-types resolves to *modality-tier* defs (Mechanism B, see D2 spec above) and config is a divergent root module. | Low
 | D1 | **Extract remaining shared-type leaves down.** `proximadb-search-types` (← `core::search` minus FilterExpression) and `proximadb-bloom` (← `core::bloom`). Same leaf recipe already proven. **DONE:** `proximadb-bloom` (PR #379); `proximadb-search-types` — the whole-file leaves `results`/`bounded_queue`/`sql_value_filter`/`json_value_serde` + the carved-out `json_comparison` module (this PR). `UnifiedSearchParams` stays in root (3 upward edges: compute `DistanceMetric`, modality `UnifiedQuantizationLevel`, query `FilterOptimizationHints`); the inline simple enums (`SearchMode`/`BlockPruneConfig`/…) remain interleaved with it and are deferred. | Low
-| D2 | **Define `proximadb-storage-ports`** — the `IndexPort` + `CollectionMetadataPort` traits. **DONE (CollectionMetadataPort):** crate created (`crates/storage/proximadb-storage-ports`, storage tier — same-tier deps allowed) with `async fn collection(&str) -> Result<Option<Collection>>` (the *measured* surface is one method; `get_collection_stats` turned out to be on `AxisManager`, not the service); `impl CollectionMetadataPort for CollectionService`. **Remaining:** `IndexPort` (leaks `AxisHybridQuery`/`AxisManagerQueryResult`/`AxisConfig`/`AxisVectorIndex` — per-type facade-vs-pre-extract decision; re-exporting root types into the port crate is a *cycle*, impossible). | Low–Med
+| D2 | **Define `proximadb-storage-ports`** — the `IndexPort` + storage-facing event/metadata traits. **DONE (CollectionMetadataPort):** crate created (`crates/storage/proximadb-storage-ports`, storage tier — same-tier deps allowed) with `async fn collection(&str) -> Result<Option<Collection>>` (the *measured* surface is one method; `get_collection_stats` turned out to be on `AxisManager`, not the service); `impl CollectionMetadataPort for CollectionService`. **DONE (StorageEventLogPort):** storage publishes flush/compaction/can-compact facts through the port; `EventLogService` performs the AXIS `IndexEvent` translation; `CompactionCoordinator` consumes the port for compaction readiness checks. **Remaining:** `IndexPort` (leaks `AxisHybridQuery`/`AxisManagerQueryResult`/`AxisConfig`/`AxisVectorIndex` — per-type facade-vs-pre-extract decision; re-exporting root types into the port crate is a *cycle*, impossible). | Low–Med
 | D3 | **Refactor storage to consume injected ports.** `engine.rs`/compaction stop constructing `AxisManager` / calling `CollectionService` directly; take `Arc<dyn IndexPort>` / `Arc<dyn CollectionMetadataPort>` via constructor injection. Same concrete behavior, now behind the trait. **This is the hot, coordination-window phase.** **DONE (metadata side):** storage fields/params/setters in viper engine+flush, flush-coordinator, and background-flush-context retyped from `Arc<CollectionService>` to `Arc<dyn CollectionMetadataPort>` (these injection setters currently have no callers — latent infra — so this is a pure structural edge removal). **DONE (tenant resolver):** `collection_tenant_id` relocated *down* to a new foundation crate **`proximadb-tenant`** (`tenant_id_of(&Collection)`) — not "down to catalog" as first sketched, because tenant resolution is a *cross-cutting economics/isolation primitive* (storage, embedded, services, and the network gates all share it; coupling it to any one tier is wrong). Foundation tier = every layer depends *down* on the single fail-closed attribution seam, and resolution is a pure function of collection metadata so any node in an autoscaled fleet attributes identically without coordination (elasticity) and per-tenant meters reconcile (economics). `CollectionService::collection_tenant_id` is now a thin alias; storage/embedded call `proximadb_tenant::tenant_id_of` directly. **DONE (catalog↔Collection mapping):** the `collection_from_catalog_schema`/`catalog_schema_from_collection` pair + 6 private helpers (8 fns, ~546 LOC) moved verbatim out of `CollectionService` into a new storage module `crate::storage::metadata::collection_mapping` — *not* down to `proximadb-catalog` as first sketched, because the mapping reaches *up* into storage's own `catalog_config` json round-trip (control-tier can't depend on storage → cycle). Storage is its natural home (WAL-recovery driven, round-trips through storage-owned config); services now calls *down* into it. **This clears the last storage→`crate::services::collection` reference** (`generate_unique_collection_id`, an interleaved `&self` async method, correctly stayed behind). **Remaining:** the whole `IndexPort` wiring (the larger port). | Med-High
 | D4 | **Implement ports + wire injection.** `impl IndexPort for AxisManager`, `impl CollectionMetadataPort for CollectionService`; the composition root injects them. | Med
-| D5 | **Gate to zero.** `scripts/check_workspace_boundaries.py` + a storage-up-edge ratchet asserting `crate::{index,compute,services,query}` references under `src/storage` == 0 (core type refs already redirected in D0/D1). Engines (Slice E) now unblocked. | Low
+| D5 | **Gate to zero.** `scripts/check_workspace_boundaries.py --storage-up-edges` reports the ratchet; `scripts/check-layering.sh` now enforces the current ceiling (`--max-storage-up-edges 271`) and should be lowered whenever a branch removes edges. Terminal target remains `crate::{index,compute,services,query}` references under `src/storage` == 0 (core type refs already redirected in D0/D1). Engines (Slice E) are unblocked only after the terminal gate, not merely after the report exists. | Low
 |===
 
 D0 and D1 are opportunistic (mechanical, independent, no coordination needed) and should be
@@ -238,7 +261,7 @@ orchestrator, and the composition root, so they need the **announced coordinatio
 * **Behavior-neutral:** D0–D2 are path/trait plumbing; D3/D4 are DIP wrapping around the
   *same* concrete impls (`AxisManager`, `CollectionService`) — no algorithm changes. Gate on
   the existing storage unit/integration suites + ANN recall ratchet (unchanged numbers).
-* **Layering:** every phase keeps `scripts/check-layering.sh` green; D5 adds the
+* **Layering:** every phase keeps `scripts/check-layering.sh` green; D5 uses the
   storage-up-edge ratchet (count only goes down, terminal 0).
 * **No new upward edges:** the port crate sits below both storage and the implementors; the
   layering validator already forbids storage→{modality,query,platform,app} — extend it to

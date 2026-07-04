@@ -218,7 +218,7 @@ impl TestKnowledgeGraph {
         let mut entities = Vec::new();
         let mut embeddings = Vec::new();
 
-        let categories = vec!["Electronics", "Clothing", "Books", "Home", "Sports"];
+        let categories = ["Electronics", "Clothing", "Books", "Home", "Sports"];
 
         // Generate products with metadata
         for i in 0..num_products {
@@ -336,7 +336,7 @@ impl TestKnowledgeGraph {
     }
 
     fn random_relation_type(rng: &mut impl Rng) -> String {
-        let types = vec!["related_to", "derived_from", "references", "similar_to"];
+        let types = ["related_to", "derived_from", "references", "similar_to"];
         types[rng.gen_range(0..types.len())].to_string()
     }
 }
@@ -367,7 +367,7 @@ mod tests {
     fn test_research_papers_fixture() {
         let graph = TestKnowledgeGraph::research_papers();
         assert_eq!(graph.entities.len(), 500);
-        assert!(graph.relations.len() > 0);
+        assert!(!graph.relations.is_empty());
 
         // Verify metadata structure
         let paper = &graph.entities[0];
@@ -387,7 +387,7 @@ mod tests {
     fn test_ecommerce_fixture() {
         let graph = TestKnowledgeGraph::ecommerce();
         assert_eq!(graph.entities.len(), 1000);
-        assert!(graph.relations.len() > 0);
+        assert!(!graph.relations.is_empty());
 
         // Verify product metadata
         let product = &graph.entities[0];

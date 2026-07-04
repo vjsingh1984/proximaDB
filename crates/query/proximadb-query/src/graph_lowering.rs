@@ -202,12 +202,6 @@ fn validate_compiled_query(compiled: &CompiledPattern, normalized_query: &str) -
         }
     }
 
-    if normalized_query.contains("[*") {
-        return Err(anyhow!(
-            "Variable-length graph paths are not supported in the facade/federated graph subset"
-        ));
-    }
-
     if compiled.nodes.is_empty() {
         return Err(anyhow!(
             "Graph query must contain at least one node pattern"

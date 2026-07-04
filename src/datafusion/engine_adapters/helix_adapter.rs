@@ -670,7 +670,7 @@ mod tests {
     fn test_estimate_hilbert_range() {
         // Level 0: 10 files, each covers 1/10 of space
         let (min0, max0) = HelixTableProvider::estimate_hilbert_range(0, 0);
-        let (min1, max1) = HelixTableProvider::estimate_hilbert_range(0, 1);
+        let (min1, _max1) = HelixTableProvider::estimate_hilbert_range(0, 1);
 
         // Ranges should be non-overlapping
         assert!(max0 < min1);

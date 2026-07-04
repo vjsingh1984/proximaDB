@@ -3405,19 +3405,24 @@ mod tests {
             .unwrap();
         assert!(result.success, "vector-bearing insert must succeed");
 
-        let entries = wal.entries.lock().expect("recording WAL read lock");
-        assert_eq!(entries.len(), 1);
-        match &entries[0].operation {
-            CanonicalOperation::RecordUpsert { record, .. } => {
-                assert_eq!(record.embeddings.len(), 1);
-                assert_eq!(
-                    record.embeddings[0].values,
-                    proximadb_records::EmbeddingValues::Fp32(vec![0.1_f32, 0.2, 0.3, 0.4])
-                );
+        // Scope the WAL lock guard so it provably drops before the `get_by_key`
+        // await below (clippy::await_holding_lock): a std Mutex held across an
+        // await would block the runtime if contended. The block end drops the
+        // guard; no explicit `drop` needed.
+        {
+            let entries = wal.entries.lock().expect("recording WAL read lock");
+            assert_eq!(entries.len(), 1);
+            match &entries[0].operation {
+                CanonicalOperation::RecordUpsert { record, .. } => {
+                    assert_eq!(record.embeddings.len(), 1);
+                    assert_eq!(
+                        record.embeddings[0].values,
+                        proximadb_records::EmbeddingValues::Fp32(vec![0.1_f32, 0.2, 0.3, 0.4])
+                    );
+                }
+                other => panic!("expected RecordUpsert WAL entry, got {other:?}"),
             }
-            other => panic!("expected RecordUpsert WAL entry, got {other:?}"),
         }
-        drop(entries);
 
         let fetched = store
             .get_by_key(

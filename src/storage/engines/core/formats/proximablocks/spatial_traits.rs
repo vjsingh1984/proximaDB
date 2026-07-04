@@ -501,7 +501,7 @@ mod tests {
         let encoder = ZOrderSpatialEncoder::new(4, 8);
 
         // Create some block codes
-        let block_coords = vec![
+        let block_coords = [
             vec![0.1, 0.1, 0.1, 0.1],
             vec![0.5, 0.5, 0.5, 0.5],
             vec![0.9, 0.9, 0.9, 0.9],

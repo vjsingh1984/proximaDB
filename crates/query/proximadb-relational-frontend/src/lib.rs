@@ -1354,10 +1354,90 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope, ctx: &mut LoweringCtx) -> Result<Ex
                 })
             }
         }
+        // Special-syntax ANSI functions → their registry FuncCall names, so they
+        // answer on the native/Volcano route too (TD-OLAP-5 P1b; previously these
+        // AST shapes were Unsupported and only ran via the DataFusion fallback).
+        //
+        // SUBSTRING(x FROM s [FOR n]) / SUBSTRING(x, s[, n]) → substr(x, s[, n]).
+        SqlExpr::Substring {
+            expr,
+            substring_from,
+            substring_for,
+            ..
+        } => {
+            let mut args = vec![lower_expr(expr, scope, ctx)?];
+            match substring_from {
+                Some(from) => args.push(lower_expr(from, scope, ctx)?),
+                // SUBSTRING(x FOR n) means from the start.
+                None => args.push(Expr::Literal {
+                    value: ProximaValue::Int64(1),
+                    ty: ProximaType::Int64,
+                }),
+            }
+            if let Some(len) = substring_for {
+                args.push(lower_expr(len, scope, ctx)?);
+            }
+            Ok(registry_func_call("substr", args))
+        }
+        // EXTRACT(field FROM x) → date_part('field', x).
+        SqlExpr::Extract { field, expr, .. } => {
+            let field_name = field.to_string().to_ascii_lowercase();
+            let args = vec![
+                Expr::Literal {
+                    value: ProximaValue::String(field_name),
+                    ty: ProximaType::String,
+                },
+                lower_expr(expr, scope, ctx)?,
+            ];
+            Ok(registry_func_call("date_part", args))
+        }
+        // TRIM([BOTH|LEADING|TRAILING] [chars FROM] x) → trim/btrim/ltrim/rtrim.
+        SqlExpr::Trim {
+            expr,
+            trim_where,
+            trim_what,
+            trim_characters,
+        } => {
+            use sqlparser::ast::TrimWhereField;
+            let name = match trim_where {
+                Some(TrimWhereField::Leading) => "ltrim",
+                Some(TrimWhereField::Trailing) => "rtrim",
+                Some(TrimWhereField::Both) | None => "btrim",
+            };
+            let mut args = vec![lower_expr(expr, scope, ctx)?];
+            if let Some(what) = trim_what {
+                args.push(lower_expr(what, scope, ctx)?);
+            } else if let Some(chars) = trim_characters
+                && let Some(first) = chars.first()
+            {
+                args.push(lower_expr(first, scope, ctx)?);
+            }
+            Ok(registry_func_call(name, args))
+        }
+        // POSITION(sub IN str) → strpos(str, sub) — note the argument swap.
+        SqlExpr::Position { expr, r#in } => {
+            let sub = lower_expr(expr, scope, ctx)?;
+            let s = lower_expr(r#in, scope, ctx)?;
+            Ok(registry_func_call("strpos", vec![s, sub]))
+        }
         other => Err(FrontendError::Unsupported(format!(
             "expression {:?}",
             std::mem::discriminant(other)
         ))),
+    }
+}
+
+/// Build a lowered [`Expr::FuncCall`] against a shared-registry function,
+/// resolving the declared return type exactly like `lower_scalar_function`.
+fn registry_func_call(name: &str, args: Vec<Expr>) -> Expr {
+    let return_ty = proximadb_functions::builtins()
+        .lookup_scalar(name)
+        .map(|d| d.signature.return_ty.clone())
+        .unwrap_or(ProximaType::String);
+    Expr::FuncCall {
+        name: name.to_string(),
+        args,
+        return_ty,
     }
 }
 
@@ -3127,5 +3207,101 @@ mod tests {
         let err =
             lower_function_body("y + 1", &[("x".to_string(), ProximaType::Int64)]).unwrap_err();
         assert!(matches!(err, FrontendError::ColumnNotFound(_)));
+    }
+
+    // --- Special-syntax ANSI functions → registry FuncCall (TD-OLAP-5 P1b) ----
+
+    fn first_output_expr(plan: LogicalNode) -> Expr {
+        let LogicalNode::Project { outputs, .. } = plan else {
+            panic!("expected Project");
+        };
+        outputs[0].expr.clone()
+    }
+
+    #[test]
+    fn substring_from_for_lowers_to_substr() {
+        let expr = first_output_expr(lower("SELECT SUBSTRING(name FROM 1 FOR 2) FROM users"));
+        match expr {
+            Expr::FuncCall {
+                name,
+                args,
+                return_ty,
+            } => {
+                assert_eq!(name, "substr");
+                assert_eq!(args.len(), 3);
+                assert_eq!(return_ty, ProximaType::String);
+            }
+            other => panic!("expected substr FuncCall, got {other:?}"),
+        }
+        // SUBSTRING(x FOR n) implies FROM 1.
+        let expr = first_output_expr(lower("SELECT SUBSTRING(name FOR 2) FROM users"));
+        match expr {
+            Expr::FuncCall { name, args, .. } => {
+                assert_eq!(name, "substr");
+                assert!(matches!(
+                    args[1],
+                    Expr::Literal {
+                        value: ProximaValue::Int64(1),
+                        ..
+                    }
+                ));
+            }
+            other => panic!("expected substr FuncCall, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extract_lowers_to_date_part() {
+        let expr = first_output_expr(lower("SELECT EXTRACT(YEAR FROM name) FROM users"));
+        match expr {
+            Expr::FuncCall {
+                name,
+                args,
+                return_ty,
+            } => {
+                assert_eq!(name, "date_part");
+                assert_eq!(return_ty, ProximaType::Float64);
+                assert!(matches!(
+                    &args[0],
+                    Expr::Literal {
+                        value: ProximaValue::String(field),
+                        ..
+                    } if field == "year"
+                ));
+            }
+            other => panic!("expected date_part FuncCall, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trim_variants_lower_to_trim_family() {
+        for (sql, want) in [
+            ("SELECT TRIM(name) FROM users", "btrim"),
+            ("SELECT TRIM(LEADING 'x' FROM name) FROM users", "ltrim"),
+            ("SELECT TRIM(TRAILING 'x' FROM name) FROM users", "rtrim"),
+            ("SELECT TRIM(BOTH 'x' FROM name) FROM users", "btrim"),
+        ] {
+            let expr = first_output_expr(lower(sql));
+            match expr {
+                Expr::FuncCall { name, .. } => assert_eq!(name, want, "for {sql}"),
+                other => panic!("expected {want} FuncCall for {sql}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn position_lowers_to_strpos_with_swapped_args() {
+        let expr = first_output_expr(lower("SELECT POSITION('a' IN name) FROM users"));
+        match expr {
+            Expr::FuncCall { name, args, .. } => {
+                assert_eq!(name, "strpos");
+                // strpos(string, substring): the IN operand comes first.
+                assert!(matches!(args[0], Expr::Column(_)), "haystack first");
+                assert!(
+                    matches!(&args[1], Expr::Literal { value: ProximaValue::String(sub), .. } if sub == "a")
+                );
+            }
+            other => panic!("expected strpos FuncCall, got {other:?}"),
+        }
     }
 }

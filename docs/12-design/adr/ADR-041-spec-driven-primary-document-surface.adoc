@@ -42,7 +42,7 @@ Generated transports are first-class and primary across all languages (Python/Ru
 spec); hand-written surfaces are deprecated, then removed.
 
 * **Canonical ingest surface** = `POST /api/v2/collections/{collection_id}/documents`
-  (`operationId: ingestDocuments`), now documented **from Rust** (`src/network/rest/v3/documents.rs` —
+  (`operationId: ingestDocuments`), now documented **from Rust** (`src/network/rest/v2/documents.rs` —
   `#[utoipa::path]` on `ingest_documents` + `ToSchema` on the ingest DTOs; registered in
   `openapi.rs`). It is the only surface live-verified for native text→embedding, and it is what
   consumers already depend on. Hand-editing the generated YAML is explicitly NOT the path — the

@@ -191,7 +191,7 @@ fn sst_block_serialization_roundtrip() {
         }
 
         db.insert("roundtrip_test", ids, vectors, None)
-            .expect(&format!("insert batch {}", batch_idx));
+            .unwrap_or_else(|_| panic!("insert batch {}", batch_idx));
     }
 
     eprintln!(
@@ -308,7 +308,7 @@ fn test_large_k_search_returns_correct_count() {
     for k in [10, 50, 100, 200, 500, 1000] {
         let results = db
             .search("test_large_k", vectors[0].clone(), k, None)
-            .expect(&format!("search pre-flush k={}", k));
+            .unwrap_or_else(|_| panic!("search pre-flush k={}", k));
         eprintln!("  k={}: got {} results", k, results.len());
     }
     let results_pre_flush = db

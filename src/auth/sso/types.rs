@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_security_clearance_all_levels() {
-        let levels = vec![
+        let levels = [
             SecurityClearance::Public,
             SecurityClearance::Internal,
             SecurityClearance::Confidential,

@@ -1084,7 +1084,7 @@ mod tests {
         assert_eq!(query.total, 0);
 
         let _router = create_observability_router();
-        let _logs = LogsHandler::default();
+        let _logs = LogsHandler;
         let _metrics = MetricsHandler::new();
     }
 }

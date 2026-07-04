@@ -202,7 +202,7 @@ async fn invalidation_summary_total_reflects_cache_contribution() {
     // Populate plan_cache with two distinct keys (different recall
     // targets → distinct cache entries even with the same predicates).
     let _ = build_for_search_cached_with_collection(&plan_cache, &inputs, "kb").await;
-    let mut inputs2 = CachedPlanInputs {
+    let inputs2 = CachedPlanInputs {
         plan_inputs: PlanBuilderInputs {
             predicates: &preds,
             field_stats: &stats,

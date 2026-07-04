@@ -3,7 +3,6 @@
 //! This test demonstrates that ProximaDB can work with different filesystem backends.
 
 use anyhow::Result;
-use tokio;
 use tracing::debug;
 
 #[tokio::test]

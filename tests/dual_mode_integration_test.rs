@@ -127,6 +127,7 @@ mod tests {
                 engine_config: std::collections::HashMap::new(),
                 base_location: sst_path.clone(),
                 assigned_at: 0,
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -186,6 +187,7 @@ mod tests {
                 engine_config: std::collections::HashMap::new(),
                 base_location: viper_path.clone(),
                 assigned_at: 0,
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -244,6 +246,7 @@ mod tests {
                 engine_config: std::collections::HashMap::new(),
                 base_location: sst_path.clone(),
                 assigned_at: 0,
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -264,6 +267,7 @@ mod tests {
                 engine_config: std::collections::HashMap::new(),
                 base_location: viper_path.clone(),
                 assigned_at: 0,
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -339,6 +343,7 @@ mod tests {
                 engine_config: std::collections::HashMap::new(),
                 base_location: sst_path.clone(),
                 assigned_at: 0,
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -431,6 +436,7 @@ mod tests {
                 engine_config: std::collections::HashMap::new(),
                 base_location: sst_path.clone(),
                 assigned_at: 0,
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -451,6 +457,7 @@ mod tests {
                 engine_config: std::collections::HashMap::new(),
                 base_location: viper_path.clone(),
                 assigned_at: 0,
+                ..Default::default()
             }),
             ..Default::default()
         };

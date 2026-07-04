@@ -1249,6 +1249,74 @@ impl Default for ResourceColumnarMonitoringConfig {
     }
 }
 
+/// Map core compression algorithm to Parquet compression
+/// This is shared by both NOVA and VIPER engines for consistent compression handling
+pub fn map_core_to_parquet_compression(
+    algorithm: CompressionAlgorithm,
+    level: Option<i32>,
+) -> Result<parquet::basic::Compression> {
+    use parquet::basic::Compression;
+
+    let compression = match algorithm {
+        CompressionAlgorithm::None => Compression::UNCOMPRESSED,
+        CompressionAlgorithm::Zstd => {
+            if let Some(lvl) = level {
+                Compression::ZSTD(parquet::basic::ZstdLevel::try_new(lvl)?)
+            } else {
+                Compression::ZSTD(parquet::basic::ZstdLevel::default())
+            }
+        }
+        CompressionAlgorithm::Lz4 => Compression::LZ4,
+        CompressionAlgorithm::Snappy => Compression::SNAPPY,
+        CompressionAlgorithm::Gzip => {
+            if let Some(lvl) = level {
+                Compression::GZIP(parquet::basic::GzipLevel::try_new(lvl as u32)?)
+            } else {
+                Compression::GZIP(parquet::basic::GzipLevel::default())
+            }
+        }
+        CompressionAlgorithm::Brotli => {
+            if let Some(lvl) = level {
+                Compression::BROTLI(parquet::basic::BrotliLevel::try_new(lvl as u32)?)
+            } else {
+                Compression::BROTLI(parquet::basic::BrotliLevel::default())
+            }
+        }
+        CompressionAlgorithm::Lzo => Compression::LZO,
+        // Map unsupported algorithms to fallbacks
+        CompressionAlgorithm::Deflate | CompressionAlgorithm::Zlib => {
+            // Deflate/Zlib are similar to GZIP
+            if let Some(lvl) = level {
+                Compression::GZIP(parquet::basic::GzipLevel::try_new(lvl as u32)?)
+            } else {
+                Compression::GZIP(parquet::basic::GzipLevel::default())
+            }
+        }
+        CompressionAlgorithm::Lz4hc => Compression::LZ4, // Use regular LZ4
+        CompressionAlgorithm::Xz | CompressionAlgorithm::Lzma => {
+            // XZ and LZMA provide high compression, map to ZSTD with high level
+            let high_level = level.unwrap_or(9).max(9);
+            Compression::ZSTD(parquet::basic::ZstdLevel::try_new(high_level)?)
+        }
+        CompressionAlgorithm::Bzip2 => {
+            // BZip2 provides good compression, map to Brotli
+            if let Some(lvl) = level {
+                Compression::BROTLI(parquet::basic::BrotliLevel::try_new(lvl as u32)?)
+            } else {
+                Compression::BROTLI(parquet::basic::BrotliLevel::default())
+            }
+        }
+        CompressionAlgorithm::Mixed => {
+            // Mixed compression - Use ZSTD level 3 as default for Parquet
+            // Per-column optimization will be handled at the writer level
+            info!("Using Mixed compression with ZSTD level 3 as base");
+            Compression::ZSTD(parquet::basic::ZstdLevel::try_new(3)?)
+        }
+    };
+
+    Ok(compression)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1318,72 +1386,4 @@ mod tests {
         assert_eq!(limits.pq_pool_max_vectors, 3000);
         assert_eq!(limits.max_vector_size_bytes, 64 * 1024);
     }
-}
-
-/// Map core compression algorithm to Parquet compression
-/// This is shared by both NOVA and VIPER engines for consistent compression handling
-pub fn map_core_to_parquet_compression(
-    algorithm: CompressionAlgorithm,
-    level: Option<i32>,
-) -> Result<parquet::basic::Compression> {
-    use parquet::basic::Compression;
-
-    let compression = match algorithm {
-        CompressionAlgorithm::None => Compression::UNCOMPRESSED,
-        CompressionAlgorithm::Zstd => {
-            if let Some(lvl) = level {
-                Compression::ZSTD(parquet::basic::ZstdLevel::try_new(lvl)?)
-            } else {
-                Compression::ZSTD(parquet::basic::ZstdLevel::default())
-            }
-        }
-        CompressionAlgorithm::Lz4 => Compression::LZ4,
-        CompressionAlgorithm::Snappy => Compression::SNAPPY,
-        CompressionAlgorithm::Gzip => {
-            if let Some(lvl) = level {
-                Compression::GZIP(parquet::basic::GzipLevel::try_new(lvl as u32)?)
-            } else {
-                Compression::GZIP(parquet::basic::GzipLevel::default())
-            }
-        }
-        CompressionAlgorithm::Brotli => {
-            if let Some(lvl) = level {
-                Compression::BROTLI(parquet::basic::BrotliLevel::try_new(lvl as u32)?)
-            } else {
-                Compression::BROTLI(parquet::basic::BrotliLevel::default())
-            }
-        }
-        CompressionAlgorithm::Lzo => Compression::LZO,
-        // Map unsupported algorithms to fallbacks
-        CompressionAlgorithm::Deflate | CompressionAlgorithm::Zlib => {
-            // Deflate/Zlib are similar to GZIP
-            if let Some(lvl) = level {
-                Compression::GZIP(parquet::basic::GzipLevel::try_new(lvl as u32)?)
-            } else {
-                Compression::GZIP(parquet::basic::GzipLevel::default())
-            }
-        }
-        CompressionAlgorithm::Lz4hc => Compression::LZ4, // Use regular LZ4
-        CompressionAlgorithm::Xz | CompressionAlgorithm::Lzma => {
-            // XZ and LZMA provide high compression, map to ZSTD with high level
-            let high_level = level.unwrap_or(9).max(9);
-            Compression::ZSTD(parquet::basic::ZstdLevel::try_new(high_level)?)
-        }
-        CompressionAlgorithm::Bzip2 => {
-            // BZip2 provides good compression, map to Brotli
-            if let Some(lvl) = level {
-                Compression::BROTLI(parquet::basic::BrotliLevel::try_new(lvl as u32)?)
-            } else {
-                Compression::BROTLI(parquet::basic::BrotliLevel::default())
-            }
-        }
-        CompressionAlgorithm::Mixed => {
-            // Mixed compression - Use ZSTD level 3 as default for Parquet
-            // Per-column optimization will be handled at the writer level
-            info!("Using Mixed compression with ZSTD level 3 as base");
-            Compression::ZSTD(parquet::basic::ZstdLevel::try_new(3)?)
-        }
-    };
-
-    Ok(compression)
 }

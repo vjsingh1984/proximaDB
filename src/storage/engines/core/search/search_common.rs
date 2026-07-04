@@ -52,7 +52,7 @@ impl Default for UniversalSearchConfig {
             enable_reranking: true,
             max_parallel_files: 4,
             enable_progressive_search: true,
-            distance_metric: proximadb_distance_kernel::DistanceMetric::default(),
+            distance_metric: proximadb_distance_kernel::DistanceMetric::Cosine,
         }
     }
 }
@@ -80,6 +80,12 @@ pub struct ProgressiveConfig {
 
     /// Final number of results
     pub final_top_k: usize,
+
+    /// Distance metric for the full-precision rerank stage. Defaults to Cosine
+    /// (the product default); callers with the collection's metric should set it
+    /// so the rerank matches the collection (P1.2 — was hard-coded Cosine via
+    /// `DistanceMetric::default()` = Unspecified).
+    pub distance_metric: proximadb_distance_kernel::DistanceMetric,
 }
 
 impl Default for ProgressiveConfig {
@@ -92,6 +98,7 @@ impl Default for ProgressiveConfig {
             enable_pq: true,
             pq_top_k: 50,
             final_top_k: 10,
+            distance_metric: proximadb_distance_kernel::DistanceMetric::Cosine,
         }
     }
 }
@@ -349,8 +356,13 @@ impl UniversalSearchPipeline {
         }
 
         // Stage 4: Full precision ranking
-        self.full_precision_rank(candidates, query_vector, config.final_top_k)
-            .await
+        self.full_precision_rank(
+            candidates,
+            query_vector,
+            config.final_top_k,
+            &config.distance_metric,
+        )
+        .await
     }
 
     /// Binary filtering stage
@@ -421,6 +433,7 @@ impl UniversalSearchPipeline {
         records: Vec<VectorRecord>,
         query_vector: &[f32],
         top_k: usize,
+        distance_metric: &proximadb_distance_kernel::DistanceMetric,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut results = Vec::with_capacity(records.len());
 
@@ -428,7 +441,7 @@ impl UniversalSearchPipeline {
             let similarity_result = self.distance_compute.as_ref().calculate_distance(
                 query_vector,
                 &record.vector,
-                &proximadb_distance_kernel::DistanceMetric::default(),
+                distance_metric,
             );
 
             // Convert metadata from Vec<MetadataItem> to HashMap<String, Value>

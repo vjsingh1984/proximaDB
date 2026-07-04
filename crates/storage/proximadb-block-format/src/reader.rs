@@ -23,7 +23,9 @@ use crate::{
     row_dir::{ROW_ENTRY_SIZE, RowDirectory},
     rowgroup::RowGroupBlock,
     stripe::{COLUMN_META_SIZE, ColumnMeta},
-    vparam::{QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock},
+    vparam::{
+        QUANT_FP16, QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock,
+    },
     writer::{BLOCK_FOOTER_SIZE, BlockFooter},
 };
 use proximadb_codec::functions::{rabitq, sq8};
@@ -42,6 +44,20 @@ pub struct PaxBlockReader<'a> {
     vparams: VectorParamBlock,
     /// Row-group sub-index for finer-than-block pruning (empty if absent).
     rowgroups: RowGroupBlock,
+}
+
+/// Metric for the PAX cascade's ranking stages. Kept local to this crate to
+/// avoid pulling `DistanceMetric` (proximadb-distance-kernel) into the low-level
+/// block-format crate; the SST engine maps `DistanceMetric` → `RankMetric` at the
+/// dispatch seam. Both stage-1 (RaBitQ prefilter) and stage-2 (SQ8 rerank) key
+/// off this.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RankMetric {
+    /// Squared L2 distance (lower = nearer) — the validated default (recall 0.932).
+    L2,
+    /// Cosine: stage-1 ranks by inner product (`ip_rank_score`), stage-2 computes
+    /// the exact cosine distance `1 − cos_sim` on SQ8-decoded vectors.
+    Cosine,
 }
 
 impl<'a> PaxBlockReader<'a> {
@@ -326,11 +342,19 @@ impl<'a> PaxBlockReader<'a> {
     /// RaBitQ-quantized. The caller reranks the returned rows against the full-precision
     /// source (decoupled rerank) before taking the final top-k — this is the seam Phase C
     /// wires into the cold scan.
-    pub fn rabitq_rank(&self, query: &[f32], pool: usize) -> Option<Vec<usize>> {
+    pub fn rabitq_rank(
+        &self,
+        query: &[f32],
+        pool: usize,
+        metric: RankMetric,
+    ) -> Option<Vec<usize>> {
         let (params, codes) = self.decode_rabitq_codes(crate::col_id::EMBED_BASE)?;
-        let rotation = rabitq::build_rotation(params.dim, params.seed);
+        let rotation = rabitq::build_rotation_cached(params.dim, params.seed);
         let q_rotated = rabitq::rotate_query(query, &params, &rotation);
-        Some(rabitq::rank_candidates(&q_rotated, &codes, pool))
+        Some(match metric {
+            RankMetric::L2 => rabitq::rank_candidates(&q_rotated, &codes, pool),
+            RankMetric::Cosine => rabitq::rank_candidates_ip(&q_rotated, &codes, pool),
+        })
     }
 
     /// Stage-2 of the cascade: rerank a RaBitQ candidate `rows` set for embedding
@@ -345,10 +369,13 @@ impl<'a> PaxBlockReader<'a> {
         emb_idx: usize,
         query: &[f32],
         rows: &[usize],
+        metric: RankMetric,
     ) -> Option<Vec<(usize, f32)>> {
         let column_id = crate::col_id::RERANK_BASE + emb_idx as i32;
         let entry = self.vparams.get(column_id)?;
-        if entry.quant_kind != QUANT_SQ8 {
+        // Accept SQ8 (default tier-2) or FP16 (near-lossless tier-2). Other
+        // quant kinds → return None (caller falls back to RaBitQ-coarse order).
+        if entry.quant_kind != QUANT_SQ8 && entry.quant_kind != QUANT_FP16 {
             return None;
         }
         let raw = self.read_stripe_raw(column_id)?;
@@ -361,7 +388,12 @@ impl<'a> PaxBlockReader<'a> {
         let bitmap = &raw[..bm_len];
         let payload = &raw[bm_len..];
         let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
-        let stride = dim; // one u8 SQ8 code per dimension
+        // FP16: 2 bytes/value; SQ8: 1 byte/value.
+        let stride = if entry.quant_kind == QUANT_FP16 {
+            dim * 2
+        } else {
+            dim
+        };
 
         let mut scored: Vec<(usize, f32)> = Vec::with_capacity(rows.len());
         let mut decoded: Vec<f32> = Vec::with_capacity(dim);
@@ -375,16 +407,157 @@ impl<'a> PaxBlockReader<'a> {
                 continue;
             }
             decoded.clear();
-            sq8::decode_into(&payload[off..end], &entry.params, &mut decoded);
-            let dist = decoded
-                .iter()
-                .zip(query)
-                .map(|(x, q)| (x - q) * (x - q))
-                .sum::<f32>();
+            if entry.quant_kind == QUANT_FP16 {
+                use half::f16;
+                for chunk in payload[off..end].chunks_exact(2) {
+                    decoded.push(f16::from_le_bytes([chunk[0], chunk[1]]).to_f32());
+                }
+            } else {
+                sq8::decode_into(&payload[off..end], &entry.params, &mut decoded);
+            }
+            let dist = match metric {
+                // Squared L2 (lower = nearer).
+                RankMetric::L2 => decoded
+                    .iter()
+                    .zip(query)
+                    .map(|(x, q)| (x - q) * (x - q))
+                    .sum::<f32>(),
+                // Cosine distance 1 − cos_sim (∈ [0, 2]; lower = nearer). Exact on
+                // the SQ8-decoded vector + query (handles non-normalized data).
+                RankMetric::Cosine => {
+                    let dot = decoded.iter().zip(query).map(|(x, q)| x * q).sum::<f32>();
+                    let norm_x = decoded.iter().map(|x| x * x).sum::<f32>().sqrt();
+                    let norm_q = query.iter().map(|q| q * q).sum::<f32>().sqrt();
+                    if norm_x > 0.0 && norm_q > 0.0 {
+                        1.0 - (dot / (norm_x * norm_q))
+                    } else {
+                        1.0 // zero vector: maximally dissimilar
+                    }
+                }
+            };
             scored.push((row, dist));
         }
         scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         Some(scored)
+    }
+
+    /// Stage-2.5 EXACT rerank: like [`rerank_rows`] but reads the OPTIONAL exact-f32
+    /// tier (`col_id::F32_TIER_BASE + emb_idx`, `QUANT_RAW_F32`) instead of the SQ8
+    /// column, and decodes the candidate rows' raw f32 directly (no quantization
+    /// error) — so the metric distance is exact and the cascade's final top-k is
+    /// exact among the candidate pool (recall ≈ 1.0). Returns `None` when no f32-tier
+    /// column is present; the caller then falls back to [`rerank_rows`] (SQ8), then
+    /// the RaBitQ-coarse order.
+    pub fn rerank_rows_f32_exact(
+        &self,
+        emb_idx: usize,
+        query: &[f32],
+        rows: &[usize],
+        metric: RankMetric,
+    ) -> Option<Vec<(usize, f32)>> {
+        let column_id = crate::col_id::F32_TIER_BASE + emb_idx as i32;
+        let entry = self.vparams.get(column_id)?;
+        if entry.quant_kind != QUANT_RAW_F32 {
+            return None;
+        }
+        let raw = self.read_stripe_raw(column_id)?;
+        let n = self.row_count() as usize;
+        let dim = entry.dim as usize;
+        let bm_len = n.div_ceil(8);
+        if raw.len() < bm_len {
+            return None;
+        }
+        let bitmap = &raw[..bm_len];
+        let payload = &raw[bm_len..];
+        let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
+        let stride = dim * 4; // one little-endian f32 per dimension
+
+        let mut scored: Vec<(usize, f32)> = Vec::with_capacity(rows.len());
+        let mut decoded: Vec<f32> = Vec::with_capacity(dim);
+        for &row in rows {
+            if row >= n || !is_present(row) {
+                continue;
+            }
+            let off = row * stride;
+            let end = off + stride;
+            if end > payload.len() {
+                continue;
+            }
+            decoded.clear();
+            for chunk in payload[off..end].chunks_exact(4) {
+                decoded.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+            }
+            let dist = match metric {
+                // Squared L2 (lower = nearer).
+                RankMetric::L2 => decoded
+                    .iter()
+                    .zip(query)
+                    .map(|(x, q)| (x - q) * (x - q))
+                    .sum::<f32>(),
+                // Cosine distance 1 − cos_sim (∈ [0, 2]; lower = nearer). Exact on
+                // the raw f32 vector + query (handles non-normalized data).
+                RankMetric::Cosine => {
+                    let dot = decoded.iter().zip(query).map(|(x, q)| x * q).sum::<f32>();
+                    let norm_x = decoded.iter().map(|x| x * x).sum::<f32>().sqrt();
+                    let norm_q = query.iter().map(|q| q * q).sum::<f32>().sqrt();
+                    if norm_x > 0.0 && norm_q > 0.0 {
+                        1.0 - (dot / (norm_x * norm_q))
+                    } else {
+                        1.0 // zero vector: maximally dissimilar
+                    }
+                }
+            };
+            scored.push((row, dist));
+        }
+        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        Some(scored)
+    }
+
+    /// Decode the exact-f32 tier vectors for a specific set of `rows` (the
+    /// cascade's top-k), reading ONLY those rows' bytes from the `F32_TIER_BASE`
+    /// stripe — not the whole column (keeps the cascade's read budget tight).
+    /// Returns `None` if no f32-tier column is present; per-row `None` for
+    /// null/out-of-range rows. This is the `include_vectors` materialization path.
+    pub fn decode_f32_tier_rows(
+        &self,
+        emb_idx: usize,
+        rows: &[usize],
+    ) -> Option<Vec<Option<Vec<f32>>>> {
+        let column_id = crate::col_id::F32_TIER_BASE + emb_idx as i32;
+        let entry = self.vparams.get(column_id)?;
+        if entry.quant_kind != QUANT_RAW_F32 {
+            return None;
+        }
+        let raw = self.read_stripe_raw(column_id)?;
+        let n = self.row_count() as usize;
+        let dim = entry.dim as usize;
+        let bm_len = n.div_ceil(8);
+        if raw.len() < bm_len {
+            return None;
+        }
+        let bitmap = &raw[..bm_len];
+        let payload = &raw[bm_len..];
+        let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
+        let stride = dim * 4; // one little-endian f32 per dimension
+        let mut out = Vec::with_capacity(rows.len());
+        for &row in rows {
+            if row >= n || !is_present(row) {
+                out.push(None);
+                continue;
+            }
+            let off = row * stride;
+            let end = off + stride;
+            if end > payload.len() {
+                out.push(None);
+                continue;
+            }
+            let v: Vec<f32> = payload[off..end]
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                .collect();
+            out.push(Some(v));
+        }
+        Some(out)
     }
 
     /// Decode opaque byte blobs from a raw length-prefixed binary stripe — the
@@ -1184,6 +1357,229 @@ mod tests {
         (corpus, writer.flush().unwrap())
     }
 
+    /// P3 Phase D f32 tier: with `with_f32_tier(true)` + RaBitQ, the block ALSO
+    /// carries an exact-f32 column at `F32_TIER_BASE` (read lazily). It
+    /// round-trips the EXACT original vectors (vs the SQ8 rerank column's
+    /// approximation), and the RaBitQ hot + SQ8 rerank columns are still present.
+    #[test]
+    fn pax_block_f32_tier_round_trips_exact_vectors() {
+        let corpus = [lcg_vec(1, 64), lcg_vec(2, 64), lcg_vec(3, 64)];
+
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+            .with_quant(crate::writer::VectorQuant::RaBitQ)
+            .with_f32_tier(true);
+        for (i, v) in corpus.iter().enumerate() {
+            writer
+                .add_record(&make_record_with_embedding(
+                    &format!("r{i}"),
+                    "t",
+                    1000 + i as i64,
+                    v.clone(),
+                ))
+                .unwrap();
+        }
+        let block = writer.flush().unwrap();
+        let reader = PaxBlockReader::open(&block).unwrap();
+
+        // The f32 tier column is present + RAW_F32.
+        let entry = reader
+            .vector_params()
+            .get(col_id::F32_TIER_BASE)
+            .expect("f32 tier column present");
+        assert_eq!(entry.quant_kind, crate::vparam::QUANT_RAW_F32);
+        // The RaBitQ hot + SQ8 rerank columns are still present.
+        assert_eq!(
+            reader
+                .vector_params()
+                .get(col_id::EMBED_BASE)
+                .unwrap()
+                .quant_kind,
+            crate::vparam::QUANT_RABITQ_RESERVED
+        );
+        assert_eq!(
+            reader
+                .vector_params()
+                .get(crate::col_id::RERANK_BASE)
+                .unwrap()
+                .quant_kind,
+            QUANT_SQ8
+        );
+
+        // The f32 tier decodes the EXACT original vectors (row-for-row).
+        let f32_vecs = reader
+            .decode_f32_vec_stripe(col_id::F32_TIER_BASE)
+            .expect("f32 tier decodes");
+        assert_eq!(f32_vecs.len(), corpus.len());
+        for (got, want) in f32_vecs.iter().zip(corpus.iter()) {
+            let got = got.as_ref().expect("non-null f32 row");
+            assert_eq!(got.as_slice(), want.as_slice(), "f32 tier must be exact");
+        }
+    }
+
+    /// Tier-2 rerank quant = FP16 (configurable tier-2, ADR-026 / TD-156 Phase 1):
+    /// with `.with_rerank_quant(Fp16)` + RaBitQ, the co-located `RERANK_BASE`
+    /// column is FP16-encoded (2 bytes/value, near-lossless) instead of the
+    /// default SQ8. `rerank_rows` decodes it and scores candidates against a
+    /// query; the FP16 distances must match the exact-f32 ground truth within
+    /// FP16 tolerance, and the ranking order is preserved (FP16 is
+    /// near-lossless → ordering unchanged for well-separated vectors).
+    #[test]
+    fn pax_block_fp16_rerank_round_trips_near_exact() {
+        // Well-separated DIM=64 vectors so FP16 rounding can't reorder near-ties.
+        let corpus = [
+            lcg_vec(1, 64),
+            lcg_vec(2, 64),
+            lcg_vec(3, 64),
+            lcg_vec(4, 64),
+        ];
+
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+            .with_quant(crate::writer::VectorQuant::RaBitQ)
+            .with_rerank_quant(crate::writer::VectorQuant::Fp16);
+        for (i, v) in corpus.iter().enumerate() {
+            writer
+                .add_record(&make_record_with_embedding(
+                    &format!("r{i}"),
+                    "t",
+                    1000 + i as i64,
+                    v.clone(),
+                ))
+                .unwrap();
+        }
+        let block = writer.flush().unwrap();
+        let reader = PaxBlockReader::open(&block).unwrap();
+
+        // The rerank column is present + FP16 (not the default SQ8).
+        let entry = reader
+            .vector_params()
+            .get(crate::col_id::RERANK_BASE)
+            .expect("rerank column present");
+        assert_eq!(entry.quant_kind, QUANT_FP16);
+        // The RaBitQ hot column is still present.
+        assert_eq!(
+            reader
+                .vector_params()
+                .get(crate::col_id::EMBED_BASE)
+                .unwrap()
+                .quant_kind,
+            crate::vparam::QUANT_RABITQ_RESERVED
+        );
+
+        // Rerank the full candidate set against a query; FP16 distances must
+        // match the exact-f32 squared-L2 within tolerance and preserve order.
+        let rows: Vec<usize> = (0..corpus.len()).collect();
+        let scored = reader
+            .rerank_rows(0, &corpus[0], &rows, RankMetric::L2)
+            .expect("FP16 rerank returns Some");
+
+        // Ground-truth squared-L2 from the original f32 vectors.
+        let l2 =
+            |a: &[f32], b: &[f32]| -> f32 { a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum() };
+        let mut truth: Vec<(usize, f32)> = rows
+            .iter()
+            .map(|&r| (r, l2(&corpus[r], &corpus[0])))
+            .collect();
+        truth.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Same ranking (FP16 is near-lossless → order preserved).
+        let got_order: Vec<usize> = scored.iter().map(|(r, _)| *r).collect();
+        let want_order: Vec<usize> = truth.iter().map(|(r, _)| *r).collect();
+        assert_eq!(got_order, want_order, "FP16 rerank reorders candidates");
+
+        // Distances within FP16 tolerance (relative ~5e-4/value; loose bound).
+        for ((_, got), (_, want)) in scored.iter().zip(truth.iter()) {
+            let tol = (want.abs() * 1e-2).max(1e-2);
+            assert!(
+                (got - want).abs() <= tol,
+                "FP16 dist {got} vs exact {want} exceeds tolerance {tol}"
+            );
+        }
+    }
+
+    /// Phase D follow-up: with the exact-f32 tier present, the cascade's
+    /// `rerank_rows_f32_exact` is exercised (returns `Some`) and holds baseline
+    /// recall. NOTE: recall at this scale is POOL-LIMITED (the stage-1 RaBitQ
+    /// candidate pool, not the rerank precision) — SQ8 ordering is already
+    /// exact-enough that f32 ≈ SQ8 here (both ~0.93), so this is NOT a recall
+    /// boost. The f32 tier's distinct value is exact-distance scoring + exact
+    /// `include_vectors` (see `pax_block_f32_tier_round_trips_exact_vectors`);
+    /// the exact rerank wired here is the foundation for both.
+    #[test]
+    fn rabitq_cascade_f32_rerank_exercised_holds_baseline_recall() {
+        const N: usize = 1000;
+        const Q: usize = 50;
+        const K: usize = 10;
+        const REFINE: usize = 100;
+        const RATCHET: f32 = 0.90;
+        const DIM: usize = 64;
+
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| lcg_vec(i as u64, DIM)).collect();
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+            .with_quant(crate::writer::VectorQuant::RaBitQ)
+            .with_f32_tier(true);
+        for (i, v) in corpus.iter().enumerate() {
+            writer
+                .add_record(&make_record_with_embedding(
+                    &format!("r{i}"),
+                    "t",
+                    1000 + i as i64,
+                    v.clone(),
+                ))
+                .unwrap();
+        }
+        let block = writer.flush().unwrap();
+        let reader = PaxBlockReader::open(&block).unwrap();
+
+        // f32 tier present + RAW_F32 → rerank_rows_f32_exact will serve.
+        assert_eq!(
+            reader
+                .vector_params()
+                .get(col_id::F32_TIER_BASE)
+                .expect("f32 tier present")
+                .quant_kind,
+            crate::vparam::QUANT_RAW_F32
+        );
+
+        let l2 =
+            |a: &[f32], b: &[f32]| -> f32 { a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum() };
+        let exact_topk = |qv: &[f32]| -> std::collections::HashSet<usize> {
+            let mut idx: Vec<usize> = (0..N).collect();
+            idx.sort_by(|&a, &b| {
+                l2(&corpus[a], qv)
+                    .partial_cmp(&l2(&corpus[b], qv))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            idx.into_iter().take(K).collect()
+        };
+
+        let mut recalls = Vec::with_capacity(Q);
+        for qi in 0..Q {
+            let base = (qi * (N / Q)) % N;
+            let noise = lcg_vec((qi as u64).wrapping_add(7_000_000), DIM);
+            let query: Vec<f32> = corpus[base]
+                .iter()
+                .zip(&noise)
+                .map(|(v, nn)| v + nn * 0.01)
+                .collect();
+            // Stage 1 RaBitQ prefilter → stage 2.5 EXACT f32 rerank.
+            let cand = reader.rabitq_rank(&query, REFINE, RankMetric::L2).unwrap();
+            let reranked = reader
+                .rerank_rows_f32_exact(0, &query, &cand, RankMetric::L2)
+                .expect("f32 tier serves exact rerank");
+            let got: std::collections::HashSet<usize> =
+                reranked.into_iter().take(K).map(|(row, _)| row).collect();
+            let truth = exact_topk(&query);
+            let hits = truth.iter().filter(|i| got.contains(i)).count();
+            recalls.push(hits as f32 / K as f32);
+        }
+        let mean = recalls.iter().sum::<f32>() / recalls.len() as f32;
+        eprintln!("[recall-ratchet/f32-tier] N={N} REFINE={REFINE} mean recall@{K} = {mean:.4}");
+        assert!(
+            mean >= RATCHET,
+            "f32-tier cascade recall@{K} = {mean:.3} < {RATCHET} baseline (exact-f32 rerank must hold baseline recall)"
+        );
+    }
+
     /// Run the RaBitQ→SQ8 cold-scan cascade over `q` deterministic near-neighbor
     /// queries against `corpus` (read back via `reader`), returning mean recall@k
     /// vs the exact-f32 top-k. `refine` is the stage-1 RaBitQ candidate pool size.
@@ -1219,11 +1615,102 @@ mod tests {
                 .collect();
 
             // Stage 1: RaBitQ candidate prefilter; Stage 2: SQ8 rerank over the pool.
-            let cand = reader.rabitq_rank(&query, refine).unwrap();
-            let reranked = reader.rerank_rows(0, &query, &cand).unwrap();
+            let cand = reader.rabitq_rank(&query, refine, RankMetric::L2).unwrap();
+            let reranked = reader
+                .rerank_rows(0, &query, &cand, RankMetric::L2)
+                .unwrap();
             let got: std::collections::HashSet<usize> =
                 reranked.into_iter().take(k).map(|(row, _)| row).collect();
 
+            let truth = exact_topk(&query);
+            let hits = truth.iter().filter(|i| got.contains(i)).count();
+            recalls.push(hits as f32 / k as f32);
+        }
+        recalls.iter().sum::<f32>() / recalls.len() as f32
+    }
+
+    /// Phase E — normalized-corpus variant of `build_cold_recall_corpus_and_block`:
+    /// L2-normalized DIM=64 vectors, the regime `RankMetric::Cosine` is validated on
+    /// (for unit vectors cosine similarity == inner product).
+    fn build_cold_recall_corpus_and_block_normalized(n: usize) -> (Vec<Vec<f32>>, Vec<u8>) {
+        const DIM: usize = 64;
+        let normalize = |v: Vec<f32>| -> Vec<f32> {
+            let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm > 0.0 {
+                v.iter().map(|x| x / norm).collect()
+            } else {
+                v
+            }
+        };
+        let corpus: Vec<Vec<f32>> = (0..n).map(|i| normalize(lcg_vec(i as u64, DIM))).collect();
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+            .with_quant(crate::writer::VectorQuant::RaBitQ);
+        for (i, v) in corpus.iter().enumerate() {
+            writer
+                .add_record(&make_record_with_embedding(
+                    &format!("r{i}"),
+                    "t",
+                    1000 + i as i64,
+                    v.clone(),
+                ))
+                .unwrap();
+        }
+        (corpus, writer.flush().unwrap())
+    }
+
+    /// Phase E — cosine analog of `cold_cascade_recall_mean`: stage-1
+    /// `RankMetric::Cosine` (RaBitQ `ip_rank_score`) → stage-2 exact cosine rerank,
+    /// scored vs the exact-cosine top-k. Query is a perturbed, re-normalized corpus
+    /// vector so its true cosine-NN is well-defined.
+    fn cold_cascade_recall_mean_cosine(
+        reader: &PaxBlockReader,
+        corpus: &[Vec<f32>],
+        q: usize,
+        k: usize,
+        refine: usize,
+    ) -> f32 {
+        let n = corpus.len();
+        let dim = corpus[0].len();
+        let cos_dist = |a: &[f32], b: &[f32]| -> f32 {
+            let dot = a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
+            let na = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let nb = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if na > 0.0 && nb > 0.0 {
+                1.0 - dot / (na * nb)
+            } else {
+                1.0
+            }
+        };
+        let exact_topk = |qv: &[f32]| -> std::collections::HashSet<usize> {
+            let mut idx: Vec<usize> = (0..n).collect();
+            idx.sort_by(|&a, &b| {
+                cos_dist(&corpus[a], qv)
+                    .partial_cmp(&cos_dist(&corpus[b], qv))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            idx.into_iter().take(k).collect()
+        };
+        let mut recalls = Vec::with_capacity(q);
+        for qi in 0..q {
+            let base = (qi * (n / q)) % n;
+            let noise = lcg_vec((qi as u64).wrapping_add(7_000_000), dim);
+            let mut query: Vec<f32> = corpus[base]
+                .iter()
+                .zip(&noise)
+                .map(|(v, nn)| v + nn * 0.01)
+                .collect();
+            let qnorm: f32 = query.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if qnorm > 0.0 {
+                query = query.iter().map(|x| x / qnorm).collect();
+            }
+            let cand = reader
+                .rabitq_rank(&query, refine, RankMetric::Cosine)
+                .unwrap();
+            let reranked = reader
+                .rerank_rows(0, &query, &cand, RankMetric::Cosine)
+                .unwrap();
+            let got: std::collections::HashSet<usize> =
+                reranked.into_iter().take(k).map(|(row, _)| row).collect();
             let truth = exact_topk(&query);
             let hits = truth.iter().filter(|i| got.contains(i)).count();
             recalls.push(hits as f32 / k as f32);
@@ -1283,6 +1770,45 @@ mod tests {
             "P3 Phase G: RaBitQ→SQ8 cascade recall@{K} at N={N} = {mean:.3} < ratchet \
              {RATCHET}. Recall regressed — add an f32 rerank column rather than lowering \
              the ratchet."
+        );
+    }
+
+    /// Phase E — cosine cold-recall ratchet at N=1000. The RaBitQ→SQ8 cascade under
+    /// `RankMetric::Cosine` (stage-1 `ip_rank_score` → stage-2 exact cosine rerank)
+    /// must hold recall@10 vs the exact-cosine top-k on a normalized corpus. Gates
+    /// the cosine path opened in `try_pax_cascade`. On normalized data cosine ranking
+    /// coincides with L2 (‖a−b‖² = 2−2cos), so this lands near the L2 ratchet; the
+    /// ratchet starts at 0.90 and only goes up.
+    #[test]
+    fn rabitq_cold_recall_harness_cosine_n1000_recall_at_10() {
+        const N: usize = 1000;
+        const Q: usize = 50;
+        const K: usize = 10;
+        const REFINE: usize = 100;
+        const RATCHET: f32 = 0.90;
+
+        let (corpus, block) = build_cold_recall_corpus_and_block_normalized(N);
+        let reader = PaxBlockReader::open(&block).unwrap();
+
+        // The cosine path uses the same RaBitQ + SQ8 columns as L2.
+        let emb = reader.vector_params().get(col_id::EMBED_BASE).unwrap();
+        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ_RESERVED);
+        assert_eq!(
+            reader
+                .vector_params()
+                .get(crate::col_id::RERANK_BASE)
+                .unwrap()
+                .quant_kind,
+            QUANT_SQ8
+        );
+
+        let mean = cold_cascade_recall_mean_cosine(&reader, &corpus, Q, K, REFINE);
+        eprintln!("[recall-ratchet/cosine] N={N} REFINE={REFINE} mean recall@{K} = {mean:.4}");
+        assert!(
+            mean >= RATCHET,
+            "Phase E: cosine RaBitQ→SQ8 cascade recall@{K} at N={N} = {mean:.3} < ratchet \
+             {RATCHET}. The cosine stage-1 proxy (ip_rank_score) needs tuning \
+             (pool/REFINE) or an f32 rerank column."
         );
     }
 

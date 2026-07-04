@@ -20,6 +20,19 @@ stripes for the internal hot path; Parquet/Iceberg is the **interop seam** (exte
 tools / federated / export), not the internal scan format.
 ====
 
+[IMPORTANT]
+====
+**Superseded in part by ADR-052 (Accepted 2026-07-04).**
+`docs/12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc` retires the
+native-*operator*-engine end state: §3's framing of `NativeOlap` as a peer execution route,
+§4 P3's promotion of the native route *over* DataFusion (DataFusion as fallback), and the
+end-state box above are superseded. Under ADR-052 the "NativeOlap route" is a **PAX-native
+SCAN operator emitting Arrow `RecordBatch`es into DataFusion's vectorized operators**
+(tracked TD-OLAP-1); native HashAgg/HashJoin/Sort are an explicit non-goal. The scan scope
+of this blueprint — §2 substrate capabilities, §4 P0–P2, and the TD-154/TD-151/TD-162a
+prerequisites — **remains authoritative**.
+====
+
 toc::[]
 
 == 1. Why a native engine (and why PAX-columnar, not Parquet)

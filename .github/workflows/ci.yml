@@ -83,6 +83,7 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       proto: ${{ steps.filter.outputs.proto }}
       panic_policy: ${{ steps.filter.outputs.panic_policy }}
+      v1_proto_usage: ${{ steps.filter.outputs.v1_proto_usage }}
       # Granular Rust component detection for targeted testing
       query_changes: ${{ steps.filter.outputs.query_changes }}
       storage_changes: ${{ steps.filter.outputs.storage_changes }}
@@ -173,10 +174,23 @@ jobs:
               - 'src/**'
               - 'scripts/count_panic_patterns.sh'
               - 'docs/_internal/roadmap/PANIC_POLICY_BASELINE.json'
+            v1_proto_usage:
+              - 'src/**'
+              - 'crates/**'
+              - 'clients/**'
+              - 'tests/**'
+              - 'proto/**'
+              - 'scripts/check_v1_proto_usage.py'
+              - 'docs/_internal/roadmap/V1_PROTO_USAGE_BASELINE.json'
             query_changes:
               - 'src/query/**'
               - 'tests/*query*'
               - 'tests/*federated*'
+              # The unflushed-tail search path feeds vector recall — changes here
+              # must run the recall+leaks E2E (vector_ann_recall_e2e) in the query
+              # integration job, which the storage-only filter would otherwise miss.
+              - 'src/storage/persistence/write_ahead_log/**'
+              - 'src/storage/memtable/**'
             storage_changes:
               - 'src/storage/**'
               - 'tests/*storage*'
@@ -628,6 +642,47 @@ jobs:
             --baseline docs/_internal/roadmap/PANIC_POLICY_BASELINE.json \
             --critical-modules network_rest,api_handlers,graph,query \
             --write artifacts/panic_policy/panic_policy_module_guard.json \
+            --format text
+
+  # TD-123: ratchet proximadb.v1 proto usage downward. v1 proto is the legacy
+  # internal domain model being migrated to v2; no-regression fails on any net
+  # INCREASE so the migration only moves one direction. Pure-python (no compile).
+  v1-proto-usage-report:
+    name: v1 Proto Usage Report (TD-123)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.v1_proto_usage == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate v1 proto usage report
+        run: |
+          mkdir -p artifacts/v1_proto_usage
+          python3 scripts/check_v1_proto_usage.py \
+            --mode report \
+            --baseline docs/_internal/roadmap/V1_PROTO_USAGE_BASELINE.json \
+            --write artifacts/v1_proto_usage/v1_proto_usage_report.json \
+            --format text
+      - name: Upload v1 proto usage report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: v1-proto-usage-report
+          path: artifacts/v1_proto_usage/v1_proto_usage_report.json
+          retention-days: 14
+
+  v1-proto-usage-no-regression:
+    name: v1 Proto Usage No Regression (TD-123)
+    runs-on: ubuntu-latest
+    needs: [changes, v1-proto-usage-report]
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.v1_proto_usage == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce no v1 proto usage increase
+        run: |
+          mkdir -p artifacts/v1_proto_usage
+          python3 scripts/check_v1_proto_usage.py \
+            --mode no-regression \
+            --baseline docs/_internal/roadmap/V1_PROTO_USAGE_BASELINE.json \
+            --write artifacts/v1_proto_usage/v1_proto_usage_no_regression.json \
             --format text
 
   rust-clippy:
@@ -1312,6 +1367,12 @@ jobs:
       !inputs.skip_tests &&
       needs.changes.outputs.test_tier == 'true' &&
       needs.changes.outputs.pgwire_accuracy_changes == 'true'
+    env:
+      # 8MB worker stack: events_tsbs_pgwire_e2e (and correlated-subquery pgwire
+      # paths) produce deep-but-finite async call chains that overflow the
+      # default ~2MB tokio worker stack. Mirrors qa-gate (b87d05a31); ci.yml's
+      # integration-test jobs previously lacked this.
+      RUST_MIN_STACK: "8388608"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -1339,7 +1400,9 @@ jobs:
             events_tsbs_pgwire_e2e \
             pgwire_null_rendering_e2e \
             pgwire_select_or_predicate_e2e \
-            sql_value_roundtrip; do
+            sql_value_roundtrip \
+            fp16_pgwire_e2e \
+            mem0_pgwire_filter_e2e; do
             echo "Running $test_name..."
             # pgwire_fk_referential_actions_e2e also contains the TD-110 S1 recursive-cascade
             # + concurrency/cycle test (pgwire_cascade_recurses_and_rejects_cycles_depth_and_concurrency),
@@ -1757,6 +1820,53 @@ jobs:
           retention-days: 30
 
   # ============================================================================
+  # TPC PERF EVIDENCE LEDGER (TD-OLAP-4 P0b) — ADVISORY, never a merge gate.
+  # Records latency + bytes-scanned per query x route (native vs DataFusion)
+  # into a JSON ledger artifact on develop pushes / manual dispatch. Gate
+  # (ratchet on a budget) only once variance is bounded — mirror the
+  # pax-recall-ratchet advisory-until-stable pattern. NOT in ci-success needs.
+  # ============================================================================
+  tpc-perf-ledger:
+    name: TPC Perf Evidence Ledger (advisory)
+    runs-on: ubuntu-latest
+    needs: [rust-build]
+    continue-on-error: true
+    timeout-minutes: 60
+    if: |
+      inputs.run_benchmarks ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/develop')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-tpc-perf"
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+
+      - name: Run TPC perf ledger harness (small scale, advisory)
+        env:
+          TPC_PERF_SCALE: "0.001"
+          TPC_PERF_LEDGER_OUT: target/tpc-perf-ledger/ledger.json
+          # Debug-build planning of join+subquery-heavy TPC shapes runs deep;
+          # 16 MiB thread stacks guard against environment-dependent overflow.
+          RUST_MIN_STACK: "16777216"
+        run: |
+          cargo test --test tpc_perf_ledger_e2e -- --ignored --nocapture 2>&1 | tail -40
+
+      - name: Upload ledger artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tpc-perf-ledger
+          path: target/tpc-perf-ledger/ledger.json
+          retention-days: 30
+
+  # ============================================================================
   # SUMMARY - Final status check
   # ============================================================================
   ci-success:
@@ -1770,6 +1880,8 @@ jobs:
       - panic-policy-report
       - panic-policy-no-regression
       - panic-policy-module-guard
+      - v1-proto-usage-report
+      - v1-proto-usage-no-regression
       - rust-compile
       - rust-clippy
       - feature-matrix

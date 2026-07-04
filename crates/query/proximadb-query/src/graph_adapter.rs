@@ -964,6 +964,7 @@ mod tests {
             properties: HashMap::new(),
             direction: EdgeDirection::Outgoing,
             optional: false,
+            var_length: None,
         }
     }
 

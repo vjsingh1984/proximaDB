@@ -70,7 +70,7 @@ brew services start proximadb
 ### Install (Docker)
 
 ```bash
-docker run -d -p 5678:5678 proximadb/proximadb:latest
+docker run -d -p 5678:5678 vjsingh1984/proximadb:latest
 ```
 
 ### Verify

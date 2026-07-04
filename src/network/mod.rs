@@ -640,10 +640,10 @@ mod config_tests {
 
         let middleware_config = config.to_middleware_config();
 
-        assert_eq!(middleware_config.enabled, true);
+        assert!(middleware_config.enabled);
         assert_eq!(middleware_config.max_requests, 150); // Uses burst_size
         assert_eq!(middleware_config.window_duration.as_secs(), 60); // 1 minute
-        assert_eq!(middleware_config.limit_health_endpoints, true);
+        assert!(middleware_config.limit_health_endpoints);
         assert_eq!(middleware_config.global_max_requests, Some(5000));
     }
 }

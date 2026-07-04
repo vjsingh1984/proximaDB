@@ -906,7 +906,9 @@ impl RaptorEngine {
         );
 
         // Use clustering for efficient rowgroup pruning
-        let selected_rowgroups = self.select_rowgroups_by_clustering(query).await?;
+        let selected_rowgroups = self
+            .select_rowgroups_by_clustering(query, distance_metric)
+            .await?;
         debug!(
             "RAPTOR SEARCH_INTERNAL: Selected {} rowgroups",
             selected_rowgroups.len()
@@ -1207,7 +1209,11 @@ impl RaptorEngine {
             .await
     }
 
-    async fn select_rowgroups_by_clustering(&self, query: &[f32]) -> Result<Vec<u32>> {
+    async fn select_rowgroups_by_clustering(
+        &self,
+        query: &[f32],
+        distance_metric: &proximadb_distance_kernel::DistanceMetric,
+    ) -> Result<Vec<u32>> {
         debug!("SELECT_ROWGROUPS: Starting rowgroup selection");
         let cluster_manager = self.cluster_manager.read().await;
         let cluster_assignments = self.cluster_assignments.read().await;
@@ -1279,9 +1285,11 @@ impl RaptorEngine {
                 if let Some(rowgroup) = rowgroup_manager.row_group(&rg_id)
                     && let Some(centroid) = &rowgroup.centroid
                 {
-                    // Calculate distance using distance computation engine
-                    let compute = UnifiedDistanceCompute::default();
-                    let distance = compute.distance(query, centroid);
+                    // Use the query's metric (NOT the Euclidean default) to score
+                    // centroids. The 0.5 threshold is Cosine-calibrated (≈60°);
+                    // non-Cosine metrics may need separate tuning (TODO).
+                    let compute = UnifiedDistanceCompute::new(*distance_metric);
+                    let distance = compute.distance_with_metric(query, centroid, distance_metric);
                     if distance < 0.5 {
                         // Threshold for similarity
                         selected.push(rowgroup.id as u32);
@@ -2331,6 +2339,7 @@ impl UnifiedStorageFormat for RaptorEngine {
                 engine_config: std::collections::HashMap::new(),
                 base_location: base_path.to_string(),
                 assigned_at: 0,
+                ..Default::default()
             }),
         });
 

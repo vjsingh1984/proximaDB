@@ -245,9 +245,21 @@ impl SstEngine {
         query_vector: &[f32],
         filter_expression: Option<&FilterExpression>,
         k: usize,
+        distance_metric: DistanceMetric,
     ) -> anyhow::Result<Option<Vec<OptimizedSearchRecord>>> {
         use crate::storage::engines::sst::segment_format::{
             MetaPrune, pax_field_to_col, rabitq_search_segment,
+        };
+        use proximadb_block_format::RankMetric;
+        // Map the query metric to a cascade rank metric. Dot/max-IP and exotic
+        // metrics stay on the generic scan (unvalidated recall / score polarity);
+        // the caller gate only routes Euclidean + Cosine here.
+        let Some(rank_metric) = (match distance_metric {
+            DistanceMetric::Euclidean => Some(RankMetric::L2),
+            DistanceMetric::Cosine => Some(RankMetric::Cosine),
+            _ => None,
+        }) else {
+            return Ok(None);
         };
         // Read the segment bytes once; the generic-scan branch uses the sstable
         // reader instead, so this read is exclusive to the cascade (no double-read).
@@ -264,17 +276,26 @@ impl SstEngine {
             filter,
             field_to_col: &pax_field_to_col,
         });
-        let Some(hits) = rabitq_search_segment(&bytes, query_vector, k, pool, prune)? else {
+        let Some(hits) = rabitq_search_segment(&bytes, query_vector, k, pool, rank_metric, prune)?
+        else {
             return Ok(None); // not PAX / no RaBitQ → caller falls back
         };
-        let metric = DistanceMetric::Euclidean;
         let records = hits
             .into_iter()
             .map(|h| {
-                OptimizedSearchRecord::new(
+                let mut r = OptimizedSearchRecord::new(
                     h.oid,
-                    OptimizedSearchRecord::standardized_distance_to_similarity(h.distance, &metric),
-                )
+                    OptimizedSearchRecord::standardized_distance_to_similarity(
+                        h.distance,
+                        &distance_metric,
+                    ),
+                );
+                // include_vectors: attach the exact f32 vector when the tier
+                // provided one (filter_search_results strips it if not requested).
+                if let Some(v) = h.vector {
+                    r = r.add_vector(v);
+                }
+                r
             })
             .collect();
         Ok(Some(records))
@@ -480,6 +501,29 @@ impl SstEngine {
             _ => return,
         };
 
+        // M1-3 cold-read recall: if EVERY durable segment is a RaBitQ-PAX segment
+        // WITHOUT an f32 tier (the default write format), rebuilding AXIS from it
+        // would index COARSE RaBitQ-reconstructed vectors (block-format reader.rs:
+        // "RaBitQ is a search representation; reconstruction is coarse") → ~0.46
+        // recall — WORSE than letting the cold search fall through to the RaBitQ
+        // cascade (~0.93, which ranks the RaBitQ codes properly via
+        // `try_pax_cascade`). Skip the lossy rebuild; the dispatch fallback
+        // reaches the cascade for `.pax` Euclidean/Cosine. Any exact-readable
+        // segment (RawF32/SQ8/RaBitQ-with-tier/`.sst`/`.arrow`) breaks the
+        // `all()` check and rebuilds normally (exact AXIS). See
+        // `pax_segment_is_coarse_rabitq_without_f32_tier`.
+        if self
+            .all_segments_coarse_rabitq_pax_without_f32_tier(&files)
+            .await
+        {
+            tracing::info!(
+                "M1-3 cold-read: RaBitQ-PAX without f32 tier for '{collection_id}' ({} segments) \
+                 — skipping coarse AXIS rebuild; cold reads use the RaBitQ cascade",
+                files.len()
+            );
+            return;
+        }
+
         // Read all records from the durable SST segments via the storage trait's
         // `read_all_records` (UnifiedSSTReader::read_batch). The per-segment
         // `read_segment_records` / `read_all_records_for_compaction` path returned
@@ -517,6 +561,33 @@ impl SstEngine {
                 "TD-112 rebuild: AXIS rebuild-from-SST failed for '{collection_id}': {e}"
             ),
         }
+    }
+
+    /// True iff EVERY file in `files` is a `.pax` segment whose `EMBED_BASE` is
+    /// RaBitQ-coded with no f32 tier (i.e. no exact data — an AXIS rebuild from
+    /// it would be coarse). Used by [`ensure_axis_index_from_sst`] to skip the
+    /// lossy rebuild for default RaBitQ-PAX collections so cold reads use the
+    /// RaBitQ cascade. A non-`.pax` file, a read error, or any exact-readable
+    /// segment (RawF32/SQ8/RaBitQ-with-tier) returns `false` (→ rebuild).
+    /// Short-circuits on the first non-coarse segment. `files` is non-empty when
+    /// called from the rebuild path.
+    async fn all_segments_coarse_rabitq_pax_without_f32_tier(&self, files: &[String]) -> bool {
+        use crate::storage::engines::sst::segment_format::pax_segment_is_coarse_rabitq_without_f32_tier;
+        for file in files {
+            if !file.ends_with(".pax") {
+                return false; // legacy `.sst` / `.arrow` → exact-readable → rebuild
+            }
+            let Ok(fs) = self.filesystem().get_filesystem(file) else {
+                return false; // can't open → don't skip; let the rebuild try
+            };
+            let Ok(bytes) = fs.read(file).await else {
+                return false;
+            };
+            if !pax_segment_is_coarse_rabitq_without_f32_tier(&bytes) {
+                return false; // RawF32/SQ8/RaBitQ-with-tier → rebuild exact
+            }
+        }
+        !files.is_empty()
     }
 
     /// Read all records from one SST segment, dispatching on the engine's block
@@ -924,30 +995,39 @@ impl SstEngine {
             );
 
             // PAX RaBitQ→SQ8 cascade (PAX Phase 2 read-side wiring): try it first
-            // for `.pax` segments under the validated Euclidean metric. The generic
-            // dispatch below handles every other case — `.arrow`, legacy `.sst`, AND
-            // `.pax` under other metrics or any cascade miss (not-PAX / no RaBitQ /
-            // error) — so this is additive and mixed-read-safe.
-            let pax_cascade: Option<Vec<OptimizedSearchRecord>> =
-                if sstable_path.ends_with(".pax") && distance_metric == DistanceMetric::Euclidean {
-                    match self
-                        .try_pax_cascade(sstable_path, query_vector, filter_expression, k)
-                        .await
-                    {
-                        Ok(Some(records)) => Some(records),
-                        Ok(None) => None,
-                        Err(e) => {
-                            warn!(
-                                file = %sstable_path,
-                                error = %e,
-                                "PAX cascade unavailable; falling back to generic scan"
-                            );
-                            None
-                        }
+            // for `.pax` segments under a validated metric (Euclidean or Cosine).
+            // The generic dispatch below handles every other case — `.arrow`, legacy
+            // `.sst`, AND `.pax` under Dot/other metrics or any cascade miss
+            // (not-PAX / no RaBitQ / error) — so this is additive and mixed-read-safe.
+            let pax_cascade: Option<Vec<OptimizedSearchRecord>> = if sstable_path.ends_with(".pax")
+                && matches!(
+                    distance_metric,
+                    DistanceMetric::Euclidean | DistanceMetric::Cosine
+                ) {
+                match self
+                    .try_pax_cascade(
+                        sstable_path,
+                        query_vector,
+                        filter_expression,
+                        k,
+                        distance_metric,
+                    )
+                    .await
+                {
+                    Ok(Some(records)) => Some(records),
+                    Ok(None) => None,
+                    Err(e) => {
+                        warn!(
+                            file = %sstable_path,
+                            error = %e,
+                            "PAX cascade unavailable; falling back to generic scan"
+                        );
+                        None
                     }
-                } else {
-                    None
-                };
+                }
+            } else {
+                None
+            };
 
             // Dispatch based on file format (Arrow vs ProximaBlocks); the PAX
             // cascade short-circuits above when it applies.
@@ -960,6 +1040,21 @@ impl SstEngine {
                     query_vector,
                     filter_expression.cloned(),
                     k, // Use exact k
+                    distance_metric,
+                )
+                .await
+            } else if sstable_path.ends_with(".pax") {
+                // A `.pax` segment the RaBitQ cascade did not cover (non-L2/Cosine
+                // metric, non-RaBitQ quant, or a cascade miss/error). Exact
+                // materialize-and-rank via the mixed-format reader so `.pax` is
+                // searchable under every metric/quant — this is what makes the PAX
+                // write-default flip safe (otherwise the ProximaBlocks-only
+                // `sstable_reader` below would fail to decode a `.pax` file).
+                self.search_pax_file_exact(
+                    sstable_path,
+                    query_vector,
+                    filter_expression.cloned(),
+                    k,
                     distance_metric,
                 )
                 .await
@@ -1524,6 +1619,98 @@ impl SstEngine {
         candidates.truncate(limit);
 
         debug!("🏹 Arrow search found {} candidates", candidates.len());
+        Ok(candidates)
+    }
+
+    /// Exact materialize-and-rank search over a `.pax` segment that the RaBitQ
+    /// cascade did not cover — a non-L2/Cosine metric (Dot / inner-product /
+    /// exotic), a non-RaBitQ quant (RawF32 / SQ8), or a cascade miss/error. The
+    /// segment is decoded back to `ProximaRecord`s via the mixed-format reader
+    /// (`segment_format::read_segment_records`, magic-detected) and ranked by
+    /// exact distance for the requested metric, so a `.pax` file is searchable
+    /// under EVERY metric and quant. This is the property that makes the PAX
+    /// write-default flip safe: the L2/Cosine fast path still takes the RaBitQ
+    /// cascade; everything else falls here instead of hitting the
+    /// ProximaBlocks-only `sstable_reader` (which cannot decode `.pax`). Recall
+    /// is exact for `RawF32` quant and dequantization-bound for `RaBitQ`/`SQ8`.
+    async fn search_pax_file_exact(
+        &self,
+        pax_path: &str,
+        query_vector: &[f32],
+        filter_expression: Option<FilterExpression>,
+        limit: usize,
+        distance_metric: DistanceMetric,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        use proximadb_distance_kernel::engine::{SimilarityResult, UnifiedDistanceCompute};
+        use std::sync::Arc;
+
+        debug!("📦 Exact PAX scan: {}", pax_path);
+
+        let local_path = pax_path.strip_prefix("file://").unwrap_or(pax_path);
+        let bytes = tokio::fs::read(local_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("read pax segment {pax_path}: {e}"))?;
+        let records = crate::storage::engines::sst::segment_format::read_segment_records(
+            &bytes,
+            &[],
+            &[],
+            None,
+        )
+        .map_err(|e| anyhow::anyhow!("decode pax segment {pax_path}: {e}"))?;
+        trace!(
+            "📦 PAX segment {} decoded to {} records",
+            pax_path,
+            records.len()
+        );
+
+        let distance_computer = UnifiedDistanceCompute::new(distance_metric);
+        let mut candidates: Vec<OptimizedSearchRecord> =
+            Vec::with_capacity(records.len().min(limit));
+
+        for record in &records {
+            // Apply the metadata filter at record level (canonical props), mirroring
+            // the ProximaBlocks scan path — PAX is the default format, so filter
+            // support here is required, not optional (the Arrow path skips it).
+            if let Some(filter_expr) = &filter_expression
+                && !crate::core::search::sql_value_filter::evaluate_filter_proxima(
+                    filter_expr,
+                    &record.props,
+                )
+            {
+                continue;
+            }
+
+            let Some(embedding) = record.embeddings.first() else {
+                continue;
+            };
+            if embedding.values.is_empty() {
+                continue;
+            }
+
+            let raw_distance = distance_computer.distance(query_vector, &embedding.as_fp32_cow());
+            let similarity_result = SimilarityResult::new(raw_distance, distance_metric);
+            let metadata = proximadb_records::conversions::proxima_tree_to_value_map(&record.props);
+
+            candidates.push(OptimizedSearchRecord {
+                id: record.oid.clone(),
+                vector_id: Some(record.oid.clone()),
+                score: similarity_result.normalized_score,
+                similarity: Some(similarity_result.normalized_score),
+                vector: Some(Arc::new(embedding.values.to_fp32_owned())),
+                metadata,
+                ..Default::default()
+            });
+        }
+
+        // Sort by score descending (higher normalized_score = more similar = better).
+        candidates.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        candidates.truncate(limit);
+
+        debug!("📦 Exact PAX scan found {} candidates", candidates.len());
         Ok(candidates)
     }
 }

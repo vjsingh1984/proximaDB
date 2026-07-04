@@ -3462,7 +3462,7 @@ mod tests {
 
         let result = convert_typed_filters_to_clauses(&filters);
         assert!(result.is_err());
-        let err_msg = format!("{:?}", result.err().expect("Should be error"));
+        let err_msg = format!("{:?}", result.expect_err("Should be error"));
         assert!(err_msg.contains("Unsupported"));
     }
 

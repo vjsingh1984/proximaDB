@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn test_sortable_value_ordering() {
-        let mut values = vec![
+        let mut values = [
             SortableValue::String("zebra".to_string()),
             SortableValue::Number(10),
             SortableValue::Null,

@@ -22,7 +22,9 @@ use std::path::Path;
 
 use anyhow::Result;
 use proximadb_block_format::prune::{FieldToColumn, PruneResult, evaluate_block};
-use proximadb_block_format::{BLOCK_MAGIC, BlockCompression, BlockMode, VectorQuant, col_id};
+use proximadb_block_format::{
+    BLOCK_MAGIC, BlockCompression, BlockMode, RankMetric, VectorQuant, col_id,
+};
 use proximadb_filter_expression::FilterExpression;
 use proximadb_records::ProximaRecord;
 use proximadb_storage_common::pax_block::{
@@ -118,6 +120,57 @@ pub fn write_pax_segment(
     quant: VectorQuant,
     target_block: Option<usize>,
 ) -> Result<SegmentMeta> {
+    write_pax_segment_with_f32_tier(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        false,
+        target_block,
+    )
+}
+
+/// Like [`write_pax_segment`] but optionally emits the exact-f32 tier (P3 Phase
+/// D). When `f32_tier` is true (and the quant is RaBitQ), each embedding also
+/// gets a co-located raw-f32 stripe at `col_id::F32_TIER_BASE + i` for an exact
+/// final rerank / `include_vectors`. The flush path calls this with the resolved
+/// `pax_f32_tier` opt-in; compaction/tests use [`write_pax_segment`] (no tier).
+pub fn write_pax_segment_with_f32_tier(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+) -> Result<SegmentMeta> {
+    write_pax_segment_full(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        VectorQuant::Sq8,
+        f32_tier,
+        target_block,
+    )
+}
+
+/// Full PAX segment write with configurable tier-1 quant, tier-2 rerank quant,
+/// and optional f32 tier. This is the canonical write entry point; the legacy
+/// `write_pax_segment_with_f32_tier` delegates with `Sq8` rerank (the default).
+#[allow(clippy::too_many_arguments)]
+pub fn write_pax_segment_full(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+) -> Result<SegmentMeta> {
     let mut writer = PaxSegmentWriter::new(
         path,
         BlockMode::Pax,
@@ -127,11 +180,125 @@ pub fn write_pax_segment(
         embedding_count.max(1),
         target_block,
     )
-    .with_quant(quant);
+    .with_quant(quant)
+    .with_f32_tier(f32_tier)
+    .with_rerank_quant(rerank_quant);
     for record in records {
         writer.add_record(record)?;
     }
     writer.finish()
+}
+
+/// True if any input `.pax` segment carries the opt-in exact-f32 tier
+/// (`F32_TIER_BASE`). Compaction calls this to PRESERVE the tier across
+/// re-encoding — otherwise [`write_pax_segment`] drops it. Reads each `.pax`
+/// input's block metadata only; the inputs are page-cached (just read into
+/// records), so this is cheap. Correct for both env- and tag-opt-in (the source
+/// segment reflects whatever the collection wrote).
+pub fn pax_inputs_have_f32_tier(input_files: &[std::path::PathBuf]) -> bool {
+    use proximadb_block_format::col_id;
+    for f in input_files {
+        if f.extension().and_then(|e| e.to_str()) != Some("pax") {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(f) else {
+            continue;
+        };
+        // Read block 0's column metadata via the segment scanner. A `.pax`
+        // SEGMENT file is laid out `[block(s)][segment_index][SEGMENT_MAGIC]`;
+        // `PaxBlockReader::open` parses a SINGLE block and reads its footer from
+        // the trailing `BLOCK_FOOTER_SIZE` bytes, so opening the whole file
+        // misreads the segment index/magic as a block footer. The scanner parses
+        // the trailing index + magic and hands back block 0 correctly.
+        let Ok(mut scanner) = PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default()) else {
+            continue;
+        };
+        let Some(reader) = scanner.next_block() else {
+            continue;
+        };
+        if reader.vector_params().get(col_id::F32_TIER_BASE).is_some() {
+            return true;
+        }
+    }
+    false
+}
+
+/// True iff `bytes` is a `.pax` SEGMENT whose `EMBED_BASE` column is RaBitQ-coded
+/// AND no `F32_TIER_BASE` column is present — i.e. the segment carries NO exact
+/// vectors, so an AXIS index rebuilt from it (via [`read_segment_records`] →
+/// `decode_rabitq_reconstruct`) would be COARSE (low recall). The reopen-rebuild
+/// path (`ensure_axis_index_from_sst`) uses this to SKIP rebuilding a lossy AXIS
+/// for default RaBitQ-PAX collections, so cold reads fall through to the RaBitQ
+/// cascade (`try_pax_cascade`, which ranks the RaBitQ codes properly, ~0.93
+/// recall) instead of a coarse rebuilt index (~0.46). Returns `false` for non-Pax,
+/// non-RaBitQ quants (RawF32/SQ8/FP16 = exact/near-exact → rebuild), RaBitQ WITH
+/// an f32 tier (exact via the tier → rebuild), or any parse error (→ rebuild).
+///
+/// Pure over `bytes` so it's unit-testable; the engine reads bytes via the
+/// filesystem trait (object-store-safe) and calls this. Mirrors
+/// [`pax_inputs_have_f32_tier`]'s `PaxSegmentScanner` block-0 metadata read.
+pub fn pax_segment_is_coarse_rabitq_without_f32_tier(bytes: &[u8]) -> bool {
+    use proximadb_block_format::vparam::QUANT_RABITQ_RESERVED;
+    if SegmentFormat::detect(bytes) != SegmentFormat::Pax {
+        return false;
+    }
+    // A `.pax` SEGMENT is `[block(s)][segment_index][SEGMENT_MAGIC]`; the scanner
+    // parses the trailing index + magic and yields block 0 (see
+    // [`pax_inputs_have_f32_tier`]).
+    let Ok(mut scanner) = PaxSegmentScanner::from_bytes(bytes.to_vec(), ScanPredicate::default())
+    else {
+        return false;
+    };
+    let Some(reader) = scanner.next_block() else {
+        return false;
+    };
+    let vparams = reader.vector_params();
+    let Some(embed) = vparams.get(col_id::EMBED_BASE) else {
+        return false;
+    };
+    embed.quant_kind == QUANT_RABITQ_RESERVED && vparams.get(col_id::F32_TIER_BASE).is_none()
+}
+
+/// Detect the tier-2 rerank quant strategy of the source `.pax` segments, so
+/// compaction PRESERVES it when re-encoding (mirrors [`pax_inputs_have_f32_tier`]
+/// for the f32 tier). Returns the first detected strategy from the co-located
+/// `RERANK_BASE` column; defaults to [`VectorQuant::Sq8`] (the validated
+/// tier-2) when no `.pax` input carries a rerank column. Correct for both env-
+/// and tag-opt-in: the source segment reflects whatever the collection wrote,
+/// so preserving it keeps a configured FP16/f32 rerank from being silently
+/// downgraded to SQ8 on the first compaction.
+pub fn pax_inputs_rerank_quant(
+    input_files: &[std::path::PathBuf],
+) -> proximadb_block_format::VectorQuant {
+    use proximadb_block_format::vparam::{QUANT_FP16, QUANT_RAW_F32};
+    for f in input_files {
+        if f.extension().and_then(|e| e.to_str()) != Some("pax") {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(f) else {
+            continue;
+        };
+        // Read block 0's column metadata via the segment scanner — a `.pax`
+        // SEGMENT file is `[block(s)][segment_index][SEGMENT_MAGIC]`, so opening
+        // the whole file as a single block misreads the footer (see
+        // [`pax_inputs_have_f32_tier`]). The rerank column is co-located in every
+        // block, so block 0 suffices to detect the segment's tier-2 strategy.
+        let Ok(mut scanner) = PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default()) else {
+            continue;
+        };
+        let Some(reader) = scanner.next_block() else {
+            continue;
+        };
+        if let Some(entry) = reader.vector_params().get(col_id::RERANK_BASE) {
+            return match entry.quant_kind {
+                QUANT_FP16 => VectorQuant::Fp16,
+                QUANT_RAW_F32 => VectorQuant::RawF32,
+                // SQ8 (the default) or any unknown/reserved kind → Sq8.
+                _ => VectorQuant::Sq8,
+            };
+        }
+    }
+    VectorQuant::Sq8
 }
 
 /// One scored hit from a RaBitQ cascade segment scan: the record's `oid` and its
@@ -141,6 +308,10 @@ pub fn write_pax_segment(
 pub struct CascadeHit {
     pub oid: String,
     pub distance: f32,
+    /// Exact f32 vector (from the opt-in f32 tier) for `include_vectors`
+    /// materialization. `None` when no f32 tier is present (the caller gets
+    /// id+score only, as before). Populated lazily for the top-k rows only.
+    pub vector: Option<Vec<f32>>,
 }
 
 /// A metadata pre-prune for the cascade scan: a [`FilterExpression`] plus the
@@ -206,6 +377,7 @@ pub fn rabitq_search_segment(
     query: &[f32],
     k: usize,
     pool: usize,
+    metric: RankMetric,
     prune: Option<MetaPrune<'_>>,
 ) -> Result<Option<Vec<CascadeHit>>> {
     use crate::observability::io_trace;
@@ -231,7 +403,7 @@ pub fn rabitq_search_segment(
         // Stage 1: RaBitQ candidate prefilter on the hot codes column. A block
         // whose EMBED_BASE isn't RaBitQ-encoded yields `None` and is skipped
         // (mixed-quant segments stay safe).
-        let Some(cand) = block.rabitq_rank(query, pool) else {
+        let Some(cand) = block.rabitq_rank(query, pool, metric) else {
             continue;
         };
         any_rabitq = true;
@@ -252,23 +424,35 @@ pub fn rabitq_search_segment(
         io_trace::record_bytes_read(codes_len + cand.len() as u64 * dim);
         io_trace::record_range_gets(1);
 
-        // Stage 2: SQ8 cascade rerank over ONLY the candidate rows (no f32 GET).
-        // Without a co-located SQ8 column, keep the RaBitQ-coarse order.
-        let scored = block.rerank_rows(0, query, &cand).unwrap_or_else(|| {
-            cand.iter()
-                .enumerate()
-                .map(|(rank, &row)| (row, rank as f32))
-                .collect()
-        });
+        // Stage 2 rerank over ONLY the candidate rows. Prefer the EXACT-f32 tier
+        // when present (P3 Phase D: recall ≈ 1.0), else the co-located SQ8 rerank
+        // column, else keep the RaBitQ-coarse order.
+        let scored = block
+            .rerank_rows_f32_exact(0, query, &cand, metric)
+            .or_else(|| block.rerank_rows(0, query, &cand, metric))
+            .unwrap_or_else(|| {
+                cand.iter()
+                    .enumerate()
+                    .map(|(rank, &row)| (row, rank as f32))
+                    .collect()
+            });
         let oids = block.decode_str_stripe(col_id::OID);
-        for (row, dist) in scored.into_iter().take(k) {
+        // include_vectors: when the f32 tier is present, decode the top-k exact
+        // vectors (top-k rows only — lazy, read-budget-tight) and attach them so
+        // the caller can materialize exact vectors without a second segment scan.
+        let topk: Vec<(usize, f32)> = scored.into_iter().take(k).collect();
+        let topk_rows: Vec<usize> = topk.iter().map(|(r, _)| *r).collect();
+        let f32_vecs = block.decode_f32_tier_rows(0, &topk_rows);
+        for (i, (row, dist)) in topk.into_iter().enumerate() {
             let oid = oids
                 .as_ref()
                 .and_then(|o| o.get(row).cloned().flatten())
                 .unwrap_or_default();
+            let vector = f32_vecs.as_ref().and_then(|v| v.get(i).cloned().flatten());
             hits.push(CascadeHit {
                 oid,
                 distance: dist,
+                vector,
             });
         }
     }
@@ -453,6 +637,127 @@ mod tests {
         assert_eq!(back.len(), records.len());
     }
 
+    /// `pax_segment_is_coarse_rabitq_without_f32_tier` classifies a segment by its
+    /// block-0 column metadata: true ONLY for RaBitQ `EMBED_BASE` without an f32
+    /// tier (the default → coarse rebuild → skip AXIS), false for RawF32/SQ8
+    /// (exact / near-exact → rebuild) and RaBitQ-with-tier (exact via tier →
+    /// rebuild). Drives the cold-read recall fix in `ensure_axis_index_from_sst`.
+    #[test]
+    fn pax_segment_is_coarse_rabitq_without_f32_tier_classifies_segments() {
+        let records: Vec<ProximaRecord> = (0..8)
+            .map(|i| {
+                rec(
+                    &format!("v{i}"),
+                    1_700_000_000_000_000_000 + i,
+                    (0..16).map(|d| (i as f32 + d as f32) * 0.1).collect(),
+                )
+            })
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+
+        // RaBitQ, no f32 tier (the default) → coarse → true (skip AXIS rebuild).
+        let path = dir.path().join("rabitq.pax");
+        write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, None).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(
+            pax_segment_is_coarse_rabitq_without_f32_tier(&bytes),
+            "RaBitQ-PAX without f32 tier is coarse → skip AXIS rebuild"
+        );
+
+        // RawF32 → exact → false.
+        let path = dir.path().join("rawf32.pax");
+        write_pax_segment(&path, &records, "col", 1, VectorQuant::RawF32, None).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(
+            !pax_segment_is_coarse_rabitq_without_f32_tier(&bytes),
+            "RawF32-PAX is exact → rebuild AXIS"
+        );
+
+        // SQ8 → near-exact → false.
+        let path = dir.path().join("sq8.pax");
+        write_pax_segment(&path, &records, "col", 1, VectorQuant::Sq8, None).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(
+            !pax_segment_is_coarse_rabitq_without_f32_tier(&bytes),
+            "SQ8-PAX is near-exact → rebuild AXIS"
+        );
+
+        // RaBitQ WITH f32 tier → exact via tier → false.
+        let path = dir.path().join("rabitq_tier.pax");
+        write_pax_segment_with_f32_tier(&path, &records, "col", 1, VectorQuant::RaBitQ, true, None)
+            .unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(
+            !pax_segment_is_coarse_rabitq_without_f32_tier(&bytes),
+            "RaBitQ-PAX with f32 tier is exact → rebuild AXIS"
+        );
+
+        // Non-PAX bytes → false (treated as exact-readable → rebuild).
+        assert!(
+            !pax_segment_is_coarse_rabitq_without_f32_tier(&[0u8; 64]),
+            "non-PAX bytes → false"
+        );
+    }
+
+    /// M1 (ADR-049): a `VectorQuant::RawF32` PAX segment carries no RaBitQ codes,
+    /// so the RaBitQ cascade (`rabitq_search_segment`) returns `None` for it. The
+    /// search dispatch then takes the exact PAX scan (`search_pax_file_exact`),
+    /// which materialises records via `read_segment_records`. This proves the two
+    /// foundations of that path: a RawF32 PAX segment round-trips to EXACT f32
+    /// vectors (recall 1.0), and the cascade correctly reports it as a miss.
+    #[test]
+    fn rawf32_pax_segment_round_trips_exact_and_misses_rabitq_cascade() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rawf32.pax");
+        let records: Vec<ProximaRecord> = (0..8)
+            .map(|i| {
+                rec(
+                    &format!("v{i}"),
+                    1_700_000_000_000_000_000 + i,
+                    (0..16).map(|d| (i as f32 + d as f32) * 0.1).collect(),
+                )
+            })
+            .collect();
+        write_pax_segment(&path, &records, "col", 1, VectorQuant::RawF32, None).unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(SegmentFormat::detect(&bytes), SegmentFormat::Pax);
+
+        // Round-trip: RawF32 decodes to the EXACT input vectors (not an
+        // approximation, unlike RaBitQ/SQ8 reconstruction).
+        let back = read_segment_records(&bytes, &[], &[], None).unwrap();
+        assert_eq!(back.len(), records.len());
+        for (got, want) in back.iter().zip(records.iter()) {
+            assert_eq!(got.oid, want.oid, "oid must round-trip");
+            let got_vec = got
+                .embeddings
+                .first()
+                .expect("RawF32 segment must reconstruct its embedding");
+            let want_vec = want.embeddings.first().expect("input embedding");
+            assert_eq!(
+                got_vec.as_fp32_slice(),
+                want_vec.as_fp32_slice(),
+                "RawF32 PAX must reconstruct the exact vector for {}",
+                want.oid
+            );
+        }
+
+        // The RaBitQ cascade must report a miss (no RaBitQ codes) — the exact
+        // PAX scan in the search dispatch handles this segment instead.
+        let query = records[0]
+            .embeddings
+            .first()
+            .expect("query embedding")
+            .as_fp32_slice()
+            .to_vec();
+        assert!(
+            rabitq_search_segment(&bytes, &query, 4, 8, RankMetric::L2, None)
+                .unwrap()
+                .is_none(),
+            "RawF32 PAX has no RaBitQ codes → cascade must return None (exact scan handles it)"
+        );
+    }
+
     /// Mixed-read-safe coexistence (storage-format mandate #8). A store rolling
     /// PAX quantization on will have BOTH legacy `ProximaBlocks` segments (written
     /// before the flip) and new PAX segments side by side. The magic-byte router
@@ -622,7 +927,7 @@ mod tests {
                     .map(|(v, n)| v + n * 0.01)
                     .collect();
 
-                let hits = rabitq_search_segment(&bytes, &query, K, POOL, None)
+                let hits = rabitq_search_segment(&bytes, &query, K, POOL, RankMetric::L2, None)
                     .unwrap()
                     .expect("PAX+RaBitQ segment must run the cascade");
                 let got: std::collections::HashSet<String> =
@@ -661,7 +966,7 @@ mod tests {
         .serialize()
         .unwrap();
         assert!(
-            rabitq_search_segment(&legacy, &vec![0.0; DIM], K, POOL, None)
+            rabitq_search_segment(&legacy, &vec![0.0; DIM], K, POOL, RankMetric::L2, None)
                 .unwrap()
                 .is_none(),
             "non-PAX input must return None (caller falls back)"
@@ -675,6 +980,157 @@ mod tests {
     /// skipped before the vector pass), and (2) stay SOUND — a vector in a surviving
     /// block is still returned. This is the cheap pre-vector filter that moves the
     /// dominant cost term (I/O round-trips), measured by the I/O trace, not asserted.
+    /// Phase D completion: when the opt-in f32 tier is present, the cascade
+    /// materializes the EXACT f32 vector for each top-k hit (`include_vectors`).
+    /// Without the tier, hits carry `vector = None` (id+score only).
+    #[test]
+    fn rabitq_search_segment_materializes_vectors_when_f32_tier_present() {
+        const DIM: usize = 64;
+        const N: usize = 256;
+        const K: usize = 10;
+        const POOL: usize = 100;
+
+        let gen_vec = |seed: u64| -> Vec<f32> {
+            let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+            (0..DIM)
+                .map(|_| {
+                    s ^= s >> 30;
+                    s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                    s ^= s >> 27;
+                    ((s >> 11) as f32 / (1u64 << 53) as f32) * 2.0 - 1.0
+                })
+                .collect()
+        };
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| gen_vec(i as u64)).collect();
+        let by_oid = |oid: &str| -> Vec<f32> {
+            let i = oid[1..].parse::<usize>().unwrap();
+            corpus[i].clone()
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                rec(
+                    &format!("v{i}"),
+                    1_700_000_000_000_000_000 + i as i64,
+                    v.clone(),
+                )
+            })
+            .collect();
+
+        // WITH the f32 tier → hits carry their exact f32 vector.
+        let path = dir.path().join("f32_tier.pax");
+        write_pax_segment_with_f32_tier(&path, &records, "col", 1, VectorQuant::RaBitQ, true, None)
+            .unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let query = corpus[0].clone();
+        let hits = rabitq_search_segment(&bytes, &query, K, POOL, RankMetric::L2, None)
+            .unwrap()
+            .expect("PAX+RaBitQ+tier segment runs the cascade");
+        assert!(!hits.is_empty(), "cascade must return top-k");
+        for h in &hits {
+            let v = h
+                .vector
+                .as_ref()
+                .expect("hit carries exact f32 vector when the tier is present");
+            assert_eq!(
+                v,
+                &by_oid(&h.oid),
+                "materialized vector must be exact for {}",
+                h.oid
+            );
+        }
+
+        // WITHOUT the tier → hits carry no vector (id+score only).
+        let path2 = dir.path().join("no_tier.pax");
+        write_pax_segment(&path2, &records, "col", 1, VectorQuant::RaBitQ, None).unwrap();
+        let bytes2 = std::fs::read(&path2).unwrap();
+        let hits2 = rabitq_search_segment(&bytes2, &query, K, POOL, RankMetric::L2, None)
+            .unwrap()
+            .expect("cascade runs");
+        assert!(
+            hits2.iter().all(|h| h.vector.is_none()),
+            "no f32 tier → hits must not carry vectors"
+        );
+    }
+
+    /// `pax_inputs_rerank_quant` detects the tier-2 rerank quant of a `.pax`
+    /// source segment so compaction PRESERVES it (an FP16/f32 rerank stays
+    /// FP16/f32; only a missing rerank column → default Sq8). Mirrors the
+    /// f32-tier detection contract — guards against compaction silently
+    /// downgrading a configured higher-fidelity rerank tier to SQ8.
+    #[test]
+    fn pax_inputs_rerank_quant_detects_source_tier() {
+        let dir = tempfile::tempdir().unwrap();
+        let records: Vec<ProximaRecord> = (0..8)
+            .map(|i| {
+                let vec: Vec<f32> = (0..32).map(|j| (i * 32 + j) as f32 * 0.01).collect();
+                rec(&format!("v{i}"), 1_700_000_000_000_000_000 + i as i64, vec)
+            })
+            .collect();
+
+        // FP16 rerank → detected as Fp16.
+        let fp16_path = dir.path().join("fp16.pax");
+        write_pax_segment_full(
+            &fp16_path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Fp16,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            pax_inputs_rerank_quant(&[fp16_path.clone()]),
+            VectorQuant::Fp16
+        );
+
+        // f32 rerank → detected as RawF32.
+        let f32_path = dir.path().join("f32.pax");
+        write_pax_segment_full(
+            &f32_path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::RawF32,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            pax_inputs_rerank_quant(&[f32_path.clone()]),
+            VectorQuant::RawF32
+        );
+
+        // Default (Sq8) rerank → detected as Sq8.
+        let sq8_path = dir.path().join("sq8.pax");
+        write_pax_segment_full(
+            &sq8_path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            pax_inputs_rerank_quant(&[sq8_path.clone()]),
+            VectorQuant::Sq8
+        );
+
+        // No `.pax` input (or none with a rerank column) → default Sq8.
+        let non_pax = dir.path().join("notpax.sst");
+        std::fs::write(&non_pax, b"junk").unwrap();
+        assert_eq!(pax_inputs_rerank_quant(&[non_pax]), VectorQuant::Sq8);
+    }
+
     #[test]
     fn rabitq_search_segment_metadata_pruning_skips_blocks() {
         use proximadb_filter_expression::ComparisonOperator;
@@ -753,7 +1209,7 @@ mod tests {
 
         // Baseline: no prune — scans every block.
         let baseline = rt.block_on(crate::observability::io_trace::scope(async {
-            let hits = rabitq_search_segment(&bytes, &query, K, POOL, None)
+            let hits = rabitq_search_segment(&bytes, &query, K, POOL, RankMetric::L2, None)
                 .unwrap()
                 .expect("PAX+RaBitQ segment");
             let snap = crate::observability::io_trace::snapshot().unwrap();
@@ -766,7 +1222,7 @@ mod tests {
                 filter: &filter,
                 field_to_col: &f2c,
             };
-            let hits = rabitq_search_segment(&bytes, &query, K, POOL, Some(mp))
+            let hits = rabitq_search_segment(&bytes, &query, K, POOL, RankMetric::L2, Some(mp))
                 .unwrap()
                 .expect("PAX+RaBitQ segment");
             let snap = crate::observability::io_trace::snapshot().unwrap();

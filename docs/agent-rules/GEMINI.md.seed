@@ -11,7 +11,7 @@ ProximaDB is a high-performance, cloud-native vector and graph database built in
 ProximaDB has shifted from a monolithic custom WAL/PAX architecture to an **Intelligent Multi-Engine Routing** system running over decoupled **Object Storage**.
 
 When modifying architecture or execution paths, you MUST adhere to the dual-path mandate:
-1. **Data Warehouse/Relational Workloads:** Driven by DataFusion/Polars executing over standard Parquet files managed by Iceberg manifests. *(DataFusion is the **interim** OLAP engine; a native, push-based, morsel-driven vectorized OLAP engine is the build target, landing behind the same `ComputeBackend` seam — never assume DataFusion is the terminal OLAP backend. See `docs/12-design/NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.adoc`; source study `NATIVE_OLAP_8ENGINE_COMPARATIVE_STUDY_2026_06_22.adoc`.)*
+1. **Data Warehouse/Relational Workloads:** Driven by DataFusion/Polars executing over standard Parquet files managed by Iceberg manifests. *(OLAP execution = DataFusion's vectorized kernels behind the `ComputeBackend` seam per **ADR-052** (Accepted 2026-07-04): the native investment is the PAX-native SCAN operator (TD-OLAP-1) feeding Arrow `RecordBatch`es into DataFusion — do NOT build native HashAgg/HashJoin/Sort, and the row-wise Volcano executor is the OLTP/point-lookup floor only. The seam keeps the backend swappable (no `datafusion::` outside the adapter allow-list, ADR-039) — but swapping is an option held open, not a build target. The `NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.adoc` §3/§4-P3 native-operator end-state is superseded by ADR-052; see `docs/12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc`.)*
 2. **Vector Search/ANN Workloads:** Driven by specialized high-performance engines (SST, HELIX, NOVA) utilizing the custom PAX block format.
 
 You must also strictly enforce SaaS Operational constraints:
@@ -59,8 +59,9 @@ When changing a storage format, reader, codec, cache, or engine you MUST:
 - **Multi-Engine Storage:** SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR.
 
 ## 📂 Project Organization
-- `src/`: Core Rust crates (storage, graph, query, vector, api_handlers).
-- `src/bin/`: Main binaries (server, bench, migrate).
+- `src/`: Core Rust library crate (storage, graph, query, vector, api_handlers).
+- `apps/`: Main binaries (proximadb-server, bench, ann-bench, migrate, vectordb-compare).
+- `crates/`: Layered workspace crates (foundation → horizontal → storage/query/modalities → control/platform).
 - `tests/`: Integration, regression, and WAL persistence tests.
 - `benches/`: Performance benchmarks (Criterion).
 - `clients/`: SDKs for Python (PyO3/C FFI), Go, Java, and Node.js.

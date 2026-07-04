@@ -648,7 +648,7 @@ mod tests {
         let partitions = partition_splits(splits, 2);
         assert_eq!(partitions.len(), 2);
         // Greedy algorithm should balance approximately
-        assert!(partitions[0].len() >= 1 && partitions[1].len() >= 1);
+        assert!(!partitions[0].is_empty() && !partitions[1].is_empty());
     }
 
     #[test]

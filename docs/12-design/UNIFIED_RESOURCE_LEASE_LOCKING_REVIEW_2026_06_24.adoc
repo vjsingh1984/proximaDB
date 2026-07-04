@@ -16,12 +16,24 @@ intentionally correction-first: the unified `ResourceKey` direction is retained,
 but the lock semantics and object-store path contracts must be tightened before
 the feature is exposed through `DmlService` or protocol handlers.
 
+2026-07-02 refresh: DML lock wiring and the A6 storage-write fence seam have
+partially landed in the current checkout. `DmlService` can carry an optional
+`DmlLockService`; `SharedServices` can build the lease manager, reconciliation
+loops, and a `StorageWriteFence` adapter when the metadata lease store opens; and
+flush/materialization paths consult the fence before publishing storage writes
+when `PROXIMADB_WRITE_FENCING=1`. This does **not** graduate the feature to
+supported distributed/serverless locking. The remaining correctness gate is to
+make the policy support-grade: prove the full DML→lease→flush fence path
+end-to-end, decide when the fence becomes default-on/mandatory, and remove
+fail-open deployment semantics for configurations that claim distributed write
+safety.
+
 [IMPORTANT]
 ====
-Do not wire DML locks into REST, gRPC, pgwire, or Arrow Flight until the
-foundation gates in <<approved-foundation-gates>> are complete. A protocol-level
-lock that is not tenant-correct, path-compatible, hierarchically enforced, and
-fenced at the storage writer is only advisory and can create split-brain writes.
+DML locks may be wired only as an internal guarded path until the foundation
+gates in <<approved-foundation-gates>> are complete. A protocol-level lock that
+is not tenant-correct, path-compatible, hierarchically enforced, and fenced at the
+storage writer is only advisory and can create split-brain writes.
 ====
 
 == First-principles position
@@ -198,19 +210,23 @@ true multi-reader durable state is implemented.
 | A6
 | P0
 | DML lock acquisition returns a guard that owns renewal/release and carries the
-fencing generation to the writer.
-| Protocol exposure.
+fencing generation to the writer; the storage boundary rejects displaced pods
+before publishing shared-storage writes. Current code has the default-off
+`StorageWriteFence` backstop (`PROXIMADB_WRITE_FENCING=1`); support requires
+end-to-end evidence and strict fail-closed deployment semantics.
+| Supported protocol exposure and multi-pod correctness claims.
 
 | A7
 | P1
 | `DmlService::execute_scoped` acquires locks after catalog resolution, using
 real tenant/schema/table identity.
-| REST/gRPC/pgwire/Flight wiring.
+| Partially landed. Still blocks support claims until A6 storage enforcement and
+strict non-fail-open configuration are complete.
 
 | A8
 | P1
 | Protocol handlers map lock outcomes consistently.
-| User-visible protocol behavior.
+| User-visible protocol behavior and retry/backoff policy.
 
 | A9
 | P1

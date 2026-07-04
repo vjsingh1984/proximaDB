@@ -139,33 +139,41 @@ impl RecordOpsService {
     /// (`request.collection_id`) and the transport tenant id — the exact pair the
     /// network gates' `consult_for_write` uses — so the binding this populates is
     /// the one the gates read. Idempotent + cheap after the first write (registry
-    /// fast-path; the renew loop keeps the lease warm). Fail-open: a missing
-    /// manager (embedded/tests) or a transient acquire error never blocks the
-    /// write — the network gate + the A6 storage fence are the enforcement points.
-    async fn ensure_collection_lease(&self, tenant_id: &str, collection_name: &str) {
+    /// fast-path; the renew loop keeps the lease warm). A missing manager still
+    /// indicates embedded/single-node operation; once a manager is wired, conflicts
+    /// and acquire errors reject the write instead of proceeding fail-open.
+    async fn ensure_collection_lease(&self, tenant_id: &str, collection_name: &str) -> Result<()> {
         let Some(manager) = self.lease_manager.read().ok().and_then(|g| g.clone()) else {
-            return;
+            return Ok(());
         };
         let now_ms = chrono::Utc::now().timestamp_millis();
         match manager
             .ensure_owned(tenant_id, collection_name, now_ms)
             .await
         {
-            Ok(true) => {}
-            Ok(false) => tracing::warn!(
-                target = "proximadb.primary_pod.lease_on_write",
-                tenant_id = %tenant_id,
-                collection_id = %collection_name,
-                "lease-on-write: this pod is not the primary for the collection; \
-                 shared registry repointed to the owner (gate should now 421 subsequent writes)"
-            ),
-            Err(e) => tracing::warn!(
-                target = "proximadb.primary_pod.lease_on_write",
-                error = %e,
-                tenant_id = %tenant_id,
-                collection_id = %collection_name,
-                "lease-on-write acquire failed; proceeding fail-open"
-            ),
+            Ok(true) => Ok(()),
+            Ok(false) => {
+                tracing::warn!(
+                    target = "proximadb.primary_pod.lease_on_write",
+                    tenant_id = %tenant_id,
+                    collection_id = %collection_name,
+                    "lease-on-write: this pod is not the primary for the collection; rejecting write"
+                );
+                Err(anyhow!(
+                    "this pod is not the primary for collection '{}'",
+                    collection_name
+                ))
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target = "proximadb.primary_pod.lease_on_write",
+                    error = %e,
+                    tenant_id = %tenant_id,
+                    collection_id = %collection_name,
+                    "lease-on-write acquire failed; rejecting write"
+                );
+                Err(anyhow!("lease-on-write acquire failed: {}", e))
+            }
         }
     }
 
@@ -344,8 +352,15 @@ impl RecordOpsService {
                 "WAL_LANE_REJECTED".to_string(),
             ));
         }
-        self.ensure_collection_lease(tenant_id.unwrap_or(""), &collection_name)
-            .await;
+        if let Err(e) = self
+            .ensure_collection_lease(tenant_id.unwrap_or(""), &collection_name)
+            .await
+        {
+            return Ok(BatchOperationResult::failure(
+                e.to_string(),
+                "LEASE_NOT_HELD".to_string(),
+            ));
+        }
         let result = self
             .vector_operations_service
             .delete_records_with_tenant_context(
@@ -407,8 +422,15 @@ impl RecordOpsService {
                 "WAL_LANE_REJECTED".to_string(),
             ));
         }
-        self.ensure_collection_lease(tenant_id.unwrap_or(""), &collection_name)
-            .await;
+        if let Err(e) = self
+            .ensure_collection_lease(tenant_id.unwrap_or(""), &collection_name)
+            .await
+        {
+            return Ok(BatchOperationResult::failure(
+                e.to_string(),
+                "LEASE_NOT_HELD".to_string(),
+            ));
+        }
 
         let mut records = request.records;
         self.coerce_records_to_canonical_precision(&mut records, &request.collection_id)
@@ -481,8 +503,15 @@ impl RecordOpsService {
                 "WAL_LANE_REJECTED".to_string(),
             ));
         }
-        self.ensure_collection_lease(tenant_id.unwrap_or(""), &collection_name)
-            .await;
+        if let Err(e) = self
+            .ensure_collection_lease(tenant_id.unwrap_or(""), &collection_name)
+            .await
+        {
+            return Ok(BatchOperationResult::failure(
+                e.to_string(),
+                "LEASE_NOT_HELD".to_string(),
+            ));
+        }
         let mut records = request.records;
         self.coerce_records_to_canonical_precision(&mut records, &request.collection_id)
             .await;

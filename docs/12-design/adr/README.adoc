@@ -1,7 +1,7 @@
 = Architecture Decision Records
 :toc: left
 :icons: font
-:last-updated: 2026-06-29
+:last-updated: 2026-06-30
 
 [.lead]
 This directory contains Architecture Decision Records (ADRs) governing ProximaDB's implementation across all open issues (#25-#61). Each ADR defines canonical contracts, interfaces, and file plans that implementation must follow.
@@ -164,10 +164,39 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Stable, line-independent symbol object_id — the correlated-CPG join key
 | Proposed
 | Cross-product audit 2026-06-28: the symbol `oid` is minted **3 different ways** across proximaDB / victor-codegraph / anvaiops and all embed the line number in identity, so a line move churns a symbol's vector + node + row — breaking fuse-on-shared-oid and forcing full re-index. *Decision:* one canonical, **line-independent** symbol oid minted once in `victor-codegraph`'s adapter and consumed verbatim by the SDK, connector, and substrate; identity = structural coordinates (`repo‖language‖module_path‖FQN‖overload-discriminator`), with line/col and body-hash as metadata, not identity. Extends ADR-031's tenet (stable id, mutable coordinate is metadata) to the symbol layer ADR-031 explicitly excluded. Mixed-read-safe, default-OFF. Tracked: TD-CG
+
+| link:ADR-045-pax-durable-core-vs-serving-metadata.adoc[ADR-045]
+| PAX Durable-Open Core vs Rebuildable Serving Metadata
+| Proposed
+| Stratify the PAX segment into a **durable open core** (stripes + MVCC; ships 1:1 to Iceberg) vs a **rebuildable serving-metadata layer** (row-dir, ColumnMeta, bloom, deletion vector, zone summaries). The ProximaDB-native form of Lakebase's "separate durability from visibility" — needs no transcode seam because PAX already co-locates row-directory + stripes; co-location of filter+vector stripes is inviolable (the ANN cascade must keep working with no extra GET). Enables LTAP single-copy export + fast cold-start (regenerate serving metadata without re-reading vectors). Grounded in Aurora "log is the database" (SIGMOD'17), PAX page-internal orthogonality (VLDB'01), Iceberg 3-FS-op immutable files. Refines ADR-010 Layer-2. Tracked: TD-LTAP-1
+
+| link:ADR-046-lsn-coherent-merge-read.adoc[ADR-046]
+| LSN-Coherent Single-Copy Analytics Read (LTAP without CDC)
+| Proposed
+| Analytical read obtains the WAL LSN, reads the materialized Parquet/VIPER arm as-of-LSN, then merges the un-materialized WAL-tail delta (MVCC-visible) — a consistent fresh read from ONE governed copy with zero tx impact. The ProximaDB-native LTAP: unify at the storage layer (one WAL authority + one durable core) with specialized compute (ADR-039). Research found Lakebase's *shipping* analytics freshness (CDF) is actually CDC (a second ~15s-synced copy), so a true single-copy LSN-merge is genuinely better. Reuses ADR-020/033/039 + the existing `search_unflushed` merge. Small-table skip. Tracked: TD-LTAP-2
+
+| link:ADR-050-statistics-fed-datafusion-route-selection.adoc[ADR-050]
+| Statistics-fed cost-based routing into the DataFusion OLAP arm
+| Proposed
+| Activates ADR-039's *declared-but-inert* DataFusion arm and makes its planning cost-based. Two moves: (1) `ComputeScheduler::route_select` stops hardcoding `Native(Volcano)` and routes analytical scan/join/aggregate over Parquet-backed tables to `DataFusionLocal` above a cost crossover (`SET compute_engine` override; strong-freshness stays Volcano) — realizes TD-115; (2) `schema_inference` feeds real DataFusion `ColumnStatistics` by projecting the ADR-042 mergeable `SegmentStatistics` (min/max/distinct/null) instead of `new_unknown()` — cost-based planning with **zero new scan**, the ADR-042 spine's second consumer. Stats are freshness-bounded hints (ADR-038) and calibrated by observed cost (ADR-030/034); the swap invariant (ADR-039) is preserved. **Explicitly disclaims the typed-vector-search scan cost** (#634 → ADR-011/028 + TD-064/073/096), which never enters DataFusion. Tracked: TD-115, TD-DFR-1
+
+| link:ADR-051-strong-freshness-default-cheap-under-concurrency.adoc[ADR-051]
+| Strong freshness stays the read default; make it cheap under concurrency
+| Proposed
+| Answers "should typed `/search` stop defaulting to Strong?" — **no.** D1: Strong stays the default (a deliberate, test-asserted read-after-write contract, `default()==Strong`, added because an INSERT→SEARCH visibility gap was a prod bug; matches turbopuffer); weakening globally is rejected — per-collection opt-out is TD-074. D2 (**implemented**): make Strong *cheap* by LSN-pinning cache eligibility — Strong reads (formerly 100% cache-bypassed) may serve a cached entry iff `computed_at_lsn == current_lsn`; any write advances the LSN (miss→recompute) AND evicts the collection, so read-after-write is preserved (belt-and-suspenders). Fixes repeated-query Strong concurrency. D3 (designed → TD-STRONG-1): per-`(collection,lsn)` shared WAL-tail scan for the distinct-query case (the #634 benchmark). **Disclaims** the SST directory-side scan cost (TD-096, the other #634 term). Tracked: TD-STRONG-1
+| link:ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052]
+| Analytics execution competitiveness — vectorized-over-Arrow reuse, PAX-native scan as the co-designed wedge, scan-avoidance as the dominant cost term
+| Accepted
+| First-principles + competitor review (Gluten/Comet/Velox/DataFusion/Photon/Snowflake/EMR/Quanton, 2026-07-03). Three findings: seams excellent (ADR-039/050/033/007) but native OLAP execution is a row-wise Volcano (`proximadb-relational-executor/src/lib.rs:1`) — the model the field abandoned (Kersten 2018); TPC-DS/TPC-H are *conformance* ratchets, not *performance* evidence; the statistics substrate (ADR-037/038) is designed but not wired to the DataFusion planner (`ColumnStatistics::new_unknown()`). Decision: (1) OLAP execution = vectorized-over-Arrow via DataFusion; native Volcano is OLTP-only; (2) the "NativeOlap route" is a PAX-native *scan* operator feeding DataFusion, NOT a parallel operator engine — collapses years of work (**supersedes** the blueprint's §3 peer-route / §4-P3 native-primary end-state + the 8-engine study verdict; ratified 2026-07-04); (3) scan-avoidance (zone maps/bloom/runtime filters/DV/late-materialization) is the PRIMARY lever because cloud-OLAP's dominant cost is bytes-scanned, not CPU; (4) competitiveness is measured (SF1/SF10 ledger vs DuckDB/DataFusion/ClickHouse) before any claim. Non-goals: no LLVM codegen now (vectorized-first, Photon's reasoning); no Ballista/MPP now (win single-node/embedded first); don't overclaim 5-mode — nail vector+OLAP+lakehouse. Tracked: TD-OLAP-1..5
+
+| link:ADR-053-cross-modal-query-fabric.adoc[ADR-053]
+| Cross-modal query fabric — modalities as composable SQL relations, joins execute data-local
+| Accepted
+| The vertical copilot demos exposed that "one engine, one query plane" is currently delivered by *client glue*: an N+1 per-entity fan-out (~90 round-trips) + a client-side graph⋈timeseries join that ships intermediate sets over the wire — maximising exactly the dominant cost terms (round-trips + egress) the co-design mandate says to minimise. Decision: expose each non-relational modality as a SQL table source so the cross-modal JOIN is a query executed **data-local** in the engine (DataFusion/Volcano behind the ADR-052 seam), shipping the answer not the intermediate sets. `vector_search(...)` already exists (Track B §8 moat); this ADR adds `timeseries_range(collection,start_ms,end_ms)` → `(timestamp,metric,value)` (first increment, mirrors the vector UDTF); `graph_traverse(...)` follows over TD-GRAPH-3. The agentic copilot brain stays in the client/agent (MCP) layer — no hard-coded workflow in the DB; AnvaiOps governs at the gateway. No new DSL (reuse SQL + table functions). Three-layer: native surfaces → cross-modal fabric (engine) → agent + governance. Tracked: TD-XMODAL-1..5
 |===
 
-NOTE: ADR-010 through ADR-013 exist in this directory but are not yet
-indexed in the table above; that catalogue gap is separate cleanup work.
+NOTE: ADR-010 through ADR-013 and ADR-048/ADR-049 exist in this directory but
+are not yet indexed in the table above; that catalogue gap is separate cleanup work.
 
 == Relationship to Design Resolution Doc
 

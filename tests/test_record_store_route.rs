@@ -1,4 +1,3 @@
-use proximadb_catalog::{CatalogStorageSpecialization, CatalogTableSchema, CatalogWorkloadProfile};
 // Assuming TableRecordStoreRoute will be updated in src/services/record_store.rs
 // We will test the routing logic here.
 

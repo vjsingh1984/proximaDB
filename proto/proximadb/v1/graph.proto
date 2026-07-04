@@ -392,6 +392,8 @@ message GetStatsRequest {
 
 // Service definition for graph operations
 service GraphService {
+  // Deprecated (ADR-049 / TD-121): v1 surface. Removed in M4; migrate to proximadb.v2.
+  option deprecated = true;
     // Node operations
     rpc CreateNode(CreateNodeRequest) returns (Node);
     rpc GetNode(GetNodeRequest) returns (Node);

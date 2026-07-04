@@ -614,6 +614,18 @@ impl MetadataSerializer for SwiftMetadataSerializer {
         metadata.estimated_selectivity(query_context)
     }
 }
+// Manual Clone implementation for SwiftMetadata
+impl Clone for SwiftMetadata {
+    fn clone(&self) -> Self {
+        Self {
+            global: self.global,
+            segments: self.segments.clone(),
+            variable_data: self.variable_data.clone(),
+            global_bloom: parking_lot::RwLock::new(self.global_bloom.read().clone()),
+            segment_blooms: parking_lot::RwLock::new(self.segment_blooms.read().clone()),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -716,18 +728,6 @@ mod tests {
                 // - no segments match the query
                 // All are valid outcomes for this test
             }
-        }
-    }
-}
-// Manual Clone implementation for SwiftMetadata
-impl Clone for SwiftMetadata {
-    fn clone(&self) -> Self {
-        Self {
-            global: self.global,
-            segments: self.segments.clone(),
-            variable_data: self.variable_data.clone(),
-            global_bloom: parking_lot::RwLock::new(self.global_bloom.read().clone()),
-            segment_blooms: parking_lot::RwLock::new(self.segment_blooms.read().clone()),
         }
     }
 }

@@ -805,10 +805,7 @@ mod tests {
         assert!(display.contains("/data/file"));
         assert!(display.contains("LSN: 7"));
 
-        let sourced = StorageError::io(
-            "read failed",
-            Some(io::Error::new(io::ErrorKind::Other, "disk said no")),
-        );
+        let sourced = StorageError::io("read failed", Some(io::Error::other("disk said no")));
         let display = sourced.to_string();
         assert!(display.contains("caused by: disk said no"));
         assert!(std::error::Error::source(&sourced).is_none());
@@ -830,7 +827,7 @@ mod tests {
         let storage_err: StorageError = io::Error::new(io::ErrorKind::WouldBlock, "busy").into();
         assert_eq!(storage_err.kind, StorageErrorKind::LockFailed);
 
-        let storage_err: StorageError = io::Error::new(io::ErrorKind::Other, "other").into();
+        let storage_err: StorageError = io::Error::other("other").into();
         assert_eq!(storage_err.kind, StorageErrorKind::Io);
     }
 
@@ -913,10 +910,8 @@ mod tests {
             assert_eq!(storage_err.message, expected_message);
         }
 
-        let storage_err: StorageError = proximadb_kernel::error::StorageError::DiskIO(
-            io::Error::new(io::ErrorKind::Other, "disk"),
-        )
-        .into();
+        let storage_err: StorageError =
+            proximadb_kernel::error::StorageError::DiskIO(io::Error::other("disk")).into();
         assert_eq!(storage_err.kind, StorageErrorKind::Io);
         assert_eq!(storage_err.source.as_deref(), Some("disk"));
 

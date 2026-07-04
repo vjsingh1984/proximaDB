@@ -44,6 +44,7 @@ use crate::storage::engines::core::ops::performance_optimization::{
 // VectorMemoryPool now managed by universal optimizer
 use super::types::*;
 use crate::core::String;
+use crate::core::search::SearchMode;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
@@ -1556,6 +1557,7 @@ impl ViperEngine {
                 engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
                 engine_config: Default::default(),
                 assigned_at: 0,
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -2074,6 +2076,7 @@ impl UnifiedStorageFormat for ViperEngine {
                 engine_config: std::collections::HashMap::new(),
                 base_location: base_path.to_string(),
                 assigned_at: 0,
+                ..Default::default()
             }),
         });
 
@@ -2265,12 +2268,17 @@ impl UnifiedStorageFormat for ViperEngine {
         // PHASE 0: TRY AXIS-BASED SEARCH FIRST (HNSW/IVF) - FASTEST PATH
         // ========================================================================
         // Use AXIS manager if available for O(log N) approximate search
+        let exact_mode = matches!(ctx.search_params.search_mode, SearchMode::Exact);
         let has_axis_manager = self.axis_manager().is_some();
         if has_axis_manager {
             tracing::debug!("🔍 VIPER: AXIS manager is available for HNSW/IVF search");
         }
 
-        if let Some(axis_manager) = self.axis_manager() {
+        if exact_mode {
+            tracing::debug!(
+                "🎯 VIPER: SearchMode::Exact requested; skipping approximate AXIS path"
+            );
+        } else if let Some(axis_manager) = self.axis_manager() {
             tracing::info!(
                 "🔗 VIPER: AXIS manager available, attempting HNSW index search for collection {}",
                 collection_id
@@ -3247,7 +3255,7 @@ mod minimal_compaction_tests {
 
         // Set up storage assignment
         use tokio::fs;
-        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+        let data_dir = StoragePath::collection_data_path(base_path, collection_id);
         fs::create_dir_all(&data_dir).await?;
 
         // Storage assignment is now handled internally by CollectionService
@@ -3307,6 +3315,7 @@ mod minimal_compaction_tests {
                 engine_config: std::collections::HashMap::new(),
                 base_location: base_path.to_string(),
                 assigned_at: chrono::Utc::now().timestamp_micros(),
+                ..Default::default()
             }),
         });
 

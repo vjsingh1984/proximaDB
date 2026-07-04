@@ -188,10 +188,10 @@ async fn test_unified_atomic_operations_lifecycle() -> Result<()> {
 
     // Test begin flush operation
     let flush_metadata = viper_ops
-        .begin_flush_operation(&collection_id.to_string(), &storage_url)
+        .begin_flush_operation(collection_id, &storage_url)
         .await?;
 
-    assert!(flush_metadata.operation_id.len() > 0);
+    assert!(!flush_metadata.operation_id.is_empty());
     assert!(flush_metadata.staging_url.contains("__flush"));
     assert!(flush_metadata.final_url.contains("storage"));
 

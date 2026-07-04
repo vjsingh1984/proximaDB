@@ -1172,7 +1172,7 @@ mod tests {
         // Test with even number of values
         let (packed, min, max, num_values) = engine.quantize_to_u4(&distances);
         assert_eq!(num_values, distances.len());
-        assert_eq!(packed.len(), (distances.len() + 1) / 2);
+        assert_eq!(packed.len(), distances.len().div_ceil(2));
 
         let reconstructed = engine.dequantize_u4(&packed, min, max, num_values);
         assert_eq!(reconstructed.len(), distances.len());
@@ -1200,7 +1200,7 @@ mod tests {
         // Test with multiple of 4 values
         let (packed, min, max, num_values) = engine.quantize_to_u6(&distances);
         assert_eq!(num_values, distances.len());
-        assert_eq!(packed.len(), (distances.len() * 6 + 7) / 8); // Ceiling division
+        assert_eq!(packed.len(), (distances.len() * 6).div_ceil(8)); // Ceiling division
 
         let reconstructed = engine.dequantize_u6(&packed, min, max, num_values);
         assert_eq!(reconstructed.len(), distances.len());

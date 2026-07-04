@@ -6,6 +6,9 @@
 use crate::core::search::BlockPruneMode;
 use crate::proto::proximadb_v1::Collection;
 use crate::security::rbac_service::{TenantContext, UnifiedUserContext};
+use crate::storage::trait_components::path_resolver::{
+    collection_data_path_typed, typed_identity_from_storage_assignment,
+};
 pub use proximadb_quantization_types::QuantizationType;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -506,13 +509,14 @@ impl StorageQueryContext {
             .map(|sa| sa.base_location.as_str())
     }
 
-    /// Get collection-specific storage path.
+    /// Get collection-specific storage path (ADR-031 Phase 4d: typed when the
+    /// collection carries a typed identity triple on its storage_assignment;
+    /// legacy `{base}/{coll_id}/data` otherwise — mixed-read-safe).
     pub fn collection_storage_path(&self) -> Option<String> {
         self.storage_url().map(|base| {
-            proximadb_storage_common::storage_path::StoragePath::collection_data_path(
-                base,
-                self.collection_id(),
-            )
+            let identity =
+                typed_identity_from_storage_assignment(self.collection.storage_assignment.as_ref());
+            collection_data_path_typed(base, self.collection_id(), identity)
         })
     }
 }

@@ -89,7 +89,7 @@ mod tests {
         // Verify module exports are accessible
         let _config = UnifiedSearchConfig::default();
         let _hints = SearchPlanHints::default();
-        let _generator = DefaultPseudoQueryGenerator::default();
+        let _generator = DefaultPseudoQueryGenerator;
         let _stages = default_progressive_stages();
     }
 }

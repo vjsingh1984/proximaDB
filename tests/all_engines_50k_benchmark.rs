@@ -210,7 +210,7 @@ fn benchmark_engine(
         println!(
             "    Inserted batch {}/{}",
             batch_start / BATCH_SIZE + 1,
-            (vector_count + BATCH_SIZE - 1) / BATCH_SIZE
+            vector_count.div_ceil(BATCH_SIZE)
         );
     }
 

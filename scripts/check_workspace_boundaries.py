@@ -8,6 +8,7 @@ run before or during expensive Rust builds without taking a cargo build lock.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -116,6 +117,17 @@ class SourceModuleTarget:
     layer: str
     target: str
     rationale: str
+
+
+@dataclass(frozen=True)
+class StorageUpEdge:
+    path: Path
+    line: int
+    target: str
+    text: str
+
+
+STORAGE_UP_EDGE_TARGETS = ("compute", "index", "query", "services")
 
 
 LAYER_RULES = (
@@ -746,6 +758,77 @@ def print_source_module_map() -> int:
     return 0
 
 
+def storage_up_edges() -> list[StorageUpEdge]:
+    storage_dir = ROOT / "src" / "storage"
+    findings: list[StorageUpEdge] = []
+
+    if not storage_dir.exists():
+        return findings
+
+    for path in sorted(storage_dir.rglob("*.rs")):
+        relative_path = path.relative_to(ROOT)
+        with path.open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                stripped = line.strip()
+                if not stripped or stripped.startswith("//"):
+                    continue
+                for target in STORAGE_UP_EDGE_TARGETS:
+                    if f"crate::{target}" in line:
+                        findings.append(
+                            StorageUpEdge(
+                                path=relative_path,
+                                line=line_number,
+                                target=target,
+                                text=stripped,
+                            )
+                        )
+    return findings
+
+
+def print_storage_up_edge_report(
+    max_allowed: int | None,
+    include_details: bool,
+) -> int:
+    findings = storage_up_edges()
+    by_target = Counter(finding.target for finding in findings)
+    by_file = Counter(finding.path for finding in findings)
+
+    print("Storage up-edge ratchet")
+    print(f"targets: {', '.join(f'crate::{target}' for target in STORAGE_UP_EDGE_TARGETS)}")
+    print(f"total edges: {len(findings)}")
+
+    if by_target:
+        print()
+        print("By target:")
+        for target, count in sorted(by_target.items()):
+            print(f"crate::{target}: {count}")
+
+    if by_file:
+        print()
+        print("Top files:")
+        for path, count in by_file.most_common(20):
+            print(f"{path.as_posix()}: {count}")
+
+    if include_details and findings:
+        print()
+        print("Details:")
+        for finding in findings:
+            print(
+                f"{finding.path.as_posix()}:{finding.line}: "
+                f"crate::{finding.target}: {finding.text}"
+            )
+
+    if max_allowed is not None and len(findings) > max_allowed:
+        print()
+        print(
+            f"FAIL: storage up-edge count {len(findings)} exceeds "
+            f"--max-storage-up-edges={max_allowed}"
+        )
+        return 1
+
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -768,6 +851,21 @@ def main() -> int:
         action="store_true",
         help="print the root src module migration map and exit",
     )
+    parser.add_argument(
+        "--storage-up-edges",
+        action="store_true",
+        help="print storage-to-root up-edge counts and exit",
+    )
+    parser.add_argument(
+        "--storage-up-edge-details",
+        action="store_true",
+        help="include line-level storage up-edge details",
+    )
+    parser.add_argument(
+        "--max-storage-up-edges",
+        type=int,
+        help="fail if storage up-edge count exceeds this value",
+    )
     args = parser.parse_args()
 
     if args.rules:
@@ -776,6 +874,12 @@ def main() -> int:
 
     if args.src_map:
         return print_source_module_map()
+
+    if args.storage_up_edges:
+        return print_storage_up_edge_report(
+            args.max_storage_up_edges,
+            args.storage_up_edge_details,
+        )
 
     crates = workspace_crates()
     if args.deps:

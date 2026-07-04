@@ -189,7 +189,7 @@ async fn test_e2e_graph_basic_operations() {
         .get_outgoing_edges(&"AI".to_string(), Some("INCLUDES"))
         .unwrap();
     println!("   AI has {} INCLUDES edges", includes_edges.len());
-    assert!(includes_edges.len() > 0);
+    assert!(!includes_edges.is_empty());
 
     // Test 5: Graph statistics
     println!("5. Testing graph statistics...");
@@ -404,7 +404,7 @@ async fn test_e2e_full_pipeline_integration() {
             &engine,
             start,
             target,
-            &vec![0.9, 0.1, 0.0],
+            &[0.9, 0.1, 0.0],
             0.5,
             Arc::clone(&distance_compute),
             DistanceMetric::Cosine,

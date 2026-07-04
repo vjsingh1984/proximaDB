@@ -762,6 +762,7 @@ impl RecoveryManager {
                 engine_config: std::collections::HashMap::new(),
                 base_location: storage_url.to_string(),
                 assigned_at: chrono::Utc::now().timestamp_millis(),
+                ..Default::default()
             }),
             ..Default::default()
         })

@@ -36,13 +36,13 @@ async fn setup_test_assignment(collection_id: &str, base_path: &str) {
     use tokio::fs;
 
     // Create necessary directories
-    let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+    let data_dir = StoragePath::collection_data_path(base_path, collection_id);
     fs::create_dir_all(&data_dir)
         .await
         .expect("Failed to create data directory");
 
     // Create temp directory for atomic writes
-    let temp_dir = StoragePath::data_file_path(base_path, &collection_id, "___temp");
+    let temp_dir = StoragePath::data_file_path(base_path, collection_id, "___temp");
     fs::create_dir_all(&temp_dir)
         .await
         .expect("Failed to create temp directory");
@@ -104,6 +104,7 @@ fn create_test_collection(
             engine_config: HashMap::new(),
             base_location: base_path.to_string(),
             assigned_at: chrono::Utc::now().timestamp(),
+            ..Default::default()
         }),
     }
 }
@@ -204,7 +205,7 @@ async fn test_insert_flush_compact_flow() {
     let base_path = temp_dir.path().to_str().unwrap();
     let data_url = format!(
         "file://{}",
-        StoragePath::collection_data_path(base_path, &collection_id)
+        StoragePath::collection_data_path(base_path, collection_id)
     );
     let fs = engine
         .get_filesystem_factory()
@@ -283,28 +284,27 @@ async fn test_insert_flush_compact_flow() {
 
     // Step 4: Verify compacted file contents
     debug!("\n🔍 Step 4: Verifying compacted file...");
-    if let Some(file_url) = compacted_file_url {
-        if let Ok(data) = fs.read(&file_url).await {
-            debug!("  📊 File size: {} bytes", data.len());
+    if let Some(file_url) = compacted_file_url
+        && let Ok(data) = fs.read(&file_url).await
+    {
+        debug!("  📊 File size: {} bytes", data.len());
 
-            use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-            if let Ok(builder) = ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(data))
-            {
-                let reader = builder.build().unwrap();
-                let mut total_rows = 0;
-                for (i, batch) in reader.enumerate() {
-                    if let Ok(batch) = batch {
-                        debug!("  📊 Batch {}: {} rows", i, batch.num_rows());
-                        total_rows += batch.num_rows();
-                    }
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        if let Ok(builder) = ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(data)) {
+            let reader = builder.build().unwrap();
+            let mut total_rows = 0;
+            for (i, batch) in reader.enumerate() {
+                if let Ok(batch) = batch {
+                    debug!("  📊 Batch {}: {} rows", i, batch.num_rows());
+                    total_rows += batch.num_rows();
                 }
-                debug!("  📊 Total rows in compacted file: {}", total_rows);
-                assert_eq!(
-                    total_rows, 40,
-                    "Expected 40 rows in compacted file, got {}",
-                    total_rows
-                );
             }
+            debug!("  📊 Total rows in compacted file: {}", total_rows);
+            assert_eq!(
+                total_rows, 40,
+                "Expected 40 rows in compacted file, got {}",
+                total_rows
+            );
         }
     }
 
@@ -359,10 +359,8 @@ async fn test_insert_flush_compact_flow() {
                             ) {
                                 let reader = builder.build().unwrap();
                                 let mut total_rows = 0;
-                                for batch in reader {
-                                    if let Ok(batch) = batch {
-                                        total_rows += batch.num_rows();
-                                    }
+                                for batch in reader.flatten() {
+                                    total_rows += batch.num_rows();
                                 }
                                 debug!("      📊 PARQUET FILE CONTAINS {} RECORDS", total_rows);
                                 if total_rows != 40 {
@@ -378,15 +376,13 @@ async fn test_insert_flush_compact_flow() {
                         if temp_path.is_dir() {
                             debug!("    - Checking ___temp directory:");
                             if let Ok(temp_entries) = std::fs::read_dir(&temp_path) {
-                                for temp_entry in temp_entries {
-                                    if let Ok(temp_entry) = temp_entry {
-                                        let temp_file = temp_entry.file_name();
-                                        debug!("      - {:?}", temp_file);
-                                        if temp_file.to_string_lossy().ends_with(".parquet") {
-                                            debug!(
-                                                "        ⚠️ Found parquet file in ___temp directory!"
-                                            );
-                                        }
+                                for temp_entry in temp_entries.flatten() {
+                                    let temp_file = temp_entry.file_name();
+                                    debug!("      - {:?}", temp_file);
+                                    if temp_file.to_string_lossy().ends_with(".parquet") {
+                                        debug!(
+                                            "        ⚠️ Found parquet file in ___temp directory!"
+                                        );
                                     }
                                 }
                             }
@@ -452,7 +448,7 @@ async fn test_basic_compaction() {
     let base_path = temp_dir.path().to_str().unwrap();
     let data_url = format!(
         "file://{}",
-        StoragePath::collection_data_path(base_path, &collection_id)
+        StoragePath::collection_data_path(base_path, collection_id)
     );
     debug!("📍 Data directory: {}", data_url);
 
@@ -515,7 +511,7 @@ async fn test_basic_compaction() {
     // Debug: check what files exist in the data directory
     let data_url = format!(
         "file://{}",
-        StoragePath::collection_data_path(base_path, &collection_id)
+        StoragePath::collection_data_path(base_path, collection_id)
     );
     let fs = engine
         .get_filesystem_factory()
@@ -653,7 +649,7 @@ async fn test_basic_compaction() {
     // List all parquet files in data directory to debug
     let data_url = format!(
         "file://{}",
-        StoragePath::collection_data_path(base_path, &collection_id)
+        StoragePath::collection_data_path(base_path, collection_id)
     );
     let fs = engine
         .get_filesystem_factory()
@@ -751,10 +747,8 @@ async fn test_basic_compaction() {
 
         if let Ok(entries) = std::fs::read_dir(&data_path) {
             debug!("  - Contents of data directory:");
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    debug!("    - {:?}", entry.path());
-                }
+            for entry in entries.flatten() {
+                debug!("    - {:?}", entry.path());
             }
         } else {
             debug!("  - ⚠️ Could not read data directory");
@@ -961,7 +955,7 @@ async fn test_concurrent_compaction_and_reads() {
         let collection_id_owned = collection_id.to_string();
         let storage_url = format!(
             "file://{}",
-            StoragePath::collection_data_path(&temp_dir_path, &collection_id)
+            StoragePath::collection_data_path(&temp_dir_path, collection_id)
         );
         let handle = tokio::spawn(async move {
             let mut successful_reads = 0;
@@ -1380,7 +1374,7 @@ async fn test_size_tiered_compaction_strategy() {
     setup_test_assignment(collection_id, temp_dir.path().to_str().unwrap()).await;
 
     // Create files of different sizes
-    let file_sizes = vec![10, 10, 10, 50, 50, 100];
+    let file_sizes = [10, 10, 10, 50, 50, 100];
 
     for (idx, size) in file_sizes.iter().enumerate() {
         let mut vectors = Vec::new();
@@ -1438,10 +1432,8 @@ async fn test_size_tiered_compaction_strategy() {
     );
     debug!("🔍 DEBUG: Listing files in data directory: {}", data_path);
     if let Ok(entries) = std::fs::read_dir(&data_path) {
-        for entry in entries {
-            if let Ok(e) = entry {
-                debug!("  - File: {:?}", e.path());
-            }
+        for e in entries.flatten() {
+            debug!("  - File: {:?}", e.path());
         }
     }
 
@@ -1602,6 +1594,7 @@ async fn test_compaction_with_metadata_filtering() {
             engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
             engine_config: Default::default(),
             assigned_at: 0,
+            ..Default::default()
         });
         Arc::new(col)
     };
@@ -1764,22 +1757,20 @@ async fn test_incremental_compaction() {
         } // Limit recursion depth
         let indent = "  ".repeat(depth);
         if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        debug!("🔍 DEBUG: {}📁 {:?}", indent, path.file_name().unwrap());
-                        list_directory_recursive(path.to_str().unwrap(), depth + 1);
-                    } else {
-                        let metadata = std::fs::metadata(&path).ok();
-                        let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-                        debug!(
-                            "🔍 DEBUG: {}📄 {:?} ({}bytes)",
-                            indent,
-                            path.file_name().unwrap(),
-                            size
-                        );
-                    }
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    debug!("🔍 DEBUG: {}📁 {:?}", indent, path.file_name().unwrap());
+                    list_directory_recursive(path.to_str().unwrap(), depth + 1);
+                } else {
+                    let metadata = std::fs::metadata(&path).ok();
+                    let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                    debug!(
+                        "🔍 DEBUG: {}📄 {:?} ({}bytes)",
+                        indent,
+                        path.file_name().unwrap(),
+                        size
+                    );
                 }
             }
         } else {

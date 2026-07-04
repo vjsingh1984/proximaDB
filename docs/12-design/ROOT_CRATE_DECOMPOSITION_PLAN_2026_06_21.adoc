@@ -155,11 +155,15 @@ boundaries are ports. E/F are large and must be coordinated.
 
 == Multi-session coordination protocol (mandatory)
 
-This repo is worked by many concurrent sessions; at time of writing ~7 worktrees are active
-and several edit `src/storage`. Large file-moves conflict violently with in-flight work, so:
+This repo is worked by many concurrent sessions; at the 2026-07-02 refresh more than 30
+worktrees were active, with several storage/vector/recall branches in flight. Large file-moves
+conflict violently with in-flight work, so:
 
 * *Pick cold subtrees.* Before moving a subtree, check open PRs and active worktrees touching
   it; defer if hot.
+* *Use one worktree per decomposition slice.* Keep docs, ratchets, port definitions, and hot
+  storage wiring in separate branches unless they must land atomically. This lets CI compile and
+  coverage-shard behavior be evaluated independently.
 * *Mechanical-only PRs.* A decomposition slice is `git mv` + re-export + `Cargo.toml` member
   add — nothing else. Easy to review, easy to rebase.
 * *Land within the day.* Don't let an extraction branch sit; divergence cost is the dominant
@@ -168,6 +172,13 @@ and several edit `src/storage`. Large file-moves conflict violently with in-flig
   coordination window, not an opportunistic PR.
 * The `layering-check` workflow + `scripts/affected_crates.py` already enforce/observe the
   boundaries; keep them green at every slice.
+* Measure the source-level Slice-D seam before and after every storage PR:
+  `python3 scripts/check_workspace_boundaries.py --storage-up-edges`. When a branch removes
+  edges, set `--max-storage-up-edges` to the new lower count in its validation notes so the next
+  branch has a ratchet target.
+* The current ceiling is wired into `scripts/check-layering.sh`, which CI runs via
+  `.github/workflows/layering-check.yml`. A branch that intentionally removes storage up-edges
+  should lower that ceiling in the same PR.
 
 == Non-goals / explicitly deferred
 
@@ -184,7 +195,7 @@ and several edit `src/storage`. Large file-moves conflict violently with in-flig
 * coverage producible without exclusions (eventually yes),
 * CI compile wall-clock for the root crate (down).
 
-== Status & next action (2026-06-25)
+== Status & next action (refreshed 2026-07-02)
 
 Four clean storage leaves have landed as pure `git mv` + re-export extractions, all
 layering-green with no call-site churn: `proximadb-storage-kv`, `-transaction` (#329),
@@ -199,3 +210,16 @@ upward edges into root subsystems (`compute`, `persistence`, `engines`, `core`, 
 `storage::traits`) and are not clean leaves. The leaf inventory is effectively exhausted, so
 *D* (the trait/index/compute port-inversion enabler) is the next linchpin — it unblocks both
 cache and the large engine slices.
+
+Current measured Slice-D baseline from
+`python3 scripts/check_workspace_boundaries.py --storage-up-edges`: 271 remaining storage
+up-edges (`compute` 239, `index` 12, `query` 10, `services` 10). This is now the enforced
+non-regression ceiling in `scripts/check-layering.sh`. That is the parallelization ground truth:
+do not move an engine crate while these edges still point at root modules; first split independent
+worktrees by edge class:
+
+* `query` edges: extract/filter DTOs or redirect to query-contract crates; low coordination cost.
+* `services` edges: finish metadata/collection ports and injection; moderate cost.
+* `index` edges: design `IndexPort` facade or pre-extract leaked AXIS types; high review cost.
+* `compute` edges: separate pure kernel redirects from quantization/runtime policy ports; highest
+  compile-payoff because it dominates the remaining count.

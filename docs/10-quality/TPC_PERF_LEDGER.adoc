@@ -1,0 +1,90 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TPC-H / TPC-DS Performance Evidence Ledger — methodology (TD-OLAP-4)
+
+The harness `tests/tpc_perf_ledger_e2e.rs` promotes the TPC suites from
+count-only *conformance* ratchets (`tests/{tpch,tpcds}_pgwire_e2e.rs`) toward
+*measured* performance evidence (ADR-052 invariant 4). Per query x route x
+temperature it records wall latency and the per-query I/O trace snapshot
+(TD-158: `bytes_read`, `range_gets`, footer hits, per-engine `compute_ms`)
+into a versioned JSON ledger artifact. ProximaDB latency and bytes-scanned on the TPC workloads are measured by this harness per query on both routes.
+
+== How to run
+
+[source,bash]
+----
+TPC_PERF_SCALE=0.001 cargo test --test tpc_perf_ledger_e2e -- --ignored --nocapture
+# artifact: target/tpc-perf-ledger/ledger.json (override: TPC_PERF_LEDGER_OUT)
+# debug builds: RUST_MIN_STACK=16777216 — plan-time recursion on the Q2-class
+# join+subquery shapes overflows default thread stacks on some environments
+# (reproduced on WSL2 debug even without column statistics).
+----
+
+CI: the `tpc-perf-ledger` job in `.github/workflows/ci.yml` runs at small scale
+on develop pushes / manual dispatch, `continue-on-error: true` (ADVISORY — it
+is not in the `ci-success` aggregator and must never gate a merge until
+variance is bounded; mirror the pax-recall-ratchet advisory-until-stable
+pattern when promoting).
+
+== Methodology (pinned per ledger entry; regimes are never averaged)
+
+|===
+| Field | Value / rule
+
+| storage regime
+| `local-tempdir` (file:// object store on local disk). The local-NVMe regime
+  is CPU-bound; the object-store regime is bytes-scanned-bound (ADR-052 first
+  principles). They are separate ledger sections — never average across them.
+  Object-store regimes (MinIO/Azurite/real cloud) are a follow-up section.
+
+| routes
+| `native` (row-wise Volcano, pre-MATERIALIZE) and `datafusion`
+  (Parquet-backed, post-`ALTER TABLE … MATERIALIZE`) — the in-repo baseline
+  pair that TD-OLAP-1 promotion decisions consume. Both routes emit the full
+  I/O trace (the DataFusion Parquet leaf is instrumented via
+  `TracingObjectStore`).
+
+| temperature
+| `first` vs `repeat` against a warm process. This is NOT a cold-page-cache
+  measurement — true cold runs need a server restart per query (future slice).
+
+| datagen
+| `synthetic-tpc-shaped`: deterministic (seeded SplitMix64), TPC-schema
+  row-ratio-scaled, power-law key skew, referentially intact. It is **not**
+  audited dbgen/dsdgen output — no TPC-official or external-comparative claim
+  may cite this ledger until a faithful generator + bulk-load path lands.
+
+| scale
+| `TPC_PERF_SCALE` (1.0 ≡ SF1 row ratios). CI runs 0.001 (~9k TPC-H rows);
+  SF1 over per-row INSERTs is impractical — a bulk-load path is the
+  prerequisite for real SF1/SF10 entries.
+
+| baselines
+| External engines (DuckDB, plain DataFusion-on-Parquet standalone,
+  ClickHouse) are DEFERRED: no CI service-container pattern exists in this
+  repo yet; the dual-route comparison above is the in-repo baseline. When
+  added, each baseline's ledger entry must pin engine version, storage
+  config, and cache state.
+
+| honesty rule
+| The ledger records where ProximaDB *loses* (e.g. DataFusion hash-join
+  no-spill on large joins) — mandate #11: no "competitive" claim is cited in
+  any doc without a ledger entry backing it.
+|===
+
+== Ledger JSON shape
+
+`{ methodology: {engine_version, git_sha, scale, storage_regime, datagen,
+temperature_semantics, routes}, records: [{benchmark, query, route,
+temperature, ok, error?, rows, wall_ms, ...IoTraceSnapshot}] }`
+
+The `IoTraceSnapshot` fields are flattened per record: `get_ops`, `bytes_read`,
+`range_gets`, `bytes_written`, `footer_hits/misses`, `egress_bytes`,
+`compute_ms` (per-engine map).
+
+== Relation to the evidence ledger
+
+Claims derived from this harness are tracked in
+`docs/_internal/roadmap/BENCHMARK_EVIDENCE.toml` (validator-enforced). A run
+artifact must be checked in (dated) before any entry is promoted to
+`measured`.

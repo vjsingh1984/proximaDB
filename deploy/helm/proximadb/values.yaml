@@ -4,7 +4,7 @@
 replicaCount: 1
 
 image:
-  repository: proximadb/proximadb
+  repository: vjsingh1984/proximadb
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion
   tag: ""

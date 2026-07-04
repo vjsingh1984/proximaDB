@@ -992,6 +992,50 @@ func TestNewConfigOptions(t *testing.T) {
 	}
 }
 
+func TestRetryUsesMaxRetryDelay(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"message": "temporary outage",
+			})
+			return
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status": "ok",
+		})
+	}))
+	defer server.Close()
+
+	client, err := proximadb.NewClient(
+		proximadb.WithURL(server.URL),
+		proximadb.WithMaxRetries(2),
+		proximadb.WithRetryDelay(50*time.Millisecond),
+		proximadb.WithMaxRetryDelay(time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	probe, err := client.HealthLive(ctx)
+	if err != nil {
+		t.Fatalf("HealthLive failed: %v", err)
+	}
+	if probe.Status != "ok" {
+		t.Fatalf("expected ok status, got %q", probe.Status)
+	}
+	if attempts != 3 {
+		t.Fatalf("expected 3 attempts, got %d", attempts)
+	}
+}
+
 // Benchmark tests
 
 func BenchmarkVectorRecordMarshal(b *testing.B) {

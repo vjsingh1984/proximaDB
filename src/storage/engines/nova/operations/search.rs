@@ -134,10 +134,16 @@ impl NovaSearchOperations {
             .ok_or_else(|| anyhow::anyhow!("No storage path in context"))?;
         let collection_id = &ctx.collection.id;
 
-        // Use standard collection data path (same as other engines)
-        let data_path = proximadb_storage_common::storage_path::StoragePath::collection_data_path(
+        // ADR-031 Phase 4d: use the typed data path when the collection carries
+        // a typed identity (env ON at create); else legacy (mixed-read-safe).
+        let typed_identity =
+            crate::storage::trait_components::path_resolver::typed_identity_from_storage_assignment(
+                ctx.collection.storage_assignment.as_ref(),
+            );
+        let data_path = crate::storage::trait_components::path_resolver::collection_data_path_typed(
             base_location,
             collection_id,
+            typed_identity,
         );
 
         debug!(

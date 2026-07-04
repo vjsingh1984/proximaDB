@@ -80,7 +80,7 @@ mod tests {
             8192 * 1024 * 1024
         );
         assert_eq!(toml_config.vector_count_threshold, 20000);
-        assert_eq!(toml_config.enable_wal, true);
+        assert!(toml_config.enable_wal);
         assert_eq!(
             toml_config.write_buffer_directory,
             "./test_data/write_buffer"

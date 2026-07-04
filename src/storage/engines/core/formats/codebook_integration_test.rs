@@ -71,8 +71,8 @@ mod tests {
         let deserialized_footer = serializer.deserialize_from_footer(&footer_bytes).unwrap();
 
         assert_eq!(deserialized_footer.collection_id, metadata.collection_id);
-        assert_eq!(deserialized_footer.binary_codebook.is_some(), true);
-        assert_eq!(deserialized_footer.int8_codebook.is_some(), true);
+        assert!(deserialized_footer.binary_codebook.is_some());
+        assert!(deserialized_footer.int8_codebook.is_some());
         assert_eq!(deserialized_footer.pq_codebooks.len(), 1);
 
         // Test sidecar serialization (for Parquet engines)

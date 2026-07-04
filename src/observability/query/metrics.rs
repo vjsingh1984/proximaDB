@@ -437,6 +437,6 @@ mod tests {
 
         let values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
         let p50 = query.calculate_percentile(&values, 0.50);
-        assert!(p50 >= 5.0 && p50 <= 6.0);
+        assert!((5.0..=6.0).contains(&p50));
     }
 }

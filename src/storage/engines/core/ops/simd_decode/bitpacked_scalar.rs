@@ -281,7 +281,7 @@ mod tests {
 
     fn create_bitpacked_data(values: &[u64], bits: u8) -> Vec<u8> {
         let total_bits = values.len() * bits as usize;
-        let byte_count = (total_bits + 7) / 8;
+        let byte_count = total_bits.div_ceil(8);
         let mut result = vec![0u8; byte_count];
 
         let mask = if bits == 64 {

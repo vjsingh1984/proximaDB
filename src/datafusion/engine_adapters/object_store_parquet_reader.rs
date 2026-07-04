@@ -11,6 +11,7 @@ use arrow_schema::{Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::catalog::Session;
 use datafusion::common::ScalarValue as DfScalarValue;
+use datafusion::common::Statistics;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::execution::SendableRecordBatchStream;
@@ -34,6 +35,10 @@ use url::Url;
 
 use super::super::proxima_scan_exec::{ProximaScanExec, SplitReader};
 use super::super::proxima_table_provider::EngineType;
+use super::super::schema_inference::{
+    df_stats_value_bounds_enabled, project_statistics, statistics_from_splits,
+};
+use crate::observability::object_store_trace::TracingObjectStore;
 
 fn project_schema(full: &SchemaRef, projection: Option<&[usize]>) -> SchemaRef {
     match projection {
@@ -141,6 +146,9 @@ pub struct ObjectStoreParquetTable {
     splits: Vec<FileSplit>,
     file_sizes: HashMap<String, u64>,
     location: String,
+    /// Registered table/collection name — keys the ADR-037 statistics
+    /// registry for the NDV overlay in [`TableProvider::statistics`].
+    table_name: Option<String>,
 }
 
 impl ObjectStoreParquetTable {
@@ -173,7 +181,10 @@ impl ObjectStoreParquetTable {
             ));
         }
 
-        let store = bridge.inner_store();
+        // Wrap the store so footer + row-group reads land in the per-query
+        // I/O trace (ADR-030/TD-158) — the DataFusion route's bytes-scanned
+        // was previously invisible to the co-design cost model.
+        let store = TracingObjectStore::wrap(bridge.inner_store());
         let mut files = Vec::with_capacity(parquet_paths.len());
         for relative in parquet_paths {
             let full = bridge.full_object_path(&relative);
@@ -191,7 +202,7 @@ impl ObjectStoreParquetTable {
         let parsed = Url::parse(location).map_err(|e| df_err("parse object-store url", e))?;
         let (store, path) =
             object_store::parse_url(&parsed).map_err(|e| df_err("object_store parse_url", e))?;
-        let store: Arc<dyn ObjectStore> = Arc::from(store);
+        let store: Arc<dyn ObjectStore> = TracingObjectStore::wrap(Arc::from(store));
         let size = store
             .head(&path)
             .await
@@ -230,7 +241,15 @@ impl ObjectStoreParquetTable {
             splits,
             file_sizes,
             location,
+            table_name: None,
         })
+    }
+
+    /// Attach the registered table name (keys the ADR-037 statistics registry
+    /// so [`TableProvider::statistics`] can overlay the HLL NDV estimate).
+    pub fn with_table_name(mut self, name: impl Into<String>) -> Self {
+        self.table_name = Some(name.into());
+        self
     }
 
     /// Number of row-group splits before runtime filter pruning.
@@ -303,6 +322,18 @@ impl TableProvider for ObjectStoreParquetTable {
         TableType::Base
     }
 
+    fn statistics(&self) -> Option<Statistics> {
+        // ADR-050 D2 / TD-DFR-1: footer-derived, zero-new-scan column
+        // statistics so the planner stops planning blind. Typed min/max value
+        // bounds are opt-in (default OFF) — see `df_stats_value_bounds_enabled`.
+        Some(statistics_from_splits(
+            &self.splits,
+            &self.schema,
+            self.table_name.as_deref(),
+            df_stats_value_bounds_enabled(),
+        ))
+    }
+
     async fn scan(
         &self,
         state: &dyn Session,
@@ -311,9 +342,21 @@ impl TableProvider for ObjectStoreParquetTable {
         limit: Option<usize>,
     ) -> DFResult<Arc<dyn ExecutionPlan>> {
         let target_partitions = state.config().target_partitions();
+        let pruned = self.prune_splits(filters);
+        // Post-prune stats, narrowed to the projection: `partition_statistics`
+        // requires the vector to match the exec's PROJECTED schema width.
+        let scan_stats = project_statistics(
+            &statistics_from_splits(
+                &pruned,
+                &self.schema,
+                self.table_name.as_deref(),
+                df_stats_value_bounds_enabled(),
+            ),
+            projection.map(|p| p.as_slice()),
+        );
         let exec = ProximaScanExec::builder()
             .schema(self.schema.clone())
-            .splits(self.prune_splits(filters))
+            .splits(pruned)
             .reader(self.reader())
             .projection(projection.cloned())
             .filters(filters.to_vec())
@@ -321,6 +364,7 @@ impl TableProvider for ObjectStoreParquetTable {
             .collection_name(self.location.clone())
             .batch_size(8192)
             .target_partitions(target_partitions)
+            .statistics(scan_stats)
             .build()?;
         Ok(Arc::new(exec))
     }
@@ -530,7 +574,11 @@ pub async fn register_object_store_parquet_location(
     name: &str,
     location: &str,
 ) -> DFResult<Arc<ObjectStoreParquetTable>> {
-    let table = Arc::new(ObjectStoreParquetTable::open(location).await?);
+    let table = Arc::new(
+        ObjectStoreParquetTable::open(location)
+            .await?
+            .with_table_name(name),
+    );
     ctx.register_table(name, table.clone())?;
     Ok(table)
 }
@@ -605,6 +653,54 @@ mod tests {
             table.estimated_bytes().unwrap_or(0) > 0,
             "row-group byte sizes are present in the footer"
         );
+    }
+
+    #[tokio::test]
+    async fn table_provider_statistics_projects_footer_bounds() {
+        use datafusion_common::stats::Precision;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        write_two_row_group_parquet(&data_dir.join("part-0.parquet"));
+
+        let location = format!("file://{}", tmp.path().display());
+        let table = ObjectStoreParquetTable::open(&location).await.unwrap();
+
+        // Provider path — value bounds are gated default-OFF
+        // (`df_stats_value_bounds_enabled`), but rows/bytes/nulls always flow.
+        let stats = TableProvider::statistics(&table).expect("footer-backed statistics");
+        assert_eq!(stats.num_rows, Precision::Inexact(4));
+        // Schema-width contract: one entry per table column.
+        assert_eq!(stats.column_statistics.len(), 2);
+        assert_eq!(stats.column_statistics[1].null_count, Precision::Inexact(0));
+        assert_eq!(
+            stats.column_statistics[1].min_value,
+            Precision::Absent,
+            "value bounds stay Absent while the gate is off (default)"
+        );
+
+        // With bounds enabled: min-of-mins / max-of-maxes across row groups.
+        let full = statistics_from_splits(&table.splits, &table.schema, None, true);
+        let k = &full.column_statistics[0];
+        assert_eq!(
+            k.min_value,
+            Precision::Inexact(DfScalarValue::Utf8(Some("a".to_string())))
+        );
+        assert_eq!(
+            k.max_value,
+            Precision::Inexact(DfScalarValue::Utf8(Some("b".to_string())))
+        );
+        let x = &full.column_statistics[1];
+        assert_eq!(
+            x.min_value,
+            Precision::Inexact(DfScalarValue::Int64(Some(1)))
+        );
+        assert_eq!(
+            x.max_value,
+            Precision::Inexact(DfScalarValue::Int64(Some(101)))
+        );
+        assert_eq!(x.null_count, Precision::Inexact(0));
     }
 
     #[tokio::test]

@@ -58,6 +58,46 @@ pub(crate) const DATAFUSION_NATIVE_SCALARS: &[&str] = &[
     "json_extract",
     "json_extract_text",
     "json_extract_path_text",
+    // ANSI tranche 1 (TD-OLAP-5 P1b): these registry kernels exist for the
+    // native/Volcano route; DataFusion serves the same names with its own
+    // vectorized natives (via the direct lowering or the ctx.sql fallback
+    // planner), so the row-wise F2 wrapper must not shadow them. `mod` and
+    // `sign` are intentionally NOT listed — DataFusion lacks those names, so
+    // the F2 adapter binds the registry kernels on the OLAP route too.
+    "trim",
+    "btrim",
+    "ltrim",
+    "rtrim",
+    "replace",
+    "strpos",
+    "position",
+    "substr",
+    "substring",
+    "lpad",
+    "rpad",
+    "left",
+    "right",
+    "repeat",
+    "reverse",
+    "split_part",
+    "initcap",
+    "starts_with",
+    "ends_with",
+    "ascii",
+    "chr",
+    "round",
+    "trunc",
+    "power",
+    "pow",
+    "exp",
+    "ln",
+    "log10",
+    "log",
+    "pi",
+    "greatest",
+    "least",
+    "date_part",
+    "date_trunc",
 ];
 
 /// Convert a DataFusion [`ScalarValue`] (one Arrow cell) to a [`ProximaValue`] for kernel

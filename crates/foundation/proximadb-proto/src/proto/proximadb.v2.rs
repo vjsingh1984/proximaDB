@@ -311,6 +311,14 @@ pub struct TypedColumn {
     /// For TIMESTAMP_TZ default
     #[prost(string, optional, tag = "23")]
     pub timezone: ::core::option::Option<::prost::alloc::string::String>,
+    /// VECTOR-specific options
+    ///
+    /// For DENSE_VECTOR / BINARY_VECTOR dimension
+    #[prost(uint32, optional, tag = "24")]
+    pub vector_dimension: ::core::option::Option<u32>,
+    /// For DENSE_VECTOR / SPARSE_VECTOR element
+    #[prost(enumeration = "VectorElementType", optional, tag = "25")]
+    pub vector_element_type: ::core::option::Option<i32>,
     /// TEXT-specific options
     #[prost(enumeration = "TextStorageStrategy", optional, tag = "30")]
     pub text_storage_strategy: ::core::option::Option<i32>,
@@ -1152,6 +1160,46 @@ impl ColumnDataType {
             "ARRAY_ANY" => Some(Self::ArrayAny),
             "STRUCT" => Some(Self::Struct),
             "BINARY_VECTOR" => Some(Self::BinaryVector),
+            _ => None,
+        }
+    }
+}
+/// Element type for dense/sparse vector columns. Value names are prefixed to
+/// avoid proto3 value-name collisions with ColumnDataType (FLOAT32/INT8/...).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum VectorElementType {
+    Unspecified = 0,
+    VectorElementFloat16 = 1,
+    VectorElementBfloat16 = 2,
+    VectorElementFloat32 = 3,
+    VectorElementFloat64 = 4,
+    VectorElementInt8 = 5,
+}
+impl VectorElementType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "VECTOR_ELEMENT_TYPE_UNSPECIFIED",
+            Self::VectorElementFloat16 => "VECTOR_ELEMENT_FLOAT16",
+            Self::VectorElementBfloat16 => "VECTOR_ELEMENT_BFLOAT16",
+            Self::VectorElementFloat32 => "VECTOR_ELEMENT_FLOAT32",
+            Self::VectorElementFloat64 => "VECTOR_ELEMENT_FLOAT64",
+            Self::VectorElementInt8 => "VECTOR_ELEMENT_INT8",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "VECTOR_ELEMENT_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "VECTOR_ELEMENT_FLOAT16" => Some(Self::VectorElementFloat16),
+            "VECTOR_ELEMENT_BFLOAT16" => Some(Self::VectorElementBfloat16),
+            "VECTOR_ELEMENT_FLOAT32" => Some(Self::VectorElementFloat32),
+            "VECTOR_ELEMENT_FLOAT64" => Some(Self::VectorElementFloat64),
+            "VECTOR_ELEMENT_INT8" => Some(Self::VectorElementInt8),
             _ => None,
         }
     }

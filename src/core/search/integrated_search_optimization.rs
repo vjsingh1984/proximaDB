@@ -718,6 +718,7 @@ impl AdvancedSearchOptimizer {
             results: vec![proto_results], // Wrap in Vec as CachedQueryResult expects Vec<SearchResult>
             cached_at: std::time::SystemTime::now(),
             file_dependencies: vec![], // Would track dependencies
+            computed_at_lsn: 0, // non-LSN-aware path; never served to a Strong read via the LSN gate
         };
 
         self.query_cache.put_with_hooks(key, cached_result).await;
@@ -1213,6 +1214,10 @@ impl Default for IntegratedOptimizationConfig {
     }
 }
 
+// Re-export types needed by other modules
+// Re-export from the smart_execution_strategy module
+pub use crate::core::search::smart_execution_strategy::ExecutionStrategy;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1251,7 +1256,3 @@ mod tests {
         }
     }
 }
-
-// Re-export types needed by other modules
-// Re-export from the smart_execution_strategy module
-pub use crate::core::search::smart_execution_strategy::ExecutionStrategy;

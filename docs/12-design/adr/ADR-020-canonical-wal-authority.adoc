@@ -125,6 +125,35 @@ Wait for each TD to land before formalizing the contract. Rejected because the f
 * `Cargo.toml` `[features]` block — `canonical-document-store` default-enable (T2.2)
 * Future engine / projection / adapter ADRs — boundary contract section above
 
+== Reconciliation (2026-06-30 — where the WAL physically lives)
+
+A prior external comparison (Lakebase/LTAP; deep-research workflow `wf_93aa09c8-12b`) initially
+mistook the canonical WAL for local-disk-only. It is not. In cloud deployments the canonical WAL
+writes through `FilesystemFactory` → `object_store`
+(`src/storage/persistence/filesystem/aws_s3.rs:179` — `store.put(...).await` blocks until the object
+store acknowledges before the commit ack returns; `sync_file` is a no-op for cloud backends because
+the PUT is already durable). On restart the pod replays the WAL into the memtable
+(`RecoveryMode::ViaMemtable`).
+
+Consequences for this ADR's authority model:
+
+* Pods are **stateless** and restart is **non-lossy** — the same properties Lakebase/Neon's
+  SafeKeeper provides, achieved via object-storage durability (S3 Standard = 11 nines) **without a
+  separate quorum service**. This ADR's "performance buffer... must be flushed-through before commit
+  acknowledgement" still holds: the object-store PUT *is* that flush.
+* A SafeKeeper-style quorum WAL is **not needed for durability** — it would buy only per-tx commit
+  latency (quorum-local-SSD fsync ≈ single-digit ms vs object-store PUT ≈ tens-to-hundreds of ms),
+  which is moot for ProximaDB's batch-ingestion profile. Recorded as
+  link:../../10-quality/td/TD-LTAP-3-quorum-wal-latency-only-wontdo.adoc[TD-LTAP-3] (Won't Do).
+  Open caveat: multi-AZ durability *at commit* would require cross-region S3 replication or a
+  lightweight quorum on the object-store seam — tracked as an open question there, not work now.
+
+Sources: https://neon.com/docs/introduction/architecture-overview[Neon architecture — object
+storage deliberately off the commit path],
+https://github.com/neondatabase/neon/blob/main/docs/safekeeper-protocol.md[Neon SafeKeeper protocol],
+https://arxiv.org/html/2603.02108v1[Milliscale — object-store commit latency is not automatically
+competitive for per-tx].
+
 == References
 
 * `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` — parent stacked-durability mandate

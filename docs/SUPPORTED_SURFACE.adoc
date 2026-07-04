@@ -56,9 +56,9 @@ REST `/api/v2` is the **sole canonical surface** for all ProximaDB clients as of
 * *REST /api/v1* — deprecated compatibility adapter. Requests are still accepted but must
   lower into v2 handlers internally. The v1 prefix will be retired; do not document or
   advertise it in new collateral.
-* *REST /api/v3* — folded back into v2 as a permanent *308 Redirect* alias. `POST
-  /api/v3/collections/{id}/documents` redirects to `POST
-  /api/v2/collections/{id}/documents`. No additional v3 surface is defined.
+* *REST /api/v3* — **removed**. The document-ingest handler lives canonically at
+  `POST /api/v2/collections/{id}/documents`; the former v3 308-redirect alias was
+  deleted (it was never an OpenAPI/released surface). Target `/api/v2` for all clients.
 * *gRPC v1 (`proximadb.v1.*`)* — deprecated-compat; **OFF by default**. Enable only for
   transitional client compatibility via config flag `enable_grpc_v1_compat: true` or
   environment variable `PROXIMADB_GRPC_V1_COMPAT=1`. This compat layer is scheduled for

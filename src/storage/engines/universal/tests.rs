@@ -84,7 +84,7 @@ mod tests {
         let converter = FormatConverter::new().await.unwrap();
 
         // Test FP32 to INT8 conversion
-        let fp32_data = vec![1.0f32, 2.0, 3.0, 4.0];
+        let fp32_data = [1.0f32, 2.0, 3.0, 4.0];
         let fp32_bytes = fp32_data
             .iter()
             .flat_map(|&f| f.to_le_bytes().to_vec())

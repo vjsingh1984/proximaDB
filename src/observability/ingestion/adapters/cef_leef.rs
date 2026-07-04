@@ -512,7 +512,7 @@ mod tests {
             entry
                 .source
                 .as_ref()
-                .map_or(false, |s| s.contains("Security"))
+                .is_some_and(|s| s.contains("Security"))
         );
     }
 
@@ -526,12 +526,7 @@ mod tests {
         let entry = adapter.parse_leef(msg).unwrap();
 
         assert_eq!(entry.message, "EventID");
-        assert!(
-            entry
-                .source
-                .as_ref()
-                .map_or(false, |s| s.contains("Vendor"))
-        );
+        assert!(entry.source.as_ref().is_some_and(|s| s.contains("Vendor")));
     }
 
     #[test]

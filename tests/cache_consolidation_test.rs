@@ -142,7 +142,7 @@ mod cache_consolidation_tests {
 
             // Verify stats can be retrieved (may be empty if no caches registered)
             // Just verify the method works and returns a valid HashMap
-            assert!(stats.is_empty() || stats.len() > 0);
+            assert!(stats.is_empty() || !stats.is_empty());
 
             // If there are stats, verify structure
             for (cache_id, cache_stats) in stats {
@@ -155,7 +155,7 @@ mod cache_consolidation_tests {
     #[test]
     fn test_cache_id_enumeration() {
         // Verify all cache IDs are defined
-        let cache_ids = vec![
+        let cache_ids = [
             CacheId::VectorData,
             CacheId::Metadata,
             CacheId::QueryResult,
