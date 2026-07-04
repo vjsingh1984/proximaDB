@@ -85,6 +85,16 @@ planning **with zero new scan** (the sketches were produced at flush). The proje
 format-agnostic via ADR-042's `SegmentFormat::detect` seam, so ProximaBlocks and PAX
 segments both feed the same `ColumnStatistics`.
 
+*Status (2026-07-04):* first slice **landed** as
+link:../../10-quality/td/TD-DFR-1-columnstatistics-for-datafusion.adoc[TD-DFR-1] —
+`ObjectStoreParquetTable` (the provider serving the `DataFusionLocal` arm) now
+implements `statistics()` from the already-read Parquet footer bounds
+(schema-width, `Precision::Inexact` per D3) with the ADR-037 registry's HLL NDV
+overlaid, and feeds post-prune projected stats into `ProximaScanExec`. Note the
+canonical `SegmentStatistics` type / `SegmentFormat::detect` seam is not yet in
+code — the ADR-042 generalization (PAX segments feeding the same projection)
+continues under TD-OLAP-2.
+
 === D3 — Treat statistics as freshness-bounded hints (ADR-038)
 
 Each `SegmentStatistics` block carries its own freshness watermark; the envelope floor is

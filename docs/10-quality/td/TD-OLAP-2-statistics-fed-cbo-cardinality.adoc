@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open — ADR-050 D2, filed as **TD-DFR-1** (ColumnStatistics for DataFusion), is the first slice; this TD generalizes it to the native planner + cardinality estimation
+| Status | Open (first slice **landed 2026-07-04**: link:TD-DFR-1-columnstatistics-for-datafusion.adoc[TD-DFR-1] wired footer-derived `ColumnStatistics` + registry NDV to the DataFusion provider); this TD continues with the ADR-042 generalization, native-planner cardinality, histograms, and stats invalidation
 | Priority | **P0a** — cheapest unlock in the ADR-052 execution order; feeds cost routing (ADR-050) and runtime filters (TD-OLAP-3). DIP: the planner consumes the ADR-042 `SegmentStatistics` port, never engine internals
 | Severity | High — without stats the planner is blind; runtime filters (TD-OLAP-3) and cost routing (ADR-050) both depend on it
 | Component | `src/core/statistics/{summary,sketches,registry}`, `src/datafusion/schema_inference.rs`, `src/query/query_optimizer.rs`, `src/query/federated/optimizer/`
