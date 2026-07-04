@@ -1,0 +1,45 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-OLAP-3: Runtime filters — Dynamic Partition Pruning (DPP) + bloom semi-join
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open (design; depends on TD-OLAP-2 stats + DataFusion runtime-filter support)
+| Severity | High — the single largest warehouse-class lever; 5–50× on star-schema joins (Databricks AQE / Snowflake SOS)
+| Component | `src/query/query_optimizer.rs`, `src/query/federated/{optimizer,execution}`, PAX/Iceberg scan pruning, `proximadb-bloom`
+| Governs | link:../../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (invariant 3)
+| Relates to | ADR-025 (deletion vectors — companion scan-avoidance), ADR-050 (cost routing), TD-OLAP-1 (scan prune stack), TD-OLAP-2 (stats), ADR-011 (filtered-ANN — the same idea on the vector side)
+|===
+
+== Why
+
+The dominant cloud-OLAP cost term is bytes scanned. The biggest lever for star/snowflake
+schemas — TPC-DS's dominant shape — is *runtime* filtering: at hash-join build time, push the
+dimension-table keys down to prune fact-table partitions (DPP) and inject a bloom filter the
+probe side tests before fetching rows (bloom semi-join). This is Databricks AQE + Snowflake
+Search Optimization Service territory; it is where warehouse-class engines get 5–50× and
+naive fixed-plan engines cannot follow. ProximaDB's bloom primitive
+(`proximadb-block-format/src/stripe.rs`) and exact-vs-ANN pre-filter (ADR-011/028) are the
+same idea on the vector side — converge, don't duplicate.
+
+== Rollout (default-off, trace-gated)
+
+. **Bloom semi-join:** at HashJoin build, construct a bloom filter over build-side keys;
+  inject it into the probe-side scan (`LogicalNode::Scan` predicate) so non-matching stripes
+  are pruned *before* fetch. Reuse `proximadb-bloom`.
+. **Dynamic Partition Pruning:** for partitioned/Iceberg tables, defer fact-scan partition
+  selection until the dimension filter's runtime values are known; prune partitions from the
+  manifest list at runtime.
+. **AQE hook:** insert a re-optimization point at pipeline breaks (post-build) so the runtime
+  filter + observed cardinality can adjust the probe plan (coalesce/repartition, join swap).
+  (Full AQE is larger; this TD delivers the runtime-filter slice first.)
+. **Trace + promotion:** instrument `bytes_scanned_before/after_filter` per query (TD-158);
+  promote only where the measured skip ratio justifies the bloom-construction cost.
+
+== Verification
+
+* TPC-DS star-join queries (e.g. Q72/Q95-class, store_sales ⋈ item/date_dim) show a measured
+  bytes-scanned reduction in the TD-OLAP-4 ledger, conformance unchanged.
+* The same bloom primitive serves ANN pre-filtering (ADR-011) and OLAP semi-join — one
+  implementation, two consumers (converge, don't duplicate).

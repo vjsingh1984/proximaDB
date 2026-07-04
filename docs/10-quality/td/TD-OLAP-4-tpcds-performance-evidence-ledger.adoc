@@ -1,0 +1,43 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-OLAP-4: Promote TPC-DS/TPC-H from conformance ratchet to measured performance evidence ledger
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open — the measurement mandate; prerequisite for any "competitive" claim
+| Severity | High — co-design mandate #11: reject component microbenchmarks masquerading as e2e claims; #2: capture the trace first
+| Component | `tests/{tpcds,tpch}_pgwire_e2e.rs`, `tools/benchbase/`, `.github/workflows/qa-gate.yml`, new evidence-ledger harness
+| Governs | link:../../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (invariant 4)
+| Relates to | ADR-040 (accuracy harness — the correctness counterpart), TD-158 (per-query I/O trace), ADR-030 (trace/meter seam)
+|===
+
+== Why
+
+Today `tests/{tpcds,tpch}_pgwire_e2e.rs` assert *query counts* (TPC-H 22, TPC-DS 16) over a
+tiny deterministic dataset — a SQL-conformance harness, not a performance benchmark. No scale
+factor, no latency/throughput, no baseline. "Competitive with Photon/Snowflake" is therefore
+unmeasured. The co-design mandate is explicit: a green conformance test does not prove the
+integrated path is fast, and no optimization lands without a trace + evidence ledger.
+
+== Rollout
+
+. **SF1 first, SF10 next:** generate TPC-DS/TPC-H at SF1 (1 GB) and SF10 into the object
+  store as Iceberg/Parquet (the OLAP path) AND PAX (the native-scan path) so both routes are
+  measured.
+. **Baseline harness:** run the same SF on DuckDB, plain DataFusion-on-Parquet, and
+  ClickHouse on the same object store / instance class. Record latency-per-query + total
+  bytes-scanned (TD-158 trace) into a versioned evidence ledger (JSON/Markdown under
+  `docs/10-quality/` or a bench artifact).
+. **CI tier (advisory→gate):** add a `tpcds-perf` job that records the ledger on develop
+  pushes; gate (ratchet on a *budget*, not a single run) only once variance is bounded —
+  mirror the `pax-recall-ratchet` pattern (advisory until evidence is stable).
+. **Honest trade capture:** the ledger must record where ProximaDB *loses* (e.g. DataFusion
+  hash-join no-spill on large joins; per-op ceiling vs Velox) so ADR-052's tradeoffs stay
+  visible, not hidden.
+
+== Verification
+
+* A ledger entry exists for SF1 TPC-DS with ProximaDB vs DuckDB/DataFusion/ClickHouse
+  latency + bytes-scanned before any "competitive" claim is cited in a doc or ADR.
+* Conformance ratchets (TPC-H 22 / TPC-DS 16) remain green and monotonically non-decreasing.
