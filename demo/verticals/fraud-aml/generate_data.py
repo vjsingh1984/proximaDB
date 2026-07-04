@@ -37,18 +37,21 @@ RING = {
     "cashout": "acct-030",
 }
 
-# Labelled AML typology signatures (the vector library). Features are
-# [peak_bucket_amount, velocity_ratio, burst_fraction, avg_bucket_amount] — the same
-# shape copilot_live.py derives from the ProximaDB timeseries aggregate.
+# Labelled AML typology signatures (the vector library). Features are the SCALE-NORMALISED
+# shape of the transacted-volume burst — [severity, spike_ratio, spread, concentration] — the
+# same vector copilot_live.py derives from the ProximaDB timeseries aggregate (see feature_vector).
+# Scaling keeps every dimension O(1..10) so cosine discriminates on burst *shape*, not raw dollars:
+# structuring's concentrated sub-threshold cash-in burst separates cleanly from spread-out layering.
+# This is the shared pattern used by every built vertical (internet/insurance/markets/D&B).
 TYPOLOGIES = [
     {"id": "typ-structuring", "label": "structuring / smurfing", "case_ref": "case-struct-01",
-     "features": [9000.0, 20.0, 0.45, 2200.0]},
+     "features": [6.0, 5.0, 2.5, 6.5]},     # concentrated sub-threshold cash-in burst
     {"id": "typ-layering", "label": "rapid layering", "case_ref": "case-layer-01",
-     "features": [12000.0, 14.0, 0.6, 5000.0]},
+     "features": [3.0, 2.2, 6.0, 2.2]},     # spread across intermediaries, sustained
     {"id": "typ-mule", "label": "money mule", "case_ref": "case-mule-01",
-     "features": [4000.0, 5.0, 0.3, 2500.0]},
+     "features": [3.5, 4.0, 6.0, 2.6]},     # moderate, spiky, many windows (forwarding)
     {"id": "typ-nominal", "label": "nominal", "case_ref": None,
-     "features": [700.0, 1.3, 0.05, 500.0]},
+     "features": [0.6, 1.4, 0.5, 3.0]},
 ]
 
 CASE_NOTES = [
@@ -99,9 +102,10 @@ def build_transactions(rng: random.Random) -> list[dict]:
     burst = WINDOW_START + timedelta(hours=3)
     p, mules, cons, cash = (RING["placement"], RING["mules"],
                             RING["consolidation"], RING["cashout"])
-    # 1. structuring: ~16 sub-threshold cash-ins into the placement account
+    # 1. structuring: ~16 sub-threshold cash-ins into the placement account, in a TIGHT
+    #    window (rapid smurfing) so the placement account's signature is a concentrated burst.
     for k in range(16):
-        ts = burst + timedelta(minutes=rng.randint(0, 80))
+        ts = burst + timedelta(minutes=rng.randint(0, 25))
         txns.append({"from": f"cash-in-{k:02d}", "to": p,
                      "amount": round(rng.uniform(820, 980), 2), "ts": ts.isoformat()})
     # 2. layering: placement -> each mule, several rapid transfers
