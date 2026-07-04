@@ -1490,6 +1490,11 @@ impl PostgresProtocol {
             // F4: hand the OLAP route the live vector service so a cross-modal
             // `... JOIN vector_search('coll','[..]',k)` resolves over pgwire.
             Some(self.vector_ops.clone() as Arc<dyn proximadb_runtime::VectorOpsPort>),
+            // F6: likewise the graph read service for `... JOIN graph_traverse(...)`
+            // (`GraphService = GraphOperationsService: GraphQueryReadService`).
+            self.graph_service
+                .clone()
+                .map(|g| g as Arc<dyn proximadb_graph_query::service::GraphQueryReadService>),
             Some(read_tenant.as_str()),
             controls,
             // pgwire keeps simple single-table SELECTs on its hardened legacy

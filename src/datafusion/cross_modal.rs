@@ -14,22 +14,24 @@
 //! one query.
 //!
 //! ## Scope
-//! Two modalities are now joinable relations, both live-backed and reachable from the pgwire
-//! DataFusion path (registered by `build_session_context`):
+//! All three non-relational modalities are now joinable relations, live-backed and reachable
+//! from the pgwire DataFusion path (registered by `build_session_context`), so a four-way
+//! `relational ⋈ vector ⋈ timeseries ⋈ graph` join executes in ONE data-local plan instead of a
+//! client-side fan-out + intersect (ADR-053):
 //!   * `vector_search(collection, query, k)` → `(id, score)` — via [`VectorSearchTableFunction`].
 //!   * `timeseries_range(collection, start_ms, end_ms)` → `(timestamp, metric, value)` — via
-//!     [`TimeseriesRangeTableFunction`]; the timeseries analogue, so a graph/relational ⋈
-//!     timeseries anomaly-scan executes in ONE data-local plan instead of a client-side fan-out
-//!     + intersect (ADR-053).
+//!     [`TimeseriesRangeTableFunction`].
+//!   * `graph_traverse(graph_id, start_id, edge_type, max_depth)` → `(node_id, depth)` — via
+//!     [`GraphTraverseTableFunction`], over the variable-length reachability traversal.
 //!
-//! Next slices (ADR-053): a `graph_traverse(graph, start, edge, depth)` source over the
-//! variable-length traversal (fixed `(node_id, depth)` schema), and a frontend source node that
-//! lowers (via the P4 `logical_lowering`) into the shared logical plane. All reuse the
-//! `*_to_batch` bridges below.
+//! Next slices (ADR-053): a single depth-carrying graph pass (vs the derived-depth `*k..k`
+//! passes), and a frontend source node that lowers (via the P4 `logical_lowering`) into the
+//! shared logical plane. All reuse the `*_to_batch` bridges below.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use arrow_array::{Float32Array, Float64Array, Int64Array, RecordBatch, StringArray};
+use arrow_array::{Float32Array, Float64Array, Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableFunctionImpl};
@@ -38,9 +40,18 @@ use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::scalar::ScalarValue;
+use proximadb_graph_query::service::GraphQueryReadService;
+use proximadb_query::graph_lowering::parse_supported_graph_query;
+use proximadb_query::graph_runtime::{
+    execute_supported_graph_query_with_start_nodes, graph_query_row_id,
+};
 
 use crate::proto::proximadb_v1::{SearchQuery, SearchVectorRecord, VectorSearchRequest};
 use crate::services::timeseries_service::{TimeSeriesService, TsPoint};
+
+/// Hard cap on `graph_traverse` depth — bounds the number of `*k..k` traversal passes
+/// (each is O(V+E)) regardless of a user-supplied `max_depth`.
+const MAX_GRAPH_TRAVERSE_DEPTH: i64 = 64;
 
 /// The lean Arrow schema a vector-search source exposes for joins: `(id, score)`.
 /// `id` joins against a relational key; `score` is the similarity the SQL can rank
@@ -453,6 +464,207 @@ impl TableFunctionImpl for TimeseriesRangeTableFunction {
             collection,
             start_ms,
             end_ms,
+        )))
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Graph slice (§8 moat, third modality) — `graph_traverse(graph_id, start_id, edge_type,
+// max_depth)` as a joinable table. The graph analogue of vector_search / timeseries_range:
+// it turns a variable-length reachability traversal into a DataFusion `(node_id, depth)`
+// relation, so a SINGLE SQL plan can join graph reachability against relational / vector /
+// timeseries data — the four-way zero-ETL cross-modal join over the pgwire OLAP route.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The Arrow schema a graph-traversal source exposes for joins: `(node_id, depth)`.
+pub fn graph_traverse_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        Field::new("node_id", DataType::Utf8, false),
+        Field::new("depth", DataType::Int32, false),
+    ]))
+}
+
+/// Convert `(node_id, depth)` reachable-node rows into a [`RecordBatch`].
+pub fn graph_nodes_to_batch(nodes: &[(String, i32)]) -> Result<RecordBatch, ArrowError> {
+    let ids: Vec<&str> = nodes.iter().map(|(id, _)| id.as_str()).collect();
+    let depths: Vec<i32> = nodes.iter().map(|(_, d)| *d).collect();
+    RecordBatch::try_new(
+        graph_traverse_schema(),
+        vec![
+            Arc::new(StringArray::from(ids)),
+            Arc::new(Int32Array::from(depths)),
+        ],
+    )
+}
+
+/// A DataFusion [`TableProvider`] whose `scan` walks a graph's variable-length reachability
+/// (`start_id -[:edge_type*1..max_depth]-> x`) live through a [`GraphQueryReadService`] and
+/// exposes the reachable `(node_id, depth)` set — so a single SQL plan can join graph
+/// reachability against relational / vector / timeseries data.
+pub struct GraphTraverseTableProvider {
+    graph_ops: Arc<dyn GraphQueryReadService>,
+    graph_id: String,
+    start_id: String,
+    edge_type: String,
+    max_depth: i64,
+}
+
+impl GraphTraverseTableProvider {
+    /// Build a provider for one parameterized reachability traversal.
+    pub fn new(
+        graph_ops: Arc<dyn GraphQueryReadService>,
+        graph_id: impl Into<String>,
+        start_id: impl Into<String>,
+        edge_type: impl Into<String>,
+        max_depth: i64,
+    ) -> Self {
+        Self {
+            graph_ops,
+            graph_id: graph_id.into(),
+            start_id: start_id.into(),
+            edge_type: edge_type.into(),
+            max_depth,
+        }
+    }
+}
+
+impl std::fmt::Debug for GraphTraverseTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GraphTraverseTableProvider")
+            .field("graph_id", &self.graph_id)
+            .field("start_id", &self.start_id)
+            .field("edge_type", &self.edge_type)
+            .field("max_depth", &self.max_depth)
+            .finish_non_exhaustive()
+    }
+}
+
+#[async_trait]
+impl TableProvider for GraphTraverseTableProvider {
+    fn schema(&self) -> SchemaRef {
+        graph_traverse_schema()
+    }
+
+    fn table_type(&self) -> TableType {
+        TableType::Base
+    }
+
+    async fn scan(
+        &self,
+        state: &dyn Session,
+        projection: Option<&Vec<usize>>,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> DFResult<Arc<dyn ExecutionPlan>> {
+        // Derived-depth traversal: one `*k..k` reachability pass per depth k in 1..=max, tagging
+        // each first-seen node with its (shortest) depth. The inner BFS is visited-set bounded,
+        // so each pass is O(V+E); a single depth-carrying pass is a follow-on TD.
+        let max_depth = self.max_depth.clamp(1, MAX_GRAPH_TRAVERSE_DEPTH);
+        let mut rows: Vec<(String, i32)> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for k in 1..=max_depth {
+            let cypher = format!(
+                "MATCH (a)-[:{edge}*{k}..{k}]->(x) RETURN x.id AS node_id",
+                edge = self.edge_type
+            );
+            let parsed = parse_supported_graph_query(&cypher, None, Some(&self.graph_id))
+                .map_err(|e| DataFusionError::Execution(format!("graph_traverse parse: {e}")))?;
+            let executed = execute_supported_graph_query_with_start_nodes(
+                &*self.graph_ops,
+                &parsed,
+                Some(std::slice::from_ref(&self.start_id)),
+            )
+            .await
+            .map_err(|e| DataFusionError::Execution(format!("graph_traverse: {e}")))?;
+            for row in &executed.rows {
+                let id = graph_query_row_id(row, 0);
+                if !id.is_empty() && seen.insert(id.clone()) {
+                    rows.push((id, k as i32));
+                }
+            }
+        }
+        let batch = graph_nodes_to_batch(&rows).map_err(DataFusionError::from)?;
+        let mem = MemTable::try_new(graph_traverse_schema(), vec![vec![batch]])?;
+        mem.scan(state, projection, filters, limit).await
+    }
+}
+
+/// DataFusion table-valued function `graph_traverse(graph_id, start_id, edge_type, max_depth)`
+/// returning a [`GraphTraverseTableProvider`] — makes the reachability ⋈ relational join
+/// expressible directly in SQL (reachable from the pgwire DataFusion path):
+/// `SELECT a.tier, g.node_id, g.depth
+///  FROM accounts a JOIN graph_traverse('aml','acct-7','sent_to',4) g ON a.id = g.node_id`.
+/// Register once per `SessionContext`:
+/// `ctx.register_udtf("graph_traverse", Arc::new(GraphTraverseTableFunction::new(graph_ops)))`.
+pub struct GraphTraverseTableFunction {
+    graph_ops: Arc<dyn GraphQueryReadService>,
+}
+
+impl GraphTraverseTableFunction {
+    /// Capture the live graph read service the function will traverse.
+    pub fn new(graph_ops: Arc<dyn GraphQueryReadService>) -> Self {
+        Self { graph_ops }
+    }
+}
+
+impl std::fmt::Debug for GraphTraverseTableFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GraphTraverseTableFunction")
+            .finish_non_exhaustive()
+    }
+}
+
+/// A bare identifier (edge type / relationship name) safe to interpolate into the internal
+/// Cypher: non-empty ASCII alphanumerics + `_`. (The start-node id is passed out-of-band via
+/// `execute_supported_graph_query_with_start_nodes`, so it never enters the query string.)
+fn is_bare_identifier(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+impl TableFunctionImpl for GraphTraverseTableFunction {
+    fn call(&self, args: &[Expr]) -> DFResult<Arc<dyn TableProvider>> {
+        let graph_id = arg_string(args, 0).ok_or_else(|| {
+            DataFusionError::Plan(
+                "graph_traverse(graph_id, start_id, edge_type, max_depth): arg 1 must be a graph-id string"
+                    .into(),
+            )
+        })?;
+        let start_id = arg_string(args, 1).ok_or_else(|| {
+            DataFusionError::Plan("graph_traverse: arg 2 must be a start-node-id string".into())
+        })?;
+        let edge_type = arg_string(args, 2).ok_or_else(|| {
+            DataFusionError::Plan("graph_traverse: arg 3 must be an edge-type string".into())
+        })?;
+        let max_depth = arg_i64(args, 3).ok_or_else(|| {
+            DataFusionError::Plan("graph_traverse: arg 4 must be an integer max_depth".into())
+        })?;
+        if graph_id.trim().is_empty() {
+            return Err(DataFusionError::Plan(
+                "graph_traverse: graph_id must not be empty".into(),
+            ));
+        }
+        if start_id.trim().is_empty() {
+            return Err(DataFusionError::Plan(
+                "graph_traverse: start_id must not be empty".into(),
+            ));
+        }
+        if !is_bare_identifier(&edge_type) {
+            return Err(DataFusionError::Plan(
+                "graph_traverse: edge_type must be a bare identifier (letters, digits, underscore)"
+                    .into(),
+            ));
+        }
+        if max_depth <= 0 {
+            return Err(DataFusionError::Plan(
+                "graph_traverse: max_depth must be greater than zero".into(),
+            ));
+        }
+        Ok(Arc::new(GraphTraverseTableProvider::new(
+            self.graph_ops.clone(),
+            graph_id,
+            start_id,
+            edge_type,
+            max_depth,
         )))
     }
 }
@@ -880,6 +1092,166 @@ mod tests {
             ),
         ] {
             let error = ctx.sql(sql).await.expect_err("invalid timeseries_range");
+            assert!(
+                error.to_string().contains(expected),
+                "expected {expected:?} in {error}"
+            );
+        }
+    }
+
+    // ── graph slice ───────────────────────────────────────────────────────────────
+    use crate::proto::proximadb_v1::{Edge, EdgeQuery, Node, NodeQuery};
+    use proximadb_graph_query::service::GraphQueryResult;
+
+    /// A fixed in-memory graph read service — a linear chain over one edge type, enough to
+    /// exercise the variable-length `*k..k` traversal the `graph_traverse` provider runs.
+    #[derive(Default)]
+    struct FixedGraphOps {
+        nodes: HashMap<String, Arc<Node>>,
+        edges: Vec<Arc<Edge>>,
+    }
+
+    impl FixedGraphOps {
+        fn chain(ids: &[&str], edge_type: &str) -> Self {
+            let mut s = Self::default();
+            for id in ids {
+                s.nodes.insert(
+                    (*id).to_string(),
+                    Arc::new(Node {
+                        id: (*id).to_string(),
+                        labels: vec!["N".to_string()],
+                        ..Default::default()
+                    }),
+                );
+            }
+            for w in ids.windows(2) {
+                s.edges.push(Arc::new(Edge {
+                    id: format!("{}->{}", w[0], w[1]),
+                    from_node_id: w[0].to_string(),
+                    to_node_id: w[1].to_string(),
+                    edge_type: edge_type.to_string(),
+                    ..Default::default()
+                }));
+            }
+            s
+        }
+    }
+
+    #[async_trait]
+    impl GraphQueryReadService for FixedGraphOps {
+        async fn list_graphs(&self) -> GraphQueryResult<Vec<String>> {
+            Ok(vec!["g".to_string()])
+        }
+        async fn get_node(&self, _g: &str, id: &str) -> GraphQueryResult<Option<Arc<Node>>> {
+            Ok(self.nodes.get(id).cloned())
+        }
+        async fn query_nodes(&self, _g: &str, _q: NodeQuery) -> GraphQueryResult<Vec<Arc<Node>>> {
+            Ok(self.nodes.values().cloned().collect())
+        }
+        async fn query_edges(&self, _g: &str, q: EdgeQuery) -> GraphQueryResult<Vec<Arc<Edge>>> {
+            Ok(self
+                .edges
+                .iter()
+                .filter(|e| {
+                    q.from_node_id
+                        .as_deref()
+                        .is_none_or(|f| e.from_node_id == f)
+                        && (q.edge_types.is_empty()
+                            || q.edge_types.iter().any(|t| t == &e.edge_type))
+                })
+                .cloned()
+                .collect())
+        }
+    }
+
+    /// The moat proof for the third modality: a graph reachability set JOINs a relational table
+    /// in ONE DataFusion SQL plan — the shape a pgwire client writes for `relational ⋈ graph`.
+    #[tokio::test]
+    async fn graph_traverse_udtf_joins_relational_in_sql() {
+        // n0 -> n1 -> n2 -> n3 over LINK.
+        let graph: Arc<dyn GraphQueryReadService> =
+            Arc::new(FixedGraphOps::chain(&["n0", "n1", "n2", "n3"], "LINK"));
+        let ctx = SessionContext::new();
+        ctx.register_udtf(
+            "graph_traverse",
+            Arc::new(GraphTraverseTableFunction::new(graph)),
+        );
+
+        // `*1..3` from n0 reaches n1 (d1), n2 (d2), n3 (d3).
+        let rows: usize = ctx
+            .sql("SELECT node_id, depth FROM graph_traverse('g','n0','LINK',3) ORDER BY depth")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.num_rows())
+            .sum();
+        assert_eq!(rows, 3);
+
+        // Join reachability with a relational dimension.
+        let dim_schema = Arc::new(Schema::new(vec![
+            Field::new("node_id", DataType::Utf8, false),
+            Field::new("tier", DataType::Utf8, false),
+        ]));
+        let dim = RecordBatch::try_new(
+            dim_schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["n1", "n3", "z"])),
+                Arc::new(StringArray::from(vec!["hot", "hot", "cold"])),
+            ],
+        )
+        .unwrap();
+        ctx.register_table(
+            "acct",
+            Arc::new(MemTable::try_new(dim_schema, vec![vec![dim]]).unwrap()),
+        )
+        .unwrap();
+        let joined: usize = ctx
+            .sql(
+                "SELECT a.tier, g.depth FROM acct a \
+                 JOIN graph_traverse('g','n0','LINK',4) g ON a.node_id = g.node_id",
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.num_rows())
+            .sum();
+        assert_eq!(joined, 2); // n1 + n3 reachable & in acct; z has no reachable node
+    }
+
+    #[tokio::test]
+    async fn graph_traverse_udtf_rejects_invalid_inputs() {
+        let graph: Arc<dyn GraphQueryReadService> = Arc::new(FixedGraphOps::default());
+        let ctx = SessionContext::new();
+        ctx.register_udtf(
+            "graph_traverse",
+            Arc::new(GraphTraverseTableFunction::new(graph)),
+        );
+
+        for (sql, expected) in [
+            (
+                "SELECT * FROM graph_traverse('','n0','LINK',3)",
+                "graph_id must not be empty",
+            ),
+            (
+                "SELECT * FROM graph_traverse('g','','LINK',3)",
+                "start_id must not be empty",
+            ),
+            (
+                "SELECT * FROM graph_traverse('g','n0','bad edge',3)",
+                "edge_type must be a bare identifier",
+            ),
+            (
+                "SELECT * FROM graph_traverse('g','n0','LINK',0)",
+                "max_depth must be greater than zero",
+            ),
+        ] {
+            let error = ctx.sql(sql).await.expect_err("invalid graph_traverse");
             assert!(
                 error.to_string().contains(expected),
                 "expected {expected:?} in {error}"

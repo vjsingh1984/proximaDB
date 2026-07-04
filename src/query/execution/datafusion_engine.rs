@@ -79,11 +79,13 @@ impl DataFusionLocalEngine {
         ExecutionError,
     > {
         context.controls.check_cancelled()?;
-        // F4: when the route owns the vector service, register the `vector_search` UDTF
-        let ctx = match context.vector_ops.clone() {
-            Some(ops) => crate::datafusion::create_session_context_with_vector_ops(ops),
-            None => crate::datafusion::create_session_context(),
-        }
+        // F4/F6: when the route owns the vector / graph services, register the cross-modal
+        // `vector_search` + `graph_traverse` UDTFs (and `timeseries_range` from the process
+        // global) on this ctx so a cross-modal join resolves in the DataFusion SQL fallback.
+        let ctx = crate::datafusion::create_session_context_with_ports(
+            context.vector_ops.clone(),
+            context.graph_ops.clone(),
+        )
         .map_err(|e| ExecutionError::Context(format!("session: {e}")))?;
 
         for (name, location) in &context.parquet_tables {
