@@ -82,6 +82,10 @@ pub mod metering_event;
 /// standard OTLP collector (ADR-027 dual-sink push half). Feature `otlp-metering`
 /// + runtime-gated by `PROXIMADB_OTLP_ENDPOINT`; compiles to no-ops otherwise.
 pub mod metering_otlp;
+/// [`ObjectStore`](object_store::ObjectStore) decorator feeding the per-query
+/// io_trace (ADR-030/TD-158) — first consumer: the DataFusion Parquet leaf,
+/// closing the "DataFusion route reports zero bytes" trace gap.
+pub mod object_store_trace;
 /// Embedding-precision metrics — Prometheus gauges/counters per
 /// EMBEDDING_PRECISION_LLD_2026_05_22 §"Observability (Q11)" (PR 7b).
 pub mod precision_metrics;

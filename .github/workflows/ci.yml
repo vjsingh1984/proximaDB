@@ -1820,6 +1820,53 @@ jobs:
           retention-days: 30
 
   # ============================================================================
+  # TPC PERF EVIDENCE LEDGER (TD-OLAP-4 P0b) — ADVISORY, never a merge gate.
+  # Records latency + bytes-scanned per query x route (native vs DataFusion)
+  # into a JSON ledger artifact on develop pushes / manual dispatch. Gate
+  # (ratchet on a budget) only once variance is bounded — mirror the
+  # pax-recall-ratchet advisory-until-stable pattern. NOT in ci-success needs.
+  # ============================================================================
+  tpc-perf-ledger:
+    name: TPC Perf Evidence Ledger (advisory)
+    runs-on: ubuntu-latest
+    needs: [rust-build]
+    continue-on-error: true
+    timeout-minutes: 60
+    if: |
+      inputs.run_benchmarks ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/develop')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-tpc-perf"
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+
+      - name: Run TPC perf ledger harness (small scale, advisory)
+        env:
+          TPC_PERF_SCALE: "0.001"
+          TPC_PERF_LEDGER_OUT: target/tpc-perf-ledger/ledger.json
+          # Debug-build planning of join+subquery-heavy TPC shapes runs deep;
+          # 16 MiB thread stacks guard against environment-dependent overflow.
+          RUST_MIN_STACK: "16777216"
+        run: |
+          cargo test --test tpc_perf_ledger_e2e -- --ignored --nocapture 2>&1 | tail -40
+
+      - name: Upload ledger artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tpc-perf-ledger
+          path: target/tpc-perf-ledger/ledger.json
+          retention-days: 30
+
+  # ============================================================================
   # SUMMARY - Final status check
   # ============================================================================
   ci-success:

@@ -314,3 +314,17 @@ hardware = ""
 date = ""
 version = ""
 notes = "Co-design T3.2. The bench measures the raw object-store round-trip floor in isolation (full GET, last-4KiB ranged GET, prefix LIST) at 4KiB/64KiB/1MiB sizes, p50/p95/p99/mean. It ALWAYS runs (defaults to in-process memory://) so CI proves the harness compiles, but memory:// latencies carry NO network RTT and are a smoke check only. Real cloud-latency evidence requires an operator run against s3:// (with --features aws; creds via the standard chain) or a minio endpoint — promote to `measured` with that dated artifact. This is the floor the route cost model and footer/ranged-read decisions must beat."
+
+[[claims]]
+id = "tpc_perf_ledger_dual_route"
+claim = "TPC-H/TPC-DS per-query latency + bytes-scanned on both routes (native Volcano vs DataFusion-on-Parquet), measured into a versioned JSON ledger"
+metric = "wall_ms + bytes_read per query x route x temperature"
+status = "unverified"
+asserted_in = ["docs/10-quality/TPC_PERF_LEDGER.adoc:10"]
+bench_source = "tests/tpc_perf_ledger_e2e.rs"
+bench_command = "TPC_PERF_SCALE=0.001 cargo test --test tpc_perf_ledger_e2e -- --ignored --nocapture"
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "TD-OLAP-4 P0b skeleton (ADR-052 invariant 4). Datagen is synthetic-tpc-shaped (seeded, deterministic, NON-audited dbgen/dsdgen) at TPC_PERF_SCALE row ratios — no TPC-official or external-comparative claim may cite this until a faithful generator + bulk-load path lands. Storage regime local-tempdir only; regimes are separate ledger sections, never averaged. Advisory `tpc-perf-ledger` CI job (continue-on-error, not in ci-success) uploads the artifact on develop pushes. Promote to `measured` only with a dated, checked-in ledger artifact from a quiet machine."
