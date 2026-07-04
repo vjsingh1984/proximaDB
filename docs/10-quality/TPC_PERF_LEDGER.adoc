@@ -79,8 +79,10 @@ temperature_semantics, routes}, records: [{benchmark, query, route,
 temperature, ok, error?, rows, wall_ms, ...IoTraceSnapshot}] }`
 
 The `IoTraceSnapshot` fields are flattened per record: `get_ops`, `bytes_read`,
-`range_gets`, `bytes_written`, `footer_hits/misses`, `egress_bytes`,
-`compute_ms` (per-engine map).
+`range_gets`, `splits_total`/`splits_pruned` (TD-OLAP-3 skip ratio — the
+runtime-filter promotion gate's evidence; totals accumulate across the static
+and runtime pruning stages), `bytes_written`, `footer_hits/misses`,
+`egress_bytes`, `compute_ms` (per-engine map).
 
 == Relation to the evidence ledger
 

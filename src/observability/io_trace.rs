@@ -127,6 +127,12 @@ pub struct IoTrace {
     /// the ~8-16 MiB S3 optimum, or fragmented into per-request-fee-dominated
     /// small GETs?
     range_gets: AtomicU64,
+    /// Split-pruning outcome (TD-OLAP-3): candidate row-group splits
+    /// considered by scans, and how many were skipped BEFORE fetch.
+    /// `splits_pruned / splits_total` is the runtime-filter skip ratio the
+    /// promotion gate consumes.
+    splits_total: AtomicU64,
+    splits_pruned: AtomicU64,
     /// Bytes written to object storage (ingest/flush — KIU).
     bytes_written: AtomicU64,
     /// Footer/metadata cache outcomes (Dimension 3 — the highest-ROI cache).
@@ -193,6 +199,14 @@ impl IoTrace {
     /// Add to the count of ranged GET requests issued.
     pub fn record_range_gets(&self, gets: u64) {
         self.range_gets.fetch_add(gets, Ordering::Relaxed);
+    }
+
+    /// Record a split-pruning outcome (TD-OLAP-3): `total` candidate
+    /// row-group splits considered by a scan, of which `pruned` were skipped
+    /// before fetch.
+    pub fn record_splits(&self, total: u64, pruned: u64) {
+        self.splits_total.fetch_add(total, Ordering::Relaxed);
+        self.splits_pruned.fetch_add(pruned, Ordering::Relaxed);
     }
 
     /// Add to bytes written to object storage.
@@ -263,6 +277,8 @@ impl IoTrace {
             delete_ops: self.delete_ops.load(Ordering::Relaxed),
             bytes_read: self.bytes_read.load(Ordering::Relaxed),
             range_gets: self.range_gets.load(Ordering::Relaxed),
+            splits_total: self.splits_total.load(Ordering::Relaxed),
+            splits_pruned: self.splits_pruned.load(Ordering::Relaxed),
             bytes_written: self.bytes_written.load(Ordering::Relaxed),
             footer_hits: self.footer_hits.load(Ordering::Relaxed),
             footer_misses: self.footer_misses.load(Ordering::Relaxed),
@@ -293,6 +309,12 @@ pub struct IoTraceSnapshot {
     pub delete_ops: u64,
     pub bytes_read: u64,
     pub range_gets: u64,
+    /// Candidate row-group splits considered by scans (TD-OLAP-3).
+    #[serde(default)]
+    pub splits_total: u64,
+    /// Splits skipped before fetch — with `splits_total`, the skip ratio.
+    #[serde(default)]
+    pub splits_pruned: u64,
     pub bytes_written: u64,
     pub footer_hits: u64,
     pub footer_misses: u64,
@@ -432,6 +454,14 @@ pub fn record_bytes_read(bytes: u64) {
 /// exists to remove. Silently no-ops outside an active scope.
 pub fn record_range_gets(gets: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_range_gets(gets));
+}
+
+/// Record a scan's split-pruning outcome for the active query (TD-OLAP-3).
+/// Core counter (always-on, like `record_range_gets`): the runtime-filter
+/// promotion gate reads `splits_pruned / splits_total` from the billing
+/// snapshot. Silently no-ops outside an active scope.
+pub fn record_splits(total: u64, pruned: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_splits(total, pruned));
 }
 
 /// Add to bytes written to object storage for the active query.
