@@ -23,6 +23,7 @@ toc::[]
 | **Fraud & AML** (FSI, built) | timeseries + vector + graph + RAG | Compliance copilot: transacted-volume burst → AML-typology match → Cypher ring trace → case-note / SAR playbook.
 | **Insurance** (FSI, built) | timeseries + vector + graph + RAG | SIU claims-fraud copilot: claimed-amount burst → fraud-typology match → Cypher staged-ring trace through shared provider → SIU playbook.
 | **Market surveillance & trading** (FSI, built) | timeseries + vector + graph + RAG | Trade-surveillance copilot: order-message burst → manipulation-typology match → Cypher coordination-ring trace through shell → MAR/MiFID STOR playbook.
+| **D&B / commercial risk** (built) | timeseries + vector + graph + RAG | Credit & KYB copilot: delinquency burst → risk-typology match → Cypher related-party cluster trace to UBO → concentration-aware credit playbook.
 | **Energy** | timeseries + vector + graph | Grid copilot: meter/sensor anomaly + forecast → topology-aware outage impact → maintenance-log RAG.
 | **Social media** | graph + vector + hybrid RRF | Feed/reco copilot: semantic post search + social-graph proximity + community/influence; taste memory (ADR-022).
 | **Internet / web** (built) | timeseries + vector + graph + RAG | Incident copilot: 5xx error burst → incident-typology match → Cypher dependency-chain trace ∩ failing set → root cause → postmortem playbook.
@@ -30,7 +31,8 @@ toc::[]
 |===
 
 **Manufacturing** (the template), **Fraud & AML**, **Insurance**, **Market surveillance** (FSI),
-and **Internet / web** are built out and verified live against a code-aligned engine. The rest
+**D&B / commercial risk**, and **Internet / web** are built out and verified live against a
+code-aligned engine. The rest
 reuse their harness — see below.
 
 == The reusable shape
