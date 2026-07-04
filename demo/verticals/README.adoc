@@ -3,9 +3,9 @@
 = ProximaDB Vertical Demos — one engine, many industries
 :toc: macro
 
-A family of industry demos for the AnvaiOps site. Each tells the same story from a
+A family of industry demos for a public demos gallery. Each tells the same story from a
 different domain: **ProximaDB unifies vector + graph + timeseries + relational + RAG
-in one engine**, and **AnvaiOps governs it** (per-tenant metering, entitlement, PII
+in one engine**, and **a governance/control layer governs it** (per-tenant metering, entitlement, PII
 redaction) — fronted by a plain-language **MCP copilot**.
 
 They share one shape so a vertical is a *dataset + config swap*, not a rewrite:
@@ -44,7 +44,7 @@ Each vertical directory holds three things:
 | `generate_data.py` | A deterministic, **stdlib-only** synthetic dataset generator — no network, no proprietary data (these are public-site demos). Seeded, so it is reproducible.
 | `copilot_live.py`  | The **verified** copilot — issues real ProximaDB v2 REST calls against a running engine (a code-aligned Docker image, data mounted) and prints each call. This is the "it actually ran through the product" artifact.
 | `copilot_demo.py`  | A **self-contained** offline transcript. Runs the analysis locally (no server) so it always works in a talk, and prints the equivalent ProximaDB operation per step.
-| `README.adoc`      | The site narrative + the Docker run + production wiring + the AnvaiOps governance framing.
+| `README.adoc`      | The site narrative + the Docker run + production wiring + the governance framing.
 |===
 
 NOTE: build the image from the *same* commit as the demo (`cargo build --release -p

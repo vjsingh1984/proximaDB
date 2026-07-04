@@ -234,7 +234,7 @@ def main() -> None:
 
     print("\n" + "-" * 78)
     print("Every [API] line is a real ProximaDB call. In production this runs behind the")
-    print("AnvaiOps MCP copilot — metered/entitlement-checked/PII-redacted per tenant.")
+    print("governed MCP control plane — metered/entitlement-checked/PII-redacted per tenant.")
 
 
 if __name__ == "__main__":
