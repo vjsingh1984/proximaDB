@@ -44,6 +44,15 @@ pub trait GraphPort: Send + Sync {
     async fn query_nodes(&self, request: NodeQuery) -> Result<BatchResponse>;
     async fn query_edges(&self, request: EdgeQuery) -> Result<BatchResponse>;
     async fn execute_query(&self, request: GraphQueryRequest) -> Result<GraphQueryResponse>;
+    /// Execute a declarative graph query and return result rows as raw JSON.
+    /// The engine already yields node/row payloads as `serde_json::Value`, so this
+    /// is the v2-era path for JSON surfaces (REST): it bypasses the legacy v1
+    /// `QueryValue`/`GraphQueryResponse` wrapping entirely. See TD-GRAPH-2.
+    async fn execute_query_json(
+        &self,
+        graph_id: &str,
+        query: &str,
+    ) -> Result<Vec<serde_json::Value>>;
     async fn get_neighbors(&self, request: GetNeighborsRequest) -> Result<BatchResponse>;
 
     // ── Traversal ─────────────────────────────────────────────────────────

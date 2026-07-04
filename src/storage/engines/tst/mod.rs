@@ -633,8 +633,15 @@ impl TimeSeriesEngine {
 
     /// Identify partitions that overlap with the time range
     fn identify_partitions(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> Vec<DateTime<Utc>> {
+        // Partitions are keyed by their truncated start instant and cover the whole
+        // `partition_duration`. A sub-partition query window (e.g. minutes within a Day
+        // partition) must still include the partition that *contains* `start`, whose key
+        // is `<= start` — so widen the lower bound to that partition boundary. Without
+        // this, an intra-partition range like [14:00, 14:05] misses its own partition
+        // (keyed at 00:00) and returns nothing.
+        let start_key = self.config.partition_duration.truncate(start);
         self.partitions
-            .range(start..=end)
+            .range(start_key..=end)
             .map(|(key, _)| *key)
             .collect()
     }

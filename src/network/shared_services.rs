@@ -1755,6 +1755,20 @@ impl SharedServices {
             }
         };
 
+        // TD-TS-1: initialise the process-global time-series service over the native
+        // TST engine, rooted under the data dir. Non-fatal on failure (surface stays
+        // unavailable rather than blocking bootstrap).
+        {
+            let ts_base_path = std::path::PathBuf::from(
+                storage_config.metadata_url.replace("file://", "") + "/timeseries",
+            );
+            if let Err(e) =
+                crate::services::timeseries_service::init_timeseries_service(ts_base_path)
+            {
+                warn!("Failed to initialise TimeSeriesService: {}", e);
+            }
+        }
+
         // Derive extracted graph capability views once here so query/orchestration
         // layers depend on explicit contracts rather than the full concrete service.
         let graph_query_service = graph_service.clone();

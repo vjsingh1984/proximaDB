@@ -51,6 +51,7 @@ pub mod graphs;
 pub mod query;
 pub mod records;
 pub mod schema;
+pub mod timeseries;
 
 pub use collections::*;
 pub use query::*;
@@ -86,7 +87,7 @@ use super::v1::handlers::AppState;
 /// - `POST /query` - Execute AQL/UQL through UnifiedQueryPort
 /// - `POST /query/explain` - Explain AQL/UQL through UnifiedQueryPort
 pub fn create_v2_router() -> Router<AppState> {
-    use axum::routing::{get, post, put};
+    use axum::routing::{delete, get, post, put};
 
     Router::new()
         // Collection operations with schema support
@@ -153,6 +154,31 @@ pub fn create_v2_router() -> Router<AppState> {
         // Query facade operations
         .route("/query", post(query::execute_query))
         .route("/query/explain", post(query::explain_query))
+        // Time-series surface (TD-TS-1) — native TST engine over the SDK contract.
+        .route(
+            "/timeseries/collections",
+            post(timeseries::create_timeseries_collection),
+        )
+        .route(
+            "/timeseries/collections",
+            get(timeseries::list_timeseries_collections),
+        )
+        .route(
+            "/timeseries/collections/{collection_id}",
+            delete(timeseries::delete_timeseries_collection),
+        )
+        .route(
+            "/timeseries/collections/{collection_id}/ingest",
+            post(timeseries::ingest_timeseries),
+        )
+        .route(
+            "/timeseries/collections/{collection_id}/query",
+            post(timeseries::query_timeseries),
+        )
+        .route(
+            "/timeseries/collections/{collection_id}/aggregate",
+            post(timeseries::aggregate_timeseries),
+        )
         // Cross-modal fusion seam — graph instance (TD-137): vector seed → graph
         // expand → calibrated fuse-by-oid.
         .route(
@@ -257,7 +283,7 @@ pub async fn capabilities() -> axum::Json<serde_json::Value> {
         "features": [
             "collections", "records", "typed_search", "query_uql", "query_explain",
             "graphs", "hybrid_search", "document_collections", "observability",
-            "index_configs", "tags", "request_id"
+            "index_configs", "tags", "request_id", "timeseries"
         ],
         "limits": {
             "max_batch_records": 10000,

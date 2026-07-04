@@ -200,6 +200,7 @@ pub mod system_catalog;
 pub mod system_catalog_state;
 #[cfg(feature = "tenant_access")]
 pub mod tenant_access;
+pub mod timeseries_service;
 pub mod transaction;
 pub mod write_intent;
 
