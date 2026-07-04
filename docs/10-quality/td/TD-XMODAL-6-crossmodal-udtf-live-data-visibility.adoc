@@ -4,7 +4,7 @@
 
 [cols="1,3"]
 |===
-|Status|Open
+|Status|Resolved
 |Priority|HIGH
 |Scope|FEAT
 |Date|2026-07-04
@@ -35,31 +35,64 @@ REST reads that same data back:
 The route/plan are correct (`Compute Route: DataFusionLocal` → frontend declines the table-function →
 `ctx.sql` fallback → UDTF `scan()` invoked). The gap is **data visibility on the UDTF read path**.
 
-== Root-cause hypothesis (to confirm)
+== Root cause (confirmed)
 
-The UDTF providers issue their read with **`tenant_id = None`** (`cross_modal.rs`
-`VectorSearchTableProvider::new(..., None)`), while REST writes/reads under a concrete (default)
-tenant. The pgwire connection's tenant (the startup `dbname`/catalog) is **not threaded into
-`build_session_context` / the UDTF**, so the modality read is unscoped (or scoped to the wrong
-tenant) relative to where the data lives. The timeseries case (shared global, still 0) suggests the
-same tenant/partition-scoping mismatch in `TimeSeriesService::query`, or a freshness/flush boundary
-the UDTF read does not cross (the vector log shows `wal_delta_records_scanned=0`, `watermark_lsn=0`).
+**Per-modality tenant scoping was not threaded into the UDTFs — each read the wrong (unscoped)
+partition.** Each modality scopes by tenant differently, and the REST write path applies that
+scoping while the UDTF read did not:
 
-== Proposed fix
+* **Timeseries** — the REST handler folds the tenant into the *collection key* via
+  `effective_collection(tenant, id) -> "{tenant}::{collection}"` (`src/network/rest/v2/timeseries.rs`),
+  identically on ingest and query. `TimeSeriesService` treats the key opaquely. The
+  `timeseries_range` UDTF passed the **raw** name, so it read `sensor` while REST wrote `default::sensor`.
+* **Vector** — records are **tenant-partitioned** (not name-folded); the REST search resolves a
+  `TenantContext` and calls `VectorOpsPort::search(request, Some(tenant))`. The `vector_search` UDTF
+  hardcoded `tenant_id = None` (`VectorSearchTableProvider::new(..., None)`), so it searched the
+  unscoped partition and found 0 records (matching the `wal_delta_records_scanned=0` log).
+* **Graph** — applies **no** tenant scoping on *either* side today (`GraphPort` has no tenant param;
+  the v1/v2 graph REST handlers take no `TenantContext`); the `graph_id` is the sole scope key, so a
+  raw-`graph_id` read already matches.
 
-1. **Thread the connection tenant** through `QueryExecutionContext` → `prepare_dataframe` →
-   `build_session_context` → the UDTF providers, so `vector_search` / `timeseries_range` /
-   (future) `graph_traverse` read under the same `TenantContext` the pgwire session carries — the
-   co-design invariant (`TenantContext` at every I/O boundary), not `None`.
-2. **Cross the freshness boundary**: ensure the UDTF read includes unflushed WAL/memtable state
-   (Strong freshness) so REST-just-written data is visible without a manual flush — mirror the REST
-   read path's freshness handling.
-3. **Ratchet**: extend `tests/pgwire_crossmodal_join_e2e.rs` to seed vector + timeseries data (via the
-   in-process services under the connection tenant) and assert the join returns the **expected rows**
-   (not just that it executes) — the value-level proof the reachability test defers.
+Freshness was a red herring: the UDTFs call the **same service methods** REST uses
+(`VectorOpsPort::search`, `TimeSeriesService::query`), so they inherit REST's freshness handling —
+once the tenant scope matches, the just-written data is visible with no extra Strong-read plumbing.
+
+A second, separate requirement surfaced: the pgwire **read tenant must equal the REST write tenant**.
+A bare `psql` connection resolves the read tenant to `""` (empty) via `pgwire_resolve_read_tenant`
+(→ `catalog_tenant()` = startup `dbname`, else empty), while the REST middleware defaults to
+`"default"`. So the reader must connect with `dbname=<tenant>` (the catalog *is* the tenant boundary,
+TD-064) matching the REST `X-Tenant-ID`.
+
+== Resolution
+
+1. **Threaded the connection tenant** pgwire → `QueryExecutionContext.tenant_id` (already wired) →
+   `prepare_dataframe` → `create_session_context_with_ports(vector_ops, graph_ops, tenant)` →
+   `build_session_context` → the UDTF constructors. `vector_search` now uses
+   `VectorSearchTableFunction::with_tenant` (passes `Some(tenant)` to `search`); `timeseries_range`
+   uses `from_service_with_tenant` and folds `{tenant}::{collection}` (shared
+   `tenant_scoped_collection` helper mirroring `effective_collection`) before the read.
+   `graph_traverse` stays tenant-agnostic (nothing to match yet).
+2. **Ratchet**: `tests/pgwire_crossmodal_join_e2e.rs` gains
+   `crossmodal_timeseries_join_returns_rest_seeded_rows`, which seeds a timeseries collection via the
+   REST v2 API under an explicit `X-Tenant-ID`, connects pgwire with the matching `dbname`, and
+   asserts the `timeseries_range` CROSS JOIN returns the **expected rows and values** (2 points; the
+   9000-value point passes a `WHERE t.value > 5000` filter). Unit tests
+   `timeseries_range_udtf_folds_tenant_into_collection` + `vector_search_udtf_forwards_tenant_to_search`
+   pin the per-modality transform.
+
+== Follow-up (out of scope, file separately)
+
+**Graph tenant isolation.** The graph modality has *no* tenant isolation on either the write path or
+the UDTF read — a follow-on TD should add a tenant param to `GraphPort` (applied on both the REST
+graph handlers and the `graph_traverse` UDTF) so graph reads are tenant-scoped like the other two.
+
+**Bare-connection default alignment.** A bare pgwire connection (no `dbname`) reads under tenant `""`
+while REST defaults to `"default"`; the two only agree when the client connects with `dbname=default`.
+Whether to default the empty pgwire tenant to `"default"` is a TD-064-scoped decision (it changes the
+catalog=tenant contract), deliberately left out of this fix.
 
 == Impact / gating
 
-Blocks the data-engineering demo (`demo/data-engineering/`, PR-C) from showing **real** joined rows —
-today it can only show that the cross-modal query is reachable/plannable. Once fixed, the zero-ETL
-`relational ⋈ vector ⋈ timeseries ⋈ graph` join returns live results over pgwire.
+Unblocks the data-engineering demo (`demo/data-engineering/`, PR-C) to show **real** joined rows: the
+zero-ETL `relational ⋈ vector ⋈ timeseries` join now returns live REST-written results over pgwire
+when the session connects under the data's tenant (`dbname=<tenant>`).

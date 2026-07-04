@@ -36,6 +36,7 @@ fn free_port() -> u16 {
 
 struct PgServer {
     pg_port: u16,
+    rest_port: u16,
     db: Option<ProximaDB>,
     _tmp: TempDir,
 }
@@ -78,13 +79,20 @@ impl PgServer {
         sleep(Duration::from_millis(200)).await;
         Ok(Self {
             pg_port,
+            rest_port,
             db: Some(db),
             _tmp: tmp,
         })
     }
     fn conn_str(&self) -> String {
+        self.conn_str_db("proximadb")
+    }
+    /// A connection string whose `dbname` is the tenant/catalog boundary
+    /// (`pgwire_resolve_read_tenant` → `catalog_tenant()` = the startup database). Used to read
+    /// under the SAME tenant a REST write used (TD-XMODAL-6).
+    fn conn_str_db(&self, db: &str) -> String {
         format!(
-            "host=127.0.0.1 port={} user=postgres dbname=proximadb sslmode=disable",
+            "host=127.0.0.1 port={} user=postgres dbname={db} sslmode=disable",
             self.pg_port
         )
     }
@@ -101,7 +109,11 @@ impl Drop for PgServer {
 }
 
 async fn connect(server: &PgServer) -> tokio_postgres::Client {
-    let (client, conn) = tokio_postgres::connect(&server.conn_str(), tokio_postgres::NoTls)
+    connect_db(server, "proximadb").await
+}
+
+async fn connect_db(server: &PgServer, db: &str) -> tokio_postgres::Client {
+    let (client, conn) = tokio_postgres::connect(&server.conn_str_db(db), tokio_postgres::NoTls)
         .await
         .expect("connect");
     tokio::spawn(async move {
@@ -208,4 +220,100 @@ async fn crossmodal_udtf_join_reaches_datafusion_over_pgwire() {
         tsrange >= 0,
         "timeseries_range join must execute, got {tsrange}"
     );
+}
+
+/// TD-XMODAL-6 (row visibility): data written through the REST v2 timeseries API under a tenant
+/// is READABLE by the `timeseries_range` UDTF over pgwire when the connection resolves to the
+/// SAME tenant (`dbname` = the REST `X-Tenant-ID`). Proves the tenant is threaded pgwire →
+/// `QueryExecutionContext` → `build_session_context` → the UDTF, which folds `{tenant}::{collection}`
+/// exactly like the REST write path's `effective_collection`. Before the fix the UDTF used the raw
+/// (unscoped) name and returned 0 rows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn crossmodal_timeseries_join_returns_rest_seeded_rows() {
+    let server = PgServer::start().await.expect("server start");
+    // Unique per run: the tenant (pgwire catalog + REST header) and the collection/table names,
+    // so parallel runs and the persisted native catalog never collide.
+    let tenant = format!("xmt{}", server.pg_port);
+    let coll = format!("sensor_{}", server.pg_port);
+    let wh = format!("wh_{}", server.pg_port);
+
+    // ── Seed the timeseries collection + points via REST under an explicit tenant ──
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .no_proxy()
+        .build()
+        .expect("http client");
+    let base = format!("http://127.0.0.1:{}", server.rest_port);
+    let create = http
+        .post(format!("{base}/api/v2/timeseries/collections"))
+        .header("X-Tenant-ID", &tenant)
+        .json(&serde_json::json!({ "name": coll, "value_columns": [{ "name": "amount" }] }))
+        .send()
+        .await
+        .expect("create req");
+    assert!(
+        create.status().is_success(),
+        "create timeseries collection failed: {}",
+        create.status()
+    );
+    let ingest = http
+        .post(format!(
+            "{base}/api/v2/timeseries/collections/{coll}/ingest"
+        ))
+        .header("X-Tenant-ID", &tenant)
+        .json(&serde_json::json!({
+            "points": [
+                { "timestamp": 1_000, "values": { "amount": 100.0 } },
+                { "timestamp": 2_000, "values": { "amount": 9_000.0 } },
+            ]
+        }))
+        .send()
+        .await
+        .expect("ingest req");
+    assert!(
+        ingest.status().is_success(),
+        "ingest timeseries failed: {}",
+        ingest.status()
+    );
+
+    // ── Read it back over pgwire under the SAME tenant (dbname == X-Tenant-ID) ──
+    let client = connect_db(&server, &tenant).await;
+    client
+        .simple_query(&format!("DROP TABLE IF EXISTS {wh}"))
+        .await
+        .ok();
+    client
+        .simple_query(&format!("CREATE TABLE {wh} (id TEXT)"))
+        .await
+        .expect("create wh");
+    client
+        .simple_query(&format!("INSERT INTO {wh} VALUES ('anchor')"))
+        .await
+        .expect("insert wh");
+    client
+        .simple_query(&format!("ALTER TABLE {wh} MATERIALIZE"))
+        .await
+        .expect("materialize wh");
+
+    // The 1-row anchor CROSS JOIN the 2 seeded points ⇒ 2 rows. If the tenant fold were missing,
+    // the UDTF would read the unscoped `sensor_*` partition (empty) ⇒ 0 rows.
+    let joined = count(
+        &client,
+        &format!("SELECT count(*) FROM {wh} d CROSS JOIN timeseries_range('{coll}', 0, 9999999) t"),
+    )
+    .await;
+    assert_eq!(
+        joined, 2,
+        "expected the 2 REST-seeded points visible via timeseries_range (tenant fold), got {joined}"
+    );
+
+    // Value correctness: only the 9000 point exceeds 5000 ⇒ exactly 1 row — the real values flow.
+    let high = count(
+        &client,
+        &format!(
+            "SELECT count(*) FROM {wh} d CROSS JOIN timeseries_range('{coll}', 0, 9999999) t WHERE t.value > 5000"
+        ),
+    )
+    .await;
+    assert_eq!(high, 1, "expected exactly the 9000-value point, got {high}");
 }
