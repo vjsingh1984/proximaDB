@@ -43,11 +43,19 @@ terms are not the retrieval D3 would share, nor the distance loop:
 (filtered recall → the bloom path) suites, wired to run on WAL/memtable changes
 via the `query_changes` CI filter.
 
-*Still deferred — the shared pool itself:* only warranted if a residual same-LSN
-*retrieval* cost remains after A+B (re-measure c16 first). *Fix C — flush policy*
-(the 2GB default keeps small corpora unflushed forever, so every Strong search is
-an O(N) linear tail scan) is a separate structural lever that only pays off with
-TD-096 (HELIX block-skip on the flushed side).
+*Shared pool (D3): NOT NEEDED — re-measured 2026-07-04.* Re-ran the c16 benchmark
+against the develop `-full` image with A+B (+D2/Part B) and compared to the
+pre-fix baseline: x86 vector QPS 23→115 (+398%), concurrent p99 1146→279 ms
+(−76%); arm QPS 35→192 (+450%), p99 765→121 ms (−84%). Concurrent p99 fell from
+~20× the sequential floor to ~2.5–5×; the residual is CPU-bound c16 queueing on
+2 vCPU, *not* retrieval. D3 shares *retrieval*, which was never the bottleneck, so
+it would add concurrency machinery (per-LSN memo + single-flight) for negligible
+gain — **dropped**, not merely deferred. (Downstream evidence:
+anvaiops `tests/load/results/2026-07-04-arm-vs-x86-postfix/`.)
+
+*Fix C — flush policy* (the 2GB default keeps small corpora unflushed forever, so
+every Strong search is an O(N) linear tail scan) is a separate structural lever
+that only pays off with TD-096 (HELIX block-skip on the flushed side).
 
 == Part B — Close the ungated query-cache read sites (SEC/correctness) — DONE
 
