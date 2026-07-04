@@ -300,9 +300,11 @@ pub struct TimeSeriesEngine {
     /// Engine configuration
     config: TimeSeriesConfig,
 
-    /// Time-partitioned data storage
-    /// Key: Partition start time, Value: Columnar partition data
-    partitions: BTreeMap<DateTime<Utc>, TimePartition>,
+    /// Time-partitioned data storage.
+    /// Key: (collection_id, partition start time), Value: columnar partition data.
+    /// The collection_id is part of the key so collections sharing a time window are
+    /// isolated — a query for one collection must never see another collection's rows.
+    partitions: BTreeMap<(String, DateTime<Utc>), TimePartition>,
 
     /// Active partition for writes
     /// Points to the current time partition that accepts new writes
@@ -409,11 +411,10 @@ impl TimeSeriesEngine {
         // Determine partition key from timestamp
         let partition_key = self.config.partition_duration.truncate(timestamp);
 
+        // Composite partition key: (collection, time) — isolates collections in memory.
+        let pkey = (collection_id.to_string(), partition_key);
         // Get partition record count before insert (to check if we should trigger downsampling)
-        let partition_count_before = self
-            .partitions
-            .get(&partition_key)
-            .map_or(0, |p| p.record_count());
+        let partition_count_before = self.partitions.get(&pkey).map_or(0, |p| p.record_count());
 
         // Get or create mutable partition and insert record
         {
@@ -425,15 +426,12 @@ impl TimeSeriesEngine {
 
         // Check if downsampling is needed after inserting
         // Trigger downsampling if partition has grown significantly
-        let partition_count_after = self
-            .partitions
-            .get(&partition_key)
-            .map_or(0, |p| p.record_count());
+        let partition_count_after = self.partitions.get(&pkey).map_or(0, |p| p.record_count());
 
         if partition_count_after > partition_count_before && partition_count_after >= 1000 {
             // Check each downsampler to see if it should trigger
             // First collect which downsamplers need to trigger to avoid borrow conflicts
-            let ohlc_to_downsample = if let Some(partition) = self.partitions.get(&partition_key) {
+            let ohlc_to_downsample = if let Some(partition) = self.partitions.get(&pkey) {
                 let mut results = Vec::new();
                 for downsampler in &self.downsamplers {
                     if downsampler.should_trigger(partition).await? {
@@ -511,13 +509,13 @@ impl TimeSeriesEngine {
     /// Query time-series data with time range
     pub async fn query_time_range(
         &self,
-        _collection_id: &str,
+        collection_id: &str,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         limit: Option<usize>,
     ) -> Result<Vec<VectorRecord>> {
-        // Identify relevant partitions
-        let relevant_partitions = self.identify_partitions(start, end);
+        // Identify relevant partitions for THIS collection only
+        let relevant_partitions = self.identify_partitions(collection_id, start, end);
 
         // Scan partitions in parallel
         let mut results = Vec::new();
@@ -553,7 +551,7 @@ impl TimeSeriesEngine {
         }
 
         // Otherwise, query raw data and aggregate to OHLC on the fly
-        let relevant_partitions = self.identify_partitions(start, end);
+        let relevant_partitions = self.identify_partitions(collection_id, start, end);
         let mut all_bars = Vec::new();
 
         for partition_key in relevant_partitions {
@@ -588,23 +586,24 @@ impl TimeSeriesEngine {
         collection_id: &str,
         partition_key: DateTime<Utc>,
     ) -> Result<&mut TimePartition> {
-        // Check if partition exists in memory
-        if !self.partitions.contains_key(&partition_key) {
+        // Check if partition exists in memory (keyed by collection + time)
+        let pkey = (collection_id.to_string(), partition_key);
+        if !self.partitions.contains_key(&pkey) {
             // Try to load from disk
             let partition_path = self.partition_path(collection_id, partition_key);
             if partition_path.exists() {
                 let partition = TimePartition::load_from_disk(&partition_path).await?;
-                self.partitions.insert(partition_key, partition);
+                self.partitions.insert(pkey.clone(), partition);
             } else {
                 // Create new partition
                 let partition = TimePartition::new(partition_key, collection_id.to_string())?;
-                self.partitions.insert(partition_key, partition);
+                self.partitions.insert(pkey.clone(), partition);
             }
         }
 
         // Return mutable reference
         self.partitions
-            .get_mut(&partition_key)
+            .get_mut(&pkey)
             .ok_or_else(|| anyhow::anyhow!("Partition not found after creation: {}", partition_key))
     }
 
@@ -616,8 +615,8 @@ impl TimeSeriesEngine {
         collection_id: &str,
         partition_key: DateTime<Utc>,
     ) -> Result<()> {
-        if let std::collections::btree_map::Entry::Vacant(e) = self.partitions.entry(partition_key)
-        {
+        let pkey = (collection_id.to_string(), partition_key);
+        if let std::collections::btree_map::Entry::Vacant(e) = self.partitions.entry(pkey) {
             let partition = TimePartition::new(partition_key, collection_id.to_string())?;
             e.insert(partition);
         }
@@ -628,21 +627,27 @@ impl TimeSeriesEngine {
     ///
     /// Used during WAL recovery to replay DropPartition operations.
     pub fn remove_partition(&mut self, partition_key: &DateTime<Utc>) {
-        self.partitions.remove(partition_key);
+        // Drop the time partition across all collections that hold it.
+        self.partitions.retain(|(_, t), _| t != partition_key);
     }
 
     /// Identify partitions that overlap with the time range
-    fn identify_partitions(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> Vec<DateTime<Utc>> {
-        // Partitions are keyed by their truncated start instant and cover the whole
-        // `partition_duration`. A sub-partition query window (e.g. minutes within a Day
-        // partition) must still include the partition that *contains* `start`, whose key
-        // is `<= start` — so widen the lower bound to that partition boundary. Without
-        // this, an intra-partition range like [14:00, 14:05] misses its own partition
-        // (keyed at 00:00) and returns nothing.
+    fn identify_partitions(
+        &self,
+        collection_id: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Vec<(String, DateTime<Utc>)> {
+        // Partitions are keyed by (collection, truncated start instant) and cover the
+        // whole `partition_duration`. A sub-partition query window (e.g. minutes within a
+        // Day partition) must still include the partition that *contains* `start`, whose
+        // key is `<= start` — so widen the lower bound to that partition boundary. The
+        // collection_id bounds the range so only this collection's partitions are scanned.
         let start_key = self.config.partition_duration.truncate(start);
+        let cid = collection_id.to_string();
         self.partitions
-            .range(start_key..=end)
-            .map(|(key, _)| *key)
+            .range((cid.clone(), start_key)..=(cid, end))
+            .map(|(key, _)| key.clone())
             .collect()
     }
 
@@ -1414,20 +1419,17 @@ impl UnifiedStorageFormat for TimeSeriesEngine {
     #[allow(dead_code)]
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
         // Identify partitions to compact based on collection_id
-        let partitions_to_compact: Vec<_> = if let Some(_collection_id) = &params.collection_id {
-            self.partitions
-                .iter()
-                .filter(|(_key, _)| {
-                    // For TST engine, we use simple timestamp-based compaction
-                    // Compact all partitions for the specified collection
-                    true
-                })
-                .map(|(key, _)| *key)
-                .collect()
-        } else {
-            // Global compaction - all partitions
-            self.partitions.keys().copied().collect()
-        };
+        let partitions_to_compact: Vec<(String, DateTime<Utc>)> =
+            if let Some(collection_id) = &params.collection_id {
+                self.partitions
+                    .keys()
+                    .filter(|(cid, _)| cid == collection_id)
+                    .cloned()
+                    .collect()
+            } else {
+                // Global compaction - all partitions
+                self.partitions.keys().cloned().collect()
+            };
 
         if partitions_to_compact.is_empty() {
             return Ok(CompactionResult {
@@ -1450,7 +1452,7 @@ impl UnifiedStorageFormat for TimeSeriesEngine {
         // For each partition, flush to disk
         for partition_key in &partitions_to_compact {
             if let Some(partition) = self.partitions.get(partition_key) {
-                let partition_path = self.partition_path("", *partition_key);
+                let partition_path = self.partition_path(&partition_key.0, partition_key.1);
                 let partition_size = partition.size_bytes();
 
                 // Flush partition to disk
@@ -1500,7 +1502,12 @@ impl UnifiedStorageFormat for TimeSeriesEngine {
             current_partition_key: None,
             current_record_index: 0,
             current_partition_records: None,
-            partition_keys: self.partitions.keys().copied().collect(),
+            partition_keys: self
+                .partitions
+                .keys()
+                .filter(|(c, _)| c.as_str() == collection_id)
+                .cloned()
+                .collect(),
             current_index: 0,
         };
 
@@ -1523,8 +1530,8 @@ struct TimeSeriesScanIterator {
     /// Scan strategy filter
     strategy: crate::storage::scan_strategy::ScanStrategy,
 
-    /// Current partition key being scanned
-    current_partition_key: Option<DateTime<Utc>>,
+    /// Current partition key being scanned (collection_id, partition start)
+    current_partition_key: Option<(String, DateTime<Utc>)>,
 
     /// Current record index within partition
     current_record_index: usize,
@@ -1532,8 +1539,8 @@ struct TimeSeriesScanIterator {
     /// Current partition's records (cached)
     current_partition_records: Option<Vec<crate::proto::proximadb_v1::VectorRecord>>,
 
-    /// List of partition keys to scan
-    partition_keys: Vec<DateTime<Utc>>,
+    /// List of partition keys to scan (collection_id, partition start)
+    partition_keys: Vec<(String, DateTime<Utc>)>,
 
     /// Current index in partition_keys
     current_index: usize,
@@ -1547,13 +1554,11 @@ impl ScanIterator for TimeSeriesScanIterator {
 
         while results.len() < batch_size && self.current_index < self.partition_keys.len() {
             // Get current partition
-            let partition_key = self.partition_keys[self.current_index];
+            let partition_key = self.partition_keys[self.current_index].clone();
 
-            if self.current_partition_key.is_none()
-                || self.current_partition_key != Some(partition_key)
-            {
+            if self.current_partition_key.as_ref() != Some(&partition_key) {
                 // Load new partition
-                self.current_partition_key = Some(partition_key);
+                self.current_partition_key = Some(partition_key.clone());
                 self.current_record_index = 0;
                 self.current_partition_records = None;
 
@@ -1713,5 +1718,71 @@ mod tests {
 
         assert_eq!(stats.total_partitions, 0);
         assert_eq!(stats.total_records, 0);
+    }
+
+    /// Regression: two collections writing into the same time window must not
+    /// cross-contaminate. The partition map is keyed by (collection_id, time);
+    /// before the fix it was keyed by time alone, so a query on one collection
+    /// summed the other's records (observed as acct-014 reading $17,934 vs its
+    /// real $1,734 in the fraud/AML demo).
+    #[tokio::test]
+    async fn test_collections_are_isolated_in_the_same_window() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = TimeSeriesConfig {
+            base_path: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
+        let mut engine = TimeSeriesEngine::with_config(config).unwrap();
+
+        let base = DateTime::parse_from_rfc3339("2026-02-01T11:15:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        // Distinct timestamps within the same partition window (a partition stores records
+        // by timestamp, so same-window records must differ in time to coexist).
+        let at = |mins: i64| base + chrono::Duration::minutes(mins);
+        let rec = |id: &str, amount: f32, ts: DateTime<Utc>| VectorRecord {
+            id: id.to_string(),
+            vector: vec![amount],
+            timestamp: Some(ts.timestamp_millis()),
+            ..Default::default()
+        };
+
+        // coll_a gets one record of 100; coll_b two of 999 — all in the same partition window.
+        engine
+            .insert_record("coll_a", at(0), rec("a-1", 100.0, at(0)))
+            .await
+            .unwrap();
+        engine
+            .insert_record("coll_b", at(1), rec("b-1", 999.0, at(1)))
+            .await
+            .unwrap();
+        engine
+            .insert_record("coll_b", at(2), rec("b-2", 999.0, at(2)))
+            .await
+            .unwrap();
+
+        let start = base - chrono::Duration::hours(1);
+        let end = base + chrono::Duration::hours(1);
+
+        let a = engine
+            .query_time_range("coll_a", start, end, None)
+            .await
+            .unwrap();
+        assert_eq!(a.len(), 1, "coll_a must see only its own record");
+        assert_eq!(a[0].vector, vec![100.0]);
+
+        let b = engine
+            .query_time_range("coll_b", start, end, None)
+            .await
+            .unwrap();
+        assert_eq!(b.len(), 2, "coll_b must see only its own two records");
+        assert!(b.iter().all(|r| r.vector == vec![999.0]));
+
+        // A collection that never wrote in this window sees nothing.
+        let empty = engine
+            .query_time_range("coll_c", start, end, None)
+            .await
+            .unwrap();
+        assert!(empty.is_empty(), "coll_c wrote nothing, must read nothing");
     }
 }

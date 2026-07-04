@@ -177,20 +177,25 @@ fn property_map(input: &str) -> IResult<&str, HashMap<String, PropertyConstraint
     )(input)
 }
 
-// Parse a node pattern (e.g., (n:Label {prop: "val"}))
+// Parse a node pattern (e.g., (n:Label {prop: "val"}), (:Label), or anonymous ())
 fn parse_node_pattern(input: &str) -> IResult<&str, NodePattern> {
+    // Anonymous nodes `()` / `(:Label)` get a synthetic, deterministic variable derived
+    // from this node's source position (the remaining-byte count is unique per node and
+    // stable across re-parses), so chained patterns like `()-[:X]->()` bind consistently
+    // without a global counter.
+    let anon_seed = input.len();
     map(
         delimited(
             char('('),
             tuple((
-                identifier,                               // Variable
+                opt(identifier),                          // Optional variable (anonymous if absent)
                 opt(preceded(char(':'), identifier)),     // Optional Label
                 opt(preceded(multispace0, property_map)), // Optional Properties
             )),
             char(')'),
         ),
-        |(variable, label_opt, properties_opt)| NodePattern {
-            variable,
+        move |(variable_opt, label_opt, properties_opt)| NodePattern {
+            variable: variable_opt.unwrap_or_else(|| format!("__anon_{anon_seed}")),
             labels: label_opt.map(|l| vec![l]).unwrap_or_default(),
             properties: properties_opt.unwrap_or_default(),
             optional: false, // Not handling OPTIONAL MATCH yet
@@ -290,7 +295,7 @@ fn parse_path_segment(input: &str) -> IResult<&str, (NodePattern, EdgePattern, N
         )),
         |(
             from_node,
-            (is_incoming, edge_var, edge_types, edge_props, is_outgoing, _var_length),
+            (is_incoming, edge_var, edge_types, edge_props, is_outgoing, var_length),
             to_node,
         )| {
             let direction = match (is_incoming, is_outgoing) {
@@ -308,6 +313,7 @@ fn parse_path_segment(input: &str) -> IResult<&str, (NodePattern, EdgePattern, N
                 properties: edge_props,
                 direction,
                 optional: false,
+                var_length,
             };
 
             (from_node.clone(), edge_pattern, to_node)
@@ -340,7 +346,7 @@ fn parse_path_chain(input: &str) -> IResult<&str, (Vec<NodePattern>, Vec<EdgePat
         {
             Ok((
                 after_edge,
-                (is_incoming, edge_var, edge_types, edge_props, is_outgoing, _var_length),
+                (is_incoming, edge_var, edge_types, edge_props, is_outgoing, var_length),
             )) => {
                 match preceded(
                     multispace0::<&str, nom::error::Error<&str>>,
@@ -364,6 +370,7 @@ fn parse_path_chain(input: &str) -> IResult<&str, (Vec<NodePattern>, Vec<EdgePat
                             properties: edge_props,
                             direction,
                             optional: false,
+                            var_length,
                         });
                         nodes.push(next_node);
                         rest = after_node;
