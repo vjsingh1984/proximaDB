@@ -160,6 +160,8 @@ pub struct QueryExecutionContext {
     pub parquet_tables: Vec<(String, String)>,
     /// Optional vector operations service for cross-modal search.
     pub vector_ops: Option<Arc<dyn proximadb_runtime::VectorOpsPort>>,
+    /// Optional graph read service for the cross-modal `graph_traverse` table function.
+    pub graph_ops: Option<Arc<dyn proximadb_graph_query::service::GraphQueryReadService>>,
     /// Optional request tenant for engines that need tenant-scoped I/O, metrics,
     /// or billing attribution.
     pub tenant_id: Option<String>,

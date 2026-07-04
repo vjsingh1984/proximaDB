@@ -128,6 +128,9 @@ pub async fn try_run_select(
     dml: Option<&Arc<DmlService>>,
     #[cfg_attr(not(feature = "datafusion-integration"), allow(unused_variables))]
     vector_ops: Option<Arc<dyn proximadb_runtime::VectorOpsPort>>,
+    #[cfg_attr(not(feature = "datafusion-integration"), allow(unused_variables))] graph_ops: Option<
+        Arc<dyn proximadb_graph_query::service::GraphQueryReadService>,
+    >,
     tenant: Option<&str>,
     controls: ExecutionControls,
     // pgwire passes `true`: only joins/GROUP BY/aggregates/set-ops engage the
@@ -307,6 +310,7 @@ pub async fn try_run_select(
         let context = QueryExecutionContext {
             parquet_tables,
             vector_ops,
+            graph_ops,
             tenant_id: tenant.map(str::to_string),
             // ADR-025: reconcile opted-in parquet-backed tables with their
             // post-snapshot WAL delta at scan time. `None` (no opted-in table)

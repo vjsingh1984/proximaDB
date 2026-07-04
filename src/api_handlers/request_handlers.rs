@@ -2167,6 +2167,7 @@ impl UnifiedHandlers {
                 &query,
                 Some(&dml),
                 None,
+                None,
                 tenant_id,
                 crate::query::execution::ExecutionControls::default(),
                 false,
