@@ -4,12 +4,12 @@
 
 [cols="1,3"]
 |===
-|Status|Proposed (awaiting ratification; refines NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22 §3–4 and composes with ADR-039/ADR-050)
+|Status|Proposed (awaiting ratification; supersedes the NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22 §3/§4-P3 native-operator end-state on ratification; composes with ADR-039/ADR-050)
 |Date|2026-07-03
 |Deciders|Vijaykumar Singh
 |Relates to|ADR-039 (DataFusion swappable backend / `LogicalNode` seam), ADR-050 (cost-based route selection + stats-fed planning), ADR-033 (Parquet-OLAP / PAX-vector dual path), ADR-027/026 (PAX unified substrate), ADR-037/038 (statistics substrate + freshness), ADR-025 (deletion vectors), `NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.adoc`, `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`, `CO_DESIGN_HANDOFF.md`
 |Co-designed with|The "extreme co-design" mandate (`CO_DESIGN_HANDOFF.md`): attack the DOMINANT cost term across the boundary; capture the trace first; measure before optimizing; vertical inside, standard outside
-|Supersedes / clarifies|`NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.adoc` §3/§4 — the "NativeOlap route" is a PAX-native SCAN operator feeding DataFusion, NOT a parallel vectorized operator engine
+|Supersedes|`NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.adoc` §3 (NativeOlap as a *peer execution route* to DataFusion), §4 P3 (native route promoted over DataFusion as primary, DataFusion demoted to fallback), its §1 end-state box, and the `NATIVE_OLAP_8ENGINE_COMPARATIVE_STUDY_2026_06_22.adoc` verdict (native push-based, morsel-driven operator core as the build target) — **effective on ratification of this ADR**. The native-operator-engine end state is retired, not deferred: the PAX-native investment is the SCAN (prune stack + Arrow bridge); operators above the scan are DataFusion's vectorized kernels behind the ADR-039 seam, which preserves the option to swap engines later without committing to build one now. ADR-033's "second cost-router arm" (Consequences (b)) survives in revised form: PAX-scan+DataFusion vs Parquet-scan+DataFusion — two *scan* arms, one operator engine. The blueprint's P0–P2 scan scope and substrate TDs (TD-154/TD-151/TD-162a) remain authoritative.
 |Tracked under|TD-OLAP-1 (PAX-native scan → DataFusion), TD-OLAP-2 (statistics-fed CBO), TD-OLAP-3 (runtime filters DPP+bloom), TD-OLAP-4 (TPC-DS/TPC-H performance ledger), TD-OLAP-5 (analytics surface parity)
 |===
 
@@ -27,7 +27,10 @@ itself is a *row-wise Volcano iterator*: `crates/query/proximadb-relational-exec
 ("Volcano-style executor… Pure pull model"), evaluating expressions row-at-a-time over
 `ProximaValue` (`.eval(&row, …)`, `row.push(…)`). That is the model the entire field
 abandoned — Kersten et al. (PVLDB 2018) show Volcano is 1–2 orders of magnitude slower than
-vectorized or code-generated execution. The function registry ships ~8 scalars and one
+vectorized or code-generated execution. And this Volcano is *today's engine for OLAP shapes
+over PAX/native-backed tables*: `route_select` sends only parquet-backed relational plans to
+DataFusion, everything else to Native — so invariant 1 is a real routing change for that arm,
+not a relabeling. The function registry ships 10 base scalars (+6 aliases) and one
 aggregate demonstrator (`crates/foundation/proximadb-functions/src/lib.rs`); window functions
 are absent.
 
@@ -35,14 +38,20 @@ are absent.
 `tests/{tpcds,tpch}_pgwire_e2e.rs` assert query counts (TPC-H 22, TPC-DS 16) over a tiny
 deterministic dataset, gated in `.github/workflows/qa-gate.yml`. No scale factor, no
 latency/throughput, no baseline vs DuckDB/DataFusion/ClickHouse. Per the co-design mandate
-(#11: reject component microbenchmarks masquerading as end-to-end claims; #2: capture the
-trace first), "competitive with Photon/Snowflake" is today an *unmeasured* assertion.
+(principle #11: reject component microbenchmarks masquerading as end-to-end claims; method
+step 2: capture the trace first), "competitive with Photon/Snowflake" is today an
+*unmeasured* assertion.
 
-. **The statistics substrate is DESIGNED, not WIRED.** ADR-037/038 specify a mergeable
-statistics envelope (min/max, NDV/HLL, TDigest, null-count, freshness watermark) and
-`src/core/statistics/{summary,sketches}` implement the sketches, but `schema_inference`
-still returns `ColumnStatistics::new_unknown()` and the planner is statistics-blind (ADR-050
-D2 is the close, in flight). No runtime filters (Dynamic Partition Pruning, bloom
+. **The statistics substrate is DESIGNED, not WIRED into the DataFusion planner.**
+ADR-037/038 specify a mergeable statistics envelope (min/max, NDV/HLL, TDigest, null-count,
+freshness watermark) and `src/core/statistics/{summary,sketches,registry}` implement the
+sketches. Today's consumers are the pgwire EXPLAIN selectivity surface
+(`src/network/postgres/relational_pipeline.rs` → `statistics_registry().equality_selectivity`)
+and the federated optimizer (`src/query/federated/optimizer/{selectivity,plan_calibration}.rs`)
+— but **none of it reaches cost-based physical planning**: `schema_inference.rs` returns
+`ColumnStatistics::new_unknown()`, its `extract_statistics` has *no call site*, and the
+table providers default `statistics: None`, so the DataFusion planner plans blind (ADR-050
+D2 / TD-DFR-1 is the close, in flight). No runtime filters (Dynamic Partition Pruning, bloom
 semi-joins), no Adaptive Query Execution.
 
 == First principles (why this shape)
@@ -55,6 +64,11 @@ semi-joins), no Adaptive Query Execution.
   scan-avoidance first (zone maps, bloom, runtime filters, deletion vectors, late
   materialization, materialized aggregates), vectorized execution second. This inverts the
   naive "build a faster engine" instinct and is the co-design spine applied to analytics.
+  *Deployment caveat:* the bytes-scanned-dominant ordering holds for the object-store
+  lakehouse target; on embedded / single-node local-NVMe (the "win single-node first"
+  non-goal, where DuckDB's CPU efficiency sets the bar) CPU is the binding constraint —
+  which reusing DataFusion's vectorized kernels covers. The TD-OLAP-4 ledger measures the
+  two regimes separately, never averaged.
 
 * **Vectorized-first; do NOT reimplement operators.** The 2020–2026 consensus (Photon,
   SIGMOD 2022 Best Industry Paper; DuckDB; ClickHouse; Velox; DataFusion) is
@@ -92,7 +106,8 @@ semi-joins), no Adaptive Query Execution.
   Bulk scan/filter/project/aggregate/join/sort over analytical tables executes in DataFusion's
   vectorized kernel set. The row-wise `proximadb-relational-executor` Volcano is the floor for
   OLTP / point-lookup / low-cardinality shapes (where row-wise is fine) and the
-  no-DataFusion build floor (ADR-039 / TD-181) — *not* the OLAP execution engine. Conformance
+  no-DataFusion build floor (ADR-039 Verification §3 — the "TD-181" number is overloaded in
+  the ledger) — *not* the OLAP execution engine. Conformance
   is identical either way (TPC-H/TPC-DS bind to the `LogicalNode` seam, not the engine).
 
 . **The "NativeOlap route" (blueprint P2) is a PAX-native SCAN operator, not a parallel
@@ -126,6 +141,43 @@ semi-joins), no Adaptive Query Execution.
   * Do not overclaim five-mode parity — the defensible competitive niche is **vector + OLAP +
     lakehouse (3-mode) co-design**; graph/document are stretch modes.
 
+== Execution order (SOLID seam discipline)
+
+The TD-OLAP work is sequenced so every slice lands behind a **stable seam** (SOLID applied to
+database engineering — depend on ports, extend behind frozen boundaries, keep each component's
+responsibility narrow; see `SOLID_DATABASE_DEVELOPMENT_STANDARDS_2026_06_27.adoc`):
+
+[cols="1,3,4", options="header"]
+|===
+| Pri | Work | SOLID / engineering rationale
+| P0a | TD-OLAP-2 slice 1 (TD-DFR-1: `SegmentStatistics` → `ColumnStatistics`)
+| **DIP** — the planner consumes the ADR-042 statistics *port*, never engine internals;
+  cheapest unlock; feeds cost routing (ADR-050) and P2a runtime filters.
+| P0b | TD-OLAP-4 harness skeleton (SF1 advisory ledger)
+| **Measure-before-optimize** (co-design method step 2) — the ledger is the promotion gate
+  for every later slice; it lands before any tuning so regressions have a floor.
+| P1a | TD-OLAP-1 PAX-scan → Arrow (gated on TD-154/TD-162a-2/-3)
+| **SRP** — the scan owns scan+prune only, operators stay DataFusion's; **OCP** — a new
+  route added behind the frozen ADR-039/`ComputeBackend` seam, no existing path modified;
+  **LSP** — the scan `ExecutionPlan` is substitutable: identical conformance ratchets on
+  both routes.
+| P1b | TD-OLAP-5 function tranches + window framing
+| **OCP** — one `ProximaValue` kernel, N bindings (ADR-039 invariant 4); coverage is
+  additive behind the registry, tracked as a monotone ratchet.
+| P2a | TD-OLAP-3 runtime filters (DPP + bloom semi-join)
+| Blocked by P0a (stats cost the filter decision); **ISP** — one `proximadb-bloom`
+  primitive, two narrow consumers (ANN pre-filter ADR-011 + OLAP semi-join): converge,
+  don't duplicate.
+| P2b | TD-OLAP-5 late-materialization (needs P1a) + tenant-keyed result cache
+| Structural tenant isolation in the cache key (co-design mandate: isolation is never a
+  predicate); LSN eligibility per ADR-051/ADR-046.
+|===
+
+Cross-cutting rule: no slice may depend on another slice's *internals* — only on the named
+seams (`ComputeBackend`, `RecordReader`, `SegmentStatistics`, `ProximaFunctionRegistry`,
+`proximadb-bloom`, the TD-158 trace). That is what keeps each TD independently landable,
+testable via ports, and reversible (every slice is flag-gated, default-off).
+
 == Consequences
 
 * **Positive.** Reusing DataFusion execution avoids reimplementing a vectorized operator
@@ -135,11 +187,14 @@ semi-joins), no Adaptive Query Execution.
   additive behind the frozen seam. Scan-avoidance attacks the term that actually dominates
   cloud cost.
 * **Costs / watch-items.**
-  - The PAX-scan→Arrow bridge must be zero-copy and preserve prune-stack semantics across the
-    DataFusion `TableProvider`/`ExecutionPlan` boundary (same shape as
-    `src/datafusion/proxima_scan_exec.rs` today).
-  - DataFusion's hash-join does not yet spill (Comet 0.15 caveat) — large joins need
-    sort-merge until upstream lands; the ledger must flag this.
+  - The PAX-scan→Arrow bridge must be **single-materialization** — stripe bytes are decoded
+    into Arrow buffers exactly once (a compressed/quantized stripe cannot be "zero-copy");
+    from there, no further copies across the DataFusion `TableProvider`/`ExecutionPlan`
+    boundary (Arc'd buffers, same shape as `src/datafusion/proxima_scan_exec.rs` today) —
+    and prune-stack semantics must be preserved across it.
+  - DataFusion's hash-join does not yet spill (Comet 0.15 caveat) — mitigation is owned by
+    the TD-OLAP-1 route step: route large joins to sort-merge above a size threshold until
+    upstream spill lands; the ledger must flag every query affected.
   - Vectorized-first accepts DataFusion's per-op microbenchmark ceiling vs Velox (EDBT 2026,
     Zhao & Fang, SFU: DataFusion 1.45× vs Velox 1.98× over Spark on TPC-DS top-20) in
     exchange for the Rust/Arrow ecosystem, the seam, and development velocity — the ledger
@@ -162,8 +217,8 @@ semi-joins), no Adaptive Query Execution.
 == Sources
 
 * Codebase audit 2026-07-03: `crates/query/proximadb-relational-executor/src/lib.rs:1`
-  (Volcano, pull, row-wise); `crates/foundation/proximadb-functions/src/lib.rs` (~8 scalars,
-  1 aggregate demonstrator); `src/query/compute_scheduler.rs` (`route_select`);
+  (Volcano, pull, row-wise); `crates/foundation/proximadb-functions/src/lib.rs` (10 scalars
+  +6 aliases, 1 aggregate demonstrator); `src/query/compute_scheduler.rs` (`route_select`);
   `tests/{tpcds,tpch}_pgwire_e2e.rs` + `.github/workflows/qa-gate.yml` (conformance ratchets);
   `src/core/statistics/{summary,sketches}` (designed statistics substrate); ADR-037/038/039/050,
   `NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.adoc`.

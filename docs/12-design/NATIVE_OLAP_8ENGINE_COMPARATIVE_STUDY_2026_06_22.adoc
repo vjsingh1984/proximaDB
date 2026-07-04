@@ -3,7 +3,10 @@
 :toclevels: 3
 :sectnums:
 
-Status: Active design blueprint (research-grounded) +
+Status: Reference study — **verdict superseded by ADR-052** (Proposed 2026-07-03; effective on
+its ratification): the native push-based, morsel-driven *operator core* is retired as a build
+target — OLAP operators are DataFusion's vectorized kernels; the native investment is the
+PAX-native SCAN (TD-OLAP-1). The scan/encoding/costing analysis herein remains a reference. +
 Date: 2026-06-22 +
 Scope: the future shape of ProximaDB's *native, Rust, object-store-first, multimodal OLAP
 execution engine*, derived from a source-level study of eight open-source MPP / data-engineering
