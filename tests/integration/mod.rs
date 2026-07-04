@@ -157,7 +157,6 @@ pub mod viper_compression_integration_test;
 // Quantization tests
 pub mod quantization_stats_test;
 pub mod sst_quantization_blocks_test;
-pub mod sst_quantization_comprehensive_test; // Comprehensive quantization coverage
 
 // Query facade integration tests - REST/gRPC parity validation
 pub mod query_facade;

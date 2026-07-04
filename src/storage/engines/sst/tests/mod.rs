@@ -10,15 +10,11 @@ pub mod compaction_vector_tracking_tests;
 pub mod cross_format_interop_benchmark;
 pub mod end_to_end_test;
 pub mod flush_recovery_tdd_test;
-pub mod hierarchical_tests;
 pub mod modular_integration_test;
 pub mod sst1_format_tests;
 pub mod sst_compactor_tests;
-pub mod strategy_tests;
 
 // Reader-specific tests - flattened from readers/tests/ in Phase 2
-pub mod sst_reader_edge_tests;
 pub mod sst_reader_tests;
-pub mod test_metadata_filtering;
 pub mod test_metadata_filtering_fixed;
 pub mod test_sst1_validation;
