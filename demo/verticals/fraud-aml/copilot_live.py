@@ -42,6 +42,7 @@ EMB_DIM = 256
 TYP_COLL = "aml_typologies"
 CASE_COLL = "aml_casenotes"
 BURST_THRESHOLD = 5000.0  # a single-bucket transacted volume this large is suspicious
+SEVERITY_SCALE = 2500.0   # normalises peak transacted-volume into the O(1..10) feature range
 
 
 # ── tiny REST client (stdlib) ───────────────────────────────────────────────────
@@ -83,6 +84,19 @@ def iso_ms(iso: str) -> int:
 
 def _load(name: str):
     return json.loads((DATA / name).read_text())
+
+
+def feature_vector(sums: list[float]) -> list[float]:
+    """Scale-normalised shape of a transacted-volume burst — must match the typology vectors in
+    generate_data.py. Scaling each dimension to O(1..10) lets cosine discriminate on burst
+    *shape* (concentrated structuring vs spread layering) rather than raw dollar magnitude —
+    the shared pattern across every built vertical."""
+    peak = max(sums)
+    total = sum(sums) or 1e-6
+    mean = total / len(sums)
+    spread = sum(1 for s in sums if s > BURST_THRESHOLD) / len(sums)
+    return [round(peak / SEVERITY_SCALE, 3), round(peak / (mean or 1e-6), 3),
+            round(spread * 10.0, 3), round(peak / total * 10.0, 3)]
 
 
 # ── setup (real ProximaDB writes) ───────────────────────────────────────────────
@@ -146,13 +160,8 @@ def timeseries_scan(ts_accounts) -> list[dict]:
             continue
         peak = max(sums)
         if peak > BURST_THRESHOLD:  # a large single-window transacted volume
-            mean = sum(sums) / len(sums)
-            burst = sum(1 for s in sums if s > BURST_THRESHOLD) / len(sums)
-            flagged.append({
-                "account": acc["account"], "peak": round(peak, 1),
-                "features": [round(peak, 3), round(peak / (mean or 1e-6), 3),
-                             round(burst, 3), round(mean, 3)],
-            })
+            flagged.append({"account": acc["account"], "peak": round(peak, 1),
+                            "features": feature_vector(sums)})
     return sorted(flagged, key=lambda f: f["peak"], reverse=True)
 
 
