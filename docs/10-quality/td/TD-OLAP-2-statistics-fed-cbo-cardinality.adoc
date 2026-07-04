@@ -5,7 +5,8 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open — ADR-050 D2 is the first slice (ColumnStatistics for DataFusion); this TD generalizes it to the native planner + cardinality estimation
+| Status | Open — ADR-050 D2, filed as **TD-DFR-1** (ColumnStatistics for DataFusion), is the first slice; this TD generalizes it to the native planner + cardinality estimation
+| Priority | **P0a** — cheapest unlock in the ADR-052 execution order; feeds cost routing (ADR-050) and runtime filters (TD-OLAP-3). DIP: the planner consumes the ADR-042 `SegmentStatistics` port, never engine internals
 | Severity | High — without stats the planner is blind; runtime filters (TD-OLAP-3) and cost routing (ADR-050) both depend on it
 | Component | `src/core/statistics/{summary,sketches,registry}`, `src/datafusion/schema_inference.rs`, `src/query/query_optimizer.rs`, `src/query/federated/optimizer/`
 | Governs | link:../../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (invariant 3); closes the ADR-037/038 designed-only gap
@@ -16,17 +17,22 @@
 
 ADR-037/038 specify a mergeable statistics envelope; `src/core/statistics/{summary,sketches}`
 already implement min/max, NDV (HyperLogLog), TDigest quantiles, null-count, and a registry.
-But none of it reaches the planner: `schema_inference.rs` returns
-`ColumnStatistics::new_unknown()`, so the DataFusion/native planners plan blind. Snowflake's
+Its consumers today are the pgwire EXPLAIN selectivity surface (`relational_pipeline.rs` →
+`statistics_registry().equality_selectivity`) and the federated optimizer
+(`optimizer/{selectivity,plan_calibration}.rs`) — but none of it reaches **cost-based physical
+planning**: `schema_inference.rs` returns `ColumnStatistics::new_unknown()` (its
+`extract_statistics` has no call site; table providers default `statistics: None`), so the
+DataFusion planner plans blind, and the native planner has no cardinality model. Snowflake's
 signature posture is *"all statistics used for optimization are automatically maintained"* and
 a no-indices Cascades CBO; Spark AQE/DPP depend on runtime stats. A competitive engine cannot
 ship a statistics-blind planner.
 
 == Rollout
 
-. **Close ADR-050 D2:** project the ADR-042 `SegmentStatistics` (min/max/distinct/null) into
-  DataFusion `ColumnStatistics` in `schema_inference.rs` (replace `new_unknown()`) — zero new
-  scan; the stats substrate's second consumer.
+. **Close ADR-050 D2 (= TD-DFR-1):** project the ADR-042 `SegmentStatistics`
+  (min/max/distinct/null) into DataFusion `ColumnStatistics` in `schema_inference.rs`
+  (replace `new_unknown()` and actually wire `extract_statistics` to the table providers) —
+  zero new scan; the stats substrate's next consumer.
 . **Persist + freshness:** stamp per-segment stats with the ADR-038 freshness watermark; merge
   up the segment→row-group→table hierarchy; invalidate on compaction / DV application.
 . **Cardinality estimation:** feed NDV + TDigest histograms into the federated optimizer's

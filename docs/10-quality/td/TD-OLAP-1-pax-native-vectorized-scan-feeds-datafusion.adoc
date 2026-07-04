@@ -6,6 +6,7 @@
 |===
 | Field | Value
 | Status | Open (design; implementation gated on TD-154/TD-162a-2/TD-162a-3 substrate)
+| Priority | **P1a** in the ADR-052 execution order — after the P0 stats/ledger slices; gated on the substrate TDs. SRP: the scan owns scan+prune only; OCP: a new route added behind the frozen ADR-039/`ComputeBackend` seam; LSP: the scan `ExecutionPlan` is substitutable — identical conformance ratchets on both routes
 | Severity | High — the OLAP execution model itself; the lever ADR-052 invariants 1–2 turn into code
 | Component | `proximadb-block-format` (scan), `src/datafusion/proxima_scan_exec.rs`, `proximadb-relational-algebra` (`LogicalNode::Scan` lowering), `compute_scheduler.rs`
 | Governs | link:../../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (invariants 1–2)
@@ -28,14 +29,20 @@ vectorized operators for everything above it.
   hierarchical zone maps + TD-162a-3 `RecordReader` trait — the scan input.
 . **PAX scan → Arrow bridge (default-off feature):** a `LogicalNode::Scan` lowering that
   produces a DataFusion `ExecutionPlan` (extend `src/datafusion/proxima_scan_exec.rs`) whose
-  `Stream` yields zero-copy Arrow `RecordBatch`es decoded from PAX column stripes via
-  `RecordReader`. Projection narrows at the stripe level; predicates push into the prune stack.
+  `Stream` yields **single-materialization** Arrow `RecordBatch`es — stripe bytes are decoded
+  into Arrow buffers exactly once via `RecordReader` (compressed/quantized stripes cannot be
+  zero-copy), with no further copies across the `TableProvider`/`ExecutionPlan` boundary.
+  Projection narrows at the stripe level; predicates push into the prune stack.
 . **Prune stack wired:** apply zone-map (TD-154) + bloom (`proximadb-block-format/src/stripe.rs`)
   + range coalescing (TD-151) *before* fetching stripe bytes; emit per-query `range_gets` /
-  `bytes_read` into the TD-158 trace.
+  `bytes_read` into the TD-158 trace (TD-158 is **Resolved** — the trace substrate is available,
+  not a pending dependency).
 . **Route (act):** `compute_scheduler.rs::route_select` selects the PAX-scan+DataFusion path
   for PAX-backed analytical tables above the ADR-050 cost crossover, flag-gated, default-off;
-  promote only where the measured trace beats DataFusion-on-Parquet on bytes-scanned.
+  promote only where the measured trace beats DataFusion-on-Parquet on bytes-scanned. Until
+  upstream DataFusion hash-join spill lands, route large joins (build side above a size
+  threshold) to sort-merge — this step owns that mitigation; the TD-OLAP-4 ledger flags every
+  affected query.
 . **Retire (non-goal enforcement):** do NOT add native HashAgg/HashJoin/Sort for the OLAP
   path — those stay DataFusion. The row-wise Volcano remains the OLTP / point-lookup / no-DF
   build floor only.

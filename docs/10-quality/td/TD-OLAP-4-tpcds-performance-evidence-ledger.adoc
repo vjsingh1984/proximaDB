@@ -6,7 +6,8 @@
 |===
 | Field | Value
 | Status | Open — the measurement mandate; prerequisite for any "competitive" claim
-| Severity | High — co-design mandate #11: reject component microbenchmarks masquerading as e2e claims; #2: capture the trace first
+| Priority | **P0b** in the ADR-052 execution order — the harness skeleton lands *before* any optimization (measure-first); it is the promotion gate for TD-OLAP-1/3/5
+| Severity | High — co-design principle #11: reject component microbenchmarks masquerading as e2e claims; method step 2: capture the trace first
 | Component | `tests/{tpcds,tpch}_pgwire_e2e.rs`, `tools/benchbase/`, `.github/workflows/qa-gate.yml`, new evidence-ledger harness
 | Governs | link:../../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (invariant 4)
 | Relates to | ADR-040 (accuracy harness — the correctness counterpart), TD-158 (per-query I/O trace), ADR-030 (trace/meter seam)
@@ -26,9 +27,14 @@ integrated path is fast, and no optimization lands without a trace + evidence le
   store as Iceberg/Parquet (the OLAP path) AND PAX (the native-scan path) so both routes are
   measured.
 . **Baseline harness:** run the same SF on DuckDB, plain DataFusion-on-Parquet, and
-  ClickHouse on the same object store / instance class. Record latency-per-query + total
-  bytes-scanned (TD-158 trace) into a versioned evidence ledger (JSON/Markdown under
-  `docs/10-quality/` or a bench artifact).
+  ClickHouse on the same object store / instance class. **Methodology (pinned per ledger
+  entry):** engine versions; each baseline's storage configuration (local NVMe vs object
+  store — ClickHouse-on-S3 ≠ local MergeTree, DuckDB is local-first); cold vs warm cache
+  state, recorded separately. The two cost regimes (object-store: bytes-scanned-dominant;
+  local-NVMe: CPU-dominant) are reported as separate ledger sections — never averaged.
+  Record latency-per-query + total bytes-scanned (TD-158 trace, **Resolved** — available)
+  into a versioned evidence ledger (JSON/Markdown under `docs/10-quality/` or a bench
+  artifact).
 . **CI tier (advisory→gate):** add a `tpcds-perf` job that records the ledger on develop
   pushes; gate (ratchet on a *budget*, not a single run) only once variance is bounded —
   mirror the `pax-recall-ratchet` pattern (advisory until evidence is stable).

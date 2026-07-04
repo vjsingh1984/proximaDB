@@ -6,6 +6,7 @@
 |===
 | Field | Value
 | Status | Open (design; depends on TD-OLAP-2 stats + DataFusion runtime-filter support)
+| Priority | **P2a** in the ADR-052 execution order — blocked by TD-OLAP-2 (P0a) stats for costing when to build a filter. ISP: one `proximadb-bloom` primitive, two consumers (ANN pre-filter ADR-011 + OLAP semi-join)
 | Severity | High — the single largest warehouse-class lever; 5–50× on star-schema joins (Databricks AQE / Snowflake SOS)
 | Component | `src/query/query_optimizer.rs`, `src/query/federated/{optimizer,execution}`, PAX/Iceberg scan pruning, `proximadb-bloom`
 | Governs | link:../../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (invariant 3)
@@ -27,15 +28,20 @@ same idea on the vector side — converge, don't duplicate.
 
 . **Bloom semi-join:** at HashJoin build, construct a bloom filter over build-side keys;
   inject it into the probe-side scan (`LogicalNode::Scan` predicate) so non-matching stripes
-  are pruned *before* fetch. Reuse `proximadb-bloom`.
+  are pruned *before* fetch. Reuse `proximadb-bloom`. **Mechanism (pinned):** since the join
+  executes inside DataFusion (ADR-052 invariant 1), the filter rides DataFusion's own
+  dynamic/runtime-filter machinery where the pinned version supports it; otherwise a custom
+  `ExecutionPlan` wrapper around the join captures the build-side keys and injects the bloom
+  into the probe-side scan — the fallback is ours to ship, not blocked on upstream.
 . **Dynamic Partition Pruning:** for partitioned/Iceberg tables, defer fact-scan partition
   selection until the dimension filter's runtime values are known; prune partitions from the
   manifest list at runtime.
 . **AQE hook:** insert a re-optimization point at pipeline breaks (post-build) so the runtime
   filter + observed cardinality can adjust the probe plan (coalesce/repartition, join swap).
   (Full AQE is larger; this TD delivers the runtime-filter slice first.)
-. **Trace + promotion:** instrument `bytes_scanned_before/after_filter` per query (TD-158);
-  promote only where the measured skip ratio justifies the bloom-construction cost.
+. **Trace + promotion:** instrument `bytes_scanned_before/after_filter` per query (TD-158 is
+  **Resolved** — the trace substrate is available); promote only where the measured skip
+  ratio justifies the bloom-construction cost.
 
 == Verification
 
