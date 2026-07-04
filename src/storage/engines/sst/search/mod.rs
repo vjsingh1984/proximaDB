@@ -501,6 +501,29 @@ impl SstEngine {
             _ => return,
         };
 
+        // M1-3 cold-read recall: if EVERY durable segment is a RaBitQ-PAX segment
+        // WITHOUT an f32 tier (the default write format), rebuilding AXIS from it
+        // would index COARSE RaBitQ-reconstructed vectors (block-format reader.rs:
+        // "RaBitQ is a search representation; reconstruction is coarse") → ~0.46
+        // recall — WORSE than letting the cold search fall through to the RaBitQ
+        // cascade (~0.93, which ranks the RaBitQ codes properly via
+        // `try_pax_cascade`). Skip the lossy rebuild; the dispatch fallback
+        // reaches the cascade for `.pax` Euclidean/Cosine. Any exact-readable
+        // segment (RawF32/SQ8/RaBitQ-with-tier/`.sst`/`.arrow`) breaks the
+        // `all()` check and rebuilds normally (exact AXIS). See
+        // `pax_segment_is_coarse_rabitq_without_f32_tier`.
+        if self
+            .all_segments_coarse_rabitq_pax_without_f32_tier(&files)
+            .await
+        {
+            tracing::info!(
+                "M1-3 cold-read: RaBitQ-PAX without f32 tier for '{collection_id}' ({} segments) \
+                 — skipping coarse AXIS rebuild; cold reads use the RaBitQ cascade",
+                files.len()
+            );
+            return;
+        }
+
         // Read all records from the durable SST segments via the storage trait's
         // `read_all_records` (UnifiedSSTReader::read_batch). The per-segment
         // `read_segment_records` / `read_all_records_for_compaction` path returned
@@ -538,6 +561,33 @@ impl SstEngine {
                 "TD-112 rebuild: AXIS rebuild-from-SST failed for '{collection_id}': {e}"
             ),
         }
+    }
+
+    /// True iff EVERY file in `files` is a `.pax` segment whose `EMBED_BASE` is
+    /// RaBitQ-coded with no f32 tier (i.e. no exact data — an AXIS rebuild from
+    /// it would be coarse). Used by [`ensure_axis_index_from_sst`] to skip the
+    /// lossy rebuild for default RaBitQ-PAX collections so cold reads use the
+    /// RaBitQ cascade. A non-`.pax` file, a read error, or any exact-readable
+    /// segment (RawF32/SQ8/RaBitQ-with-tier) returns `false` (→ rebuild).
+    /// Short-circuits on the first non-coarse segment. `files` is non-empty when
+    /// called from the rebuild path.
+    async fn all_segments_coarse_rabitq_pax_without_f32_tier(&self, files: &[String]) -> bool {
+        use crate::storage::engines::sst::segment_format::pax_segment_is_coarse_rabitq_without_f32_tier;
+        for file in files {
+            if !file.ends_with(".pax") {
+                return false; // legacy `.sst` / `.arrow` → exact-readable → rebuild
+            }
+            let Ok(fs) = self.filesystem().get_filesystem(file) else {
+                return false; // can't open → don't skip; let the rebuild try
+            };
+            let Ok(bytes) = fs.read(file).await else {
+                return false;
+            };
+            if !pax_segment_is_coarse_rabitq_without_f32_tier(&bytes) {
+                return false; // RawF32/SQ8/RaBitQ-with-tier → rebuild exact
+            }
+        }
+        !files.is_empty()
     }
 
     /// Read all records from one SST segment, dispatching on the engine's block

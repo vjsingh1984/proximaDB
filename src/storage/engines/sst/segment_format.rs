@@ -223,6 +223,42 @@ pub fn pax_inputs_have_f32_tier(input_files: &[std::path::PathBuf]) -> bool {
     false
 }
 
+/// True iff `bytes` is a `.pax` SEGMENT whose `EMBED_BASE` column is RaBitQ-coded
+/// AND no `F32_TIER_BASE` column is present — i.e. the segment carries NO exact
+/// vectors, so an AXIS index rebuilt from it (via [`read_segment_records`] →
+/// `decode_rabitq_reconstruct`) would be COARSE (low recall). The reopen-rebuild
+/// path (`ensure_axis_index_from_sst`) uses this to SKIP rebuilding a lossy AXIS
+/// for default RaBitQ-PAX collections, so cold reads fall through to the RaBitQ
+/// cascade (`try_pax_cascade`, which ranks the RaBitQ codes properly, ~0.93
+/// recall) instead of a coarse rebuilt index (~0.46). Returns `false` for non-Pax,
+/// non-RaBitQ quants (RawF32/SQ8/FP16 = exact/near-exact → rebuild), RaBitQ WITH
+/// an f32 tier (exact via the tier → rebuild), or any parse error (→ rebuild).
+///
+/// Pure over `bytes` so it's unit-testable; the engine reads bytes via the
+/// filesystem trait (object-store-safe) and calls this. Mirrors
+/// [`pax_inputs_have_f32_tier`]'s `PaxSegmentScanner` block-0 metadata read.
+pub fn pax_segment_is_coarse_rabitq_without_f32_tier(bytes: &[u8]) -> bool {
+    use proximadb_block_format::vparam::QUANT_RABITQ_RESERVED;
+    if SegmentFormat::detect(bytes) != SegmentFormat::Pax {
+        return false;
+    }
+    // A `.pax` SEGMENT is `[block(s)][segment_index][SEGMENT_MAGIC]`; the scanner
+    // parses the trailing index + magic and yields block 0 (see
+    // [`pax_inputs_have_f32_tier`]).
+    let Ok(mut scanner) = PaxSegmentScanner::from_bytes(bytes.to_vec(), ScanPredicate::default())
+    else {
+        return false;
+    };
+    let Some(reader) = scanner.next_block() else {
+        return false;
+    };
+    let vparams = reader.vector_params();
+    let Some(embed) = vparams.get(col_id::EMBED_BASE) else {
+        return false;
+    };
+    embed.quant_kind == QUANT_RABITQ_RESERVED && vparams.get(col_id::F32_TIER_BASE).is_none()
+}
+
 /// Detect the tier-2 rerank quant strategy of the source `.pax` segments, so
 /// compaction PRESERVES it when re-encoding (mirrors [`pax_inputs_have_f32_tier`]
 /// for the f32 tier). Returns the first detected strategy from the co-located
@@ -599,6 +635,68 @@ mod tests {
         let bytes2 = std::fs::read(&path).unwrap();
         let back = read_segment_records(&bytes2, &[], &[], None).unwrap();
         assert_eq!(back.len(), records.len());
+    }
+
+    /// `pax_segment_is_coarse_rabitq_without_f32_tier` classifies a segment by its
+    /// block-0 column metadata: true ONLY for RaBitQ `EMBED_BASE` without an f32
+    /// tier (the default → coarse rebuild → skip AXIS), false for RawF32/SQ8
+    /// (exact / near-exact → rebuild) and RaBitQ-with-tier (exact via tier →
+    /// rebuild). Drives the cold-read recall fix in `ensure_axis_index_from_sst`.
+    #[test]
+    fn pax_segment_is_coarse_rabitq_without_f32_tier_classifies_segments() {
+        let records: Vec<ProximaRecord> = (0..8)
+            .map(|i| {
+                rec(
+                    &format!("v{i}"),
+                    1_700_000_000_000_000_000 + i,
+                    (0..16).map(|d| (i as f32 + d as f32) * 0.1).collect(),
+                )
+            })
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+
+        // RaBitQ, no f32 tier (the default) → coarse → true (skip AXIS rebuild).
+        let path = dir.path().join("rabitq.pax");
+        write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, None).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(
+            pax_segment_is_coarse_rabitq_without_f32_tier(&bytes),
+            "RaBitQ-PAX without f32 tier is coarse → skip AXIS rebuild"
+        );
+
+        // RawF32 → exact → false.
+        let path = dir.path().join("rawf32.pax");
+        write_pax_segment(&path, &records, "col", 1, VectorQuant::RawF32, None).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(
+            !pax_segment_is_coarse_rabitq_without_f32_tier(&bytes),
+            "RawF32-PAX is exact → rebuild AXIS"
+        );
+
+        // SQ8 → near-exact → false.
+        let path = dir.path().join("sq8.pax");
+        write_pax_segment(&path, &records, "col", 1, VectorQuant::Sq8, None).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(
+            !pax_segment_is_coarse_rabitq_without_f32_tier(&bytes),
+            "SQ8-PAX is near-exact → rebuild AXIS"
+        );
+
+        // RaBitQ WITH f32 tier → exact via tier → false.
+        let path = dir.path().join("rabitq_tier.pax");
+        write_pax_segment_with_f32_tier(&path, &records, "col", 1, VectorQuant::RaBitQ, true, None)
+            .unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(
+            !pax_segment_is_coarse_rabitq_without_f32_tier(&bytes),
+            "RaBitQ-PAX with f32 tier is exact → rebuild AXIS"
+        );
+
+        // Non-PAX bytes → false (treated as exact-readable → rebuild).
+        assert!(
+            !pax_segment_is_coarse_rabitq_without_f32_tier(&[0u8; 64]),
+            "non-PAX bytes → false"
+        );
     }
 
     /// M1 (ADR-049): a `VectorQuant::RawF32` PAX segment carries no RaBitQ codes,
