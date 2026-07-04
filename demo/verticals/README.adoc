@@ -23,12 +23,12 @@ toc::[]
 | **Fraud & AML** (FSI, built) | timeseries + vector + graph + RAG | Compliance copilot: transacted-volume burst → AML-typology match → Cypher ring trace → case-note / SAR playbook.
 | **Energy** | timeseries + vector + graph | Grid copilot: meter/sensor anomaly + forecast → topology-aware outage impact → maintenance-log RAG.
 | **Social media** | graph + vector + hybrid RRF | Feed/reco copilot: semantic post search + social-graph proximity + community/influence; taste memory (ADR-022).
-| **Internet / web** | vector + BM25 + Graph-RAG + Text-to-SQL | Knowledge copilot: hybrid retrieval → entity knowledge-graph reasoning → pgwire SQL analytics.
+| **Internet / web** (built) | timeseries + vector + graph + RAG | Incident copilot: 5xx error burst → incident-typology match → Cypher dependency-chain trace ∩ failing set → root cause → postmortem playbook.
 | **Chip / semiconductor** | vector + graph + timeseries + RAG | Design/verification copilot: spec & sim-log RAG + defect/waveform similarity + netlist-graph traversal + yield timeseries.
 |===
 
-**Manufacturing** (the template) and **Fraud & AML** (the first FSI vertical) are built
-out and verified live against a code-aligned engine. The rest reuse their harness — see
+**Manufacturing** (the template), **Fraud & AML** (first FSI vertical), and **Internet / web**
+are built out and verified live against a code-aligned engine. The rest reuse their harness — see
 below.
 
 == The reusable shape
