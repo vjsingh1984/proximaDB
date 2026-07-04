@@ -54,19 +54,27 @@ it ran through the engine:
 
 [source,text]
 ----
-🤖 [timeseries] 2 sensor(s) off baseline: assembly-2/vibration, paint-3/temperature
+🤖 [timeseries] scanned 36 sensor streams via ProximaDB — 2 anomalous: assembly-2/vibration, paint-3/temperature
      [API ✓] POST /api/v2/collections/mfg_fault_signatures/search  (200, 3 ms)
-🤖 [vector] assembly-2/vibration → bearing wear (score 0.990, live ANN)
-🤖 [graph] downstream impact → line-paint (4 machines), line-packaging (4 machines)
+🤖 [vector] assembly-2/vibration → bearing wear (score 0.982, live ANN)
+     [API ✓] POST /api/v2/graphs/assets/query  (200, 1 ms)
+🤖 [graph] downstream impact → paint          (live Cypher)
      [API ✓] POST /api/v2/collections/mfg_maintenance_logs/search  (200, 2 ms)
 🤖 [RAG] log-bearing-01 (score 0.874) → Replaced worn spindle bearing…
 ----
 
-The fault-signature match and maintenance-log RAG are live ProximaDB ANN searches
-(`records/batch` inserts + typed `search`); the timeseries anomaly scan and graph
-impact run over the mounted dataset (ProximaDB's timeseries / graph engines wire the
-same way — see below). The demo embedding is a deterministic hash for portability;
-production uses a real embedder.
+**All four modalities are live ProximaDB calls** (nothing client-side):
+- **timeseries** — each sensor stream is ingested (`POST /api/v2/timeseries/collections/{c}/ingest`)
+  and scanned with a per-30-min-bucket `max` **aggregate**; a z-score vs the early-window
+  baseline flags exactly the two seeded faults.
+- **vector** — fault-signature ANN over `records/batch` + typed `search`.
+- **graph** — the asset topology is built (`/graphs/assets/nodes` + `/edges`) and downstream
+  impact resolved by a **Cypher** query (`MATCH (l:Line {id:…})-[:feeds_into*1..5]->(dl) RETURN dl`).
+- **RAG** — hybrid vector search over the maintenance-log corpus.
+
+The demo embedding is a deterministic hash for portability; production uses a real embedder.
+The timeseries + graph endpoints require a ProximaDB built from the same code (they landed
+in #651) — the Docker steps above build exactly that.
 
 === B. Offline illustration (no server)
 

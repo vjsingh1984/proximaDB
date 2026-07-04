@@ -32,8 +32,13 @@ import os
 import time
 import urllib.error
 import urllib.request
-from collections import defaultdict, deque
+from datetime import datetime
 from pathlib import Path
+
+
+def iso_ms(iso: str) -> int:
+    """Parse a generate_data ISO timestamp to epoch milliseconds."""
+    return int(datetime.fromisoformat(iso).timestamp() * 1000)
 
 BASE = os.environ.get("PROXIMADB_URL", "http://localhost:5678").rstrip("/")
 DATA = Path(os.environ.get("DATA", Path(__file__).parent / "data"))
@@ -116,45 +121,87 @@ def load_logs(logs) -> None:
 
 
 # ── analysis hops ───────────────────────────────────────────────────────────────
-def scan_anomalies(series) -> list[dict]:
-    """Timeseries anomaly scan over the mounted dataset (client-side z-score).
-    Production: a ProximaDB timeseries aggregate query per sensor."""
+def timeseries_scan(series) -> list[dict]:
+    """Ingest each sensor stream into ProximaDB time-series, then aggregate per 30-min
+    bucket to flag anomalies — real `/api/v2/timeseries/*` calls (create + ingest +
+    aggregate). Returns flagged sensors + a feature vector for the fault-signature match.
+    (Bulk ingest calls are untraced to keep the transcript readable.)"""
     flagged = []
+    print(f"     [timeseries] ingesting {len(series)} sensor streams + aggregating (live API)…")
     for s in series:
-        vals = [p["value"] for p in s["points"]]
-        n = len(vals)
-        base = vals[: n // 2]
-        mean = sum(base) / len(base)
-        sd = (sum((v - mean) ** 2 for v in base) / len(base)) ** 0.5 or 1e-6
-        tail = vals[int(n * 0.6):]
-        breaks = sum(1 for v in tail if abs(v - mean) / sd > 3.0)
-        if breaks >= max(3, len(tail) * 0.03):
-            slope = (sum(tail[-20:]) / 20 - mean) / (mean or 1e-6)
+        coll = "ts_" + s["sensor_id"].replace(":", "_").replace("-", "_")
+        metric = s["metric"]
+        pts = s["points"][::6]  # ~6-min cadence keeps the demo snappy
+        if len(pts) < 4:
+            continue
+        api("POST", "/api/v2/timeseries/collections", {"name": coll})
+        points = [{"timestamp": iso_ms(p["ts"]), "values": {metric: p["value"]}} for p in pts]
+        api("POST", f"/api/v2/timeseries/collections/{coll}/ingest", {"points": points})
+        res = api("POST", f"/api/v2/timeseries/collections/{coll}/aggregate",
+                  {"start_time": iso_ms(pts[0]["ts"]) - 1, "end_time": iso_ms(pts[-1]["ts"]) + 1,
+                   "aggregation": "max", "bucket_ms": 1_800_000})
+        peaks = [b["values"][metric] for b in res.get("buckets", []) if metric in b.get("values", {})]
+        if len(peaks) < 4:
+            continue
+        # per-bucket MAX exposes the intermittent spike / drift that averaging smooths.
+        # Flag when the late-window peak breaks out of the early-window baseline
+        # distribution (z-score) — this adapts to each sensor's own noise, so a
+        # spike (z≈30) and a slow drift (z≈9) both trip while noisy-but-normal
+        # sensors (z≈2) do not, without a metric-specific threshold.
+        half = len(peaks) // 2
+        early = peaks[:half]
+        base = sum(early) / len(early)
+        std = max((sum((p - base) ** 2 for p in early) / len(early)) ** 0.5, base * 0.02)
+        late_peak = max(peaks[half:])
+        z = (late_peak - base) / std
+        if z > 4.5:
+            ratio = late_peak / base if base else 1.0
+            hot = sum(1 for a in peaks[half:] if (a - base) / std > 4.5) / max(1, len(peaks[half:]))
+            # feature[0] = baseline level so the metric magnitude picks the right fault
+            # signature (vibration≈3 → bearing, temperature≈68 → cooling).
             flagged.append({
-                "machine": s["machine"], "metric": s["metric"], "breakouts": breaks,
-                "features": [round(sum(tail) / len(tail), 3), round(slope, 3),
-                             round(max(vals) / (mean or 1e-6), 3), round(breaks / len(tail), 3)],
+                "machine": s["machine"], "metric": metric,
+                "features": [round(base, 3), round(ratio - 1, 3), round(ratio, 3), round(hot, 3)],
             })
     return flagged
 
 
-def downstream_impact(machine, assets) -> list[str]:
-    """Graph impact over the mounted topology (BFS on feeds_into).
-    Production: the ProximaDB `graph_walk` / impact-analysis endpoint."""
-    line_of = {n["id"]: n.get("line") for n in assets["nodes"] if n["kind"] == "machine"}
-    flow, contains = defaultdict(list), defaultdict(list)
+def build_asset_graph(assets) -> None:
+    """Create the asset topology as a ProximaDB graph — line/machine nodes + feeds_into
+    / contains edges — via the real graph API (untraced setup calls)."""
+    api("POST", "/api/v2/graphs", {"graph_id": "assets"})
+    keep = set()
+    for node in assets["nodes"]:
+        if node["kind"] in ("line", "machine"):
+            keep.add(node["id"])
+            api("POST", "/api/v2/graphs/assets/nodes",
+                {"node": {"id": node["id"], "labels": [node["kind"].capitalize()],
+                          "properties": {"name": node.get("name", node["id"])}}})
+    n_edges = 0
     for e in assets["edges"]:
-        (flow if e["rel"] == "feeds_into" else contains if e["rel"] == "contains" else defaultdict(list))[e["from"]].append(e["to"])
-    start = f"line-{line_of.get(machine)}"
-    impacted, q, seen = [], deque([start]), {start}
-    while q:
-        for nxt in flow[q.popleft()]:
-            if nxt not in seen:
-                seen.add(nxt)
-                machines = [m for m in contains[nxt] if not m.startswith("line-")]
-                impacted.append(f"{nxt} ({len(machines)} machines)")
-                q.append(nxt)
-    return impacted
+        if e["rel"] in ("feeds_into", "contains") and e["from"] in keep and e["to"] in keep:
+            api("POST", "/api/v2/graphs/assets/edges",
+                {"edge": {"id": f"{e['from']}->{e['to']}", "from_node_id": e["from"],
+                          "to_node_id": e["to"], "edge_type": e["rel"], "weight": 1.0}})
+            n_edges += 1
+    print(f"     [graph] built asset topology: {len(keep)} nodes, {n_edges} edges (live)")
+
+
+def graph_impact(machine, assets) -> list[str]:
+    """Downstream impact via a live Cypher query over the asset graph — from the faulty
+    machine's line, follow `feeds_into` to the downstream lines."""
+    line_of = {n["id"]: n.get("line") for n in assets["nodes"] if n["kind"] == "machine"}
+    line = f"line-{line_of.get(machine)}"
+    query = f"MATCH (l:Line {{id:'{line}'}})-[:feeds_into*1..5]->(dl:Line) RETURN dl"
+    res = api("POST", "/api/v2/graphs/assets/query", {"query": query, "language": "cypher"},
+              label=f"Cypher downstream-impact from {line}")
+    rows = res.get("data", {}).get("rows", [])
+    out = []
+    for r in rows:
+        node_id = r.get("node_id") or r.get("id")
+        props = r.get("properties", {})
+        out.append(props.get("name", node_id) if isinstance(props, dict) else node_id)
+    return out
 
 
 def main() -> None:
@@ -169,17 +216,19 @@ def main() -> None:
     caps = api("GET", "/api/v2/_meta/capabilities")
     print(f"  engine: v{caps.get('api_version','?')}  features: {', '.join(caps.get('features',[])[:6])}…\n")
 
-    print("── setup (real ProximaDB writes) ──")
+    print("── setup (real ProximaDB writes across all four modalities) ──")
     create_collection(SIG_COLL, 4)
     create_collection(LOG_COLL, EMB_DIM)
     load_signatures(signatures)
     load_logs(logs)
+    build_asset_graph(assets)
 
     print("\n── copilot ──")
     print("\n👷 operator: Throughput on the packaging line just dropped — what's going on?")
 
-    anomalies = scan_anomalies(series)
-    print(f"\n🤖 [timeseries] {len(anomalies)} sensor(s) off baseline (mounted data): "
+    anomalies = timeseries_scan(series)
+    print(f"\n🤖 [timeseries] scanned {len(series)} sensor streams via ProximaDB — "
+          f"{len(anomalies)} anomalous: "
           + ", ".join(f"{a['machine']}/{a['metric']}" for a in anomalies))
 
     for a in anomalies:
@@ -193,8 +242,8 @@ def main() -> None:
         fault = unwrap(hits[0]["props"].get("label", hits[0]["id"]))
         print(f"🤖 [vector] {a['machine']}/{a['metric']} → **{fault}** (score {hits[0]['score']:.3f}, live ANN)")
 
-        # GRAPH — impact over mounted topology
-        impact = downstream_impact(a["machine"], assets)
+        # GRAPH — downstream impact via a live Cypher query
+        impact = graph_impact(a["machine"], assets)
         print(f"🤖 [graph] downstream impact → {', '.join(impact) if impact else 'none (contained)'}")
 
         # RAG — real ProximaDB vector search over the log corpus
