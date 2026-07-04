@@ -1,0 +1,65 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-XMODAL-6: cross-modal UDTFs over pgwire return 0 rows for live-written data (tenant/read-path scoping)
+
+[cols="1,3"]
+|===
+|Status|Open
+|Priority|HIGH
+|Scope|FEAT
+|Date|2026-07-04
+|Relates to|ADR-053 (cross-modal query fabric), `src/datafusion/cross_modal.rs` (`VectorSearchTableProvider`, `TimeseriesRangeTableProvider`), `src/datafusion/mod.rs::build_session_context`, the pgwire→DataFusion path (`src/network/postgres/relational_pipeline.rs`, `src/query/execution/datafusion_engine.rs`), `VectorOpsPort` / `timeseries_service()`. Follow-on to the pgwire→UDTF reachability fix.
+|===
+
+== Context
+
+With the reachability fix (table-functions route to the DataFusion `ctx.sql` fallback) and
+`datafusion-integration` in the server's default features, a cross-modal join now **executes**
+over a real pgwire session:
+
+[source,sql]
+----
+SELECT d.id, v.score FROM wh d JOIN vector_search('sig','[0.1,0.2]',5) v ON d.id = v.id;   -- runs
+SELECT count(*)      FROM wh d CROSS JOIN timeseries_range('ts', 0, 9e9) t;                 -- runs
+----
+
+But both return **0 rows** for data written moments earlier via the v2 REST surface, even though
+REST reads that same data back:
+
+* `POST /api/v2/collections/de_vec/records/batch` (3 vectors) → REST `search` returns all 3, but the
+  pgwire `vector_search` UDTF's `scan()` returns 0 (log: search reaches `de_vec` but finds 0 records).
+* `POST /api/v2/timeseries/collections/ts_seeded/ingest` (3 points) → REST `query` returns all 3, but
+  the pgwire `timeseries_range` UDTF returns 0 — **even though both the REST handler and the UDTF use
+  the same process-global `timeseries_service()`**.
+
+The route/plan are correct (`Compute Route: DataFusionLocal` → frontend declines the table-function →
+`ctx.sql` fallback → UDTF `scan()` invoked). The gap is **data visibility on the UDTF read path**.
+
+== Root-cause hypothesis (to confirm)
+
+The UDTF providers issue their read with **`tenant_id = None`** (`cross_modal.rs`
+`VectorSearchTableProvider::new(..., None)`), while REST writes/reads under a concrete (default)
+tenant. The pgwire connection's tenant (the startup `dbname`/catalog) is **not threaded into
+`build_session_context` / the UDTF**, so the modality read is unscoped (or scoped to the wrong
+tenant) relative to where the data lives. The timeseries case (shared global, still 0) suggests the
+same tenant/partition-scoping mismatch in `TimeSeriesService::query`, or a freshness/flush boundary
+the UDTF read does not cross (the vector log shows `wal_delta_records_scanned=0`, `watermark_lsn=0`).
+
+== Proposed fix
+
+1. **Thread the connection tenant** through `QueryExecutionContext` → `prepare_dataframe` →
+   `build_session_context` → the UDTF providers, so `vector_search` / `timeseries_range` /
+   (future) `graph_traverse` read under the same `TenantContext` the pgwire session carries — the
+   co-design invariant (`TenantContext` at every I/O boundary), not `None`.
+2. **Cross the freshness boundary**: ensure the UDTF read includes unflushed WAL/memtable state
+   (Strong freshness) so REST-just-written data is visible without a manual flush — mirror the REST
+   read path's freshness handling.
+3. **Ratchet**: extend `tests/pgwire_crossmodal_join_e2e.rs` to seed vector + timeseries data (via the
+   in-process services under the connection tenant) and assert the join returns the **expected rows**
+   (not just that it executes) — the value-level proof the reachability test defers.
+
+== Impact / gating
+
+Blocks the data-engineering demo (`demo/data-engineering/`, PR-C) from showing **real** joined rows —
+today it can only show that the cross-modal query is reachable/plannable. Once fixed, the zero-ETL
+`relational ⋈ vector ⋈ timeseries ⋈ graph` join returns live results over pgwire.
