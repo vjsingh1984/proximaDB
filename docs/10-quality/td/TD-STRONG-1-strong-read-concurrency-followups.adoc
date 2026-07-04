@@ -54,8 +54,9 @@ gain — **dropped**, not merely deferred. (Downstream evidence:
 anvaiops `tests/load/results/2026-07-04-arm-vs-x86-postfix/`.)
 
 *Fix C — flush policy* (the 2GB default keeps small corpora unflushed forever, so
-every Strong search is an O(N) linear tail scan) is a separate structural lever
-that only pays off with TD-096 (HELIX block-skip on the flushed side).
+every Strong search is an O(N) linear tail scan) is promoted to its own gated
+item, **TD-FLUSH-2** (gate: TD-096 + a corpus-scale trigger). A+B lowered its
+urgency to a scale concern; it is not built at MVP size.
 
 == Part B — Close the ungated query-cache read sites (SEC/correctness) — DONE
 
