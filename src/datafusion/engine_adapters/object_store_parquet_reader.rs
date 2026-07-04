@@ -10,12 +10,11 @@ use std::sync::Arc;
 use arrow_schema::{Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::catalog::Session;
-use datafusion::common::ScalarValue as DfScalarValue;
 use datafusion::common::Statistics;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::execution::SendableRecordBatchStream;
-use datafusion::logical_expr::{Expr, Operator};
+use datafusion::logical_expr::{Expr, Operator, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::prelude::SessionContext;
@@ -33,6 +32,7 @@ use proximadb_storage_common::format_splits::{
 use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
 use url::Url;
 
+use super::super::physical_filter_translate::df_scalar_value;
 use super::super::proxima_scan_exec::{ProximaScanExec, SplitReader};
 use super::super::proxima_table_provider::EngineType;
 use super::super::schema_inference::{
@@ -322,6 +322,19 @@ impl TableProvider for ObjectStoreParquetTable {
         TableType::Base
     }
 
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> DFResult<Vec<TableProviderFilterPushDown>> {
+        // TD-OLAP-3 slice A: without this override DataFusion's optimizer
+        // keeps every WHERE predicate in a FilterExec and hands `scan()` an
+        // EMPTY filter list — the split-pruning machinery below never fires.
+        // `Inexact` = predicates are passed to `scan()` for best-effort
+        // row-group pruning AND the FilterExec stays above for exact
+        // row-level filtering, so results cannot regress.
+        Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
+    }
+
     fn statistics(&self) -> Option<Statistics> {
         // ADR-050 D2 / TD-DFR-1: footer-derived, zero-new-scan column
         // statistics so the planner stops planning blind. Typed min/max value
@@ -343,6 +356,12 @@ impl TableProvider for ObjectStoreParquetTable {
     ) -> DFResult<Arc<dyn ExecutionPlan>> {
         let target_partitions = state.config().target_partitions();
         let pruned = self.prune_splits(filters);
+        // Skip-ratio evidence for the runtime-filter promotion gate
+        // (TD-OLAP-3/TD-OLAP-4): candidate vs pruned splits, per query.
+        crate::observability::io_trace::record_splits(
+            self.splits.len() as u64,
+            (self.splits.len() - pruned.len()) as u64,
+        );
         // Post-prune stats, narrowed to the projection: `partition_statistics`
         // requires the vector to match the exec's PROJECTED schema width.
         let scan_stats = project_statistics(
@@ -547,27 +566,6 @@ fn literal_value(expr: &Expr) -> Option<ScalarValue> {
     }
 }
 
-fn df_scalar_value(value: &DfScalarValue) -> Option<ScalarValue> {
-    match value {
-        DfScalarValue::Null => Some(ScalarValue::Null),
-        DfScalarValue::Boolean(Some(v)) => Some(ScalarValue::Bool(*v)),
-        DfScalarValue::Int8(Some(v)) => Some(ScalarValue::Int64(*v as i64)),
-        DfScalarValue::Int16(Some(v)) => Some(ScalarValue::Int64(*v as i64)),
-        DfScalarValue::Int32(Some(v)) => Some(ScalarValue::Int64(*v as i64)),
-        DfScalarValue::Int64(Some(v)) => Some(ScalarValue::Int64(*v)),
-        DfScalarValue::UInt8(Some(v)) => Some(ScalarValue::Int64(*v as i64)),
-        DfScalarValue::UInt16(Some(v)) => Some(ScalarValue::Int64(*v as i64)),
-        DfScalarValue::UInt32(Some(v)) => Some(ScalarValue::Int64(*v as i64)),
-        DfScalarValue::UInt64(Some(v)) => i64::try_from(*v).ok().map(ScalarValue::Int64),
-        DfScalarValue::Float32(Some(v)) => Some(ScalarValue::Float64(*v as f64)),
-        DfScalarValue::Float64(Some(v)) => Some(ScalarValue::Float64(*v)),
-        DfScalarValue::Utf8(Some(v))
-        | DfScalarValue::Utf8View(Some(v))
-        | DfScalarValue::LargeUtf8(Some(v)) => Some(ScalarValue::String(v.clone())),
-        _ => None,
-    }
-}
-
 /// Register an object_store-backed Parquet location as a DataFusion table.
 pub async fn register_object_store_parquet_location(
     ctx: &SessionContext,
@@ -701,6 +699,51 @@ mod tests {
             Precision::Inexact(DfScalarValue::Int64(Some(101)))
         );
         assert_eq!(x.null_count, Precision::Inexact(0));
+    }
+
+    /// TD-OLAP-3 slice A: with `supports_filters_pushdown` (Inexact), a WHERE
+    /// predicate planned through a real DataFusion session reaches `scan()`
+    /// and prunes row-group splits — previously the optimizer kept it in a
+    /// FilterExec and `scan()` saw an empty filter list (dormant pruning).
+    #[tokio::test]
+    async fn where_predicate_reaches_scan_and_prunes_splits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        write_two_row_group_parquet(&data_dir.join("part-0.parquet"));
+
+        let location = format!("file://{}", tmp.path().display());
+        let ctx = SessionContext::new();
+        register_object_store_parquet_location(&ctx, "t", &location)
+            .await
+            .unwrap();
+
+        // Row group 1 holds x ∈ {1,2}; row group 2 holds x ∈ {100,101}.
+        let df = ctx.sql("SELECT x FROM t WHERE x > 50").await.unwrap();
+        let plan = df.create_physical_plan().await.unwrap();
+
+        fn find_scan(plan: &Arc<dyn ExecutionPlan>) -> Option<usize> {
+            if let Some(scan) = plan.downcast_ref::<ProximaScanExec>() {
+                return Some(scan.total_split_count());
+            }
+            plan.children().iter().find_map(|c| find_scan(c))
+        }
+        let splits = find_scan(&plan).expect("plan contains a ProximaScanExec");
+        assert_eq!(
+            splits, 1,
+            "the WHERE predicate must reach scan() and prune the disjoint row group"
+        );
+
+        // Correctness: the FilterExec above still applies exact semantics.
+        let rows = ctx
+            .sql("SELECT x FROM t WHERE x > 50")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let total: usize = rows.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total, 2, "exactly the two rows with x > 50");
     }
 
     #[tokio::test]

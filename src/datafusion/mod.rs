@@ -53,6 +53,10 @@ pub mod scan_executor;
 pub mod schema_inference;
 pub mod table_provider;
 
+// TD-OLAP-3: resolved PhysicalExpr → split-pruning predicate translation
+// (consumes DataFusion 54's join runtime filters at stream-open).
+pub(crate) mod physical_filter_translate;
+
 // New split-based table provider and execution plan modules
 pub mod proxima_scan_exec;
 pub mod proxima_table_provider;

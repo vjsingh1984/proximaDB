@@ -54,10 +54,17 @@ use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion::common::Statistics;
+use datafusion::common::config::ConfigOptions;
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext};
-use datafusion::physical_expr::{EquivalenceProperties, Partitioning};
+use datafusion::physical_expr::expressions::DynamicFilterPhysicalExpr;
+use datafusion::physical_expr::{EquivalenceProperties, Partitioning, PhysicalExpr};
+use datafusion::physical_plan::filter_pushdown::{
+    ChildPushdownResult, FilterPushdownPhase, FilterPushdownPropagation, PushedDown,
+};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
+
+use super::physical_filter_translate::pruning_predicates;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
 use futures::{Stream, StreamExt, TryStreamExt};
 use tracing::debug;
@@ -140,6 +147,24 @@ pub struct ProximaScanExec {
     properties: Arc<PlanProperties>,
     /// Cached statistics
     statistics: Option<Statistics>,
+    /// Absorbed join runtime filters (TD-OLAP-3): DataFusion 54's HashJoin
+    /// pushes a `DynamicFilterPhysicalExpr` over the probe keys in the
+    /// Post-phase filter pushdown; `execute()` snapshots it at stream-open
+    /// (after the build side completed) and prunes splits before fetch.
+    dynamic_filters: Vec<Arc<dyn PhysicalExpr>>,
+}
+
+/// Opt-in gate for absorbing DataFusion's join runtime filters into the scan
+/// (default **off**, per the TD-OLAP-3 "default-off, trace-gated" rollout).
+/// Enable with `PROXIMADB_DF_RUNTIME_FILTER_PRUNE=1`; promote once the
+/// TD-OLAP-4 ledger evidences the skip ratio.
+pub fn runtime_filter_prune_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("PROXIMADB_DF_RUNTIME_FILTER_PRUNE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
 }
 
 impl ProximaScanExec {
@@ -201,6 +226,67 @@ impl ProximaScanExec {
         self.limit
     }
 
+    /// TD-OLAP-3 slice B: runtime split pruning. The absorbed join filter is
+    /// a `DynamicFilterPhysicalExpr` — `snapshot()` re-resolves it NOW
+    /// (stream-open, after the HashJoin build side completed) to per-column
+    /// bounds / an in-list over the build keys. Translation is conservative:
+    /// unrecognized shapes prune nothing, and the join above re-applies exact
+    /// semantics regardless.
+    fn apply_runtime_filters(
+        &self,
+        mut splits: Vec<FileSplit>,
+        partition: usize,
+    ) -> Vec<FileSplit> {
+        if self.dynamic_filters.is_empty() {
+            return splits;
+        }
+        let mut predicates = Vec::new();
+        for dynamic in &self.dynamic_filters {
+            if let Ok(Some(resolved)) = dynamic.snapshot() {
+                predicates.extend(pruning_predicates(&resolved));
+            }
+        }
+        if predicates.is_empty() {
+            return splits;
+        }
+        let before = splits.len();
+        splits.retain(|split| {
+            !predicates
+                .iter()
+                .any(|(column, predicate)| split.can_prune_scalar(column, predicate))
+        });
+        crate::observability::io_trace::record_splits(
+            before as u64,
+            (before - splits.len()) as u64,
+        );
+        debug!(
+            "Runtime filter pruned {}/{} splits for collection '{}' partition {}",
+            before - splits.len(),
+            before,
+            self.collection_name,
+            partition
+        );
+        splits
+    }
+
+    /// Copy of this scan with absorbed runtime filters attached (TD-OLAP-3).
+    fn with_dynamic_filters(&self, dynamic_filters: Vec<Arc<dyn PhysicalExpr>>) -> Self {
+        Self {
+            schema: self.schema.clone(),
+            original_schema: self.original_schema.clone(),
+            partitions: self.partitions.clone(),
+            projection: self.projection.clone(),
+            filters: self.filters.clone(),
+            limit: self.limit,
+            reader: self.reader.clone(),
+            batch_size: self.batch_size,
+            collection_name: self.collection_name.clone(),
+            properties: self.properties.clone(),
+            statistics: self.statistics.clone(),
+            dynamic_filters,
+        }
+    }
+
     /// Apply schema projection.
     fn project_schema(schema: &SchemaRef, projection: &Option<Vec<usize>>) -> SchemaRef {
         if let Some(proj) = projection {
@@ -237,13 +323,14 @@ impl DisplayAs for ProximaScanExec {
             | DisplayFormatType::TreeRender => {
                 write!(
                     f,
-                    "ProximaScanExec: collection={}, engine={}, partitions={}, splits={}, projection={:?}, filters={}, limit={:?}",
+                    "ProximaScanExec: collection={}, engine={}, partitions={}, splits={}, projection={:?}, filters={}, runtime_filters={}, limit={:?}",
                     self.collection_name,
                     self.reader.engine_type(),
                     self.partitions.len(),
                     self.total_split_count(),
                     self.projection,
                     self.filters.len(),
+                    self.dynamic_filters.len(),
                     self.limit
                 )
             }
@@ -285,7 +372,7 @@ impl ExecutionPlan for ProximaScanExec {
             self.partitions.get(partition).map(|p| p.len()).unwrap_or(0)
         );
 
-        let splits = self
+        let mut splits = self
             .partitions
             .get(partition)
             .ok_or_else(|| {
@@ -297,6 +384,8 @@ impl ExecutionPlan for ProximaScanExec {
                 ))
             })?
             .clone();
+
+        splits = self.apply_runtime_filters(splits, partition);
 
         let reader = self.reader.clone();
         let projection = self.projection.clone();
@@ -343,6 +432,50 @@ impl ExecutionPlan for ProximaScanExec {
         });
 
         Ok(Box::pin(RecordBatchStreamAdapter::new(schema, limited)))
+    }
+
+    fn handle_child_pushdown_result(
+        &self,
+        phase: FilterPushdownPhase,
+        child_pushdown_result: ChildPushdownResult,
+        _config: &ConfigOptions,
+    ) -> DFResult<FilterPushdownPropagation<Arc<dyn ExecutionPlan>>> {
+        // TD-OLAP-3 slice B: absorb ONLY runtime (dynamic) join filters, and
+        // only in the Post phase where HashJoin pushes them. Static predicates
+        // must stay in the FilterExec above — split pruning is inexact, so
+        // claiming support for them would drop rows. Absorbing a dynamic
+        // filter is safe: it is purely an optimization hint (the join still
+        // applies exact semantics).
+        if !matches!(phase, FilterPushdownPhase::Post) || !runtime_filter_prune_enabled() {
+            return Ok(FilterPushdownPropagation::if_all(child_pushdown_result));
+        }
+        let mut absorbed: Vec<Arc<dyn PhysicalExpr>> = Vec::new();
+        let statuses: Vec<PushedDown> = child_pushdown_result
+            .parent_filters
+            .iter()
+            .map(|parent| {
+                if parent
+                    .filter
+                    .downcast_ref::<DynamicFilterPhysicalExpr>()
+                    .is_some()
+                {
+                    absorbed.push(Arc::clone(&parent.filter));
+                    PushedDown::Yes
+                } else {
+                    PushedDown::No
+                }
+            })
+            .collect();
+        if absorbed.is_empty() {
+            return Ok(FilterPushdownPropagation::if_all(child_pushdown_result));
+        }
+        let mut dynamic_filters = self.dynamic_filters.clone();
+        dynamic_filters.extend(absorbed);
+        let updated: Arc<dyn ExecutionPlan> = Arc::new(self.with_dynamic_filters(dynamic_filters));
+        Ok(
+            FilterPushdownPropagation::with_parent_pushdown_result(statuses)
+                .with_updated_node(updated),
+        )
     }
 
     fn partition_statistics(&self, _partition: Option<usize>) -> DFResult<Arc<Statistics>> {
@@ -491,6 +624,7 @@ impl ProximaScanExecBuilder {
             collection_name: self.collection_name,
             properties: Arc::new(properties),
             statistics: self.statistics,
+            dynamic_filters: Vec::new(),
         })
     }
 }
@@ -776,5 +910,85 @@ mod tests {
         let schema = test_schema();
         let stream = EmptyRecordBatchStream::new(schema.clone());
         assert_eq!(stream.schema().fields().len(), 3);
+    }
+
+    /// TD-OLAP-3 slice B: an absorbed `DynamicFilterPhysicalExpr`, once the
+    /// build side resolves it to key bounds, prunes non-overlapping splits at
+    /// stream-open — the whole snapshot → translate → `can_prune_scalar` chain.
+    #[test]
+    fn runtime_filter_prunes_splits_at_execute() {
+        use datafusion::logical_expr::Operator;
+        use datafusion::physical_expr::expressions::{BinaryExpr, col, lit};
+        use proximadb_storage_common::format_splits::{ColumnBounds, SplitStatistics};
+
+        let schema: SchemaRef =
+            Arc::new(Schema::new(vec![Field::new("x", DataType::Int64, false)]));
+
+        let split_with_bounds = |file: &str, min: i64, max: i64| {
+            let mut split = FileSplit::new_row_group(file.to_string(), 0, 0, 1000, 100);
+            let mut stats = SplitStatistics {
+                row_count: Some(100),
+                byte_size: Some(1000),
+                ..Default::default()
+            };
+            stats.column_stats.insert(
+                "x".to_string(),
+                ColumnBounds {
+                    min: Some(serde_json::json!(min)),
+                    max: Some(serde_json::json!(max)),
+                    null_count: 0,
+                    distinct_count: None,
+                },
+            );
+            split.statistics = stats;
+            split
+        };
+
+        let exec = ProximaScanExec::builder()
+            .schema(schema.clone())
+            .splits(vec![])
+            .reader(Arc::new(NullSplitReader::new(
+                schema.clone(),
+                EngineType::Viper,
+            )))
+            .collection_name("t".to_string())
+            .target_partitions(1)
+            .build()
+            .unwrap();
+
+        // The join build side resolved to keys in [50, 300].
+        let dynamic = DynamicFilterPhysicalExpr::new(vec![col("x", &schema).unwrap()], lit(true));
+        dynamic
+            .update(Arc::new(BinaryExpr::new(
+                Arc::new(BinaryExpr::new(
+                    col("x", &schema).unwrap(),
+                    Operator::GtEq,
+                    lit(50i64),
+                )),
+                Operator::And,
+                Arc::new(BinaryExpr::new(
+                    col("x", &schema).unwrap(),
+                    Operator::LtEq,
+                    lit(300i64),
+                )),
+            )))
+            .unwrap();
+        let exec = exec.with_dynamic_filters(vec![Arc::new(dynamic)]);
+
+        let splits = vec![
+            split_with_bounds("a.parquet", 1, 10),    // disjoint → pruned
+            split_with_bounds("b.parquet", 100, 200), // overlaps → kept
+            split_with_bounds("c.parquet", 250, 400), // overlaps → kept
+        ];
+        let survivors = exec.apply_runtime_filters(splits, 0);
+        assert_eq!(survivors.len(), 2, "disjoint split pruned before fetch");
+        assert!(survivors.iter().all(|s| s.file_path != "a.parquet"));
+
+        // Unresolved placeholder (`lit(true)`) prunes nothing.
+        let placeholder =
+            DynamicFilterPhysicalExpr::new(vec![col("x", &schema).unwrap()], lit(true));
+        let exec = exec.with_dynamic_filters(vec![Arc::new(placeholder)]);
+        let splits = vec![split_with_bounds("a.parquet", 1, 10)];
+        assert_eq!(exec.apply_runtime_filters(splits, 0).len(), 1);
     }
 }
