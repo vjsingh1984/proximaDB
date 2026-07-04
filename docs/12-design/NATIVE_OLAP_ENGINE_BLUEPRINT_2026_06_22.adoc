@@ -22,7 +22,7 @@ tools / federated / export), not the internal scan format.
 
 [IMPORTANT]
 ====
-**Superseded in part by ADR-052 (Proposed, 2026-07-03; effective on its ratification).**
+**Superseded in part by ADR-052 (Accepted 2026-07-04).**
 `docs/12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc` retires the
 native-*operator*-engine end state: §3's framing of `NativeOlap` as a peer execution route,
 §4 P3's promotion of the native route *over* DataFusion (DataFusion as fallback), and the
