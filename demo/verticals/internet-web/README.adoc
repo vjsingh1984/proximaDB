@@ -114,9 +114,9 @@ Over the **MCP** transport it is the same, tool-shaped — the copilot calls `se
 a graph query (step 3), and can persist the incident timeline with `event` / recall prior outages
 with `memory` (ADR-022).
 
-== Why AnvaiOps
+== Why a governance layer
 
-The engine exposes the affordances; **AnvaiOps governs them**. Every copilot call is metered per
+The engine exposes the affordances; **a governance/control layer governs them**. Every copilot call is metered per
 tenant (KRU read/compute, KOU outgress), entitlement-checked, and PII-redacted at the gateway — so
 the same demo is a multi-tenant SaaS surface, not a notebook. Governance is the product; the
 multi-modal engine is the moat.

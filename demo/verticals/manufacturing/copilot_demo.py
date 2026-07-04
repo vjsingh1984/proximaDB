@@ -15,7 +15,7 @@ glue):
 
 This script is **self-contained and runnable with no server** — it runs the analysis
 locally over the generated dataset so the copilot transcript always works, and prints,
-for each step, the equivalent ProximaDB operation (the same call an AnvaiOps-governed
+for each step, the equivalent ProximaDB operation (the same call a governed
 MCP copilot issues in production). Run ``generate_data.py`` first.
 
     python generate_data.py && python run_demo.py
@@ -181,7 +181,7 @@ def main() -> None:
                    "(upstream, highest downstream impact), then the paint-3 cooling loop.")
     print("\n" + "-" * 74)
     print("In production every bracketed step is a governed ProximaDB operation issued")
-    print("through the AnvaiOps MCP copilot — metered per tenant (KRU/KEU), entitlement-")
+    print("through the governed MCP control plane — metered per tenant (KRU/KEU), entitlement-")
     print("checked, PII-redacted. Same engine, one query plane. See README.adoc.")
 
 

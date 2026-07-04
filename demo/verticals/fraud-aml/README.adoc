@@ -133,9 +133,9 @@ recall prior case context with `memory` (ADR-022):
                                    "query": "structuring smurfing", "k": 1 } }
 ----
 
-== Why AnvaiOps
+== Why a governance layer
 
-The engine exposes the affordances; **AnvaiOps governs them**. Every copilot call is metered
+The engine exposes the affordances; **a governance/control layer governs them**. Every copilot call is metered
 per tenant (KRU read/compute, KEU egress), entitlement-checked, and PII-redacted at the
 gateway — table stakes for a regulated FSI workload where transaction data can never leak
 across tenants. Governance is the product; the multi-modal engine is the moat.

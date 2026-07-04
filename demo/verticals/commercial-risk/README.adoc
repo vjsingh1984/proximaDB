@@ -115,9 +115,9 @@ Over the **MCP** transport it is the same, tool-shaped — the copilot calls `se
 a graph query (step 3), and can persist the decision with `event` / recall prior reviews with
 `memory` (ADR-022).
 
-== Why AnvaiOps
+== Why a governance layer
 
-The engine exposes the affordances; **AnvaiOps governs them**. Every copilot call is metered per
+The engine exposes the affordances; **a governance/control layer governs them**. Every copilot call is metered per
 tenant (KRU read/compute, KOU outgress), entitlement-checked, and PII-redacted at the gateway — table
 stakes for a business-data workload where firmographic and beneficial-owner data can never leak across
 tenants. Governance is the product; the multi-modal engine is the moat.
