@@ -20,13 +20,15 @@ toc::[]
 |===
 | Vertical | Modalities showcased | Copilot story
 | **Manufacturing / industrial** (template, built) | timeseries + vector + graph + RAG | Factory copilot: sensor anomaly → fault-signature match → downstream-impact traversal → maintenance-log fix.
+| **Fraud & AML** (FSI, built) | timeseries + vector + graph + RAG | Compliance copilot: transacted-volume burst → AML-typology match → Cypher ring trace → case-note / SAR playbook.
 | **Energy** | timeseries + vector + graph | Grid copilot: meter/sensor anomaly + forecast → topology-aware outage impact → maintenance-log RAG.
 | **Social media** | graph + vector + hybrid RRF | Feed/reco copilot: semantic post search + social-graph proximity + community/influence; taste memory (ADR-022).
 | **Internet / web** | vector + BM25 + Graph-RAG + Text-to-SQL | Knowledge copilot: hybrid retrieval → entity knowledge-graph reasoning → pgwire SQL analytics.
 | **Chip / semiconductor** | vector + graph + timeseries + RAG | Design/verification copilot: spec & sim-log RAG + defect/waveform similarity + netlist-graph traversal + yield timeseries.
 |===
 
-Only **manufacturing** is built out (the template). The rest reuse its harness — see
+**Manufacturing** (the template) and **Fraud & AML** (the first FSI vertical) are built
+out and verified live against a code-aligned engine. The rest reuse their harness — see
 below.
 
 == The reusable shape
