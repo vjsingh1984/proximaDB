@@ -235,33 +235,11 @@ impl TenantGraphOps<'_> {
     ) -> Result<TraversalResponse> {
         self.inner.traverse(&self.scope(graph_id)?, request).await
     }
-    #[allow(clippy::too_many_arguments)]
-    pub async fn shortest_path(
-        &self,
-        graph_id: &str,
-        start_node_id: &NodeId,
-        target_node_id: &NodeId,
-        max_depth: Option<u32>,
-        edge_types: Option<Vec<String>>,
-        algorithm: Option<crate::proto::proximadb_v1::ShortestPathAlgorithm>,
-        k: Option<u32>,
-        override_enable_prefetch: Option<bool>,
-        override_prefetch_budget: Option<usize>,
-    ) -> Result<Option<(Vec<NodeId>, f64)>> {
-        self.inner
-            .shortest_path(
-                &self.scope(graph_id)?,
-                start_node_id,
-                target_node_id,
-                max_depth,
-                edge_types,
-                algorithm,
-                k,
-                override_enable_prefetch,
-                override_prefetch_budget,
-            )
-            .await
-    }
+    // NOTE: `shortest_path` is intentionally NOT forwarded here. Its raw signature names a v1
+    // proto type (`ShortestPathAlgorithm`), and duplicating that path in a forwarder adds a
+    // net-new legacy-v1-proto reference that trips the TD-123 ratchet. Its single caller (the v2
+    // gRPC handler) instead composes the scope via [`scoped_graph_id`] and calls the raw method
+    // directly — same structural key, no extra legacy-proto reference.
     pub async fn connected_components(&self, graph_id: &str) -> Result<Vec<Vec<NodeId>>> {
         self.inner
             .connected_components(&self.scope(graph_id)?)

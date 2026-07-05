@@ -696,11 +696,15 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             Ok(pv1::ShortestPathAlgorithm::Astar) => pv1::ShortestPathAlgorithm::Astar,
             _ => pv1::ShortestPathAlgorithm::Dijkstra,
         };
+        // Compose the structural scope once (`{tenant}/{graph_id}`) and call the raw method
+        // directly — `shortest_path` is deliberately not a `TenantGraphOps` forwarder (its
+        // legacy-v1-proto algorithm type would add a net-new legacy-proto reference, TD-123).
+        let scoped_graph_id = crate::graph::scoped_graph_id(&tenant, &graph_id)
+            .map_err(|e| Status::invalid_argument(format!("invalid tenant: {e}")))?;
         match self
             .graph
-            .for_tenant(&tenant)
             .shortest_path(
-                &graph_id,
+                &scoped_graph_id,
                 &req.start_node_id,
                 &req.target_node_id,
                 req.max_depth,
