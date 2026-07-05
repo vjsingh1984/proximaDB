@@ -2,6 +2,23 @@
 
 All notable changes to ProximaDB will be documented in this file.
 
+## [0.2.2] - 2026-07-04
+
+### Storage
+- Always-PAX flush/compaction for the SST engine (ADR-049 M1-3); PAX segment compaction; AXIS rebuild from SST on index-store loss.
+
+### Statistics & routing
+- Canonical segment-statistics contract (ADR-042) + neutral envelope (ADR-037) + freshness floor (ADR-038); ADR-050 cost-based routing recorded.
+
+### API
+- gRPC v2 GetRecord Python stubs regenerated to match the proto; two-surface SQL model (pgwire + JWT gRPC ExecuteQuery) documented — neither deprecated.
+
+### OSS adoption
+- First-run funnel fixed (docker refs -> published vjsingh1984/proximadb, :latest live multi-arch); README status reconciled to SUPPORTED_SURFACE ("the contract wins"); OPEN_CORE.md + COMPETITIVE_LANDSCAPE.adoc added.
+
+### Hygiene
+- Clippy real-bug tail + mechanical sweep; attribution/doc-authority CI gates; deterministic-commit contract.
+
 ## [0.2.0] - 2026-02-22
 
 ### 🎉 Major Release: Platform Packages
