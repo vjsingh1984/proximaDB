@@ -485,7 +485,11 @@ const TPCDS_SCHEMA: &[(&str, &str)] = &[
     ),
     (
         "store_sales",
-        "CREATE TABLE store_sales (ss_sold_date_sk INT, ss_item_sk INT, ss_store_sk INT, ss_customer_sk INT, ss_addr_sk INT, ss_ticket_number INT, ss_quantity INT, ss_sales_price DOUBLE PRECISION, ss_ext_sales_price DOUBLE PRECISION, ss_ext_discount_amt DOUBLE PRECISION, ss_net_profit DOUBLE PRECISION)",
+        // TD-OLAP-6: star-schema fact tables key on an INT date surrogate, so
+        // the first-DATE-column heuristic finds nothing — declare the cluster
+        // key explicitly so sort-on-materialize gives row groups tight
+        // ss_sold_date_sk windows (the runtime join filter's prune target).
+        "CREATE TABLE store_sales (ss_sold_date_sk INT, ss_item_sk INT, ss_store_sk INT, ss_customer_sk INT, ss_addr_sk INT, ss_ticket_number INT, ss_quantity INT, ss_sales_price DOUBLE PRECISION, ss_ext_sales_price DOUBLE PRECISION, ss_ext_discount_amt DOUBLE PRECISION, ss_net_profit DOUBLE PRECISION) WITH (cluster_key = 'ss_sold_date_sk')",
     ),
 ];
 

@@ -384,11 +384,29 @@ impl ExecutionPlan for ProximaScanExec {
         // streams into one. Each split's future owns its `FileSplit` + an `Arc` clone of
         // the reader, so the resulting stream is `'static` and `Send`.
         //
-        // Runtime-filter pruning is evaluated PER SPLIT, immediately before its
-        // read (see `split_pruned_by_runtime_filters`): in partitioned
-        // hash-join mode the probe races the build, so early splits may see
-        // the unresolved placeholder (and are read), while later splits see
-        // the resolved bounds/in-list and skip their fetch entirely.
+        // Runtime-filter protocol (TD-OLAP-3, race PROVEN by evidence): the
+        // probe scan is drained eagerly (RepartitionExec producer tasks), so
+        // without synchronization every split races the HashJoin build and
+        // sees the `lit(true)` placeholder. The stream head therefore AWAITS
+        // each absorbed filter's completion signal (`wait_complete`, fired by
+        // the join's `mark_complete` after the build) before any split is
+        // evaluated — bounded by a timeout so no plan shape can stall a scan
+        // (on timeout, splits are read unpruned: conservative). Per-split
+        // evaluation below stays as defense-in-depth.
+        let wait_filters = dynamic_filters.clone();
+        let head = futures::stream::once(async move {
+            for dynamic in &wait_filters {
+                if let Some(df) = dynamic.downcast_ref::<DynamicFilterPhysicalExpr>() {
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        df.wait_complete(),
+                    )
+                    .await;
+                }
+            }
+            futures::stream::empty::<DFResult<RecordBatch>>()
+        })
+        .flatten();
         let empty_schema = schema.clone();
         let batches = futures::stream::iter(splits)
             .then(move |split| {
@@ -420,6 +438,7 @@ impl ExecutionPlan for ProximaScanExec {
                 }
             })
             .try_flatten();
+        let batches = head.chain(batches);
 
         // Honor the row limit without over-reading: stop once `limit` rows are emitted.
         let limited = batches.scan(0usize, move |emitted, item| {
