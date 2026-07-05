@@ -152,6 +152,12 @@ pub struct ProximaScanExec {
     /// Post-phase filter pushdown; `execute()` snapshots it at stream-open
     /// (after the build side completed) and prunes splits before fetch.
     dynamic_filters: Vec<Arc<dyn PhysicalExpr>>,
+    /// Per-query I/O trace captured at **build** time (physical planning, in
+    /// scope). `execute()` runs on DataFusion-spawned partition tasks where the
+    /// `IO_TRACE` task-local is absent, so the split-pruning counters
+    /// (`record_splits`) must record through this captured handle to attribute
+    /// to the right query (TD-OLAP-3). `None` when built outside a scope.
+    trace: Option<Arc<crate::observability::io_trace::IoTrace>>,
 }
 
 /// TD-OLAP-3 slice B: should this split be skipped under the CURRENT state of
@@ -271,6 +277,7 @@ impl ProximaScanExec {
             properties: self.properties.clone(),
             statistics: self.statistics.clone(),
             dynamic_filters,
+            trace: self.trace.clone(),
         }
     }
 
@@ -379,6 +386,7 @@ impl ExecutionPlan for ProximaScanExec {
         let schema = self.schema.clone();
         let dynamic_filters = self.dynamic_filters.clone();
         let collection_name = self.collection_name.clone();
+        let trace = self.trace.clone();
 
         // Drive each split's async `read_split` lazily and flatten the per-split batch
         // streams into one. Each split's future owns its `FileSplit` + an `Arc` clone of
@@ -415,10 +423,19 @@ impl ExecutionPlan for ProximaScanExec {
                 let dynamic_filters = dynamic_filters.clone();
                 let collection_name = collection_name.clone();
                 let empty_schema = empty_schema.clone();
+                let trace = trace.clone();
                 async move {
                     if !dynamic_filters.is_empty() {
                         let pruned = split_pruned_by_runtime_filters(&split, &dynamic_filters);
-                        crate::observability::io_trace::record_splits(1, pruned as u64);
+                        // Attribute through the captured handle: this closure runs
+                        // on a spawned partition task where the task-local is absent
+                        // (TD-OLAP-3).
+                        match &trace {
+                            Some(t) => t.record_splits(1, pruned as u64),
+                            None => {
+                                crate::observability::io_trace::record_splits(1, pruned as u64)
+                            }
+                        }
                         if pruned {
                             debug!(
                                 "Runtime filter skipped split {} of '{}' (partition {})",
@@ -657,6 +674,10 @@ impl ProximaScanExecBuilder {
             properties: Arc::new(properties),
             statistics: self.statistics,
             dynamic_filters: Vec::new(),
+            // Capture the active query trace now (physical planning runs in the
+            // query scope) so `execute()` — driven on spawned partition tasks —
+            // can still attribute its split-pruning counters (TD-OLAP-3).
+            trace: crate::observability::io_trace::current_handle(),
         })
     }
 }
