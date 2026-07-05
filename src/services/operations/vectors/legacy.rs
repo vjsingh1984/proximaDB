@@ -2421,6 +2421,41 @@ impl VectorOperationsService {
         Ok((v1_results, explain))
     }
 
+    /// Tenant-aware wrapper over [`unified_search_native`]: validates the tenant's access to the
+    /// collection and resolves it to the tenant's canonical id (mirroring `VectorOpsPort::search`),
+    /// then delegates the actual search. Isolation is clean-name + `TenantContext`
+    /// (catalog-resolve and record-stamp), never a name fold. `None` tenant (or empty tenant_id) ⇒
+    /// plain delegation.
+    /// Lets the fusion vector leg read only the tenant's vectors (TD-ENTITY-TENANT-1) without
+    /// touching the existing `unified_search_native` call sites.
+    pub async fn unified_search_native_with_tenant_context(
+        &self,
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        k: usize,
+        filter: Option<FilterExpression>,
+        config: Option<UnifiedSearchConfig>,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        let resolved = match tenant_context {
+            Some(tc) if !tc.tenant_id.is_empty() => {
+                self.validate_tenant_collection_access(collection_id, tenant_context)
+                    .await?;
+                match self
+                    .collection_port
+                    .get_collection(collection_id, Some(&tc.tenant_id))
+                    .await?
+                {
+                    Some(collection) => collection.id,
+                    None => collection_id.to_string(),
+                }
+            }
+            _ => collection_id.to_string(),
+        };
+        self.unified_search_native(&resolved, query_vector, k, filter, config)
+            .await
+    }
+
     /// Native variant: returns optimized native records for internal callers.
     /// Callers at API boundaries should use v1 adapters.
     pub async fn unified_search_native(

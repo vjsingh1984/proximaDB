@@ -222,6 +222,13 @@ impl TenantGraphOps<'_> {
     pub async fn query_nodes(&self, graph_id: &str, query: NodeQuery) -> Result<Vec<Arc<Node>>> {
         self.inner.query_nodes(&self.scope(graph_id)?, query).await
     }
+    pub async fn get_nodes(
+        &self,
+        graph_id: &str,
+        ids: &[String],
+    ) -> Result<Vec<Option<Arc<Node>>>> {
+        self.inner.get_nodes(&self.scope(graph_id)?, ids).await
+    }
 
     // ── Edge ops ────────────────────────────────────────────────────────────
     pub async fn create_edge(&self, graph_id: &str, edge: Edge) -> Result<Arc<Edge>> {

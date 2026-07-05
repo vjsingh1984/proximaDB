@@ -3796,6 +3796,8 @@ impl EmbeddedProximaDB {
             let params = GraphFusionParams {
                 route_policy: None,
                 graph_id: graph_id.to_string(),
+                // Embedded stays single-tenant by default (unscoped, byte-identical legacy behavior).
+                tenant: None,
                 vector_collection: vector_collection.to_string(),
                 query_vector,
                 max_depth,
