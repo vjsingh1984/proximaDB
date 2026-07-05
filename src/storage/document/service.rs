@@ -50,6 +50,24 @@ use proximadb_data_model::ProximaValue;
 use proximadb_records::conversions::sql_value_to_proxima;
 use proximadb_records::{ProximaTree, ProximaTreeNode, tree_get};
 
+/// Compose the structural per-tenant document collection key `{tenant}/{collection}` — the
+/// document counterpart of graph's `scoped_graph_id`.
+///
+/// The DEFAULT tenant stays UNSCOPED (bare `collection`), matching the bare collections the
+/// pgwire / REST v1 create paths register; named tenants scope. Validates the tenant as a path
+/// segment (fail-closed) before it becomes part of a storage key. BOTH the storage-key parameter
+/// AND the record's `collection_id` must be composed from this — they key the same canonical OID
+/// (`document/{collection_id}/{doc_id}`), so a scoped write and its recovery/read agree
+/// (TD-DOC-TENANT-1); scoping only one side mis-keys the live read immediately.
+pub fn scoped_document_collection(tenant: &str, collection: &str) -> anyhow::Result<String> {
+    proximadb_tenant::validate_request_tenant(tenant)
+        .map_err(|e| anyhow::anyhow!("invalid tenant '{tenant}': {e}"))?;
+    if tenant == proximadb_tenant::DEFAULT_TENANT {
+        return Ok(collection.to_string());
+    }
+    Ok(format!("{tenant}/{collection}"))
+}
+
 /// Document service for CRUD operations
 pub struct DocumentService {
     /// Storage engine for persistence (vector-centric, used for legacy flush path)
@@ -818,6 +836,31 @@ impl DocumentService {
         Ok(collections.get(name).cloned())
     }
 
+    /// Get the collection metadata for `name`, lazily provisioning it with defaults if absent —
+    /// the get-or-create counterpart of [`get_collection`].
+    ///
+    /// This lets a tenant-scoped first write auto-register its collection under the SCOPED key
+    /// (`{tenant}/{collection}`): the v2 document gRPC path scopes reads/writes, but there is no
+    /// scoped create path (pgwire/REST-v1 create bare), so without this the scoped collection has
+    /// no metadata and the existence gate rejects the insert (TD-DOC-TENANT-1). Provisioning goes
+    /// through [`create_collection`] so the `CreateCollection` WAL op is logged and the collection
+    /// metadata is rebuilt on restart (recovery replays collections only from that op). Idempotent
+    /// and race-safe: a lost create race is resolved by re-fetch.
+    pub async fn ensure_or_create_collection(&self, name: &str) -> Result<DocumentCollection> {
+        if let Some(existing) = self.get_collection(name).await? {
+            return Ok(existing);
+        }
+        let config = DocumentCollectionConfig {
+            name: name.to_string(),
+            ..Default::default()
+        };
+        // On success OR a lost create race, re-fetch the now-registered metadata.
+        let _ = self.create_collection(name, config).await;
+        self.get_collection(name)
+            .await?
+            .ok_or_else(|| anyhow!("Collection '{}' missing after provision", name))
+    }
+
     /// List all collections
     pub async fn list_collections(&self) -> Result<Vec<DocumentCollection>> {
         let collections = self.collections.read().await;
@@ -895,12 +938,11 @@ impl DocumentService {
             doc_id, collection
         );
 
-        // Verify collection exists
-        let _collection_meta = match self
-            .get_collection(collection)
-            .await?
-            .ok_or_else(|| anyhow!("Collection '{}' not found", collection))
-        {
+        // Get — or lazily provision — the collection (get-or-create). A tenant-scoped first write
+        // auto-registers its collection under the scoped key, so named-tenant document create→use
+        // works without an out-of-band scoped create (TD-DOC-TENANT-1). The default tenant's
+        // collections are bare and already exist, so they are found, not recreated.
+        let _collection_meta = match self.ensure_or_create_collection(collection).await {
             Ok(meta) => meta,
             Err(e) => {
                 self.record_insert_metrics(start, true).await;
@@ -3482,5 +3524,74 @@ mod tests {
             .await
             .expect("delete should succeed");
         assert!(!again, "deleting non-existent collection returns false");
+    }
+
+    #[test]
+    fn scoped_document_collection_default_bare_named_scoped_invalid_rejected() {
+        assert_eq!(
+            scoped_document_collection("default", "docs").unwrap(),
+            "docs",
+            "default tenant stays bare (matches bare-created collections)"
+        );
+        assert_eq!(
+            scoped_document_collection("acme", "docs").unwrap(),
+            "acme/docs",
+            "named tenant is path-scoped"
+        );
+        assert!(
+            scoped_document_collection("../evil", "docs").is_err(),
+            "path traversal rejected"
+        );
+        assert!(
+            scoped_document_collection("_system", "docs").is_err(),
+            "reserved-prefix tenant rejected"
+        );
+    }
+
+    /// Named-tenant document isolation with NO explicit provisioning (TD-DOC-TENANT-1): the first
+    /// write to each scoped collection auto-provisions it, and two tenants using the SAME clean
+    /// logical collection + doc id are isolated by their distinct `{tenant}/{collection}` keys.
+    #[tokio::test]
+    async fn scoped_document_collections_isolate_by_tenant_with_auto_provision() {
+        let svc = create_test_service();
+        let acme = scoped_document_collection("acme", "shared").unwrap();
+        let globex = scoped_document_collection("globex", "shared").unwrap();
+
+        // Same clean logical collection ("shared") AND same doc id ("d1"), different tenants.
+        svc.insert_document(
+            &acme,
+            Some("d1"),
+            make_document(vec![("owner", sql_string("acme"))]),
+        )
+        .await
+        .expect("acme insert auto-provisions acme/shared");
+        svc.insert_document(
+            &globex,
+            Some("d1"),
+            make_document(vec![("owner", sql_string("globex"))]),
+        )
+        .await
+        .expect("globex insert auto-provisions globex/shared");
+
+        let a = svc
+            .get_document(&acme, "d1", None)
+            .await
+            .expect("get acme")
+            .expect("acme doc exists");
+        let g = svc
+            .get_document(&globex, "d1", None)
+            .await
+            .expect("get globex")
+            .expect("globex doc exists");
+
+        // Each tenant's doc lives under its own scoped collection — no cross-tenant bleed despite
+        // identical clean collection name + doc id.
+        assert_eq!(a.collection_id, "acme/shared");
+        assert_eq!(g.collection_id, "globex/shared");
+        assert_ne!(
+            tree_get(&a.props, "owner"),
+            tree_get(&g.props, "owner"),
+            "same clean collection + doc id isolate by tenant"
+        );
     }
 }
