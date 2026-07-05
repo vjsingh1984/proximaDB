@@ -29,12 +29,18 @@ local-tempdir, debug; repeat temperature)
 | sorted + `PROXIMADB_DF_RUNTIME_FILTER_PRUNE=1`
 | 81/422 (19.2%) — identical to baseline
 | 0/152 (0%) — identical to baseline
-| The join dynamic filter added ZERO incremental pruning: no per-query
-  delta vs the sorted baseline anywhere. Either DF 54's Post-phase pushdown
-  is not delivering the filter to `ProximaScanExec` on our plan shapes, or
-  the resolved filter does not translate to prunable predicates here —
-  instrumenting the absorption path (absorb/snapshot/translate counters) is
-  the follow-up filed under TD-OLAP-3.
+| The join dynamic filter added ZERO incremental pruning across THREE
+  measured configurations. Instrumentation confirmed delivery works (the
+  Post-phase pushdown reaches `ProximaScanExec`, the filter downcasts to
+  `DynamicFilterPhysicalExpr`, absorption succeeds) but `snapshot()`
+  resolved to the `lit(true)` placeholder. Two correctness fixes landed:
+  (1) pruning deferred from `execute()` to first stream poll; (2) per-split
+  late evaluation (`DataSourceExec` semantics — partitioned hash joins poll
+  build and probe concurrently). Still zero measured gain. Remaining
+  suspects for TD-OLAP-3: does the join's rebuilt node (which owns
+  `update()`) survive our session's optimizer pipeline, and does the
+  post-build resolved expression take the hash-lookup form the conservative
+  translator skips? Next step: post-build per-split snapshot instrumentation.
 |===
 
 Geometry note: the 4,096-row evidence granularity raises `splits_total`
