@@ -1551,4 +1551,43 @@ mod tests {
         );
         Ok(())
     }
+
+    /// End-to-end functional isolation with NO explicit provisioning (TD-GRAPH-TENANT-1): a named
+    /// tenant's first scoped write auto-provisions its `{tenant}/{graph_id}` collection, so
+    /// create→use works without an out-of-band bare create — and a second tenant using the SAME
+    /// clean logical id is isolated (it auto-provisions its own empty scoped graph). This is the
+    /// flow that was broken before the lazy-provision fix (create scoped nowhere ⇒ "collection
+    /// does not exist").
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn named_tenant_graph_auto_provisions_on_first_write_and_isolates() -> anyhow::Result<()>
+    {
+        // Fresh service — NO `create_graph_collection`; the first scoped write must provision.
+        let graph = GraphOperationsService::new();
+        let node = crate::graph::Node {
+            id: "secret".to_string(),
+            labels: vec!["Doc".to_string()],
+            ..Default::default()
+        };
+        graph.for_tenant("acme").create_node("shared", node).await?;
+
+        // acme reads its own node back through the same clean logical id.
+        assert!(
+            graph
+                .for_tenant("acme")
+                .get_node("shared", &"secret".to_string())
+                .await?
+                .is_some(),
+            "owner reads its own node after auto-provision"
+        );
+        // globex, same clean "shared", sees nothing (its own auto-provisioned empty scoped graph).
+        assert!(
+            graph
+                .for_tenant("globex")
+                .get_node("shared", &"secret".to_string())
+                .await?
+                .is_none(),
+            "cross-tenant read is isolated"
+        );
+        Ok(())
+    }
 }

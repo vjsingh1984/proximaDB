@@ -407,6 +407,33 @@ impl GraphCollectionService {
         })
     }
 
+    /// Get the graph collection for `graph_id`, lazily provisioning it with defaults (ORION
+    /// engine, the service's default storage root) if it does not yet exist — the get-or-create
+    /// counterpart of [`ensure_graph_exists`].
+    ///
+    /// This lets a tenant-scoped first write auto-register its collection under the SCOPED key
+    /// (`{tenant}/{graph_id}`), so named-tenant graph create→use works without an out-of-band bare
+    /// create (the v2 gRPC surface has no create RPC, and the REST v1 / pgwire create paths are not
+    /// tenant-scoped — TD-GRAPH-TENANT-1). The default tenant stays bare, so its existing
+    /// explicitly-created collections are found on the first branch and never double-provisioned.
+    /// Idempotent and race-safe: if a concurrent caller wins the insert, we pick it up on re-fetch.
+    pub async fn ensure_or_create_graph(&self, graph_id: &str) -> Result<Arc<GraphCollection>> {
+        if let Some(existing) = self.get_graph(graph_id).await? {
+            return Ok(existing);
+        }
+        match self
+            .create_graph(CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(created) => Ok(created),
+            // Lost a create race (another task registered it first) — re-fetch the winner.
+            Err(_) => self.ensure_graph_exists(graph_id).await,
+        }
+    }
+
     /// Get graph statistics
     pub async fn get_graph_stats(
         &self,
