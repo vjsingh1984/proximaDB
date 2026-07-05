@@ -13965,8 +13965,11 @@ impl Client {
     ///
     /// Sends a `GET` request to `/api/v2/_meta/capabilities`
     ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.get_capabilities()
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -13997,11 +14000,13 @@ impl Client {
     /// - `include_stats`: Whether to include statistics
     /// - `limit`: Maximum number of collections to return (default: 100)
     /// - `offset`: Offset for pagination (default: 0)
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.list_collections()
     /// .include_stats(include_stats)
     /// .limit(limit)
     /// .offset(offset)
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14028,8 +14033,12 @@ impl Client {
     ///
     /// Sends a `POST` request to `/api/v2/collections`
     ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
     /// ```text
     /// let response = client.create_collection()
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14058,9 +14067,11 @@ impl Client {
     ///
     /// Arguments:
     /// - `collection_id`: Collection name/ID.
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.get_collection()
     /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14077,9 +14088,11 @@ impl Client {
     ///
     /// Arguments:
     /// - `collection_id`: Collection name/ID.
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.delete_collection()
     /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14094,10 +14107,12 @@ impl Client {
     ///
     /// Arguments:
     /// - `collection_id`: Target collection name/ID.
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// - `body`
     /// ```text
     /// let response = client.ingest_documents()
     /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14109,10 +14124,12 @@ impl Client {
     ///
     /// Arguments:
     /// - `collection_id`: Collection backing the entities
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// - `body`
     /// ```text
     /// let response = client.upsert_entity_v2()
     /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14124,10 +14141,12 @@ impl Client {
     ///
     /// Arguments:
     /// - `collection_id`: Collection backing the entities
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// - `body`
     /// ```text
     /// let response = client.search_entities_v2()
     /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14140,10 +14159,12 @@ impl Client {
     /// Arguments:
     /// - `collection_id`: Collection backing the entities
     /// - `entity_id`: Entity ID
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.get_entity_v2()
     /// .collection_id(collection_id)
     /// .entity_id(entity_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14155,10 +14176,12 @@ impl Client {
     /// Arguments:
     /// - `collection_id`: Collection backing the entities
     /// - `entity_id`: Entity ID
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.delete_entity_v2()
     /// .collection_id(collection_id)
     /// .entity_id(entity_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14187,10 +14210,12 @@ impl Client {
     ///
     /// Arguments:
     /// - `collection_id`: Collection name/ID.
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// - `body`
     /// ```text
     /// let response = client.insert_records()
     /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14212,10 +14237,12 @@ impl Client {
     ///
     /// Arguments:
     /// - `collection_id`: Collection name/ID.
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// - `body`
     /// ```text
     /// let response = client.scan_records()
     /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14253,12 +14280,14 @@ impl Client {
     /// - `record_id`: Record ID.
     /// - `include_text`: Whether to include TEXT fields in the response
     /// - `include_vector`: Whether to include the vector in the response
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.get_record()
     /// .collection_id(collection_id)
     /// .record_id(record_id)
     /// .include_text(include_text)
     /// .include_vector(include_vector)
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14274,10 +14303,12 @@ impl Client {
     /// Arguments:
     /// - `collection_id`: Collection name/ID.
     /// - `record_id`: Record ID.
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.delete_record()
     /// .collection_id(collection_id)
     /// .record_id(record_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14305,9 +14336,11 @@ impl Client {
     ///
     /// Arguments:
     /// - `collection_id`: Collection name/ID.
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.get_collection_schema()
     /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14346,10 +14379,12 @@ impl Client {
     ///
     /// Arguments:
     /// - `collection_id`: Collection name/ID.
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// - `body`
     /// ```text
     /// let response = client.update_collection_schema()
     /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14379,10 +14414,12 @@ impl Client {
     ///
     /// Arguments:
     /// - `collection_id`: Collection name/ID.
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// - `body`
     /// ```text
     /// let response = client.search_records()
     /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14394,8 +14431,11 @@ impl Client {
     ///
     /// Sends a `GET` request to `/api/v2/document-collections`
     ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.list_document_collections()
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14406,8 +14446,12 @@ impl Client {
     ///
     /// Sends a `POST` request to `/api/v2/document-collections`
     ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
     /// ```text
     /// let response = client.create_document_collection()
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14419,9 +14463,13 @@ impl Client {
     ///
     /// Sends a `GET` request to `/api/v2/document-collections/{collection}/documents`
     ///
+    /// Arguments:
+    /// - `collection`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.query_documents()
     /// .collection(collection)
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14432,9 +14480,14 @@ impl Client {
     ///
     /// Sends a `POST` request to `/api/v2/document-collections/{collection}/documents`
     ///
+    /// Arguments:
+    /// - `collection`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
     /// ```text
     /// let response = client.insert_document()
     /// .collection(collection)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14446,8 +14499,11 @@ impl Client {
     ///
     /// Sends a `GET` request to `/api/v2/graphs`
     ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.list_graphs()
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14458,8 +14514,12 @@ impl Client {
     ///
     /// Sends a `POST` request to `/api/v2/graphs`
     ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
     /// ```text
     /// let response = client.create_graph()
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14471,9 +14531,13 @@ impl Client {
     ///
     /// Sends a `GET` request to `/api/v2/graphs/{graph_id}`
     ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.get_graph()
     /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14484,9 +14548,13 @@ impl Client {
     ///
     /// Sends a `DELETE` request to `/api/v2/graphs/{graph_id}`
     ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.delete_graph()
     /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14497,9 +14565,14 @@ impl Client {
     ///
     /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/edges`
     ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
     /// ```text
     /// let response = client.create_edge()
     /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14514,9 +14587,14 @@ impl Client {
     ///
     /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/edges/batch`
     ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
     /// ```text
     /// let response = client.batch_create_edges()
     /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14530,10 +14608,12 @@ impl Client {
     ///
     /// Arguments:
     /// - `graph_id`: Graph ID for traversal expansion
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// - `body`
     /// ```text
     /// let response = client.fusion_search_v2()
     /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14548,10 +14628,12 @@ impl Client {
     ///
     /// Arguments:
     /// - `graph_id`: Graph ID
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// - `body`
     /// ```text
     /// let response = client.impact_analysis_v2()
     /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14563,9 +14645,14 @@ impl Client {
     ///
     /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/nodes`
     ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
     /// ```text
     /// let response = client.create_node()
     /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14581,9 +14668,14 @@ impl Client {
     ///
     /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/nodes/batch`
     ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
     /// ```text
     /// let response = client.batch_create_nodes()
     /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14595,10 +14687,15 @@ impl Client {
     ///
     /// Sends a `GET` request to `/api/v2/graphs/{graph_id}/nodes/{node_id}`
     ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `node_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.get_node()
     /// .graph_id(graph_id)
     /// .node_id(node_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14609,10 +14706,15 @@ impl Client {
     ///
     /// Sends a `DELETE` request to `/api/v2/graphs/{graph_id}/nodes/{node_id}`
     ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `node_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.delete_node()
     /// .graph_id(graph_id)
     /// .node_id(node_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14623,9 +14725,13 @@ impl Client {
     ///
     /// Sends a `GET` request to `/api/v2/graphs/{graph_id}/stats`
     ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.get_graph_stats()
     /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14636,9 +14742,14 @@ impl Client {
     ///
     /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/traverse`
     ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
     /// ```text
     /// let response = client.traverse_graph()
     /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14650,8 +14761,12 @@ impl Client {
     ///
     /// Sends a `POST` request to `/api/v2/hybrid/index`
     ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
     /// ```text
     /// let response = client.hybrid_index()
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14663,8 +14778,12 @@ impl Client {
     ///
     /// Sends a `POST` request to `/api/v2/hybrid/search`
     ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
     /// ```text
     /// let response = client.hybrid_search()
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14676,9 +14795,14 @@ impl Client {
     ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/logs`
     ///
+    /// Arguments:
+    /// - `namespace`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
     /// ```text
     /// let response = client.ingest_log()
     /// .namespace(namespace)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14690,9 +14814,14 @@ impl Client {
     ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/logs/search`
     ///
+    /// Arguments:
+    /// - `namespace`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
     /// ```text
     /// let response = client.query_logs()
     /// .namespace(namespace)
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14710,8 +14839,12 @@ impl Client {
     ///
     /// Sends a `POST` request to `/api/v2/query`
     ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
     /// ```text
     /// let response = client.execute_query()
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14723,8 +14856,12 @@ impl Client {
     ///
     /// Sends a `POST` request to `/api/v2/query/explain`
     ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
     /// ```text
     /// let response = client.explain_query()
+    /// .x_tenant_id(x_tenant_id)
     /// .body(body)
     /// .send()
     /// .await;
@@ -14736,8 +14873,11 @@ impl Client {
     ///
     /// Sends a `GET` request to `/health`
     ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.get_health()
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14748,8 +14888,11 @@ impl Client {
     ///
     /// Sends a `GET` request to `/health/live`
     ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.get_liveness()
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14760,8 +14903,11 @@ impl Client {
     ///
     /// Sends a `GET` request to `/health/ready`
     ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.get_readiness()
+    /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
     /// ```
@@ -14784,20 +14930,40 @@ pub mod builder {
     #[derive(Debug, Clone)]
     pub struct GetCapabilities<'a> {
         client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> GetCapabilities<'a> {
         pub fn new(client: &'a super::Client) -> Self {
-            Self { client: client }
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
         }
         ///Sends a `GET` request to `/api/v2/_meta/capabilities`
         pub async fn send(self) -> Result<ResponseValue<types::CapabilitiesResponse>, Error<()>> {
-            let Self { client } = self;
+            let Self {
+                client,
+                x_tenant_id,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!("{}/api/v2/_meta/capabilities", client.baseurl,);
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -14830,6 +14996,7 @@ pub mod builder {
         include_stats: Result<Option<bool>, String>,
         limit: Result<Option<i32>, String>,
         offset: Result<Option<i32>, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> ListCollections<'a> {
         pub fn new(client: &'a super::Client) -> Self {
@@ -14838,6 +15005,7 @@ pub mod builder {
                 include_stats: Ok(None),
                 limit: Ok(None),
                 offset: Ok(None),
+                x_tenant_id: Ok(None),
             }
         }
         pub fn include_stats<V>(mut self, value: V) -> Self
@@ -14870,6 +15038,15 @@ pub mod builder {
                 .map_err(|_| "conversion to `i32` for offset failed".to_string());
             self
         }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
         ///Sends a `GET` request to `/api/v2/collections`
         pub async fn send(
             self,
@@ -14879,16 +15056,21 @@ pub mod builder {
                 include_stats,
                 limit,
                 offset,
+                x_tenant_id,
             } = self;
             let include_stats = include_stats.map_err(Error::InvalidRequest)?;
             let limit = limit.map_err(Error::InvalidRequest)?;
             let offset = offset.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!("{}/api/v2/collections", client.baseurl,);
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -14924,14 +15106,25 @@ pub mod builder {
     #[derive(Debug, Clone)]
     pub struct CreateCollection<'a> {
         client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::CreateCollectionV2Request, String>,
     }
     impl<'a> CreateCollection<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
         }
         pub fn body<V>(mut self, value: V) -> Self
         where
@@ -14961,18 +15154,26 @@ pub mod builder {
             self,
         ) -> Result<ResponseValue<types::CreateCollectionV2Response>, Error<types::ErrorResponse>>
         {
-            let Self { client, body } = self;
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| {
                     types::CreateCollectionV2Request::try_from(v).map_err(|e| e.to_string())
                 })
                 .map_err(Error::InvalidRequest)?;
             let url = format!("{}/api/v2/collections", client.baseurl,);
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -15007,12 +15208,14 @@ pub mod builder {
     pub struct GetCollection<'a> {
         client: &'a super::Client,
         collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> GetCollection<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
                 collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
             }
         }
         pub fn collection_id<V>(mut self, value: V) -> Self
@@ -15024,6 +15227,15 @@ pub mod builder {
             });
             self
         }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
         ///Sends a `GET` request to `/api/v2/collections/{collection_id}`
         pub async fn send(
             self,
@@ -15032,18 +15244,23 @@ pub mod builder {
             let Self {
                 client,
                 collection_id,
+                x_tenant_id,
             } = self;
             let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/collections/{}",
                 client.baseurl,
                 encode_path(&collection_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -15077,12 +15294,14 @@ pub mod builder {
     pub struct DeleteCollection<'a> {
         client: &'a super::Client,
         collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> DeleteCollection<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
                 collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
             }
         }
         pub fn collection_id<V>(mut self, value: V) -> Self
@@ -15094,6 +15313,15 @@ pub mod builder {
             });
             self
         }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
         ///Sends a `DELETE` request to `/api/v2/collections/{collection_id}`
         pub async fn send(
             self,
@@ -15102,18 +15330,23 @@ pub mod builder {
             let Self {
                 client,
                 collection_id,
+                x_tenant_id,
             } = self;
             let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/collections/{}",
                 client.baseurl,
                 encode_path(&collection_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -15147,6 +15380,7 @@ pub mod builder {
     pub struct IngestDocuments<'a> {
         client: &'a super::Client,
         collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::IngestDocumentsRequest, String>,
     }
     impl<'a> IngestDocuments<'a> {
@@ -15154,6 +15388,7 @@ pub mod builder {
             Self {
                 client: client,
                 collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
         }
@@ -15163,6 +15398,15 @@ pub mod builder {
         {
             self.collection_id = value.try_into().map_err(|_| {
                 "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
             });
             self
         }
@@ -15196,9 +15440,11 @@ pub mod builder {
             let Self {
                 client,
                 collection_id,
+                x_tenant_id,
                 body,
             } = self;
             let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::IngestDocumentsRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
@@ -15207,11 +15453,14 @@ pub mod builder {
                 client.baseurl,
                 encode_path(&collection_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -15249,6 +15498,7 @@ pub mod builder {
     pub struct UpsertEntityV2<'a> {
         client: &'a super::Client,
         collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::UpsertEntityRequest, String>,
     }
     impl<'a> UpsertEntityV2<'a> {
@@ -15256,6 +15506,7 @@ pub mod builder {
             Self {
                 client: client,
                 collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
         }
@@ -15265,6 +15516,15 @@ pub mod builder {
         {
             self.collection_id = value.try_into().map_err(|_| {
                 "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
             });
             self
         }
@@ -15296,9 +15556,11 @@ pub mod builder {
             let Self {
                 client,
                 collection_id,
+                x_tenant_id,
                 body,
             } = self;
             let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::UpsertEntityRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
@@ -15307,11 +15569,14 @@ pub mod builder {
                 client.baseurl,
                 encode_path(&collection_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -15349,6 +15614,7 @@ pub mod builder {
     pub struct SearchEntitiesV2<'a> {
         client: &'a super::Client,
         collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::SearchEntitiesRequest, String>,
     }
     impl<'a> SearchEntitiesV2<'a> {
@@ -15356,6 +15622,7 @@ pub mod builder {
             Self {
                 client: client,
                 collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
         }
@@ -15365,6 +15632,15 @@ pub mod builder {
         {
             self.collection_id = value.try_into().map_err(|_| {
                 "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
             });
             self
         }
@@ -15398,9 +15674,11 @@ pub mod builder {
             let Self {
                 client,
                 collection_id,
+                x_tenant_id,
                 body,
             } = self;
             let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::SearchEntitiesRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
@@ -15409,11 +15687,14 @@ pub mod builder {
                 client.baseurl,
                 encode_path(&collection_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -15452,6 +15733,7 @@ pub mod builder {
         client: &'a super::Client,
         collection_id: Result<::std::string::String, String>,
         entity_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> GetEntityV2<'a> {
         pub fn new(client: &'a super::Client) -> Self {
@@ -15459,6 +15741,7 @@ pub mod builder {
                 client: client,
                 collection_id: Err("collection_id was not initialized".to_string()),
                 entity_id: Err("entity_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
             }
         }
         pub fn collection_id<V>(mut self, value: V) -> Self
@@ -15479,6 +15762,15 @@ pub mod builder {
             });
             self
         }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
         ///Sends a `GET` request to `/api/v2/collections/{collection_id}/entities/{entity_id}`
         pub async fn send(
             self,
@@ -15487,20 +15779,25 @@ pub mod builder {
                 client,
                 collection_id,
                 entity_id,
+                x_tenant_id,
             } = self;
             let collection_id = collection_id.map_err(Error::InvalidRequest)?;
             let entity_id = entity_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/collections/{}/entities/{}",
                 client.baseurl,
                 encode_path(&collection_id.to_string()),
                 encode_path(&entity_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -15538,6 +15835,7 @@ pub mod builder {
         client: &'a super::Client,
         collection_id: Result<::std::string::String, String>,
         entity_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> DeleteEntityV2<'a> {
         pub fn new(client: &'a super::Client) -> Self {
@@ -15545,6 +15843,7 @@ pub mod builder {
                 client: client,
                 collection_id: Err("collection_id was not initialized".to_string()),
                 entity_id: Err("entity_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
             }
         }
         pub fn collection_id<V>(mut self, value: V) -> Self
@@ -15565,6 +15864,15 @@ pub mod builder {
             });
             self
         }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
         ///Sends a `DELETE` request to `/api/v2/collections/{collection_id}/entities/{entity_id}`
         pub async fn send(
             self,
@@ -15574,20 +15882,25 @@ pub mod builder {
                 client,
                 collection_id,
                 entity_id,
+                x_tenant_id,
             } = self;
             let collection_id = collection_id.map_err(Error::InvalidRequest)?;
             let entity_id = entity_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/collections/{}/entities/{}",
                 client.baseurl,
                 encode_path(&collection_id.to_string()),
                 encode_path(&entity_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -15624,6 +15937,7 @@ pub mod builder {
     pub struct InsertRecords<'a> {
         client: &'a super::Client,
         collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::InsertRecordsRequest, String>,
     }
     impl<'a> InsertRecords<'a> {
@@ -15631,6 +15945,7 @@ pub mod builder {
             Self {
                 client: client,
                 collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
         }
@@ -15640,6 +15955,15 @@ pub mod builder {
         {
             self.collection_id = value.try_into().map_err(|_| {
                 "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
             });
             self
         }
@@ -15673,9 +15997,11 @@ pub mod builder {
             let Self {
                 client,
                 collection_id,
+                x_tenant_id,
                 body,
             } = self;
             let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::InsertRecordsRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
@@ -15684,11 +16010,14 @@ pub mod builder {
                 client.baseurl,
                 encode_path(&collection_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -15723,6 +16052,7 @@ pub mod builder {
     pub struct ScanRecords<'a> {
         client: &'a super::Client,
         collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::ScanRecordsRequest, String>,
     }
     impl<'a> ScanRecords<'a> {
@@ -15730,6 +16060,7 @@ pub mod builder {
             Self {
                 client: client,
                 collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
         }
@@ -15739,6 +16070,15 @@ pub mod builder {
         {
             self.collection_id = value.try_into().map_err(|_| {
                 "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
             });
             self
         }
@@ -15770,9 +16110,11 @@ pub mod builder {
             let Self {
                 client,
                 collection_id,
+                x_tenant_id,
                 body,
             } = self;
             let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::ScanRecordsRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
@@ -15781,11 +16123,14 @@ pub mod builder {
                 client.baseurl,
                 encode_path(&collection_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -15826,6 +16171,7 @@ pub mod builder {
         record_id: Result<::std::string::String, String>,
         include_text: Result<Option<bool>, String>,
         include_vector: Result<Option<bool>, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> GetRecord<'a> {
         pub fn new(client: &'a super::Client) -> Self {
@@ -15835,6 +16181,7 @@ pub mod builder {
                 record_id: Err("record_id was not initialized".to_string()),
                 include_text: Ok(None),
                 include_vector: Ok(None),
+                x_tenant_id: Ok(None),
             }
         }
         pub fn collection_id<V>(mut self, value: V) -> Self
@@ -15875,6 +16222,15 @@ pub mod builder {
                 .map_err(|_| "conversion to `bool` for include_vector failed".to_string());
             self
         }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
         ///Sends a `GET` request to `/api/v2/collections/{collection_id}/records/{record_id}`
         pub async fn send(
             self,
@@ -15885,22 +16241,27 @@ pub mod builder {
                 record_id,
                 include_text,
                 include_vector,
+                x_tenant_id,
             } = self;
             let collection_id = collection_id.map_err(Error::InvalidRequest)?;
             let record_id = record_id.map_err(Error::InvalidRequest)?;
             let include_text = include_text.map_err(Error::InvalidRequest)?;
             let include_vector = include_vector.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/collections/{}/records/{}",
                 client.baseurl,
                 encode_path(&collection_id.to_string()),
                 encode_path(&record_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -15943,6 +16304,7 @@ pub mod builder {
         client: &'a super::Client,
         collection_id: Result<::std::string::String, String>,
         record_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> DeleteRecord<'a> {
         pub fn new(client: &'a super::Client) -> Self {
@@ -15950,6 +16312,7 @@ pub mod builder {
                 client: client,
                 collection_id: Err("collection_id was not initialized".to_string()),
                 record_id: Err("record_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
             }
         }
         pub fn collection_id<V>(mut self, value: V) -> Self
@@ -15970,26 +16333,40 @@ pub mod builder {
             });
             self
         }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
         ///Sends a `DELETE` request to `/api/v2/collections/{collection_id}/records/{record_id}`
         pub async fn send(self) -> Result<ResponseValue<types::DeleteRecordV2Response>, Error<()>> {
             let Self {
                 client,
                 collection_id,
                 record_id,
+                x_tenant_id,
             } = self;
             let collection_id = collection_id.map_err(Error::InvalidRequest)?;
             let record_id = record_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/collections/{}/records/{}",
                 client.baseurl,
                 encode_path(&collection_id.to_string()),
                 encode_path(&record_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -16020,12 +16397,14 @@ pub mod builder {
     pub struct GetCollectionSchema<'a> {
         client: &'a super::Client,
         collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> GetCollectionSchema<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
                 collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
             }
         }
         pub fn collection_id<V>(mut self, value: V) -> Self
@@ -16037,6 +16416,15 @@ pub mod builder {
             });
             self
         }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
         ///Sends a `GET` request to `/api/v2/collections/{collection_id}/schema`
         pub async fn send(
             self,
@@ -16044,18 +16432,23 @@ pub mod builder {
             let Self {
                 client,
                 collection_id,
+                x_tenant_id,
             } = self;
             let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/collections/{}/schema",
                 client.baseurl,
                 encode_path(&collection_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -16089,6 +16482,7 @@ pub mod builder {
     pub struct UpdateCollectionSchema<'a> {
         client: &'a super::Client,
         collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::UpdateSchemaRequest, String>,
     }
     impl<'a> UpdateCollectionSchema<'a> {
@@ -16096,6 +16490,7 @@ pub mod builder {
             Self {
                 client: client,
                 collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
         }
@@ -16105,6 +16500,15 @@ pub mod builder {
         {
             self.collection_id = value.try_into().map_err(|_| {
                 "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
             });
             self
         }
@@ -16136,9 +16540,11 @@ pub mod builder {
             let Self {
                 client,
                 collection_id,
+                x_tenant_id,
                 body,
             } = self;
             let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::UpdateSchemaRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
@@ -16147,11 +16553,14 @@ pub mod builder {
                 client.baseurl,
                 encode_path(&collection_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -16186,6 +16595,7 @@ pub mod builder {
     pub struct SearchRecords<'a> {
         client: &'a super::Client,
         collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::TypedSearchRequest, String>,
     }
     impl<'a> SearchRecords<'a> {
@@ -16193,6 +16603,7 @@ pub mod builder {
             Self {
                 client: client,
                 collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
         }
@@ -16202,6 +16613,15 @@ pub mod builder {
         {
             self.collection_id = value.try_into().map_err(|_| {
                 "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
             });
             self
         }
@@ -16233,9 +16653,11 @@ pub mod builder {
             let Self {
                 client,
                 collection_id,
+                x_tenant_id,
                 body,
             } = self;
             let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::TypedSearchRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
@@ -16244,11 +16666,14 @@ pub mod builder {
                 client.baseurl,
                 encode_path(&collection_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -16282,10 +16707,23 @@ pub mod builder {
     #[derive(Debug, Clone)]
     pub struct ListDocumentCollections<'a> {
         client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> ListDocumentCollections<'a> {
         pub fn new(client: &'a super::Client) -> Self {
-            Self { client: client }
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
         }
         ///Sends a `GET` request to `/api/v2/document-collections`
         pub async fn send(
@@ -16294,13 +16732,20 @@ pub mod builder {
             ResponseValue<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
             Error<()>,
         > {
-            let Self { client } = self;
+            let Self {
+                client,
+                x_tenant_id,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!("{}/api/v2/document-collections", client.baseurl,);
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -16330,14 +16775,25 @@ pub mod builder {
     #[derive(Debug, Clone)]
     pub struct CreateDocumentCollection<'a> {
         client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<::serde_json::Map<::std::string::String, ::serde_json::Value>, String>,
     }
     impl<'a> CreateDocumentCollection<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
+                x_tenant_id: Ok(None),
                 body: Err("body was not initialized".to_string()),
             }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
         }
         pub fn body<V>(mut self, value: V) -> Self
         where
@@ -16358,14 +16814,22 @@ pub mod builder {
             ResponseValue<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
             Error<()>,
         > {
-            let Self { client, body } = self;
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body.map_err(Error::InvalidRequest)?;
             let url = format!("{}/api/v2/document-collections", client.baseurl,);
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -16397,12 +16861,14 @@ pub mod builder {
     pub struct QueryDocuments<'a> {
         client: &'a super::Client,
         collection: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> QueryDocuments<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
                 collection: Err("collection was not initialized".to_string()),
+                x_tenant_id: Ok(None),
             }
         }
         pub fn collection<V>(mut self, value: V) -> Self
@@ -16414,6 +16880,15 @@ pub mod builder {
             });
             self
         }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
         ///Sends a `GET` request to `/api/v2/document-collections/{collection}/documents`
         pub async fn send(
             self,
@@ -16421,18 +16896,26 @@ pub mod builder {
             ResponseValue<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
             Error<()>,
         > {
-            let Self { client, collection } = self;
+            let Self {
+                client,
+                collection,
+                x_tenant_id,
+            } = self;
             let collection = collection.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/document-collections/{}/documents",
                 client.baseurl,
                 encode_path(&collection.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -16463,6 +16946,7 @@ pub mod builder {
     pub struct InsertDocument<'a> {
         client: &'a super::Client,
         collection: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<::serde_json::Map<::std::string::String, ::serde_json::Value>, String>,
     }
     impl<'a> InsertDocument<'a> {
@@ -16470,6 +16954,7 @@ pub mod builder {
             Self {
                 client: client,
                 collection: Err("collection was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Err("body was not initialized".to_string()),
             }
         }
@@ -16479,6 +16964,15 @@ pub mod builder {
         {
             self.collection = value.try_into().map_err(|_| {
                 "conversion to `:: std :: string :: String` for collection failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
             });
             self
         }
@@ -16504,20 +16998,25 @@ pub mod builder {
             let Self {
                 client,
                 collection,
+                x_tenant_id,
                 body,
             } = self;
             let collection = collection.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/document-collections/{}/documents",
                 client.baseurl,
                 encode_path(&collection.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -16551,20 +17050,40 @@ pub mod builder {
     #[derive(Debug, Clone)]
     pub struct ListGraphs<'a> {
         client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> ListGraphs<'a> {
         pub fn new(client: &'a super::Client) -> Self {
-            Self { client: client }
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
         }
         ///Sends a `GET` request to `/api/v2/graphs`
         pub async fn send(self) -> Result<ResponseValue<types::ListGraphsResponse>, Error<()>> {
-            let Self { client } = self;
+            let Self {
+                client,
+                x_tenant_id,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!("{}/api/v2/graphs", client.baseurl,);
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -16594,14 +17113,25 @@ pub mod builder {
     #[derive(Debug, Clone)]
     pub struct CreateGraph<'a> {
         client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::CreateGraphRequest, String>,
     }
     impl<'a> CreateGraph<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
         }
         pub fn body<V>(mut self, value: V) -> Self
         where
@@ -16628,16 +17158,24 @@ pub mod builder {
             self,
         ) -> Result<ResponseValue<types::GraphCollectionResponse>, Error<types::ErrorResponse>>
         {
-            let Self { client, body } = self;
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::CreateGraphRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
             let url = format!("{}/api/v2/graphs", client.baseurl,);
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -16672,12 +17210,14 @@ pub mod builder {
     pub struct GetGraph<'a> {
         client: &'a super::Client,
         graph_id: Result<types::GetGraphGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> GetGraph<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
                 graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
             }
         }
         pub fn graph_id<V>(mut self, value: V) -> Self
@@ -16689,23 +17229,40 @@ pub mod builder {
                 .map_err(|_| "conversion to `GetGraphGraphId` for graph_id failed".to_string());
             self
         }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
         ///Sends a `GET` request to `/api/v2/graphs/{graph_id}`
         pub async fn send(
             self,
         ) -> Result<ResponseValue<types::GraphCollectionResponse>, Error<types::ErrorResponse>>
         {
-            let Self { client, graph_id } = self;
+            let Self {
+                client,
+                graph_id,
+                x_tenant_id,
+            } = self;
             let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/graphs/{}",
                 client.baseurl,
                 encode_path(&graph_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -16739,12 +17296,14 @@ pub mod builder {
     pub struct DeleteGraph<'a> {
         client: &'a super::Client,
         graph_id: Result<types::DeleteGraphGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> DeleteGraph<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
                 graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
             }
         }
         pub fn graph_id<V>(mut self, value: V) -> Self
@@ -16756,23 +17315,40 @@ pub mod builder {
                 .map_err(|_| "conversion to `DeleteGraphGraphId` for graph_id failed".to_string());
             self
         }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
         ///Sends a `DELETE` request to `/api/v2/graphs/{graph_id}`
         pub async fn send(
             self,
         ) -> Result<ResponseValue<types::DeleteGraphResponse>, Error<types::ErrorResponse>>
         {
-            let Self { client, graph_id } = self;
+            let Self {
+                client,
+                graph_id,
+                x_tenant_id,
+            } = self;
             let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/graphs/{}",
                 client.baseurl,
                 encode_path(&graph_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -16806,6 +17382,7 @@ pub mod builder {
     pub struct CreateEdge<'a> {
         client: &'a super::Client,
         graph_id: Result<types::CreateEdgeGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::CreateEdgeRequest, String>,
     }
     impl<'a> CreateEdge<'a> {
@@ -16813,6 +17390,7 @@ pub mod builder {
             Self {
                 client: client,
                 graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
         }
@@ -16823,6 +17401,15 @@ pub mod builder {
             self.graph_id = value
                 .try_into()
                 .map_err(|_| "conversion to `CreateEdgeGraphId` for graph_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
             self
         }
         pub fn body<V>(mut self, value: V) -> Self
@@ -16852,9 +17439,11 @@ pub mod builder {
             let Self {
                 client,
                 graph_id,
+                x_tenant_id,
                 body,
             } = self;
             let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::CreateEdgeRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
@@ -16863,11 +17452,14 @@ pub mod builder {
                 client.baseurl,
                 encode_path(&graph_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -16905,6 +17497,7 @@ pub mod builder {
     pub struct BatchCreateEdges<'a> {
         client: &'a super::Client,
         graph_id: Result<types::BatchCreateEdgesGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::BatchCreateEdgesRequest, String>,
     }
     impl<'a> BatchCreateEdges<'a> {
@@ -16912,6 +17505,7 @@ pub mod builder {
             Self {
                 client: client,
                 graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
         }
@@ -16921,6 +17515,15 @@ pub mod builder {
         {
             self.graph_id = value.try_into().map_err(|_| {
                 "conversion to `BatchCreateEdgesGraphId` for graph_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
             });
             self
         }
@@ -16953,9 +17556,11 @@ pub mod builder {
             let Self {
                 client,
                 graph_id,
+                x_tenant_id,
                 body,
             } = self;
             let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| {
                     types::BatchCreateEdgesRequest::try_from(v).map_err(|e| e.to_string())
@@ -16966,11 +17571,14 @@ pub mod builder {
                 client.baseurl,
                 encode_path(&graph_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -17008,6 +17616,7 @@ pub mod builder {
     pub struct FusionSearchV2<'a> {
         client: &'a super::Client,
         graph_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::FusionSearchRequest, String>,
     }
     impl<'a> FusionSearchV2<'a> {
@@ -17015,6 +17624,7 @@ pub mod builder {
             Self {
                 client: client,
                 graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
         }
@@ -17024,6 +17634,15 @@ pub mod builder {
         {
             self.graph_id = value.try_into().map_err(|_| {
                 "conversion to `:: std :: string :: String` for graph_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
             });
             self
         }
@@ -17055,9 +17674,11 @@ pub mod builder {
             let Self {
                 client,
                 graph_id,
+                x_tenant_id,
                 body,
             } = self;
             let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::FusionSearchRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
@@ -17066,11 +17687,14 @@ pub mod builder {
                 client.baseurl,
                 encode_path(&graph_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -17108,6 +17732,7 @@ pub mod builder {
     pub struct ImpactAnalysisV2<'a> {
         client: &'a super::Client,
         graph_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::ImpactAnalysisRequest, String>,
     }
     impl<'a> ImpactAnalysisV2<'a> {
@@ -17115,6 +17740,7 @@ pub mod builder {
             Self {
                 client: client,
                 graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
         }
@@ -17124,6 +17750,15 @@ pub mod builder {
         {
             self.graph_id = value.try_into().map_err(|_| {
                 "conversion to `:: std :: string :: String` for graph_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
             });
             self
         }
@@ -17157,9 +17792,11 @@ pub mod builder {
             let Self {
                 client,
                 graph_id,
+                x_tenant_id,
                 body,
             } = self;
             let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::ImpactAnalysisRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
@@ -17168,11 +17805,14 @@ pub mod builder {
                 client.baseurl,
                 encode_path(&graph_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -17210,6 +17850,7 @@ pub mod builder {
     pub struct CreateNode<'a> {
         client: &'a super::Client,
         graph_id: Result<types::CreateNodeGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::CreateNodeRequest, String>,
     }
     impl<'a> CreateNode<'a> {
@@ -17217,6 +17858,7 @@ pub mod builder {
             Self {
                 client: client,
                 graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
         }
@@ -17227,6 +17869,15 @@ pub mod builder {
             self.graph_id = value
                 .try_into()
                 .map_err(|_| "conversion to `CreateNodeGraphId` for graph_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
             self
         }
         pub fn body<V>(mut self, value: V) -> Self
@@ -17256,9 +17907,11 @@ pub mod builder {
             let Self {
                 client,
                 graph_id,
+                x_tenant_id,
                 body,
             } = self;
             let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::CreateNodeRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
@@ -17267,11 +17920,14 @@ pub mod builder {
                 client.baseurl,
                 encode_path(&graph_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -17309,6 +17965,7 @@ pub mod builder {
     pub struct BatchCreateNodes<'a> {
         client: &'a super::Client,
         graph_id: Result<types::BatchCreateNodesGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::BatchCreateNodesRequest, String>,
     }
     impl<'a> BatchCreateNodes<'a> {
@@ -17316,6 +17973,7 @@ pub mod builder {
             Self {
                 client: client,
                 graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
         }
@@ -17325,6 +17983,15 @@ pub mod builder {
         {
             self.graph_id = value.try_into().map_err(|_| {
                 "conversion to `BatchCreateNodesGraphId` for graph_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
             });
             self
         }
@@ -17357,9 +18024,11 @@ pub mod builder {
             let Self {
                 client,
                 graph_id,
+                x_tenant_id,
                 body,
             } = self;
             let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| {
                     types::BatchCreateNodesRequest::try_from(v).map_err(|e| e.to_string())
@@ -17370,11 +18039,14 @@ pub mod builder {
                 client.baseurl,
                 encode_path(&graph_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -17413,6 +18085,7 @@ pub mod builder {
         client: &'a super::Client,
         graph_id: Result<types::GetNodeGraphId, String>,
         node_id: Result<types::GetNodeNodeId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> GetNode<'a> {
         pub fn new(client: &'a super::Client) -> Self {
@@ -17420,6 +18093,7 @@ pub mod builder {
                 client: client,
                 graph_id: Err("graph_id was not initialized".to_string()),
                 node_id: Err("node_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
             }
         }
         pub fn graph_id<V>(mut self, value: V) -> Self
@@ -17440,6 +18114,15 @@ pub mod builder {
                 .map_err(|_| "conversion to `GetNodeNodeId` for node_id failed".to_string());
             self
         }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
         ///Sends a `GET` request to `/api/v2/graphs/{graph_id}/nodes/{node_id}`
         pub async fn send(
             self,
@@ -17448,20 +18131,25 @@ pub mod builder {
                 client,
                 graph_id,
                 node_id,
+                x_tenant_id,
             } = self;
             let graph_id = graph_id.map_err(Error::InvalidRequest)?;
             let node_id = node_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/graphs/{}/nodes/{}",
                 client.baseurl,
                 encode_path(&graph_id.to_string()),
                 encode_path(&node_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -17496,6 +18184,7 @@ pub mod builder {
         client: &'a super::Client,
         graph_id: Result<types::DeleteNodeGraphId, String>,
         node_id: Result<types::DeleteNodeNodeId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> DeleteNode<'a> {
         pub fn new(client: &'a super::Client) -> Self {
@@ -17503,6 +18192,7 @@ pub mod builder {
                 client: client,
                 graph_id: Err("graph_id was not initialized".to_string()),
                 node_id: Err("node_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
             }
         }
         pub fn graph_id<V>(mut self, value: V) -> Self
@@ -17523,6 +18213,15 @@ pub mod builder {
                 .map_err(|_| "conversion to `DeleteNodeNodeId` for node_id failed".to_string());
             self
         }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
         ///Sends a `DELETE` request to `/api/v2/graphs/{graph_id}/nodes/{node_id}`
         pub async fn send(
             self,
@@ -17531,20 +18230,25 @@ pub mod builder {
                 client,
                 graph_id,
                 node_id,
+                x_tenant_id,
             } = self;
             let graph_id = graph_id.map_err(Error::InvalidRequest)?;
             let node_id = node_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/graphs/{}/nodes/{}",
                 client.baseurl,
                 encode_path(&graph_id.to_string()),
                 encode_path(&node_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -17578,12 +18282,14 @@ pub mod builder {
     pub struct GetGraphStats<'a> {
         client: &'a super::Client,
         graph_id: Result<types::GetGraphStatsGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> GetGraphStats<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
                 graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
             }
         }
         pub fn graph_id<V>(mut self, value: V) -> Self
@@ -17595,20 +18301,37 @@ pub mod builder {
             });
             self
         }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
         ///Sends a `GET` request to `/api/v2/graphs/{graph_id}/stats`
         pub async fn send(self) -> Result<ResponseValue<types::GraphStatsResponse>, Error<()>> {
-            let Self { client, graph_id } = self;
+            let Self {
+                client,
+                graph_id,
+                x_tenant_id,
+            } = self;
             let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/graphs/{}/stats",
                 client.baseurl,
                 encode_path(&graph_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -17639,6 +18362,7 @@ pub mod builder {
     pub struct TraverseGraph<'a> {
         client: &'a super::Client,
         graph_id: Result<types::TraverseGraphGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::TraverseRequest, String>,
     }
     impl<'a> TraverseGraph<'a> {
@@ -17646,6 +18370,7 @@ pub mod builder {
             Self {
                 client: client,
                 graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
         }
@@ -17655,6 +18380,15 @@ pub mod builder {
         {
             self.graph_id = value.try_into().map_err(|_| {
                 "conversion to `TraverseGraphGraphId` for graph_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
             });
             self
         }
@@ -17683,9 +18417,11 @@ pub mod builder {
             let Self {
                 client,
                 graph_id,
+                x_tenant_id,
                 body,
             } = self;
             let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::TraverseRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
@@ -17694,11 +18430,14 @@ pub mod builder {
                 client.baseurl,
                 encode_path(&graph_id.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -17732,14 +18471,25 @@ pub mod builder {
     #[derive(Debug, Clone)]
     pub struct HybridIndex<'a> {
         client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::HybridIndexBody, String>,
     }
     impl<'a> HybridIndex<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
         }
         pub fn body<V>(mut self, value: V) -> Self
         where
@@ -17766,16 +18516,24 @@ pub mod builder {
             ResponseValue<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
             Error<()>,
         > {
-            let Self { client, body } = self;
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::HybridIndexBody::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
             let url = format!("{}/api/v2/hybrid/index", client.baseurl,);
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -17806,14 +18564,25 @@ pub mod builder {
     #[derive(Debug, Clone)]
     pub struct HybridSearch<'a> {
         client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::HybridSearchBody, String>,
     }
     impl<'a> HybridSearch<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
         }
         pub fn body<V>(mut self, value: V) -> Self
         where
@@ -17842,16 +18611,24 @@ pub mod builder {
             ResponseValue<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
             Error<types::ErrorResponse>,
         > {
-            let Self { client, body } = self;
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::HybridSearchBody::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
             let url = format!("{}/api/v2/hybrid/search", client.baseurl,);
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -17886,6 +18663,7 @@ pub mod builder {
     pub struct IngestLog<'a> {
         client: &'a super::Client,
         namespace: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<::serde_json::Map<::std::string::String, ::serde_json::Value>, String>,
     }
     impl<'a> IngestLog<'a> {
@@ -17893,6 +18671,7 @@ pub mod builder {
             Self {
                 client: client,
                 namespace: Err("namespace was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Err("body was not initialized".to_string()),
             }
         }
@@ -17902,6 +18681,15 @@ pub mod builder {
         {
             self.namespace = value.try_into().map_err(|_| {
                 "conversion to `:: std :: string :: String` for namespace failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
             });
             self
         }
@@ -17927,20 +18715,25 @@ pub mod builder {
             let Self {
                 client,
                 namespace,
+                x_tenant_id,
                 body,
             } = self;
             let namespace = namespace.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/observability/namespaces/{}/logs",
                 client.baseurl,
                 encode_path(&namespace.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -17972,6 +18765,7 @@ pub mod builder {
     pub struct QueryLogs<'a> {
         client: &'a super::Client,
         namespace: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<::serde_json::Map<::std::string::String, ::serde_json::Value>, String>,
     }
     impl<'a> QueryLogs<'a> {
@@ -17979,6 +18773,7 @@ pub mod builder {
             Self {
                 client: client,
                 namespace: Err("namespace was not initialized".to_string()),
+                x_tenant_id: Ok(None),
                 body: Err("body was not initialized".to_string()),
             }
         }
@@ -17988,6 +18783,15 @@ pub mod builder {
         {
             self.namespace = value.try_into().map_err(|_| {
                 "conversion to `:: std :: string :: String` for namespace failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
             });
             self
         }
@@ -18013,20 +18817,25 @@ pub mod builder {
             let Self {
                 client,
                 namespace,
+                x_tenant_id,
                 body,
             } = self;
             let namespace = namespace.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body.map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/observability/namespaces/{}/logs/search",
                 client.baseurl,
                 encode_path(&namespace.to_string()),
             );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -18057,14 +18866,25 @@ pub mod builder {
     #[derive(Debug, Clone)]
     pub struct ExecuteQuery<'a> {
         client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::QueryRequest, String>,
     }
     impl<'a> ExecuteQuery<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
         }
         pub fn body<V>(mut self, value: V) -> Self
         where
@@ -18088,16 +18908,24 @@ pub mod builder {
         pub async fn send(
             self,
         ) -> Result<ResponseValue<types::QueryResponse>, Error<types::ErrorResponse>> {
-            let Self { client, body } = self;
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::QueryRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
             let url = format!("{}/api/v2/query", client.baseurl,);
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -18131,14 +18959,25 @@ pub mod builder {
     #[derive(Debug, Clone)]
     pub struct ExplainQuery<'a> {
         client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
         body: Result<types::builder::ExplainQueryRequest, String>,
     }
     impl<'a> ExplainQuery<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
+                x_tenant_id: Ok(None),
                 body: Ok(::std::default::Default::default()),
             }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
         }
         pub fn body<V>(mut self, value: V) -> Self
         where
@@ -18164,16 +19003,24 @@ pub mod builder {
         pub async fn send(
             self,
         ) -> Result<ResponseValue<types::QueryResponse>, Error<types::ErrorResponse>> {
-            let Self { client, body } = self;
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| types::ExplainQueryRequest::try_from(v).map_err(|e| e.to_string()))
                 .map_err(Error::InvalidRequest)?;
             let url = format!("{}/api/v2/query/explain", client.baseurl,);
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -18207,20 +19054,40 @@ pub mod builder {
     #[derive(Debug, Clone)]
     pub struct GetHealth<'a> {
         client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> GetHealth<'a> {
         pub fn new(client: &'a super::Client) -> Self {
-            Self { client: client }
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
         }
         ///Sends a `GET` request to `/health`
         pub async fn send(self) -> Result<ResponseValue<types::HealthResponse>, Error<()>> {
-            let Self { client } = self;
+            let Self {
+                client,
+                x_tenant_id,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!("{}/health", client.baseurl,);
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -18250,20 +19117,40 @@ pub mod builder {
     #[derive(Debug, Clone)]
     pub struct GetLiveness<'a> {
         client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> GetLiveness<'a> {
         pub fn new(client: &'a super::Client) -> Self {
-            Self { client: client }
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
         }
         ///Sends a `GET` request to `/health/live`
         pub async fn send(self) -> Result<ResponseValue<types::ProbeResponse>, Error<()>> {
-            let Self { client } = self;
+            let Self {
+                client,
+                x_tenant_id,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!("{}/health/live", client.baseurl,);
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client
@@ -18293,20 +19180,40 @@ pub mod builder {
     #[derive(Debug, Clone)]
     pub struct GetReadiness<'a> {
         client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
     }
     impl<'a> GetReadiness<'a> {
         pub fn new(client: &'a super::Client) -> Self {
-            Self { client: client }
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
         }
         ///Sends a `GET` request to `/health/ready`
         pub async fn send(self) -> Result<ResponseValue<types::ProbeResponse>, Error<()>> {
-            let Self { client } = self;
+            let Self {
+                client,
+                x_tenant_id,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!("{}/health/ready", client.baseurl,);
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
             );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
             #[allow(unused_mut)]
             let mut request = client
                 .client

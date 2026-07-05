@@ -12,15 +12,18 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.ingest_log_body import IngestLogBody
 from ...models.ingest_log_response_200 import IngestLogResponse200
-from ...types import UNSET, Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     namespace: str,
     *,
     body: IngestLogBody,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_tenant_id, Unset):
+        headers["X-Tenant-ID"] = x_tenant_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -67,11 +70,13 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: IngestLogBody,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[IngestLogResponse200]:
     """Ingest a log entry.
 
     Args:
         namespace (str):
+        x_tenant_id (Union[Unset, str]):
         body (IngestLogBody):
 
     Raises:
@@ -85,6 +90,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         namespace=namespace,
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -99,11 +105,13 @@ def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     body: IngestLogBody,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[IngestLogResponse200]:
     """Ingest a log entry.
 
     Args:
         namespace (str):
+        x_tenant_id (Union[Unset, str]):
         body (IngestLogBody):
 
     Raises:
@@ -118,6 +126,7 @@ def sync(
         namespace=namespace,
         client=client,
         body=body,
+        x_tenant_id=x_tenant_id,
     ).parsed
 
 
@@ -126,11 +135,13 @@ async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: IngestLogBody,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[IngestLogResponse200]:
     """Ingest a log entry.
 
     Args:
         namespace (str):
+        x_tenant_id (Union[Unset, str]):
         body (IngestLogBody):
 
     Raises:
@@ -144,6 +155,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         namespace=namespace,
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -156,11 +168,13 @@ async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     body: IngestLogBody,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[IngestLogResponse200]:
     """Ingest a log entry.
 
     Args:
         namespace (str):
+        x_tenant_id (Union[Unset, str]):
         body (IngestLogBody):
 
     Raises:
@@ -176,5 +190,6 @@ async def asyncio(
             namespace=namespace,
             client=client,
             body=body,
+            x_tenant_id=x_tenant_id,
         )
     ).parsed

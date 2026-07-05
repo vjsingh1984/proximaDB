@@ -21,7 +21,11 @@ def _get_kwargs(
     *,
     include_vector: Union[Unset, bool] = UNSET,
     include_text: Union[Unset, bool] = UNSET,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_tenant_id, Unset):
+        headers["X-Tenant-ID"] = x_tenant_id
 
     params: dict[str, Any] = {}
 
@@ -40,6 +44,7 @@ def _get_kwargs(
         "params": params,
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -78,6 +83,7 @@ def sync_detailed(
     client: Union[AuthenticatedClient, Client],
     include_vector: Union[Unset, bool] = UNSET,
     include_text: Union[Unset, bool] = UNSET,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[ErrorResponse, RecordV2Response]]:
     """Get a record by ID.
 
@@ -107,6 +113,7 @@ def sync_detailed(
         record_id (str):
         include_vector (Union[Unset, bool]):
         include_text (Union[Unset, bool]):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -121,6 +128,7 @@ def sync_detailed(
         record_id=record_id,
         include_vector=include_vector,
         include_text=include_text,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -137,6 +145,7 @@ def sync(
     client: Union[AuthenticatedClient, Client],
     include_vector: Union[Unset, bool] = UNSET,
     include_text: Union[Unset, bool] = UNSET,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[ErrorResponse, RecordV2Response]]:
     """Get a record by ID.
 
@@ -166,6 +175,7 @@ def sync(
         record_id (str):
         include_vector (Union[Unset, bool]):
         include_text (Union[Unset, bool]):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -181,6 +191,7 @@ def sync(
         client=client,
         include_vector=include_vector,
         include_text=include_text,
+        x_tenant_id=x_tenant_id,
     ).parsed
 
 
@@ -191,6 +202,7 @@ async def asyncio_detailed(
     client: Union[AuthenticatedClient, Client],
     include_vector: Union[Unset, bool] = UNSET,
     include_text: Union[Unset, bool] = UNSET,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[ErrorResponse, RecordV2Response]]:
     """Get a record by ID.
 
@@ -220,6 +232,7 @@ async def asyncio_detailed(
         record_id (str):
         include_vector (Union[Unset, bool]):
         include_text (Union[Unset, bool]):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -234,6 +247,7 @@ async def asyncio_detailed(
         record_id=record_id,
         include_vector=include_vector,
         include_text=include_text,
+        x_tenant_id=x_tenant_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -248,6 +262,7 @@ async def asyncio(
     client: Union[AuthenticatedClient, Client],
     include_vector: Union[Unset, bool] = UNSET,
     include_text: Union[Unset, bool] = UNSET,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[ErrorResponse, RecordV2Response]]:
     """Get a record by ID.
 
@@ -277,6 +292,7 @@ async def asyncio(
         record_id (str):
         include_vector (Union[Unset, bool]):
         include_text (Union[Unset, bool]):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -293,5 +309,6 @@ async def asyncio(
             client=client,
             include_vector=include_vector,
             include_text=include_text,
+            x_tenant_id=x_tenant_id,
         )
     ).parsed

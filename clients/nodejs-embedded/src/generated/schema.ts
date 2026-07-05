@@ -2120,7 +2120,10 @@ export interface operations {
     getCapabilities: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2147,7 +2150,10 @@ export interface operations {
                 /** @description Whether to include statistics */
                 include_stats?: boolean;
             };
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2167,7 +2173,10 @@ export interface operations {
     createCollection: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2200,7 +2209,10 @@ export interface operations {
     getCollection: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Collection name/ID. */
                 collection_id: string;
@@ -2232,7 +2244,10 @@ export interface operations {
     deleteCollection: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Collection name/ID. */
                 collection_id: string;
@@ -2264,7 +2279,10 @@ export interface operations {
     ingestDocuments: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Target collection name/ID. */
                 collection_id: string;
@@ -2309,7 +2327,10 @@ export interface operations {
     upsert_entity_v2: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Collection backing the entities */
                 collection_id: string;
@@ -2354,7 +2375,10 @@ export interface operations {
     search_entities_v2: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Collection backing the entities */
                 collection_id: string;
@@ -2399,7 +2423,10 @@ export interface operations {
     get_entity_v2: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Collection backing the entities */
                 collection_id: string;
@@ -2442,7 +2469,10 @@ export interface operations {
     delete_entity_v2: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Collection backing the entities */
                 collection_id: string;
@@ -2485,7 +2515,10 @@ export interface operations {
     insertRecords: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Collection name/ID. */
                 collection_id: string;
@@ -2521,7 +2554,10 @@ export interface operations {
     scanRecords: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Collection name/ID. */
                 collection_id: string;
@@ -2571,7 +2607,10 @@ export interface operations {
                 /** @description Whether to include TEXT fields in the response */
                 include_text?: boolean;
             };
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Collection name/ID. */
                 collection_id: string;
@@ -2605,7 +2644,10 @@ export interface operations {
     deleteRecord: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Collection name/ID. */
                 collection_id: string;
@@ -2630,7 +2672,10 @@ export interface operations {
     getCollectionSchema: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Collection name/ID. */
                 collection_id: string;
@@ -2662,7 +2707,10 @@ export interface operations {
     updateCollectionSchema: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Collection name/ID. */
                 collection_id: string;
@@ -2698,7 +2746,10 @@ export interface operations {
     searchRecords: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Collection name/ID. */
                 collection_id: string;
@@ -2734,7 +2785,10 @@ export interface operations {
     listDocumentCollections: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2756,7 +2810,10 @@ export interface operations {
     createDocumentCollection: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2784,7 +2841,10 @@ export interface operations {
     queryDocuments: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 collection: string;
             };
@@ -2808,7 +2868,10 @@ export interface operations {
     insertDocument: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 collection: string;
             };
@@ -2839,7 +2902,10 @@ export interface operations {
     listGraphs: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2859,7 +2925,10 @@ export interface operations {
     createGraph: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2884,7 +2953,10 @@ export interface operations {
     getGraph: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 graph_id: components["parameters"]["GraphId"];
             };
@@ -2907,7 +2979,10 @@ export interface operations {
     deleteGraph: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 graph_id: components["parameters"]["GraphId"];
             };
@@ -2930,7 +3005,10 @@ export interface operations {
     createEdge: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 graph_id: components["parameters"]["GraphId"];
             };
@@ -2958,7 +3036,10 @@ export interface operations {
     batchCreateEdges: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 graph_id: components["parameters"]["GraphId"];
             };
@@ -2986,7 +3067,10 @@ export interface operations {
     fusion_search_v2: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Graph ID for traversal expansion */
                 graph_id: string;
@@ -3031,7 +3115,10 @@ export interface operations {
     impact_analysis_v2: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 /** @description Graph ID */
                 graph_id: string;
@@ -3076,7 +3163,10 @@ export interface operations {
     createNode: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 graph_id: components["parameters"]["GraphId"];
             };
@@ -3104,7 +3194,10 @@ export interface operations {
     batchCreateNodes: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 graph_id: components["parameters"]["GraphId"];
             };
@@ -3132,7 +3225,10 @@ export interface operations {
     getNode: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 graph_id: components["parameters"]["GraphId"];
                 node_id: components["parameters"]["NodeId"];
@@ -3156,7 +3252,10 @@ export interface operations {
     deleteNode: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 graph_id: components["parameters"]["GraphId"];
                 node_id: components["parameters"]["NodeId"];
@@ -3180,7 +3279,10 @@ export interface operations {
     getGraphStats: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 graph_id: components["parameters"]["GraphId"];
             };
@@ -3202,7 +3304,10 @@ export interface operations {
     traverseGraph: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 graph_id: components["parameters"]["GraphId"];
             };
@@ -3229,7 +3334,10 @@ export interface operations {
     hybridIndex: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3257,7 +3365,10 @@ export interface operations {
     hybridSearch: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3292,7 +3403,10 @@ export interface operations {
     ingestLog: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 namespace: string;
             };
@@ -3322,7 +3436,10 @@ export interface operations {
     queryLogs: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path: {
                 namespace: string;
             };
@@ -3352,7 +3469,10 @@ export interface operations {
     executeQuery: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3385,7 +3505,10 @@ export interface operations {
     explainQuery: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3418,7 +3541,10 @@ export interface operations {
     getHealth: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3438,7 +3564,10 @@ export interface operations {
     getLiveness: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3458,7 +3587,10 @@ export interface operations {
     getReadiness: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
             path?: never;
             cookie?: never;
         };

@@ -13,14 +13,17 @@ from ...client import AuthenticatedClient, Client
 from ...models.create_graph_request import CreateGraphRequest
 from ...models.error_response import ErrorResponse
 from ...models.graph_collection_response import GraphCollectionResponse
-from ...types import UNSET, Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
     body: CreateGraphRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_tenant_id, Unset):
+        headers["X-Tenant-ID"] = x_tenant_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -68,10 +71,12 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateGraphRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[ErrorResponse, GraphCollectionResponse]]:
     """Create a graph collection.
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (CreateGraphRequest):
 
     Raises:
@@ -84,6 +89,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -97,10 +103,12 @@ def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateGraphRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[ErrorResponse, GraphCollectionResponse]]:
     """Create a graph collection.
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (CreateGraphRequest):
 
     Raises:
@@ -114,6 +122,7 @@ def sync(
     return sync_detailed(
         client=client,
         body=body,
+        x_tenant_id=x_tenant_id,
     ).parsed
 
 
@@ -121,10 +130,12 @@ async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateGraphRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[ErrorResponse, GraphCollectionResponse]]:
     """Create a graph collection.
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (CreateGraphRequest):
 
     Raises:
@@ -137,6 +148,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -148,10 +160,12 @@ async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateGraphRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[ErrorResponse, GraphCollectionResponse]]:
     """Create a graph collection.
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (CreateGraphRequest):
 
     Raises:
@@ -166,5 +180,6 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             body=body,
+            x_tenant_id=x_tenant_id,
         )
     ).parsed
