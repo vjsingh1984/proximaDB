@@ -474,14 +474,14 @@ mod tests {
     #[tokio::test]
     async fn reorder_returns_none_without_optimizer() {
         let mut q = empty_query(vec![vector_component(), document_component()]);
-        let original_models: Vec<_> = q.components.iter().map(|c| c.model.clone()).collect();
+        let original_models: Vec<_> = q.components.iter().map(|c| c.model).collect();
 
         let none_opt: Option<&std::sync::Arc<dyn proximadb_query::QueryOptimizationService>> = None;
         let result = reorder_components_with_optimizer(none_opt, &mut q)
             .await
             .unwrap();
         assert!(result.is_none());
-        let after: Vec<_> = q.components.iter().map(|c| c.model.clone()).collect();
+        let after: Vec<_> = q.components.iter().map(|c| c.model).collect();
         assert_eq!(after, original_models, "no optimizer -> no reorder");
     }
 

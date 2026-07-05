@@ -178,6 +178,7 @@ fn bench_viper_flush(c: &mut Criterion) {
                                 engine_config: HashMap::new(),
                                 base_location: "/tmp/proximadb-bench/viper".to_string(),
                                 assigned_at: 0,
+                                ..Default::default()
                             }),
                         };
 

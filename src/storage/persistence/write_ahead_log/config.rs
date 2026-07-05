@@ -819,7 +819,7 @@ mod tests {
         assert_eq!(format!("{:?}", avro_strategy), "AvroBatch");
         assert_eq!(format!("{:?}", bincode_strategy), "BincodeBatch");
 
-        let cloned_avro = avro_strategy.clone();
+        let cloned_avro = avro_strategy;
         assert!(matches!(avro_strategy, WriteBufferStrategyType::AvroBatch));
         assert!(matches!(cloned_avro, WriteBufferStrategyType::AvroBatch));
     }

@@ -79,13 +79,13 @@ mod tests {
         use tokio::fs;
 
         // Create necessary directories
-        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+        let data_dir = StoragePath::collection_data_path(base_path, collection_id);
         fs::create_dir_all(&data_dir)
             .await
             .expect("Failed to create data directory");
 
         // Create temp directory for atomic writes
-        let temp_dir = StoragePath::data_file_path(base_path, &collection_id, "___temp");
+        let temp_dir = StoragePath::data_file_path(base_path, collection_id, "___temp");
         fs::create_dir_all(&temp_dir)
             .await
             .expect("Failed to create temp directory");
@@ -93,7 +93,7 @@ mod tests {
         // Storage assignment is now handled internally by CollectionService
         // when a collection is created. For test purposes, we just ensure
         // the directory structure exists.
-        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+        let data_dir = StoragePath::collection_data_path(base_path, collection_id);
         let wal_dir = format!("{}/{}/write_buffer", base_path, collection_id);
         fs::create_dir_all(&data_dir)
             .await
@@ -147,6 +147,7 @@ mod tests {
                 engine_config: std::collections::HashMap::new(),
                 base_location: format!("file://{}", base_path),
                 assigned_at: chrono::Utc::now().timestamp(),
+                ..Default::default()
             }),
         }
     }
@@ -252,6 +253,7 @@ mod tests {
                 engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
                 engine_config: Default::default(),
                 assigned_at: 0,
+                ..Default::default()
             }),
             ..Default::default()
         });
@@ -263,7 +265,7 @@ mod tests {
             has_quantization: false,
             storage_path: base_location, // Match production: just base_location
             dimension: query_vector.len(),
-            distance_metric: distance_metric.into(),
+            distance_metric,
             ..Default::default()
         };
 
@@ -829,7 +831,7 @@ mod tests {
             // VIPER stores files in {base_path}/{collection_id}/data
             let storage_url = format!(
                 "file://{}",
-                StoragePath::collection_data_path(base_path, &collection_id)
+                StoragePath::collection_data_path(base_path, collection_id)
             );
             let results =
                 search_with_context(&engine, collection_id, &storage_url, &vec![0.1; 128], 30)
@@ -1071,8 +1073,7 @@ mod tests {
                                                     // Check for id column
                                                     if let Ok(idx) =
                                                         batch.schema().index_of(FIELD_ID)
-                                                    {
-                                                        if let Some(id_array) = batch
+                                                        && let Some(id_array) = batch
                                                             .column(idx)
                                                             .as_any()
                                                             .downcast_ref::<arrow_array::StringArray>()
@@ -1088,7 +1089,6 @@ mod tests {
                                                                 }
                                                             }
                                                         }
-                                                    }
                                                 }
                                                 Err(e) => {
                                                     debug!("  Error reading batch: {}", e);
@@ -1117,7 +1117,7 @@ mod tests {
         // Debug: Check the directory structure
         {
             let base_path = temp_dir.path().to_str().unwrap();
-            let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+            let data_dir = StoragePath::collection_data_path(base_path, collection_id);
             let _wal_dir = format!("{}/{}/write_buffer", base_path, collection_id);
             if tokio::fs::metadata(&data_dir).await.is_ok() {
                 debug!("Data directory exists: {}", data_dir);

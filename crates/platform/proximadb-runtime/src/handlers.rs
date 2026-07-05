@@ -20,14 +20,18 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use proximadb_data_model::ProximaValue;
+use proximadb_data_model::{ProximaType, ProximaValue, TimeUnit};
 use proximadb_proto::v1::{
-    CollectionOperation, CollectionRequest, CollectionResponse, ExecuteQueryResponse,
-    HybridSearchRequest, HybridSearchResponse, SqlRow, SqlRowField, SqlValue, VectorBatchRequest,
-    VectorOperationResponse, VectorSearchRequest, sql_value,
+    Collection, CollectionConfig, CollectionOperation, CollectionRequest, CollectionResponse,
+    ExecuteQueryResponse, FilterableColumnSpec, FilterableDataType, HybridSearchRequest,
+    HybridSearchResponse, RecordSchemaConfig, SqlRow, SqlRowField, SqlValue, TextStorageConfig,
+    VectorBatchRequest, VectorOperationResponse, VectorSearchRequest, sql_value,
 };
 
-use crate::port::ApiHandlersPort;
+use crate::port::{
+    ApiHandlersPort, CollectionSchemaColumn, CollectionSchemaEnforcement, CollectionSchemaMetadata,
+    CollectionSchemaUpdate, CollectionTextStorage,
+};
 use crate::service_ports::{CollectionPort, QueryAdapterPort, VectorOpsPort};
 
 /// Global request counter for generating unique request IDs.
@@ -120,6 +124,23 @@ pub struct HybridRuntimeConfig;
 
 // ── UnifiedHandlers ───────────────────────────────────────────────────────────
 
+/// Canonical runtime-native API handler — the seam new schema/port work targets.
+///
+/// This is one of two same-named handler types. Prefer this one: it delegates
+/// to the runtime ports (`CollectionPort` / `VectorOpsPort`) and, on the schema
+/// surface, speaks the runtime-native contract (`CollectionSchemaMetadata`,
+/// built on canonical `ProximaType`) with no v1 envelope. Note the trait still
+/// carries legacy v1-proto methods (`handle_collection_operation_for_tenant`,
+/// `handle_vector_search_v1_*`, `execute_sql_v1`, …) that this impl bridges to
+/// the ports; those retire with the TD-123 v1→v2 message migration.
+///
+/// The legacy twin (`api_handlers::UnifiedHandlers` in the root crate) also
+/// impls `ApiHandlersPort`, additionally owns the write/graph/doc/DDL
+/// orchestration services, and is the dev/test default `AppState.api_handlers`
+/// (TD-104); prod overrides that default with THIS handler via
+/// `with_api_handlers` (`rest/server.rs`, `multi_server.rs`). The legacy handler
+/// retires once its orchestration is extracted into runtime ports.
+///
 /// Composition root that wires service ports into the API surface.
 ///
 /// Hold `Arc<dyn CollectionPort>`, `Arc<dyn VectorOpsPort>`, and optionally an
@@ -156,7 +177,267 @@ impl UnifiedHandlers {
     }
 }
 
+fn schema_metadata_from_collection(collection: &Collection) -> CollectionSchemaMetadata {
+    let Some(config) = collection.config.as_ref() else {
+        return CollectionSchemaMetadata {
+            collection_id: collection.id.clone(),
+            created_at_ms: collection.created_at,
+            updated_at_ms: collection.updated_at,
+            ..CollectionSchemaMetadata::default()
+        };
+    };
+
+    let mut columns = config
+        .text_columns
+        .iter()
+        .map(|name| CollectionSchemaColumn {
+            name: name.clone(),
+            data_type: ProximaType::String,
+            nullable: true,
+            indexed: false,
+            filterable: true,
+            text_storage: Some(CollectionTextStorage::Inline),
+            max_length: None,
+        })
+        .collect::<Vec<_>>();
+
+    for text_config in &config.text_storage_configs {
+        if let Some(existing) = columns
+            .iter_mut()
+            .find(|column| column.name == text_config.column_name)
+        {
+            existing.text_storage = Some(CollectionTextStorage::Large);
+            existing.max_length = Some(text_config.chunk_size);
+        } else {
+            columns.push(CollectionSchemaColumn {
+                name: text_config.column_name.clone(),
+                data_type: ProximaType::String,
+                nullable: true,
+                indexed: false,
+                filterable: false,
+                text_storage: Some(CollectionTextStorage::Large),
+                max_length: Some(text_config.chunk_size),
+            });
+        }
+    }
+
+    let existing_column_names = columns
+        .iter()
+        .map(|column| column.name.clone())
+        .collect::<std::collections::HashSet<_>>();
+    columns.extend(config.filterable_columns.iter().filter_map(|column| {
+        if existing_column_names.contains(&column.name) {
+            return None;
+        }
+        filterable_type_to_proxima_type(column.data_type).map(|data_type| CollectionSchemaColumn {
+            name: column.name.clone(),
+            data_type,
+            nullable: true,
+            indexed: column.indexed,
+            filterable: true,
+            text_storage: None,
+            max_length: None,
+        })
+    }));
+
+    let record_schema = config.record_schema.as_ref();
+    CollectionSchemaMetadata {
+        collection_id: collection.id.clone(),
+        created_at_ms: collection.created_at,
+        updated_at_ms: collection.updated_at,
+        schema_id: record_schema.map(|schema| schema.schema_id.clone()),
+        schema_version: record_schema.map(|schema| schema.schema_version.clone()),
+        enforcement: record_schema.map(|schema| enforcement_from_i32(schema.enforcement)),
+        auto_evolve: record_schema.is_none_or(|schema| schema.auto_evolve),
+        enabled: config.enable_proxima_record.unwrap_or(false) || record_schema.is_some(),
+        columns,
+    }
+}
+
+fn apply_schema_update(
+    config: &mut CollectionConfig,
+    update: &CollectionSchemaUpdate,
+) -> Result<()> {
+    config.record_schema = Some(RecordSchemaConfig {
+        schema_id: update.schema_id.clone(),
+        schema_version: update.schema_version.clone(),
+        enforcement: enforcement_to_i32(update.enforcement),
+        auto_evolve: update.auto_evolve,
+        columns: Vec::new(),
+    });
+    config.enable_proxima_record = Some(true);
+    config.text_columns = update
+        .columns
+        .iter()
+        .filter(|column| matches!(column.data_type, ProximaType::String))
+        .map(|column| column.name.clone())
+        .collect();
+    config.text_storage_configs = update
+        .columns
+        .iter()
+        .filter(|column| {
+            matches!(column.data_type, ProximaType::String)
+                && matches!(column.text_storage, Some(CollectionTextStorage::Large))
+        })
+        .map(|column| TextStorageConfig {
+            column_name: column.name.clone(),
+            strategy: 1,
+            inline_threshold: 4096,
+            chunked_threshold: 1_048_576,
+            chunk_size: column.max_length.unwrap_or(512),
+            ..Default::default()
+        })
+        .collect();
+    config.filterable_columns = update
+        .columns
+        .iter()
+        .filter(|column| column.filterable)
+        .filter_map(|column| {
+            proxima_type_to_filterable_type(&column.data_type).map(|data_type| {
+                FilterableColumnSpec {
+                    name: column.name.clone(),
+                    data_type,
+                    indexed: column.indexed,
+                    supports_range: supports_range_filter(&column.data_type),
+                    estimated_cardinality: None,
+                }
+            })
+        })
+        .collect();
+
+    // ADR-047 / TD-TBL-1: the narrow v1 projection above is best-effort — it can
+    // only carry text + the `FilterableDataType` vocabulary. Columns it cannot
+    // represent (UInt/Struct/Map/Sparse/BinaryVector …) are preserved verbatim
+    // in the canonical sidecar written by `set_collection_schema_columns`; they
+    // are no longer rejected, so the canonical authority is never lossy.
+    for column in &update.columns {
+        let storable_text = matches!(column.data_type, ProximaType::String);
+        let storable_filterable =
+            column.filterable && proxima_type_to_filterable_type(&column.data_type).is_some();
+        if !storable_text && !storable_filterable {
+            tracing::debug!(
+                "schema column '{}' (type {:?}) preserved only in canonical sidecar \
+                 (not representable in the narrow v1 collection config)",
+                column.name,
+                column.data_type
+            );
+        }
+    }
+    Ok(())
+}
+
+fn enforcement_from_i32(value: i32) -> CollectionSchemaEnforcement {
+    match value {
+        1 => CollectionSchemaEnforcement::Strict,
+        2 => CollectionSchemaEnforcement::Flexible,
+        _ => CollectionSchemaEnforcement::Hybrid,
+    }
+}
+
+fn enforcement_to_i32(value: CollectionSchemaEnforcement) -> i32 {
+    match value {
+        CollectionSchemaEnforcement::Strict => 1,
+        CollectionSchemaEnforcement::Flexible => 2,
+        CollectionSchemaEnforcement::Hybrid => 3,
+    }
+}
+
+fn filterable_type_to_proxima_type(value: i32) -> Option<ProximaType> {
+    match FilterableDataType::try_from(value).ok()? {
+        FilterableDataType::FilterableInteger => Some(ProximaType::Int64),
+        FilterableDataType::FilterableFloat => Some(ProximaType::Float64),
+        FilterableDataType::FilterableDecimal => Some(ProximaType::Decimal {
+            precision: 38,
+            scale: 18,
+        }),
+        FilterableDataType::FilterableBoolean => Some(ProximaType::Boolean),
+        FilterableDataType::FilterableDatetime => {
+            Some(ProximaType::Timestamp(TimeUnit::Nanosecond))
+        }
+        FilterableDataType::FilterableTimestampTz => {
+            Some(ProximaType::TimestampTz(TimeUnit::Nanosecond))
+        }
+        FilterableDataType::FilterableDate => Some(ProximaType::Date),
+        FilterableDataType::FilterableTime => Some(ProximaType::Time(TimeUnit::Nanosecond)),
+        FilterableDataType::FilterableUuid => Some(ProximaType::Uuid),
+        FilterableDataType::FilterableJson => Some(ProximaType::Json),
+        FilterableDataType::FilterableArrayString => {
+            Some(ProximaType::Array(Box::new(ProximaType::String)))
+        }
+        FilterableDataType::FilterableArrayInteger => {
+            Some(ProximaType::Array(Box::new(ProximaType::Int64)))
+        }
+        FilterableDataType::FilterableArrayFloat => {
+            Some(ProximaType::Array(Box::new(ProximaType::Float64)))
+        }
+        FilterableDataType::FilterableArrayBoolean => {
+            Some(ProximaType::Array(Box::new(ProximaType::Boolean)))
+        }
+        _ => None,
+    }
+}
+
+fn proxima_type_to_filterable_type(value: &ProximaType) -> Option<i32> {
+    let data_type = match value {
+        ProximaType::Int8 | ProximaType::Int16 | ProximaType::Int32 | ProximaType::Int64 => {
+            FilterableDataType::FilterableInteger
+        }
+        ProximaType::Float32 | ProximaType::Float64 => FilterableDataType::FilterableFloat,
+        ProximaType::Decimal { .. } => FilterableDataType::FilterableDecimal,
+        ProximaType::Boolean => FilterableDataType::FilterableBoolean,
+        ProximaType::Timestamp(_) => FilterableDataType::FilterableDatetime,
+        ProximaType::TimestampTz(_) => FilterableDataType::FilterableTimestampTz,
+        ProximaType::Date => FilterableDataType::FilterableDate,
+        ProximaType::Time(_) => FilterableDataType::FilterableTime,
+        ProximaType::Uuid => FilterableDataType::FilterableUuid,
+        ProximaType::Json | ProximaType::Jsonb => FilterableDataType::FilterableJson,
+        ProximaType::Array(inner) if matches!(inner.as_ref(), ProximaType::String) => {
+            FilterableDataType::FilterableArrayString
+        }
+        ProximaType::Array(inner)
+            if matches!(
+                inner.as_ref(),
+                ProximaType::Int8 | ProximaType::Int16 | ProximaType::Int32 | ProximaType::Int64
+            ) =>
+        {
+            FilterableDataType::FilterableArrayInteger
+        }
+        ProximaType::Array(inner)
+            if matches!(inner.as_ref(), ProximaType::Float32 | ProximaType::Float64) =>
+        {
+            FilterableDataType::FilterableArrayFloat
+        }
+        ProximaType::Array(inner) if matches!(inner.as_ref(), ProximaType::Boolean) => {
+            FilterableDataType::FilterableArrayBoolean
+        }
+        _ => return None,
+    };
+    Some(data_type as i32)
+}
+
+fn supports_range_filter(value: &ProximaType) -> bool {
+    matches!(
+        value,
+        ProximaType::Int8
+            | ProximaType::Int16
+            | ProximaType::Int32
+            | ProximaType::Int64
+            | ProximaType::Float32
+            | ProximaType::Float64
+            | ProximaType::Decimal { .. }
+            | ProximaType::Timestamp(_)
+            | ProximaType::TimestampTz(_)
+            | ProximaType::Date
+            | ProximaType::Time(_)
+    )
+}
+
 // ── ApiHandlersPort implementation ───────────────────────────────────────────
+// CANONICAL impl. New schema/port methods belong here (runtime-native shape).
+// The legacy twin lives in `src/api_handlers/request_handlers.rs`
+// (`impl ApiHandlersPort for UnifiedHandlers` on the root-crate struct) and
+// bridges to v1 CollectionRequest/CollectionOperation — edit that one only to
+// keep the bridge compiling; do not extend it for new functionality.
 
 #[async_trait]
 impl ApiHandlersPort for UnifiedHandlers {
@@ -231,6 +512,60 @@ impl ApiHandlersPort for UnifiedHandlers {
 
         resp.processing_time_us = start.elapsed().as_micros() as i64;
         Ok(resp)
+    }
+
+    async fn get_collection_schema_metadata(
+        &self,
+        collection_id: &str,
+        tenant_id: Option<&str>,
+    ) -> Result<Option<CollectionSchemaMetadata>> {
+        let collection = self
+            .collection
+            .get_collection(collection_id, tenant_id)
+            .await?;
+        let Some(collection) = collection else {
+            return Ok(None);
+        };
+        let mut metadata = schema_metadata_from_collection(&collection);
+        // ADR-047 / TD-TBL-1: the canonical sidecar (if present) is authoritative;
+        // otherwise keep the narrow-derived view (legacy collection fallback).
+        if let Some(canonical) = self
+            .collection
+            .get_collection_schema_columns(collection_id, tenant_id)
+            .await?
+        {
+            metadata.columns = canonical;
+        }
+        Ok(Some(metadata))
+    }
+
+    async fn update_collection_schema_metadata(
+        &self,
+        collection_id: &str,
+        update: CollectionSchemaUpdate,
+        tenant_id: Option<&str>,
+    ) -> Result<CollectionSchemaMetadata> {
+        let collection = self
+            .collection
+            .get_collection(collection_id, tenant_id)
+            .await?
+            .ok_or_else(|| anyhow!("collection not found: {collection_id}"))?;
+        let mut config = collection.config.clone().unwrap_or_default();
+        // Narrow projection (best-effort); the canonical columns are persisted
+        // verbatim via the sidecar below so rich ProximaType variants survive.
+        apply_schema_update(&mut config, &update)?;
+        let updated = self
+            .collection
+            .update_collection(collection_id, config, tenant_id)
+            .await?;
+        self.collection
+            .set_collection_schema_columns(collection_id, &update.columns, tenant_id)
+            .await?;
+        // Return the canonical columns as the authoritative view (the narrow
+        // config above cannot represent them, so re-deriving would lose them).
+        let mut metadata = schema_metadata_from_collection(&updated);
+        metadata.columns = update.columns;
+        Ok(metadata)
     }
 
     async fn handle_vector_search_v1_for_tenant(

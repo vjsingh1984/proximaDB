@@ -3342,7 +3342,7 @@ mod tests {
         // With centroid routing: 1000 * (1 - 0.8) = 200 blocks
         let blocks = oe.expected_blocks_to_scan(true, false);
         assert!(
-            blocks >= 190 && blocks <= 210,
+            (190..=210).contains(&blocks),
             "Expected ~200 blocks, got {}",
             blocks
         );
@@ -3350,7 +3350,7 @@ mod tests {
         // With centroid + Z-order: 1000 * (1 - 0.8) * (1 - 0.5) = 100 blocks
         let blocks = oe.expected_blocks_to_scan(true, true);
         assert!(
-            blocks >= 90 && blocks <= 110,
+            (90..=110).contains(&blocks),
             "Expected ~100 blocks, got {}",
             blocks
         );
@@ -3369,7 +3369,7 @@ mod tests {
 
         // With centroid only: 1 - 0.9 = 0.1 (90% reduction)
         let mult = oe.io_cost_multiplier(true, false, false);
-        assert!(mult >= 0.09 && mult <= 0.11, "Expected ~0.1, got {}", mult);
+        assert!((0.09..=0.11).contains(&mult), "Expected ~0.1, got {}", mult);
 
         // With centroid + zone: raw multiplier is
         // (1 - 0.9) * (1 - 0.8) = 0.02, but the cost model applies a
@@ -3377,7 +3377,7 @@ mod tests {
         // stacked pruning signals.
         let mult = oe.io_cost_multiplier(true, false, true);
         assert!(
-            mult >= 0.09 && mult <= 0.11,
+            (0.09..=0.11).contains(&mult),
             "Expected conservative floor ~0.1, got {}",
             mult
         );

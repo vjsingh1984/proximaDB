@@ -149,6 +149,12 @@ pub async fn execute_graph_query_expr_with_start_nodes(
     execute_lowered_graph_query_with_start_nodes(graph_ops, expr, start_node_ids).await
 }
 
+/// Hard cap on variable-length `*min..max` expansion depth. Per-source work is already
+/// bounded to O(V + E) by the visited set; this backstops a user-supplied `max` far larger
+/// than any real graph diameter (e.g. `*1..1000000`) so a single query cannot iterate the
+/// depth loop pathologically.
+const MAX_VARIABLE_LENGTH_DEPTH: u32 = 64;
+
 pub async fn execute_supported_graph_query_with_start_nodes(
     graph_ops: &dyn GraphQueryReadService,
     parsed: &ParsedGraphQuery,
@@ -176,46 +182,124 @@ pub async fn execute_supported_graph_query_with_start_nodes(
                 ));
             };
 
-            let candidate_edges =
-                query_candidate_edges(graph_ops, parsed.graph_id(), &current_node.id, edge_pattern)
+            match edge_pattern.var_length {
+                None => {
+                    // Fixed single hop: bind both the traversed edge and the adjacent node.
+                    let candidate_edges = query_candidate_edges(
+                        graph_ops,
+                        parsed.graph_id(),
+                        &current_node.id,
+                        edge_pattern,
+                    )
                     .await?;
 
-            for edge in candidate_edges {
-                let next_node_id = resolve_adjacent_node_id(
-                    &current_node.id,
-                    edge.as_ref(),
-                    edge_pattern.direction,
-                );
-                let Some(next_node) = graph_ops.get_node(parsed.graph_id(), &next_node_id).await?
-                else {
-                    continue;
-                };
+                    for edge in candidate_edges {
+                        let next_node_id = resolve_adjacent_node_id(
+                            &current_node.id,
+                            edge.as_ref(),
+                            edge_pattern.direction,
+                        );
+                        let Some(next_node) =
+                            graph_ops.get_node(parsed.graph_id(), &next_node_id).await?
+                        else {
+                            continue;
+                        };
 
-                if !matches_node_pattern(next_node.as_ref(), next_node_pattern) {
-                    continue;
-                }
+                        if !matches_node_pattern(next_node.as_ref(), next_node_pattern) {
+                            continue;
+                        }
 
-                let mut next_binding = binding.clone();
-                let edge_value = BoundValue::Edge(edge.clone());
-                if let Some(edge_var) = &edge_pattern.variable {
-                    if !binding_is_compatible(next_binding.get(edge_var), &edge_value) {
-                        continue;
+                        let mut next_binding = binding.clone();
+                        let edge_value = BoundValue::Edge(edge.clone());
+                        if let Some(edge_var) = &edge_pattern.variable {
+                            if !binding_is_compatible(next_binding.get(edge_var), &edge_value) {
+                                continue;
+                            }
+                            next_binding.insert(edge_var.clone(), edge_value);
+                        } else {
+                            let synthetic_key = format!("_edge_{}", edge.id);
+                            next_binding.insert(synthetic_key, edge_value);
+                        }
+
+                        let next_node_value = BoundValue::Node(next_node.clone());
+                        if !binding_is_compatible(
+                            next_binding.get(&next_node_pattern.variable),
+                            &next_node_value,
+                        ) {
+                            continue;
+                        }
+                        next_binding.insert(next_node_pattern.variable.clone(), next_node_value);
+                        next_bindings.push(next_binding);
                     }
-                    next_binding.insert(edge_var.clone(), edge_value);
-                } else {
-                    let synthetic_key = format!("_edge_{}", edge.id);
-                    next_binding.insert(synthetic_key, edge_value);
                 }
+                Some((min_hops, max_hops)) => {
+                    // Variable-length `*min..max`: bounded BFS from the current node,
+                    // emitting one binding per DISTINCT node reachable in [min, max] hops
+                    // that matches the terminal pattern. This is *reachability* semantics —
+                    // the cost-bounded default for impact / lineage / ring tracing — rather
+                    // than per-path multiplicity. Each node is expanded at most once, so the
+                    // work is O(V + E) per source regardless of `max`; MAX_VARIABLE_LENGTH_DEPTH
+                    // backstops pathological graphs. Intermediate nodes are unconstrained (only
+                    // the edge type filters each hop); the terminal pattern gates emission.
+                    let max_depth = max_hops.min(MAX_VARIABLE_LENGTH_DEPTH) as usize;
+                    let min_depth = (min_hops.max(1)) as usize;
 
-                let next_node_value = BoundValue::Node(next_node.clone());
-                if !binding_is_compatible(
-                    next_binding.get(&next_node_pattern.variable),
-                    &next_node_value,
-                ) {
-                    continue;
+                    let mut visited: HashSet<String> = HashSet::new();
+                    visited.insert(current_node.id.clone());
+                    let mut emitted: HashSet<String> = HashSet::new();
+                    let mut frontier = vec![current_node.clone()];
+
+                    for depth in 1..=max_depth {
+                        let mut next_frontier = Vec::new();
+                        for node in &frontier {
+                            let candidate_edges = query_candidate_edges(
+                                graph_ops,
+                                parsed.graph_id(),
+                                &node.id,
+                                edge_pattern,
+                            )
+                            .await?;
+                            for edge in candidate_edges {
+                                let adj_id = resolve_adjacent_node_id(
+                                    &node.id,
+                                    edge.as_ref(),
+                                    edge_pattern.direction,
+                                );
+                                let Some(adj_node) =
+                                    graph_ops.get_node(parsed.graph_id(), &adj_id).await?
+                                else {
+                                    continue;
+                                };
+
+                                if depth >= min_depth
+                                    && matches_node_pattern(adj_node.as_ref(), next_node_pattern)
+                                    && emitted.insert(adj_id.clone())
+                                {
+                                    let next_node_value = BoundValue::Node(adj_node.clone());
+                                    if binding_is_compatible(
+                                        binding.get(&next_node_pattern.variable),
+                                        &next_node_value,
+                                    ) {
+                                        let mut next_binding = binding.clone();
+                                        next_binding.insert(
+                                            next_node_pattern.variable.clone(),
+                                            next_node_value,
+                                        );
+                                        next_bindings.push(next_binding);
+                                    }
+                                }
+
+                                if depth < max_depth && visited.insert(adj_id.clone()) {
+                                    next_frontier.push(adj_node.clone());
+                                }
+                            }
+                        }
+                        frontier = next_frontier;
+                        if frontier.is_empty() {
+                            break;
+                        }
+                    }
                 }
-                next_binding.insert(next_node_pattern.variable.clone(), next_node_value);
-                next_bindings.push(next_binding);
             }
         }
 
@@ -1249,6 +1333,107 @@ mod tests {
                 "colleague": "Bob",
                 "company": "Acme"
             })]
+        );
+    }
+
+    // A linear chain n0 -> n1 -> n2 -> n3 -> n4 over edge type LINK, for exercising
+    // variable-length `*min..max` traversal.
+    fn seed_chain() -> MockGraphReadService {
+        let mut service = MockGraphReadService::with_graphs(&["chain"]);
+        for id in ["n0", "n1", "n2", "n3", "n4"] {
+            service.insert_node(
+                "chain",
+                Node {
+                    id: id.to_string(),
+                    labels: vec!["N".to_string()],
+                    properties: HashMap::new(),
+                    embedding: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                },
+            );
+        }
+        for (from, to) in [("n0", "n1"), ("n1", "n2"), ("n2", "n3"), ("n3", "n4")] {
+            service.insert_edge(
+                "chain",
+                Edge {
+                    id: format!("{from}->{to}"),
+                    from_node_id: from.to_string(),
+                    to_node_id: to.to_string(),
+                    edge_type: "LINK".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                },
+            );
+        }
+        service
+    }
+
+    async fn chain_ids(service: &MockGraphReadService, query: &str) -> Vec<String> {
+        let parsed = crate::graph_lowering::parse_supported_graph_query(query, None, Some("chain"))
+            .expect("parse graph query");
+        let executed = execute_supported_graph_query(service, &parsed)
+            .await
+            .expect("execute graph query");
+        let mut ids = executed
+            .rows
+            .iter()
+            .filter_map(|row| row.get("id").and_then(Value::as_str).map(str::to_string))
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids
+    }
+
+    #[tokio::test]
+    async fn variable_length_path_expands_every_depth_in_range() {
+        let service = seed_chain();
+
+        // `*1..3` from n0 must reach n1 (depth 1), n2 (depth 2), n3 (depth 3) — not n4 (depth 4).
+        // Before the fix this returned only n1 (depth 1).
+        assert_eq!(
+            chain_ids(
+                &service,
+                "MATCH (a:N {id: \"n0\"})-[:LINK*1..3]->(x:N) RETURN x.id AS id",
+            )
+            .await,
+            vec!["n1", "n2", "n3"],
+        );
+
+        // `*1..1` is a plain single hop.
+        assert_eq!(
+            chain_ids(
+                &service,
+                "MATCH (a:N {id: \"n0\"})-[:LINK*1..1]->(x:N) RETURN x.id AS id",
+            )
+            .await,
+            vec!["n1"],
+        );
+
+        // The lower bound excludes the direct neighbour: `*2..4` starts at depth 2.
+        assert_eq!(
+            chain_ids(
+                &service,
+                "MATCH (a:N {id: \"n0\"})-[:LINK*2..4]->(x:N) RETURN x.id AS id",
+            )
+            .await,
+            vec!["n2", "n3", "n4"],
+        );
+    }
+
+    #[tokio::test]
+    async fn anonymous_chained_pattern_traverses_two_explicit_hops() {
+        let service = seed_chain();
+        // Two explicit hops through an anonymous intermediate node `()` must reach n2.
+        // Before the fix, anonymous nodes failed to parse and the query returned nothing.
+        assert_eq!(
+            chain_ids(
+                &service,
+                "MATCH (a:N {id: \"n0\"})-[:LINK]->()-[:LINK]->(x:N) RETURN x.id AS id",
+            )
+            .await,
+            vec!["n2"],
         );
     }
 

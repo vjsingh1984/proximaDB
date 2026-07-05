@@ -74,6 +74,10 @@ pub struct EdgePattern {
     pub direction: EdgeDirection,
     /// Whether this is an optional match
     pub optional: bool,
+    /// Variable-length quantifier `*min..max` (e.g. `-[:KNOWS*1..4]->`).
+    /// `None` is a fixed single hop (equivalent to `Some((1, 1))`); `Some((min, max))`
+    /// expands the relationship over `min..=max` hops via bounded BFS at execution time.
+    pub var_length: Option<(u32, u32)>,
 }
 
 /// Path pattern for variable-length paths

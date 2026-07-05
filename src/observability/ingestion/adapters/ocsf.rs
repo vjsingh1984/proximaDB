@@ -378,7 +378,7 @@ mod tests {
             entry
                 .source
                 .as_ref()
-                .map_or(false, |s| s.contains("TestVendor"))
+                .is_some_and(|s| s.contains("TestVendor"))
         );
     }
 

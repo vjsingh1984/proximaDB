@@ -168,7 +168,7 @@ impl TestDataGenerator {
         vectors
             .iter()
             .map(|vector| {
-                let bytes_needed = (self.config.dimension + 7) / 8;
+                let bytes_needed = self.config.dimension.div_ceil(8);
                 let mut binary = vec![0u8; bytes_needed];
 
                 for (i, &value) in vector.iter().enumerate() {
@@ -654,7 +654,7 @@ mod tests {
 
         // Test binary quantization
         debug!("Testing binary quantized distances:");
-        for (_idx, binary_vector) in binary_codes.iter().enumerate() {
+        for binary_vector in binary_codes.iter() {
             // Convert binary back to float for comparison (1 bit per dimension)
             let mut dequantized = vec![0.0f32; dimension];
             for (i, &byte) in binary_vector.iter().enumerate() {

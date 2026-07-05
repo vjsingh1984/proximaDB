@@ -36,7 +36,10 @@ pub use handlers::{CollectionIdCache, UnifiedHandlers};
 pub use hardware::{HardwareCapabilities, SimdLevel, best_simd_level, hardware_capabilities};
 pub use hybrid_port::HybridPort;
 pub use observability_port::ObservabilityPort;
-pub use port::ApiHandlersPort;
+pub use port::{
+    ApiHandlersPort, CollectionSchemaColumn, CollectionSchemaEnforcement, CollectionSchemaMetadata,
+    CollectionSchemaUpdate, CollectionTextStorage,
+};
 pub use record_ops_port::RecordOpsPort;
 pub use resources::{MemoryBudget, ResourceManager};
 pub use security_port::{PortAuthCredential, PortUserContext, SecurityPort};

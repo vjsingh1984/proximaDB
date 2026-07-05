@@ -204,6 +204,7 @@ impl TestCollectionBuilder {
                 engine_config: HashMap::new(),
                 base_location: temp_dir.path().to_str().unwrap().to_string(),
                 assigned_at: 0,
+                ..Default::default()
             }),
         };
 
@@ -262,6 +263,7 @@ impl TestCollectionBuilder {
                 engine_config: HashMap::new(),
                 base_location: path.to_str().unwrap().to_string(),
                 assigned_at: 0,
+                ..Default::default()
             }),
         }
     }

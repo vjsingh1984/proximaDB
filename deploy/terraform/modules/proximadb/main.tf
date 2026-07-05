@@ -61,7 +61,7 @@ variable "backup_retention_days" {
 variable "container_image" {
   description = "ProximaDB container image"
   type        = string
-  default     = "proximadb/proximadb:latest"
+  default     = "vjsingh1984/proximadb:latest"
 }
 
 variable "rest_port" {

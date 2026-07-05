@@ -861,7 +861,7 @@ mod tests {
         ]);
 
         let selectivity = pushdown.estimate_selectivity(&filter);
-        assert!(selectivity >= 0.0 && selectivity <= 1.0);
+        assert!((0.0..=1.0).contains(&selectivity));
     }
 
     #[test]

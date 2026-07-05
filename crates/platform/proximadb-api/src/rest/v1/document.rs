@@ -1159,7 +1159,7 @@ mod tests {
         assert_eq!(aggregate.results[0]["name"], "doc");
 
         let _router = create_document_router();
-        let _handler = DocumentHandler::default();
+        let _handler = DocumentHandler;
         let _query_handler = DocumentQueryHandler::new();
         assert_eq!(default_limit(), 100);
         assert_eq!(default_index_type(), "btree");

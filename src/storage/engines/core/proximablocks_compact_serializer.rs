@@ -269,7 +269,7 @@ mod tests {
         data.extend_from_slice(&256u64.to_le_bytes());
 
         // Fill header to 64 bytes
-        data.extend_from_slice(&vec![0u8; 40]);
+        data.extend_from_slice(&[0u8; 40]);
 
         // Some data content
         data.extend_from_slice(&vec![0xFFu8; 960]); // Up to index start

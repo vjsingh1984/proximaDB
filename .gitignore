@@ -309,6 +309,7 @@ docs/log/
 !config/tier-config.json
 !config/tier-config.example.json
 !docs/_internal/roadmap/PANIC_POLICY_BASELINE.json
+!docs/_internal/roadmap/V1_PROTO_USAGE_BASELINE.json
 !clients/**/package.json
 !clients/**/tsconfig.json
 !clients/**/tsconfig.*.json
@@ -406,13 +407,14 @@ ml_prompt.txt
 footer_cache.bin
 
 # AI-assistant instruction files — per-developer / local-only (NOT committed).
-# CLAUDE.md / GEMINI.md / AGENTS.md at the repo root are each developer's own
+# CLAUDE.md / GEMINI.md / AGENTS.md / AGENT.md at the repo root are each developer's own
 # local copy; shared defaults ship committed under docs/agent-rules/*.seed — copy
 # one to the root to seed a new machine (see docs/agent-rules/README.adoc).
 # Remaining entries below ignore tooling artifacts that should never be committed.
 CLAUDE.md
 GEMINI.md
 AGENTS.md
+AGENT.md
 CURSOR.md
 COPILOT.md
 .claude/

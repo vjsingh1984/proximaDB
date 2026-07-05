@@ -146,23 +146,18 @@ MATURITY_CONTRACT_RULES = [
             "This document states the *broad, durable vision*",
         ],
     },
-    # REST /api/v3 is a 308 alias to /api/v2/collections/{id}/documents.
-    # These checks ensure the alias relationship and redirect behaviour remain
-    # in place and that v3 is not re-promoted to an independent API surface.
+    # REST /api/v3 is REMOVED — the document-ingest handler lives canonically at
+    # /api/v2/collections/{id}/documents (folded from the former v3 surface). These
+    # checks ensure v3 stays removed and the handler stays at v2.
     {
-        "path": "src/network/rest/v3/mod.rs",
+        "path": "src/network/rest/v2/documents.rs",
         "required_substrings": [
-            # v3 returns a 308 to the canonical v2 path.
-            "308 Permanent Redirect",
-            # Redirect target comment must reference the canonical v2 path template.
-            "/api/v2/collections/{id}/documents",
-            # Sunset header constant must be referenced (not hard-coded inline).
-            "V3_DOCUMENTS_SUNSET_DATE",
+            # Canonical v2 route for document ingest.
+            "POST /api/v2/collections/{collection_id}/documents",
         ],
         "forbidden_substrings": [
-            # v3 must not be re-promoted to a stable independent surface.
-            "v3 is a stable API surface",
-            "v3 production-ready",
+            # v3 must not be re-introduced in the handler.
+            "/api/v3",
         ],
     },
     # gRPC v1 compatibility services must remain OFF by default and must carry

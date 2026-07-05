@@ -80,7 +80,7 @@ impl SplitMix64 {
 /// Build a `dim × dim` orthonormal rotation matrix (row-major) from `seed` via a
 /// seeded Gaussian matrix + modified Gram–Schmidt. Deterministic: the same
 /// `(dim, seed)` always yields the same matrix, so decode regenerates it.
-pub fn build_rotation(dim: usize, seed: u64) -> Vec<Vec<f32>> {
+pub fn build_rotation(dim: usize, seed: u64) -> Vec<f32> {
     let mut rng = SplitMix64(seed ^ 0xA5A5_5A5A_DEAD_BEEF);
     let mut rows: Vec<Vec<f32>> = (0..dim)
         .map(|_| (0..dim).map(|_| rng.next_gaussian()).collect())
@@ -99,25 +99,52 @@ pub fn build_rotation(dim: usize, seed: u64) -> Vec<Vec<f32>> {
             rows[i][k] *= inv;
         }
     }
-    rows
+    // Flatten to row-major contiguous for cache-friendly apply_rotation.
+    rows.into_iter().flatten().collect()
+}
+
+/// Cached `build_rotation` — the rotation is deterministic from `(dim, seed)`,
+/// so it's identical across all blocks + queries. Without caching it was rebuilt
+/// per-block-per-query (30ms each, O(dim³) Gram-Schmidt + Box-Muller) → dominated
+/// the cascade search cost (~87%). The thread_local cache builds ONCE, then clones
+/// (~64KB memcpy) — a 1000×+ amortized win.
+pub fn build_rotation_cached(dim: usize, seed: u64) -> Vec<f32> {
+    type RotCache = std::cell::RefCell<Option<((usize, u64), Vec<f32>)>>;
+    thread_local! {
+        static CACHE: RotCache = const { std::cell::RefCell::new(None) };
+    }
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if let Some(((cd, cs), rot)) = c.as_ref()
+            && *cd == dim
+            && *cs == seed
+        {
+            return rot.clone();
+        }
+        let rot = build_rotation(dim, seed);
+        *c = Some(((dim, seed), rot.clone()));
+        rot
+    })
 }
 
 /// Apply a rotation matrix to a vector: `out = P · v`.
-pub fn apply_rotation(rotation: &[Vec<f32>], v: &[f32]) -> Vec<f32> {
+pub fn apply_rotation(rotation: &[f32], v: &[f32]) -> Vec<f32> {
+    let dim = v.len();
     rotation
-        .iter()
+        .chunks(dim)
         .map(|row| row.iter().zip(v).map(|(a, b)| a * b).sum())
         .collect()
 }
 
 /// Apply the inverse (transpose) rotation: `out = Pᵀ · v`. For an orthonormal
 /// `P`, `Pᵀ = P⁻¹`, so this maps a rotated vector back to the original basis.
-pub fn apply_rotation_transpose(rotation: &[Vec<f32>], v: &[f32]) -> Vec<f32> {
+pub fn apply_rotation_transpose(rotation: &[f32], v: &[f32]) -> Vec<f32> {
     let dim = v.len();
     let mut out = vec![0.0f32; dim];
     for (i, &vi) in v.iter().enumerate() {
         // row i of P contributes vi to every output column (Pᵀ column i = P row i).
-        for (o, &r) in out.iter_mut().zip(rotation[i].iter()) {
+        let row = &rotation[i * dim..(i + 1) * dim];
+        for (o, &r) in out.iter_mut().zip(row) {
             *o += vi * r;
         }
     }
@@ -127,7 +154,7 @@ pub fn apply_rotation_transpose(rotation: &[Vec<f32>], v: &[f32]) -> Vec<f32> {
 /// Coarse full-vector reconstruction from a binary code (lossy — RaBitQ is a
 /// search representation, not an exact codec). Rebuilds `centroid + ‖r‖ · Pᵀx̄`
 /// where `x̄ᵢ = ±1/√D`. Direction is preserved far better than magnitude.
-pub fn reconstruct(code: &RaBitQCode, params: &RaBitQParams, rotation: &[Vec<f32>]) -> Vec<f32> {
+pub fn reconstruct(code: &RaBitQCode, params: &RaBitQParams, rotation: &[f32]) -> Vec<f32> {
     let dim = params.dim;
     let inv_sqrt_d = 1.0 / (dim as f32).sqrt();
     let x_rotated: Vec<f32> = (0..dim)
@@ -177,7 +204,7 @@ fn packed_len(dim: usize) -> usize {
 
 /// Encode one vector to a [`RaBitQCode`] using a prebuilt `rotation`
 /// (`build_rotation(params.dim, params.seed)`).
-pub fn encode(vector: &[f32], params: &RaBitQParams, rotation: &[Vec<f32>]) -> RaBitQCode {
+pub fn encode(vector: &[f32], params: &RaBitQParams, rotation: &[f32]) -> RaBitQCode {
     let dim = params.dim;
     // residual = v - centroid
     let residual: Vec<f32> = vector
@@ -216,7 +243,7 @@ pub fn encode(vector: &[f32], params: &RaBitQParams, rotation: &[Vec<f32>]) -> R
 }
 
 /// Rotate a query's residual once per query: `q̃ = P · (query − centroid)`.
-pub fn rotate_query(query: &[f32], params: &RaBitQParams, rotation: &[Vec<f32>]) -> Vec<f32> {
+pub fn rotate_query(query: &[f32], params: &RaBitQParams, rotation: &[f32]) -> Vec<f32> {
     let residual: Vec<f32> = query
         .iter()
         .zip(params.centroid.iter())
@@ -227,18 +254,29 @@ pub fn rotate_query(query: &[f32], params: &RaBitQParams, rotation: &[Vec<f32>])
 
 impl RaBitQCode {
     /// `⟨x̄, q̃⟩` — the sign-weighted sum of the rotated query, the cheap core of
-    /// the estimator (one add/sub per dim, no multiply).
+    /// the estimator. Branchless + per-byte (8 dims/iteration) so the inner loop
+    /// auto-vectorizes — the prior per-dim `if set { += q } else { -= q }` was a
+    /// data-dependent branch (128 mispredicted branches/code) that dominated the
+    /// cascade search cost (~90% at N=100k).
     fn binary_dot(&self, q_rotated: &[f32]) -> f32 {
         let dim = q_rotated.len();
         let inv_sqrt_d = 1.0 / (dim as f32).sqrt();
         let mut acc = 0.0f32;
-        for (i, &q) in q_rotated.iter().enumerate() {
-            let set = self.bits[i / 8] & (1u8 << (i % 8)) != 0;
-            if set {
-                acc += q;
-            } else {
-                acc -= q;
+        let n_full_bytes = dim / 8;
+        for b in 0..n_full_bytes {
+            let byte = self.bits[b];
+            let qs = &q_rotated[b * 8..b * 8 + 8];
+            // Branchless: bit → sign ±1.0, multiply-add. The fixed 8-iter loop
+            // over contiguous `qs` lets the compiler unroll + vectorize.
+            for bit in 0..8 {
+                let sign = 2.0 * ((byte >> bit) & 1) as f32 - 1.0;
+                acc += sign * qs[bit];
             }
+        }
+        // Tail (dim not a multiple of 8).
+        for i in (n_full_bytes * 8)..dim {
+            let sign = 2.0 * ((self.bits[i >> 3] >> (i & 7)) & 1) as f32 - 1.0;
+            acc += sign * q_rotated[i];
         }
         acc * inv_sqrt_d
     }
@@ -255,6 +293,16 @@ impl RaBitQCode {
         let r = self.dist_to_centroid;
         r * r - 2.0 * r * self.estimate_unit_ip(q_rotated)
     }
+
+    /// Inner-product ranking score against a rotated query (lower = higher IP =
+    /// nearer) — the cosine / max-IP analog of [`l2_rank_score`]. Ranks by the
+    /// residual inner product `‖r‖·⟨r̂, q̃⟩`; the centroid·q term is dropped, as in
+    /// the L2 proxy (a ranking approximation validated empirically by the cosine
+    /// recall ratchet). Negated so the shared ascending "lower = nearer" order
+    /// selects max inner-product first.
+    pub fn ip_rank_score(&self, q_rotated: &[f32]) -> f32 {
+        -self.dist_to_centroid * self.estimate_unit_ip(q_rotated)
+    }
 }
 
 /// Stage-1 RaBitQ candidate ranking: score every present code with the binary L2
@@ -268,6 +316,25 @@ pub fn rank_candidates(q_rotated: &[f32], codes: &[Option<RaBitQCode>], pool: us
         .iter()
         .enumerate()
         .filter_map(|(i, c)| c.as_ref().map(|c| (i, c.l2_rank_score(q_rotated))))
+        .collect();
+    scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(pool);
+    scored.into_iter().map(|(i, _)| i).collect()
+}
+
+/// Stage-1 RaBitQ candidate ranking by **inner product** (cosine / max-IP):
+/// mirror of [`rank_candidates`] using [`RaBitQCode::ip_rank_score`] so the
+/// ascending "lower score = nearer" order surfaces the max-IP candidates first.
+/// Stage-2 rerank then computes the exact metric on the SQ8-decoded vectors.
+pub fn rank_candidates_ip(
+    q_rotated: &[f32],
+    codes: &[Option<RaBitQCode>],
+    pool: usize,
+) -> Vec<usize> {
+    let mut scored: Vec<(usize, f32)> = codes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| c.as_ref().map(|c| (i, c.ip_rank_score(q_rotated))))
         .collect();
     scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(pool);
@@ -300,10 +367,14 @@ mod tests {
         let rot = build_rotation(dim, 12345);
         // rows are unit-norm and mutually orthogonal.
         for i in 0..dim {
-            let norm: f32 = rot[i].iter().map(|v| v * v).sum::<f32>().sqrt();
+            let norm: f32 = rot[i * dim..(i + 1) * dim]
+                .iter()
+                .map(|v| v * v)
+                .sum::<f32>()
+                .sqrt();
             assert!((norm - 1.0).abs() < 1e-3, "row {i} norm {norm}");
         }
-        let d01: f32 = (0..dim).map(|k| rot[0][k] * rot[1][k]).sum();
+        let d01: f32 = (0..dim).map(|k| rot[k] * rot[dim + k]).sum();
         assert!(d01.abs() < 1e-3, "rows 0,1 not orthogonal: {d01}");
         // rotation preserves norm.
         let v: Vec<f32> = (0..dim).map(|i| (i as f32 * 0.13).sin()).collect();

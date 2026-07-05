@@ -33,7 +33,7 @@ This software may include third-party dependencies with their own licenses.
 See Cargo.toml and package.json files for complete dependency information.
 
 For questions, contributions, or support:
-- GitHub: https://github.com/vijaykumarsingh/proximadb
+- GitHub: https://github.com/vjsingh1984/proximadb
 - Email: singhvjd@gmail.com
 
 Built with Rust for the AI revolution.

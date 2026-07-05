@@ -5824,7 +5824,7 @@ mod tests {
         schema
             .properties
             .insert("policy_boundary".to_string(), "engine-enforced".to_string());
-        let predicates = vec![RelationalSelectPredicate {
+        let predicates = [RelationalSelectPredicate {
             column: schema.columns[0].clone(),
             condition: RelationalSelectPredicateCondition::Comparison {
                 operator: RelationalSelectPredicateOperator::Equal,
@@ -6773,8 +6773,8 @@ mod tests {
 
         let insert = |sql: &'static str| {
             let p = &parser;
-            let stmt = p.parse_dml(sql).expect("parse dml").expect("dml");
-            stmt
+
+            p.parse_dml(sql).expect("parse dml").expect("dml")
         };
 
         // First insert succeeds.

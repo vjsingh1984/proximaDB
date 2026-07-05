@@ -13,7 +13,6 @@ use proximadb::proto::proximadb_v1::{
     VectorRecord, VectorSearchRequest, filter_clause, sql_value,
 };
 use std::time::Duration;
-use tokio;
 
 #[cfg(test)]
 mod api_consistency_tests {
@@ -141,7 +140,6 @@ mod api_consistency_tests {
 
         // Verify REST response structure
         if let Ok(response) = rest_response {
-            assert!(response.success || !response.success); // Response should have success field
             assert!(response.operation >= 0); // Should have valid operation enum
 
             // Check for required fields

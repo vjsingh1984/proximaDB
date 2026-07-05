@@ -49,8 +49,7 @@
 use serde_json::Value;
 use utoipa::OpenApi;
 
-use crate::network::rest::v2::{collections, entities, graphs, query, records, schema};
-use crate::network::rest::v3::documents;
+use crate::network::rest::v2::{collections, documents, entities, graphs, query, records, schema};
 
 /// Canonical ProximaDB error envelope (`{ error: { type, message, code } }`).
 ///

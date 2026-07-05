@@ -515,7 +515,7 @@ mod tests {
 
     #[test]
     fn catalog_legacy_stubs_construct() {
-        let _catalog = CatalogHandler::default();
+        let _catalog = CatalogHandler;
         let _collection = CollectionHandler::new();
     }
 }

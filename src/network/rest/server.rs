@@ -498,17 +498,9 @@ impl RestServer {
         // `[server.admin_ui] enabled`. This legacy multi-port path never serves it.
 
         // Add V2 API router with ProximaRecord support
-        let state_for_v3 = state_for_v2.clone();
         let v2_router = super::v2::create_v2_router().with_state(state_for_v2);
         base_router = base_router.nest("/api/v2", v2_router);
         tracing::info!("✅ V2 API enabled at /api/v2 (ProximaRecord, typed schema)");
-
-        // Add V3 API router with native server-side embedding
-        let v3_router = super::v3::create_v3_router().with_state(state_for_v3);
-        base_router = base_router.nest("/api/v3", v3_router);
-        tracing::info!(
-            "✅ V3 API now an alias -> /api/v2 (document ingest 308-redirects to /api/v2/collections/:id/documents)"
-        );
 
         // Unmatched routes (incl. the removed v1 surfaces) return the canonical
         // error envelope with a migration hint pointing at the v2 replacement.
@@ -812,17 +804,9 @@ impl RestServer {
         }
 
         // Add V2 API router with ProximaRecord support
-        let state_for_v3 = state_for_v2.clone();
         let v2_router = super::v2::create_v2_router().with_state(state_for_v2);
         base_router = base_router.nest("/api/v2", v2_router);
         tracing::info!("✅ V2 API enabled at /api/v2 (unified mode)");
-
-        // Add V3 API router with native server-side embedding
-        let v3_router = super::v3::create_v3_router().with_state(state_for_v3);
-        base_router = base_router.nest("/api/v3", v3_router);
-        tracing::info!(
-            "✅ V3 API now an alias -> /api/v2 (unified mode; document ingest 308-redirects to /api/v2/collections/:id/documents)"
-        );
 
         // Unmatched routes (incl. removed v1 surfaces) → canonical 404 + hint.
         base_router = base_router.fallback(not_found_fallback);
@@ -1064,21 +1048,11 @@ impl RestServer {
         tracing::info!(
             "   POST   /api/v2/collections/:id/records/batch - Canonical ProximaRecord writes"
         );
-        tracing::info!("Compatibility endpoints:");
-        tracing::info!(
-            "   POST   /api/v1/search                    - Deprecated vector search adapter"
-        );
-        tracing::info!(
-            "   POST   /api/v1/vectors/batch             - Deprecated alias over record writes"
-        );
+        tracing::info!("Auxiliary endpoints:");
         tracing::info!("   POST   /api/v1/progressive/search/:id    - Progressive search (JSON)");
-        tracing::info!(
-            "   POST   /api/v1/collections               - Deprecated collection compatibility"
-        );
-        tracing::info!("   GET    /api/v1/collections               - List collections");
-        tracing::info!("   GET    /api/v1/collections/:id           - Get collection by ID");
-        tracing::info!("   DELETE /api/v1/collections/:id           - Delete collection");
-        tracing::info!("   POST   /api/v1/search/with_metadata      - Vector search with metadata");
+        // Legacy /api/v1 vector/collection/search REST surfaces are removed;
+        // those paths return a /api/v2 migration hint (see `v1_replacement_for`).
+        // Do not re-advertise them here.
         tracing::info!("   WS     /ws/insert                        - WebSocket vector streaming");
         tracing::info!(
             "   WS     /ws/subscribe                     - WebSocket live query subscription"

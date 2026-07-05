@@ -743,7 +743,7 @@ mod tests {
 
     #[test]
     fn test_multiple_compliance_frameworks() {
-        let frameworks = vec![
+        let frameworks = [
             ComplianceFramework::SOC2,
             ComplianceFramework::SOX,
             ComplianceFramework::HIPAA,

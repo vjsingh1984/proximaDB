@@ -11,11 +11,65 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use proximadb_data_model::ProximaValue;
+use proximadb_data_model::{ProximaType, ProximaValue};
 use proximadb_proto::v1::{
     CollectionRequest, CollectionResponse, ExecuteQueryResponse, HybridSearchRequest,
     HybridSearchResponse, VectorBatchRequest, VectorOperationResponse, VectorSearchRequest,
 };
+use serde::{Deserialize, Serialize};
+
+/// Runtime-native schema metadata for v2 collection/schema handlers.
+///
+/// This is intentionally not a proto envelope. The underlying collection store
+/// may still adapt to older persisted metadata, but protocol adapters should
+/// depend on this v2-shaped contract instead of constructing v1 collection
+/// operation requests.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionSchemaMetadata {
+    pub collection_id: String,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    pub schema_id: Option<String>,
+    pub schema_version: Option<String>,
+    pub enforcement: Option<CollectionSchemaEnforcement>,
+    pub auto_evolve: bool,
+    pub enabled: bool,
+    pub columns: Vec<CollectionSchemaColumn>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionSchemaUpdate {
+    pub schema_id: String,
+    pub schema_version: String,
+    pub enforcement: CollectionSchemaEnforcement,
+    pub auto_evolve: bool,
+    pub columns: Vec<CollectionSchemaColumn>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionSchemaColumn {
+    pub name: String,
+    pub data_type: ProximaType,
+    pub nullable: bool,
+    pub indexed: bool,
+    pub filterable: bool,
+    pub text_storage: Option<CollectionTextStorage>,
+    pub max_length: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CollectionTextStorage {
+    Inline,
+    Large,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CollectionSchemaEnforcement {
+    Strict,
+    Flexible,
+    #[default]
+    Hybrid,
+}
 
 /// Port trait that protocol adapters use to dispatch API requests.
 ///
@@ -31,6 +85,23 @@ pub trait ApiHandlersPort: Send + Sync {
         request: CollectionRequest,
         tenant_id: Option<&str>,
     ) -> Result<CollectionResponse>;
+
+    /// Fetch v2 schema metadata for a collection without exposing v1 operation
+    /// envelopes to protocol adapters.
+    async fn get_collection_schema_metadata(
+        &self,
+        collection_id: &str,
+        tenant_id: Option<&str>,
+    ) -> Result<Option<CollectionSchemaMetadata>>;
+
+    /// Persist v2 schema metadata for a collection. Implementations may adapt to
+    /// legacy storage internally, but callers pass only the runtime-native shape.
+    async fn update_collection_schema_metadata(
+        &self,
+        collection_id: &str,
+        update: CollectionSchemaUpdate,
+        tenant_id: Option<&str>,
+    ) -> Result<CollectionSchemaMetadata>;
 
     // ── Vector ────────────────────────────────────────────────────────────────
 

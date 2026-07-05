@@ -108,8 +108,8 @@ use tracing::{info, warn};
 
 use crate::metrics::collectors::EngineMetricsCollector;
 use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
-use crate::query::capability::CapabilityRegistry;
 use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageFormat};
+use proximadb_query_capability::CapabilityRegistry;
 
 use super::{nova::NovaEngine, sst::SstEngine, viper::ViperEngine};
 #[cfg(feature = "experimental-engines")]

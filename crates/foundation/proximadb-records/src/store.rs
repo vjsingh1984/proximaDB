@@ -499,7 +499,7 @@ mod tests {
         }
 
         // Predicate selects even record_version (r0,r2,r4 = 3 matches); limit 2.
-        let pred = |r: &ProximaRecord| r.record_version % 2 == 0;
+        let pred = |r: &ProximaRecord| r.record_version.is_multiple_of(2);
         let got = store
             .scan_records_filtered(RecordScanOptions::limit(2), Some(&pred))
             .await

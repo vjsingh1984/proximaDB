@@ -2453,8 +2453,22 @@ impl WriteAheadLogManager {
         // Step 3: Create distance calculator once for efficiency
         let distance_calculator = UnifiedDistanceCompute::new(distance_metric);
 
-        // Step 4: Search through filtered batches
-        let mut all_results = Vec::new();
+        // Step 4: score every candidate, but defer the expensive record
+        // materialization. Deletion tombstones (`valid_to_ns == Some(0)`) are
+        // cheap suppression markers kept in full and EXEMPT from the top_k cut
+        // (TD-188). For every other candidate we push only a lightweight
+        // (score, location) tuple; the full OptimizedSearchRecord — including the
+        // per-record metadata HashMap clone — is built ONLY for the ≤top_k
+        // survivors below, not for all N scanned records. The old
+        // materialize-all-then-truncate allocated (and immediately discarded) a
+        // metadata map + record for every record on every query — the per-query
+        // allocation firehose behind the concurrency collapse on a large
+        // unflushed tail. NOTE: a *live* (non-empty-vector) record with
+        // `valid_to_ns == Some(0)` — a malformed record that does not occur in
+        // practice — is treated here as a normal scored candidate, not exempt.
+        let mut tombstones: Vec<crate::core::search::results::OptimizedSearchRecord> = Vec::new();
+        // (score, batch_idx, record_idx, is_zero_score_marker).
+        let mut scored_cands: Vec<(f32, usize, usize, bool)> = Vec::new();
 
         // Get current time for tombstone detection
         let current_time_secs = std::time::SystemTime::now()
@@ -2462,8 +2476,8 @@ impl WriteAheadLogManager {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
-        for batch in filtered_batches {
-            for vector_record in batch.vector_records.iter() {
+        for (batch_idx, batch) in filtered_batches.iter().enumerate() {
+            for (record_idx, vector_record) in batch.vector_records.iter().enumerate() {
                 let embedding = vector_record.embeddings.first();
                 // Use `as_fp32_cow()` so non-fp32 variants (fp16/bf16/int8/etc.)
                 // are promoted to fp32 for the distance calculation. `as_fp32_slice`
@@ -2481,21 +2495,29 @@ impl WriteAheadLogManager {
                     && expires_at_secs.is_some_and(|e| e <= current_time_secs);
 
                 if is_tombstone {
-                    tracing::trace!("Returning tombstone marker for: {}", vector_record.oid);
-                    let tombstone_result = crate::core::search::results::OptimizedSearchRecord {
-                        id: vector_record.oid.clone(),
-                        vector_id: Some(vector_record.oid.clone()),
-                        score: 0.0,
-                        similarity: Some(0.0),
-                        vector: None,
-                        version: Some(vector_record.record_version as u32),
-                        timestamp: Some(vector_record.created_at_ns / 1_000_000),
-                        updated_at: Some(vector_record.updated_at_ns / 1_000_000),
-                        expires_at: expires_at_secs,
-                        valid_to_ns: vector_record.valid_to_ns,
-                        ..Default::default()
-                    };
-                    all_results.push(tombstone_result);
+                    if vector_record.valid_to_ns == Some(0) {
+                        // Deletion tombstone: cheap suppression marker, EXEMPT
+                        // from the top_k cut (TD-188), kept in full.
+                        tracing::trace!("Returning tombstone marker for: {}", vector_record.oid);
+                        tombstones.push(crate::core::search::results::OptimizedSearchRecord {
+                            id: vector_record.oid.clone(),
+                            vector_id: Some(vector_record.oid.clone()),
+                            score: 0.0,
+                            similarity: Some(0.0),
+                            vector: None,
+                            version: Some(vector_record.record_version as u32),
+                            timestamp: Some(vector_record.created_at_ns / 1_000_000),
+                            updated_at: Some(vector_record.updated_at_ns / 1_000_000),
+                            expires_at: expires_at_secs,
+                            valid_to_ns: vector_record.valid_to_ns,
+                            ..Default::default()
+                        });
+                    } else {
+                        // TTL-expired empty: a score-0.0 candidate subject to the
+                        // cut (as the original scored is_tombstone records whose
+                        // valid_to_ns != Some(0)).
+                        scored_cands.push((0.0, batch_idx, record_idx, true));
+                    }
                     continue;
                 }
 
@@ -2517,13 +2539,58 @@ impl WriteAheadLogManager {
                     continue;
                 }
 
-                // Calculate distance
+                // Score now (cheap); defer record materialization to survivors.
                 let similarity_result = distance_calculator.calculate_distance(
                     query_vector,
                     vec_values,
                     &distance_metric,
                 );
+                scored_cands.push((
+                    similarity_result.normalized_score,
+                    batch_idx,
+                    record_idx,
+                    false,
+                ));
+            }
+        }
 
+        // Step 5: cut the SCORED set to top_k (deletion tombstones are exempt and
+        // re-appended below; TD-188), then materialize the full record — the
+        // metadata HashMap clone and any vector copy — ONLY for the survivors.
+        scored_cands.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        scored_cands.truncate(top_k);
+
+        let mut scored: Vec<crate::core::search::results::OptimizedSearchRecord> = scored_cands
+            .into_iter()
+            .map(|(_score, batch_idx, record_idx, is_zero_marker)| {
+                let vector_record = &filtered_batches[batch_idx].vector_records[record_idx];
+                let expires_at_secs = vector_record.valid_to_ns.map(|ns| ns / 1_000_000_000);
+                if is_zero_marker {
+                    return crate::core::search::results::OptimizedSearchRecord {
+                        id: vector_record.oid.clone(),
+                        vector_id: Some(vector_record.oid.clone()),
+                        score: 0.0,
+                        similarity: Some(0.0),
+                        vector: None,
+                        version: Some(vector_record.record_version as u32),
+                        timestamp: Some(vector_record.created_at_ns / 1_000_000),
+                        updated_at: Some(vector_record.updated_at_ns / 1_000_000),
+                        expires_at: expires_at_secs,
+                        valid_to_ns: vector_record.valid_to_ns,
+                        ..Default::default()
+                    };
+                }
+                let vec_values_cow = vector_record
+                    .embeddings
+                    .first()
+                    .map(|e| e.as_fp32_cow())
+                    .unwrap_or_else(|| std::borrow::Cow::Borrowed(&[][..]));
+                let vec_values: &[f32] = vec_values_cow.as_ref();
+                let similarity_result = distance_calculator.calculate_distance(
+                    query_vector,
+                    vec_values,
+                    &distance_metric,
+                );
                 let metadata = if include_metadata {
                     use proximadb_records::ProximaTreeNode;
                     vector_record
@@ -2540,12 +2607,12 @@ impl WriteAheadLogManager {
                 } else {
                     Default::default()
                 };
-
-                let search_result = crate::core::search::results::OptimizedSearchRecord {
+                let ns = similarity_result.normalized_score;
+                crate::core::search::results::OptimizedSearchRecord {
                     id: vector_record.oid.clone(),
                     vector_id: Some(vector_record.oid.clone()),
-                    score: similarity_result.normalized_score,
-                    similarity: Some(similarity_result.normalized_score),
+                    score: ns,
+                    similarity: Some(ns),
                     vector: if include_vectors {
                         Some(Arc::new(vec_values.to_vec()))
                     } else {
@@ -2558,36 +2625,13 @@ impl WriteAheadLogManager {
                     expires_at: expires_at_secs,
                     valid_to_ns: vector_record.valid_to_ns,
                     source: None,
-                    semantic_similarity: Some(similarity_result.clone()),
+                    semantic_similarity: Some(similarity_result),
                     ..Default::default()
-                };
-
-                // OptimizedSearchRecord is complete with all necessary fields
-                all_results.push(search_result);
-            }
-        }
-
-        // Step 5: Sort the LIVE (scored) results by score and take top_k — but
-        // tombstones are suppression markers (score 0.0, `valid_to_ns == Some(0)`),
-        // NOT ranked candidates, so they must be EXEMPT from the ANN top-k cut.
-        // Otherwise (TD-188), once the unflushed live set exceeds the candidate
-        // budget (e.g. N=300 live vs the top_k-scaled candidate count) every
-        // score-0.0 tombstone ranks below the cut and is truncated away before it can
-        // suppress its deleted oid in the downstream MVCC dedup /
-        // `merge_delta_with_directory_results` — so deleted vectors leak back into
-        // results. Partition, truncate only the scored set, then re-append ALL
-        // tombstones unconditionally.
-        let (mut tombstones, mut scored): (Vec<_>, Vec<_>) = all_results
-            .into_iter()
-            .partition(|r| r.valid_to_ns == Some(0));
-        scored.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        scored.truncate(top_k);
+                }
+            })
+            .collect();
         scored.append(&mut tombstones);
-        all_results = scored;
+        let all_results = scored;
 
         // Ranks are handled via score field in OptimizedSearchRecord
         // They can be computed by the caller if needed
@@ -3237,11 +3281,11 @@ mod simple_context_tests {
 
         // Test row group size optimization for VIPER
         let row_group_size = viper_context.row_group_size();
-        assert!(row_group_size >= 1000 && row_group_size <= 50000);
+        assert!((1000..=50000).contains(&row_group_size));
 
         // Test flush threshold optimization
         let flush_threshold = viper_context.flush_threshold();
-        assert!(flush_threshold >= 10000 && flush_threshold <= 100000);
+        assert!((10000..=100000).contains(&flush_threshold));
 
         info!("✅ Context performance configuration test passed");
     }

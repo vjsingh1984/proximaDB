@@ -19,7 +19,6 @@
 //! Implements level-based compaction strategy to prevent unbounded growth
 //! of SST files. Uses background workers to merge files when thresholds are exceeded.
 
-use super::SstableWriter; // OPTIMIZED: Removed SstRecord import
 use super::block_format::BlockFormat;
 use super::compactor_impl::{SstCompactor, ZeroCopyCompactionStats};
 use crate::core::search::mvcc_resolution::MvccResolver;
@@ -178,6 +177,32 @@ impl std::fmt::Debug for Compaction {
             .field("filesystem_factory", &"<filesystem_factory>")
             .finish()
     }
+}
+
+/// Decide a compaction output segment's format from its INPUT segments —
+/// format-preserving compaction (M1, ADR-049). M1-3: PAX is the only vector
+/// write format (the legacy `.sst` streaming write is retired), so `.pax` inputs
+/// compact to `.pax` AND legacy `.sst` inputs compact FORWARD to `.pax` (compaction
+/// is the migration on-ramp — old segments become PAX at the next merge). Arrow
+/// inputs stay Arrow. Mixed inputs consolidate to the richest format present
+/// (PAX > Arrow). The flush-side kill-switch / opt-out now select the RawF32
+/// quant at flush, so compaction simply follows the resulting PAX inputs.
+fn compaction_output_format<P: AsRef<std::path::Path>>(input_files: &[P]) -> BlockFormat {
+    if input_files
+        .iter()
+        .any(|f| f.as_ref().extension().is_some_and(|e| e == "pax"))
+    {
+        return BlockFormat::PaxBlock;
+    }
+    if input_files
+        .iter()
+        .any(|f| f.as_ref().extension().is_some_and(|e| e == "arrow"))
+    {
+        return BlockFormat::ArrowBlock;
+    }
+    // M1-3: legacy `.sst` / no-extension inputs compact FORWARD to PAX (the
+    // streaming write path is retired; compaction no longer re-emits `.sst`).
+    BlockFormat::PaxBlock
 }
 
 impl Compaction {
@@ -569,11 +594,17 @@ impl Compaction {
             // Convert unified task to SST SstCompactionTask
             let input_files: Vec<PathBuf> =
                 task.input_files.into_iter().map(PathBuf::from).collect();
+            // M1-3 (ADR-049): compaction output format follows the INPUT segments'
+            // format — `.pax`/`.sst` → `.pax` (PAX is the only vector write format;
+            // legacy inputs compact forward to PAX), `.arrow` → `.arrow` — so the
+            // output filename extension matches the writer chosen at the write site.
+            let output_block_format = compaction_output_format(&input_files);
 
             let output_file = self.generate_output_file_path(
                 collection_id,
                 collection_dir,
                 task.target_level as u8,
+                output_block_format,
             );
 
             let priority = if input_files.len() >= (self.config.compaction_threshold * 2) as usize {
@@ -756,6 +787,9 @@ impl Compaction {
         task: &SstCompactionTask,
         _config: &SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
+        // M1-3 (ADR-049): compression only applied to the retired ProximaBlocks
+        // streaming writer; PAX/Arrow compaction don't take it. Kept on the
+        // signature for API stability and still logged below.
         compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
     ) -> Result<EnhancedSstCompactionStats> {
         debug!(
@@ -953,23 +987,21 @@ impl Compaction {
         let mut deleted_vector_ids = Vec::new();
         let mut merged_vectors = Vec::new();
 
-        // Get current time in seconds for consistent comparison
-        let current_time_secs = current_time / 1000;
-
         for vector_record in &resolved_records {
             // Tombstone detection: empty vector + expires_at in past (including 0)
             // expires_at = 0 means "epoch time" which is always in the past = tombstone marker
             let is_tombstone = vector_record.vector.is_empty()
                 && vector_record
                     .expires_at
-                    .is_some_and(|e| e <= current_time_secs);
+                    .is_some_and(|e| Self::epoch_millis(e) <= current_time);
 
             // Check if record is expired (TTL-based expiry for non-tombstones)
             // This is different from tombstones - these are regular records that have expired
             let is_expired = !is_tombstone
-                && vector_record
-                    .expires_at
-                    .is_some_and(|expires_at| expires_at > 0 && expires_at < current_time_secs);
+                && vector_record.expires_at.is_some_and(|expires_at| {
+                    let expires_at_ms = Self::epoch_millis(expires_at);
+                    expires_at_ms > 0 && expires_at_ms < current_time
+                });
 
             // Skip expired records completely - they are physically deleted
             if is_expired {
@@ -980,8 +1012,8 @@ impl Compaction {
             }
             let should_keep = if is_tombstone {
                 // Keep tombstones that are less than 1 hour old
-                let age = (current_time / 1000) - vector_record.timestamp.unwrap_or(0); // Both in seconds
-                let keep_tombstone = age < (60 * 60); // 1 hour in seconds
+                let age = current_time - Self::epoch_millis(vector_record.timestamp.unwrap_or(0));
+                let keep_tombstone = age < (60 * 60 * 1000); // 1 hour in milliseconds
 
                 if !keep_tombstone {
                     tombstones_removed_count += 1;
@@ -1015,13 +1047,13 @@ impl Compaction {
         }
 
         // OPTIMIZED: Sort VectorRecords by metadata for optimal encoding (no conversions)
-        let resolved_records_len = resolved_records.len();
+        let vector_records_len = vector_records.len();
         info!(
             "🔄 UNIFIED COMPACTION: Sorting {} VectorRecords by metadata for optimal encoding",
-            resolved_records_len
+            vector_records_len
         );
         let (sorted_vectors, sort_stats) =
-            Self::sort_vectors_for_compaction(resolved_records).await?;
+            Self::sort_vectors_for_compaction(vector_records).await?;
         info!(
             "✅ UNIFIED COMPACTION: Sorted records (estimated compression improvement: {:.1}%)",
             sort_stats.compression_estimate * 100.0
@@ -1086,18 +1118,10 @@ impl Compaction {
             btree_records.insert(key, record);
         }
 
-        // Use task-specific block size if provided, otherwise fall back to server config
-        let block_size_kb = task.block_size_kb.unwrap_or(64); // Default to 64KB blocks
-        let block_size = (block_size_kb * 1024) as usize;
-
-        // Deferred: Pass filesystem from compaction manager - for now create a new factory
-        let filesystem_factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::create(
-                crate::storage::persistence::filesystem::FilesystemConfig::default(),
-            )
-            .await
-            .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?,
-        );
+        // M1-3 (ADR-049): the legacy ProximaBlocks write arms (which needed a
+        // block size + a writer-local filesystem factory + compression config)
+        // are retired — compaction re-emits PAX (`write_pax_segment_full`) or
+        // Arrow (`ArrowBlockWriter`), neither of which takes those.
 
         let bytes_written = if let Some(ref coordinator) = atomic_coordinator {
             // Use atomic operations for compaction
@@ -1160,11 +1184,15 @@ impl Compaction {
             debug!("Writing to staging path: {}", staging_file_path.display());
 
             // Check block format and use appropriate writer
-            let block_format = BlockFormat::parse_block_format(&self.config.block_format);
+            let block_format = compaction_output_format(&task.input_files);
             debug!("🔍 COMPACTION: Using block format: {:?}", block_format);
 
             match block_format {
-                BlockFormat::PaxBlock => {
+                // M1-3 (ADR-049): ProximaBlocks is folded into PaxBlock — the
+                // legacy `.sst` streaming write is retired, so compaction always
+                // re-emits PAX for non-Arrow output (unreachable here anyway, since
+                // `compaction_output_format` never returns ProximaBlocks).
+                BlockFormat::PaxBlock | BlockFormat::ProximaBlocks => {
                     // P3 Phase E: compact to a `.pax` segment, re-encoding the merged
                     // records with RaBitQ. Mixed-read-safe — source segments may be
                     // legacy `.sst` or `.pax` (btree_records already merged them); the
@@ -1180,12 +1208,24 @@ impl Compaction {
                         std::fs::create_dir_all(parent)
                             .map_err(crate::core::StorageError::DiskIO)?;
                     }
-                    crate::storage::engines::sst::segment_format::write_pax_segment(
+                    let f32_tier =
+                        crate::storage::engines::sst::segment_format::pax_inputs_have_f32_tier(
+                            &task.input_files,
+                        );
+                    // Preserve the source segments' tier-2 rerank quant (SQ8/FP16/f32)
+                    // through compaction — see `pax_inputs_rerank_quant`.
+                    let rerank_quant =
+                        crate::storage::engines::sst::segment_format::pax_inputs_rerank_quant(
+                            &task.input_files,
+                        );
+                    crate::storage::engines::sst::segment_format::write_pax_segment_full(
                         &staging_file_path,
                         &records,
                         &collection_id,
                         records.len(),
                         proximadb_block_format::VectorQuant::RaBitQ,
+                        rerank_quant,
+                        f32_tier,
                         None,
                     )
                     .map_err(|e| {
@@ -1242,35 +1282,6 @@ impl Compaction {
                         records.len()
                     );
                 }
-                BlockFormat::ProximaBlocks => {
-                    // Use SstableWriter for ProximaBlocks format
-                    debug!("🔍 COMPACTION: Creating SstableWriter with compression config");
-                    let writer = if let Some(ref compression) = compression_config {
-                        debug!(
-                            "   Using compression: algorithm={}, level={:?}",
-                            compression.algorithm, compression.level
-                        );
-                        SstableWriter::with_compression(
-                            &staging_file_path,
-                            block_size,
-                            filesystem_factory.clone(),
-                            Some(compression.clone()),
-                        )
-                    } else {
-                        debug!("   No compression - using default writer");
-                        SstableWriter::new(
-                            &staging_file_path,
-                            block_size,
-                            filesystem_factory.clone(),
-                        )
-                    };
-                    let record_count = btree_records.len();
-                    let sorted_records_iter = btree_records.into_iter();
-                    writer
-                        .write_sorted_vector_records(sorted_records_iter, record_count)
-                        .await
-                        .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
-                }
             }
 
             // Get file size for stats
@@ -1305,14 +1316,16 @@ impl Compaction {
             debug!("Writing directly to: {}", task.output_file.display());
 
             // Check block format and use appropriate writer
-            let block_format = BlockFormat::parse_block_format(&self.config.block_format);
+            let block_format = compaction_output_format(&task.input_files);
             debug!(
                 "🔍 COMPACTION (non-atomic): Using block format: {:?}",
                 block_format
             );
 
             match block_format {
-                BlockFormat::PaxBlock => {
+                // M1-3 (ADR-049): ProximaBlocks is folded into PaxBlock — see the
+                // atomic arm above (legacy `.sst` streaming write retired).
+                BlockFormat::PaxBlock | BlockFormat::ProximaBlocks => {
                     // P3 Phase E: compact to a `.pax` segment (re-encode RaBitQ).
                     // See the atomic arm above; this is the non-atomic direct-write path.
                     let collection_id = self
@@ -1324,12 +1337,24 @@ impl Compaction {
                         std::fs::create_dir_all(parent)
                             .map_err(crate::core::StorageError::DiskIO)?;
                     }
-                    crate::storage::engines::sst::segment_format::write_pax_segment(
+                    let f32_tier =
+                        crate::storage::engines::sst::segment_format::pax_inputs_have_f32_tier(
+                            &task.input_files,
+                        );
+                    // Preserve the source segments' tier-2 rerank quant (SQ8/FP16/f32)
+                    // through compaction — see `pax_inputs_rerank_quant`.
+                    let rerank_quant =
+                        crate::storage::engines::sst::segment_format::pax_inputs_rerank_quant(
+                            &task.input_files,
+                        );
+                    crate::storage::engines::sst::segment_format::write_pax_segment_full(
                         &task.output_file,
                         &records,
                         &collection_id,
                         records.len(),
                         proximadb_block_format::VectorQuant::RaBitQ,
+                        rerank_quant,
+                        f32_tier,
                         None,
                     )
                     .map_err(|e| {
@@ -1385,33 +1410,6 @@ impl Compaction {
                         "✅ COMPACTION (non-atomic): Wrote {} records to Arrow block",
                         records.len()
                     );
-                }
-                BlockFormat::ProximaBlocks => {
-                    // Use SstableWriter for ProximaBlocks format
-                    debug!(
-                        "🔍 COMPACTION (non-atomic): Creating SstableWriter with compression config"
-                    );
-                    let writer = if let Some(ref compression) = compression_config {
-                        debug!(
-                            "   Using compression: algorithm={}, level={:?}",
-                            compression.algorithm, compression.level
-                        );
-                        SstableWriter::with_compression(
-                            &task.output_file,
-                            block_size,
-                            filesystem_factory,
-                            Some(compression.clone()),
-                        )
-                    } else {
-                        debug!("   No compression - using default writer");
-                        SstableWriter::new(&task.output_file, block_size, filesystem_factory)
-                    };
-                    let record_count = btree_records.len();
-                    let sorted_records_iter = btree_records.into_iter();
-                    writer
-                        .write_sorted_vector_records(sorted_records_iter, record_count)
-                        .await
-                        .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
                 }
             }
 
@@ -1515,7 +1513,7 @@ impl Compaction {
             bytes_read / 1024 / 1024,
             bytes_written / 1024 / 1024,
             compression_ratio,
-            resolved_records_len,
+            vector_records_len,
             expired_records_count,
             tombstones_removed_count
         );
@@ -1841,14 +1839,11 @@ impl Compaction {
         _collection_id: &str,
         collection_dir: &Path,
         level: u8,
+        block_format: BlockFormat,
     ) -> PathBuf {
-        // Use unified FilenameCodec directly from compaction framework
-        use super::block_format::BlockFormat;
         use crate::storage::common::compaction_orchestrator::FilenameCodec;
 
         let codec = FilenameCodec::new();
-        // Check block_format from config and use appropriate extension
-        let block_format = BlockFormat::parse_block_format(&self.config.block_format);
         let extension = match block_format {
             BlockFormat::ArrowBlock => "arrow",
             BlockFormat::ProximaBlocks => "sst",
@@ -1941,6 +1936,21 @@ impl Compaction {
 
         Ok((sorted_records, sort_stats))
     }
+
+    fn epoch_millis(timestamp: i64) -> i64 {
+        let abs = timestamp.unsigned_abs();
+        if timestamp == 0 {
+            0
+        } else if abs < 10_000_000_000 {
+            timestamp * 1000
+        } else if abs > 10_000_000_000_000_000 {
+            timestamp / 1_000_000
+        } else if abs > 10_000_000_000_000 {
+            timestamp / 1000
+        } else {
+            timestamp
+        }
+    }
 }
 
 impl Drop for Compaction {
@@ -1963,3 +1973,42 @@ impl Drop for Compaction {
 #[cfg(test)]
 #[cfg_attr(test, path = "compaction_tests.rs")]
 mod tests;
+
+#[cfg(test)]
+mod compaction_format_tests {
+    use super::BlockFormat;
+    use super::compaction_output_format;
+
+    /// M1-3 (ADR-049): compaction output format follows the INPUT segments' format
+    /// — PAX is the only vector write format, so `.pax` inputs compact to `.pax`
+    /// AND legacy `.sst` inputs compact FORWARD to `.pax` (compaction is the
+    /// migration on-ramp). Arrow inputs stay Arrow. Mixed `.sst`+`.pax` → PAX.
+    #[test]
+    fn compaction_output_format_preserves_input_format() {
+        // PAX input → PAX.
+        assert_eq!(
+            compaction_output_format(&["/c/x.pax".to_string()]),
+            BlockFormat::PaxBlock
+        );
+        // Legacy `.sst` input → compact FORWARD to PAX (streaming retired).
+        assert_eq!(
+            compaction_output_format(&["/c/x.sst".to_string()]),
+            BlockFormat::PaxBlock
+        );
+        // Mixed `.sst` + `.pax` → consolidate to PAX.
+        assert_eq!(
+            compaction_output_format(&["/c/a.sst".to_string(), "/c/b.pax".to_string()]),
+            BlockFormat::PaxBlock
+        );
+        // Arrow input → Arrow.
+        assert_eq!(
+            compaction_output_format(&["/c/x.arrow".to_string()]),
+            BlockFormat::ArrowBlock
+        );
+        // No recognized inputs (no extension) → PAX (the default vector format).
+        assert_eq!(
+            compaction_output_format(&[] as &[String]),
+            BlockFormat::PaxBlock
+        );
+    }
+}

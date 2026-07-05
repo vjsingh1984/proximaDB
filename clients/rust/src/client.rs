@@ -372,7 +372,7 @@ impl ProximaClient {
             request = request.header("Authorization", format!("Bearer {api_key}"));
         }
 
-        let response = request.send().await?;
+        let response = self.send_with_retries(request).await?;
         self.handle_response(response).await
     }
 
@@ -388,7 +388,7 @@ impl ProximaClient {
             request = request.header("Authorization", format!("Bearer {api_key}"));
         }
 
-        let response = request.send().await?;
+        let response = self.send_with_retries(request).await?;
         self.handle_response(response).await
     }
 
@@ -404,7 +404,7 @@ impl ProximaClient {
             request = request.header("Authorization", format!("Bearer {api_key}"));
         }
 
-        let response = request.send().await?;
+        let response = self.send_with_retries(request).await?;
         self.handle_response(response).await
     }
 
@@ -416,8 +416,67 @@ impl ProximaClient {
             request = request.header("Authorization", format!("Bearer {api_key}"));
         }
 
-        let response = request.send().await?;
+        let response = self.send_with_retries(request).await?;
         self.handle_response(response).await
+    }
+
+    #[cfg(feature = "client")]
+    async fn send_with_retries(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response> {
+        let max_retries = self.inner.config.max_retries;
+        let mut attempts = 0;
+        let mut next_request = Some(request);
+
+        loop {
+            let Some(request) = next_request.take() else {
+                return Err(ProximaError::Network(NetworkError::ConnectionFailed {
+                    url: self.inner.config.url.clone(),
+                    reason: "request body could not be cloned for retry".to_string(),
+                }));
+            };
+            let retry_request = request.try_clone();
+
+            match request.send().await {
+                Ok(response)
+                    if attempts < max_retries
+                        && retry_request.is_some()
+                        && Self::is_retryable_status(response.status()) =>
+                {
+                    attempts += 1;
+                    Self::sleep_before_retry(attempts).await;
+                    next_request = retry_request;
+                }
+                Ok(response) => return Ok(response),
+                Err(err)
+                    if attempts < max_retries
+                        && retry_request.is_some()
+                        && Self::is_retryable_error(&err) =>
+                {
+                    attempts += 1;
+                    Self::sleep_before_retry(attempts).await;
+                    next_request = retry_request;
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+    }
+
+    #[cfg(feature = "client")]
+    fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+        status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+    }
+
+    #[cfg(feature = "client")]
+    fn is_retryable_error(err: &reqwest::Error) -> bool {
+        err.is_timeout() || err.is_connect() || err.is_request()
+    }
+
+    #[cfg(feature = "client")]
+    async fn sleep_before_retry(attempt: u32) {
+        let delay_ms = 25u64.saturating_mul(1u64 << attempt.saturating_sub(1).min(6));
+        tokio::time::sleep(Duration::from_millis(delay_ms.min(1_000))).await;
     }
 
     #[cfg(feature = "client")]
@@ -805,6 +864,21 @@ mod tests {
         assert_eq!(client.config().api_key.as_deref(), Some("secret"));
         assert!(!client.config().pool_connections);
         assert_eq!(client.config().max_idle_connections, 2);
+    }
+
+    #[cfg(feature = "client")]
+    #[test]
+    fn retry_status_classification_matches_transient_failures() {
+        assert!(ProximaClient::is_retryable_status(
+            reqwest::StatusCode::TOO_MANY_REQUESTS
+        ));
+        assert!(ProximaClient::is_retryable_status(
+            reqwest::StatusCode::BAD_GATEWAY
+        ));
+        assert!(!ProximaClient::is_retryable_status(
+            reqwest::StatusCode::BAD_REQUEST
+        ));
+        assert!(!ProximaClient::is_retryable_status(reqwest::StatusCode::OK));
     }
 
     #[test]

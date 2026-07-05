@@ -222,14 +222,15 @@ async fn test_relation_management_orion() {
             .strip_prefix("entity-")
             .and_then(|s| s.parse::<usize>().ok());
 
-        if let (Some(src), Some(tgt)) = (source_idx, target_idx) {
-            if src < 10 && tgt < 10 {
-                store
-                    .add_relation(relation.clone())
-                    .await
-                    .expect("Failed to add relation");
-                added_relations += 1;
-            }
+        if let (Some(src), Some(tgt)) = (source_idx, target_idx)
+            && src < 10
+            && tgt < 10
+        {
+            store
+                .add_relation(relation.clone())
+                .await
+                .expect("Failed to add relation");
+            added_relations += 1;
         }
     }
 
@@ -983,13 +984,13 @@ fn test_fixtures_validation() {
     // Small graph
     let small = TestKnowledgeGraph::small();
     assert_eq!(small.entities.len(), 100);
-    assert!(small.relations.len() > 0);
+    assert!(!small.relations.is_empty());
     assert_eq!(small.embeddings.len(), 100);
 
     // Medium graph
     let medium = TestKnowledgeGraph::medium();
     assert_eq!(medium.entities.len(), 1000);
-    assert!(medium.relations.len() > 0);
+    assert!(!medium.relations.is_empty());
 
     // Research papers
     let papers = TestKnowledgeGraph::research_papers();

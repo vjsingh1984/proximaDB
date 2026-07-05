@@ -43,7 +43,7 @@ pub struct Config {
     /// Async-ingest queue runtime configuration (optional).
     ///
     /// When present, ProximaDB opens the queue subsystem at startup
-    /// and async ingest (`/v3/documents?mode=async`) routes through
+    /// and async ingest (`/v2/documents?mode=async`) routes through
     /// `producer.send` → background drainer → bulk-load. When absent,
     /// async ingest degrades to inline embed.
     ///

@@ -325,7 +325,7 @@ mod execution_tests {
         );
         let wal_config = WALConfig::default();
         let strategy = WALBatchFactory::create_batch_serialization_strategy(
-            wal_config.strategy_type.clone(),
+            wal_config.strategy_type,
             &wal_config,
             filesystem,
         )

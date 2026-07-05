@@ -18,6 +18,16 @@ test actually *gate* in CI.
 
 == Two structural findings
 
+[NOTE]
+====
+2026-07-02 refresh: this audit remains the historical baseline for TD-182, but
+part of Finding 2 has been corrected. CI now includes an explicit pgwire accuracy
+job in the success set, and the QA gate runs vector recall ratchets. The remaining
+gap is no longer "all strong tests run nowhere"; it is "some modality value
+assertions are gated, while graph/document/time-series depth and additional
+coverage shards still need to be made cheap and mandatory."
+====
+
 === Finding 1 — most "ratchets" count execution, not correctness
 
 The TPC-H, TPC-DS, graph-LDBC, document, and events ratchets gate on "the query
@@ -30,9 +40,9 @@ ran without error", not "the query returned the right answer". `ADR-040` (accept
 *Vector is the exception*: it is genuinely accuracy-based (recall@k vs an f32
 brute-force baseline) across many engines and quantizers.
 
-=== Finding 2 — the accuracy tests that exist mostly do not gate in CI
+=== Finding 2 — the accuracy tests that exist were under-gated in CI
 
-115 of 150 integration tests are *orphaned* (no CI tier runs them). An integration
+Original 2026-06-28 finding: 115 of 150 integration tests were *orphaned* (no CI tier runs them). An integration
 test gates only if its filename matches an integration-job glob (`+*graph*+`,
 `+*query*+`, `+*cache*+`, `+*storage*+`, `+*sst*+`, `+*wal*+`, `+*cluster*+`,
 `+*distributed*+`) or is explicitly named in the qa-gate. The strong
@@ -41,6 +51,9 @@ value-correctness / recall suites that already exist run *nowhere* in CI:
 `pgwire_olap_delta_merge_e2e` (incl. the JOIN value-accuracy test added in the
 ADR-025 PR3 flip), `vector_ann_recall_e2e` / `raptor` / `helix` / `nova` /
 `td112_postflush` recall, `document_json_pgwire_e2e`, `events_tsbs_pgwire_e2e`.
+Current checkout status: the pgwire accuracy suite and QA vector recall ratchets
+are now wired. Keep this finding open only for the remaining orphaned/deep
+accuracy surfaces and for coverage-shard cost control.
 
 == CI tiers
 
@@ -66,28 +79,25 @@ ADR-025 PR3 flip), `vector_ann_recall_e2e` / `raptor` / `helix` / `nova` /
 |===
 | Modality | Accuracy test? | Gates in CI? | Where / note
 
-| Vector ANN / recall | yes (strong) | partial | block-format + sst-prune gate; ANN/RAPTOR/HELIX/NOVA/TD-112 recall *orphaned*
+| Vector ANN / recall | yes (strong) | partial | QA gate runs ANN/RAPTOR/HELIX/NOVA/TD-112 recall; SIFT1M and broader stress recall remain manual/heavy
 | Vector quantization | yes (sq8 0.90 / rabitq 0.80 / fp16 0.99) | likely (crate `--lib`) | sign-magnitude + turboquant have *no* recall test
-| Relational (dedicated) | yes (strong value) | *no — orphaned* | `pgwire_relational_engine_e2e`, olap-merge, null/OR/roundtrip
+| Relational (dedicated) | yes (strong value) | yes | pgwire accuracy job covers relational engine, OLAP delta merge, null/OR/roundtrip, and FP16/Mem0 pgwire e2e
 | Relational TPC-H/DS | execution-only (+ Q1, INTERSECT spot) | yes | qa-tier
 | Graph (impact/fusion/paths) | yes (value) | yes | develop-tier (`+*graph*+`)
 | Graph LDBC pgwire | execution-only (recursive CTE unasserted) | yes (execution only) | develop-tier
-| Document JSON | converting (ADR-040 PR#476; TD-183) | *no — orphaned* | 4 accurate / 7 known-bad
-| Time-series TSBS | execution-only (+ 1 spot) | *no — orphaned* | windows/buckets unverified
+| Document JSON | converting (ADR-040 PR#476; TD-183) | partial | `document_json_pgwire_e2e` gates in pgwire accuracy; TD-183 keeps full JSON projection/filter accuracy open
+| Time-series TSBS | execution-only (+ 1 spot) | partial | `events_tsbs_pgwire_e2e` gates in pgwire accuracy; windows/buckets still need stronger value checks
 |===
 
 == Prioritized program (TD-182)
 
-=== P0 — gate the accuracy tests that already exist
+=== P0 — keep newly wired accuracy gates mandatory and finish the remaining cheap gaps
 
-Wire the orphaned accuracy/recall e2e suite into CI with `--test-threads=1` (they
-toggle process env) and a Linux-sized run. Split by cost: a fast develop-tier
-pgwire-accuracy job (`pgwire_relational_engine_e2e`, `pgwire_olap_delta_merge_e2e`,
-`document_json_pgwire_e2e`, `events_tsbs_pgwire_e2e`) and the heavier vector recall
-ratchets (`vector_ann_recall_e2e`, `raptor`, `helix`, `nova`, `td112_postflush`)
-in the qa-tier alongside the existing recall ratchets. Verify each passes in CI
-before declaring done. Cheapest high-value win — these tests are written and green
-locally; they just run nowhere.
+Keep the pgwire accuracy job in the CI success set and the heavier vector recall
+ratchets in the QA gate. Do not collapse them back into the monolithic root crate
+coverage job. The next cheapest high-value work is to move remaining value
+assertions into similarly narrow package/test shards so `cargo llvm-cov` and
+Tarpaulin do not need to compile the whole root crate for every modality.
 
 === P1 — finish the ADR-040 execution→accuracy conversion
 

@@ -67,10 +67,10 @@ impl ReleaseSmokeServer {
         let health_url = format!("http://127.0.0.1:{}/health", rest_port);
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
         loop {
-            if let Ok(resp) = http.get(&health_url).send().await {
-                if resp.status().is_success() {
-                    break;
-                }
+            if let Ok(resp) = http.get(&health_url).send().await
+                && resp.status().is_success()
+            {
+                break;
             }
             if std::time::Instant::now() > deadline {
                 anyhow::bail!("REST didn't become ready in 20s");

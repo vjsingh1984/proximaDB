@@ -1712,7 +1712,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         }
     }
 
-    info!("✅ REST API: Router created with canonical v2 routes and v1 compatibility adapters:");
+    info!("✅ REST API: Router created with canonical v2 routes:");
     info!(
         "   POST   /api/v2/collections/:collection/records/batch (canonical ProximaRecord writes)"
     );
@@ -1720,19 +1720,14 @@ pub fn create_router(state: AppState) -> axum::Router {
     info!(
         "   GET    /api/v2/collections/:collection/records/:record (canonical ProximaRecord fetch)"
     );
-    info!("   POST   /api/v1/collections (deprecated compatibility via proximadb-api)");
-    info!("   GET    /api/v1/collections (deprecated compatibility via proximadb-api)");
-    info!("   GET    /api/v1/collections/:id (deprecated compatibility via proximadb-api)");
-    info!("   DELETE /api/v1/collections/:id (deprecated compatibility via proximadb-api)");
-    info!("   POST   /api/v1/search (deprecated compatibility via proximadb-api)");
-    info!("   POST   /api/v1/search/with_metadata (deprecated compatibility via proximadb-api)");
-    info!("   POST   /api/v1/vectors/batch (deprecated alias over record-native writes)");
-    info!("   GET    /api/v1/vectors/:collection_id/:vector_id (deprecated compatibility)");
-    info!("   DELETE /api/v1/vectors/:collection_id/:vector_id (deprecated compatibility)");
-    info!("   POST   /api/v1/hybrid/search (deprecated compatibility; real BM25+vector)");
-    info!("   POST   /api/v1/hybrid/index (deprecated compatibility)");
-    // /api/v1/experimental/hybrid/search route removed 2026-05-26 — was
-    // mock-backed; production path is /api/v1/hybrid/search above.
+    // NOTE: the legacy /api/v1 vector/collection/search/hybrid REST surfaces were
+    // removed in the API-standardization hard-rename; those paths now fall through
+    // to a migration hint redirecting to /api/v2 (see `v1_replacement_for`). The
+    // only live /api/v1 mount is the Iceberg REST catalog adapter at
+    // /api/v1/catalogs. Do not re-advertise the removed routes here — that misleads
+    // callers into thinking v1 REST is still served.
+    // (/api/v1/experimental/hybrid/search was removed 2026-05-26; it was
+    // mock-backed. The real hybrid path is /api/v2/hybrid/search.)
 
     router
 }
@@ -2012,6 +2007,13 @@ mod tests {
             &self,
             _: crate::proto::v1::GraphQueryRequest,
         ) -> anyhow::Result<crate::proto::v1::GraphQueryResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn execute_query_json(
+            &self,
+            _graph_id: &str,
+            _query: &str,
+        ) -> anyhow::Result<Vec<serde_json::Value>> {
             anyhow::bail!("mock")
         }
         async fn get_neighbors(

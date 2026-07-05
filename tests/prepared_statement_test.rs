@@ -542,10 +542,10 @@ fn test_invalidate_for_collection() {
     let product_ids: Vec<String> = vec![id1.clone(), id2.clone()];
     for id in product_ids {
         let stmt = cache.get(&id);
-        if let Ok(s) = stmt {
-            if s.original_sql.contains("products") {
-                cache.drop_statement(&id).ok();
-            }
+        if let Ok(s) = stmt
+            && s.original_sql.contains("products")
+        {
+            cache.drop_statement(&id).ok();
         }
     }
 

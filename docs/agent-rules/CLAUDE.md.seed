@@ -11,7 +11,7 @@ ProximaDB is a high-performance, cloud-native vector and graph database built in
 ProximaDB has shifted from a monolithic custom WAL/PAX architecture to an **Intelligent Multi-Engine Routing** system running over decoupled **Object Storage**.
 
 When modifying architecture or execution paths, you MUST adhere to the dual-path mandate:
-1. **Data Warehouse/Relational Workloads:** Driven by DataFusion/Polars executing over standard Parquet files managed by Iceberg manifests. *(DataFusion is the **interim** OLAP engine; a native, push-based, morsel-driven vectorized OLAP engine is the build target, landing behind the same `ComputeBackend` seam — never assume DataFusion is the terminal OLAP backend. See `docs/12-design/NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.adoc`; source study `NATIVE_OLAP_8ENGINE_COMPARATIVE_STUDY_2026_06_22.adoc`.)*
+1. **Data Warehouse/Relational Workloads:** Driven by DataFusion/Polars executing over standard Parquet files managed by Iceberg manifests. *(OLAP execution = DataFusion's vectorized kernels behind the `ComputeBackend` seam per **ADR-052** (Accepted 2026-07-04): the native investment is the PAX-native SCAN operator (TD-OLAP-1) feeding Arrow `RecordBatch`es into DataFusion — do NOT build native HashAgg/HashJoin/Sort, and the row-wise Volcano executor is the OLTP/point-lookup floor only. The seam keeps the backend swappable (no `datafusion::` outside the adapter allow-list, ADR-039) — but swapping is an option held open, not a build target. The `NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.adoc` §3/§4-P3 native-operator end-state is superseded by ADR-052; see `docs/12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc`.)*
 2. **Vector Search/ANN Workloads:** Driven by specialized high-performance engines (SST, HELIX, NOVA) utilizing the custom PAX block format.
 
 You must also strictly enforce SaaS Operational constraints:
@@ -54,6 +54,103 @@ When changing a storage format, reader, codec, cache, or engine you MUST:
    I/O boundary), never per-cloud strings at call sites; default-safe (unset ⇒ account default). HNS
    buys nothing for our flat-key, immutable, ranged-read workload.
 ====
+
+## 🛠 Commands
+
+Toolchain is pinned by `rust-toolchain.toml` (edition 2024). `.cargo/config.toml` caps build
+jobs at 3 for OOM safety — don't override upward.
+
+### Build / check
+```bash
+cargo check-fast                      # alias: cargo check --all-targets — tightest inner loop
+cargo build                           # dev build
+cargo build --profile release-server  # optimized server binary (make build-server)
+```
+
+### Test (nextest preferred — process-per-test isolation; install: make install-fast-tools)
+```bash
+cargo nxlib                           # unit tests only (--lib, nextest profile "unit", parallel)
+cargo nx                              # all tests (nextest default profile)
+cargo nxint                           # integration tests (sequential, port-safe)
+cargo nextest run <substring>         # single test by name filter
+cargo nextest run --test <file> <substring>   # single test within one integration-test file
+cargo test <test_name> -- --exact     # libtest fallback for a single test
+```
+Integration tests live flat in `tests/` (`*_integration_test.rs`, `*_e2e.rs`); unit tests are
+inline `#[cfg(test)]`. Nextest profiles/test-groups are in `.config/nextest.toml` — anything
+matching `*_e2e`/`*_integration_test` or `datafusion`/`native_volcano` is auto-serialized; don't
+"fix" those by hand. Verify the **server binary** builds, not just `--lib`.
+
+### Lint / format / guardrails
+```bash
+cargo fmt --check                     # CI "Rust Format" gate — run before EVERY push
+cargo clippy -- -D warnings
+make work-commit-check                # all deterministic commit guards: fmt-check, docs-claim,
+                                      # capability-matrix, workspace-boundaries, tenant-path,
+                                      # panic-policy module guard, hygiene
+python3 scripts/check_td_adr_unique.py        # before pushing a TD/ADR filing
+python3 scripts/check_no_agent_attribution.py # commit/PR text must carry no AI attribution
+```
+
+### Run the server
+```bash
+cargo run --release --bin proximadb-server    # flags: -c config (default config/config.toml),
+                                              #        -d data-dir, -p port
+```
+Ports: **5678** = unified multiplexed REST + gRPC + Arrow Flight; **5433** = Postgres wire (pgwire).
+
+### Contract / codegen gates (regenerate in the same PR as the spec change)
+```bash
+make verify-openapi-spec              # spec is GENERATED from axum handlers; fails on drift
+                                      # regen: UPDATE_OPENAPI_SPEC=1 cargo test -p proximadb --test openapi_spec_gen
+make proto-check                      # proto/OpenAPI contract drift
+make gen-python-sdk / gen-go-sdk / gen-ts-sdk / gen-rust-sdk   # spec-driven SDK transports
+```
+
+## 🏗 Architecture (big picture)
+
+**Workspace shape.** Root `src/` is the main library crate `proximadb` (a large monolith being
+decomposed); the server binary is `apps/proximadb-server`. `crates/` is layered — `foundation`
+(leaf types: proto, records, tenant, distance/quantization/index types) → `horizontal`
+(codec, compression, security, telemetry) → `storage` / `query` / `modalities` (vector, graph,
+document, embedding, rank) → `control` (catalog) / `platform` (runtime, api, mcp, admin-ui).
+Layering is CI-enforced (`scripts/check-layering.sh`, `scripts/check_workspace_boundaries.py`) —
+depend on stable crate paths (`proximadb_proto::…`) or port traits, never root-crate internal
+module paths.
+
+**Request flow.** All network surfaces live in `src/network/`: `postgres/` (pgwire, port 5433,
+SELECT lowering in `relational_pipeline.rs`), `rest/` + `grpc/` + `arrow_ipc/` (Arrow Flight)
+multiplexed on port 5678 (`multi_server.rs`, `multiplex/`). Tenant identity enters at
+`src/network/middleware/tenant.rs` and must flow as `TenantContext`
+(crate `proximadb-tenant`) to every I/O boundary.
+
+**Query routing.** The engine owns engine selection — never bypass it. SQL reaches
+`ComputeScheduler::route_select` (`src/query/compute_scheduler.rs`), which picks ONE
+`ComputeBackend` per plan: **DataFusion (OLAP)** for parquet-backed tables (deep integration in
+`src/datafusion/` — table provider, scan exec, pushdown), **native Volcano** otherwise
+(`src/query/execution/engine.rs`). DataFusion's vectorized kernels are the OLAP execution
+engine behind the `ComputeBackend` seam (ADR-052, Accepted) — the seam keeps it swappable,
+but do not build native OLAP operators; the native investment is the PAX-native scan
+(TD-OLAP-1). Vector/ANN work runs on the specialized
+engines in `src/storage/engines/`: **SST**, **HELIX**, **NOVA**, **VIPER** (plus gated
+experimental RAPTOR/SWIFT); graph is **ORION**.
+
+**Storage.** Write path: WAL (`src/storage/persistence/write_ahead_log/`) → memtable → flush
+(`flush_materializer.rs`) into the custom **PAX block format**
+(`crates/storage/proximadb-block-format`) for vector engines, or Parquet+Iceberg
+(`proximadb-iceberg-engine`) for warehouse tables. All object-storage keys are built by
+`DrPathBuilder` (`src/storage/trait_components/path_resolver.rs`) under
+`data/{tenant_id}/{namespace_id}/…` — never raw paths. Object-store abstraction:
+`crates/storage/proximadb-object-store`.
+
+**Feature flags** (root `Cargo.toml` `[features]`): defaults include `sql_frontend`,
+`datafusion-integration`, `canonical-document-store`. Notable opt-ins: `cluster` (Raft),
+`experimental-engines` (RAPTOR/SWIFT), `experimental-turboquant`, `aws`/`azure`/`gcp`,
+`io-trace`, `onnx`.
+
+**Docs.** Architecture index: `docs/12-design/README.adoc`; single-pane system view:
+`docs/12-design/SYSTEM_MAP_2026_05_30.adoc`. Support tiers (what's GA vs Beta vs Experimental):
+`docs/SUPPORTED_SURFACE.adoc`. TD/ADR filing: `docs/12-design/HOW_TO_FILE_TD_AND_ADR.adoc`.
 
 ### Core Directives
 1.  **Workspace Isolation (MANDATORY — this repo is worked on by multiple concurrent sessions):** NEVER edit, commit, `checkout`, `reset`, `stash`, or `branch -f` in the main checkout, and NEVER touch another worktree's branch or uncommitted WIP. Every task gets its own git worktree + branch off `origin/develop`: run `eval "$(scripts/worktree.sh new <type/topic>)"` to create one and `cd` into it. Run `scripts/worktree.sh guard` before editing — if it fails, you are in the shared checkout; stop and make a worktree. Clean up with `scripts/worktree.sh rm <type/topic>` once your PR merges. **Reclaim disk routinely:** worktree `target/` build caches are tens of GB each and are the dominant disk consumer, so run `scripts/worktree.sh clean` (preview with `--dry-run`) at the start/end of a session to drop every worktree whose branch has landed in `develop` — it detects **both** merge-commit and **squash-merged** PRs and reports the space reclaimed. For worktrees you KEEP, the recurring bloat is `target/*/incremental` (multi-GB per crate, never shared) — `eval "$(scripts/worktree.sh new …)"` now disables it (`CARGO_INCREMENTAL=0`) and wires **sccache** when present (`brew install sccache` for fast shared-cache rebuilds); reclaim existing incremental bloat from a kept worktree with `scripts/worktree.sh gc` (`--all` across worktrees, `--dry-run` to preview). Full rationale + commands: `docs/10-quality/WORKSPACE_ISOLATION.md`.

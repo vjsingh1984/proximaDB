@@ -671,26 +671,17 @@ mod tests {
         }
 
         fn with_prepare(self, results: impl IntoIterator<Item = PrepareResult>) -> Self {
-            self.prepare_results
-                .lock()
-                .unwrap()
-                .extend(results.into_iter());
+            self.prepare_results.lock().unwrap().extend(results);
             self
         }
 
         fn with_commit(self, results: impl IntoIterator<Item = CommitResult>) -> Self {
-            self.commit_results
-                .lock()
-                .unwrap()
-                .extend(results.into_iter());
+            self.commit_results.lock().unwrap().extend(results);
             self
         }
 
         fn with_abort(self, results: impl IntoIterator<Item = CommitResult>) -> Self {
-            self.abort_results
-                .lock()
-                .unwrap()
-                .extend(results.into_iter());
+            self.abort_results.lock().unwrap().extend(results);
             self
         }
     }

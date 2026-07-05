@@ -1774,18 +1774,14 @@ mod tests {
         assert!(
             !search_results
                 .iter()
-                .any(|(_, record)| record.oid == "test_vector".to_string())
+                .any(|(_, record)| record.oid == "test_vector")
         );
 
         let all_vectors = memtable
             .get_collection_vectors(collection_id)
             .await
             .unwrap();
-        assert!(
-            !all_vectors
-                .iter()
-                .any(|record| record.oid == "test_vector".to_string())
-        );
+        assert!(!all_vectors.iter().any(|record| record.oid == "test_vector"));
     }
 
     #[tokio::test]
@@ -2409,7 +2405,7 @@ mod tests {
         assert!(
             !search_results
                 .iter()
-                .any(|(_, record)| record.oid == vector_id.to_string())
+                .any(|(_, record)| record.oid == vector_id)
         );
     }
 

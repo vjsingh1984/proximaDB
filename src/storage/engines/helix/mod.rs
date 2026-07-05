@@ -1592,12 +1592,17 @@ impl UnifiedStorageFormat for HelixEngine {
         // PHASE 0: TRY AXIS-BASED SEARCH FIRST (HNSW/IVF) - FASTEST PATH
         // ========================================================================
         // Use AXIS manager if available for O(log N) approximate search
+        let exact_mode = matches!(ctx.search_params.search_mode, SearchMode::Exact);
         let has_axis_manager = self.axis_manager().is_some();
         if has_axis_manager {
             tracing::debug!("🔍 HELIX: AXIS manager is available for HNSW/IVF search");
         }
 
-        if let Some(axis_manager) = self.axis_manager() {
+        if exact_mode {
+            tracing::debug!(
+                "🎯 HELIX: SearchMode::Exact requested; skipping approximate AXIS path"
+            );
+        } else if let Some(axis_manager) = self.axis_manager() {
             tracing::info!(
                 "🔗 HELIX: AXIS manager available, attempting HNSW index search for collection {}",
                 collection_id

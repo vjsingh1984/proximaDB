@@ -1,6 +1,6 @@
 """v3 documents endpoint benchmark: sync vs async with server-side embedding.
 
-POST /api/v3/collections/{id}/documents
+POST /api/v2/collections/{id}/documents
 Body: {"records": [{"id": "...", "text": "...", "metadata": {...}}]}
 
 When records arrive without a `vector` field, the server calls
@@ -114,7 +114,7 @@ def v3_sync_one_at_a_time(count: int) -> dict[str, Any]:
     create_collection(name)
     records = make_records(count)
     s = requests.Session()
-    url = f"{REST_URL}/api/v3/collections/{name}/documents"
+    url = f"{REST_URL}/api/v2/collections/{name}/documents"
 
     def call() -> None:
         for r in records:
@@ -136,7 +136,7 @@ def v3_sync_one_big_call(count: int) -> dict[str, Any]:
     create_collection(name)
     records = make_records(count)
     s = requests.Session()
-    url = f"{REST_URL}/api/v3/collections/{name}/documents"
+    url = f"{REST_URL}/api/v2/collections/{name}/documents"
 
     def call() -> None:
         resp = s.post(url, json={"records": records}, timeout=300)
@@ -157,7 +157,7 @@ async def v3_async_one_per_call(count: int, concurrency: int) -> dict[str, Any]:
     name = f"v3_async1_{uuid.uuid4().hex[:8]}"
     create_collection(name)
     records = make_records(count)
-    url = f"{REST_URL}/api/v3/collections/{name}/documents"
+    url = f"{REST_URL}/api/v2/collections/{name}/documents"
 
     sem = asyncio.Semaphore(concurrency)
 
@@ -191,7 +191,7 @@ async def v3_async_chunked(count: int, concurrency: int) -> dict[str, Any]:
     name = f"v3_async_chunk_{uuid.uuid4().hex[:8]}"
     create_collection(name)
     records = make_records(count)
-    url = f"{REST_URL}/api/v3/collections/{name}/documents"
+    url = f"{REST_URL}/api/v2/collections/{name}/documents"
 
     async with aiohttp.ClientSession() as session:
 

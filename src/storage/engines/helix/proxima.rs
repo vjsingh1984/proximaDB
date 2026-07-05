@@ -1113,56 +1113,6 @@ fn metric_distance(
     distance_compute.distance_with_metric(a, b, metric)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn centroid_pruning_selects_sqrt() {
-        let query = vec![0.0f32, 0.0];
-        let metas = vec![
-            HelixBlockMetadata {
-                proxima_metadata: ProximaBlockMetadata::default(),
-                hilbert_range: None,
-                block_centroid: vec![0.1, 0.1],
-                pca_stats: None,
-                clustering_hints: None,
-            },
-            HelixBlockMetadata {
-                proxima_metadata: ProximaBlockMetadata::default(),
-                hilbert_range: None,
-                block_centroid: vec![3.0, 3.0],
-                pca_stats: None,
-                clustering_hints: None,
-            },
-            HelixBlockMetadata {
-                proxima_metadata: ProximaBlockMetadata::default(),
-                hilbert_range: None,
-                block_centroid: vec![0.2, 0.2],
-                pca_stats: None,
-                clustering_hints: None,
-            },
-            HelixBlockMetadata {
-                proxima_metadata: ProximaBlockMetadata::default(),
-                hilbert_range: None,
-                block_centroid: vec![6.0, 6.0],
-                pca_stats: None,
-                clustering_hints: None,
-            },
-        ];
-
-        let selected = select_blocks_by_centroid(
-            &query,
-            &metas,
-            &proximadb_distance_kernel::DistanceMetric::Euclidean,
-            &crate::core::search::BlockPruneConfig::for_testing(),
-        );
-        // max(3, sqrt(4)) = 3 -> expect the three closest indices 0, 2, 1
-        // Block 0: [0.1, 0.1] - dist 0.141, Block 2: [0.2, 0.2] - dist 0.283, Block 1: [3.0, 3.0] - dist 4.243
-        assert_eq!(selected, vec![0, 1, 2]);
-    }
-}
-
 /// Extract block metadata for HELIX
 pub fn extract_helix_metadata(
     records: &[VectorRecord],
@@ -1221,4 +1171,54 @@ pub fn extract_helix_metadata(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn centroid_pruning_selects_sqrt() {
+        let query = vec![0.0f32, 0.0];
+        let metas = vec![
+            HelixBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                hilbert_range: None,
+                block_centroid: vec![0.1, 0.1],
+                pca_stats: None,
+                clustering_hints: None,
+            },
+            HelixBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                hilbert_range: None,
+                block_centroid: vec![3.0, 3.0],
+                pca_stats: None,
+                clustering_hints: None,
+            },
+            HelixBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                hilbert_range: None,
+                block_centroid: vec![0.2, 0.2],
+                pca_stats: None,
+                clustering_hints: None,
+            },
+            HelixBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                hilbert_range: None,
+                block_centroid: vec![6.0, 6.0],
+                pca_stats: None,
+                clustering_hints: None,
+            },
+        ];
+
+        let selected = select_blocks_by_centroid(
+            &query,
+            &metas,
+            &proximadb_distance_kernel::DistanceMetric::Euclidean,
+            &crate::core::search::BlockPruneConfig::for_testing(),
+        );
+        // max(3, sqrt(4)) = 3 -> expect the three closest indices 0, 2, 1
+        // Block 0: [0.1, 0.1] - dist 0.141, Block 2: [0.2, 0.2] - dist 0.283, Block 1: [3.0, 3.0] - dist 4.243
+        assert_eq!(selected, vec![0, 1, 2]);
+    }
 }

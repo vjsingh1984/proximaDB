@@ -211,19 +211,32 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
       headers["Authorization"] = "Bearer " + this.config.apiKey;
     }
 
-    const init: RequestInit = {
-      method,
-      headers,
-    };
+    const buildInit = (signal?: AbortSignal): RequestInit => {
+      const init: RequestInit = {
+        method,
+        headers,
+        signal,
+      };
 
-    if (body !== undefined) {
-      init.body = JSON.stringify(body);
-    }
+      if (body !== undefined) {
+        init.body = JSON.stringify(body);
+      }
+
+      return init;
+    };
 
     let lastError: Error | null = null;
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        this.config.timeoutMs,
+      );
       try {
-        const response = await this.fetchFn(requestUrl, init);
+        const response = await this.fetchFn(
+          requestUrl,
+          buildInit(controller.signal),
+        );
         return await this.handleResponse<T>(response);
       } catch (e: unknown) {
         lastError = e instanceof Error ? e : new Error(String(e));
@@ -240,6 +253,8 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
           const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
+      } finally {
+        clearTimeout(timeoutId);
       }
     }
 

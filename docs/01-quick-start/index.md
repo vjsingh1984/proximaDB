@@ -33,7 +33,7 @@ flowchart LR
 
 ```bash
 # 1. Run ProximaDB
-docker run -d -p 5678:5678 --name proximadb proximadb/proximadb:latest
+docker run -d -p 5678:5678 --name proximadb vjsingh1984/proximadb:latest
 
 # 2. Wait for startup (5 seconds)
 sleep 5

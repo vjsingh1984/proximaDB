@@ -195,7 +195,7 @@ async fn test_incremental_backup() {
     );
 
     // Verify second backup includes previous backup ID
-    assert!(manifest2.data_files.len() >= 1); // At least the new file
+    assert!(!manifest2.data_files.is_empty()); // At least the new file
 }
 
 /// Test backup retention policy

@@ -3,7 +3,8 @@
 = Per-developer agent instruction files (local-only seeds)
 
 The active agent-instruction files at the repo root — `CLAUDE.md`, `GEMINI.md`,
-`AGENTS.md` — are **gitignored and per-developer-local**. They are *not*
+`AGENTS.md`, and the singular compatibility alias `AGENT.md` — are
+**gitignored and per-developer-local**. They are *not*
 committed, so each developer maintains their own copy and concurrent
 sessions/machines never conflict over them (no merge conflicts, no
 cross-machine drift of the rule text itself).
@@ -14,6 +15,7 @@ git. To set up a fresh clone or a new machine:
     cp docs/agent-rules/CLAUDE.md.seed  CLAUDE.md
     cp docs/agent-rules/GEMINI.md.seed  GEMINI.md
     cp docs/agent-rules/AGENTS.md.seed  AGENTS.md
+    cp docs/agent-rules/AGENT.md.seed   AGENT.md
 
 …then customize your local copies freely (they stay untracked / gitignored).
 
@@ -37,6 +39,9 @@ local. Keep the seed copies' pointer to that doc current when you update your
 local rules.
 
 == Skills (local-only, seeded like the rule files)
+
+`AGENT.md` is intentionally a short alias for tools that look for the singular
+filename; `AGENTS.md` remains the canonical shared index.
 
 `.claude/skills/` is gitignored too (it is per-machine state). Shared skill
 *seeds* live under `docs/agent-rules/skills/` and are committed. To activate one

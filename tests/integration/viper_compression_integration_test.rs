@@ -286,6 +286,7 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
             engine_config: std::collections::HashMap::new(),
             base_location: temp_dir.path().to_str().unwrap().to_string(),
             assigned_at: chrono::Utc::now().timestamp(),
+            ..Default::default()
         }),
     };
 
@@ -405,6 +406,7 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
             engine_config: std::collections::HashMap::new(),
             base_location: temp_dir.path().to_str().unwrap().to_string(),
             assigned_at: chrono::Utc::now().timestamp(),
+            ..Default::default()
         }),
     };
 
@@ -795,6 +797,7 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
                 engine_config: std::collections::HashMap::new(),
                 base_location: temp_dir.path().to_str().unwrap().to_string(),
                 assigned_at: chrono::Utc::now().timestamp(),
+                ..Default::default()
             }),
         };
 
@@ -934,6 +937,7 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
                 engine_config: std::collections::HashMap::new(),
                 base_location: temp_dir.path().to_str().unwrap().to_string(),
                 assigned_at: chrono::Utc::now().timestamp(),
+                ..Default::default()
             }),
         };
 

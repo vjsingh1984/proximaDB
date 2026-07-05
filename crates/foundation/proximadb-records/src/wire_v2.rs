@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn batch_of_mixed_precision_records_round_trips_each_variant() {
-        let recs = vec![
+        let recs = [
             ProximaRecord {
                 oid: "fp32-rec".to_string(),
                 embeddings: vec![EmbeddingCell {

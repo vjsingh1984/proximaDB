@@ -807,7 +807,7 @@ impl ProximaFlightService {
     /// records as-is and let the existing catalog validation reject them —
     /// no silent data loss.
     ///
-    /// `pub(crate)` so the REST `/api/v3/documents` handler can reuse the same
+    /// `pub(crate)` so the REST `/api/v2/documents` handler can reuse the same
     /// dispatch logic without duplicating it.
     pub(crate) async fn embed_text_only_records(
         records: &mut [ProximaRecord],

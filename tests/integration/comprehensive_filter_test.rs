@@ -179,6 +179,7 @@ async fn search_with_filter(
             engine: proximadb::proto::proximadb_v1::StorageEngine::Viper as i32,
             engine_config: Default::default(),
             assigned_at: 0,
+            ..Default::default()
         }),
         ..Default::default()
     });
@@ -288,6 +289,7 @@ async fn setup_test_collection(
             engine_config: HashMap::new(),
             base_location: format!("file://{}", base_path),
             assigned_at: chrono::Utc::now().timestamp(),
+            ..Default::default()
         }),
         ..Default::default()
     };

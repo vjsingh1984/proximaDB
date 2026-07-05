@@ -374,7 +374,7 @@ mod tests {
     /// The contract for the LSM bypass requires sorted input.
     #[test]
     fn unsorted_records_get_sorted_by_oid() {
-        let mut records = vec![rec("zeta"), rec("alpha"), rec("mike")];
+        let mut records = [rec("zeta"), rec("alpha"), rec("mike")];
         records.sort_by(|a, b| a.oid.cmp(&b.oid));
         let oids: Vec<_> = records.iter().map(|r| r.oid.as_str()).collect();
         assert_eq!(oids, vec!["alpha", "mike", "zeta"]);

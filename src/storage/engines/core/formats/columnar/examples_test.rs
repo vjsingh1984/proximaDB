@@ -95,7 +95,7 @@ pub async fn viper_optimization_example() -> Result<()> {
                     values: proximadb_records::EmbeddingValues::Fp32(vector),
                     ..Default::default()
                 }],
-                created_at_ns: i as i64,
+                created_at_ns: i,
                 record_version: 1,
                 ..Default::default()
             };
@@ -357,7 +357,7 @@ pub async fn nova_optimization_example() -> Result<()> {
                     values: proximadb_records::EmbeddingValues::Fp32(vector),
                     ..Default::default()
                 }],
-                created_at_ns: (1_700_000_000 + i) as i64,
+                created_at_ns: (1_700_000_000 + i),
                 record_version: 1,
                 ..Default::default()
             };

@@ -4,7 +4,7 @@
 //! This trait satisfies the Single Responsibility Principle by focusing solely
 //! on engine identification and capability reporting.
 
-use crate::index::axis::eventlog::StorageEngineType;
+use crate::core::types::StorageEngineType;
 use crate::storage::traits::StorageFormatStrategy;
 
 /// Core identity trait for storage engines

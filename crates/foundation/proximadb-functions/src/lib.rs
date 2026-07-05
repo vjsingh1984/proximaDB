@@ -38,7 +38,7 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use proximadb_data_model::{ProximaType, ProximaValue};
+use proximadb_data_model::{ProximaType, ProximaValue, TimeUnit as DmTimeUnit};
 use proximadb_relational_types::{Expr, ExprError, FunctionRegistry, RelationalRow};
 
 /// What kind of function a registry entry is.
@@ -318,6 +318,108 @@ fn as_f64(name: &str, v: &ProximaValue) -> Result<f64, ExprError> {
     }
 }
 
+fn as_i64(name: &str, v: &ProximaValue) -> Result<i64, ExprError> {
+    match v {
+        ProximaValue::Int64(i) => Ok(*i),
+        ProximaValue::Int32(i) => Ok(*i as i64),
+        ProximaValue::Int16(i) => Ok(*i as i64),
+        ProximaValue::Int8(i) => Ok(*i as i64),
+        ProximaValue::UInt64(i) => i64::try_from(*i)
+            .map_err(|_| ExprError::Other(format!("{name}: integer argument out of range"))),
+        ProximaValue::UInt32(i) => Ok(*i as i64),
+        other => Err(ExprError::Other(format!(
+            "{name}: expected an integer argument, got {other:?}"
+        ))),
+    }
+}
+
+fn is_integer(v: &ProximaValue) -> bool {
+    matches!(
+        v,
+        ProximaValue::Int8(_)
+            | ProximaValue::Int16(_)
+            | ProximaValue::Int32(_)
+            | ProximaValue::Int64(_)
+            | ProximaValue::UInt32(_)
+            | ProximaValue::UInt64(_)
+    )
+}
+
+fn check_arity_range(
+    name: &str,
+    args: &[ProximaValue],
+    min: usize,
+    max: usize,
+) -> Result<(), ExprError> {
+    if args.len() < min || args.len() > max {
+        return Err(ExprError::WrongFunctionArity {
+            name: name.to_string(),
+            expected: min,
+            got: args.len(),
+        });
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Civil-date arithmetic (Howard Hinnant's algorithms) — dependency-free
+// helpers for the temporal kernels. `Date(i32)` is days since 1970-01-01;
+// `Timestamp(i64, unit)` is ticks since the epoch in `unit`.
+// ---------------------------------------------------------------------------
+
+/// (year, month, day) from days since 1970-01-01 (proleptic Gregorian).
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// Days since 1970-01-01 from a civil (year, month, day).
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400; // [0, 399]
+    let mp = if m > 2 { m - 3 } else { m + 9 } as i64; // [0, 11]
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    era * 146_097 + doe - 719_468
+}
+
+/// Ticks-per-second for a canonical [`TimeUnit`].
+fn unit_per_second(unit: DmTimeUnit) -> i64 {
+    match unit {
+        DmTimeUnit::Second => 1,
+        DmTimeUnit::Millisecond => 1_000,
+        DmTimeUnit::Microsecond => 1_000_000,
+        DmTimeUnit::Nanosecond => 1_000_000_000,
+    }
+}
+
+/// Decompose a temporal ProximaValue into (days since epoch, seconds within
+/// the day as f64 including fractional part). `Date` has no time component.
+fn temporal_parts(name: &str, v: &ProximaValue) -> Result<(i64, f64), ExprError> {
+    match v {
+        ProximaValue::Date(days) => Ok((*days as i64, 0.0)),
+        ProximaValue::Timestamp(ticks, unit) | ProximaValue::TimestampTz(ticks, unit) => {
+            let per_sec = unit_per_second(*unit);
+            let per_day = per_sec * 86_400;
+            let days = ticks.div_euclid(per_day);
+            let rem = ticks.rem_euclid(per_day);
+            Ok((days, rem as f64 / per_sec as f64))
+        }
+        other => Err(ExprError::Other(format!(
+            "{name}: expected a date/timestamp argument, got {other:?}"
+        ))),
+    }
+}
+
 /// Register the builtin scalar function set (the canonical names the SQL frontend and the
 /// DataFusion adapter both resolve against).
 pub fn register_builtin_scalars(reg: &ProximaFunctionRegistry) {
@@ -441,6 +543,569 @@ pub fn register_builtin_scalars(reg: &ProximaFunctionRegistry) {
         json_extract_native("json_extract_text", args, true)
     }));
 
+    // ------------------------------------------------------------------
+    // ANSI tranche 1 (TD-OLAP-5 P1b): string / math / conditional /
+    // temporal scalars, PostgreSQL semantics. One ProximaValue kernel each
+    // (ADR-039 invariant 4); the DataFusion route keeps its own vectorized
+    // natives for these names (see DATAFUSION_NATIVE_SCALARS) — these
+    // kernels make the same names answer on the native/Volcano route.
+    // ------------------------------------------------------------------
+
+    // trim family — 1-arg strips whitespace; 2-arg (btrim/ltrim/rtrim) strips
+    // any character in the given set, per Postgres.
+    fn trim_set(chars: Option<&str>) -> impl Fn(char) -> bool + '_ {
+        move |c: char| match chars {
+            Some(set) => set.contains(c),
+            None => c.is_whitespace(),
+        }
+    }
+    reg.register_scalar(def("trim", ProximaType::String, |args| {
+        check_arity("trim", args, 1)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        Ok(ProximaValue::String(
+            as_str("trim", &args[0])?.trim().to_string(),
+        ))
+    }));
+    reg.register_scalar(def("btrim", ProximaType::String, |args| {
+        check_arity_range("btrim", args, 1, 2)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let s = as_str("btrim", &args[0])?;
+        let set = args.get(1).map(|v| as_str("btrim", v)).transpose()?;
+        Ok(ProximaValue::String(
+            s.trim_matches(trim_set(set)).to_string(),
+        ))
+    }));
+    reg.register_scalar(def("ltrim", ProximaType::String, |args| {
+        check_arity_range("ltrim", args, 1, 2)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let s = as_str("ltrim", &args[0])?;
+        let set = args.get(1).map(|v| as_str("ltrim", v)).transpose()?;
+        Ok(ProximaValue::String(
+            s.trim_start_matches(trim_set(set)).to_string(),
+        ))
+    }));
+    reg.register_scalar(def("rtrim", ProximaType::String, |args| {
+        check_arity_range("rtrim", args, 1, 2)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let s = as_str("rtrim", &args[0])?;
+        let set = args.get(1).map(|v| as_str("rtrim", v)).transpose()?;
+        Ok(ProximaValue::String(
+            s.trim_end_matches(trim_set(set)).to_string(),
+        ))
+    }));
+
+    // replace(string, from, to)
+    reg.register_scalar(def("replace", ProximaType::String, |args| {
+        check_arity("replace", args, 3)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let s = as_str("replace", &args[0])?;
+        let from = as_str("replace", &args[1])?;
+        let to = as_str("replace", &args[2])?;
+        Ok(ProximaValue::String(if from.is_empty() {
+            s.to_string()
+        } else {
+            s.replace(from, to)
+        }))
+    }));
+
+    // strpos(string, substring) — 1-based char position, 0 when absent.
+    reg.register_scalar(def("strpos", ProximaType::Int64, |args| {
+        check_arity("strpos", args, 2)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let s = as_str("strpos", &args[0])?;
+        let sub = as_str("strpos", &args[1])?;
+        let pos = match s.find(sub) {
+            Some(byte_ix) => s[..byte_ix].chars().count() as i64 + 1,
+            None => 0,
+        };
+        Ok(ProximaValue::Int64(pos))
+    }));
+
+    // substr(string, start [, count]) — 1-based, Postgres clamping semantics
+    // (start may be <= 0; the window [start, start+count) intersects the string).
+    reg.register_scalar(def("substr", ProximaType::String, |args| {
+        check_arity_range("substr", args, 2, 3)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let s = as_str("substr", &args[0])?;
+        let start = as_i64("substr", &args[1])?;
+        let count = args.get(2).map(|v| as_i64("substr", v)).transpose()?;
+        if let Some(c) = count
+            && c < 0
+        {
+            return Err(ExprError::Other(
+                "substr: negative substring length not allowed".to_string(),
+            ));
+        }
+        let end = count.map(|c| start.saturating_add(c)); // exclusive, 1-based
+        let from = start.max(1);
+        let out: String = match end {
+            Some(e) if e <= from => String::new(),
+            Some(e) => s
+                .chars()
+                .skip((from - 1) as usize)
+                .take((e - from) as usize)
+                .collect(),
+            None => s.chars().skip((from - 1) as usize).collect(),
+        };
+        Ok(ProximaValue::String(out))
+    }));
+
+    // lpad / rpad (string, length [, fill=' ']) — truncates when longer.
+    fn pad(
+        name: &'static str,
+        left: bool,
+        args: &[ProximaValue],
+    ) -> Result<ProximaValue, ExprError> {
+        check_arity_range(name, args, 2, 3)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let s = as_str(name, &args[0])?;
+        let len = as_i64(name, &args[1])?.max(0) as usize;
+        let fill = args
+            .get(1 + 1)
+            .map(|v| as_str(name, v))
+            .transpose()?
+            .unwrap_or(" ");
+        let cur = s.chars().count();
+        if cur >= len {
+            return Ok(ProximaValue::String(s.chars().take(len).collect()));
+        }
+        if fill.is_empty() {
+            return Ok(ProximaValue::String(s.to_string()));
+        }
+        let padding: String = fill.chars().cycle().take(len - cur).collect();
+        Ok(ProximaValue::String(if left {
+            format!("{padding}{s}")
+        } else {
+            format!("{s}{padding}")
+        }))
+    }
+    reg.register_scalar(def("lpad", ProximaType::String, |args| {
+        pad("lpad", true, args)
+    }));
+    reg.register_scalar(def("rpad", ProximaType::String, |args| {
+        pad("rpad", false, args)
+    }));
+
+    // left / right (string, n) — negative n drops from the other end (PG).
+    reg.register_scalar(def("left", ProximaType::String, |args| {
+        check_arity("left", args, 2)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let s = as_str("left", &args[0])?;
+        let n = as_i64("left", &args[1])?;
+        let total = s.chars().count() as i64;
+        let take = if n >= 0 { n } else { (total + n).max(0) };
+        Ok(ProximaValue::String(
+            s.chars().take(take as usize).collect(),
+        ))
+    }));
+    reg.register_scalar(def("right", ProximaType::String, |args| {
+        check_arity("right", args, 2)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let s = as_str("right", &args[0])?;
+        let n = as_i64("right", &args[1])?;
+        let total = s.chars().count() as i64;
+        let skip = if n >= 0 { (total - n).max(0) } else { -n };
+        Ok(ProximaValue::String(
+            s.chars().skip(skip as usize).collect(),
+        ))
+    }));
+
+    // repeat(string, n) / reverse(string)
+    reg.register_scalar(def("repeat", ProximaType::String, |args| {
+        check_arity("repeat", args, 2)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let s = as_str("repeat", &args[0])?;
+        let n = as_i64("repeat", &args[1])?.max(0);
+        if s.len().saturating_mul(n as usize) > 64 * 1024 * 1024 {
+            return Err(ExprError::Other("repeat: result too large".to_string()));
+        }
+        Ok(ProximaValue::String(s.repeat(n as usize)))
+    }));
+    reg.register_scalar(def("reverse", ProximaType::String, |args| {
+        check_arity("reverse", args, 1)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        Ok(ProximaValue::String(
+            as_str("reverse", &args[0])?.chars().rev().collect(),
+        ))
+    }));
+
+    // split_part(string, delimiter, n) — 1-based field; out of range → ''.
+    // Negative n counts from the end (PG 14+).
+    reg.register_scalar(def("split_part", ProximaType::String, |args| {
+        check_arity("split_part", args, 3)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let s = as_str("split_part", &args[0])?;
+        let delim = as_str("split_part", &args[1])?;
+        let n = as_i64("split_part", &args[2])?;
+        if n == 0 {
+            return Err(ExprError::Other(
+                "split_part: field position must not be zero".to_string(),
+            ));
+        }
+        if delim.is_empty() {
+            // PG: with an empty delimiter the string is a single field.
+            let hit = n == 1 || n == -1;
+            return Ok(ProximaValue::String(if hit {
+                s.to_string()
+            } else {
+                String::new()
+            }));
+        }
+        let parts: Vec<&str> = s.split(delim).collect();
+        let ix = if n > 0 {
+            (n - 1) as usize
+        } else {
+            match parts.len() as i64 + n {
+                neg if neg < 0 => return Ok(ProximaValue::String(String::new())),
+                ix => ix as usize,
+            }
+        };
+        Ok(ProximaValue::String(
+            parts.get(ix).copied().unwrap_or("").to_string(),
+        ))
+    }));
+
+    // initcap — capitalize the first letter of every word (PG: words are
+    // sequences of alphanumeric characters).
+    reg.register_scalar(def("initcap", ProximaType::String, |args| {
+        check_arity("initcap", args, 1)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let s = as_str("initcap", &args[0])?;
+        let mut out = String::with_capacity(s.len());
+        let mut at_word_start = true;
+        for c in s.chars() {
+            if c.is_alphanumeric() {
+                if at_word_start {
+                    out.extend(c.to_uppercase());
+                } else {
+                    out.extend(c.to_lowercase());
+                }
+                at_word_start = false;
+            } else {
+                out.push(c);
+                at_word_start = true;
+            }
+        }
+        Ok(ProximaValue::String(out))
+    }));
+
+    // starts_with / ends_with → Boolean
+    reg.register_scalar(def("starts_with", ProximaType::Boolean, |args| {
+        check_arity("starts_with", args, 2)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        Ok(ProximaValue::Boolean(
+            as_str("starts_with", &args[0])?.starts_with(as_str("starts_with", &args[1])?),
+        ))
+    }));
+    reg.register_scalar(def("ends_with", ProximaType::Boolean, |args| {
+        check_arity("ends_with", args, 2)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        Ok(ProximaValue::Boolean(
+            as_str("ends_with", &args[0])?.ends_with(as_str("ends_with", &args[1])?),
+        ))
+    }));
+
+    // ascii(string) — code point of the first character (0 for '').
+    // chr(n) — the character with code point n.
+    reg.register_scalar(def("ascii", ProximaType::Int64, |args| {
+        check_arity("ascii", args, 1)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        Ok(ProximaValue::Int64(
+            as_str("ascii", &args[0])?
+                .chars()
+                .next()
+                .map(|c| c as i64)
+                .unwrap_or(0),
+        ))
+    }));
+    reg.register_scalar(def("chr", ProximaType::String, |args| {
+        check_arity("chr", args, 1)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let n = as_i64("chr", &args[0])?;
+        let c = u32::try_from(n)
+            .ok()
+            .and_then(char::from_u32)
+            .ok_or_else(|| ExprError::Other(format!("chr: {n} is not a valid code point")))?;
+        Ok(ProximaValue::String(c.to_string()))
+    }));
+
+    // round(x [, digits]) / trunc(x [, digits]) — half-away-from-zero (PG).
+    fn scale_op(
+        name: &'static str,
+        op: impl Fn(f64) -> f64 + Copy,
+        args: &[ProximaValue],
+    ) -> Result<ProximaValue, ExprError> {
+        check_arity_range(name, args, 1, 2)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let x = as_f64(name, &args[0])?;
+        let digits = args
+            .get(1)
+            .map(|v| as_i64(name, v))
+            .transpose()?
+            .unwrap_or(0);
+        let factor = 10f64.powi(digits.clamp(-300, 300) as i32);
+        Ok(ProximaValue::Float64(op(x * factor) / factor))
+    }
+    reg.register_scalar(def("round", ProximaType::Float64, |args| {
+        scale_op("round", f64::round, args)
+    }));
+    reg.register_scalar(def("trunc", ProximaType::Float64, |args| {
+        scale_op("trunc", f64::trunc, args)
+    }));
+
+    // power / mod / sign / exp / ln / log10 / pi
+    reg.register_scalar(def("power", ProximaType::Float64, |args| {
+        check_arity("power", args, 2)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        Ok(ProximaValue::Float64(
+            as_f64("power", &args[0])?.powf(as_f64("power", &args[1])?),
+        ))
+    }));
+    reg.register_scalar(def("mod", ProximaType::Float64, |args| {
+        check_arity("mod", args, 2)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        if is_integer(&args[0]) && is_integer(&args[1]) {
+            let a = as_i64("mod", &args[0])?;
+            let b = as_i64("mod", &args[1])?;
+            if b == 0 {
+                return Err(ExprError::Other("mod: division by zero".to_string()));
+            }
+            // PG mod: sign follows the dividend (Rust % agrees).
+            Ok(ProximaValue::Int64(a % b))
+        } else {
+            let a = as_f64("mod", &args[0])?;
+            let b = as_f64("mod", &args[1])?;
+            Ok(ProximaValue::Float64(a % b))
+        }
+    }));
+    reg.register_scalar(def("sign", ProximaType::Float64, |args| {
+        check_arity("sign", args, 1)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        if is_integer(&args[0]) {
+            Ok(ProximaValue::Int64(as_i64("sign", &args[0])?.signum()))
+        } else {
+            let x = as_f64("sign", &args[0])?;
+            Ok(ProximaValue::Float64(if x > 0.0 {
+                1.0
+            } else if x < 0.0 {
+                -1.0
+            } else {
+                0.0
+            }))
+        }
+    }));
+    reg.register_scalar(def("exp", ProximaType::Float64, |args| {
+        check_arity("exp", args, 1)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        Ok(ProximaValue::Float64(as_f64("exp", &args[0])?.exp()))
+    }));
+    reg.register_scalar(def("ln", ProximaType::Float64, |args| {
+        check_arity("ln", args, 1)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let x = as_f64("ln", &args[0])?;
+        if x <= 0.0 {
+            return Err(ExprError::Other(
+                "ln: cannot take logarithm of a non-positive number".to_string(),
+            ));
+        }
+        Ok(ProximaValue::Float64(x.ln()))
+    }));
+    reg.register_scalar(def("log10", ProximaType::Float64, |args| {
+        check_arity("log10", args, 1)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let x = as_f64("log10", &args[0])?;
+        if x <= 0.0 {
+            return Err(ExprError::Other(
+                "log10: cannot take logarithm of a non-positive number".to_string(),
+            ));
+        }
+        Ok(ProximaValue::Float64(x.log10()))
+    }));
+    reg.register_scalar(def("pi", ProximaType::Float64, |args| {
+        check_arity("pi", args, 0)?;
+        Ok(ProximaValue::Float64(std::f64::consts::PI))
+    }));
+
+    // greatest / least — variadic; PG semantics: NULL args are IGNORED,
+    // NULL only when every arg is NULL. All-numeric compares numerically;
+    // all-string compares lexically; mixed types error.
+    fn extremum(
+        name: &'static str,
+        want_max: bool,
+        args: &[ProximaValue],
+    ) -> Result<ProximaValue, ExprError> {
+        let live: Vec<&ProximaValue> = args
+            .iter()
+            .filter(|v| !matches!(v, ProximaValue::Null))
+            .collect();
+        if live.is_empty() {
+            return Ok(ProximaValue::Null);
+        }
+        let all_numeric = live.iter().all(|v| as_f64(name, v).is_ok());
+        if all_numeric {
+            let mut best = live[0];
+            let mut best_key = as_f64(name, best)?;
+            for v in &live[1..] {
+                let key = as_f64(name, v)?;
+                if (want_max && key > best_key) || (!want_max && key < best_key) {
+                    best = v;
+                    best_key = key;
+                }
+            }
+            return Ok((*best).clone());
+        }
+        let all_strings = live.iter().all(|v| as_str(name, v).is_ok());
+        if all_strings {
+            let mut best = live[0];
+            for v in &live[1..] {
+                let (a, b) = (as_str(name, v)?, as_str(name, best)?);
+                if (want_max && a > b) || (!want_max && a < b) {
+                    best = v;
+                }
+            }
+            return Ok((*best).clone());
+        }
+        Err(ExprError::Other(format!(
+            "{name}: arguments must be all-numeric or all-string"
+        )))
+    }
+    reg.register_scalar(ScalarFunctionDef {
+        signature: FunctionSignature {
+            name: "greatest".to_string(),
+            arg_types: Vec::new(),
+            variadic: true,
+            return_ty: ProximaType::Float64,
+            volatility: Volatility::Immutable,
+        },
+        kernel: Arc::new(|args| extremum("greatest", true, args)),
+    });
+    reg.register_scalar(ScalarFunctionDef {
+        signature: FunctionSignature {
+            name: "least".to_string(),
+            arg_types: Vec::new(),
+            variadic: true,
+            return_ty: ProximaType::Float64,
+            volatility: Volatility::Immutable,
+        },
+        kernel: Arc::new(|args| extremum("least", false, args)),
+    });
+
+    // date_part(field, date|timestamp) → Float64, PG field names. The SQL
+    // `EXTRACT(field FROM x)` syntax lowers to this name in the frontend.
+    reg.register_scalar(def("date_part", ProximaType::Float64, |args| {
+        check_arity("date_part", args, 2)?;
+        if any_null(args) {
+            return Ok(ProximaValue::Null);
+        }
+        let field = as_str("date_part", &args[0])?.to_ascii_lowercase();
+        let (days, secs) = temporal_parts("date_part", &args[1])?;
+        let (y, m, d) = civil_from_days(days);
+        let out = match field.as_str() {
+            "year" | "years" => y as f64,
+            "month" | "months" => m as f64,
+            "day" | "days" => d as f64,
+            "quarter" => ((m - 1) / 3 + 1) as f64,
+            // PG dow: 0 = Sunday. 1970-01-01 was a Thursday (4).
+            "dow" => ((days + 4).rem_euclid(7)) as f64,
+            "isodow" => (((days + 3).rem_euclid(7)) + 1) as f64,
+            "doy" => (days - days_from_civil(y, 1, 1) + 1) as f64,
+            "hour" | "hours" => (secs / 3600.0).floor(),
+            "minute" | "minutes" => ((secs % 3600.0) / 60.0).floor(),
+            "second" | "seconds" => secs % 60.0,
+            "epoch" => days as f64 * 86_400.0 + secs,
+            other => {
+                return Err(ExprError::Other(format!(
+                    "date_part: unsupported field '{other}'"
+                )));
+            }
+        };
+        Ok(ProximaValue::Float64(out))
+    }));
+
+    // date_trunc(field, timestamp|date) → Timestamp (microseconds).
+    reg.register_scalar(def(
+        "date_trunc",
+        ProximaType::Timestamp(DmTimeUnit::Microsecond),
+        |args| {
+            check_arity("date_trunc", args, 2)?;
+            if any_null(args) {
+                return Ok(ProximaValue::Null);
+            }
+            let field = as_str("date_trunc", &args[0])?.to_ascii_lowercase();
+            let (days, secs) = temporal_parts("date_trunc", &args[1])?;
+            let (y, m, _d) = civil_from_days(days);
+            let whole = secs as i64; // whole seconds within the day
+            let (out_days, out_secs) = match field.as_str() {
+                "year" | "years" => (days_from_civil(y, 1, 1), 0),
+                "quarter" => (days_from_civil(y, ((m - 1) / 3) * 3 + 1, 1), 0),
+                "month" | "months" => (days_from_civil(y, m, 1), 0),
+                // ISO week: truncate to Monday.
+                "week" => (days - (days + 3).rem_euclid(7), 0),
+                "day" | "days" => (days, 0),
+                "hour" | "hours" => (days, whole - whole % 3600),
+                "minute" | "minutes" => (days, whole - whole % 60),
+                "second" | "seconds" => (days, whole),
+                other => {
+                    return Err(ExprError::Other(format!(
+                        "date_trunc: unsupported field '{other}'"
+                    )));
+                }
+            };
+            let micros = (out_days * 86_400 + out_secs) * 1_000_000;
+            Ok(ProximaValue::Timestamp(micros, DmTimeUnit::Microsecond))
+        },
+    ));
+
     // Aliases (kept consistent with the DataFusion-side lowering).
     reg.alias_scalar("ucase", "upper");
     reg.alias_scalar("lcase", "lower");
@@ -449,6 +1114,12 @@ pub fn register_builtin_scalars(reg: &ProximaFunctionRegistry) {
     reg.alias_scalar("ceiling", "ceil");
     // Postgres `json_extract_path_text(doc, key)` is the text-extract form.
     reg.alias_scalar("json_extract_path_text", "json_extract_text");
+    // ANSI tranche 1 aliases.
+    reg.alias_scalar("substring", "substr");
+    reg.alias_scalar("pow", "power");
+    // Postgres single-arg `log(x)` is base-10.
+    reg.alias_scalar("log", "log10");
+    reg.alias_scalar("position", "strpos");
 }
 
 /// Extract `key` from a JSON document/array (engine-neutral; mirrors `extract_one` in
@@ -892,5 +1563,239 @@ mod tests {
                 .unwrap(),
             ProximaValue::Float64(3.5)
         );
+    }
+
+    // -----------------------------------------------------------------
+    // ANSI tranche 1 (TD-OLAP-5 P1b)
+    // -----------------------------------------------------------------
+
+    fn s(v: &str) -> ProximaValue {
+        ProximaValue::String(v.to_string())
+    }
+    fn i(v: i64) -> ProximaValue {
+        ProximaValue::Int64(v)
+    }
+    fn f(v: f64) -> ProximaValue {
+        ProximaValue::Float64(v)
+    }
+    fn call(r: &ProximaFunctionRegistry, name: &str, args: &[ProximaValue]) -> ProximaValue {
+        r.dispatch(name, args)
+            .unwrap_or_else(|| panic!("{name} not registered"))
+            .unwrap_or_else(|e| panic!("{name} errored: {e:?}"))
+    }
+
+    /// The ANSI coverage ratchet: the builtin scalar surface only grows.
+    /// Raise the floor when adding functions; NEVER lower it (mirrors the
+    /// TPC conformance ratchets, mandate #10).
+    #[test]
+    fn ansi_scalar_coverage_ratchet() {
+        let r = reg();
+        assert!(
+            r.scalar_count() >= 52,
+            "builtin scalar surface regressed: {} < 52 (10 base + 32 tranche-1 + 10 aliases)",
+            r.scalar_count()
+        );
+        for name in [
+            // tranche 1 — string
+            "trim",
+            "btrim",
+            "ltrim",
+            "rtrim",
+            "replace",
+            "strpos",
+            "substr",
+            "lpad",
+            "rpad",
+            "left",
+            "right",
+            "repeat",
+            "reverse",
+            "split_part",
+            "initcap",
+            "starts_with",
+            "ends_with",
+            "ascii",
+            "chr",
+            // tranche 1 — math
+            "round",
+            "trunc",
+            "power",
+            "mod",
+            "sign",
+            "exp",
+            "ln",
+            "log10",
+            "pi",
+            // tranche 1 — conditional + temporal
+            "greatest",
+            "least",
+            "date_part",
+            "date_trunc",
+            // tranche 1 — aliases
+            "substring",
+            "pow",
+            "log",
+            "position",
+        ] {
+            assert!(
+                r.lookup_scalar(name).is_some(),
+                "ratcheted builtin '{name}' missing"
+            );
+        }
+    }
+
+    #[test]
+    fn trim_family_pg_semantics() {
+        let r = reg();
+        assert_eq!(call(&r, "trim", &[s("  hi  ")]), s("hi"));
+        assert_eq!(call(&r, "btrim", &[s("xxhixx"), s("x")]), s("hi"));
+        assert_eq!(call(&r, "ltrim", &[s("  hi  ")]), s("hi  "));
+        assert_eq!(call(&r, "rtrim", &[s("xyhixy"), s("yx")]), s("xyhi"));
+        assert_eq!(call(&r, "trim", &[ProximaValue::Null]), ProximaValue::Null);
+    }
+
+    #[test]
+    fn string_kernels_pg_semantics() {
+        let r = reg();
+        assert_eq!(
+            call(&r, "replace", &[s("abcabc"), s("b"), s("XY")]),
+            s("aXYcaXYc")
+        );
+        assert_eq!(call(&r, "strpos", &[s("high"), s("ig")]), i(2));
+        assert_eq!(call(&r, "strpos", &[s("high"), s("zz")]), i(0));
+        // substr: PG clamping — negative start intersects the window.
+        assert_eq!(call(&r, "substr", &[s("alphabet"), i(3)]), s("phabet"));
+        assert_eq!(call(&r, "substr", &[s("alphabet"), i(3), i(2)]), s("ph"));
+        assert_eq!(call(&r, "substr", &[s("alphabet"), i(-2), i(5)]), s("al"));
+        assert_eq!(call(&r, "substring", &[s("alphabet"), i(3), i(2)]), s("ph"));
+        assert_eq!(call(&r, "lpad", &[s("hi"), i(5), s("xy")]), s("xyxhi"));
+        assert_eq!(call(&r, "lpad", &[s("hi"), i(1)]), s("h"), "lpad truncates");
+        assert_eq!(call(&r, "rpad", &[s("hi"), i(4)]), s("hi  "));
+        assert_eq!(call(&r, "left", &[s("hello"), i(2)]), s("he"));
+        assert_eq!(call(&r, "left", &[s("hello"), i(-2)]), s("hel"));
+        assert_eq!(call(&r, "right", &[s("hello"), i(2)]), s("lo"));
+        assert_eq!(call(&r, "right", &[s("hello"), i(-2)]), s("llo"));
+        assert_eq!(call(&r, "repeat", &[s("ab"), i(3)]), s("ababab"));
+        assert_eq!(call(&r, "reverse", &[s("abc")]), s("cba"));
+        assert_eq!(call(&r, "split_part", &[s("a,b,c"), s(","), i(2)]), s("b"));
+        assert_eq!(call(&r, "split_part", &[s("a,b,c"), s(","), i(-1)]), s("c"));
+        assert_eq!(call(&r, "split_part", &[s("a,b,c"), s(","), i(9)]), s(""));
+        assert_eq!(
+            call(&r, "initcap", &[s("hello WORLD-of sql")]),
+            s("Hello World-Of Sql")
+        );
+        assert_eq!(
+            call(&r, "starts_with", &[s("alphabet"), s("alph")]),
+            ProximaValue::Boolean(true)
+        );
+        assert_eq!(
+            call(&r, "ends_with", &[s("alphabet"), s("bet")]),
+            ProximaValue::Boolean(true)
+        );
+        assert_eq!(call(&r, "ascii", &[s("Abc")]), i(65));
+        assert_eq!(call(&r, "ascii", &[s("")]), i(0));
+        assert_eq!(call(&r, "chr", &[i(65)]), s("A"));
+    }
+
+    #[test]
+    fn math_kernels_pg_semantics() {
+        let r = reg();
+        assert_eq!(call(&r, "round", &[f(2.5)]), f(3.0), "half away from zero");
+        assert_eq!(call(&r, "round", &[f(-2.5)]), f(-3.0));
+        assert_eq!(call(&r, "round", &[f(1.2345), i(2)]), f(1.23));
+        assert_eq!(call(&r, "trunc", &[f(1.999)]), f(1.0));
+        assert_eq!(call(&r, "trunc", &[f(-1.999)]), f(-1.0));
+        assert_eq!(call(&r, "power", &[f(2.0), f(10.0)]), f(1024.0));
+        assert_eq!(call(&r, "pow", &[f(2.0), f(3.0)]), f(8.0));
+        assert_eq!(call(&r, "mod", &[i(7), i(3)]), i(1));
+        assert_eq!(call(&r, "mod", &[i(-7), i(3)]), i(-1), "sign of dividend");
+        assert!(r.dispatch("mod", &[i(1), i(0)]).unwrap().is_err());
+        assert_eq!(call(&r, "sign", &[i(-9)]), i(-1));
+        assert_eq!(call(&r, "sign", &[f(0.0)]), f(0.0));
+        assert_eq!(call(&r, "exp", &[f(0.0)]), f(1.0));
+        assert_eq!(call(&r, "ln", &[f(1.0)]), f(0.0));
+        assert!(r.dispatch("ln", &[f(0.0)]).unwrap().is_err());
+        assert_eq!(call(&r, "log10", &[f(1000.0)]), f(3.0));
+        assert_eq!(call(&r, "log", &[f(100.0)]), f(2.0), "PG log = base 10");
+        assert_eq!(call(&r, "pi", &[]), f(std::f64::consts::PI));
+    }
+
+    #[test]
+    fn greatest_least_ignore_nulls() {
+        let r = reg();
+        assert_eq!(
+            call(&r, "greatest", &[i(1), ProximaValue::Null, i(7), f(3.5)]),
+            i(7)
+        );
+        assert_eq!(
+            call(&r, "least", &[s("pear"), s("apple"), ProximaValue::Null]),
+            s("apple")
+        );
+        assert_eq!(
+            call(&r, "greatest", &[ProximaValue::Null, ProximaValue::Null]),
+            ProximaValue::Null,
+            "NULL only when all args are NULL"
+        );
+        assert!(r.dispatch("greatest", &[i(1), s("x")]).unwrap().is_err());
+    }
+
+    #[test]
+    fn date_part_and_trunc_civil_arithmetic() {
+        let r = reg();
+        // 2000-03-01 was a Wednesday (PG dow: Sunday=0 → 3).
+        let date = ProximaValue::Date(days_from_civil(2000, 3, 1) as i32);
+        assert_eq!(call(&r, "date_part", &[s("year"), date.clone()]), f(2000.0));
+        assert_eq!(call(&r, "date_part", &[s("month"), date.clone()]), f(3.0));
+        assert_eq!(call(&r, "date_part", &[s("day"), date.clone()]), f(1.0));
+        assert_eq!(call(&r, "date_part", &[s("quarter"), date.clone()]), f(1.0));
+        assert_eq!(call(&r, "date_part", &[s("dow"), date.clone()]), f(3.0));
+        assert_eq!(
+            call(&r, "date_part", &[s("doy"), date.clone()]),
+            f(61.0),
+            "2000 is a leap year"
+        );
+        // Epoch day zero: 1970-01-01, a Thursday.
+        let epoch = ProximaValue::Date(0);
+        assert_eq!(call(&r, "date_part", &[s("dow"), epoch.clone()]), f(4.0));
+        assert_eq!(call(&r, "date_part", &[s("epoch"), epoch]), f(0.0));
+
+        // Timestamp: 2021-06-15 12:34:56 UTC (microseconds).
+        let secs = days_from_civil(2021, 6, 15) * 86_400 + 12 * 3600 + 34 * 60 + 56;
+        let ts = ProximaValue::Timestamp(secs * 1_000_000, DmTimeUnit::Microsecond);
+        assert_eq!(call(&r, "date_part", &[s("hour"), ts.clone()]), f(12.0));
+        assert_eq!(call(&r, "date_part", &[s("minute"), ts.clone()]), f(34.0));
+        assert_eq!(call(&r, "date_part", &[s("second"), ts.clone()]), f(56.0));
+
+        // date_trunc to month → 2021-06-01 00:00:00.
+        let truncated = call(&r, "date_trunc", &[s("month"), ts.clone()]);
+        let expected = days_from_civil(2021, 6, 1) * 86_400 * 1_000_000;
+        assert_eq!(
+            truncated,
+            ProximaValue::Timestamp(expected, DmTimeUnit::Microsecond)
+        );
+        // date_trunc to hour keeps the day, zeroes minutes/seconds.
+        let by_hour = call(&r, "date_trunc", &[s("hour"), ts]);
+        let expected_hour = (days_from_civil(2021, 6, 15) * 86_400 + 12 * 3600) * 1_000_000;
+        assert_eq!(
+            by_hour,
+            ProximaValue::Timestamp(expected_hour, DmTimeUnit::Microsecond)
+        );
+        // Unsupported field is a clear error, not a wrong answer.
+        assert!(
+            r.dispatch("date_part", &[s("fortnight"), ProximaValue::Date(0)])
+                .unwrap()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn civil_date_roundtrip() {
+        // Round-trip across leap years, century boundaries, and the epoch.
+        for days in [-719_468i64, -1, 0, 1, 10_957, 11_016, 18_993, 2_932_896] {
+            let (y, m, d) = civil_from_days(days);
+            assert_eq!(days_from_civil(y, m, d), days, "roundtrip for {days}");
+        }
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(10_957), (2000, 1, 1));
     }
 }

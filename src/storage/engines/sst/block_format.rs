@@ -181,6 +181,8 @@ impl BlockFormatReader {
         let path = path.as_ref();
         if path.extension().is_some_and(|e| e == "arrow") {
             BlockFormat::ArrowBlock
+        } else if path.extension().is_some_and(|e| e == "pax") {
+            BlockFormat::PaxBlock
         } else {
             BlockFormat::ProximaBlocks
         }

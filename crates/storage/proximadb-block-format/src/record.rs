@@ -29,7 +29,21 @@ pub mod col_id {
     pub const VALID_TO: i32 = 5;
     pub const ACTOR: i32 = 6;
     pub const ORIGIN: i32 = 7;
+    /// Props column (ID 8) — the canonical **durable-core overflow carrier**
+    /// (msgpack-serialized `ProximaTree` bytes).
+    ///
+    /// Per ADR-045 §Decision (Layer A) and ADR-010 §Props Opacity Limitation: any
+    /// value a typed PAX column cannot represent — exotic numerics (NaN/±Inf,
+    /// signaling-NaN/subnormal, oversized decimals), non-UTF8 binary, deeply-nested
+    /// or extension-shaped payloads — flows through this stripe **losslessly**. It is
+    /// part of the durable open core (a columnar stripe, immutable, ships 1:1 to
+    /// Iceberg), NOT rebuildable serving metadata. The stripe is a verbatim
+    /// length-prefixed byte copy, hence byte-transparent for arbitrary msgpack — see
+    /// `props_stripe_round_trips_losslessly_for_exotic_payloads` (the TD-LTAP-1
+    /// parity ratchet the durable-core/serving-metadata split must preserve).
     pub const PROPS: i32 = 8;
+    /// Labels column (ID 9) — msgpack-serialized `LabelSet` bytes; a secondary
+    /// opaque durable-core carrier alongside `PROPS`.
     pub const LABELS: i32 = 9;
     pub const EDGE_SRC: i32 = 10;
     pub const EDGE_TGT: i32 = 11;
@@ -49,6 +63,16 @@ pub mod col_id {
     /// f32 rerank is added only if the recall gate can't be met on SQ8. Chosen
     /// well above `USER_BASE` so it never collides with catalog-driven columns.
     pub const RERANK_BASE: i32 = 1000;
+    /// First column ID for the OPTIONAL exact-f32 tier (f32_tier_0, …).
+    ///
+    /// Opt-in only (`pax_f32_tier:on` tag / `PROXIMADB_PAX_F32_TIER` env, default
+    /// OFF): when enabled on a RaBitQ collection, the writer ALSO emits the raw
+    /// f32 embedding at `F32_TIER_BASE + i`. The column is read LAZILY — normal
+    /// id+score queries never touch it (zero scan/egress cost); it is decoded
+    /// only for an exact final rerank (→ recall ≈ 1.0) or `include_vectors`. This
+    /// is the storage/egress trade for exact-vector fidelity. Well above
+    /// `RERANK_BASE` so it never collides.
+    pub const F32_TIER_BASE: i32 = 2000;
 }
 
 /// Descriptor for a single column stripe in a PAX block.
@@ -727,5 +751,143 @@ mod tests {
             reader.row_directory().unwrap().is_none(),
             "OLAP block must not have row directory"
         );
+    }
+
+    /// TD-LTAP-1 / ADR-045 Layer-A parity ratchet: the `props` stripe (column ID 8)
+    /// is the durable-open-core carrier for any value a typed PAX column cannot
+    /// represent (the Lakebase "structured-overflow field" analog — ADR-045 §Decision
+    /// Layer A; ADR-010 §Props Opacity Limitation). The stripe is a verbatim
+    /// length-prefixed byte copy, so it MUST survive a full writer→reader round-trip
+    /// byte-identical for arbitrary msgpack — including the exotic payloads no typed
+    /// column holds (NaN/±Inf, signaling-NaN/subnormal, oversized Decimal, nested
+    /// trees, non-UTF8 binary, Json). This is the lossless baseline the
+    /// durable-core/serving-metadata format split (TD-LTAP-1) must preserve.
+    ///
+    /// Follow-up (not v1): raw msgpack *extension-type* bytes cannot be injected
+    /// through `add_record` (it rebuilds `props_bytes` from the `ProximaValue` tree,
+    /// which has no raw-ext variant); a stripe-level ext-bytes assertion can be added
+    /// separately. The `Binary` payload below already proves byte-transparency.
+    #[test]
+    fn props_stripe_round_trips_losslessly_for_exotic_payloads() {
+        use proximadb_data_model::ProximaValue;
+
+        let mut props: HashMap<String, ProximaTreeNode> = HashMap::new();
+        // 1. IEEE-754 exotics (compared via to_bits — NaN != NaN under PartialEq).
+        props.insert(
+            "nan".into(),
+            ProximaTreeNode::Value(ProximaValue::Float64(f64::NAN)),
+        );
+        props.insert(
+            "inf".into(),
+            ProximaTreeNode::Value(ProximaValue::Float64(f64::INFINITY)),
+        );
+        props.insert(
+            "neg_inf".into(),
+            ProximaTreeNode::Value(ProximaValue::Float64(f64::NEG_INFINITY)),
+        );
+        props.insert(
+            "snan".into(),
+            ProximaTreeNode::Value(ProximaValue::Float64(f64::from_bits(0x7FF0_0000_0000_0001))),
+        );
+        props.insert(
+            "subnormal".into(),
+            ProximaTreeNode::Value(ProximaValue::Float64(f64::from_bits(0x0000_0000_0000_0001))),
+        );
+        // 2. Oversized decimal beyond any fixed-width numeric column.
+        props.insert(
+            "big_decimal".into(),
+            ProximaTreeNode::Value(ProximaValue::Decimal(
+                "99999999999999999999999999.999".into(),
+            )),
+        );
+        // 3. Deeply-nested object tree (~8 levels) — the natural props nesting shape.
+        let mut nested = ProximaTreeNode::Value(ProximaValue::String("leaf".into()));
+        for _ in 0..8 {
+            let mut inner = HashMap::new();
+            inner.insert("down".into(), nested);
+            nested = ProximaTreeNode::Object(inner);
+        }
+        props.insert("nested".into(), nested);
+        // 4. Non-UTF8 / NUL binary — proves the stripe is byte-transparent.
+        props.insert(
+            "raw".into(),
+            ProximaTreeNode::Value(ProximaValue::Binary(vec![0x00, 0xFF, 0xC0, 0xFE])),
+        );
+        // 5. Structured Json.
+        props.insert(
+            "json".into(),
+            ProximaTreeNode::Value(ProximaValue::Json(serde_json::json!({
+                "k": [1, 2, { "nested": true }]
+            }))),
+        );
+
+        let rec = ProximaRecord {
+            oid: "exotic-1".into(),
+            tenant_id: "tenant_x".into(),
+            created_at_ns: 1,
+            updated_at_ns: 1,
+            props: props.clone(),
+            ..Default::default()
+        };
+
+        // Single canonical serialization — deterministic within the run (the writer
+        // serializes a clone of this same HashMap with the same RandomState).
+        let expected_props_bytes = rmp_serde::to_vec_named(&rec.props).unwrap();
+
+        // Full writer → reader round-trip.
+        let mut writer =
+            PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col_props", 0, 0);
+        writer.add_record(&rec).unwrap();
+        let block = writer.flush().unwrap();
+
+        let reader = PaxBlockReader::open(&block).unwrap();
+        assert_eq!(reader.row_count(), 1);
+
+        // PRIMARY: the durable-core props stripe is a verbatim copy → byte-identical
+        // to the canonical serialization. This alone proves losslessness for every
+        // payload above (NaN bits, oversized decimal, non-UTF8 binary, nesting, Json).
+        let stripe = reader
+            .decode_bytes_stripe(col_id::PROPS)
+            .expect("props stripe must be present");
+        assert_eq!(stripe.len(), 1, "one row written ⇒ one props slot");
+        assert_eq!(
+            stripe[0].as_ref().expect("row 0 props non-null"),
+            &expected_props_bytes,
+            "props stripe must round-trip byte-identical (lossless durable-core carrier)",
+        );
+
+        // SECONDARY: reconstruct the record and confirm the trickiest exotics survive
+        // (NaN-aware — PartialEq would say NaN != NaN).
+        let rec2 = FlatRow::from_block_reader(&reader)
+            .unwrap()
+            .remove(0)
+            .into_record(&[], &[], None)
+            .unwrap();
+        assert_eq!(rec2.props.len(), rec.props.len(), "all prop keys survived");
+        match rec2.props.get("nan") {
+            Some(ProximaTreeNode::Value(ProximaValue::Float64(v))) => {
+                assert_eq!(v.to_bits(), f64::NAN.to_bits(), "NaN bit pattern preserved");
+            }
+            other => panic!("nan did not round-trip as Float64: {other:?}"),
+        }
+        match rec2.props.get("big_decimal") {
+            Some(ProximaTreeNode::Value(ProximaValue::Decimal(s))) => {
+                assert_eq!(
+                    s, "99999999999999999999999999.999",
+                    "oversized decimal preserved verbatim",
+                );
+            }
+            other => panic!("big_decimal did not round-trip: {other:?}"),
+        }
+        match rec2.props.get("raw") {
+            Some(ProximaTreeNode::Value(ProximaValue::Binary(b))) => {
+                assert_eq!(
+                    b,
+                    &vec![0x00u8, 0xFF, 0xC0, 0xFE],
+                    "non-UTF8 binary preserved"
+                );
+            }
+            other => panic!("raw did not round-trip: {other:?}"),
+        }
     }
 }

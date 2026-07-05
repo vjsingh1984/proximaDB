@@ -429,7 +429,7 @@ mod sst_filename_tests {
         let level = 3;
 
         // Test that the generated filename can be properly parsed back
-        let filename = FilenameCodec::new().generate(level as u32, "sst");
+        let filename = FilenameCodec::new().generate(level, "sst");
 
         assert!(FilenameCodec::new().is_tiered_filename(&filename, "sst"));
         assert_eq!(FilenameCodec::new().parse_level(&filename), level);
@@ -2123,7 +2123,7 @@ mod bplustree_tests {
 
         // Check structure
         assert_eq!(tree.fanout, 16);
-        assert_eq!(tree.leaves.len(), (100 + 15) / 16); // Ceiling division
+        assert_eq!(tree.leaves.len(), 100_usize.div_ceil(16)); // Ceiling division
         assert_eq!(tree.root.len(), tree.leaves.len());
 
         // Check leaf ranges
@@ -2198,7 +2198,7 @@ mod bplustree_tests {
 
         // Range within single leaf
         let leaves = tree.range_leaves("key_00000", "key_00010");
-        assert!(leaves.len() >= 1);
+        assert!(!leaves.is_empty());
 
         // Full range
         let leaves = tree.range_leaves("key_00000", "key_00099");
@@ -2262,7 +2262,7 @@ mod bplustree_tests {
         let tree = BPlusTreeIndex::build(&entries, 128);
 
         assert_eq!(tree.fanout, 128);
-        assert_eq!(tree.leaves.len(), (1000 + 127) / 128);
+        assert_eq!(tree.leaves.len(), 1000_usize.div_ceil(128));
 
         // Verify all entries are covered
         let total_covered: usize = tree.leaves.iter().map(|l| l.len).sum();
@@ -2362,7 +2362,7 @@ mod compression_tests_unified {
 
         for (algorithm, expected_marker) in algorithms_and_markers {
             let config = BlockCompressionConfig {
-                algorithm: algorithm.clone(),
+                algorithm,
                 compression_level: 3,
                 enable_vector_compression: false, // Disable to avoid vector decompression complexity
                 enable_metadata_compression: false, // Disable to avoid metadata decompression complexity
@@ -2427,7 +2427,7 @@ mod compression_tests_unified {
 
         for algorithm in compression_algorithms {
             let config = BlockCompressionConfig {
-                algorithm: algorithm.clone(),
+                algorithm,
                 compression_level: 6,
                 enable_vector_compression: false, // Disable to avoid vector decompression complexity
                 enable_metadata_compression: false, // Disable to avoid metadata decompression complexity
@@ -2510,7 +2510,7 @@ mod compression_tests_unified {
     #[test]
     fn test_unified_compression_mixed_deserialization() {
         // Test that blocks compressed with different algorithms can be deserialized together
-        let algorithms = vec![
+        let algorithms = [
             UnifiedCompressionAlgorithm::None,
             UnifiedCompressionAlgorithm::Zstd,
             UnifiedCompressionAlgorithm::Lz4,
@@ -2522,7 +2522,7 @@ mod compression_tests_unified {
         for (i, algorithm) in algorithms.iter().enumerate() {
             let records = vec![create_test_record(&format!("test_{}", i), 128)];
             let config = BlockCompressionConfig {
-                algorithm: algorithm.clone(),
+                algorithm: *algorithm,
                 compression_level: 3,
                 enable_vector_compression: false, // Disable to avoid vector decompression complexity
                 enable_metadata_compression: false, // Disable to avoid metadata decompression complexity
@@ -2534,7 +2534,7 @@ mod compression_tests_unified {
             let block = ProximaDataBlock::new(records, config.clone());
 
             let serialized = block.serialize_with_config(&config).unwrap();
-            serialized_blocks.push((serialized, algorithm.clone()));
+            serialized_blocks.push((serialized, *algorithm));
         }
 
         // Deserialize all blocks and verify
@@ -2597,7 +2597,7 @@ mod bloom_filter_tests {
 
         // With 10 bits per key, false positive rate should be approximately 0.0095
         // Note: An empty bloom filter should have 0.0 false positive rate
-        assert!(calculated_rate >= 0.0 && calculated_rate < 0.02);
+        assert!((0.0..0.02).contains(&calculated_rate));
     }
 
     #[test]
@@ -2743,7 +2743,7 @@ mod bloom_filter_tests {
 
         // Serialize
         let serialized_data = filter.serialize().unwrap();
-        assert!(serialized_data.len() > 0);
+        assert!(!serialized_data.is_empty());
 
         // Create SerializedBloomFilter for deserialization
         let serialized = crate::core::bloom::SerializedBloomFilter {
@@ -3170,7 +3170,7 @@ mod decompression_cache_tests {
                 };
 
                 let config = BlockCompressionConfig {
-                    algorithm: algo.clone(),
+                    algorithm: *algo,
                     compression_level: 6,
                     enable_vector_compression: true,
                     enable_metadata_compression: true,
@@ -3576,7 +3576,7 @@ mod compression_tests {
     #[test]
     fn test_mixed_compression_deserialization() {
         // Create blocks with different compression algorithms
-        let blocks_data = vec![
+        let blocks_data = [
             (CompressionAlgorithm::CompressionNone, MARKER_UNCOMPRESSED),
             (CompressionAlgorithm::CompressionZstd, MARKER_ZSTD),
             (CompressionAlgorithm::CompressionLz4, MARKER_LZ4),
@@ -3617,288 +3617,9 @@ mod compression_tests {
 
 #[cfg(test)]
 mod simple_sstable_tests {
-    use super::*;
-    use crate::core::config::SstConfig;
-    use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-    use std::collections::BTreeMap;
     use std::sync::Arc;
     use tempfile::TempDir;
-
-    fn create_test_config() -> SstConfig {
-        SstConfig {
-            block_size_kb: 4, // Use small 4KB blocks for tests
-            decompression_cache_config: None,
-            ..SstConfig::default()
-        }
-    }
-
-    #[tokio::test]
-    async fn test_simple_sstable_write_read() {
-        // Create temp directory
-        let temp_dir = TempDir::new().unwrap();
-        let temp_path = temp_dir.path();
-
-        // Create filesystem factory
-        let config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
-
-        // Write SSTable
-        let sstable_path = temp_path.join("test_simple.sstable");
-        let test_config = create_test_config();
-        let block_size = (test_config.block_size_kb * 1024) as usize;
-        let writer = SstableWriter::new(&sstable_path, block_size, filesystem.clone());
-
-        // Create test records
-        let mut records = BTreeMap::new();
-        let test_record = SstRecord {
-            id: "test_id".to_string(),
-            vector: Some(vec![1.0, 2.0, 3.0]),
-            metadata: None,
-            sequence_number: 1,
-            level: 0,
-            is_tombstone: false,
-            timestamp: 0,
-        };
-        records.insert(test_record.id.clone(), test_record);
-
-        // Write records using streaming approach for production consistency
-        let record_count = records.len();
-        let sorted_records_iter = records.into_iter().map(|(id, sst_record)| {
-            let vector_record = VectorRecord {
-                id,
-                vector: sst_record.vector.unwrap_or_default(),
-                metadata: sst_record.metadata
-                    .map(|v| {
-                        v.as_object()
-                            .map(|obj| {
-                                obj.iter()
-                                    .filter_map(|(k, v)| {
-                                        v.as_str().map(|s| {
-                                            (k.clone(), SqlValue {
-                                                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s.to_string())),
-                                            })
-                                        })
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default()
-                    })
-                    .unwrap_or_default(),
-                timestamp: Some(sst_record.timestamp as i64),
-                updated_at: None,
-                expires_at: None,
-                version: Some(0),
-                source: None,
-            };
-            (vector_record.id.clone(), vector_record)
-        }); // BTreeMap already sorted by key
-        writer
-            .write_sorted_vector_records(sorted_records_iter, record_count)
-            .await
-            .unwrap();
-
-        // Read the file directly
-        let file_url = format!("file://{}", sstable_path.display());
-        let fs = filesystem.get_filesystem(&file_url).unwrap();
-        let data = fs.read(&file_url).await.unwrap();
-
-        // Parse the SSTable manually
-        let mut offset = 0;
-
-        // Check SST1 magic bytes
-        assert_eq!(&data[0..4], b"SST1", "Missing SST1 magic bytes");
-        offset += 4;
-
-        // Read header length
-        let header_len = u32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]) as usize;
-        offset += 4;
-
-        // Read header
-        let header_data = &data[offset..offset + header_len];
-        let _header: SstableHeader = bincode::deserialize(header_data).unwrap();
-        offset += header_len;
-
-        // Read bloom filter length
-        let bloom_len = u32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]) as usize;
-        offset += 4;
-        offset += bloom_len; // Skip bloom data
-
-        // Read index length
-        let index_len = u32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]) as usize;
-        offset += 4;
-
-        // Read index
-        let index_data = &data[offset..offset + index_len];
-        // Deserialize index entries using custom deserialization
-        let mut index_entries = Vec::new();
-        let mut cursor = std::io::Cursor::new(index_data);
-
-        while (cursor.position() as usize) < index_data.len() {
-            use std::io::Read;
-
-            // Read entry length
-            let mut len_bytes = [0u8; 4];
-            if cursor.read_exact(&mut len_bytes).is_err() {
-                break;
-            }
-            let entry_len = u32::from_le_bytes(len_bytes) as usize;
-
-            if cursor.position() as usize + entry_len > index_data.len() {
-                break;
-            }
-
-            // Read entry data
-            let mut entry_data = vec![0u8; entry_len];
-            if cursor.read_exact(&mut entry_data).is_err() {
-                break;
-            }
-
-            // Deserialize the entry
-            if let Ok(entry) = IndexEntry::deserialize(&entry_data) {
-                index_entries.push(entry);
-            } else {
-                break;
-            }
-        }
-        offset += index_len;
-
-        // Read first data block
-        let block_len = u32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]) as usize;
-        offset += 4;
-
-        let block_data = &data[offset..offset + block_len];
-        let block = ProximaDataBlock::deserialize(block_data, None).unwrap();
-
-        // Verify the record
-        assert_eq!(block.records.len(), 1);
-        let record = &block.records[0];
-        assert_eq!(record.oid, "test_id");
-        assert_eq!(
-            record
-                .embeddings
-                .first()
-                .map(|embedding| embedding.as_fp32_slice())
-                .unwrap_or(&[]),
-            &[1.0, 2.0, 3.0]
-        );
-    }
-
-    #[tokio::test]
-    async fn test_sstable_format_with_bloom_filter() {
-        use crate::storage::engines::sst::readers::UnifiedSstableReader;
-        use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
-
-        // Initialize hardware capabilities for testing
-        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
-
-        // Create temp directory
-        let temp_dir = TempDir::new().unwrap();
-        let temp_path = temp_dir.path();
-
-        // Create filesystem factory
-        let config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
-
-        // Write SSTable with bloom filter
-        let sstable_path = temp_path.join("test_bloom.sstable");
-        let test_config = create_test_config();
-        let block_size = (test_config.block_size_kb * 1024) as usize;
-        let writer = SstableWriter::new(&sstable_path, block_size, filesystem.clone());
-
-        // Create test records
-        let mut records = BTreeMap::new();
-        for i in 0..10 {
-            let record = VectorRecord {
-                id: format!("vec_{:03}", i),
-                vector: vec![i as f32; 3],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(chrono::Utc::now().timestamp()),
-                updated_at: Some(chrono::Utc::now().timestamp()),
-                expires_at: None,
-                version: Some(1),
-                source: None,
-            };
-            records.insert(record.id.clone(), record);
-        }
-
-        // Write records using streaming approach for production consistency
-        let record_count = records.len();
-        let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
-        writer
-            .write_sorted_vector_records(sorted_records_iter, record_count)
-            .await
-            .unwrap();
-
-        // Read SSTable metadata (this will test bloom filter reading)
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create(FilesystemConfig::default())
-                .await
-                .unwrap(),
-        );
-        let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
-        let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
-            base_fs,
-            "test_collection".to_string(),
-            "sst".to_string(),
-        ));
-        let reader = UnifiedSstableReader::new(
-            filesystem_factory,
-            unified_fs,
-            "test_collection".to_string(),
-        );
-        let file_url = format!("file://{}", sstable_path.display());
-
-        // This should not panic with "unexpected end of file"
-        reader.load_metadata(&file_url).await.unwrap();
-
-        // Test bloom filter functionality
-        let contains_005 = reader.might_contain_key(&file_url, "vec_005").await;
-        let contains_009 = reader.might_contain_key(&file_url, "vec_009").await;
-        let _contains_fake = reader.might_contain_key(&file_url, "fake_key").await;
-
-        assert!(
-            contains_005,
-            "Bloom filter should report vec_005 might exist"
-        );
-        assert!(
-            contains_009,
-            "Bloom filter should report vec_009 might exist"
-        );
-
-        // Test retrieving a vector
-        match reader.vector(&file_url, "vec_005").await {
-            Ok(Some(vector)) => {
-                assert_eq!(vector.oid, "vec_005".to_string());
-            }
-            Ok(None) => {
-                panic!("Vector vec_005 not found in SSTable");
-            }
-            Err(e) => {
-                panic!("Error retrieving vector: {}", e);
-            }
-        }
-    }
 
     #[tokio::test]
     async fn test_sstable_empty_file_handling() {

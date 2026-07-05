@@ -303,7 +303,7 @@ mod tests {
 
             // Add dummy data
             let mut encoded = header_bytes.clone();
-            encoded.extend_from_slice(&vec![0u8; 100]);
+            encoded.extend_from_slice(&[0u8; 100]);
 
             let parsed = manager.read_header(&encoded).unwrap();
             assert_eq!(parsed.version, WIRE_FORMAT_VERSION);

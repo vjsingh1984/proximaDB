@@ -321,10 +321,9 @@ impl TierDataMovement {
                 .unwrap_or_default();
         }
 
-        // Write records using streaming approach for production consistency
-        let record_count = records.len();
+        // M1-2 (ADR-049): native PAX segment (no VectorRecord round-trip).
         writer
-            .write_sorted_proxima_records(records.into_iter(), record_count)
+            .write_pax_segment(records.into_iter(), &self.collection_id)
             .await?;
         Ok(total_bytes)
     }

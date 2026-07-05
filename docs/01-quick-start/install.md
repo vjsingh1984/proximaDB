@@ -111,7 +111,7 @@ docker run -d \
   -p 5678:5678 \
   -p 5433:5433 \
   -v proximadb-data:/var/lib/proximadb \
-  proximadb/proximadb:latest
+  vjsingh1984/proximadb:latest
 
 # Check logs
 docker logs -f proximadb
@@ -127,7 +127,7 @@ curl http://localhost:5678/health
 version: '3.8'
 services:
   proximadb:
-    image: proximadb/proximadb:latest
+    image: vjsingh1984/proximadb:latest
     ports:
       - "5678:5678"  # Unified API
       - "5433:5433"  # PostgreSQL wire
@@ -302,10 +302,10 @@ msiexec /i proximadb-0.2.1-x64.msi
 ### Docker
 
 ```bash
-docker pull proximadb/proximadb:latest
+docker pull vjsingh1984/proximadb:latest
 docker stop proximadb
 docker rm proximadb
-docker run -d ... proximadb/proximadb:latest
+docker run -d ... vjsingh1984/proximadb:latest
 ```
 
 ### From Source

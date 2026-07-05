@@ -612,7 +612,7 @@ mod tests {
 
         #[test]
         fn test_processing_stages() {
-            let stages = vec![
+            let stages = [
                 ProcessingStage::BloomFilter,
                 ProcessingStage::ZoneMapPruning,
                 ProcessingStage::BinaryFilter,

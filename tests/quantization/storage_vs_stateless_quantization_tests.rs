@@ -77,6 +77,7 @@ fn create_collection_with_quantization(
             engine_config: HashMap::new(),
             base_location: "/tmp/proximadb_test".to_string(),
             assigned_at: chrono::Utc::now().timestamp(),
+                ..Default::default()
         }),
         ..Default::default()
     }
@@ -293,6 +294,7 @@ mod optimized_quantization_tests {
                     engine_config: HashMap::new(),
                     base_location: "/tmp/proximadb_test".to_string(),
                     assigned_at: chrono::Utc::now().timestamp(),
+                ..Default::default()
                 }),
                 ..Default::default()
             };

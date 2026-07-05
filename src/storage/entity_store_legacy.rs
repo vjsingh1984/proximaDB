@@ -1305,6 +1305,9 @@ impl ProvenanceRegistry for InMemoryProvenanceRegistry {
     }
 }
 
+static GLOBAL_ENTITY_STORE: std::sync::OnceLock<Arc<ProximaEntityStore>> =
+    std::sync::OnceLock::new();
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1680,6 +1683,3 @@ mod tests {
         assert!(!store.header_matches_filter(&header, &non_matching_filter));
     }
 }
-
-static GLOBAL_ENTITY_STORE: std::sync::OnceLock<Arc<ProximaEntityStore>> =
-    std::sync::OnceLock::new();

@@ -496,7 +496,7 @@ mod tests {
     #[test]
     fn default_top_k_and_legacy_handler_stubs_construct() {
         assert_eq!(default_top_k(), 10);
-        let _hybrid = HybridSearchHandler::default();
+        let _hybrid = HybridSearchHandler;
         let _progressive = ProgressiveSearchHandler::new();
         let _hybrid_router = create_hybrid_search_router();
     }

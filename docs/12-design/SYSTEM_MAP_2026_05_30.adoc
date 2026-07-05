@@ -4,10 +4,10 @@
 :icons: font
 :source-highlighter: rouge
 :sectnums:
-:last-updated: 2026-06-24
+:last-updated: 2026-07-02
 
 Status: Apex reference index (active baseline) +
-Date: 2026-06-24 (filename `SYSTEM_MAP_2026_05_30` is the original; content tracks current HEAD) +
+Date: 2026-07-02 (filename `SYSTEM_MAP_2026_05_30` is the original; content tracks current HEAD) +
 Cost spine: the multi-engine routing + cache policy shown here is co-optimized against the *measured
 per-query I/O trace* across the five physical dimensions — see
 `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` (the unified cost objective the `ComputeScheduler`
@@ -22,8 +22,8 @@ feeders (see <<feeders>>).
 
 [.lead]
 This is the **single pane of glass** for ProximaDB. It exists to answer one question fast — "where does
-a thing live, and what does it converge on?" Current manifest reality: 79 workspace members
-under `crates/` + `apps/`, and ~52 real top-level `src/` module directories. It is navigation-first: it does not
+a thing live, and what does it converge on?" Current checkout reality: 91 workspace members
+under `crates/` + `apps/`, and 42 real top-level `src/` module directories. It is navigation-first: it does not
 duplicate the per-module detail in the feeder docs, it indexes and ties them together so they stop
 diverging.
 
@@ -35,6 +35,13 @@ Each is correct but none is canonical, so they drift. This doc is declared the a
 subordinate feeders. New whole-system diagrams belong here or in a feeder linked from here — **not in a
 fourth competing map**. That rule is itself a convergence gate (see
 link:CONVERGENCE_AUDIT_2026_05_30.adoc[CONVERGENCE_AUDIT_2026_05_30]).
+
+Production composition is still mostly rooted in the legacy crate (`src/database.rs`,
+`src/network/shared_services.rs`, `src/network/multi_server.rs`). `proximadb-runtime` is the target
+composition boundary and partial shell, not yet the sole owner. Workspace decomposition therefore
+remains a first-principles build-scaling requirement: split ownership only where it reduces compile
+fan-out, enables independent worktrees, and lets CI coverage shards (`cargo llvm-cov`, Tarpaulin, and
+focused `cargo test -p ...`) compile smaller units without timeout or OOM pressure.
 ====
 
 == How to use this map
@@ -73,7 +80,7 @@ flowchart TB
   subgraph EDGE[Protocol Facades]
     NET["network/<br/>REST v1/v2/v3, gRPC, pgwire, Arrow IPC/Flight"]:::edge
     API["api_handlers/ + proximadb-api<br/>request lowering, tenant extraction, response shaping"]:::edge
-    RT["proximadb-runtime<br/>ports and composition boundary"]:::edge
+    RT["root server wiring + target proximadb-runtime<br/>ports and composition boundary"]:::edge
   end
 
   subgraph PLANE[Logical Plane]
@@ -130,7 +137,9 @@ flowchart TB
 Load-bearing invariants:
 
 * Protocols and modalities are facades. Durable truth converges on `ProximaRecord`, xCatalog,
-canonical WAL/log/manifest state, and tenant-isolated paths.
+canonical WAL/log/manifest state, and tenant-isolated paths. ADR-048 makes the catalog direction
+explicit: typed `CatalogTableSchema`/`CatalogColumn` metadata becomes the native authority, while
+v1 `Collection`/`CollectionConfig` are compatibility read views rather than a second truth.
 * Routing happens in the logical plane. Native Volcano, DataFusionLocal, specialized vector engines,
 and modality runtimes are physical execution choices behind one contract. Standard and metered native
 physical plans execute through the query-layer `NativeVolcanoEngine` adapter; pgwire owns wire
