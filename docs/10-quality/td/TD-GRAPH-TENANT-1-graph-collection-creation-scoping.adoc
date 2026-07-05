@@ -1,0 +1,68 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-GRAPH-TENANT-1: Scope graph collection CREATION so named-tenant graph isolation is functional end-to-end
+
+[cols="1,3"]
+|===
+|Status|Open
+|Priority|HIGH
+|Scope|FEAT
+|Date|2026-07-05
+|Relates to|Phase 1b of the tenant-isolation program (the `TenantGraphOps`/`for_tenant`/`scoped_graph_id` facade over `GraphOperationsService`; the graph_traverse UDTF). Sibling of [[TD-DOC-TENANT-1]] and [[TD-ENTITY-TENANT-1]] — all three are gated by the SAME unscoped-collection-creation issue. Backing: `src/graph/mod.rs` (`scoped_graph_id`), `src/graph/service_engine_factory.rs` (`get_or_create_graph_engine`), the graph collection-create paths (`src/network/rest/v1/graph.rs`, `src/network/postgres/protocol.rs`, `src/database.rs`, embedded, and any future `POST /api/v2/graphs`).
+|===
+
+== Context (the gap Phase 1b left)
+
+Phase 1b routed the graph **gRPC + Flight node/edge ops** through `for_tenant`, composing the
+structural scope `{tenant}/{graph_id}` once at the boundary. But graph **collection creation** was
+NOT scoped, and the two are coupled by a hard gate:
+
+* `get_or_create_graph_engine(graph_id)` (`service_engine_factory.rs:35`) is *not* purely lazy — on
+  an engine-cache miss it **verifies the collection exists in `collection_service`** and errors
+  `Graph collection '{}' does not exist` otherwise.
+* Graph collections are created bare (`create_graph_collection(graph_id, …)`) via the v1 REST
+  handler, pgwire `CREATE`, `database.rs`, embedded, and internal paths — **none tenant-scoped**.
+  There is no `POST /api/v2/graphs` create endpoint; the v2 gRPC surface defers creation to REST.
+
+Consequence: once node/edge ops scope to `{tenant}/{graph_id}` but creation stays bare, every
+scoped create→use fails the existence gate. Two symptoms:
+
+* **Default-tenant regression (fixed surgically here):** `resolved_tenant_id` returns the canonical
+  `"default"` (never empty), so absent an explicit tenant the ops scoped to `default/{graph_id}`
+  while creation stayed bare — breaking the previously-working single-tenant flow (the
+  `service_with_graph` gRPC handler tests: `node_crud_roundtrip`, `edge_query_traverse_shortest_path`,
+  `td124_batch_analytics_constraint_stream`). Mitigated by making `scoped_graph_id` return the BARE
+  id for the DEFAULT tenant (creation is bare, so reads must be bare too) — see the comment in
+  `scoped_graph_id`.
+* **Named-tenant isolation is not yet functional:** a real tenant creating a graph via REST/pgwire
+  (bare `graph_id`) and then node-op'ing via gRPC (`{tenant}/graph_id`) hits "collection does not
+  exist". Phase 1b's `{tenant}/…` scoping is therefore **foundational plumbing** (clean network
+  names + one composition point + fold removal), NOT end-to-end isolation. The isolation tests pass
+  only because they provision the backing collection under the scoped key explicitly. NOTE: this is
+  **not a regression** — before Phase 1b the `{tenant}::{graph_id}` fold had the identical create→use
+  break for named tenants (creation never folded either); Phase 1b changed the separator, not the
+  functional state.
+
+== Proposed resolution (make it functional)
+
+. **Scope graph collection creation in lockstep** — every create path that feeds a tenant-scoped
+  read composes `{tenant}/{graph_id}` (via `scoped_graph_id` / a `for_tenant().create_graph_collection`
+  forwarder that rewrites `req.graph_id`): the v1 REST create, pgwire `CREATE`, any `POST /api/v2/graphs`,
+  and internal creators that are request-scoped. Internal/embedded/observability creators with no
+  request tenant keep bare keys (they are single-tenant control-plane graphs).
+. **Then flip the default tenant to also scope** (`default/{graph_id}`) for uniformity with the other
+  modalities, once its creation path scopes too — removing the bare-default special case in
+  `scoped_graph_id`.
+. **Consider making the create gate auto-provision** for scoped keys (a scoped first-write lazily
+  registers the collection) as an alternative to threading creation through every surface — evaluate
+  against the metadata the gate needs (`engine_type`, `storage_root_url`).
+. Gate with an end-to-end test: create a graph via the (scoped) REST/pgwire path under tenant A,
+  node-op + traverse via gRPC under tenant A succeed; the same logical id under tenant B is isolated;
+  a bare create→use under the default tenant still works.
+
+== Constraints
+
+* Keep net `proximadb_v1` references non-increasing (TD-123 ratchet, baseline 2917).
+* Any change to the on-disk graph key shape must be mixed-read-safe (no flag-day).
+* This is shared collection-lifecycle work with [[TD-DOC-TENANT-1]] / [[TD-ENTITY-TENANT-1]] — a
+  single "scope collection creation across modalities" effort likely subsumes all three.

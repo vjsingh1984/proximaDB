@@ -147,6 +147,19 @@ pub type EdgeId = String;
 pub fn scoped_graph_id(tenant: &str, graph_id: &str) -> anyhow::Result<String> {
     proximadb_tenant::validate_request_tenant(tenant)
         .map_err(|e| anyhow::anyhow!("invalid tenant '{tenant}': {e}"))?;
+    // The default tenant stays UNSCOPED (bare `graph_id`). Graph node/edge ops resolve the
+    // backing engine through `get_or_create_graph_engine`, which requires the collection to
+    // already exist in `collection_service` — and graph collection CREATION is not yet
+    // tenant-scoped (created bare via the REST/pgwire/internal create paths). Prefixing the
+    // default tenant would key reads at `default/{graph_id}` while creation stays bare, so every
+    // default-tenant create→use would fail "collection does not exist". Named tenants DO scope
+    // (`{tenant}/{graph_id}`) as the structural foundation — but that path is only end-to-end
+    // functional once collection creation is scoped in lockstep (TD-GRAPH-TENANT-1, the same
+    // collection-lifecycle work that gates the document/entity slices). Until then a named-tenant
+    // graph must be provisioned under the scoped key explicitly (as the isolation tests do).
+    if tenant == proximadb_tenant::DEFAULT_TENANT {
+        return Ok(graph_id.to_string());
+    }
     Ok(format!("{tenant}/{graph_id}"))
 }
 
