@@ -127,6 +127,16 @@ pub(crate) fn df_scalar_value(value: &DfScalarValue) -> Option<ScalarValue> {
         DfScalarValue::Utf8(Some(v))
         | DfScalarValue::Utf8View(Some(v))
         | DfScalarValue::LargeUtf8(Some(v)) => Some(ScalarValue::String(v.clone())),
+        // Temporal literals prune against the Parquet footer's physical-integer
+        // bounds (Date32 = days-since-epoch Int32 stats; timestamps = Int64
+        // ticks in the column's stored unit). TPC-H filters are almost all
+        // date-ranged — without these arms no date predicate ever prunes.
+        DfScalarValue::Date32(Some(days)) => Some(ScalarValue::Int64(*days as i64)),
+        DfScalarValue::Date64(Some(ms)) => Some(ScalarValue::Int64(*ms / 86_400_000)),
+        DfScalarValue::TimestampSecond(Some(v), _)
+        | DfScalarValue::TimestampMillisecond(Some(v), _)
+        | DfScalarValue::TimestampMicrosecond(Some(v), _)
+        | DfScalarValue::TimestampNanosecond(Some(v), _) => Some(ScalarValue::Int64(*v)),
         _ => None,
     }
 }

@@ -13,8 +13,10 @@
 //! - storage regime: `local-tempdir` (file:// object store on local disk).
 //!   Object-store regimes are a separate ledger section when they land.
 //! - datagen: `synthetic-tpc-shaped` — deterministic, seeded, TPC-schema
-//!   row-ratio-scaled with key skew and referential integrity. It is NOT
-//!   audited dbgen/dsdgen output; no TPC-official claim may cite this ledger.
+//!   row-ratio-scaled with key skew, referential integrity, and fact tables
+//!   CLUSTERED by their date column (uniform data defeats zone-map pruning —
+//!   see TPC_PERF_GATE_EVIDENCE_2026_07_04). It is NOT audited dbgen/dsdgen
+//!   output; no TPC-official claim may cite this ledger.
 //! - temperature: `first` vs `repeat` against a warm process (true cold-cache
 //!   runs need a server restart per query — a future slice).
 //! - scale: `TPC_PERF_SCALE` (default 0.001 ≈ 9k TPC-H rows; SF1 ≡ 1.0 —
@@ -399,48 +401,60 @@ fn gen_tpch(scale: f64) -> Vec<String> {
             .collect(),
         200,
     ));
-    let mut lineitems: Vec<String> = Vec::new();
+    // Fact tables are CLUSTERED by their date column before insertion.
+    // Uniform per-row dates give every row group whole-domain min/max, so
+    // zone-map pruning provably cannot skip (measured 0% in
+    // docs/_internal/status/TPC_PERF_GATE_EVIDENCE_2026_07_04.adoc). Real TPC
+    // data is time-ordered; sorting restores that property so row groups
+    // carry tight bounds. The `DATE 'YYYY-MM-DD'` literal format sorts
+    // lexicographically.
+    let mut lineitems: Vec<(String, String)> = Vec::new();
+    let mut orders: Vec<(String, String)> = (1..=n_ord)
+        .map(|o| {
+            let lines = 1 + rng.below(7);
+            for l in 1..=lines {
+                let ship = rng.date();
+                let row = format!(
+                    "({o}, {}, {}, {l}, {}, {}, 0.0{}, 0.0{}, '{}', '{}', {ship}, {}, {}, '{}', '{}', 'lc')",
+                    rng.skewed_key(n_part),
+                    rng.skewed_key(n_supp),
+                    1 + rng.below(50),
+                    rng.money(10_000),
+                    rng.below(11),
+                    rng.below(9),
+                    rng.pick(&["N", "R", "A"]),
+                    rng.pick(&["O", "F"]),
+                    rng.date(),
+                    rng.date(),
+                    rng.pick(&instructs),
+                    rng.pick(&shipmodes),
+                );
+                lineitems.push((ship, row));
+            }
+            let odate = rng.date();
+            let row = format!(
+                "({o}, {}, '{}', {}, {odate}, '{}', 'Clerk#{}', 0, 'oc')",
+                rng.skewed_key(n_cust),
+                rng.pick(&["O", "F", "P"]),
+                rng.money(100_000),
+                rng.pick(&priorities),
+                1 + rng.below(100)
+            );
+            (odate, row)
+        })
+        .collect();
+    orders.sort_by(|a, b| a.0.cmp(&b.0));
+    lineitems.sort_by(|a, b| a.0.cmp(&b.0));
     out.extend(chunked_inserts(
         "orders",
         "o_orderkey, o_custkey, o_orderstatus, o_totalprice, o_orderdate, o_orderpriority, o_clerk, o_shippriority, o_comment",
-        (1..=n_ord)
-            .map(|o| {
-                let lines = 1 + rng.below(7);
-                for l in 1..=lines {
-                    let ship = rng.date();
-                    lineitems.push(format!(
-                        "({o}, {}, {}, {l}, {}, {}, 0.0{}, 0.0{}, '{}', '{}', {ship}, {}, {}, '{}', '{}', 'lc')",
-                        rng.skewed_key(n_part),
-                        rng.skewed_key(n_supp),
-                        1 + rng.below(50),
-                        rng.money(10_000),
-                        rng.below(11),
-                        rng.below(9),
-                        rng.pick(&["N", "R", "A"]),
-                        rng.pick(&["O", "F"]),
-                        rng.date(),
-                        rng.date(),
-                        rng.pick(&instructs),
-                        rng.pick(&shipmodes),
-                    ));
-                }
-                format!(
-                    "({o}, {}, '{}', {}, {}, '{}', 'Clerk#{}', 0, 'oc')",
-                    rng.skewed_key(n_cust),
-                    rng.pick(&["O", "F", "P"]),
-                    rng.money(100_000),
-                    rng.date(),
-                    rng.pick(&priorities),
-                    1 + rng.below(100)
-                )
-            })
-            .collect(),
+        orders.into_iter().map(|(_, row)| row).collect(),
         200,
     ));
     out.extend(chunked_inserts(
         "lineitem",
         "l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment",
-        lineitems,
+        lineitems.into_iter().map(|(_, row)| row).collect(),
         200,
     ));
     out
@@ -574,26 +588,30 @@ fn gen_tpcds(scale: f64) -> Vec<String> {
             .collect(),
         200,
     ));
+    // Clustered by ss_sold_date_sk — see the gen_tpch clustering note.
+    let mut sales: Vec<(u64, String)> = (1..=n_sales)
+        .map(|t| {
+            let qty = 1 + rng.below(10);
+            let price = 1 + rng.below(100);
+            let date_sk = first_sk + rng.below(n_dates);
+            let row = format!(
+                "({date_sk}, {}, {}, {}, {}, {t}, {qty}, {price}.00, {}.00, {}.00, {}.00)",
+                rng.skewed_key(n_item),
+                1 + rng.below(n_store),
+                rng.skewed_key(n_cust),
+                1 + rng.below(n_cust),
+                qty * price,
+                rng.below(10),
+                rng.below(30)
+            );
+            (date_sk, row)
+        })
+        .collect();
+    sales.sort_by_key(|(sk, _)| *sk);
     out.extend(chunked_inserts(
         "store_sales",
         "ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_customer_sk, ss_addr_sk, ss_ticket_number, ss_quantity, ss_sales_price, ss_ext_sales_price, ss_ext_discount_amt, ss_net_profit",
-        (1..=n_sales)
-            .map(|t| {
-                let qty = 1 + rng.below(10);
-                let price = 1 + rng.below(100);
-                format!(
-                    "({}, {}, {}, {}, {}, {t}, {qty}, {price}.00, {}.00, {}.00, {}.00)",
-                    first_sk + rng.below(n_dates),
-                    rng.skewed_key(n_item),
-                    1 + rng.below(n_store),
-                    rng.skewed_key(n_cust),
-                    1 + rng.below(n_cust),
-                    qty * price,
-                    rng.below(10),
-                    rng.below(30)
-                )
-            })
-            .collect(),
+        sales.into_iter().map(|(_, row)| row).collect(),
         200,
     ));
     out
@@ -890,7 +908,7 @@ async fn tpc_perf_ledger() {
             git_sha: std::env::var("GITHUB_SHA").ok(),
             scale,
             storage_regime: "local-tempdir",
-            datagen: "synthetic-tpc-shaped (seeded, deterministic, non-audited)",
+            datagen: "synthetic-tpc-shaped (seeded, deterministic, date-clustered facts, non-audited)",
             temperature_semantics: "first vs repeat against a warm process (not cold page cache)",
             routes: [
                 "native (Volcano, pre-MATERIALIZE)",
@@ -919,4 +937,93 @@ async fn tpc_perf_ledger() {
         n_queries * 2 /* routes */ * 2, /* temperatures */
         "one record per query x route x temperature"
     );
+}
+
+/// Diagnostic (TD-OLAP-3 promotion investigation): what do MATERIALIZE'd
+/// Parquet footers actually look like after date-clustered inserts? The
+/// static-prune machinery is proven on hand-written Parquet; if row-group
+/// bounds here are whole-domain, the materializer is scrambling insertion
+/// order (or writing one giant row group) and clustering cannot survive.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "diagnostic — run on demand"]
+async fn diagnose_materialized_footer_bounds() {
+    use parquet::file::reader::{FileReader, SerializedFileReader};
+
+    let server = PgServer::start().await.expect("server start");
+    let client = connect(&server).await;
+
+    let _ = client.simple_query("DROP TABLE IF EXISTS diag").await;
+    client
+        .simple_query("CREATE TABLE diag (d DATE, x INT)")
+        .await
+        .expect("create");
+    // 20k rows, strictly date-ordered: 2000 rows per month, Jan..Oct 1994.
+    let rows: Vec<String> = (0..20_000)
+        .map(|i| {
+            let month = 1 + i / 2_000;
+            let day = 1 + (i % 2_000) % 28;
+            format!("(DATE '1994-{month:02}-{day:02}', {i})")
+        })
+        .collect();
+    for sql in chunked_inserts("diag", "d, x", rows, 200) {
+        client.simple_query(&sql).await.expect("insert");
+    }
+    client
+        .simple_query("ALTER TABLE diag MATERIALIZE")
+        .await
+        .expect("materialize");
+
+    // Find every parquet object under the server tempdir and dump per-row-group
+    // stats for column d (Date32 → Int32 days since epoch).
+    let mut found = 0;
+    for entry in walk(server._tmp.path()) {
+        if entry.extension().and_then(|e| e.to_str()) != Some("parquet") {
+            continue;
+        }
+        let file = std::fs::File::open(&entry).expect("open parquet");
+        let reader = SerializedFileReader::new(file).expect("footer");
+        let meta = reader.metadata();
+        eprintln!(
+            "file={} row_groups={}",
+            entry.display(),
+            meta.num_row_groups()
+        );
+        for i in 0..meta.num_row_groups() {
+            let rg = meta.row_group(i);
+            for col in rg.columns() {
+                if col.column_path().string().contains('d') && col.column_path().string().len() <= 2
+                {
+                    let stats = col.statistics();
+                    eprintln!(
+                        "  rg{} col={} rows={} stats={:?}",
+                        i,
+                        col.column_path(),
+                        rg.num_rows(),
+                        stats.map(|s| format!("{s:?}"))
+                    );
+                }
+            }
+        }
+        found += 1;
+    }
+    assert!(found > 0, "no parquet files found under the server tempdir");
+    server.shutdown().await;
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        if let Ok(entries) = std::fs::read_dir(&d) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    out
 }
