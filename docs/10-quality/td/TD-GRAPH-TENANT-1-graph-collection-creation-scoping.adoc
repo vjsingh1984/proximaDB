@@ -4,8 +4,8 @@
 
 [cols="1,3"]
 |===
-|Status|Open
-|Priority|HIGH
+|Status|Core resolved (lazy auto-provision); follow-ons open
+|Priority|MED
 |Scope|FEAT
 |Date|2026-07-05
 |Relates to|Phase 1b of the tenant-isolation program (the `TenantGraphOps`/`for_tenant`/`scoped_graph_id` facade over `GraphOperationsService`; the graph_traverse UDTF). Sibling of [[TD-DOC-TENANT-1]] and [[TD-ENTITY-TENANT-1]] — all three are gated by the SAME unscoped-collection-creation issue. Backing: `src/graph/mod.rs` (`scoped_graph_id`), `src/graph/service_engine_factory.rs` (`get_or_create_graph_engine`), the graph collection-create paths (`src/network/rest/v1/graph.rs`, `src/network/postgres/protocol.rs`, `src/database.rs`, embedded, and any future `POST /api/v2/graphs`).
@@ -42,6 +42,39 @@ scoped create→use fails the existence gate. Two symptoms:
   **not a regression** — before Phase 1b the `{tenant}::{graph_id}` fold had the identical create→use
   break for named tenants (creation never folded either); Phase 1b changed the separator, not the
   functional state.
+
+== Landed (core fix — lazy auto-provision)
+
+Named-tenant graph create→use is now **functional end-to-end** via lazy provisioning, chosen over
+threading scoped creation through every request-scoped create path (which would need `TenantContext`
+added to legacy REST v1, pgwire-create scoping, a facade create forwarder, and `{tenant}/` strip
+logic across many response sites):
+
+* `GraphCollectionService::ensure_or_create_graph(graph_id)` (`src/services/graph_collection.rs`) —
+  race-safe get-or-create; on a miss it registers the collection with defaults (ORION engine,
+  service default storage root) under the passed key.
+* `get_or_create_graph_engine` (`src/graph/service_engine_factory.rs`) now calls it instead of
+  `ensure_graph_exists`. So a tenant-scoped first write (`for_tenant` composes `{tenant}/{graph_id}`)
+  auto-registers its collection under the scoped key — no out-of-band bare create needed. The
+  default tenant stays bare, so its explicitly-created collections are found on the first branch and
+  never double-provisioned.
+* Test: `named_tenant_graph_auto_provisions_on_first_write_and_isolates` (v2 graph_service) — a named
+  tenant writes+reads under a clean logical id with NO explicit create; a second tenant on the same
+  id is isolated (its own empty scoped graph). Ratchet +0; server binary + clippy clean.
+
+== Remaining follow-ons (open)
+
+* **Custom create metadata for named tenants.** Auto-provision uses DEFAULT engine/schema. A
+  named tenant that wants a custom schema/engine still needs a tenant-aware create path (scope
+  pgwire `create_graph_collection` + add `TenantContext` to a REST create, or add a v2 graph-create
+  RPC that routes through `for_tenant().create_graph_collection`).
+* **Default-tenant uniformity.** The default tenant stays bare (its create paths are bare). Once
+  those creates scope, flip `scoped_graph_id` to also scope the default (`default/{graph_id}`).
+* **REST v1 list scoping.** REST v1 `list_graph_collections` is unscoped and would surface named
+  tenants' scoped keys (`{tenant}/{graph_id}`) to a default-tenant/legacy caller — scope + strip
+  when REST v1 gains tenant-awareness.
+
+== Original proposal (superseded by the auto-provision fix above)
 
 == Proposed resolution (make it functional)
 
