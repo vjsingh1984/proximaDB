@@ -561,16 +561,21 @@ pub struct GraphTraverseTableProvider {
     start_id: String,
     edge_type: String,
     max_depth: i64,
+    /// The connection tenant. `scan` composes the SAME structural scope the graph write path
+    /// uses (`{tenant}/{graph_id}` via [`crate::graph::scoped_graph_id`]), so a traverse reads
+    /// exactly the tenant's graph. `None` ⇒ the canonical default tenant.
+    tenant: Option<String>,
 }
 
 impl GraphTraverseTableProvider {
-    /// Build a provider for one parameterized reachability traversal.
+    /// Build a provider for one parameterized reachability traversal, scoped to `tenant`.
     pub fn new(
         graph_ops: Arc<dyn GraphQueryReadService>,
         graph_id: impl Into<String>,
         start_id: impl Into<String>,
         edge_type: impl Into<String>,
         max_depth: i64,
+        tenant: Option<String>,
     ) -> Self {
         Self {
             graph_ops,
@@ -578,6 +583,7 @@ impl GraphTraverseTableProvider {
             start_id: start_id.into(),
             edge_type: edge_type.into(),
             max_depth,
+            tenant,
         }
     }
 }
@@ -589,6 +595,7 @@ impl std::fmt::Debug for GraphTraverseTableProvider {
             .field("start_id", &self.start_id)
             .field("edge_type", &self.edge_type)
             .field("max_depth", &self.max_depth)
+            .field("tenant", &self.tenant)
             .finish_non_exhaustive()
     }
 }
@@ -614,6 +621,12 @@ impl TableProvider for GraphTraverseTableProvider {
         // each first-seen node with its (shortest) depth. The inner BFS is visited-set bounded,
         // so each pass is O(V+E); a single depth-carrying pass is a follow-on TD.
         let max_depth = self.max_depth.clamp(1, MAX_GRAPH_TRAVERSE_DEPTH);
+        // Structural tenant scope: read the SAME `{tenant}/{graph_id}` key the graph write path
+        // composes (`TenantGraphOps`/`for_tenant`), so a cross-modal traverse sees exactly this
+        // tenant's graph and never another's. `None` ⇒ the canonical default tenant.
+        let tenant = proximadb_tenant::resolve_request_tenant(self.tenant.as_deref());
+        let scoped_graph_id = crate::graph::scoped_graph_id(&tenant, &self.graph_id)
+            .map_err(|e| DataFusionError::Execution(format!("graph_traverse tenant scope: {e}")))?;
         let mut rows: Vec<(String, i32)> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         for k in 1..=max_depth {
@@ -621,7 +634,7 @@ impl TableProvider for GraphTraverseTableProvider {
                 "MATCH (a)-[:{edge}*{k}..{k}]->(x) RETURN x.id AS node_id",
                 edge = self.edge_type
             );
-            let parsed = parse_supported_graph_query(&cypher, None, Some(&self.graph_id))
+            let parsed = parse_supported_graph_query(&cypher, None, Some(&scoped_graph_id))
                 .map_err(|e| DataFusionError::Execution(format!("graph_traverse parse: {e}")))?;
             let executed = execute_supported_graph_query_with_start_nodes(
                 &*self.graph_ops,
@@ -652,24 +665,36 @@ impl TableProvider for GraphTraverseTableProvider {
 /// `ctx.register_udtf("graph_traverse", Arc::new(GraphTraverseTableFunction::new(graph_ops)))`.
 pub struct GraphTraverseTableFunction {
     graph_ops: Arc<dyn GraphQueryReadService>,
+    /// The connection tenant, forwarded to each provider so the traverse reads the same
+    /// `{tenant}/{graph_id}` scope the graph write path composes. `None` ⇒ the canonical
+    /// default tenant (matches a default-tenant write).
+    tenant: Option<String>,
 }
 
 impl GraphTraverseTableFunction {
-    /// Capture the live graph read service the function will traverse.
-    ///
-    /// Unlike `vector_search` / `timeseries_range`, this takes NO tenant: the graph write path
-    /// (`GraphPort`, the v1/v2 REST graph handlers) applies no tenant scoping today — the
-    /// `graph_id` is the sole scope key on both sides — so a UDTF read of the raw `graph_id`
-    /// already matches the write. Real graph tenant isolation (a tenant param on `GraphPort`,
-    /// applied on both write and this read) is a follow-up (see TD-XMODAL-6).
+    /// Capture the live graph read service the function will traverse (no tenant scope ⇒
+    /// the canonical default tenant). Prefer [`with_tenant`](Self::with_tenant) on the pgwire
+    /// path so the traverse reads the connection's tenant.
     pub fn new(graph_ops: Arc<dyn GraphQueryReadService>) -> Self {
-        Self { graph_ops }
+        Self {
+            graph_ops,
+            tenant: None,
+        }
+    }
+
+    /// Capture the graph read service AND the connection tenant — so the traverse reads the
+    /// SAME structural scope (`{tenant}/{graph_id}`) the graph write path (`TenantGraphOps` on
+    /// gRPC/Flight) composed. Without this the read would hit a different (or default) scope and
+    /// return 0 rows for tenant-scoped graphs (closes TD-XMODAL-6 for the graph modality).
+    pub fn with_tenant(graph_ops: Arc<dyn GraphQueryReadService>, tenant: Option<String>) -> Self {
+        Self { graph_ops, tenant }
     }
 }
 
 impl std::fmt::Debug for GraphTraverseTableFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GraphTraverseTableFunction")
+            .field("tenant", &self.tenant)
             .finish_non_exhaustive()
     }
 }
@@ -725,6 +750,7 @@ impl TableFunctionImpl for GraphTraverseTableFunction {
             start_id,
             edge_type,
             max_depth,
+            self.tenant.clone(),
         )))
     }
 }
@@ -1498,5 +1524,67 @@ mod tests {
                 "expected {expected:?} in {error}"
             );
         }
+    }
+
+    /// Records the graph id each read is issued against — so we can assert the `graph_traverse`
+    /// UDTF composes the SAME `{tenant}/{graph_id}` structural scope the graph write path uses.
+    #[derive(Default)]
+    struct RecordingGraphOps {
+        seen_graph_ids: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl GraphQueryReadService for RecordingGraphOps {
+        async fn list_graphs(&self) -> GraphQueryResult<Vec<String>> {
+            Ok(Vec::new())
+        }
+        async fn get_node(&self, g: &str, _id: &str) -> GraphQueryResult<Option<Arc<Node>>> {
+            self.seen_graph_ids.lock().unwrap().push(g.to_string());
+            Ok(None)
+        }
+        async fn query_nodes(&self, g: &str, _q: NodeQuery) -> GraphQueryResult<Vec<Arc<Node>>> {
+            self.seen_graph_ids.lock().unwrap().push(g.to_string());
+            Ok(Vec::new())
+        }
+        async fn query_edges(&self, g: &str, _q: EdgeQuery) -> GraphQueryResult<Vec<Arc<Edge>>> {
+            self.seen_graph_ids.lock().unwrap().push(g.to_string());
+            Ok(Vec::new())
+        }
+    }
+
+    /// TD-XMODAL-6 (graph modality): a tenant-scoped `graph_traverse` reads the SAME
+    /// `{tenant}/{graph_id}` structural scope the graph write path (`TenantGraphOps`) composes —
+    /// never the raw `graph_id` — so a cross-modal traverse sees exactly the tenant's graph and
+    /// the composed scope carries no `::` fold.
+    #[tokio::test]
+    async fn graph_traverse_udtf_scopes_read_by_tenant() {
+        let ops = Arc::new(RecordingGraphOps::default());
+        let ops_dyn: Arc<dyn GraphQueryReadService> = ops.clone();
+        let ctx = SessionContext::new();
+        ctx.register_udtf(
+            "graph_traverse",
+            Arc::new(GraphTraverseTableFunction::with_tenant(
+                ops_dyn,
+                Some("tenantA".to_string()),
+            )),
+        );
+        // The logical graph_id in SQL is tenant-CLEAN ("shared"); the tenant is applied by the UDTF.
+        let _ = ctx
+            .sql("SELECT node_id, depth FROM graph_traverse('shared','n0','LINK',1)")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let seen = ops.seen_graph_ids.lock().unwrap();
+        assert!(!seen.is_empty(), "the read path was exercised");
+        assert!(
+            seen.iter().all(|g| g == "tenantA/shared"),
+            "every graph read is scoped to the tenant: {seen:?}"
+        );
+        assert!(
+            seen.iter().all(|g| !g.contains("::")),
+            "structural scope carries no `::` fold: {seen:?}"
+        );
     }
 }

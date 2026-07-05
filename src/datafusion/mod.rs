@@ -181,11 +181,11 @@ pub fn create_session_context_with_ports(
 }
 
 /// `tenant` is the resolved pgwire connection tenant (`pgwire_resolve_read_tenant`). It is
-/// applied to the `vector_search` (as the search `tenant_id`) and `timeseries_range` (folded
-/// into the `{tenant}::{collection}` key) UDTFs so a cross-modal read hits the same partition the
-/// REST write path wrote — otherwise those UDTFs read the unscoped partition and return 0 rows
-/// (TD-XMODAL-6). `graph_traverse` is tenant-agnostic today (the graph path applies no tenant on
-/// either side).
+/// applied structurally to ALL three cross-modal UDTFs so a read hits the same tenant scope the
+/// write path wrote (otherwise the read is unscoped and returns 0 rows for tenant data,
+/// TD-XMODAL-6): `vector_search` (as the search `tenant_id`), `timeseries_range` (selects the
+/// tenant's per-tenant engine), and `graph_traverse` (composes the same `{tenant}/{graph_id}`
+/// scope `TenantGraphOps` uses on the graph write path).
 fn build_session_context(
     vector_ops: Option<std::sync::Arc<dyn proximadb_runtime::VectorOpsPort>>,
     graph_ops: Option<std::sync::Arc<dyn proximadb_graph_query::service::GraphQueryReadService>>,
@@ -257,7 +257,10 @@ fn build_session_context(
     if let Some(graph) = graph_ops {
         ctx.register_udtf(
             "graph_traverse",
-            std::sync::Arc::new(cross_modal::GraphTraverseTableFunction::new(graph)),
+            std::sync::Arc::new(cross_modal::GraphTraverseTableFunction::with_tenant(
+                graph,
+                tenant.clone(),
+            )),
         );
     }
 
