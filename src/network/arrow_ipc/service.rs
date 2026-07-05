@@ -2650,19 +2650,6 @@ impl ProximaFlightService {
         Ok(TonicResponse::new(Box::pin(stream)))
     }
 
-    /// Derive the effective backing graph namespace from the request tenant.
-    ///
-    /// Structural isolation: the tenant is folded into the graph storage key
-    /// (mirrors the gRPC v2 graph surface's `effective_graph_id`), never a
-    /// per-query predicate. Unauthenticated calls (no tenant) fall back to the
-    /// raw graph id.
-    fn effective_graph_id(tenant: Option<&str>, graph_id: &str) -> String {
-        match tenant {
-            Some(t) if !t.is_empty() => format!("{t}::{graph_id}"),
-            _ => graph_id.to_string(),
-        }
-    }
-
     /// Handle the batched columnar graph ingest exchange (`graph_nodes` /
     /// `graph_edges`). Each streamed Arrow `RecordBatch` is decoded via
     /// [`super::graph_codec`] into neutral nodes/edges and upserted through the
@@ -2679,7 +2666,10 @@ impl ProximaFlightService {
         let graph = self.graph_service.as_ref().ok_or_else(|| {
             TonicStatus::unimplemented("graph Flight path requires the graph backing service")
         })?;
-        let effective_graph_id = Self::effective_graph_id(tenant_id.as_deref(), &graph_id);
+        // Structural isolation: resolve the tenant and route through the scoped handle,
+        // which composes `{tenant}/{graph_id}` once. The graph_id stays tenant-clean.
+        let tenant = proximadb_tenant::resolve_request_tenant(tenant_id.as_deref());
+        let ops = graph.for_tenant(&tenant);
 
         let mut total_rows = 0u64;
         let mut total_batches = 0u64;
@@ -2695,15 +2685,13 @@ impl ProximaFlightService {
             let written = if is_nodes {
                 let nodes = super::graph_codec::batch_to_nodes(&batch)
                     .map_err(|e| TonicStatus::invalid_argument(format!("decode nodes: {}", e)))?;
-                graph
-                    .batch_create_nodes_with_strategy(&effective_graph_id, nodes, "update")
+                ops.batch_create_nodes_with_strategy(&graph_id, nodes, "update")
                     .await
                     .map(|created| created.len() as u64)
             } else {
                 let edges = super::graph_codec::batch_to_edges(&batch)
                     .map_err(|e| TonicStatus::invalid_argument(format!("decode edges: {}", e)))?;
-                graph
-                    .batch_create_edges(&effective_graph_id, edges)
+                ops.batch_create_edges(&graph_id, edges)
                     .await
                     .map(|created| created.len() as u64)
             };
@@ -2712,7 +2700,7 @@ impl ProximaFlightService {
                 Ok(n) => (n, true),
                 Err(e) => {
                     all_success = false;
-                    tracing::error!(graph_id = %effective_graph_id, error = %e, "graph Flight ingest batch failed");
+                    tracing::error!(graph_id = %graph_id, error = %e, "graph Flight ingest batch failed");
                     (0, false)
                 }
             };
@@ -2748,7 +2736,7 @@ impl ProximaFlightService {
         }));
 
         info!(
-            graph_id = %effective_graph_id,
+            graph_id = %graph_id,
             kind = if is_nodes { "graph_nodes" } else { "graph_edges" },
             total_batches = total_batches,
             total_rows_written = total_rows,
@@ -2785,7 +2773,10 @@ impl ProximaFlightService {
         let graph = self.graph_service.clone().ok_or_else(|| {
             TonicStatus::unimplemented("graph Flight path requires the graph backing service")
         })?;
-        let gid = Self::effective_graph_id(tenant_id.as_deref(), &ticket.graph_id);
+        // Read the SAME structural key the write path composes (`{tenant}/{graph_id}`).
+        let tenant = proximadb_tenant::resolve_request_tenant(tenant_id.as_deref());
+        let gid = crate::graph::scoped_graph_id(&tenant, &ticket.graph_id)
+            .map_err(|e| TonicStatus::invalid_argument(format!("invalid tenant: {e}")))?;
         let page = ticket
             .limit
             .map(|l| l as usize)

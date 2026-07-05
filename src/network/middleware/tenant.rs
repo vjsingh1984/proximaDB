@@ -91,9 +91,10 @@ impl MiddlewareTenantContext {
         }
     }
 
-    /// Create a default/anonymous tenant context
+    /// Create a default/anonymous tenant context. Uses the ONE canonical default
+    /// (`proximadb_tenant::DEFAULT_TENANT`) shared by every surface.
     pub fn default_tenant() -> Self {
-        Self::new("default", TenantIdSource::Default)
+        Self::new(proximadb_tenant::DEFAULT_TENANT, TenantIdSource::Default)
     }
 
     /// Set the owning customer account (Phase 5). Activates the account-rooted
@@ -170,7 +171,8 @@ pub struct TenantExtractorConfig {
 impl Default for TenantExtractorConfig {
     fn default() -> Self {
         Self {
-            default_tenant: Some("default".to_string()),
+            // The ONE canonical default shared by every surface (foundation).
+            default_tenant: Some(proximadb_tenant::DEFAULT_TENANT.to_string()),
             require_tenant: false,  // Allow single-tenant mode by default
             validate_tenant: false, // Disable validation by default (enable in production)
             system_tenants: vec!["system".to_string(), "admin".to_string()],
@@ -507,6 +509,21 @@ mod tests {
         let ctx = MiddlewareTenantContext::default_tenant();
         assert_eq!(ctx.tenant_id, "default");
         assert_eq!(ctx.source, TenantIdSource::Default);
+    }
+
+    #[test]
+    fn rest_default_uses_the_one_canonical_constant() {
+        // The middleware default context AND the extractor config default both
+        // derive from the single `proximadb_tenant::DEFAULT_TENANT`, so REST can
+        // never drift from pgwire/gRPC (which resolve the same constant).
+        assert_eq!(
+            MiddlewareTenantContext::default_tenant().tenant_id,
+            proximadb_tenant::DEFAULT_TENANT
+        );
+        assert_eq!(
+            TenantExtractorConfig::default().default_tenant.as_deref(),
+            Some(proximadb_tenant::DEFAULT_TENANT)
+        );
     }
 
     #[test]

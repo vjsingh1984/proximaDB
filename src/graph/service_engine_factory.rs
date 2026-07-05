@@ -40,10 +40,14 @@ impl super::GraphOperationsService {
             return Ok(Arc::clone(&engine));
         }
 
-        // Verify graph collection exists first
+        // Get — or lazily provision — the graph collection under this (possibly tenant-scoped)
+        // key. A tenant-scoped first write (`for_tenant` composes `{tenant}/{graph_id}`) thus
+        // auto-registers its collection instead of failing "does not exist", making named-tenant
+        // graph create→use functional without an out-of-band bare create (TD-GRAPH-TENANT-1). The
+        // default tenant stays bare, so its explicitly-created collections are found, not recreated.
         let collection = self
             .collection_service
-            .ensure_graph_exists(graph_id)
+            .ensure_or_create_graph(graph_id)
             .await?;
 
         // Determine engine type and storage ROOT URL

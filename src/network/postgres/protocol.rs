@@ -1689,11 +1689,14 @@ impl PostgresProtocol {
             .iter()
             .map(|(k, v)| (k.to_ascii_lowercase(), v.clone()))
             .collect();
-        normalized
+        // One canonical default across all surfaces (foundation): a bare connection
+        // with no session var resolves to `DEFAULT_TENANT`, not `""` — the empty
+        // string used to split pgwire reads/writes from REST's `"default"` bucket.
+        let session_var = normalized
             .get("proximadb.write.tenant_id")
             .or_else(|| normalized.get("proximadb.write_tenant_id"))
-            .cloned()
-            .unwrap_or_default()
+            .map(String::as_str);
+        proximadb_tenant::resolve_request_tenant(session_var)
     }
 
     /// TD-064 S1 (read-half): resolve the tenant/catalog scope used to authorize

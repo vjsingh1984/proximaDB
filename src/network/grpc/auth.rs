@@ -144,6 +144,14 @@ pub fn tenant_id<T>(request: &Request<T>) -> Option<String> {
         .or_else(|| tenant_id_from_metadata(request.metadata()))
 }
 
+/// The RESOLVED request tenant for gRPC + Arrow Flight — the authenticated /
+/// `x-tenant-id`-metadata tenant, else the ONE canonical [`DEFAULT_TENANT`]
+/// (`proximadb_tenant::resolve_request_tenant`). Data-plane handlers call this so
+/// a bare request lands in the SAME bucket as REST/pgwire instead of `""`.
+pub fn resolved_tenant_id<T>(request: &Request<T>) -> String {
+    proximadb_tenant::resolve_request_tenant(tenant_id(request).as_deref())
+}
+
 /// Acting principal (user id) for within-tenant row-level RBAC
 /// (`permitted_principals`, TD-134). Extracted from the authenticated
 /// [`GrpcAuthContext`]; `None` when the request is unauthenticated (e.g. dev /
@@ -385,6 +393,16 @@ mod tests {
     use crate::security::rbac_service::RBACConfig;
     use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
     use crate::security::{AuditConfig, SecurityConfig, SecurityMode};
+
+    #[test]
+    fn resolved_tenant_id_defaults_when_no_tenant_present() {
+        // A bare gRPC/Flight request (no auth context, no `x-tenant-id` metadata)
+        // resolves to the ONE canonical default — the same bucket REST and pgwire
+        // use — instead of the old `""` that split it from REST's `"default"`.
+        let req = Request::new(());
+        assert_eq!(tenant_id(&req), None);
+        assert_eq!(resolved_tenant_id(&req), proximadb_tenant::DEFAULT_TENANT);
+    }
 
     fn security_config() -> SecurityConfig {
         SecurityConfig {

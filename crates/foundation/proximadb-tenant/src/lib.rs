@@ -71,6 +71,90 @@ pub fn tenant_id_of(collection: &Collection) -> Option<String> {
     None
 }
 
+/// The single canonical default **request** tenant.
+///
+/// Non-empty on purpose: an empty tenant id is rejected by
+/// `DrPathBuilder::validate_id` and makes the catalog's `resolve_table_scoped`
+/// skip the tenant namespace entirely — i.e. an *empty* default silently
+/// **disables** structural isolation. A non-empty default keeps every request
+/// attributable to a real tenant partition.
+pub const DEFAULT_TENANT: &str = "default";
+
+/// Resolve the **request** tenant (who is acting) from a raw per-surface signal —
+/// the pgwire startup `database`, the REST `X-Tenant-ID` header, or the
+/// gRPC/Arrow-Flight `x-tenant-id` metadata. Trims surrounding whitespace; an
+/// absent or empty signal resolves to [`DEFAULT_TENANT`].
+///
+/// This is deliberately distinct from [`tenant_id_of`]: that resolves the
+/// **owner** of a stored collection and fails closed to [`None`], because an
+/// ownership gate must deny when it cannot attribute. A *request*, by contrast,
+/// always acts as some tenant, so it defaults. Every network surface calls THIS
+/// one function, so their defaults can never drift apart again (the pre-unify
+/// state was pgwire/gRPC `""` vs REST `"default"` — a cross-surface data split).
+pub fn resolve_request_tenant(raw: Option<&str>) -> String {
+    match raw.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(tenant) => tenant.to_string(),
+        None => DEFAULT_TENANT.to_string(),
+    }
+}
+
+/// Why a tenant id is not safe to compose into a storage key / path / catalog
+/// `namespace[0]`. Returned by [`validate_request_tenant`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TenantError {
+    /// Empty tenant id (would disable structural isolation).
+    Empty,
+    /// Begins with `_` — reserved for control-plane system subtrees
+    /// (`_operator`, `_metering`, `_trace`, …), so a tenant can never shadow one.
+    ReservedPrefix,
+    /// Contains a path-traversal / separator / control / whitespace character.
+    InvalidChar(char),
+}
+
+impl std::fmt::Display for TenantError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TenantError::Empty => write!(f, "tenant id must not be empty"),
+            TenantError::ReservedPrefix => {
+                write!(
+                    f,
+                    "tenant id must not begin with '_' (reserved for system use)"
+                )
+            }
+            TenantError::InvalidChar(c) => {
+                write!(f, "tenant id contains an invalid character: {c:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TenantError {}
+
+/// Validate a resolved request tenant BEFORE it becomes a storage-key dimension,
+/// a `DrPathBuilder` path segment, or a catalog `namespace[0]`. Mirrors the
+/// structural guard in `DrPathBuilder::validate_id`: rejects empty, `_`-prefixed
+/// (reserved system segments), path traversal (`..`), and separator / control /
+/// whitespace characters (`/`, `\`, `\0`, …). Callers validate at the ingress
+/// boundary and fail the request on error (fail-closed).
+pub fn validate_request_tenant(tenant: &str) -> Result<(), TenantError> {
+    if tenant.is_empty() {
+        return Err(TenantError::Empty);
+    }
+    if tenant.starts_with('_') {
+        return Err(TenantError::ReservedPrefix);
+    }
+    if tenant.contains("..") {
+        return Err(TenantError::InvalidChar('.'));
+    }
+    if let Some(c) = tenant
+        .chars()
+        .find(|&c| c == '/' || c == '\\' || c == '\0' || c.is_whitespace())
+    {
+        return Err(TenantError::InvalidChar(c));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +226,49 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(tenant_id_of(&c), None);
+    }
+
+    // ── request-tenant resolution (the one default, shared by all surfaces) ──
+
+    #[test]
+    fn resolve_request_tenant_defaults_when_absent_or_empty() {
+        assert_eq!(resolve_request_tenant(None), DEFAULT_TENANT);
+        assert_eq!(resolve_request_tenant(Some("")), DEFAULT_TENANT);
+        assert_eq!(resolve_request_tenant(Some("   ")), DEFAULT_TENANT);
+        assert_eq!(DEFAULT_TENANT, "default");
+    }
+
+    #[test]
+    fn resolve_request_tenant_passes_through_and_trims() {
+        assert_eq!(resolve_request_tenant(Some("acme")), "acme");
+        assert_eq!(resolve_request_tenant(Some("  acme  ")), "acme");
+    }
+
+    #[test]
+    fn validate_request_tenant_accepts_ordinary_ids() {
+        assert!(validate_request_tenant("acme").is_ok());
+        assert!(validate_request_tenant("default").is_ok());
+        assert!(validate_request_tenant("acct-lender-us").is_ok());
+    }
+
+    #[test]
+    fn validate_request_tenant_rejects_unsafe_ids() {
+        assert_eq!(validate_request_tenant(""), Err(TenantError::Empty));
+        assert_eq!(
+            validate_request_tenant("_operator"),
+            Err(TenantError::ReservedPrefix)
+        );
+        assert_eq!(
+            validate_request_tenant("../etc"),
+            Err(TenantError::InvalidChar('.'))
+        );
+        assert_eq!(
+            validate_request_tenant("a/b"),
+            Err(TenantError::InvalidChar('/'))
+        );
+        assert_eq!(
+            validate_request_tenant("a b"),
+            Err(TenantError::InvalidChar(' '))
+        );
     }
 }
