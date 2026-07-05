@@ -154,6 +154,36 @@ pub struct ProximaScanExec {
     dynamic_filters: Vec<Arc<dyn PhysicalExpr>>,
 }
 
+/// TD-OLAP-3 slice B: should this split be skipped under the CURRENT state of
+/// the absorbed join runtime filters? `snapshot()` re-resolves each
+/// `DynamicFilterPhysicalExpr` to the per-column bounds / in-list DataFusion
+/// built from the HashJoin build keys; translation is conservative
+/// (unrecognized shapes prune nothing) and the join above re-applies exact
+/// semantics regardless.
+///
+/// Evaluated **per split, immediately before its read** — NOT once per stream:
+/// in partitioned hash-join mode DataFusion polls build and probe
+/// concurrently, so early probe splits race the build (the filter is still
+/// the `lit(true)` placeholder) while later splits see the resolved filter.
+/// Per-split late evaluation is exactly how `DataSourceExec` consumes dynamic
+/// filters (per file open); a split evaluated too early is read, never
+/// wrongly skipped.
+fn split_pruned_by_runtime_filters(
+    split: &FileSplit,
+    dynamic_filters: &[Arc<dyn PhysicalExpr>],
+) -> bool {
+    for dynamic in dynamic_filters {
+        if let Ok(Some(resolved)) = dynamic.snapshot() {
+            for (column, predicate) in pruning_predicates(&resolved) {
+                if split.can_prune_scalar(&column, &predicate) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Opt-in gate for absorbing DataFusion's join runtime filters into the scan
 /// (default **off**, per the TD-OLAP-3 "default-off, trace-gated" rollout).
 /// Enable with `PROXIMADB_DF_RUNTIME_FILTER_PRUNE=1`; promote once the
@@ -224,49 +254,6 @@ impl ProximaScanExec {
     /// Get the limit.
     pub fn limit(&self) -> Option<usize> {
         self.limit
-    }
-
-    /// TD-OLAP-3 slice B: runtime split pruning. The absorbed join filter is
-    /// a `DynamicFilterPhysicalExpr` — `snapshot()` re-resolves it NOW
-    /// (stream-open, after the HashJoin build side completed) to per-column
-    /// bounds / an in-list over the build keys. Translation is conservative:
-    /// unrecognized shapes prune nothing, and the join above re-applies exact
-    /// semantics regardless.
-    fn apply_runtime_filters(
-        &self,
-        mut splits: Vec<FileSplit>,
-        partition: usize,
-    ) -> Vec<FileSplit> {
-        if self.dynamic_filters.is_empty() {
-            return splits;
-        }
-        let mut predicates = Vec::new();
-        for dynamic in &self.dynamic_filters {
-            if let Ok(Some(resolved)) = dynamic.snapshot() {
-                predicates.extend(pruning_predicates(&resolved));
-            }
-        }
-        if predicates.is_empty() {
-            return splits;
-        }
-        let before = splits.len();
-        splits.retain(|split| {
-            !predicates
-                .iter()
-                .any(|(column, predicate)| split.can_prune_scalar(column, predicate))
-        });
-        crate::observability::io_trace::record_splits(
-            before as u64,
-            (before - splits.len()) as u64,
-        );
-        debug!(
-            "Runtime filter pruned {}/{} splits for collection '{}' partition {}",
-            before - splits.len(),
-            before,
-            self.collection_name,
-            partition
-        );
-        splits
     }
 
     /// Copy of this scan with absorbed runtime filters attached (TD-OLAP-3).
@@ -372,7 +359,7 @@ impl ExecutionPlan for ProximaScanExec {
             self.partitions.get(partition).map(|p| p.len()).unwrap_or(0)
         );
 
-        let mut splits = self
+        let splits = self
             .partitions
             .get(partition)
             .ok_or_else(|| {
@@ -385,22 +372,48 @@ impl ExecutionPlan for ProximaScanExec {
             })?
             .clone();
 
-        splits = self.apply_runtime_filters(splits, partition);
-
         let reader = self.reader.clone();
         let projection = self.projection.clone();
         let batch_size = self.batch_size;
         let limit = self.limit;
         let schema = self.schema.clone();
+        let dynamic_filters = self.dynamic_filters.clone();
+        let collection_name = self.collection_name.clone();
 
         // Drive each split's async `read_split` lazily and flatten the per-split batch
         // streams into one. Each split's future owns its `FileSplit` + an `Arc` clone of
         // the reader, so the resulting stream is `'static` and `Send`.
+        //
+        // Runtime-filter pruning is evaluated PER SPLIT, immediately before its
+        // read (see `split_pruned_by_runtime_filters`): in partitioned
+        // hash-join mode the probe races the build, so early splits may see
+        // the unresolved placeholder (and are read), while later splits see
+        // the resolved bounds/in-list and skip their fetch entirely.
+        let empty_schema = schema.clone();
         let batches = futures::stream::iter(splits)
             .then(move |split| {
                 let reader = reader.clone();
                 let projection = projection.clone();
+                let dynamic_filters = dynamic_filters.clone();
+                let collection_name = collection_name.clone();
+                let empty_schema = empty_schema.clone();
                 async move {
+                    if !dynamic_filters.is_empty() {
+                        let pruned = split_pruned_by_runtime_filters(&split, &dynamic_filters);
+                        crate::observability::io_trace::record_splits(1, pruned as u64);
+                        if pruned {
+                            debug!(
+                                "Runtime filter skipped split {} of '{}' (partition {})",
+                                split.split_id, collection_name, partition
+                            );
+                            let empty: SendableRecordBatchStream =
+                                Box::pin(RecordBatchStreamAdapter::new(
+                                    empty_schema,
+                                    futures::stream::empty(),
+                                ));
+                            return Ok(empty);
+                        }
+                    }
                     reader
                         .read_split(&split, projection.as_deref(), batch_size)
                         .await
@@ -973,22 +986,28 @@ mod tests {
                 )),
             )))
             .unwrap();
-        let exec = exec.with_dynamic_filters(vec![Arc::new(dynamic)]);
+        let filters: Vec<Arc<dyn PhysicalExpr>> = vec![Arc::new(dynamic)];
+        // The exec carries the filters (absorption path); pruning itself is
+        // the free fn the deferred stream invokes at first poll.
+        let _exec = exec.with_dynamic_filters(filters.clone());
 
         let splits = vec![
             split_with_bounds("a.parquet", 1, 10),    // disjoint → pruned
             split_with_bounds("b.parquet", 100, 200), // overlaps → kept
             split_with_bounds("c.parquet", 250, 400), // overlaps → kept
         ];
-        let survivors = exec.apply_runtime_filters(splits, 0);
+        let survivors: Vec<_> = splits
+            .iter()
+            .filter(|s| !split_pruned_by_runtime_filters(s, &filters))
+            .collect();
         assert_eq!(survivors.len(), 2, "disjoint split pruned before fetch");
         assert!(survivors.iter().all(|s| s.file_path != "a.parquet"));
 
         // Unresolved placeholder (`lit(true)`) prunes nothing.
-        let placeholder =
-            DynamicFilterPhysicalExpr::new(vec![col("x", &schema).unwrap()], lit(true));
-        let exec = exec.with_dynamic_filters(vec![Arc::new(placeholder)]);
-        let splits = vec![split_with_bounds("a.parquet", 1, 10)];
-        assert_eq!(exec.apply_runtime_filters(splits, 0).len(), 1);
+        let placeholder: Vec<Arc<dyn PhysicalExpr>> = vec![Arc::new(
+            DynamicFilterPhysicalExpr::new(vec![col("x", &schema).unwrap()], lit(true)),
+        )];
+        let split = split_with_bounds("a.parquet", 1, 10);
+        assert!(!split_pruned_by_runtime_filters(&split, &placeholder));
     }
 }

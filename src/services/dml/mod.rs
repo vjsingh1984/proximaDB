@@ -133,6 +133,60 @@ fn materialize_path_segment(table: &str, object_id: Option<u64>, oid_paths: bool
     table.to_string()
 }
 
+/// TD-OLAP-6: resolve the cluster key for a materialized publication.
+///
+/// Precedence: the explicit `cluster_key` table property (must name an
+/// existing column, else it is ignored — never a materialize failure), then
+/// the first DATE / TIMESTAMP / TIMESTAMPTZ column, else no clustering.
+pub(crate) fn resolve_cluster_key(schema: &CatalogTableSchema) -> Option<String> {
+    if let Some(explicit) = schema.properties.get("cluster_key") {
+        if schema.columns.iter().any(|c| &c.name == explicit) {
+            return Some(explicit.clone());
+        }
+        tracing::warn!(
+            "cluster_key property '{explicit}' names no column of '{}' — ignoring",
+            schema.name
+        );
+    }
+    schema
+        .columns
+        .iter()
+        .find(|c| {
+            matches!(
+                c.data_type,
+                ProximaType::Date | ProximaType::Timestamp(_) | ProximaType::TimestampTz(_)
+            )
+        })
+        .map(|c| c.name.clone())
+}
+
+/// Total-order sort key over a record's cluster-key value: temporal and
+/// integer values order numerically, strings lexically; rows whose key is
+/// NULL/absent/unorderable sort LAST (the `(true, ..)` arm). Timestamps
+/// compare within one column, so raw ticks are a valid order (one column ⇒
+/// one unit).
+pub(crate) fn cluster_sort_key(rec: &ProximaRecord, column: &str) -> (bool, i128, String) {
+    let value = match rec.props.get(column) {
+        Some(ProximaTreeNode::Value(v)) => v,
+        _ => return (true, 0, String::new()),
+    };
+    match value {
+        ProximaValue::Date(d) => (false, *d as i128, String::new()),
+        ProximaValue::Timestamp(t, _) | ProximaValue::TimestampTz(t, _) => {
+            (false, *t as i128, String::new())
+        }
+        ProximaValue::Time(t, _) => (false, *t as i128, String::new()),
+        ProximaValue::Int8(v) => (false, *v as i128, String::new()),
+        ProximaValue::Int16(v) => (false, *v as i128, String::new()),
+        ProximaValue::Int32(v) => (false, *v as i128, String::new()),
+        ProximaValue::Int64(v) => (false, *v as i128, String::new()),
+        ProximaValue::UInt32(v) => (false, *v as i128, String::new()),
+        ProximaValue::UInt64(v) => (false, *v as i128, String::new()),
+        ProximaValue::String(s) | ProximaValue::Symbol(s) => (false, 0, s.clone()),
+        _ => (true, 0, String::new()),
+    }
+}
+
 pub(crate) fn resolve_materialize_prefix(
     tenant_id: &str,
     namespace_id: &str,
@@ -1381,11 +1435,24 @@ impl DmlService {
         //    SAME builder as the OLAP read-merge appends so the cold base and the live
         //    append rows encode identically (ADR-025).
         let col_names: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
-        let records: Vec<ProximaRecord> = rows
+        let mut records: Vec<ProximaRecord> = rows
             .into_iter()
             .enumerate()
             .map(|(i, row)| Self::value_row_to_relational_record(&i.to_string(), &col_names, row))
             .collect();
+
+        // 2b. TD-OLAP-6: cluster the snapshot by the table's cluster key before
+        //     publication, so Parquet row groups carry tight min/max bounds and
+        //     zone-map / runtime-filter pruning can actually skip (the snapshot
+        //     scan otherwise discards row order — every row group spans the whole
+        //     domain, measured 0% skip in TPC_PERF_GATE_EVIDENCE_V2_2026_07_04).
+        //     Key resolution: explicit `cluster_key` table property, else the
+        //     first DATE/TIMESTAMP column (the dominant analytical access shape).
+        //     One sort at materialize time; ordering is reader-neutral
+        //     (mixed-read-safe) and NULL-keyed rows sort last.
+        if let Some(cluster_col) = resolve_cluster_key(&schema) {
+            records.sort_by_cached_key(|rec| cluster_sort_key(rec, &cluster_col));
+        }
 
         // 3. Tenant-isolated object prefix (DrPathBuilder mandate: data/{tenant}/{ns}/{table}).
         //    NOTE (tracked tech-debt): this path does NOT yet route through
@@ -5535,6 +5602,71 @@ impl crate::services::ddl::TableMaterializer for DmlTableMaterializer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TD-OLAP-6: explicit `cluster_key` property wins; else the first
+    /// DATE/TIMESTAMP column; NULL-keyed rows sort last.
+    #[test]
+    fn cluster_key_resolution_and_sort_order() {
+        fn col(name: &str, ty: ProximaType) -> CatalogColumn {
+            CatalogColumn {
+                id: 0,
+                object_id: None,
+                name: name.to_string(),
+                data_type: ty,
+                nullable: true,
+                default_value: None,
+                comment: None,
+                properties: Default::default(),
+                is_deleted: false,
+                original_id: None,
+            }
+        }
+        let mut schema = CatalogTableSchema {
+            name: "t".to_string(),
+            columns: vec![
+                col("id", ProximaType::Int64),
+                col("created", ProximaType::Date),
+                col(
+                    "updated",
+                    ProximaType::Timestamp(proximadb_data_model::TimeUnit::Microsecond),
+                ),
+            ],
+            ..Default::default()
+        };
+        // Heuristic: first temporal column.
+        assert_eq!(resolve_cluster_key(&schema).as_deref(), Some("created"));
+        // Explicit property wins.
+        schema
+            .properties
+            .insert("cluster_key".to_string(), "id".to_string());
+        assert_eq!(resolve_cluster_key(&schema).as_deref(), Some("id"));
+        // Bogus property falls back to the heuristic.
+        schema
+            .properties
+            .insert("cluster_key".to_string(), "nope".to_string());
+        assert_eq!(resolve_cluster_key(&schema).as_deref(), Some("created"));
+
+        let rec = |d: Option<i32>| {
+            let mut r = ProximaRecord::default();
+            if let Some(days) = d {
+                r.props.insert(
+                    "created".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::Date(days)),
+                );
+            }
+            r
+        };
+        let mut records = vec![rec(Some(30)), rec(None), rec(Some(10)), rec(Some(20))];
+        records.sort_by_cached_key(|r| cluster_sort_key(r, "created"));
+        let keys: Vec<Option<i32>> = records
+            .iter()
+            .map(|r| match r.props.get("created") {
+                Some(ProximaTreeNode::Value(ProximaValue::Date(d))) => Some(*d),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, vec![Some(10), Some(20), Some(30), None], "NULLs last");
+    }
 
     #[test]
     fn resolve_materialize_prefix_drpath_and_cross_tenant() {
