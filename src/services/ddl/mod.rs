@@ -2445,8 +2445,15 @@ mod tests {
 
     async fn create_with_precision_property(value: &str) -> proximadb_records::EmbeddingScalarType {
         let manager = Arc::new(CatalogManager::new());
+        // Unique tempdir per test (SOLID test-hygiene mandate 17c): the four
+        // precision-variant tests run as THREADS under plain `cargo test`, and
+        // a shared /tmp catalog path made whoever created it second panic —
+        // a schedule-sensitive flake. Leak the dir: the catalog outlives this fn.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let url = format!("file://{}", tmp.path().display());
+        std::mem::forget(tmp);
         manager
-            .create_native_catalog("default", "file:///tmp/proximadb-ddl-precision-test")
+            .create_native_catalog("default", &url)
             .await
             .expect("create catalog");
         let service = DdlService::new(manager.clone());
@@ -2572,11 +2579,12 @@ mod tests {
         // No WITH option set → legacy fp32 (no behavior change for
         // existing CREATE TABLE statements).
         let manager = Arc::new(CatalogManager::new());
+        // Unique tempdir (mandate 17c) — see create_with_precision_property.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let url = format!("file://{}", tmp.path().display());
+        std::mem::forget(tmp);
         manager
-            .create_native_catalog(
-                "default",
-                "file:///tmp/proximadb-ddl-precision-test-default",
-            )
+            .create_native_catalog("default", &url)
             .await
             .expect("create catalog");
         let service = DdlService::new(manager.clone());
