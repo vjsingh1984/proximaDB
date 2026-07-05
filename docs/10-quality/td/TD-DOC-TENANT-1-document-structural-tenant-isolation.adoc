@@ -4,8 +4,8 @@
 
 [cols="1,3"]
 |===
-|Status|Open
-|Priority|MED
+|Status|Core resolved (v2 gRPC scoped + auto-provision); REST-v2 store-split follow-on open
+|Priority|LOW
 |Scope|FEAT
 |Date|2026-07-05
 |Relates to|The coherent structural tenant-isolation program (Phase 0 unified resolution; Phase 1a timeseries per-tenant engines; Phase 1b graph `TenantGraphOps` facade; Phase 1c graph_traverse UDTF). This TD is the deferred **document** slice of that program. Backing: `src/storage/document/service.rs` (`DocumentService`), `src/network/grpc/v2/document_service.rs` (the `{tenant}::{collection}` fold), `src/network/postgres/protocol.rs` (`create_document_collection`), `src/network/rest/v2/documents.rs` (a *different* store path).
@@ -50,6 +50,41 @@ bolting scoping onto it now would be unsafe and incomplete:
   documents are lost on replay**. This must be proven before scoping.
 
 The gRPC `DocumentService` is wired in production (`multi_server.rs:192`), so correctness matters.
+
+== Landed (core fix — v2 gRPC scoped + lazy auto-provision)
+
+Named-tenant document isolation is now **functional on the v2 gRPC document surface**. The
+earlier investigation over-weighted the WAL-recovery risk: the map confirmed recovery replays each
+record by its **embedded canonical OID** (`document/{collection_id}/{doc_id}`), NOT recomputed from
+a WAL frame — so scoping is recovery-safe **provided the storage-key parameter and the record's
+`collection_id` are scoped together** (they were already, on this path). The only real blocker was
+the collection-existence gate rejecting the never-created scoped collection.
+
+* `scoped_document_collection(tenant, collection)` (`src/storage/document/service.rs`) — the
+  document counterpart of `scoped_graph_id`: `{tenant}/{collection}`, DEFAULT tenant bare,
+  fail-closed. Applied to BOTH the storage-key param and `record.collection_id`.
+* `DocumentService::ensure_or_create_collection` — race-safe get-or-create that goes through
+  `create_collection` (so the `CreateCollection` WAL op is logged and the collection is rebuilt on
+  restart). `insert_document_record` now uses it instead of erroring "Collection not found", so a
+  tenant-scoped first write auto-provisions its collection.
+* The v2 gRPC handler replaces the `{tenant}::{collection}` fold with `scoped_document_collection`
+  (`/`, default bare) and strips the scope prefix in responses (`record_to_v2_clean`) so clients see
+  clean names.
+* Tests: `scoped_document_collection` defaults/validation; two tenants, same clean collection +
+  doc id, isolated via auto-provision. Ratchet +0; server binary + clippy + document unit and
+  integration tests green.
+
+== Remaining follow-ons (open)
+
+* **REST v2 documents store-split.** `src/network/rest/v2/documents.rs` writes through a DIFFERENT
+  store (the Flight/record-store path), not `DocumentService` — so this fix does NOT make the REST
+  v2 document ingest surface tenant-isolated the same way. Reconcile the two document write surfaces
+  (or document the split) before claiming cross-surface document coherence.
+* **pgwire / REST v1 create + default uniformity.** Same shape as the graph follow-ons: those create
+  paths are bare; once they scope, flip the default tenant to `default/{collection}` for uniformity.
+* **Entity document leg.** `entity_service.rs` still folds `{tenant}::{collection}` for its document
+  writes; it now auto-provisions (via the shared gate) but uses `::` not `/` — unify when the entity
+  slice (TD-ENTITY-TENANT-1) lands.
 
 == Why deferred (not band-aided)
 
