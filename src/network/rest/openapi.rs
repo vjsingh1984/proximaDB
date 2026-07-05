@@ -220,7 +220,59 @@ fn openapi_document() -> Result<Value, String> {
     let supplement: Value = serde_yaml::from_str(SUPPLEMENT_YAML)
         .map_err(|e| format!("parse openapi_supplement.yaml: {e}"))?;
     merge_into(&mut doc, &supplement);
+
+    // Formalize the tenant selector as an OPTIONAL `X-Tenant-ID` header on EVERY operation
+    // (generated core ⊕ supplement) — one place, zero per-handler churn, and it sidesteps the
+    // `Option<String>: Display` codegen error that blocks a per-handler `params(...)` header.
+    // Isolation is structural on the server (the tenant is scoped into the storage key); this
+    // header only SELECTS the tenant when there is no authenticated context.
+    inject_tenant_header(&mut doc);
     Ok(doc)
+}
+
+/// Inject the optional `X-Tenant-ID` header parameter into every operation of the merged document.
+///
+/// Runs AFTER the supplement merge so BOTH the generated core paths and the supplement-carried
+/// paths (`/health*`, hybrid, observability, …) carry it. Idempotent — never double-adds. Applied
+/// document-wide because tenant selection is uniform across the REST surface (mirrors the
+/// document-root `security` injection above).
+fn inject_tenant_header(doc: &mut Value) {
+    const METHODS: [&str; 7] = ["get", "put", "post", "delete", "patch", "options", "head"];
+    let header = serde_json::json!({
+        "name": "X-Tenant-ID",
+        "in": "header",
+        "required": false,
+        "description": "Optional explicit tenant selector. Applied only when there is no \
+            authenticated tenant context — a JWT tenant claim takes precedence, and a header that \
+            disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. \
+            Tenant isolation is structural on the server; this header only selects the tenant.",
+        "schema": { "type": "string" }
+    });
+    let Some(paths) = doc.get_mut("paths").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for path_item in paths.values_mut() {
+        let Some(item) = path_item.as_object_mut() else {
+            continue;
+        };
+        for method in METHODS {
+            let Some(op) = item.get_mut(method).and_then(Value::as_object_mut) else {
+                continue;
+            };
+            let params = op
+                .entry("parameters".to_string())
+                .or_insert_with(|| serde_json::json!([]));
+            if let Some(arr) = params.as_array_mut() {
+                let already = arr.iter().any(|p| {
+                    p.get("name").and_then(Value::as_str) == Some("X-Tenant-ID")
+                        && p.get("in").and_then(Value::as_str) == Some("header")
+                });
+                if !already {
+                    arr.push(header.clone());
+                }
+            }
+        }
+    }
 }
 
 /// Render the merged OpenAPI document to canonical YAML (the on-disk form of
@@ -251,5 +303,45 @@ mod tests {
         // Supplement-carried operations survive the merge.
         assert!(paths.contains_key("/health/live"));
         assert!(paths.contains_key("/api/v2/graphs"));
+    }
+
+    #[test]
+    fn every_operation_carries_the_optional_tenant_header() {
+        let doc = openapi_document().expect("openapi document builds");
+        let paths = doc
+            .get("paths")
+            .and_then(Value::as_object)
+            .expect("paths object present");
+        const METHODS: [&str; 7] = ["get", "put", "post", "delete", "patch", "options", "head"];
+
+        let mut checked = 0usize;
+        for (route, item) in paths {
+            let Some(item) = item.as_object() else {
+                continue;
+            };
+            for method in METHODS {
+                let Some(op) = item.get(method).and_then(Value::as_object) else {
+                    continue;
+                };
+                let params = op
+                    .get("parameters")
+                    .and_then(Value::as_array)
+                    .unwrap_or_else(|| panic!("{method} {route} should carry parameters"));
+                let tenant = params.iter().find(|p| {
+                    p.get("name").and_then(Value::as_str) == Some("X-Tenant-ID")
+                        && p.get("in").and_then(Value::as_str) == Some("header")
+                });
+                let tenant =
+                    tenant.unwrap_or_else(|| panic!("{method} {route} missing X-Tenant-ID header"));
+                assert_eq!(
+                    tenant.get("required").and_then(Value::as_bool),
+                    Some(false),
+                    "{method} {route}: X-Tenant-ID must be optional"
+                );
+                checked += 1;
+            }
+        }
+        // Covers the generated core (20 ops) + supplement operations.
+        assert!(checked >= 20, "expected many operations, checked {checked}");
     }
 }

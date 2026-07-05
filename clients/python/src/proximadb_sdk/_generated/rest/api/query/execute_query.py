@@ -13,14 +13,17 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_response import ErrorResponse
 from ...models.query_request import QueryRequest
 from ...models.query_response import QueryResponse
-from ...types import UNSET, Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
     body: QueryRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_tenant_id, Unset):
+        headers["X-Tenant-ID"] = x_tenant_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -68,6 +71,7 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: QueryRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[ErrorResponse, QueryResponse]]:
     """Execute AQL or UQL through the shared query facade.
 
@@ -78,6 +82,7 @@ def sync_detailed(
     only the plain-SQL gRPC `ExecuteQuery` path, not this UQL/federated surface.)
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (QueryRequest):
 
     Raises:
@@ -90,6 +95,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -103,6 +109,7 @@ def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     body: QueryRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[ErrorResponse, QueryResponse]]:
     """Execute AQL or UQL through the shared query facade.
 
@@ -113,6 +120,7 @@ def sync(
     only the plain-SQL gRPC `ExecuteQuery` path, not this UQL/federated surface.)
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (QueryRequest):
 
     Raises:
@@ -126,6 +134,7 @@ def sync(
     return sync_detailed(
         client=client,
         body=body,
+        x_tenant_id=x_tenant_id,
     ).parsed
 
 
@@ -133,6 +142,7 @@ async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: QueryRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[ErrorResponse, QueryResponse]]:
     """Execute AQL or UQL through the shared query facade.
 
@@ -143,6 +153,7 @@ async def asyncio_detailed(
     only the plain-SQL gRPC `ExecuteQuery` path, not this UQL/federated surface.)
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (QueryRequest):
 
     Raises:
@@ -155,6 +166,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -166,6 +178,7 @@ async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     body: QueryRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[ErrorResponse, QueryResponse]]:
     """Execute AQL or UQL through the shared query facade.
 
@@ -176,6 +189,7 @@ async def asyncio(
     only the plain-SQL gRPC `ExecuteQuery` path, not this UQL/federated surface.)
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (QueryRequest):
 
     Raises:
@@ -190,5 +204,6 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             body=body,
+            x_tenant_id=x_tenant_id,
         )
     ).parsed

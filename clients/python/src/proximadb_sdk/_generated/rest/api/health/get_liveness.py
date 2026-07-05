@@ -11,16 +11,23 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.probe_response import ProbeResponse
-from ...types import UNSET, Response
+from ...types import UNSET, Response, Unset
 
 
-def _get_kwargs() -> dict[str, Any]:
+def _get_kwargs(
+    *,
+    x_tenant_id: Union[Unset, str] = UNSET,
+) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_tenant_id, Unset):
+        headers["X-Tenant-ID"] = x_tenant_id
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/health/live",
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -51,8 +58,12 @@ def _build_response(
 def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[ProbeResponse]:
     """Kubernetes liveness probe.
+
+    Args:
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -62,7 +73,9 @@ def sync_detailed(
         Response[ProbeResponse]
     """
 
-    kwargs = _get_kwargs()
+    kwargs = _get_kwargs(
+        x_tenant_id=x_tenant_id,
+    )
 
     response = client.get_httpx_client().request(
         **kwargs,
@@ -74,8 +87,12 @@ def sync_detailed(
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[ProbeResponse]:
     """Kubernetes liveness probe.
+
+    Args:
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -87,14 +104,19 @@ def sync(
 
     return sync_detailed(
         client=client,
+        x_tenant_id=x_tenant_id,
     ).parsed
 
 
 async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[ProbeResponse]:
     """Kubernetes liveness probe.
+
+    Args:
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -104,7 +126,9 @@ async def asyncio_detailed(
         Response[ProbeResponse]
     """
 
-    kwargs = _get_kwargs()
+    kwargs = _get_kwargs(
+        x_tenant_id=x_tenant_id,
+    )
 
     response = await client.get_async_httpx_client().request(**kwargs)
 
@@ -114,8 +138,12 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[ProbeResponse]:
     """Kubernetes liveness probe.
+
+    Args:
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -128,5 +156,6 @@ async def asyncio(
     return (
         await asyncio_detailed(
             client=client,
+            x_tenant_id=x_tenant_id,
         )
     ).parsed
