@@ -939,15 +939,19 @@ async fn tpc_perf_ledger() {
     );
 }
 
-/// Diagnostic (TD-OLAP-3 promotion investigation): what do MATERIALIZE'd
-/// Parquet footers actually look like after date-clustered inserts? The
-/// static-prune machinery is proven on hand-written Parquet; if row-group
-/// bounds here are whole-domain, the materializer is scrambling insertion
-/// order (or writing one giant row group) and clustering cannot survive.
+/// TD-OLAP-6 regression: MATERIALIZE must publish CLUSTERED row groups.
+/// With sort-on-materialize (heuristic key = first DATE column) and a small
+/// row-group cap, each row group's date bounds must be tight and the group
+/// windows monotone — the property zone-map / runtime-filter pruning needs.
+/// (Origin: the v2 evidence diagnostic that root-caused the order-scrambling
+/// snapshot scan — every group spanned min=8766..max=9066 before the sort.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "diagnostic — run on demand"]
-async fn diagnose_materialized_footer_bounds() {
+async fn materialize_publishes_clustered_row_groups() {
     use parquet::file::reader::{FileReader, SerializedFileReader};
+
+    // Force multiple row groups at this small scale (writer default 65,536).
+    // Safe under nextest's process-per-test isolation.
+    unsafe { std::env::set_var("PROXIMADB_MATERIALIZE_ROW_GROUP_ROWS", "4096") };
 
     let server = PgServer::start().await.expect("server start");
     let client = connect(&server).await;
@@ -973,8 +977,10 @@ async fn diagnose_materialized_footer_bounds() {
         .await
         .expect("materialize");
 
-    // Find every parquet object under the server tempdir and dump per-row-group
-    // stats for column d (Date32 → Int32 days since epoch).
+    // Inspect every published parquet footer: per-row-group bounds for column
+    // `d` (Date32 → Int32 days) must form tight, monotonically increasing,
+    // near-disjoint windows — NOT the whole-domain span the unsorted snapshot
+    // produced before sort-on-materialize.
     let mut found = 0;
     for entry in walk(server._tmp.path()) {
         if entry.extension().and_then(|e| e.to_str()) != Some("parquet") {
@@ -983,27 +989,41 @@ async fn diagnose_materialized_footer_bounds() {
         let file = std::fs::File::open(&entry).expect("open parquet");
         let reader = SerializedFileReader::new(file).expect("footer");
         let meta = reader.metadata();
-        eprintln!(
-            "file={} row_groups={}",
-            entry.display(),
+        assert!(
+            meta.num_row_groups() >= 4,
+            "expected multiple row groups (cap 4096 over ~20k rows), got {}",
             meta.num_row_groups()
         );
+        let mut windows: Vec<(i32, i32)> = Vec::new();
         for i in 0..meta.num_row_groups() {
             let rg = meta.row_group(i);
             for col in rg.columns() {
-                if col.column_path().string().contains('d') && col.column_path().string().len() <= 2
+                if col.column_path().string() == "d"
+                    && let Some(parquet::file::statistics::Statistics::Int32(s)) = col.statistics()
                 {
-                    let stats = col.statistics();
-                    eprintln!(
-                        "  rg{} col={} rows={} stats={:?}",
-                        i,
-                        col.column_path(),
-                        rg.num_rows(),
-                        stats.map(|s| format!("{s:?}"))
+                    let (min, max) = (
+                        *s.min_opt().expect("min stat"),
+                        *s.max_opt().expect("max stat"),
                     );
+                    eprintln!("  rg{i} d=[{min}, {max}] rows={}", rg.num_rows());
+                    windows.push((min, max));
                 }
             }
         }
+        assert_eq!(windows.len(), meta.num_row_groups(), "d stats per group");
+        // Monotone windows (adjacent groups may share the boundary day); the
+        // whole-domain-in-every-group failure mode must not recur.
+        for pair in windows.windows(2) {
+            assert!(
+                pair[0].1 <= pair[1].0,
+                "row-group windows must be sorted/disjoint: {pair:?}"
+            );
+        }
+        let full_domain = (windows.first().unwrap().0, windows.last().unwrap().1);
+        assert!(
+            windows.iter().filter(|w| **w == full_domain).count() <= 1,
+            "clustering collapsed: multiple groups span the full domain {windows:?}"
+        );
         found += 1;
     }
     assert!(found > 0, "no parquet files found under the server tempdir");
