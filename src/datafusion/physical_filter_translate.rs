@@ -217,6 +217,44 @@ mod tests {
         ));
     }
 
+    /// The EXACT post-build shape DF 54's join dynamic filter resolves to
+    /// (observed live): `col >= lit AND col <= lit AND col IN (SET)(...)`
+    /// with INT32 literals (the column's arrow type), left-associated ANDs.
+    #[test]
+    fn live_join_filter_shape_translates() {
+        use datafusion::physical_expr::expressions::in_list;
+        let s = Schema::new(vec![Field::new("ss_sold_date_sk", DataType::Int32, true)]);
+        let c = || col("ss_sold_date_sk", &s).unwrap();
+        let i32lit = |v: i32| lit(DfScalarValue::Int32(Some(v)));
+        let bounds = binary(
+            binary(c(), Operator::GtEq, i32lit(23617)),
+            Operator::And,
+            binary(c(), Operator::LtEq, i32lit(23644)),
+        );
+        let inset = in_list(c(), (23617..=23644).map(i32lit).collect(), &false, &s).unwrap();
+        let expr = binary(bounds, Operator::And, inset);
+
+        let preds = pruning_predicates(&expr);
+        assert!(
+            preds.len() >= 2,
+            "bounds must translate from the live shape, got {preds:?}"
+        );
+        // And they must actually prune a disjoint row group.
+        use proximadb_storage_common::format_splits::ColumnBounds;
+        let bounds = ColumnBounds {
+            min: Some(serde_json::json!(23001)),
+            max: Some(serde_json::json!(23085)),
+            null_count: 0,
+            distinct_count: None,
+        };
+        assert!(
+            preds
+                .iter()
+                .any(|(col, p)| col == "ss_sold_date_sk" && bounds.can_prune(p)),
+            "a [23001,23085] group must prune under >= 23617: {preds:?}"
+        );
+    }
+
     #[test]
     fn unrecognized_shapes_contribute_nothing() {
         use datafusion::physical_expr::expressions::in_list;
