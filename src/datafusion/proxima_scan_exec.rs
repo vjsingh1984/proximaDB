@@ -154,49 +154,34 @@ pub struct ProximaScanExec {
     dynamic_filters: Vec<Arc<dyn PhysicalExpr>>,
 }
 
-/// TD-OLAP-3 slice B: runtime split pruning against absorbed join filters.
-/// `snapshot()` re-resolves each `DynamicFilterPhysicalExpr` to the
-/// per-column bounds / in-list DataFusion built from the HashJoin build keys;
-/// translation is conservative (unrecognized shapes prune nothing) and the
-/// join above re-applies exact semantics regardless.
+/// TD-OLAP-3 slice B: should this split be skipped under the CURRENT state of
+/// the absorbed join runtime filters? `snapshot()` re-resolves each
+/// `DynamicFilterPhysicalExpr` to the per-column bounds / in-list DataFusion
+/// built from the HashJoin build keys; translation is conservative
+/// (unrecognized shapes prune nothing) and the join above re-applies exact
+/// semantics regardless.
 ///
-/// MUST run at first stream POLL, not at `ExecutionPlan::execute` — DataFusion
-/// constructs the probe stream before the build side has populated the filter
-/// (a snapshot at execute-time still sees the `lit(true)` placeholder); the
-/// probe is only polled after the build completes.
-fn prune_with_runtime_filters(
-    mut splits: Vec<FileSplit>,
+/// Evaluated **per split, immediately before its read** — NOT once per stream:
+/// in partitioned hash-join mode DataFusion polls build and probe
+/// concurrently, so early probe splits race the build (the filter is still
+/// the `lit(true)` placeholder) while later splits see the resolved filter.
+/// Per-split late evaluation is exactly how `DataSourceExec` consumes dynamic
+/// filters (per file open); a split evaluated too early is read, never
+/// wrongly skipped.
+fn split_pruned_by_runtime_filters(
+    split: &FileSplit,
     dynamic_filters: &[Arc<dyn PhysicalExpr>],
-    collection_name: &str,
-    partition: usize,
-) -> Vec<FileSplit> {
-    if dynamic_filters.is_empty() {
-        return splits;
-    }
-    let mut predicates = Vec::new();
+) -> bool {
     for dynamic in dynamic_filters {
         if let Ok(Some(resolved)) = dynamic.snapshot() {
-            predicates.extend(pruning_predicates(&resolved));
+            for (column, predicate) in pruning_predicates(&resolved) {
+                if split.can_prune_scalar(&column, &predicate) {
+                    return true;
+                }
+            }
         }
     }
-    if predicates.is_empty() {
-        return splits;
-    }
-    let before = splits.len();
-    splits.retain(|split| {
-        !predicates
-            .iter()
-            .any(|(column, predicate)| split.can_prune_scalar(column, predicate))
-    });
-    crate::observability::io_trace::record_splits(before as u64, (before - splits.len()) as u64);
-    debug!(
-        "Runtime filter pruned {}/{} splits for collection '{}' partition {}",
-        before - splits.len(),
-        before,
-        collection_name,
-        partition
-    );
-    splits
+    false
 }
 
 /// Opt-in gate for absorbing DataFusion's join runtime filters into the scan
@@ -399,26 +384,42 @@ impl ExecutionPlan for ProximaScanExec {
         // streams into one. Each split's future owns its `FileSplit` + an `Arc` clone of
         // the reader, so the resulting stream is `'static` and `Send`.
         //
-        // Runtime-filter pruning happens inside the `once` future — i.e. at the
-        // FIRST POLL of this stream, after the HashJoin build side completed —
-        // not at execute() time, where the dynamic filter is still the
-        // `lit(true)` placeholder (see `prune_with_runtime_filters`).
-        let batches = futures::stream::once(async move {
-            let splits =
-                prune_with_runtime_filters(splits, &dynamic_filters, &collection_name, partition);
-            futures::stream::iter(splits)
-                .then(move |split| {
-                    let reader = reader.clone();
-                    let projection = projection.clone();
-                    async move {
-                        reader
-                            .read_split(&split, projection.as_deref(), batch_size)
-                            .await
+        // Runtime-filter pruning is evaluated PER SPLIT, immediately before its
+        // read (see `split_pruned_by_runtime_filters`): in partitioned
+        // hash-join mode the probe races the build, so early splits may see
+        // the unresolved placeholder (and are read), while later splits see
+        // the resolved bounds/in-list and skip their fetch entirely.
+        let empty_schema = schema.clone();
+        let batches = futures::stream::iter(splits)
+            .then(move |split| {
+                let reader = reader.clone();
+                let projection = projection.clone();
+                let dynamic_filters = dynamic_filters.clone();
+                let collection_name = collection_name.clone();
+                let empty_schema = empty_schema.clone();
+                async move {
+                    if !dynamic_filters.is_empty() {
+                        let pruned = split_pruned_by_runtime_filters(&split, &dynamic_filters);
+                        crate::observability::io_trace::record_splits(1, pruned as u64);
+                        if pruned {
+                            debug!(
+                                "Runtime filter skipped split {} of '{}' (partition {})",
+                                split.split_id, collection_name, partition
+                            );
+                            let empty: SendableRecordBatchStream =
+                                Box::pin(RecordBatchStreamAdapter::new(
+                                    empty_schema,
+                                    futures::stream::empty(),
+                                ));
+                            return Ok(empty);
+                        }
                     }
-                })
-                .try_flatten()
-        })
-        .flatten();
+                    reader
+                        .read_split(&split, projection.as_deref(), batch_size)
+                        .await
+                }
+            })
+            .try_flatten();
 
         // Honor the row limit without over-reading: stop once `limit` rows are emitted.
         let limited = batches.scan(0usize, move |emitted, item| {
@@ -995,7 +996,10 @@ mod tests {
             split_with_bounds("b.parquet", 100, 200), // overlaps → kept
             split_with_bounds("c.parquet", 250, 400), // overlaps → kept
         ];
-        let survivors = prune_with_runtime_filters(splits, &filters, "t", 0);
+        let survivors: Vec<_> = splits
+            .iter()
+            .filter(|s| !split_pruned_by_runtime_filters(s, &filters))
+            .collect();
         assert_eq!(survivors.len(), 2, "disjoint split pruned before fetch");
         assert!(survivors.iter().all(|s| s.file_path != "a.parquet"));
 
@@ -1003,10 +1007,7 @@ mod tests {
         let placeholder: Vec<Arc<dyn PhysicalExpr>> = vec![Arc::new(
             DynamicFilterPhysicalExpr::new(vec![col("x", &schema).unwrap()], lit(true)),
         )];
-        let splits = vec![split_with_bounds("a.parquet", 1, 10)];
-        assert_eq!(
-            prune_with_runtime_filters(splits, &placeholder, "t", 0).len(),
-            1
-        );
+        let split = split_with_bounds("a.parquet", 1, 10);
+        assert!(!split_pruned_by_runtime_filters(&split, &placeholder));
     }
 }
