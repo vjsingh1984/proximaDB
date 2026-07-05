@@ -107,6 +107,8 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
         let params = GraphFusionParams {
             route_policy: None,
             graph_id: req.graph_id.clone(),
+            // Structural tenant boundary — scopes both fusion legs (TD-ENTITY-TENANT-1).
+            tenant: tenant_id.clone(),
             vector_collection: req.vector_collection.clone(),
             query_vector: req.query_vector.clone(),
             max_depth: if req.max_depth == 0 {

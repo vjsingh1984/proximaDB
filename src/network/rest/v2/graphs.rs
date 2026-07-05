@@ -170,6 +170,8 @@ pub async fn fusion_search_v2(
     let service = state.fusion_service.clone();
     let params = GraphFusionParams {
         graph_id,
+        // Structural tenant boundary — scopes both fusion legs (TD-ENTITY-TENANT-1).
+        tenant: Some(tenant.tenant_id.clone()),
         vector_collection: request.vector_collection,
         query_vector: request.query_vector,
         max_depth: request.max_depth,
