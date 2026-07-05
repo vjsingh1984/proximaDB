@@ -268,19 +268,6 @@ fn arg_i64(args: &[Expr], i: usize) -> Option<i64> {
     }
 }
 
-/// Fold the connection tenant into the collection key exactly as the REST write path's
-/// `effective_collection` (`src/network/rest/v2/timeseries.rs`) does — `{tenant}::{collection}` —
-/// so a UDTF read hits the same partition a REST ingest wrote (TD-XMODAL-6). An empty/absent
-/// tenant yields the raw name, mirroring the REST rule so single-tenant reads still resolve.
-/// (Vectors are scoped by `TenantContext`, not by name, so they use the raw collection + the
-/// tenant id directly; this fold is the timeseries analogue.)
-fn tenant_scoped_collection(tenant: Option<&str>, collection: &str) -> String {
-    match tenant {
-        Some(t) if !t.is_empty() => format!("{t}::{collection}"),
-        _ => collection.to_string(),
-    }
-}
-
 /// Parse a pgvector-style text literal `[0.1, 0.2, 0.3]` into `Vec<f32>`.
 fn parse_vector_literal(text: &str) -> Option<Vec<f32>> {
     let inner = text.trim().strip_prefix('[')?.strip_suffix(']')?;
@@ -342,9 +329,12 @@ pub fn timeseries_points_to_batch(points: &[TsPoint]) -> Result<RecordBatch, Arr
 /// with a fixed set of points, independent of the process time-series service.
 #[async_trait]
 pub trait TimeseriesScanPort: Send + Sync {
-    /// Read the points of `collection` in `[start_ms, end_ms]` (epoch millis).
+    /// Read the points of `tenant`'s `collection` in `[start_ms, end_ms]` (epoch millis). The
+    /// tenant scopes the read structurally (the service selects the tenant's engine); the
+    /// collection name is tenant-clean.
     async fn range(
         &self,
+        tenant: &str,
         collection: &str,
         start_ms: i64,
         end_ms: i64,
@@ -358,11 +348,14 @@ struct TimeSeriesServiceScan(Arc<TimeSeriesService>);
 impl TimeseriesScanPort for TimeSeriesServiceScan {
     async fn range(
         &self,
+        tenant: &str,
         collection: &str,
         start_ms: i64,
         end_ms: i64,
     ) -> anyhow::Result<Vec<TsPoint>> {
-        self.0.query(collection, start_ms, end_ms, None).await
+        self.0
+            .query(tenant, collection, start_ms, end_ms, None)
+            .await
     }
 }
 
@@ -371,21 +364,24 @@ impl TimeseriesScanPort for TimeSeriesServiceScan {
 /// can join a timeseries scan against relational/graph data.
 pub struct TimeseriesRangeTableProvider {
     scan: Arc<dyn TimeseriesScanPort>,
+    tenant: String,
     collection: String,
     start_ms: i64,
     end_ms: i64,
 }
 
 impl TimeseriesRangeTableProvider {
-    /// Build a provider for one parameterized time-range read.
+    /// Build a provider for one parameterized time-range read, scoped to `tenant`.
     pub fn new(
         scan: Arc<dyn TimeseriesScanPort>,
+        tenant: impl Into<String>,
         collection: impl Into<String>,
         start_ms: i64,
         end_ms: i64,
     ) -> Self {
         Self {
             scan,
+            tenant: tenant.into(),
             collection: collection.into(),
             start_ms,
             end_ms,
@@ -396,6 +392,7 @@ impl TimeseriesRangeTableProvider {
 impl std::fmt::Debug for TimeseriesRangeTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TimeseriesRangeTableProvider")
+            .field("tenant", &self.tenant)
             .field("collection", &self.collection)
             .field("start_ms", &self.start_ms)
             .field("end_ms", &self.end_ms)
@@ -422,7 +419,7 @@ impl TableProvider for TimeseriesRangeTableProvider {
     ) -> DFResult<Arc<dyn ExecutionPlan>> {
         let points = self
             .scan
-            .range(&self.collection, self.start_ms, self.end_ms)
+            .range(&self.tenant, &self.collection, self.start_ms, self.end_ms)
             .await
             .map_err(|e| DataFusionError::Execution(format!("timeseries range: {e}")))?;
         let batch = timeseries_points_to_batch(&points).map_err(DataFusionError::from)?;
@@ -441,9 +438,8 @@ impl TableProvider for TimeseriesRangeTableProvider {
 /// `ctx.register_udtf("timeseries_range", Arc::new(TimeseriesRangeTableFunction::new(port)))`.
 pub struct TimeseriesRangeTableFunction {
     scan: Arc<dyn TimeseriesScanPort>,
-    /// The connection tenant, folded into the collection key (`{tenant}::{collection}`) at
-    /// `call` time so the range read hits the same partition a REST ingest wrote. `None` ⇒ raw
-    /// collection name (single-tenant / tenant-less data).
+    /// The connection tenant, passed structurally to the scan port (which selects the tenant's
+    /// engine) — NOT folded into the collection name. `None` ⇒ the canonical `DEFAULT_TENANT`.
     tenant: Option<String>,
 }
 
@@ -511,11 +507,14 @@ impl TableFunctionImpl for TimeseriesRangeTableFunction {
                 "timeseries_range: end_ms must be >= start_ms".into(),
             ));
         }
-        // Fold the tenant into the collection key the same way the REST write path does, so the
-        // range read resolves the partition the ingest wrote (TD-XMODAL-6).
-        let collection = tenant_scoped_collection(self.tenant.as_deref(), &collection);
+        // Structural tenant scoping: pass the connection tenant (defaulting to the one canonical
+        // DEFAULT_TENANT) + the tenant-CLEAN collection name to the service, which selects the
+        // tenant's engine. No name-folding — the read hits the same per-tenant engine the REST
+        // ingest wrote to.
+        let tenant = proximadb_tenant::resolve_request_tenant(self.tenant.as_deref());
         Ok(Arc::new(TimeseriesRangeTableProvider::new(
             self.scan.clone(),
+            tenant,
             collection,
             start_ms,
             end_ms,
@@ -1054,6 +1053,7 @@ mod tests {
     impl TimeseriesScanPort for FixedTimeseriesScan {
         async fn range(
             &self,
+            _tenant: &str,
             _collection: &str,
             _start_ms: i64,
             _end_ms: i64,
@@ -1205,34 +1205,39 @@ mod tests {
         assert_eq!(n, 1);
     }
 
-    /// A `TimeseriesScanPort` that records the collection name it was asked to read — used to
-    /// prove `timeseries_range` folds the tenant into the collection key (TD-XMODAL-6).
+    /// A `TimeseriesScanPort` that records the `(tenant, collection)` it was asked to read — used
+    /// to prove `timeseries_range` passes the tenant STRUCTURALLY and keeps the collection name
+    /// tenant-clean (no `{tenant}::` folding).
     struct RecordingTimeseriesScan {
-        seen: Arc<std::sync::Mutex<Vec<String>>>,
+        seen: Arc<std::sync::Mutex<Vec<(String, String)>>>,
     }
 
     #[async_trait]
     impl TimeseriesScanPort for RecordingTimeseriesScan {
         async fn range(
             &self,
+            tenant: &str,
             collection: &str,
             _start_ms: i64,
             _end_ms: i64,
         ) -> anyhow::Result<Vec<TsPoint>> {
-            self.seen.lock().unwrap().push(collection.to_string());
+            self.seen
+                .lock()
+                .unwrap()
+                .push((tenant.to_string(), collection.to_string()));
             Ok(vec![tp(1_000, "amount", 1.0)])
         }
     }
 
-    /// TD-XMODAL-6: a tenant-scoped `timeseries_range` folds `{tenant}::{collection}` before the
-    /// read — matching the REST write path's `effective_collection` — so it hits the partition a
-    /// REST ingest wrote; an empty/absent tenant reads the raw name.
+    /// Structural isolation: `timeseries_range` passes the connection tenant to the scan port
+    /// (which selects the tenant's engine) and keeps the collection name tenant-CLEAN — no
+    /// `{tenant}::` folding. An empty/absent tenant resolves to the one canonical `DEFAULT_TENANT`.
     #[tokio::test]
-    async fn timeseries_range_udtf_folds_tenant_into_collection() {
-        for (tenant, expected) in [
-            (Some("acme".to_string()), "acme::sensor"),
-            (Some(String::new()), "sensor"),
-            (None, "sensor"),
+    async fn timeseries_range_udtf_passes_tenant_structurally_with_clean_name() {
+        for (tenant, expected_tenant) in [
+            (Some("acme".to_string()), "acme"),
+            (Some(String::new()), "default"),
+            (None, "default"),
         ] {
             let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
             let port: Arc<dyn TimeseriesScanPort> = Arc::new(RecordingTimeseriesScan {
@@ -1250,7 +1255,11 @@ mod tests {
                 .collect()
                 .await
                 .unwrap();
-            assert_eq!(seen.lock().unwrap().as_slice(), &[expected.to_string()]);
+            // The collection stays "sensor" (no `::`); the tenant is passed as a distinct arg.
+            assert_eq!(
+                seen.lock().unwrap().as_slice(),
+                &[(expected_tenant.to_string(), "sensor".to_string())]
+            );
         }
     }
 

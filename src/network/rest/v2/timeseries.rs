@@ -8,7 +8,8 @@
 //! `.../{c}/aggregate`, `GET /api/v2/timeseries/collections` (list),
 //! `DELETE .../{c}` (delete). Backed by the process-global [`TimeSeriesService`] over
 //! the native TST engine — never the stubbed vector-shaped trait methods. Tenant
-//! isolation is structural (the tenant is folded into the collection key).
+//! isolation is structural: the request tenant selects a per-tenant engine in the
+//! service (physically separate storage), and the collection name stays tenant-clean.
 
 use axum::extract::Path;
 use axum::{Extension, Json};
@@ -20,14 +21,6 @@ use crate::network::middleware::tenant::TenantContext;
 use crate::services::timeseries_service::{
     TimeSeriesService, TsCollectionConfig, TsPoint, timeseries_service,
 };
-
-fn effective_collection(tenant: &TenantContext, collection_id: &str) -> String {
-    if !tenant.tenant_id.is_empty() {
-        format!("{}::{}", tenant.tenant_id, collection_id)
-    } else {
-        collection_id.to_string()
-    }
-}
 
 fn service() -> ApiResult<Arc<TimeSeriesService>> {
     timeseries_service()
@@ -97,12 +90,13 @@ pub struct DeleteResponse {
 /// `POST /api/v2/timeseries/collections`
 pub async fn create_timeseries_collection(
     Extension(tenant): Extension<TenantContext>,
-    Json(mut config): Json<TsCollectionConfig>,
+    Json(config): Json<TsCollectionConfig>,
 ) -> ApiResult<Json<CreateResponse>> {
-    let name = effective_collection(&tenant, &config.name);
-    config.name = name.clone();
+    // Tenant-clean logical name: the tenant scopes the collection structurally in the service
+    // (a per-tenant engine), so the name the caller sees carries no `{tenant}::` prefix.
+    let name = config.name.clone();
     service()?
-        .create_collection(config)
+        .create_collection(&tenant.tenant_id, config)
         .await
         .map_err(|e| ApiError::Internal(format!("create timeseries collection: {e}")))?;
     Ok(Json(CreateResponse { name }))
@@ -114,9 +108,8 @@ pub async fn ingest_timeseries(
     Extension(tenant): Extension<TenantContext>,
     Json(request): Json<IngestRequest>,
 ) -> ApiResult<Json<IngestResponse>> {
-    let collection = effective_collection(&tenant, &collection_id);
     let ingested = service()?
-        .ingest(&collection, request.points)
+        .ingest(&tenant.tenant_id, &collection_id, request.points)
         .await
         .map_err(|e| ApiError::Internal(format!("ingest timeseries: {e}")))?;
     Ok(Json(IngestResponse { ingested }))
@@ -128,10 +121,10 @@ pub async fn query_timeseries(
     Extension(tenant): Extension<TenantContext>,
     Json(request): Json<QueryRequest>,
 ) -> ApiResult<Json<QueryResponse>> {
-    let collection = effective_collection(&tenant, &collection_id);
     let points = service()?
         .query(
-            &collection,
+            &tenant.tenant_id,
+            &collection_id,
             request.start_time,
             request.end_time,
             request.limit,
@@ -147,10 +140,10 @@ pub async fn aggregate_timeseries(
     Extension(tenant): Extension<TenantContext>,
     Json(request): Json<AggregateRequest>,
 ) -> ApiResult<Json<AggregateResponse>> {
-    let collection = effective_collection(&tenant, &collection_id);
     let buckets = service()?
         .aggregate(
-            &collection,
+            &tenant.tenant_id,
+            &collection_id,
             request.start_time,
             request.end_time,
             &request.aggregation,
@@ -163,9 +156,10 @@ pub async fn aggregate_timeseries(
 
 /// `GET /api/v2/timeseries/collections`
 pub async fn list_timeseries_collections(
-    Extension(_tenant): Extension<TenantContext>,
+    Extension(tenant): Extension<TenantContext>,
 ) -> ApiResult<Json<ListResponse>> {
-    let collections = service()?.list_collections().await;
+    // Tenant-scoped: list only this tenant's collections (was a cross-tenant leak).
+    let collections = service()?.list_collections(&tenant.tenant_id).await;
     Ok(Json(ListResponse { collections }))
 }
 
@@ -174,7 +168,8 @@ pub async fn delete_timeseries_collection(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,
 ) -> ApiResult<Json<DeleteResponse>> {
-    let collection = effective_collection(&tenant, &collection_id);
-    let success = service()?.delete_collection(&collection).await;
+    let success = service()?
+        .delete_collection(&tenant.tenant_id, &collection_id)
+        .await;
     Ok(Json(DeleteResponse { success }))
 }
