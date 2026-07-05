@@ -938,3 +938,92 @@ async fn tpc_perf_ledger() {
         "one record per query x route x temperature"
     );
 }
+
+/// Diagnostic (TD-OLAP-3 promotion investigation): what do MATERIALIZE'd
+/// Parquet footers actually look like after date-clustered inserts? The
+/// static-prune machinery is proven on hand-written Parquet; if row-group
+/// bounds here are whole-domain, the materializer is scrambling insertion
+/// order (or writing one giant row group) and clustering cannot survive.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "diagnostic — run on demand"]
+async fn diagnose_materialized_footer_bounds() {
+    use parquet::file::reader::{FileReader, SerializedFileReader};
+
+    let server = PgServer::start().await.expect("server start");
+    let client = connect(&server).await;
+
+    let _ = client.simple_query("DROP TABLE IF EXISTS diag").await;
+    client
+        .simple_query("CREATE TABLE diag (d DATE, x INT)")
+        .await
+        .expect("create");
+    // 20k rows, strictly date-ordered: 2000 rows per month, Jan..Oct 1994.
+    let rows: Vec<String> = (0..20_000)
+        .map(|i| {
+            let month = 1 + i / 2_000;
+            let day = 1 + (i % 2_000) % 28;
+            format!("(DATE '1994-{month:02}-{day:02}', {i})")
+        })
+        .collect();
+    for sql in chunked_inserts("diag", "d, x", rows, 200) {
+        client.simple_query(&sql).await.expect("insert");
+    }
+    client
+        .simple_query("ALTER TABLE diag MATERIALIZE")
+        .await
+        .expect("materialize");
+
+    // Find every parquet object under the server tempdir and dump per-row-group
+    // stats for column d (Date32 → Int32 days since epoch).
+    let mut found = 0;
+    for entry in walk(server._tmp.path()) {
+        if entry.extension().and_then(|e| e.to_str()) != Some("parquet") {
+            continue;
+        }
+        let file = std::fs::File::open(&entry).expect("open parquet");
+        let reader = SerializedFileReader::new(file).expect("footer");
+        let meta = reader.metadata();
+        eprintln!(
+            "file={} row_groups={}",
+            entry.display(),
+            meta.num_row_groups()
+        );
+        for i in 0..meta.num_row_groups() {
+            let rg = meta.row_group(i);
+            for col in rg.columns() {
+                if col.column_path().string().contains('d') && col.column_path().string().len() <= 2
+                {
+                    let stats = col.statistics();
+                    eprintln!(
+                        "  rg{} col={} rows={} stats={:?}",
+                        i,
+                        col.column_path(),
+                        rg.num_rows(),
+                        stats.map(|s| format!("{s:?}"))
+                    );
+                }
+            }
+        }
+        found += 1;
+    }
+    assert!(found > 0, "no parquet files found under the server tempdir");
+    server.shutdown().await;
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        if let Ok(entries) = std::fs::read_dir(&d) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    out
+}
