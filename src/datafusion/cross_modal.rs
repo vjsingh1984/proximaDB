@@ -1160,6 +1160,51 @@ mod tests {
         }
     }
 
+    /// TD-XMODAL-7 repro: a UDTF wrapped in an aggregating derived table that is then JOINed with
+    /// a base table (`FROM base o CROSS JOIN (SELECT max(value) FROM timeseries_range(...)) ts`)
+    /// must not blow the stack. A top-level UDTF (even two joined) plans fine; only the
+    /// join-to-a-derived-table-over-a-UDTF shape recursed over pgwire's DataFusion fallback.
+    #[tokio::test]
+    async fn udtf_in_aggregating_subquery_does_not_recurse() {
+        let port: Arc<dyn TimeseriesScanPort> = Arc::new(FixedTimeseriesScan {
+            points: vec![tp(1, "amount", 5.0), tp(2, "amount", 9.0)],
+        });
+        let ctx = SessionContext::new();
+        ctx.register_udtf(
+            "timeseries_range",
+            Arc::new(TimeseriesRangeTableFunction::new(port)),
+        );
+        // A base relation to join against, mirroring the pgwire `orders` table.
+        let base_schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Utf8, false)]));
+        let base = RecordBatch::try_new(
+            base_schema.clone(),
+            vec![Arc::new(StringArray::from(vec!["acct-7"]))],
+        )
+        .unwrap();
+        ctx.register_table(
+            "orders",
+            Arc::new(MemTable::try_new(base_schema, vec![vec![base]]).unwrap()),
+        )
+        .unwrap();
+        let n: usize = ctx
+            .sql(
+                "SELECT o.id, ts.peak \
+                 FROM orders o \
+                 CROSS JOIN (SELECT max(value) AS peak FROM timeseries_range('c', 0, 9)) ts \
+                 WHERE o.id = 'acct-7' \
+                 GROUP BY o.id, ts.peak",
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.num_rows())
+            .sum();
+        assert_eq!(n, 1);
+    }
+
     /// A `TimeseriesScanPort` that records the collection name it was asked to read — used to
     /// prove `timeseries_range` folds the tenant into the collection key (TD-XMODAL-6).
     struct RecordingTimeseriesScan {

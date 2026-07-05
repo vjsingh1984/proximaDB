@@ -5533,9 +5533,25 @@ impl VectorQueryService for VectorOperationsService {
 impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
     async fn search(
         &self,
-        request: crate::proto::proximadb_v1::VectorSearchRequest,
-        _tenant_id: Option<&str>,
+        mut request: crate::proto::proximadb_v1::VectorSearchRequest,
+        tenant_id: Option<&str>,
     ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        // TD-XMODAL-8: the cross-modal `vector_search` UDTF reaches this port carrying the pgwire
+        // connection tenant. Resolve the collection UNDER that tenant — the same tenant-scoped
+        // name→canonical-id resolution the REST record path does via
+        // `RecordOpsService::resolve_collection_id_internal` (`collection_port.get_collection`,
+        // TD-XMODAL-6). Without it a tenant-scoped collection name resolves against the unscoped
+        // registry, misses, and the search returns 0 rows even though the data exists. The
+        // resolved id is idempotent for `search_v1`'s own resolution, so tenant-less callers
+        // (`None`) are unaffected.
+        if let Some(tid) = tenant_id.filter(|t| !t.is_empty())
+            && let Ok(Some(collection)) = self
+                .collection_port
+                .get_collection(&request.collection_id, Some(tid))
+                .await
+        {
+            request.collection_id = collection.id;
+        }
         self.search_v1(request).await
     }
 

@@ -118,8 +118,23 @@ async fn ensure_required_directories(config: &proximadb::core::Config) -> anyhow
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    // ProximaDB's pgwire OLAP path plans through DataFusion, whose SQL planner + optimizer recurse
+    // deeply on nested-subquery / cross-modal plans — e.g. a derived table wrapping a
+    // `vector_search` / `timeseries_range` / `graph_traverse` aggregate that is then JOINed to a
+    // Parquet-backed base table. tokio's default 2 MiB worker stack overflows on that recursion and
+    // aborts the WHOLE server (a single crafted query = DoS; TD-XMODAL-7). Databases routinely run
+    // recursive query planners on a larger stack, so give the runtime workers 32 MiB — deep-but-
+    // bounded planning then completes instead of crashing. (Debug builds have much larger frames,
+    // so this also covers the amplified debug-mode overflow.)
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(32 * 1024 * 1024)
+        .build()?;
+    runtime.block_on(run())
+}
+
+async fn run() -> anyhow::Result<()> {
     // Initialize tracing with rolling file appender
     use tracing_appender::rolling::{RollingFileAppender, Rotation};
     use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
