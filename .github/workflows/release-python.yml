@@ -80,7 +80,12 @@ jobs:
           - os: ubuntu-latest
             target: x86_64
             manylinux: auto
-          - os: ubuntu-latest
+          # Native ARM runner (not cross-compile): the engine's C deps —
+          # aws-lc-sys (rustls crypto) and vendored OpenSSL — fail to
+          # cross-compile to aarch64 (aws-lc bcm.c under aarch64-gcc). Building
+          # natively on an ARM runner compiles them the same way x86_64 does,
+          # avoiding the cross-toolchain entirely.
+          - os: ubuntu-24.04-arm
             target: aarch64
             manylinux: auto
     steps:
