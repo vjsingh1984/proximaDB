@@ -138,6 +138,13 @@ async fn external_parquet_table_registers_and_reads_via_datafusion() {
     let server = PgServer::start(tmp).await.expect("server");
     let client = connect(&server).await;
 
+    // The native catalog persists outside this test's tempdir, so clear any
+    // entry a prior run left behind (mirrors the tpc harness's DROP-first).
+    client
+        .simple_query("DROP TABLE IF EXISTS ext_hits")
+        .await
+        .ok();
+
     // Register the existing Parquet object as a read-only external table.
     client
         .simple_query(&format!(
@@ -148,8 +155,14 @@ async fn external_parquet_table_registers_and_reads_via_datafusion() {
         .expect("create external table");
 
     // SELECT routes to the DataFusion OLAP engine and reads the object directly.
+    // NOTE: the query must "engage" the relational pipeline (join / GROUP BY /
+    // aggregate) — pgwire keeps a *simple* single-table SELECT on the legacy path
+    // that reads the (empty) backing collection, so a bare `SELECT * FROM ext`
+    // returns no rows today. Parquet-backed / external tables always routing to
+    // DataFusion is a separate follow-up; ClickBench's queries are aggregates and
+    // engage naturally. GROUP BY here both engages and preserves the row values.
     let rows = client
-        .simple_query("SELECT id, name FROM ext_hits ORDER BY id")
+        .simple_query("SELECT id, name FROM ext_hits GROUP BY id, name ORDER BY id")
         .await
         .expect("select");
     let data: Vec<_> = rows
@@ -187,6 +200,7 @@ async fn external_location_outside_allowlist_is_rejected() {
     };
     let server = PgServer::start(tmp).await.expect("server");
     let client = connect(&server).await;
+    client.simple_query("DROP TABLE IF EXISTS bad").await.ok();
 
     let err = client
         .simple_query(
@@ -196,7 +210,12 @@ async fn external_location_outside_allowlist_is_rejected() {
         .await
         .err()
         .expect("CREATE must be rejected when the location is outside the allowlist");
-    let msg = err.to_string().to_lowercase();
+    // tokio-postgres' Display is the terse "db error"; the real message is on
+    // the DbError cause.
+    let msg = err
+        .as_db_error()
+        .map(|e| e.message().to_lowercase())
+        .unwrap_or_else(|| err.to_string().to_lowercase());
     assert!(
         msg.contains("allowlist") || msg.contains("external"),
         "rejection should cite the external-location allowlist, got: {msg}"

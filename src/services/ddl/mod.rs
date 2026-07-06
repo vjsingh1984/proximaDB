@@ -2069,15 +2069,11 @@ fn external_location_allowed(location: &str) -> bool {
         .map(str::trim)
         .filter(|root| !root.is_empty())
         .any(|root| {
-            if loc == root {
-                return true;
-            }
-            let with_slash = if root.ends_with('/') {
-                root.to_string()
-            } else {
-                format!("{root}/")
-            };
-            loc.starts_with(&with_slash)
+            // Normalize the root's trailing slash so `file:///x/` and `file:///x`
+            // both denote the same directory: a location is allowed when it IS
+            // the root or sits strictly beneath it (path boundary).
+            let root_norm = root.trim_end_matches('/');
+            loc == root_norm || loc.starts_with(&format!("{root_norm}/"))
         })
 }
 
