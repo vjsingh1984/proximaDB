@@ -3663,18 +3663,23 @@ impl DmlService {
         let Ok(table_schema) = catalog.get_table(&table_id).await else {
             return Ok(());
         };
-        // v2 vector record API path: when the caller provides at least one
-        // embedding cell on every record, skip relational schema validation.
-        // The v2 records/batch endpoint is the vector ingest surface, not a
-        // SQL DML surface. Relational schema constraints (`reject_unknown_columns`,
-        // missing-required-column, type strictness) reject perfectly valid
-        // vector-API batches — including ones that carry filter metadata in
-        // `props` — because the auto-registered schema is `id` + `vector`
-        // only and treats anything else as unknown. Reconciled 2026-05-28 for
-        // the v0.2 v2 INSERT→SEARCH gap.
-        let all_records_are_vector_shaped =
-            !records.is_empty() && records.iter().all(|r| !r.embeddings.is_empty());
-        if all_records_are_vector_shaped {
+        // v2 record API path: skip relational schema validation for records that are
+        // vector-shaped (carry ≥1 embedding cell) OR document-facade records (labelled
+        // `document`, ADR-009 convergence). Both are v2 record-API shapes — a vector ingest
+        // or a schemaless NF² document projection — NOT SQL DML rows. Relational schema
+        // constraints (`reject_unknown_columns`, missing-required-column, type strictness)
+        // reject perfectly valid vector-API batches — including ones that carry filter/doc
+        // metadata in `props` — because the auto-registered schema is `id` + `vector` only
+        // and treats anything else as unknown. Document records are the vectorless case: a
+        // metadata-only document has no embedding but must not be validated against the
+        // vector-collection's relational schema. (Vector path reconciled 2026-05-28 for the
+        // v0.2 v2 INSERT→SEARCH gap; document label added for ADR-009.)
+        let all_records_are_v2_record_api = !records.is_empty()
+            && records.iter().all(|r| {
+                !r.embeddings.is_empty()
+                    || r.labels.contains(proximadb_document::DOCUMENT_RECORD_LABEL)
+            });
+        if all_records_are_v2_record_api {
             return Ok(());
         }
         // Determine which schema column (if any) maps to the record's canonical
