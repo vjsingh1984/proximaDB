@@ -1958,6 +1958,29 @@ fn add_open_table_layouts(schema: &mut CatalogTableSchema) -> Result<()> {
         .and_then(|value| parse_authority_mode(value))
         .unwrap_or(CatalogAuthorityMode::ProjectionPublication);
 
+    // Path Isolation (CRITICAL mandate): a table that reads an operator/tenant
+    // supplied external `location` reaches outside `DrPathBuilder`'s
+    // `data/{tenant}/{namespace}/…` tree. Gate it fail-closed behind an operator
+    // allowlist of URI-prefix roots (`PROXIMADB_EXTERNAL_TABLE_ROOTS`) so a
+    // tenant cannot point a table at an arbitrary path. The publication
+    // authorities below synthesize an internal `proximadb://…` location and are
+    // exempt; only the externally-located authorities are validated.
+    let reads_external_location = matches!(
+        ownership,
+        CatalogAuthorityMode::ExternalAuthoritative
+            | CatalogAuthorityMode::ImportedSnapshot
+            | CatalogAuthorityMode::FederatedRead
+    );
+    if reads_external_location && !external_location_allowed(&location) {
+        return Err(anyhow!(
+            "external table '{}': location '{}' is not within an allowlisted root — \
+             set PROXIMADB_EXTERNAL_TABLE_ROOTS to a comma-separated list of permitted \
+             URI-prefix roots to opt in (Path Isolation, fail-closed default)",
+            schema.name,
+            location
+        ));
+    }
+
     let mut layout = match ownership {
         CatalogAuthorityMode::ExternalAuthoritative => {
             if location.is_empty() {
@@ -2022,6 +2045,36 @@ fn add_open_table_layouts(schema: &mut CatalogTableSchema) -> Result<()> {
 
     schema.storage_layouts.push(layout);
     Ok(())
+}
+
+/// Fail-closed allowlist for external-table `location`s (Path Isolation mandate).
+///
+/// A location is permitted only when the operator has set
+/// `PROXIMADB_EXTERNAL_TABLE_ROOTS` to a comma-separated list of URI-prefix roots
+/// and the location falls under one of them. Empty/unset allowlist ⇒ every
+/// external location is rejected (the feature is off by default). Locations
+/// containing `..` are always rejected (no traversal-escape). Matching is on a
+/// path boundary — a root `file:///data/ext` matches `file:///data/ext/a.parquet`
+/// but NOT `file:///data/ext-evil/…`.
+fn external_location_allowed(location: &str) -> bool {
+    let loc = location.trim();
+    if loc.is_empty() || loc.contains("..") {
+        return false;
+    }
+    let Ok(roots) = std::env::var("PROXIMADB_EXTERNAL_TABLE_ROOTS") else {
+        return false;
+    };
+    roots
+        .split(',')
+        .map(str::trim)
+        .filter(|root| !root.is_empty())
+        .any(|root| {
+            // Normalize the root's trailing slash so `file:///x/` and `file:///x`
+            // both denote the same directory: a location is allowed when it IS
+            // the root or sits strictly beneath it (path boundary).
+            let root_norm = root.trim_end_matches('/');
+            loc == root_norm || loc.starts_with(&format!("{root_norm}/"))
+        })
 }
 
 fn parse_physical_format(value: &str) -> Option<CatalogPhysicalFormat> {
@@ -2098,6 +2151,44 @@ mod tests {
         let result = DdlResult::success("Operation completed");
         assert!(result.success);
         assert_eq!(result.affected_count, 1);
+    }
+
+    // External-location allowlist (Path Isolation, fail-closed). Serialized by
+    // the shared env var; nextest's process-per-test isolation keeps these from
+    // racing other tests.
+    #[test]
+    fn external_location_allowlist_is_fail_closed_and_boundary_aware() {
+        // Unset ⇒ everything rejected (feature off by default).
+        unsafe { std::env::remove_var("PROXIMADB_EXTERNAL_TABLE_ROOTS") };
+        assert!(!external_location_allowed("file:///data/ext/a.parquet"));
+
+        unsafe {
+            std::env::set_var(
+                "PROXIMADB_EXTERNAL_TABLE_ROOTS",
+                "file:///data/ext/, s3://bucket/warehouse/",
+            )
+        };
+        // Within an allowlisted root.
+        assert!(external_location_allowed("file:///data/ext/a.parquet"));
+        assert!(external_location_allowed(
+            "s3://bucket/warehouse/hits/part-0.parquet"
+        ));
+        // Exact-root match is allowed.
+        assert!(external_location_allowed("file:///data/ext"));
+        // Path-boundary escape must NOT match a prefix of a sibling dir.
+        assert!(!external_location_allowed(
+            "file:///data/ext-evil/secret.parquet"
+        ));
+        // Outside any root.
+        assert!(!external_location_allowed("file:///etc/passwd"));
+        // Traversal is always rejected, even under an allowlisted root.
+        assert!(!external_location_allowed(
+            "file:///data/ext/../../etc/passwd"
+        ));
+        // Empty is rejected.
+        assert!(!external_location_allowed("  "));
+
+        unsafe { std::env::remove_var("PROXIMADB_EXTERNAL_TABLE_ROOTS") };
     }
 
     #[test]
