@@ -706,6 +706,30 @@ impl VectorOperationsService {
         })
     }
 
+    /// Point-get a single FULL record by id, tenant-scoped (TD-DOC-CONV-1).
+    ///
+    /// Unlike [`Self::get_record_with_tenant_context`] (which returns the search-shaped,
+    /// label-less `RichSearchResult`), this returns the whole [`ProximaRecord`] — `labels` +
+    /// `variation_id` intact — so the document facade can be rebuilt from an O(log n) bloom +
+    /// B+ tree point lookup instead of a bounded collection scan. Dead (tombstone / TTL-expired)
+    /// and cross-tenant records are filtered, matching the get/scan surfaces.
+    pub async fn get_full_record_with_tenant_context(
+        &self,
+        collection_id: &str,
+        record_id: &str,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<Option<ProximaRecord>> {
+        self.validate_tenant_collection_access(collection_id, tenant_context)
+            .await?;
+        let record = self.vector(collection_id, record_id, false, true).await?;
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        Ok(record.filter(|r| {
+            r.is_visible_at(now_ns)
+                && tenant_context
+                    .is_none_or(|ctx| r.tenant_id.is_empty() || r.tenant_id == ctx.tenant_id)
+        }))
+    }
+
     /// Scan current visible canonical records from the VectorOps-backed WAL/memtable path.
     ///
     /// This is a compatibility bridge for cataloged table scans while the direct
@@ -3972,48 +3996,27 @@ impl VectorOperationsService {
             return Ok(Some(result));
         }
 
-        // WAL miss → scan SST files via bloom-filter-accelerated point lookup
+        // WAL miss → point-lookup in SST files. Read the FULL record straight from the SST
+        // reader (bloom-filter reject + B+ tree O(log n) block lookup), rather than the
+        // search-shaped `OptimizedSearchRecord`, so `labels` + `variation_id` are preserved.
+        // Document-facade projections (`proxima_record_to_legacy_document`) require the
+        // `document` label, which the search shape drops (TD-DOC-CONV-1).
         let file_paths = self
             .storage_engine
             .list_collection_files(collection_id)
             .await
             .unwrap_or_default();
 
-        if !file_paths.is_empty() {
-            let search_ops = crate::storage::engines::sst::search::SearchOperations::new(
-                self.storage_engine.clone(),
-            );
-            if let Ok(Some(hit)) = search_ops.point_lookup(&file_paths, vector_id).await {
-                let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-                let vector_values = hit.vector.as_deref().cloned().unwrap_or_default();
-                let dim = vector_values.len() as u32;
-                let mut props = proximadb_records::ProximaTree::new();
-                if include_metadata {
-                    for (k, v) in hit.metadata {
-                        props.insert(k, proximadb_records::ProximaTreeNode::Value(v));
-                    }
+        let reader = self.storage_engine.sstable_reader();
+        for file_path in &file_paths {
+            if let Ok(Some(mut record)) = reader.vector(file_path, vector_id).await {
+                if !include_vector {
+                    record.embeddings.clear();
                 }
-                let embeddings = if include_vector && !vector_values.is_empty() {
-                    vec![proximadb_records::EmbeddingCell {
-                        model_id: "default".to_string(),
-                        modality: "vector".to_string(),
-                        values: proximadb_records::EmbeddingValues::Fp32(vector_values),
-                        dim,
-                        ..Default::default()
-                    }]
-                } else {
-                    vec![]
-                };
-                return Ok(Some(ProximaRecord {
-                    oid: hit.id,
-                    record_version: hit.version.map(|v| v as u64).unwrap_or(1),
-                    created_at_ns: hit.timestamp.unwrap_or(now_ns),
-                    updated_at_ns: hit.updated_at.unwrap_or(now_ns),
-                    valid_to_ns: hit.expires_at,
-                    props,
-                    embeddings,
-                    ..Default::default()
-                }));
+                if !include_metadata {
+                    record.props.clear();
+                }
+                return Ok(Some(record));
             }
         }
 

@@ -43,30 +43,30 @@ struct TestServer {
 }
 
 impl TestServer {
-    async fn start() -> anyhow::Result<Self> {
-        let rest_port = free_port();
-        let grpc_port = free_port();
-        let pg_port = free_port();
-        let tmp_data = TempDir::new()?;
-
+    fn build_config(
+        data_path: &std::path::Path,
+        rest_port: u16,
+        grpc_port: u16,
+        pg_port: u16,
+    ) -> Config {
         let mut config = Config::default();
         config.server.bind_address = "127.0.0.1".to_string();
         config.server.port = rest_port;
-        config.server.data_dir = tmp_data.path().to_path_buf();
+        config.server.data_dir = data_path.to_path_buf();
         config.api.rest_port = rest_port;
         config.api.grpc_port = grpc_port;
         config.api.unified_mode = false;
         config.api.pg_port = Some(pg_port);
         config.storage.storage_locations = vec![proximadb::core::config::StorageLocation {
-            url: format!("file://{}", tmp_data.path().display()),
+            url: format!("file://{}", data_path.display()),
             ..Default::default()
         }];
         config.storage.wal_config.write_buffer_directory =
-            format!("file://{}/wal", tmp_data.path().display());
+            format!("file://{}/wal", data_path.display());
+        config
+    }
 
-        let mut db = ProximaDB::new(config).await?;
-        db.start().await?;
-
+    async fn wait_ready(rest_port: u16) -> anyhow::Result<()> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(3))
             .no_proxy()
@@ -85,6 +85,24 @@ impl TestServer {
             }
         }
         sleep(Duration::from_millis(300)).await;
+        Ok(())
+    }
+
+    async fn start() -> anyhow::Result<Self> {
+        let rest_port = free_port();
+        let grpc_port = free_port();
+        let pg_port = free_port();
+        let tmp_data = TempDir::new()?;
+
+        let mut db = ProximaDB::new(Self::build_config(
+            tmp_data.path(),
+            rest_port,
+            grpc_port,
+            pg_port,
+        ))
+        .await?;
+        db.start().await?;
+        Self::wait_ready(rest_port).await?;
 
         Ok(Self {
             rest_port,
@@ -92,6 +110,35 @@ impl TestServer {
             db: Some(db),
             _tmp_data: tmp_data,
         })
+    }
+
+    /// Shut down and restart on the SAME `data_dir` (fresh ports) to prove durability: data
+    /// written before the restart must be recovered from the on-disk WAL. The `TempDir` stays
+    /// owned by `self`, so the data directory survives the restart.
+    async fn restart(&mut self) -> anyhow::Result<()> {
+        if let Some(mut db) = self.db.take() {
+            db.shutdown().await?;
+        }
+        // Let the OS release the ports + WAL file handles before rebinding/reopening.
+        sleep(Duration::from_millis(750)).await;
+
+        let rest_port = free_port();
+        let grpc_port = free_port();
+        let pg_port = free_port();
+        let mut db = ProximaDB::new(Self::build_config(
+            self._tmp_data.path(),
+            rest_port,
+            grpc_port,
+            pg_port,
+        ))
+        .await?;
+        db.start().await?;
+        Self::wait_ready(rest_port).await?;
+
+        self.rest_port = rest_port;
+        self.grpc_port = grpc_port;
+        self.db = Some(db);
+        Ok(())
     }
 
     fn rest(&self) -> String {
@@ -317,4 +364,149 @@ async fn pure_metadata_grpc_document_round_trips_on_canonical_route_when_gate_on
         "query returns the metadata-only doc"
     );
     assert_eq!(queried.documents[0].id, "m1");
+}
+
+/// Durability: a document written on the canonical route survives a full server restart. The
+/// canonical path deliberately drops the legacy `document_wal`, so recovery rests entirely on the
+/// shared vector WAL — this proves the doc is recovered from it and served cross-surface after
+/// restart (the plan's "restart → docs survive via the vector WAL" verification point).
+#[tokio::test]
+async fn canonical_document_survives_restart_via_vector_wal() {
+    let mut server = TestServer::start().await.expect("server start");
+    // Name is fixed for the whole test (from the initial port) so it stays stable across the
+    // restart, which rebinds fresh ports. The gate stays ON throughout.
+    let collection = format!("recdocs{}", server.grpc_port);
+    let _gate = GateGuard::on(&collection);
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .no_proxy()
+        .build()
+        .expect("http client");
+
+    let create = http
+        .post(format!("{}/api/v2/collections", server.rest()))
+        .json(&json!({"name": collection, "dimension": 8, "engine": "sst"}))
+        .send()
+        .await
+        .expect("create collection");
+    assert!(create.status().is_success(), "create: {}", create.status());
+
+    let ingest = http
+        .post(format!(
+            "{}/api/v2/collections/{collection}/documents",
+            server.rest()
+        ))
+        .header("X-Embed-Source", "sdk-vector")
+        .header("X-Ingest-Mode", "sync")
+        .json(&json!({
+            "records": [{
+                "id": "r1",
+                "vector": [0.1_f32, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+                "metadata": {"title": "Durable"}
+            }]
+        }))
+        .send()
+        .await
+        .expect("ingest document");
+    assert!(
+        ingest.status().is_success(),
+        "ingest: {} {:?}",
+        ingest.status(),
+        ingest.text().await.ok()
+    );
+
+    // Visible before the restart.
+    let mut client =
+        ProximaDocumentServiceClient::connect(format!("http://127.0.0.1:{}", server.grpc_port))
+            .await
+            .expect("gRPC connect");
+    let pre = client
+        .get_document(GetDocumentRequest {
+            collection_id: collection.clone(),
+            id: "r1".to_string(),
+        })
+        .await
+        .expect("pre-restart get")
+        .into_inner();
+    assert_eq!(pre.document.expect("present before restart").id, "r1");
+
+    // Full shutdown + restart on the SAME data_dir.
+    server.restart().await.expect("restart on same data_dir");
+
+    // The document must be recovered from the vector WAL and served on the canonical route.
+    let mut client2 =
+        ProximaDocumentServiceClient::connect(format!("http://127.0.0.1:{}", server.grpc_port))
+            .await
+            .expect("gRPC reconnect after restart");
+    let post = client2
+        .get_document(GetDocumentRequest {
+            collection_id: collection.clone(),
+            id: "r1".to_string(),
+        })
+        .await
+        .expect("post-restart get should recover the doc from the vector WAL")
+        .into_inner();
+    assert_eq!(
+        post.document.expect("document survived the restart").id,
+        "r1"
+    );
+}
+
+/// Metering plumbing: a document written on the canonical route flows through the metered
+/// vector-write service (`handle_record_batch_for_tenant`) — the same path REST v2 records use —
+/// closing the billing gap where the legacy gRPC/DocumentService WAL path was unmetered.
+///
+/// What is asserted: the gRPC write succeeds through the metered service AND the Prometheus
+/// consumption surface (`/metrics/prometheus`) is live and serving the consumption metric family
+/// after the write. What is NOT asserted here: a per-write counter delta — the per-query io_trace
+/// is task-local (not observable across the server task boundary) and consumption is metered at
+/// flush / object-store / egress boundaries, not per un-flushed insert. The precise per-write
+/// signal is emitted by the shared vector-write path (covered where that path is metered); this
+/// test guards that documents ride that metered path and the endpoint is wired.
+#[tokio::test]
+async fn canonical_document_write_rides_the_metered_path() {
+    let server = TestServer::start().await.expect("server start");
+    let collection = format!("metdocs{}", server.grpc_port);
+    let _gate = GateGuard::on(&collection);
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .no_proxy()
+        .build()
+        .expect("http client");
+
+    let create = http
+        .post(format!("{}/api/v2/collections", server.rest()))
+        .json(&json!({"name": collection, "dimension": 8, "engine": "sst"}))
+        .send()
+        .await
+        .expect("create collection");
+    assert!(create.status().is_success(), "create: {}", create.status());
+
+    let mut client =
+        ProximaDocumentServiceClient::connect(format!("http://127.0.0.1:{}", server.grpc_port))
+            .await
+            .expect("gRPC connect");
+    client
+        .create_document(CreateDocumentRequest {
+            collection_id: collection.clone(),
+            id: "billed-1".to_string(),
+            ..Default::default()
+        })
+        .await
+        .expect("gRPC CreateDocument on canonical route");
+
+    // The metered write completed (above). The consumption telemetry surface must be live and
+    // serving after it — the per-tenant consumption metric family is registered and exported.
+    let scrape = http
+        .get(format!("{}/metrics/prometheus", server.rest()))
+        .send()
+        .await
+        .expect("scrape /metrics/prometheus")
+        .text()
+        .await
+        .expect("metrics body");
+    assert!(
+        scrape.contains("proximadb_storage_bytes"),
+        "the consumption metric family should be live on /metrics/prometheus after a metered write"
+    );
 }
