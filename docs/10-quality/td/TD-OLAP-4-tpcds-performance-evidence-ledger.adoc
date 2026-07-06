@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open (P0b skeleton **landed 2026-07-04**: `tests/tpc_perf_ledger_e2e.rs` dual-route harness + advisory `tpc-perf-ledger` CI job + methodology doc `docs/10-quality/TPC_PERF_LEDGER.adoc`; first dated artifact **2026-07-04**: `docs/_internal/status/TPC_PERF_GATE_EVIDENCE_2026_07_04.adoc`, BENCHMARK_EVIDENCE `tpc_perf_ledger_dual_route` promoted to `measured`; generator fact tables now date-CLUSTERED and the warehouse writer row-group cap landed (`PROXIMADB_MATERIALIZE_ROW_GROUP_ROWS`, default 65,536); evidence v2 artifact `TPC_PERF_GATE_EVIDENCE_V2_2026_07_04.adoc` root-causes the remaining blocker as TD-OLAP-6 sort-on-materialize; remaining: TD-OLAP-6 re-run, faithful datagen + bulk load for real SF1/SF10, object-store regime section, external baselines)
+| Status | Open (P0b skeleton **landed 2026-07-04**: `tests/tpc_perf_ledger_e2e.rs` dual-route harness + advisory `tpc-perf-ledger` CI job + methodology doc `docs/10-quality/TPC_PERF_LEDGER.adoc`; first dated artifact **2026-07-04**: `docs/_internal/status/TPC_PERF_GATE_EVIDENCE_2026_07_04.adoc`, BENCHMARK_EVIDENCE `tpc_perf_ledger_dual_route` promoted to `measured`; generator fact tables now date-CLUSTERED and the warehouse writer row-group cap landed (`PROXIMADB_MATERIALIZE_ROW_GROUP_ROWS`, default 65,536); evidence v2 artifact `TPC_PERF_GATE_EVIDENCE_V2_2026_07_04.adoc` root-causes the remaining blocker as TD-OLAP-6 sort-on-materialize; remaining: TD-OLAP-6 re-run, faithful datagen + bulk load for real SF1/SF10, object-store regime section, external baselines; amendment 2026-07-06: + ClickBench single-node/embedded track + peak-memory & join-build ledger columns)
 | Priority | **P0b** in the ADR-052 execution order — the harness skeleton lands *before* any optimization (measure-first); it is the promotion gate for TD-OLAP-1/3/5
 | Severity | High — co-design principle #11: reject component microbenchmarks masquerading as e2e claims; method step 2: capture the trace first
 | Component | `tests/{tpcds,tpch}_pgwire_e2e.rs`, `tools/benchbase/`, `.github/workflows/qa-gate.yml`, new evidence-ledger harness
@@ -35,6 +35,7 @@ integrated path is fast, and no optimization lands without a trace + evidence le
   Record latency-per-query + total bytes-scanned (TD-158 trace, **Resolved** — available)
   into a versioned evidence ledger (JSON/Markdown under `docs/10-quality/` or a bench
   artifact).
+. **ClickBench track (single-node / embedded regime):** add https://github.com/ClickHouse/ClickBench[ClickBench] (one wide table, ~43 queries — the de-facto single-node OLAP signal where DuckDB / DataFusion / ClickHouse publish) as a ledger track *alongside* TPC-DS. TPC-DS stays primary for the **object-store / scan-avoidance** regime (star joins, DPP, TD-OLAP-3 promotion); ClickBench is primary for the **local-NVMe / single-node / embedded** regime (the "win single-node first" non-goal) where DataFusion's per-op CPU ceiling vs Velox/DuckDB is the binding constraint. Mostly mechanical wiring into the existing `tests/tpc_perf_ledger_e2e.rs` dual-route harness, plus a ClickBench data-gen/loader step (a ~100 M-row `hits` table — the one non-trivial piece).
 . **CI tier (advisory→gate):** add a `tpcds-perf` job that records the ledger on develop
   pushes; gate (ratchet on a *budget*, not a single run) only once variance is bounded —
   mirror the `pax-recall-ratchet` pattern (advisory until evidence is stable).
@@ -46,4 +47,5 @@ integrated path is fast, and no optimization lands without a trace + evidence le
 
 * A ledger entry exists for SF1 TPC-DS with ProximaDB vs DuckDB/DataFusion/ClickHouse
   latency + bytes-scanned before any "competitive" claim is cited in a doc or ADR.
+* Each ledger entry records per-query **peak memory + join-build bytes** (calibrates the TD-OLAP-1 hash-join-no-spill routing threshold and future per-tenant memory budgeting).
 * Conformance ratchets (TPC-H 22 / TPC-DS 16) remain green and monotonically non-decreasing.
