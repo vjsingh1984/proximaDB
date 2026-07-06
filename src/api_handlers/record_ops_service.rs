@@ -605,6 +605,29 @@ impl RecordOpsService {
             .await
     }
 
+    /// Point-get a single FULL record by id, tenant-scoped (TD-DOC-CONV-1). Resolves the tenant
+    /// and collection, then returns the whole `ProximaRecord` (labels + props) via the O(log n)
+    /// bloom-filter and B+ tree point lookup — the document facade needs the `document` label that
+    /// the search-shaped get drops. `None` when the collection or record is absent.
+    pub async fn handle_record_get_full_for_tenant(
+        &self,
+        collection_id: &str,
+        record_id: &str,
+        tenant_id: Option<&str>,
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        let resolved = match self
+            .resolve_collection_id_internal(collection_id, tenant_context.as_ref())
+            .await?
+        {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+        self.vector_operations_service
+            .get_full_record_with_tenant_context(&resolved, record_id, tenant_context.as_ref())
+            .await
+    }
+
     /// Paginated rich-record scan (TD-099(3d) push-down): resolves tenant +
     /// collection id, then streams a single page from the deduped, time-ordered
     /// scan index and returns `(page, next_cursor)`.
@@ -740,6 +763,16 @@ impl proximadb_runtime::RecordRoutePort for RecordOpsService {
                 result.errors.join("; ")
             ))
         }
+    }
+
+    async fn get_record(
+        &self,
+        collection_id: &str,
+        record_id: &str,
+        tenant: Option<&str>,
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
+        self.handle_record_get_full_for_tenant(collection_id, record_id, tenant)
+            .await
     }
 
     async fn scan_records(

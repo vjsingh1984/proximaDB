@@ -33,6 +33,16 @@ pub trait RecordRoutePort: Send + Sync {
         tenant: Option<&str>,
     ) -> Result<usize>;
 
+    /// Point-get a single full [`ProximaRecord`] by id, tenant-scoped (labels + props intact) —
+    /// an O(log n) bloom + B+ tree lookup, so a document point read need not scan the collection.
+    /// `None` when the record (or collection) is absent, dead, or cross-tenant.
+    async fn get_record(
+        &self,
+        collection_id: &str,
+        record_id: &str,
+        tenant: Option<&str>,
+    ) -> Result<Option<ProximaRecord>>;
+
     /// Scan up to `limit` live records from `collection_id`, tenant-scoped. Returns
     /// full [`ProximaRecord`]s (labels + props intact) so the document facade can be
     /// rebuilt. Dead/TTL-expired records are filtered by the underlying scan.

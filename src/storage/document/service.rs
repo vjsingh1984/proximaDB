@@ -1169,26 +1169,20 @@ impl DocumentService {
     ) -> Result<Option<DocumentRecord>> {
         debug!("Getting document {} from {}", id, collection);
 
-        // ADR-009 canonical-vector route: the shared vector store is authoritative. Scan it
-        // (full labelled records), rebuild the doc, return on hit. On miss, fall back to the
-        // legacy in-memory map for pre-cutover docs (mixed-read-safe). Note: no `get_collection`
-        // existence gate here — a canonical collection may live only in the record/vector
-        // catalog (e.g. created + written via REST v2), never in this facade's own map.
+        // ADR-009 canonical-vector route: the shared vector store is authoritative. Point-get it
+        // by id (O(log n) bloom + B+ tree — TD-DOC-CONV-1, no full-collection scan), rebuild the
+        // doc, return on hit. On miss, fall back to the legacy in-memory map for pre-cutover docs
+        // (mixed-read-safe). Note: no `get_collection` existence gate here — a canonical
+        // collection may live only in the record/vector catalog (e.g. created + written via
+        // REST v2), never in this facade's own map.
         if let Some(route) = self.canonical_route(collection) {
             let (tenant, clean_collection) = unscope_document_collection(collection);
-            let records = route
-                .scan_records(clean_collection, CANONICAL_DOC_SCAN_LIMIT, tenant)
+            if let Some(mut doc) = route
+                .get_record(clean_collection, id, tenant)
                 .await
-                .context("canonical-vector document scan failed")?;
-            if records.len() == CANONICAL_DOC_SCAN_LIMIT {
-                warn!(
-                    "canonical-vector get scan hit the {} cap for collection {}; a point read may be incomplete",
-                    CANONICAL_DOC_SCAN_LIMIT, clean_collection
-                );
-            }
-            if let Some(mut doc) = records
-                .iter()
-                .find_map(|r| proxima_record_to_legacy_document(r).filter(|d| d.id == id))
+                .context("canonical-vector document get failed")?
+                .as_ref()
+                .and_then(proxima_record_to_legacy_document)
             {
                 if let Some(fields) = projection.as_ref().filter(|f| !f.is_empty()) {
                     doc.props = self.apply_projection(&doc.props, fields);
@@ -2849,6 +2843,18 @@ mod tests {
                 coll.insert(r.oid.clone(), r);
             }
             Ok(n)
+        }
+
+        async fn get_record(
+            &self,
+            collection_id: &str,
+            record_id: &str,
+            _tenant: Option<&str>,
+        ) -> anyhow::Result<Option<proximadb_records::ProximaRecord>> {
+            let store = self.store.lock().expect("mock route lock");
+            Ok(store
+                .get(collection_id)
+                .and_then(|c| c.get(record_id).cloned()))
         }
 
         async fn scan_records(
