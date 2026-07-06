@@ -21,7 +21,9 @@ use std::time::Duration;
 use proximadb::core::Config;
 use proximadb::database::ProximaDB;
 use proximadb::proto::proximadb_v2::proxima_document_service_client::ProximaDocumentServiceClient;
-use proximadb::proto::proximadb_v2::{CreateDocumentRequest, GetDocumentRequest};
+use proximadb::proto::proximadb_v2::{
+    CreateDocumentRequest, GetDocumentRequest, QueryDocumentsRequest, TypedValue, typed_value,
+};
 use serde_json::json;
 use tempfile::TempDir;
 use tokio::time::sleep;
@@ -127,9 +129,12 @@ impl Drop for GateGuard {
 /// cross-surface (the headline convergence claim).
 #[tokio::test]
 async fn rest_ingested_document_is_visible_via_grpc_when_gate_on() {
-    let collection = "convdocs";
-    let _gate = GateGuard::on(collection);
     let server = TestServer::start().await.expect("server start");
+    // Port-unique collection name so the shared in-process catalog never collides across runs
+    // (the convention used by grpc_td*_e2e). The gate is read per-call, so setting it after
+    // start — once the port is known — is fine.
+    let collection = format!("convdocs{}", server.grpc_port);
+    let _gate = GateGuard::on(&collection);
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .no_proxy()
@@ -196,6 +201,7 @@ async fn rest_ingested_document_is_visible_via_grpc_when_gate_on() {
 #[tokio::test]
 async fn grpc_document_round_trips_on_legacy_path_when_gate_off() {
     let server = TestServer::start().await.expect("server start");
+    let collection = format!("legacydocs{}", server.grpc_port);
     let mut client =
         ProximaDocumentServiceClient::connect(format!("http://127.0.0.1:{}", server.grpc_port))
             .await
@@ -203,7 +209,7 @@ async fn grpc_document_round_trips_on_legacy_path_when_gate_off() {
 
     client
         .create_document(CreateDocumentRequest {
-            collection_id: "legacydocs".to_string(),
+            collection_id: collection.clone(),
             id: "doc-1".to_string(),
             ..Default::default()
         })
@@ -212,7 +218,7 @@ async fn grpc_document_round_trips_on_legacy_path_when_gate_off() {
 
     let resp = client
         .get_document(GetDocumentRequest {
-            collection_id: "legacydocs".to_string(),
+            collection_id: collection.clone(),
             id: "doc-1".to_string(),
         })
         .await
@@ -220,4 +226,95 @@ async fn grpc_document_round_trips_on_legacy_path_when_gate_off() {
         .into_inner();
     let doc = resp.document.expect("document present via legacy path");
     assert_eq!(doc.id, "doc-1");
+}
+
+/// Follow-up validation (PR #698 disclosed limitation): a **pure-metadata** gRPC document —
+/// created with props but NO vector — routes onto the shared record/vector store when the gate is
+/// ON, and is retrievable via gRPC get + query. Confirms documents without embeddings converge
+/// (vector *search* won't surface them, but get/scan/query do).
+#[tokio::test]
+async fn pure_metadata_grpc_document_round_trips_on_canonical_route_when_gate_on() {
+    let server = TestServer::start().await.expect("server start");
+    let collection = format!("metadocs{}", server.grpc_port);
+    let _gate = GateGuard::on(&collection);
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .no_proxy()
+        .build()
+        .expect("http client");
+
+    // The canonical route resolves against a real vector collection. A metadata-only document
+    // carries no embedding (dim 0); the vector-insert validation accepts vectorless records in
+    // any collection (they're excluded from the ANN index/search but stored + served by id/scan),
+    // so it converges on the shared store alongside embedded documents.
+    let create = http
+        .post(format!("{}/api/v2/collections", server.rest()))
+        .json(&json!({"name": collection, "dimension": 8, "engine": "sst"}))
+        .send()
+        .await
+        .expect("create collection");
+    let status = create.status();
+    let body = create.text().await.unwrap_or_default();
+    assert!(
+        status.is_success(),
+        "collection create should succeed, got {status} — body: {body}"
+    );
+
+    let mut client =
+        ProximaDocumentServiceClient::connect(format!("http://127.0.0.1:{}", server.grpc_port))
+            .await
+            .expect("gRPC connect");
+
+    // gRPC CreateDocument with a prop but NO vector — the metadata-only case.
+    let mut props = std::collections::HashMap::new();
+    props.insert(
+        "title".to_string(),
+        TypedValue {
+            declared_type: 0,
+            value: Some(typed_value::Value::TextValue("Gamma".to_string())),
+        },
+    );
+    client
+        .create_document(CreateDocumentRequest {
+            collection_id: collection.to_string(),
+            id: "m1".to_string(),
+            props,
+            ..Default::default()
+        })
+        .await
+        .expect("gRPC CreateDocument (no vector) should route to the shared store");
+
+    // gRPC GetDocument reads it back through the vector-store scan.
+    let got = client
+        .get_document(GetDocumentRequest {
+            collection_id: collection.to_string(),
+            id: "m1".to_string(),
+        })
+        .await
+        .expect("gRPC GetDocument (metadata-only)")
+        .into_inner()
+        .document
+        .expect("metadata-only document present via canonical route");
+    assert_eq!(got.id, "m1");
+    assert!(
+        got.props.contains_key("title"),
+        "props round-trip through the shared store"
+    );
+
+    // gRPC QueryDocuments also surfaces it (sourced from the shared store).
+    let queried = client
+        .query_documents(QueryDocumentsRequest {
+            collection_id: collection.to_string(),
+            limit: 10,
+            ..Default::default()
+        })
+        .await
+        .expect("gRPC QueryDocuments (metadata-only)")
+        .into_inner();
+    assert_eq!(
+        queried.documents.len(),
+        1,
+        "query returns the metadata-only doc"
+    );
+    assert_eq!(queried.documents[0].id, "m1");
 }

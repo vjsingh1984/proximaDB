@@ -76,10 +76,15 @@ the collection-existence gate rejecting the never-created scoped collection.
 
 == Remaining follow-ons (open)
 
-* **REST v2 documents store-split.** `src/network/rest/v2/documents.rs` writes through a DIFFERENT
-  store (the Flight/record-store path), not `DocumentService` — so this fix does NOT make the REST
-  v2 document ingest surface tenant-isolated the same way. Reconcile the two document write surfaces
-  (or document the split) before claiming cross-surface document coherence.
+* **REST v2 documents store-split — RESOLVED (ADR-009 convergence, #698).** The two document
+  write surfaces are reconciled: `DocumentService`'s canonical branch now routes through the same
+  tenant-scoped record/vector store REST v2 (`src/network/rest/v2/documents.rs`) uses, behind a
+  default-OFF per-collection gate (`PROXIMADB_DOC_CANONICAL_VECTOR`), mixed-read-safe. A document
+  written on either surface is cross-surface visible (verified e2e in
+  `tests/documents_convergence_e2e.rs`), metered, and stored once. Tenant isolation on the canonical
+  path is structural via per-tenant collection resolution + `record.tenant_id`; the legacy
+  `scoped_document_collection` fold is retained on the read-fallback for pre-cutover docs. Follow-up
+  perf item: TD-DOC-CONV-1 (point-get filter pushdown).
 * **pgwire / REST v1 create + default uniformity.** Same shape as the graph follow-ons: those create
   paths are bare; once they scope, flip the default tenant to `default/{collection}` for uniformity.
 * **Entity document leg.** `entity_service.rs` still folds `{tenant}::{collection}` for its document
