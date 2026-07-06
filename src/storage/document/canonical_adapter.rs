@@ -206,4 +206,35 @@ mod tests {
     fn ignores_non_document_proxima_records() {
         assert!(proxima_record_to_legacy_document(&ProximaRecord::default()).is_none());
     }
+
+    /// ADR-009 canonical-vector route: a document stored with a RAW-id OID (the `document/`
+    /// prefix dropped) still rebuilds losslessly, because reconstruction reads the id from
+    /// `local_id` and the collection from `DOCUMENT_COLLECTION_PROP` — never from the OID.
+    #[test]
+    fn round_trips_with_raw_id_oid_on_canonical_vector_route() {
+        let legacy = legacy_record();
+        let mut record = legacy_document_to_proxima_record(&legacy);
+
+        // Mirror `DocumentService::canonical_document_record`: raw-id OID + tenant stamp.
+        record.oid = legacy.id.clone();
+        record.tenant_id = "acme".to_string();
+        assert_eq!(record.oid, "doc-1"); // no `document/papers/` prefix
+        assert!(
+            record
+                .labels
+                .contains(proximadb_document::DOCUMENT_RECORD_LABEL)
+        );
+
+        let rebuilt = proxima_record_to_legacy_document(&record).expect("document record");
+        assert_eq!(rebuilt.id, legacy.id);
+        assert_eq!(rebuilt.collection_id, legacy.collection_id);
+        assert_eq!(rebuilt.version, legacy.version);
+        assert_eq!(rebuilt.schema_id, legacy.schema_id);
+        assert_eq!(rebuilt.document_type, legacy.document_type);
+        assert_eq!(rebuilt.props.get("title"), legacy.props.get("title"));
+        assert!(matches!(
+            rebuilt.props.get("author"),
+            Some(ProximaTreeNode::Value(_)) | Some(ProximaTreeNode::Object(_))
+        ));
+    }
 }

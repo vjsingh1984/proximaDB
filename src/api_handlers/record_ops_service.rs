@@ -709,3 +709,86 @@ impl proximadb_runtime::RecordOpsPort for RecordOpsService {
         .await
     }
 }
+
+// ADR-009 convergence: the document facade's canonical branch routes here so a
+// document written via gRPC/DocumentService lands in the same tenant-scoped record
+// store REST v2 already uses — closing the store-split. Writes upsert (a re-inserted
+// document id updates in place); reads use the paginated scan, which returns full
+// `ProximaRecord`s (labels + props) needed to rebuild the document facade.
+#[async_trait::async_trait]
+impl proximadb_runtime::RecordRoutePort for RecordOpsService {
+    async fn insert_records(
+        &self,
+        collection_id: &str,
+        records: Vec<proximadb_records::ProximaRecord>,
+        tenant: Option<&str>,
+    ) -> Result<usize> {
+        let result = self
+            .handle_record_batch_for_tenant(
+                RichRecordBatchRequest {
+                    collection_id: collection_id.to_string(),
+                    records,
+                },
+                tenant,
+            )
+            .await?;
+        if result.success {
+            Ok(result.vector_ids.len())
+        } else {
+            Err(anyhow!(
+                "record route insert failed: {}",
+                result.errors.join("; ")
+            ))
+        }
+    }
+
+    async fn scan_records(
+        &self,
+        collection_id: &str,
+        limit: usize,
+        tenant: Option<&str>,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+        let (records, _next_cursor) = self
+            .handle_record_scan_paginated_for_tenant(
+                collection_id,
+                None,
+                limit,
+                false,
+                true,
+                tenant,
+                None,
+                now_ns,
+            )
+            .await?;
+        Ok(records)
+    }
+
+    async fn delete_records(
+        &self,
+        collection_id: &str,
+        record_ids: Vec<String>,
+        tenant: Option<&str>,
+    ) -> Result<usize> {
+        let result = self
+            .handle_record_delete_batch_for_tenant(
+                RichRecordDeleteBatchRequest {
+                    collection_id: collection_id.to_string(),
+                    record_ids,
+                },
+                tenant,
+            )
+            .await?;
+        if result.success {
+            Ok(result.vector_ids.len())
+        } else {
+            Err(anyhow!(
+                "record route delete failed: {}",
+                result.errors.join("; ")
+            ))
+        }
+    }
+}

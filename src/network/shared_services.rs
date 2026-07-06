@@ -1797,6 +1797,18 @@ impl SharedServices {
         let request_handlers = Arc::new(request_handlers_instance);
         debug!("✅ SharedServices::new - UnifiedHandlers created with shared graph services");
 
+        // ADR-009 document convergence: wire the single shared DocumentService onto the same
+        // tenant-scoped record/vector route REST v2 uses (via RecordOpsService, built inside
+        // UnifiedHandlers above). Default-OFF per-collection gate — this only makes the route
+        // *available*; `doc_canonical_vector_enabled` decides per collection at call time. With
+        // this, gRPC/DocumentService and REST v2 writes converge on one store (no store-split).
+        document_service.set_record_route(
+            request_handlers.record_ops() as Arc<dyn proximadb_runtime::RecordRoutePort>
+        );
+        debug!(
+            "✅ SharedServices::new - DocumentService wired to canonical record route (ADR-009, gate default-OFF)"
+        );
+
         // ==================================================================================
         // Create UnifiedQueryFacade - single entry point for all query types
         // This consolidates the 5 parallel query paths into a single unified interface

@@ -529,25 +529,11 @@ impl MultiServer {
 
             // ── Create backend services (doc + observability need data-dir paths) ──
 
-            let doc_base_path = self.config.data_dir.join("documents");
-            let doc_path_str = doc_base_path.to_string_lossy().to_string();
-            let doc_storage_service = {
-                let engine = services.vector_operations_service.unified_engine();
-                match crate::storage::document::DocumentService::new_with_wal(engine, &doc_path_str)
-                    .await
-                {
-                    Ok(svc) => Arc::new(svc),
-                    Err(e) => {
-                        warn!(
-                            "Failed to create DocumentService with WAL: {}. Using non-durable storage.",
-                            e
-                        );
-                        Arc::new(crate::storage::document::DocumentService::new(
-                            services.vector_operations_service.unified_engine(),
-                        ))
-                    }
-                }
-            };
+            // ADR-009 document convergence: reuse the ONE shared, route-wired DocumentService
+            // instead of building a second WAL-backed instance here — a separate instance would
+            // re-open the store-split (its own document_wal + no canonical route). The shared
+            // instance carries the default-OFF canonical-vector route wired in SharedServices.
+            let doc_storage_service = services.document_service.clone();
 
             let obs_base_path = self.config.data_dir.join("observability");
             let obs_path_str = obs_base_path.to_string_lossy().to_string();
@@ -990,29 +976,10 @@ impl MultiServer {
         // use Arc clones so there is a single WAL-backed instance per service.
         let shared_services_ref = self.shared_services.clone();
 
-        let doc_base_path = self.config.data_dir.join("documents");
-        let doc_path_str = doc_base_path.to_string_lossy().to_string();
-        let doc_storage_service: Arc<crate::storage::document::DocumentService> = {
-            let engine = shared_services_ref
-                .vector_operations_service
-                .unified_engine();
-            match crate::storage::document::DocumentService::new_with_wal(engine, &doc_path_str)
-                .await
-            {
-                Ok(svc) => Arc::new(svc),
-                Err(e) => {
-                    warn!(
-                        "Failed to create DocumentService with WAL: {}. Using non-durable storage.",
-                        e
-                    );
-                    Arc::new(crate::storage::document::DocumentService::new(
-                        shared_services_ref
-                            .vector_operations_service
-                            .unified_engine(),
-                    ))
-                }
-            }
-        };
+        // ADR-009 document convergence: reuse the ONE shared, route-wired DocumentService
+        // rather than a second WAL-backed instance (which would re-open the store-split).
+        let doc_storage_service: Arc<crate::storage::document::DocumentService> =
+            shared_services_ref.document_service.clone();
 
         let obs_base_path = self.config.data_dir.join("observability");
         let obs_path_str = obs_base_path.to_string_lossy().to_string();
