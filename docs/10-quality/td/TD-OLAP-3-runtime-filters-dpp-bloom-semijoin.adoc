@@ -38,7 +38,7 @@ same idea on the vector side — converge, don't duplicate.
   manifest list at runtime.
 . **AQE hook:** insert a re-optimization point at pipeline breaks (post-build) so the runtime
   filter + observed cardinality can adjust the probe plan (coalesce/repartition, join swap).
-  (Full AQE is larger; this TD delivers the runtime-filter slice first.)
+  (Full AQE is larger; this TD delivers the runtime-filter slice first.) **Upstream watch:** DataFusion issue #23194 (Add AQE). The runtime-filter mechanism is already RESOLVED via DataFusion 54 native `enable_join_dynamic_filter_pushdown` (no local shim to retire); if/when full AQE (re-optimization at pipeline breaks, join swap, repartition coalesce) lands upstream, adopt it directly rather than building a local equivalent.
 . **Trace + promotion:** instrument `bytes_scanned_before/after_filter` per query (TD-158 is
   **Resolved** — the trace substrate is available); promote only where the measured skip
   ratio justifies the bloom-construction cost.
