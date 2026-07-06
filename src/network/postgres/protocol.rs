@@ -4457,10 +4457,12 @@ impl PostgresProtocol {
         // Read statement name (source prepared statement)
         let statement_name = self.read_cstring(&mut cursor)?;
 
-        // Read format codes count (currently ignored - we use text format)
+        // Read parameter format codes. Per the PG protocol: 0 codes → all params
+        // are text; 1 code → it applies to every param; N codes → one per param.
         let format_code_count = cursor.get_i16() as usize;
+        let mut format_codes: Vec<i16> = Vec::with_capacity(format_code_count);
         for _ in 0..format_code_count {
-            let _format_code = cursor.get_i16();
+            format_codes.push(cursor.get_i16());
         }
 
         // Read parameter values count
@@ -4485,13 +4487,22 @@ impl PostgresProtocol {
             let _ = cursor.get_i16();
         }
 
+        // Normalize parameter format codes to one-per-parameter.
+        let param_formats: Vec<i16> = (0..param_count)
+            .map(|i| match format_codes.len() {
+                0 => 0,
+                1 => format_codes[0],
+                _ => format_codes.get(i).copied().unwrap_or(0),
+            })
+            .collect();
+
         // Get the prepared statement data (extract to avoid borrow conflicts)
         let stmt_data = self
             .prepared_statements
             .get(&statement_name)
-            .map(|s| (s.query.clone(), s.translated.clone()));
+            .map(|s| (s.query.clone(), s.translated.clone(), s.param_types.clone()));
 
-        let (stmt_query, stmt_translated) = match stmt_data {
+        let (stmt_query, stmt_translated, stmt_param_types) = match stmt_data {
             Some(data) => data,
             None => {
                 // If unnamed statement (""), use the query directly
@@ -4508,8 +4519,19 @@ impl PostgresProtocol {
             }
         };
 
-        // Bind parameters to the query
-        let bound_query = self.bind_parameters(&stmt_query, &param_values)?;
+        // Bind parameters to the query (format- and type-aware).
+        let bound_query = match self.bind_parameters(
+            &stmt_query,
+            &param_values,
+            &param_formats,
+            &stmt_param_types,
+        ) {
+            Ok(q) => q,
+            Err(e) => {
+                // 22P03 = invalid_binary_representation.
+                return self.send_error("ERROR", "22P03", &format!("{}", e)).await;
+            }
+        };
 
         // Create portal
         let portal = Portal {
@@ -4525,25 +4547,44 @@ impl PostgresProtocol {
         self.send_bind_complete().await
     }
 
-    /// Bind parameter values to a query string
-    fn bind_parameters(&self, query: &str, param_values: &[Option<Vec<u8>>]) -> Result<String> {
-        let mut result = query.to_string();
-
+    /// Bind parameter values into a query by substituting `$N` placeholders.
+    ///
+    /// Fixes two long-standing bugs in the old ordered `str::replace` approach:
+    /// (1) replacing `$1` before `$10` corrupted every placeholder ≥ 10 (and any
+    /// injected value that happened to contain a later `$N`); (2) every parameter
+    /// was decoded as UTF-8 text, silently mangling **binary-format** params
+    /// (int/float/vector sent with format code 1). Substitution is now a single
+    /// left-to-right pass ([`substitute_placeholders`]) and binary params are
+    /// decoded per their type ([`decode_binary_param`]) before rendering.
+    ///
+    /// `param_formats[i]` is the wire format code for parameter i (0 = text,
+    /// 1 = binary); `param_types[i]` is its type (from Parse / inferred).
+    fn bind_parameters(
+        &self,
+        query: &str,
+        param_values: &[Option<Vec<u8>>],
+        param_formats: &[i16],
+        param_types: &[PgType],
+    ) -> Result<String> {
+        let mut rendered: Vec<Option<String>> = Vec::with_capacity(param_values.len());
         for (i, value) in param_values.iter().enumerate() {
-            let placeholder = format!("${}", i + 1);
-            let replacement = match value {
-                Some(v) => {
-                    // Convert bytes to string (assuming UTF-8 text format)
-                    let s = String::from_utf8_lossy(v);
-                    // Escape single quotes
-                    format!("'{}'", s.replace('\'', "''"))
+            match value {
+                None => rendered.push(None),
+                Some(bytes) => {
+                    let is_binary = param_formats.get(i).copied().unwrap_or(0) == 1;
+                    let text = if is_binary {
+                        let ty = param_types.get(i).cloned().unwrap_or(PgType::Unknown);
+                        decode_binary_param(bytes, &ty).map_err(|e| {
+                            anyhow::anyhow!("parameter ${} binary decode failed: {}", i + 1, e)
+                        })?
+                    } else {
+                        String::from_utf8_lossy(bytes).into_owned()
+                    };
+                    rendered.push(Some(text));
                 }
-                None => "NULL".to_string(),
-            };
-            result = result.replace(&placeholder, &replacement);
+            }
         }
-
-        Ok(result)
+        Ok(substitute_placeholders(query, &rendered))
     }
 
     /// Handle Execute message - executes a portal
@@ -4999,6 +5040,165 @@ impl PostgresProtocol {
     }
 }
 
+/// Substitute `$N` placeholders in `query` with the rendered parameter values in
+/// a single left-to-right pass. `rendered[N-1]` is the parameter's textual value
+/// (`None` = SQL NULL); present values are emitted as quoted, `''`-escaped string
+/// literals (implicit-cast in the SQL layer, matching the historical behavior).
+///
+/// Correctness properties the old ordered `str::replace` lacked:
+/// - Each `$N` is matched by its **full digit run**, so `$10` is never clobbered
+///   by the `$1` substitution, and a substituted value that itself contains a
+///   `$K` sequence is never re-substituted (single forward pass).
+/// - `$N` inside single-quoted string literals is left untouched.
+/// - UTF-8 is preserved (verbatim spans are copied as `&str` slices).
+///
+/// An out-of-range or unparsable `$N` is passed through verbatim.
+fn substitute_placeholders(query: &str, rendered: &[Option<String>]) -> String {
+    let bytes = query.as_bytes();
+    let mut out = String::with_capacity(query.len() + 16);
+    let mut last = 0usize; // start of the not-yet-copied verbatim span
+    let mut i = 0usize;
+    let mut in_squote = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_squote {
+            if c == b'\'' {
+                // '' is an escaped quote inside the literal — stay inside.
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                    i += 2;
+                    continue;
+                }
+                in_squote = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'\'' => {
+                in_squote = true;
+                i += 1;
+            }
+            b'$' if i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() => {
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if let Ok(num) = query[i + 1..j].parse::<usize>()
+                    && num >= 1
+                    && num <= rendered.len()
+                {
+                    out.push_str(&query[last..i]);
+                    match &rendered[num - 1] {
+                        Some(v) => {
+                            out.push('\'');
+                            out.push_str(&v.replace('\'', "''"));
+                            out.push('\'');
+                        }
+                        None => out.push_str("NULL"),
+                    }
+                    last = j;
+                }
+                i = j;
+            }
+            _ => i += 1,
+        }
+    }
+    out.push_str(&query[last..]);
+    out
+}
+
+/// Decode a **binary-format** (format code 1) bound parameter into its textual
+/// representation, per the parameter's PostgreSQL type. Integers/floats are
+/// big-endian per the wire protocol; text-like types pass through as UTF-8.
+/// Returns an error (surfaced to the client as SQLSTATE 22P03) for types whose
+/// binary layout we do not decode — better than silently mangling the value,
+/// which the previous UTF-8-only path did.
+fn decode_binary_param(bytes: &[u8], ty: &PgType) -> std::result::Result<String, String> {
+    let fixed = |n: usize| -> std::result::Result<(), String> {
+        if bytes.len() == n {
+            Ok(())
+        } else {
+            Err(format!(
+                "{} expects {n} bytes, got {}",
+                ty.name(),
+                bytes.len()
+            ))
+        }
+    };
+    match ty {
+        PgType::Bool => {
+            fixed(1)?;
+            Ok(if bytes[0] == 0 { "false" } else { "true" }.to_string())
+        }
+        PgType::Int2 => {
+            fixed(2)?;
+            Ok(i16::from_be_bytes([bytes[0], bytes[1]]).to_string())
+        }
+        PgType::Int4 => {
+            fixed(4)?;
+            Ok(i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]).to_string())
+        }
+        PgType::Int8 => {
+            fixed(8)?;
+            let mut a = [0u8; 8];
+            a.copy_from_slice(bytes);
+            Ok(i64::from_be_bytes(a).to_string())
+        }
+        PgType::Float4 => {
+            fixed(4)?;
+            Ok(f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]).to_string())
+        }
+        PgType::Float8 => {
+            fixed(8)?;
+            let mut a = [0u8; 8];
+            a.copy_from_slice(bytes);
+            Ok(f64::from_be_bytes(a).to_string())
+        }
+        PgType::Text | PgType::Varchar | PgType::Json | PgType::Jsonb | PgType::Uuid => {
+            Ok(String::from_utf8_lossy(bytes).into_owned())
+        }
+        PgType::Vector => decode_binary_vector(bytes),
+        other => Err(format!(
+            "binary format for parameter type '{}' is not supported",
+            other.name()
+        )),
+    }
+}
+
+/// Decode a pgvector binary parameter (`int16 dim`, `int16 unused`, then
+/// `dim × big-endian float4`) into the `[a,b,c]` text literal the SQL layer
+/// parses.
+fn decode_binary_vector(bytes: &[u8]) -> std::result::Result<String, String> {
+    if bytes.len() < 4 {
+        return Err("vector binary too short for header".to_string());
+    }
+    let dim = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+    let expected = 4 + dim * 4;
+    if bytes.len() < expected {
+        return Err(format!(
+            "vector binary: expected {expected} bytes for dim {dim}, got {}",
+            bytes.len()
+        ));
+    }
+    let mut vals = Vec::with_capacity(dim);
+    let mut off = 4;
+    for _ in 0..dim {
+        vals.push(f32::from_be_bytes([
+            bytes[off],
+            bytes[off + 1],
+            bytes[off + 2],
+            bytes[off + 3],
+        ]));
+        off += 4;
+    }
+    let joined = vals
+        .iter()
+        .map(|f| f.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    Ok(format!("[{joined}]"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5010,6 +5210,80 @@ mod tests {
     fn test_frontend_message() {
         assert_eq!(FrontendMessage::Query as u8, b'Q');
         assert_eq!(FrontendMessage::Terminate as u8, b'X');
+    }
+
+    #[test]
+    fn substitute_placeholders_handles_two_digit_indices() {
+        // The old ordered str::replace turned "$10" into "<val1>0"; verify each
+        // placeholder is matched by its full digit run.
+        let rendered: Vec<Option<String>> = (1..=12).map(|n| Some(format!("v{n}"))).collect();
+        let out = substitute_placeholders("a=$1 b=$10 c=$11 d=$2 e=$12", &rendered);
+        assert_eq!(out, "a='v1' b='v10' c='v11' d='v2' e='v12'");
+    }
+
+    #[test]
+    fn substitute_placeholders_null_and_escaping_and_literals() {
+        let rendered = vec![None, Some("O'Brien".to_string())];
+        // $1 -> NULL (unquoted); $2 -> quoted with '' escaping.
+        let out = substitute_placeholders("x=$1, y=$2", &rendered);
+        assert_eq!(out, "x=NULL, y='O''Brien'");
+
+        // A `$1` inside a single-quoted string literal must NOT be substituted.
+        let out2 = substitute_placeholders("SELECT '$1', $2", &rendered);
+        assert_eq!(out2, "SELECT '$1', 'O''Brien'");
+
+        // A substituted value that itself contains `$2` is not re-substituted.
+        let rendered2 = vec![
+            Some("has $2 inside".to_string()),
+            Some("second".to_string()),
+        ];
+        let out3 = substitute_placeholders("$1 | $2", &rendered2);
+        assert_eq!(out3, "'has $2 inside' | 'second'");
+    }
+
+    #[test]
+    fn decode_binary_param_integers_and_floats_are_big_endian() {
+        assert_eq!(
+            decode_binary_param(&258i16.to_be_bytes(), &PgType::Int2).unwrap(),
+            "258"
+        );
+        assert_eq!(
+            decode_binary_param(&70000i32.to_be_bytes(), &PgType::Int4).unwrap(),
+            "70000"
+        );
+        assert_eq!(
+            decode_binary_param(&5_000_000_000i64.to_be_bytes(), &PgType::Int8).unwrap(),
+            "5000000000"
+        );
+        assert_eq!(
+            decode_binary_param(&1.5f32.to_be_bytes(), &PgType::Float4).unwrap(),
+            "1.5"
+        );
+        assert_eq!(
+            decode_binary_param(&2.25f64.to_be_bytes(), &PgType::Float8).unwrap(),
+            "2.25"
+        );
+        assert_eq!(decode_binary_param(&[1], &PgType::Bool).unwrap(), "true");
+        assert_eq!(decode_binary_param(&[0], &PgType::Bool).unwrap(), "false");
+    }
+
+    #[test]
+    fn decode_binary_param_rejects_bad_width_and_unsupported() {
+        // Wrong byte width is rejected rather than mis-decoded.
+        assert!(decode_binary_param(&[0, 0, 0], &PgType::Int4).is_err());
+        // Unsupported binary type errors instead of silently mangling.
+        assert!(decode_binary_param(&[0x01, 0x02], &PgType::Timestamp).is_err());
+    }
+
+    #[test]
+    fn decode_binary_vector_roundtrips_pgvector_layout() {
+        // [int16 dim=2][int16 unused=0][f32 be * 2]
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&2u16.to_be_bytes());
+        buf.extend_from_slice(&0u16.to_be_bytes());
+        buf.extend_from_slice(&0.5f32.to_be_bytes());
+        buf.extend_from_slice(&(-1.0f32).to_be_bytes());
+        assert_eq!(decode_binary_vector(&buf).unwrap(), "[0.5,-1]");
     }
 
     // pgvector WHERE-filter + extended-protocol param tests (TD-100/TD-102)

@@ -311,3 +311,16 @@ contract and Iceberg type coercion impact.
   PAX co-locates filter + vector attributes in one page with no storage penalty and no I/O beyond the
   page — validating that the ANN cascade (filter → RaBitQ → SQ8 rerank) must keep filter + vector
   stripes together in the durable core. Source: https://www.vldb.org/conf/2001/P169.pdf.
+* **Format versioning, integrity & quant-id clarifications (2026-07-06).**
+  ** The header `format_version` byte is the block-format compatibility gate. The historical
+     **v1→v2 clean break** (v2 rejects v1 outright, `header.rs::from_bytes`) is a permitted exception
+     to the mixed-read-safety mandate (CLAUDE.md #8) *only because v1 was a pre-release development
+     format that never persisted in any released build* — there are no v1 blocks on disk to migrate.
+     From v2 onward the mandate applies in full: any future `v3` MUST be mixed-read-safe (readers
+     dispatch on the version byte and keep decoding v2), never a flag-day rejection.
+  ** The header `checksum` is **crc32 (IEEE)** over `[64..block_size]` (the block body) and is now
+     **verified on read** by `PaxBlockReader::open` — a mismatch or truncation is rejected rather than
+     decoded, closing a silent-corruption gap where the writer stamped a checksum the reader ignored.
+  ** The `quant_kind == 2` vector id is **RaBitQ** (`QUANT_RABITQ`), not "reserved": the writer emits
+     it (under the `PROXIMADB_VECTOR_RABITQ` gate, default-OFF) and readers key off it for the RaBitQ
+     cascade. The wire value is unchanged; only the mislabeled `_RESERVED` name/doc was corrected.
