@@ -1,0 +1,407 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+//! ClickBench single-node OLAP ledger over pgwire (TD-OLAP-4, ClickBench track).
+//!
+//! Registers the pre-built ClickBench `hits` Parquet as a read-only EXTERNAL
+//! table (no ingestion) and runs the canonical queries on the DataFusion route,
+//! recording per-query wall + rows into a JSON ledger. When a DuckDB binary is
+//! available (`DUCKDB_BIN`) it runs the same queries over the same Parquet as a
+//! single-node baseline. Advisory — asserts harness integrity, never perf.
+//!
+//! Requires a ClickBench `hits` Parquet (VARCHAR string cols); point
+//! `CLICKBENCH_PARQUET` at it. Its directory is auto-allowlisted for the
+//! external-table load. Run:
+//!   CLICKBENCH_PARQUET=/path/cb_hits.parquet DUCKDB_BIN=/path/duckdb \
+//!     cargo test --features datafusion-integration --test clickbench_ledger_e2e \
+//!     clickbench_ledger -- --ignored --nocapture
+#![cfg(feature = "datafusion-integration")]
+
+use std::net::TcpListener;
+use std::time::{Duration, Instant};
+
+use proximadb::core::Config;
+use proximadb::database::ProximaDB;
+use tempfile::TempDir;
+use tokio::time::sleep;
+use tokio_postgres::{NoTls, SimpleQueryMessage};
+
+const CLICKBENCH_DDL_COLS: &str = "WatchID BIGINT, JavaEnable SMALLINT, Title VARCHAR, GoodEvent SMALLINT, EventTime BIGINT, EventDate INT, CounterID INT, ClientIP INT, RegionID INT, UserID BIGINT, CounterClass SMALLINT, OS SMALLINT, UserAgent SMALLINT, URL VARCHAR, Referer VARCHAR, IsRefresh SMALLINT, RefererCategoryID SMALLINT, RefererRegionID INT, URLCategoryID SMALLINT, URLRegionID INT, ResolutionWidth SMALLINT, ResolutionHeight SMALLINT, ResolutionDepth SMALLINT, FlashMajor SMALLINT, FlashMinor SMALLINT, FlashMinor2 VARCHAR, NetMajor SMALLINT, NetMinor SMALLINT, UserAgentMajor SMALLINT, UserAgentMinor VARCHAR, CookieEnable SMALLINT, JavascriptEnable SMALLINT, IsMobile SMALLINT, MobilePhone SMALLINT, MobilePhoneModel VARCHAR, Params VARCHAR, IPNetworkID INT, TraficSourceID SMALLINT, SearchEngineID SMALLINT, SearchPhrase VARCHAR, AdvEngineID SMALLINT, IsArtifical SMALLINT, WindowClientWidth SMALLINT, WindowClientHeight SMALLINT, ClientTimeZone SMALLINT, ClientEventTime BIGINT, SilverlightVersion1 SMALLINT, SilverlightVersion2 SMALLINT, SilverlightVersion3 INT, SilverlightVersion4 SMALLINT, PageCharset VARCHAR, CodeVersion INT, IsLink SMALLINT, IsDownload SMALLINT, IsNotBounce SMALLINT, FUniqID BIGINT, OriginalURL VARCHAR, HID INT, IsOldCounter SMALLINT, IsEvent SMALLINT, IsParameter SMALLINT, DontCountHits SMALLINT, WithHash SMALLINT, HitColor VARCHAR, LocalEventTime BIGINT, Age SMALLINT, Sex SMALLINT, Income SMALLINT, Interests SMALLINT, Robotness SMALLINT, RemoteIP INT, WindowName INT, OpenerName INT, HistoryLength SMALLINT, BrowserLanguage VARCHAR, BrowserCountry VARCHAR, SocialNetwork VARCHAR, SocialAction VARCHAR, HTTPError SMALLINT, SendTiming INT, DNSTiming INT, ConnectTiming INT, ResponseStartTiming INT, ResponseEndTiming INT, FetchTiming INT, SocialSourceNetworkID SMALLINT, SocialSourcePage VARCHAR, ParamPrice BIGINT, ParamOrderID VARCHAR, ParamCurrency VARCHAR, ParamCurrencyID SMALLINT, OpenstatServiceName VARCHAR, OpenstatCampaignID VARCHAR, OpenstatAdID VARCHAR, OpenstatSourceID VARCHAR, UTMSource VARCHAR, UTMMedium VARCHAR, UTMCampaign VARCHAR, UTMContent VARCHAR, UTMTerm VARCHAR, FromTag VARCHAR, HasGCLID SMALLINT, RefererHash BIGINT, URLHash BIGINT, CLID INT";
+
+fn clickbench_queries() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("q01", "SELECT COUNT(*) FROM hits"),
+        ("q02", "SELECT COUNT(*) FROM hits WHERE AdvEngineID <> 0"),
+        (
+            "q03",
+            "SELECT SUM(AdvEngineID), COUNT(*), AVG(ResolutionWidth) FROM hits",
+        ),
+        ("q04", "SELECT AVG(UserID) FROM hits"),
+        ("q05", "SELECT COUNT(DISTINCT UserID) FROM hits"),
+        ("q06", "SELECT COUNT(DISTINCT SearchPhrase) FROM hits"),
+        ("q07", "SELECT MIN(EventDate), MAX(EventDate) FROM hits"),
+        (
+            "q08",
+            "SELECT AdvEngineID, COUNT(*) FROM hits WHERE AdvEngineID <> 0 GROUP BY AdvEngineID ORDER BY COUNT(*) DESC",
+        ),
+        (
+            "q09",
+            "SELECT RegionID, COUNT(DISTINCT UserID) AS u FROM hits GROUP BY RegionID ORDER BY u DESC LIMIT 10",
+        ),
+        (
+            "q10",
+            "SELECT RegionID, SUM(AdvEngineID), COUNT(*) AS c, AVG(ResolutionWidth), COUNT(DISTINCT UserID) FROM hits GROUP BY RegionID ORDER BY c DESC LIMIT 10",
+        ),
+        (
+            "q11",
+            "SELECT MobilePhoneModel, COUNT(DISTINCT UserID) AS u FROM hits WHERE MobilePhoneModel <> '' GROUP BY MobilePhoneModel ORDER BY u DESC LIMIT 10",
+        ),
+        (
+            "q12",
+            "SELECT MobilePhone, MobilePhoneModel, COUNT(DISTINCT UserID) AS u FROM hits WHERE MobilePhoneModel <> '' GROUP BY MobilePhone, MobilePhoneModel ORDER BY u DESC LIMIT 10",
+        ),
+        (
+            "q13",
+            "SELECT SearchPhrase, COUNT(*) AS c FROM hits WHERE SearchPhrase <> '' GROUP BY SearchPhrase ORDER BY c DESC LIMIT 10",
+        ),
+        (
+            "q14",
+            "SELECT SearchPhrase, COUNT(DISTINCT UserID) AS u FROM hits WHERE SearchPhrase <> '' GROUP BY SearchPhrase ORDER BY u DESC LIMIT 10",
+        ),
+        (
+            "q15",
+            "SELECT SearchEngineID, SearchPhrase, COUNT(*) AS c FROM hits WHERE SearchPhrase <> '' GROUP BY SearchEngineID, SearchPhrase ORDER BY c DESC LIMIT 10",
+        ),
+        (
+            "q16",
+            "SELECT UserID, COUNT(*) FROM hits GROUP BY UserID ORDER BY COUNT(*) DESC LIMIT 10",
+        ),
+        (
+            "q17",
+            "SELECT UserID, SearchPhrase, COUNT(*) FROM hits GROUP BY UserID, SearchPhrase ORDER BY COUNT(*) DESC LIMIT 10",
+        ),
+        (
+            "q18",
+            "SELECT UserID, SearchPhrase, COUNT(*) FROM hits GROUP BY UserID, SearchPhrase LIMIT 10",
+        ),
+        (
+            "q19",
+            "SELECT UserID, extract(minute FROM EventTime) AS m, SearchPhrase, COUNT(*) FROM hits GROUP BY UserID, m, SearchPhrase ORDER BY COUNT(*) DESC LIMIT 10",
+        ),
+        (
+            "q20",
+            "SELECT UserID FROM hits WHERE UserID = 435090932899640449",
+        ),
+        ("q21", "SELECT COUNT(*) FROM hits WHERE URL LIKE '%google%'"),
+        (
+            "q22",
+            "SELECT SearchPhrase, MIN(URL), COUNT(*) AS c FROM hits WHERE URL LIKE '%google%' AND SearchPhrase <> '' GROUP BY SearchPhrase ORDER BY c DESC LIMIT 10",
+        ),
+        (
+            "q23",
+            "SELECT SearchPhrase, MIN(URL), MIN(Title), COUNT(*) AS c, COUNT(DISTINCT UserID) FROM hits WHERE Title LIKE '%Google%' AND URL NOT LIKE '%.google.%' AND SearchPhrase <> '' GROUP BY SearchPhrase ORDER BY c DESC LIMIT 10",
+        ),
+        (
+            "q24",
+            "SELECT * FROM hits WHERE URL LIKE '%google%' ORDER BY EventTime LIMIT 10",
+        ),
+        (
+            "q25",
+            "SELECT SearchPhrase FROM hits WHERE SearchPhrase <> '' ORDER BY EventTime LIMIT 10",
+        ),
+        (
+            "q26",
+            "SELECT SearchPhrase FROM hits WHERE SearchPhrase <> '' ORDER BY SearchPhrase LIMIT 10",
+        ),
+        (
+            "q27",
+            "SELECT SearchPhrase FROM hits WHERE SearchPhrase <> '' ORDER BY EventTime, SearchPhrase LIMIT 10",
+        ),
+        (
+            "q28",
+            "SELECT CounterID, AVG(length(URL)) AS l, COUNT(*) AS c FROM hits WHERE URL <> '' GROUP BY CounterID HAVING COUNT(*) > 100000 ORDER BY l DESC LIMIT 25",
+        ),
+        (
+            "q29",
+            "SELECT REGEXP_REPLACE(Referer, '^https?://(?:www\\.)?([^/]+)/.*$', '\\1') AS k, AVG(length(Referer)) AS l, COUNT(*) AS c, MIN(Referer) FROM hits WHERE Referer <> '' GROUP BY k HAVING COUNT(*) > 100000 ORDER BY l DESC LIMIT 25",
+        ),
+        (
+            "q30",
+            "SELECT SUM(ResolutionWidth), SUM(ResolutionWidth + 1), SUM(ResolutionWidth + 2), SUM(ResolutionWidth + 3), SUM(ResolutionWidth + 4), SUM(ResolutionWidth + 5), SUM(ResolutionWidth + 6), SUM(ResolutionWidth + 7), SUM(ResolutionWidth + 8), SUM(ResolutionWidth + 9), SUM(ResolutionWidth + 10), SUM(ResolutionWidth + 11), SUM(ResolutionWidth + 12), SUM(ResolutionWidth + 13), SUM(ResolutionWidth + 14), SUM(ResolutionWidth + 15), SUM(ResolutionWidth + 16), SUM(ResolutionWidth + 17), SUM(ResolutionWidth + 18), SUM(ResolutionWidth + 19), SUM(ResolutionWidth + 20), SUM(ResolutionWidth + 21), SUM(ResolutionWidth + 22), SUM(ResolutionWidth + 23), SUM(ResolutionWidth + 24), SUM(ResolutionWidth + 25), SUM(ResolutionWidth + 26), SUM(ResolutionWidth + 27), SUM(ResolutionWidth + 28), SUM(ResolutionWidth + 29), SUM(ResolutionWidth + 30), SUM(ResolutionWidth + 31), SUM(ResolutionWidth + 32), SUM(ResolutionWidth + 33), SUM(ResolutionWidth + 34), SUM(ResolutionWidth + 35), SUM(ResolutionWidth + 36), SUM(ResolutionWidth + 37), SUM(ResolutionWidth + 38), SUM(ResolutionWidth + 39), SUM(ResolutionWidth + 40), SUM(ResolutionWidth + 41), SUM(ResolutionWidth + 42), SUM(ResolutionWidth + 43), SUM(ResolutionWidth + 44), SUM(ResolutionWidth + 45), SUM(ResolutionWidth + 46), SUM(ResolutionWidth + 47), SUM(ResolutionWidth + 48), SUM(ResolutionWidth + 49), SUM(ResolutionWidth + 50), SUM(ResolutionWidth + 51), SUM(ResolutionWidth + 52), SUM(ResolutionWidth + 53), SUM(ResolutionWidth + 54), SUM(ResolutionWidth + 55), SUM(ResolutionWidth + 56), SUM(ResolutionWidth + 57), SUM(ResolutionWidth + 58), SUM(ResolutionWidth + 59), SUM(ResolutionWidth + 60), SUM(ResolutionWidth + 61), SUM(ResolutionWidth + 62), SUM(ResolutionWidth + 63), SUM(ResolutionWidth + 64), SUM(ResolutionWidth + 65), SUM(ResolutionWidth + 66), SUM(ResolutionWidth + 67), SUM(ResolutionWidth + 68), SUM(ResolutionWidth + 69), SUM(ResolutionWidth + 70), SUM(ResolutionWidth + 71), SUM(ResolutionWidth + 72), SUM(ResolutionWidth + 73), SUM(ResolutionWidth + 74), SUM(ResolutionWidth + 75), SUM(ResolutionWidth + 76), SUM(ResolutionWidth + 77), SUM(ResolutionWidth + 78), SUM(ResolutionWidth + 79), SUM(ResolutionWidth + 80), SUM(ResolutionWidth + 81), SUM(ResolutionWidth + 82), SUM(ResolutionWidth + 83), SUM(ResolutionWidth + 84), SUM(ResolutionWidth + 85), SUM(ResolutionWidth + 86), SUM(ResolutionWidth + 87), SUM(ResolutionWidth + 88), SUM(ResolutionWidth + 89) FROM hits",
+        ),
+        (
+            "q31",
+            "SELECT SearchEngineID, ClientIP, COUNT(*) AS c, SUM(IsRefresh), AVG(ResolutionWidth) FROM hits WHERE SearchPhrase <> '' GROUP BY SearchEngineID, ClientIP ORDER BY c DESC LIMIT 10",
+        ),
+        (
+            "q32",
+            "SELECT WatchID, ClientIP, COUNT(*) AS c, SUM(IsRefresh), AVG(ResolutionWidth) FROM hits WHERE SearchPhrase <> '' GROUP BY WatchID, ClientIP ORDER BY c DESC LIMIT 10",
+        ),
+        (
+            "q33",
+            "SELECT WatchID, ClientIP, COUNT(*) AS c, SUM(IsRefresh), AVG(ResolutionWidth) FROM hits GROUP BY WatchID, ClientIP ORDER BY c DESC LIMIT 10",
+        ),
+        (
+            "q34",
+            "SELECT URL, COUNT(*) AS c FROM hits GROUP BY URL ORDER BY c DESC LIMIT 10",
+        ),
+        (
+            "q35",
+            "SELECT 1, URL, COUNT(*) AS c FROM hits GROUP BY 1, URL ORDER BY c DESC LIMIT 10",
+        ),
+        (
+            "q36",
+            "SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, COUNT(*) AS c FROM hits GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3 ORDER BY c DESC LIMIT 10",
+        ),
+        (
+            "q37",
+            "SELECT URL, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate >= '2013-07-01' AND EventDate <= '2013-07-31' AND DontCountHits = 0 AND IsRefresh = 0 AND URL <> '' GROUP BY URL ORDER BY PageViews DESC LIMIT 10",
+        ),
+        (
+            "q38",
+            "SELECT Title, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate >= '2013-07-01' AND EventDate <= '2013-07-31' AND DontCountHits = 0 AND IsRefresh = 0 AND Title <> '' GROUP BY Title ORDER BY PageViews DESC LIMIT 10",
+        ),
+        (
+            "q39",
+            "SELECT URL, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate >= '2013-07-01' AND EventDate <= '2013-07-31' AND IsRefresh = 0 AND IsLink <> 0 AND IsDownload = 0 GROUP BY URL ORDER BY PageViews DESC LIMIT 10 OFFSET 1000",
+        ),
+        (
+            "q40",
+            "SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL AS Dst, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate >= '2013-07-01' AND EventDate <= '2013-07-31' AND IsRefresh = 0 GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, Dst ORDER BY PageViews DESC LIMIT 10 OFFSET 1000",
+        ),
+        (
+            "q41",
+            "SELECT URLHash, EventDate, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate >= '2013-07-01' AND EventDate <= '2013-07-31' AND IsRefresh = 0 AND TraficSourceID IN (-1, 6) AND RefererHash = 3594120000172545465 GROUP BY URLHash, EventDate ORDER BY PageViews DESC LIMIT 10 OFFSET 100",
+        ),
+        (
+            "q42",
+            "SELECT WindowClientWidth, WindowClientHeight, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate >= '2013-07-01' AND EventDate <= '2013-07-31' AND IsRefresh = 0 AND DontCountHits = 0 AND URLHash = 2868770270353813622 GROUP BY WindowClientWidth, WindowClientHeight ORDER BY PageViews DESC LIMIT 10 OFFSET 10000",
+        ),
+        (
+            "q43",
+            "SELECT DATE_TRUNC('minute', EventTime) AS M, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate >= '2013-07-14' AND EventDate <= '2013-07-15' AND IsRefresh = 0 AND DontCountHits = 0 GROUP BY DATE_TRUNC('minute', EventTime) ORDER BY DATE_TRUNC('minute', EventTime) LIMIT 10 OFFSET 1000",
+        ),
+    ]
+}
+
+fn free_port() -> u16 {
+    let l = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let p = l.local_addr().expect("addr").port();
+    drop(l);
+    p
+}
+
+struct PgServer {
+    pg_port: u16,
+    _db: ProximaDB,
+    _tmp: TempDir,
+}
+
+impl PgServer {
+    async fn start() -> anyhow::Result<Self> {
+        let pg_port = free_port();
+        let rest_port = free_port();
+        let grpc_port = free_port();
+        let tmp = TempDir::new()?;
+        let mut config = Config::default();
+        config.server.bind_address = "127.0.0.1".to_string();
+        config.server.port = rest_port;
+        config.server.data_dir = tmp.path().to_path_buf();
+        config.api.rest_port = rest_port;
+        config.api.grpc_port = grpc_port;
+        config.api.unified_mode = false;
+        config.api.pg_port = Some(pg_port);
+        config.storage.storage_locations = vec![proximadb::core::config::StorageLocation {
+            url: format!("file://{}", tmp.path().display()),
+            ..Default::default()
+        }];
+        config.storage.wal_config.write_buffer_directory =
+            format!("file://{}/wal", tmp.path().display());
+        let mut db = ProximaDB::new(config).await?;
+        db.start().await?;
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .no_proxy()
+            .build()?;
+        let health = format!("http://127.0.0.1:{rest_port}/health");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            match http.get(&health).send().await {
+                Ok(r) if r.status().is_success() => break,
+                _ if Instant::now() > deadline => anyhow::bail!("REST not ready"),
+                _ => sleep(Duration::from_millis(100)).await,
+            }
+        }
+        sleep(Duration::from_millis(200)).await;
+        Ok(Self {
+            pg_port,
+            _db: db,
+            _tmp: tmp,
+        })
+    }
+
+    fn conn_str(&self) -> String {
+        format!(
+            "host=127.0.0.1 port={} user=postgres dbname=proximadb sslmode=disable",
+            self.pg_port
+        )
+    }
+}
+
+async fn connect(server: &PgServer) -> tokio_postgres::Client {
+    let (client, conn) = tokio_postgres::connect(&server.conn_str(), NoTls)
+        .await
+        .expect("connect");
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    client
+}
+
+#[derive(serde::Serialize)]
+struct QueryRecord {
+    query: String,
+    engine: String,
+    ok: bool,
+    rows: usize,
+    wall_ms: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+/// Rewrite `FROM hits` to a DuckDB `read_parquet(...)` over the same object.
+fn duckdb_sql(sql: &str, parquet: &str) -> String {
+    sql.replace("FROM hits", &format!("FROM read_parquet('{parquet}')"))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "ClickBench single-node ledger (TD-OLAP-4) — advisory; needs CLICKBENCH_PARQUET"]
+async fn clickbench_ledger() {
+    let parquet = match std::env::var("CLICKBENCH_PARQUET") {
+        Ok(p) => p,
+        Err(_) => {
+            eprintln!("CLICKBENCH_PARQUET unset — skipping ClickBench ledger");
+            return;
+        }
+    };
+    let parquet_uri = if parquet.starts_with("file://") {
+        parquet.clone()
+    } else {
+        format!("file://{parquet}")
+    };
+    // Allowlist the parquet's directory for the external-table load.
+    let dir = std::path::Path::new(&parquet)
+        .parent()
+        .map(|p| format!("file://{}", p.display()))
+        .unwrap_or_else(|| "file:///".to_string());
+    unsafe { std::env::set_var("PROXIMADB_EXTERNAL_TABLE_ROOTS", &dir) };
+
+    let server = PgServer::start().await.expect("server start");
+    let client = connect(&server).await;
+    client.simple_query("DROP TABLE IF EXISTS hits").await.ok();
+    client
+        .simple_query(&format!(
+            "CREATE TABLE hits ({CLICKBENCH_DDL_COLS}) \
+             WITH (format='parquet', external_location='{parquet_uri}', authority='external')"
+        ))
+        .await
+        .expect("register ClickBench external table");
+
+    let queries = clickbench_queries();
+    let mut records: Vec<QueryRecord> = Vec::new();
+
+    // ProximaDB (DataFusion route).
+    for (id, sql) in &queries {
+        let t0 = Instant::now();
+        let res = client.simple_query(sql).await;
+        let wall_ms = t0.elapsed().as_millis();
+        match res {
+            Ok(msgs) => {
+                let rows = msgs
+                    .iter()
+                    .filter(|m| matches!(m, SimpleQueryMessage::Row(_)))
+                    .count();
+                records.push(QueryRecord {
+                    query: (*id).into(),
+                    engine: "proximadb".into(),
+                    ok: true,
+                    rows,
+                    wall_ms,
+                    error: None,
+                });
+            }
+            Err(e) => records.push(QueryRecord {
+                query: (*id).into(),
+                engine: "proximadb".into(),
+                ok: false,
+                rows: 0,
+                wall_ms,
+                error: Some(
+                    e.as_db_error()
+                        .map(|d| d.message().to_string())
+                        .unwrap_or_else(|| e.to_string()),
+                ),
+            }),
+        }
+    }
+
+    // DuckDB baseline (same Parquet), if a binary is provided.
+    if let Ok(duckdb) = std::env::var("DUCKDB_BIN") {
+        for (id, sql) in &queries {
+            let dsql = duckdb_sql(sql, &parquet);
+            let t0 = Instant::now();
+            let out = std::process::Command::new(&duckdb)
+                .arg("-c")
+                .arg(&dsql)
+                .output();
+            let wall_ms = t0.elapsed().as_millis();
+            let ok = out.as_ref().map(|o| o.status.success()).unwrap_or(false);
+            records.push(QueryRecord {
+                query: (*id).into(),
+                engine: "duckdb".into(),
+                ok,
+                rows: 0,
+                wall_ms,
+                error: (!ok).then(|| {
+                    out.as_ref()
+                        .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
+                        .unwrap_or_else(|_| "duckdb spawn failed".to_string())
+                }),
+            });
+        }
+    }
+
+    // Console summary + ledger.
+    for engine in ["proximadb", "duckdb"] {
+        let rs: Vec<&QueryRecord> = records.iter().filter(|r| r.engine == engine).collect();
+        if rs.is_empty() {
+            continue;
+        }
+        let ok = rs.iter().filter(|r| r.ok).count();
+        let mut walls: Vec<u128> = rs.iter().filter(|r| r.ok).map(|r| r.wall_ms).collect();
+        walls.sort_unstable();
+        let median = walls.get(walls.len() / 2).copied().unwrap_or(0);
+        let total: u128 = walls.iter().sum();
+        eprintln!(
+            "[clickbench/{engine}] ok {ok}/{} · median {median} ms · total {total} ms",
+            rs.len()
+        );
+    }
+
+    let out_path = std::env::var("CLICKBENCH_LEDGER_OUT")
+        .unwrap_or_else(|_| "target/clickbench-ledger/ledger.json".to_string());
+    if let Some(d) = std::path::Path::new(&out_path).parent() {
+        std::fs::create_dir_all(d).expect("ledger dir");
+    }
+    std::fs::write(
+        &out_path,
+        serde_json::to_vec_pretty(&records).expect("serialize"),
+    )
+    .expect("write ledger");
+    eprintln!("ledger written: {out_path}");
+
+    unsafe { std::env::remove_var("PROXIMADB_EXTERNAL_TABLE_ROOTS") };
+
+    // Integrity only: every query has a ProximaDB record.
+    let pdb = records.iter().filter(|r| r.engine == "proximadb").count();
+    assert_eq!(pdb, queries.len(), "one ProximaDB record per query");
+}
