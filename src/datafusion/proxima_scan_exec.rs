@@ -190,16 +190,23 @@ fn split_pruned_by_runtime_filters(
     false
 }
 
-/// Opt-in gate for absorbing DataFusion's join runtime filters into the scan
-/// (default **off**, per the TD-OLAP-3 "default-off, trace-gated" rollout).
-/// Enable with `PROXIMADB_DF_RUNTIME_FILTER_PRUNE=1`; promote once the
-/// TD-OLAP-4 ledger evidences the skip ratio.
+/// Gate for absorbing DataFusion's join runtime filters into the scan.
+///
+/// **Promoted to default-ON** (2026-07-06, TD-OLAP-3 evidence v6, executing the
+/// promotion v5/#696 found evidence-supported). On the four TPC-DS star-join
+/// queries (q3/q42/q52/q55) the runtime filter cuts the same query's `bytes_read`
+/// 30–57% (fact scan collapses to the row groups the `date_dim` build side
+/// selects) — measured stable across scale 0.01/0.05; the other conformance
+/// queries are byte-identical and all 38 return identical result sets on both
+/// gates. Correctness-neutral: the hash join still applies exact semantics, so
+/// absorbing the dynamic filter is a scan-pruning hint. Opt out with
+/// `PROXIMADB_DF_RUNTIME_FILTER_PRUNE=0`.
 pub fn runtime_filter_prune_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
         std::env::var("PROXIMADB_DF_RUNTIME_FILTER_PRUNE")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
+            .unwrap_or(true)
     })
 }
 
@@ -425,27 +432,29 @@ impl ExecutionPlan for ProximaScanExec {
                 let empty_schema = empty_schema.clone();
                 let trace = trace.clone();
                 async move {
-                    if !dynamic_filters.is_empty() {
-                        let pruned = split_pruned_by_runtime_filters(&split, &dynamic_filters);
+                    if !dynamic_filters.is_empty()
+                        && split_pruned_by_runtime_filters(&split, &dynamic_filters)
+                    {
                         // Attribute through the captured handle: this closure runs
                         // on a spawned partition task where the task-local is absent
-                        // (TD-OLAP-3).
+                        // (TD-OLAP-3). Record ONLY the dynamic skip into
+                        // `splits_pruned` — every split reaching `execute` was
+                        // already counted in `splits_total` by the provider
+                        // `scan()` (candidates + static skips). Re-adding to the
+                        // total here double-counts survivors and understates the
+                        // runtime-filter skip ratio the promotion gate reads.
                         match &trace {
-                            Some(t) => t.record_splits(1, pruned as u64),
-                            None => crate::observability::io_trace::record_splits(1, pruned as u64),
+                            Some(t) => t.record_splits(0, 1),
+                            None => crate::observability::io_trace::record_splits(0, 1),
                         }
-                        if pruned {
-                            debug!(
-                                "Runtime filter skipped split {} of '{}' (partition {})",
-                                split.split_id, collection_name, partition
-                            );
-                            let empty: SendableRecordBatchStream =
-                                Box::pin(RecordBatchStreamAdapter::new(
-                                    empty_schema,
-                                    futures::stream::empty(),
-                                ));
-                            return Ok(empty);
-                        }
+                        debug!(
+                            "Runtime filter skipped split {} of '{}' (partition {})",
+                            split.split_id, collection_name, partition
+                        );
+                        let empty: SendableRecordBatchStream = Box::pin(
+                            RecordBatchStreamAdapter::new(empty_schema, futures::stream::empty()),
+                        );
+                        return Ok(empty);
                     }
                     reader
                         .read_split(&split, projection.as_deref(), batch_size)

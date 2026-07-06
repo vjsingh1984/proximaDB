@@ -851,12 +851,29 @@ async fn tpc_perf_ledger() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.001);
+    // Iteration filters (diagnostic / gate-comparison runs): restrict to one
+    // benchmark and/or a comma-separated query-id list. Unset ⇒ the full
+    // advisory ledger. Used by the TD-OLAP-3 baseline-vs-gate re-measure.
+    let benchmark_filter = std::env::var("TPC_PERF_BENCHMARK").ok();
+    let query_filter: Option<Vec<String>> = std::env::var("TPC_PERF_QUERIES")
+        .ok()
+        .map(|s| s.split(',').map(|q| q.trim().to_string()).collect());
+    let filtered = benchmark_filter.is_some() || query_filter.is_some();
+    let keep_queries = |queries: Vec<(&'static str, String)>| -> Vec<(&'static str, String)> {
+        match &query_filter {
+            Some(ids) => queries
+                .into_iter()
+                .filter(|(id, _)| ids.iter().any(|q| q == id))
+                .collect(),
+            None => queries,
+        }
+    };
     eprintln!("=== tpc-perf-ledger harness (TPC_PERF_SCALE={scale}) ===");
 
     let mut records = Vec::new();
 
     // Fresh server per benchmark: TPC-H and TPC-DS both define `customer`.
-    {
+    if benchmark_filter.as_deref().is_none_or(|b| b == "tpch") {
         let server = PgServer::start().await.expect("server start (tpch)");
         let client = connect(&server).await;
         run_benchmark(
@@ -864,13 +881,13 @@ async fn tpc_perf_ledger() {
             "tpch",
             TPCH_SCHEMA,
             gen_tpch(scale),
-            tpch_queries(),
+            keep_queries(tpch_queries()),
             &mut records,
         )
         .await;
         server.shutdown().await;
     }
-    {
+    if benchmark_filter.as_deref().is_none_or(|b| b == "tpcds") {
         let server = PgServer::start().await.expect("server start (tpcds)");
         let client = connect(&server).await;
         run_benchmark(
@@ -878,7 +895,7 @@ async fn tpc_perf_ledger() {
             "tpcds",
             TPCDS_SCHEMA,
             gen_tpcds(scale),
-            tpcds_queries(),
+            keep_queries(tpcds_queries()),
             &mut records,
         )
         .await;
@@ -935,12 +952,16 @@ async fn tpc_perf_ledger() {
     eprintln!("ledger written: {out_path}");
 
     // Advisory skeleton: assert only harness integrity, never perf numbers.
-    let n_queries = 22 + 16;
-    assert_eq!(
-        ledger.records.len(),
-        n_queries * 2 /* routes */ * 2, /* temperatures */
-        "one record per query x route x temperature"
-    );
+    // Skipped for filtered diagnostic runs — the fixed count is only meaningful
+    // for the full ledger.
+    if !filtered {
+        let n_queries = 22 + 16;
+        assert_eq!(
+            ledger.records.len(),
+            n_queries * 2 /* routes */ * 2, /* temperatures */
+            "one record per query x route x temperature"
+        );
+    }
 }
 
 /// TD-OLAP-6 regression: MATERIALIZE must publish CLUSTERED row groups.
