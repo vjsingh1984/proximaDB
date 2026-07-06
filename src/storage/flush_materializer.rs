@@ -140,9 +140,18 @@ pub async fn materialize_collection(
         .collect();
     let vector_count = vector_records.len() as u64;
 
-    // Resolve + create the collection's configured engine (proven factory path).
-    let proto_engine =
-        ProtoStorageEngine::try_from(plan.engine_type).unwrap_or(ProtoStorageEngine::Sst);
+    // Resolve the collection's configured engine (proven factory path). An
+    // unrecognized engine id is a misconfiguration — fail loudly rather than
+    // silently substituting SST, which would write the collection's data in a
+    // different on-disk format than it was configured for.
+    let proto_engine = ProtoStorageEngine::try_from(plan.engine_type).map_err(|_| {
+        anyhow::anyhow!(
+            "flush: collection '{}' declares an unrecognized storage engine id {} — \
+             refusing to substitute a default engine",
+            plan.wal_key,
+            plan.engine_type
+        )
+    })?;
     let engine =
         match crate::storage::engines::factory::StorageFormatFactory::create_from_proto_async(
             proto_engine,

@@ -111,7 +111,7 @@ pub mod flags {
 /// [8..10]  column_count       u16
 /// [10..14] row_count          u32
 /// [14..18] block_size         u32  (total bytes including header)
-/// [18..22] checksum           u32  crc32c of bytes [22..block_size]
+/// [18..22] checksum           u32  crc32 (IEEE) of bytes [64..block_size]
 /// [22..24] _pad               u16
 /// [24..32] collection_id_hash u64  xxhash64(collection_id)
 /// [32..40] schema_fingerprint u64  schema version fingerprint
@@ -128,7 +128,9 @@ pub struct BlockHeader {
     pub row_count: u32,
     /// Total block size in bytes (including this 64-byte header).
     pub block_size: u32,
-    /// crc32c checksum of bytes [22..block_size] (everything after the checksum field).
+    /// crc32 (IEEE) checksum of bytes [HEADER_SIZE..block_size] (the block body,
+    /// i.e. everything after the 64-byte header). Verified on read by
+    /// `PaxBlockReader::open`.
     pub checksum: u32,
     /// xxhash64 of the UTF-8 collection identifier.
     pub collection_id_hash: u64,
@@ -194,8 +196,15 @@ impl BlockHeader {
 
     /// True if this block may contain rows for the given `tenant_id_hash`.
     ///
-    /// Returns `true` conservatively (when hash is 0, block is multi-tenant
-    /// or tenant hash is not set).
+    /// This is a block-level **pruning hint**, not the tenant-isolation
+    /// boundary: it lets a scan skip blocks that provably hold no rows for the
+    /// querying tenant. A `tenant_id_hash` of 0 means the block is
+    /// **mixed-tenant** — the writer stamps 0 whenever a single block accretes
+    /// records from more than one tenant (see `PaxBlockWriter`) — so such a
+    /// block cannot be pruned by tenant and is conservatively scanned. Tenant
+    /// isolation for mixed blocks is enforced downstream by **row-level**
+    /// tenant filtering, never by this method alone; returning `true` here is
+    /// therefore correct (a superset), not a fail-open leak.
     pub fn tenant_matches(&self, tenant_hash: u64) -> bool {
         self.tenant_id_hash == 0 || self.tenant_id_hash == tenant_hash
     }
