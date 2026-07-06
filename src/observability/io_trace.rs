@@ -59,6 +59,7 @@
 //! to a `tracing-appender` JSON file sink.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -70,7 +71,15 @@ pub const TARGET: &str = "proximadb::io_trace";
 tokio::task_local! {
     /// Active per-query I/O trace for the current task. Bound by [`scope`] /
     /// [`instrument`].
-    static IO_TRACE: IoTrace;
+    ///
+    /// Held behind an `Arc` so a handle can be cloned out via
+    /// [`current_handle`] and captured by components (e.g. `TracingObjectStore`,
+    /// `ProximaScanExec`) whose I/O later runs on DataFusion-**spawned** tokio
+    /// tasks — a `task_local!` does not cross `tokio::spawn`, so those tasks
+    /// must record through a captured handle rather than this task-local
+    /// (TD-OLAP-3). All counters are atomic, so concurrent spawned readers
+    /// aggregate into the one shared trace correctly.
+    static IO_TRACE: Arc<IoTrace>;
 }
 
 /// Classification of an object-store operation by its cost shape. The universe
@@ -532,6 +541,17 @@ pub fn snapshot() -> Option<IoTraceSnapshot> {
     IO_TRACE.try_with(|t| t.snapshot()).ok()
 }
 
+/// Clone out an `Arc` handle to the active query trace, if any.
+///
+/// Components whose I/O later runs on DataFusion-spawned tokio tasks (where the
+/// `IO_TRACE` task-local is absent) capture this handle **while still in the
+/// query scope** — table open / physical planning — and record through it, so
+/// their reads attribute to the correct per-query trace (TD-OLAP-3). Returns
+/// `None` outside any [`scope`]/[`instrument`].
+pub fn current_handle() -> Option<Arc<IoTrace>> {
+    IO_TRACE.try_with(|t| t.clone()).ok()
+}
+
 /// Observer invoked at trace flush with `(snapshot, shape_class, backend_label)`
 /// when the query stamped a route. This is the dependency-inversion seam: the
 /// query layer registers a sink that feeds the trace-driven route cost model
@@ -618,7 +638,7 @@ fn notify_billing_observer(snap: &IoTraceSnapshot, tenant_id: Option<&str>) {
 /// [`instrument`]; use when the caller wants to read the snapshot itself before
 /// the scope ends.
 pub async fn scope<F: std::future::Future>(future: F) -> F::Output {
-    IO_TRACE.scope(IoTrace::new(), future).await
+    IO_TRACE.scope(Arc::new(IoTrace::new()), future).await
 }
 
 /// Wrap a query future in a fresh trace, run it, then emit the captured
@@ -635,7 +655,7 @@ where
 {
     let route = route.into();
     IO_TRACE
-        .scope(IoTrace::new(), async move {
+        .scope(Arc::new(IoTrace::new()), async move {
             let out = future.await;
             // Still inside the scope: read and emit before the binding drops.
             if let Ok((snap, stamped_route)) = IO_TRACE.try_with(|t| (t.snapshot(), t.route())) {
