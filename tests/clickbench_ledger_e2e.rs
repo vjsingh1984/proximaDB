@@ -10,7 +10,10 @@
 //!
 //! Requires a ClickBench `hits` Parquet (VARCHAR string cols); point
 //! `CLICKBENCH_PARQUET` at it. Its directory is auto-allowlisted for the
-//! external-table load. Run:
+//! external-table load. The Parquet columns MUST be lowercase: ProximaDB folds
+//! unquoted SQL identifiers to lowercase while DataFusion resolves the external
+//! Parquet schema case-sensitively, so a CamelCase column (`CounterID`) never
+//! matches the folded reference (`counterid`). See the v1 evidence doc. Run:
 //!   CLICKBENCH_PARQUET=/path/cb_hits.parquet DUCKDB_BIN=/path/duckdb \
 //!     cargo test --features datafusion-integration --test clickbench_ledger_e2e \
 //!     clickbench_ledger -- --ignored --nocapture
