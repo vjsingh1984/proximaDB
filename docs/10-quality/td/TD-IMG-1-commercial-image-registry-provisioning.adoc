@@ -1,0 +1,55 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-IMG-1: Commercial image build blocked on operator registry provisioning + cloud creds
+:toc: macro
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Open** (blocked — external operator action)
+| Severity | Low — the OSS multi-arch image publishes fine; the commercial overlay is an out-of-band operator/provisioning task, known-red independent of any code in this repo.
+| Component | Release/infra — commercial (AnvaiOps) pipeline that overlays pricing onto the OSS image and pushes to ACR/ECR. OSS base: `.github/workflows/publish-image.yml`, `deploy/docker/Dockerfile` target `runtime`.
+| Relates to | `TD-EMBED-1` (the other shipped-release follow-up); `deploy/docker/IMAGE_PUBLISH.md`
+| Pillar | RELEASE/INFRA
+|===
+
+toc::[]
+
+== Symptom
+
+The **commercial** ProximaDB image build is red, independent of the OSS work. It is not a
+code defect and not automatable from this repo: it requires an operator to **provision the
+target container registry (Azure ACR / AWS ECR) and supply cloud credentials** to the
+commercial pipeline before the overlay build can push.
+
+== Context / boundary
+
+* This repo publishes the **public OSS** image `vjsingh1984/proximadb` to Docker Hub, built
+  multi-arch (`linux/amd64` + `linux/arm64`, native per-arch runners) by
+  `.github/workflows/publish-image.yml`. That path is healthy.
+* The **commercial** pipeline (AnvaiOps) consumes that OSS image as a base, overlays pricing/
+  entitlement, and pushes to a **commercial registry (ACR/ECR)**. Auth for that push is
+  registry credentials the operator holds — not repo secrets, not something a code change
+  here can satisfy.
+* Therefore the red state is an **infra provisioning dependency**, tracked here so it is not
+  mistaken for a build regression in this repo.
+
+== Fix approach (operator action, out-of-band)
+
+. Provision the commercial registry (ACR or ECR) for the target cloud account.
+. Supply the registry credentials to the AnvaiOps commercial pipeline (scoped push token /
+  service principal / OIDC — prefer keyless OIDC over a long-lived token where the registry
+  supports it, mirroring the OSS Docker Hub setup).
+. Re-run the commercial overlay build; confirm the pushed digest resolves and the pricing
+  overlay is present.
+
+No change to this repo's `publish-image.yml` or `Dockerfile` is expected. If the OSS image
+shape needs to change to unblock the overlay (e.g. a new `runtime-*` target), file that as a
+separate, code-scoped TD.
+
+== Verification
+
+* Commercial registry exists and the pipeline authenticates (push succeeds).
+* Commercial image pulls and runs; pricing/entitlement overlay is applied on top of the OSS
+  `runtime` base.
+* OSS `publish-image.yml` remains untouched and green.
