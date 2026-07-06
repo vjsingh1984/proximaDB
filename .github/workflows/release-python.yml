@@ -69,6 +69,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Linux-only: proximadb_embedded links the full Rust engine, which is
+        # Linux-native (unix storage APIs). Windows does not compile
+        # (proximadb-storage-common: E0425/E0433/E0599 — no MSVC port); macOS is
+        # deferred. Linux x86_64 + aarch64 is the embedded / edge / air-gapped
+        # deployment surface for an in-process engine. macOS/Windows embedded
+        # wheels are a tracked follow-up (Windows blocked on engine portability,
+        # not a build-config fix).
         include:
           - os: ubuntu-latest
             target: x86_64
@@ -76,12 +83,6 @@ jobs:
           - os: ubuntu-latest
             target: aarch64
             manylinux: auto
-          - os: macos-13
-            target: x86_64
-          - os: macos-14
-            target: aarch64
-          - os: windows-latest
-            target: x64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
