@@ -69,19 +69,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Linux-only: proximadb_embedded links the full Rust engine, which is
+        # Linux-native (unix storage APIs). Windows does not compile
+        # (proximadb-storage-common: E0425/E0433/E0599 — no MSVC port); macOS is
+        # deferred. Linux x86_64 + aarch64 is the embedded / edge / air-gapped
+        # deployment surface for an in-process engine. macOS/Windows embedded
+        # wheels are a tracked follow-up (Windows blocked on engine portability,
+        # not a build-config fix).
         include:
           - os: ubuntu-latest
             target: x86_64
             manylinux: auto
-          - os: ubuntu-latest
+          # Native ARM runner (not cross-compile): the engine's C deps —
+          # aws-lc-sys (rustls crypto) and vendored OpenSSL — fail to
+          # cross-compile to aarch64 (aws-lc bcm.c under aarch64-gcc). Building
+          # natively on an ARM runner compiles them the same way x86_64 does,
+          # avoiding the cross-toolchain entirely.
+          - os: ubuntu-24.04-arm
             target: aarch64
             manylinux: auto
-          - os: macos-13
-            target: x86_64
-          - os: macos-14
-            target: aarch64
-          - os: windows-latest
-            target: x64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -95,6 +101,24 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || '' }}
           args: --release --out dist --features python
+          # `openssl/vendored` (enabled by the python feature — openssl-sys is
+          # transitive via sqlx/reqwest) builds OpenSSL from source inside the
+          # manylinux container. openssl-src's Configure needs Perl's IPC::Cmd,
+          # which the stock manylinux2014 image lacks. Install it (yum or dnf,
+          # whichever the image ships) before the build. Linux-only hook; macOS/
+          # Windows system Perl already carries these modules.
+          before-script-linux: |
+            # perl-core = the full Perl stdlib (IPC::Cmd, Time::Piece,
+            # Data::Dumper, Getopt::Long, File::Compare … all of which
+            # openssl 3.x's Configure needs). Verified in the manylinux2014
+            # container that perl-core supplies every module the build requires.
+            if command -v yum >/dev/null 2>&1; then
+              yum install -y perl-core
+            elif command -v dnf >/dev/null 2>&1; then
+              dnf install -y perl-core
+            elif command -v microdnf >/dev/null 2>&1; then
+              microdnf install -y perl-core
+            fi
       - uses: actions/upload-artifact@v4
         with:
           name: embedded-wheels-${{ matrix.os }}-${{ matrix.target }}
