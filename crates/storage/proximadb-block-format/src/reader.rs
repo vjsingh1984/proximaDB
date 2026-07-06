@@ -24,9 +24,7 @@ use crate::{
     row_dir::{ROW_ENTRY_SIZE, RowDirectory},
     rowgroup::RowGroupBlock,
     stripe::{COLUMN_META_SIZE, ColumnMeta},
-    vparam::{
-        QUANT_FP16, QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock,
-    },
+    vparam::{QUANT_FP16, QUANT_RABITQ, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock},
     writer::{BLOCK_FOOTER_SIZE, BlockFooter},
 };
 use proximadb_codec::functions::{rabitq, sq8};
@@ -315,7 +313,7 @@ impl<'a> PaxBlockReader<'a> {
         let raw = self.read_stripe_raw(column_id)?;
         let n = self.row_count() as usize;
         let entry = self.vparams.get(column_id)?;
-        if entry.quant_kind == QUANT_RABITQ_RESERVED {
+        if entry.quant_kind == QUANT_RABITQ {
             // RaBitQ is a search representation; reconstruction is coarse (direction
             // preserved, magnitude approximate). Exact rerank uses a full-f32 tier.
             let col = self.vparams.rabitq_column(column_id)?;
@@ -333,7 +331,7 @@ impl<'a> PaxBlockReader<'a> {
         column_id: i32,
     ) -> Option<(RaBitQParams, Vec<Option<RaBitQCode>>)> {
         let entry = self.vparams.get(column_id)?;
-        if entry.quant_kind != QUANT_RABITQ_RESERVED {
+        if entry.quant_kind != QUANT_RABITQ {
             return None;
         }
         let col = self.vparams.rabitq_column(column_id)?;
@@ -1472,7 +1470,7 @@ mod tests {
                 .get(col_id::EMBED_BASE)
                 .unwrap()
                 .quant_kind,
-            crate::vparam::QUANT_RABITQ_RESERVED
+            crate::vparam::QUANT_RABITQ
         );
         assert_eq!(
             reader
@@ -1540,7 +1538,7 @@ mod tests {
                 .get(crate::col_id::EMBED_BASE)
                 .unwrap()
                 .quant_kind,
-            crate::vparam::QUANT_RABITQ_RESERVED
+            crate::vparam::QUANT_RABITQ
         );
 
         // Rerank the full candidate set against a query; FP16 distances must
@@ -1815,7 +1813,7 @@ mod tests {
 
         // Both vector columns present and correctly quantized.
         let emb = reader.vector_params().get(col_id::EMBED_BASE).unwrap();
-        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ_RESERVED);
+        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ);
         let rer = reader
             .vector_params()
             .get(crate::col_id::RERANK_BASE)
@@ -1870,7 +1868,7 @@ mod tests {
 
         // The cosine path uses the same RaBitQ + SQ8 columns as L2.
         let emb = reader.vector_params().get(col_id::EMBED_BASE).unwrap();
-        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ_RESERVED);
+        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ);
         assert_eq!(
             reader
                 .vector_params()

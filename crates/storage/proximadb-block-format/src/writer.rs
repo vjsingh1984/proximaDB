@@ -35,8 +35,8 @@ use crate::{
     rowgroup::{RowGroupBlock, RowGroupEntry, f64_bounds, i64_bounds},
     stripe::{COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe},
     vparam::{
-        QUANT_FP16, QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn,
-        VectorParamBlock, VectorParamEntry,
+        QUANT_FP16, QUANT_RABITQ, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock,
+        VectorParamEntry,
     },
 };
 
@@ -729,12 +729,7 @@ impl PaxBlockWriter {
         };
         let (data, scheme, quant_kind, rabitq_col) = if use_rabitq {
             let (bytes, col) = encode_f32_vec_rabitq(vals, dim, id);
-            (
-                bytes,
-                ProximaScheme::RaBitQ,
-                QUANT_RABITQ_RESERVED,
-                Some(col),
-            )
+            (bytes, ProximaScheme::RaBitQ, QUANT_RABITQ, Some(col))
         } else if use_sq8 {
             (
                 encode_f32_vec_sq8(vals, dim, &params),
