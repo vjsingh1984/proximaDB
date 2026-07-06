@@ -248,7 +248,7 @@ xz2 = "0.1"
 zstd = "0.13"
 
 # Language bindings
-pyo3 = { version = "0.28", features = ["extension-module"] }
+pyo3 = { version = "0.28", features = ["extension-module", "abi3-py38"] }
 numpy = { version = "0.28" }
 
 # TurboQuant numerics (ADR-021, gated by `experimental-turboquant`).
