@@ -553,6 +553,14 @@ moka = { version = "0.12", features = ["future"] }
 # Language bindings (optional, for embedded mode)
 # Python bindings via PyO3
 pyo3 = { workspace = true, optional = true }
+# Vendored OpenSSL for the embedded wheel build only (see the `python` feature).
+# `openssl-sys` reaches the tree transitively (sqlx tls-native-tls + reqwest 0.11
+# default-tls). The manylinux wheel container has no system openssl, so the
+# maturin build fails at link time. Declaring openssl here with `vendored` and
+# gating it under `python` makes only the wheel build compile OpenSSL from source
+# (portable, cross-target-safe); the OSS server build never pulls this dep and
+# keeps dynamic system openssl.
+openssl = { version = "0.10", optional = true }
 # Zero-copy NumPy array access (matches PyO3 version)
 # Provides direct buffer access to numpy arrays without Python .tolist() conversion
 numpy = { workspace = true, optional = true }
@@ -779,7 +787,7 @@ experimental-cdc-connectors = ["dep:tokio-postgres"]
 # Enable language-specific bindings for embedded database mode
 
 # Python embedded mode (PyO3 bindings with zero-copy numpy support)
-python = ["dep:pyo3", "dep:numpy", "arrow/pyarrow"]  # Enable Python bindings with zero-copy numpy support (arrow/pyarrow pulls pyo3 → gated here so the OSS server build stays Python-free)
+python = ["dep:pyo3", "dep:numpy", "arrow/pyarrow", "dep:openssl", "openssl/vendored"]  # Enable Python bindings with zero-copy numpy support (arrow/pyarrow pulls pyo3 → gated here so the OSS server build stays Python-free). openssl/vendored statically builds OpenSSL so the manylinux wheel needs no system openssl (transitive via sqlx/reqwest).
 
 # Python cdylib output (for PyO3/FFI builds)
 # When enabled, changes crate-type to include cdylib for Python shared library generation
