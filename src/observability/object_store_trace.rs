@@ -243,4 +243,52 @@ mod tests {
         let bytes = store.get_range(&path, 0..8).await.unwrap();
         assert_eq!(bytes.len(), 8);
     }
+
+    /// TD-OLAP-3 regression: a store wrapped IN a query scope must still
+    /// attribute a read that runs on a **spawned** task — the exact shape of a
+    /// DataFusion multi-partition scan (`CoalescePartitionsExec` drives each
+    /// partition on `tokio::spawn`). Before the `Arc<IoTrace>` handle capture,
+    /// the spawned task lost the `IO_TRACE` task-local and the bytes went
+    /// uncounted; with the captured handle they attribute correctly.
+    #[tokio::test]
+    async fn records_bytes_from_spawned_task_via_captured_handle() {
+        let inner: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let path = Path::from("t/data.bin");
+        inner
+            .put(&path, PutPayload::from_static(&[0u8; 4096]))
+            .await
+            .unwrap();
+
+        static CAPTURED: Mutex<Option<IoTraceSnapshot>> = Mutex::new(None);
+        io_trace::set_billing_observer(Some(Box::new(|snap, _tenant| {
+            *CAPTURED.lock().unwrap_or_else(|p| p.into_inner()) = Some(snap.clone());
+        })));
+
+        io_trace::instrument(None, "test", async move {
+            // Wrap INSIDE the scope so the handle is captured (as table-open does).
+            let store = TracingObjectStore::wrap(inner.clone());
+            let path = path.clone();
+            // Read on a spawned task: the task-local is absent there, so this
+            // only records if the captured handle is used.
+            tokio::spawn(async move {
+                let bytes = store.get_range(&path, 0..512).await.unwrap();
+                assert_eq!(bytes.len(), 512);
+            })
+            .await
+            .unwrap();
+        })
+        .await;
+        io_trace::set_billing_observer(None);
+
+        let snapshot = CAPTURED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+            .expect("billing observer captured a snapshot");
+        assert_eq!(
+            snapshot.bytes_read, 512,
+            "spawned-task read attributed via captured handle"
+        );
+        assert_eq!(snapshot.range_gets, 1, "spawned-task ranged GET counted");
+    }
 }
