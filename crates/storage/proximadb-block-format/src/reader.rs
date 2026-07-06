@@ -16,6 +16,7 @@
 //! stripes are read at that index position.
 
 use anyhow::{Result, bail};
+use crc32fast::Hasher as Crc32;
 use proximadb_codec::{ProximaScheme, functions};
 
 use crate::{
@@ -69,6 +70,17 @@ impl<'a> PaxBlockReader<'a> {
             bail!("block too small: {} bytes", data.len());
         }
         let header = BlockHeader::from_bytes(&data[..HEADER_SIZE])?;
+
+        // Verify block integrity before interpreting any footer offsets. The
+        // writer stamps crc32(body) where body = bytes [HEADER_SIZE..block_size]
+        // (everything after the 64-byte header); a mismatch means the block was
+        // silently corrupted on disk or in flight, so we fail closed rather than
+        // decode garbage. This guards the whole-block read path (compaction,
+        // local reads, OLTP full-row reads); the footer-first ranged path
+        // (`ranged.rs`) fetches partial byte ranges and cannot run this
+        // whole-block check — extending integrity to per-stripe/per-range CRCs
+        // for the ranged reader is a known follow-up.
+        verify_block_checksum(data, &header)?;
 
         // Read block footer (last BLOCK_FOOTER_SIZE bytes)
         let footer_start = data.len() - BLOCK_FOOTER_SIZE;
@@ -593,6 +605,32 @@ impl<'a> PaxBlockReader<'a> {
     }
 }
 
+/// Recompute and check the block's CRC32 against the value stamped in its
+/// header. `body` is `data[HEADER_SIZE..block_size]` — exactly the bytes the
+/// writer hashed (see `PaxBlockWriter::flush`). Returns an error on a truncated
+/// buffer or a checksum mismatch (silent corruption), so the reader never
+/// decodes bytes it cannot vouch for.
+fn verify_block_checksum(data: &[u8], header: &BlockHeader) -> Result<()> {
+    let block_size = header.block_size as usize;
+    if block_size < HEADER_SIZE || block_size > data.len() {
+        bail!(
+            "block size {block_size} inconsistent with buffer {} bytes (truncated or corrupt)",
+            data.len()
+        );
+    }
+    let mut hasher = Crc32::new();
+    hasher.update(&data[HEADER_SIZE..block_size]);
+    let actual = hasher.finalize();
+    if actual != header.checksum {
+        bail!(
+            "block checksum mismatch: header {:#010x} != computed {:#010x} (corruption)",
+            header.checksum,
+            actual
+        );
+    }
+    Ok(())
+}
+
 fn scheme_from_encoding_id(encoding_id: u8) -> Option<ProximaScheme> {
     match encoding_id {
         0 => Some(ProximaScheme::Raw),
@@ -1007,6 +1045,46 @@ mod tests {
         assert_eq!(stats.upper_bounds.get(&col_id::CREATED_AT), Some(&3000));
         assert!(stats.hash_lower_bounds.contains_key(&col_id::TENANT_ID));
         assert!(stats.bloom_filter_bytes.contains_key(&col_id::TENANT_ID));
+    }
+
+    #[test]
+    fn open_rejects_corrupted_block() {
+        // A block whose body is mutated after the writer stamped its CRC must be
+        // rejected by `open` — silent corruption is caught, not decoded.
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 0);
+        writer.add_record(&make_record("r1", "t", 1000)).unwrap();
+        writer.add_record(&make_record("r2", "t", 2000)).unwrap();
+        let block = writer.flush().unwrap();
+
+        // Sanity: the pristine block opens.
+        assert!(PaxBlockReader::open(&block).is_ok());
+
+        // Flip one body byte (past the 64-byte header) → checksum must fail.
+        // (`PaxBlockReader` has no Debug impl, so we can't use `unwrap_err`.)
+        let mut corrupt = block.clone();
+        corrupt[HEADER_SIZE + 1] ^= 0xff;
+        let err = match PaxBlockReader::open(&corrupt) {
+            Ok(_) => panic!("expected corrupted block to be rejected"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("checksum mismatch"),
+            "expected checksum rejection, got: {err}"
+        );
+
+        // A buffer whose declared block_size exceeds its length is rejected as
+        // truncated before any offset is interpreted.
+        let truncated = &block[..block.len() - 1];
+        let err = match PaxBlockReader::open(truncated) {
+            Ok(_) => panic!("expected truncated block to be rejected"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("truncated")
+                || err.to_string().contains("checksum")
+                || err.to_string().contains("too small"),
+            "expected truncation/checksum rejection, got: {err}"
+        );
     }
 
     #[test]
