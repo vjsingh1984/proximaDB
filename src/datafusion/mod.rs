@@ -133,6 +133,8 @@ pub use engine_adapters::{
     HelixTableProvider,
     ObjectStoreParquetSplitReader,
     ObjectStoreParquetTable,
+    // PAX-native OLAP scan (TD-OLAP-1 slice 1, default-off; bridges PaxBlockReader → Arrow)
+    PaxSplitReader,
     SstSplitReader,
     // SST engine adapter
     SstTableProvider,
