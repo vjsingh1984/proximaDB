@@ -1218,6 +1218,22 @@ impl PostgresProtocol {
                     // CREATE-then-INSERT address one tenant-prefixed schema row.
                     let ddl_tenant = self.pgwire_resolve_write_tenant().await;
                     let ddl_scope = (!ddl_tenant.is_empty()).then_some(ddl_tenant);
+                    // Capture the target table BEFORE the statement is moved into
+                    // execute_scoped, so the success branch can invalidate the
+                    // tenant-scoped OLAP result cache for it.
+                    let ddl_table: Option<String> = match &statement {
+                        crate::services::DdlStatement::CreateTable { table_name, .. }
+                        | crate::services::DdlStatement::DropTable { table_name, .. }
+                        | crate::services::DdlStatement::AlterTable { table_name, .. }
+                        | crate::services::DdlStatement::CreateIndex { table_name, .. }
+                        | crate::services::DdlStatement::DropIndex { table_name, .. } => {
+                            Some(table_name.clone())
+                        }
+                        crate::services::DdlStatement::MaterializeTable { name, .. } => {
+                            Some(name.clone())
+                        }
+                        _ => None,
+                    };
                     match ddl_service
                         .execute_scoped(statement, ddl_scope.as_deref())
                         .await
@@ -1246,6 +1262,15 @@ impl PostgresProtocol {
                             } else {
                                 "OK"
                             };
+                            // Mandate #16b: invalidate the tenant-scoped OLAP
+                            // result cache for the DDL'd table (default-OFF no-op).
+                            if let Some(table) = &ddl_table {
+                                super::relational_pipeline::invalidate_olap_result_cache_for(
+                                    ddl_scope.as_deref().unwrap_or(""),
+                                    table,
+                                )
+                                .await;
+                            }
                             info!(message = %result.message, "DDL executed via catalog service");
                             return self.send_command_complete(tag).await;
                         }
@@ -1484,6 +1509,12 @@ impl PostgresProtocol {
         controls: ExecutionControls,
     ) -> Option<Result<ExecutionPipelineResult, String>> {
         let read_tenant = self.pgwire_resolve_read_tenant().await;
+        // Namespace (pgwire `search_path`) + the shared OLAP result cache are a
+        // structural key component / a short-circuit. The cache is default-OFF
+        // (`PROXIMADB_QUERY_RESULT_CACHE`); `None` ⇒ this path is byte-identical
+        // to the pre-cache behavior.
+        let namespace = self.session.read().await.current_schema();
+        let olap_cache = super::relational_pipeline::olap_result_cache();
         super::relational_pipeline::try_run_select(
             query,
             self.dml_service.as_ref(),
@@ -1500,6 +1531,8 @@ impl PostgresProtocol {
             // pgwire keeps simple single-table SELECTs on its hardened legacy
             // path; only relational-engaging shapes go through this pipeline.
             true,
+            Some(namespace.as_str()),
+            olap_cache.as_deref(),
         )
         .await
     }
@@ -3606,6 +3639,13 @@ impl PostgresProtocol {
                             rows_affected = result.rows_affected,
                             "INSERT executed via DmlService"
                         );
+                        // Mandate #16b: invalidate the tenant-scoped OLAP result
+                        // cache for the written table (default-OFF no-op).
+                        super::relational_pipeline::invalidate_olap_result_cache_for(
+                            &write_tenant,
+                            &table,
+                        )
+                        .await;
                         self.send_command_complete(&format!("INSERT 0 {}", result.rows_affected))
                             .await
                     }
@@ -3721,6 +3761,13 @@ impl PostgresProtocol {
                             rows_affected = result.rows_affected,
                             "DELETE executed via DmlService"
                         );
+                        // Mandate #16b: invalidate the tenant-scoped OLAP result
+                        // cache for the written table (default-OFF no-op).
+                        super::relational_pipeline::invalidate_olap_result_cache_for(
+                            &write_tenant,
+                            &table,
+                        )
+                        .await;
                         self.send_command_complete(&format!("DELETE {}", result.rows_affected))
                             .await
                     }
@@ -3830,6 +3877,13 @@ impl PostgresProtocol {
                             rows_affected = result.rows_affected,
                             "UPDATE executed via DmlService"
                         );
+                        // Mandate #16b: invalidate the tenant-scoped OLAP result
+                        // cache for the written table (default-OFF no-op).
+                        super::relational_pipeline::invalidate_olap_result_cache_for(
+                            &write_tenant,
+                            &table,
+                        )
+                        .await;
                         self.send_command_complete(&format!("UPDATE {}", result.rows_affected))
                             .await
                     }

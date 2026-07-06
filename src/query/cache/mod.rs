@@ -133,8 +133,9 @@ pub use adaptive_cache::{
     AccessPattern, AdaptiveCacheConfig, AdaptiveCacheEntry, AdaptiveCacheStats, AdaptiveQueryCache,
 };
 pub use query_result_cache::{
-    CachedResult, QueryCacheError, QueryCacheKey, QueryCacheResult, QueryCacheStats, QueryKey,
-    QueryResultCache, QueryResultCacheConfig,
+    CacheableResult, CachedResult, CompositeMapKey, FederatedQueryResultCache, QueryCacheError,
+    QueryCacheKey, QueryCacheResult, QueryCacheStats, QueryKey, QueryResultCache,
+    QueryResultCacheConfig, StructuralKey, freshness_eligible,
 };
 
 pub use invalidation::{
