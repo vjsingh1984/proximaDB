@@ -432,9 +432,7 @@ impl ExecutionPlan for ProximaScanExec {
                         // (TD-OLAP-3).
                         match &trace {
                             Some(t) => t.record_splits(1, pruned as u64),
-                            None => {
-                                crate::observability::io_trace::record_splits(1, pruned as u64)
-                            }
+                            None => crate::observability::io_trace::record_splits(1, pruned as u64),
                         }
                         if pruned {
                             debug!(
