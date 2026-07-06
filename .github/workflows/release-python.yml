@@ -95,6 +95,20 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || '' }}
           args: --release --out dist --features python
+          # `openssl/vendored` (enabled by the python feature — openssl-sys is
+          # transitive via sqlx/reqwest) builds OpenSSL from source inside the
+          # manylinux container. openssl-src's Configure needs Perl's IPC::Cmd,
+          # which the stock manylinux2014 image lacks. Install it (yum or dnf,
+          # whichever the image ships) before the build. Linux-only hook; macOS/
+          # Windows system Perl already carries these modules.
+          before-script-linux: |
+            if command -v yum >/dev/null 2>&1; then
+              yum install -y perl-IPC-Cmd perl-Data-Dumper perl-Getopt-Long
+            elif command -v dnf >/dev/null 2>&1; then
+              dnf install -y perl-IPC-Cmd perl-Data-Dumper perl-Getopt-Long
+            elif command -v microdnf >/dev/null 2>&1; then
+              microdnf install -y perl-IPC-Cmd perl-Data-Dumper perl-Getopt-Long
+            fi
       - uses: actions/upload-artifact@v4
         with:
           name: embedded-wheels-${{ matrix.os }}-${{ matrix.target }}
