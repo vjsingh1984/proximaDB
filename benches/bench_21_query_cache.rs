@@ -14,8 +14,8 @@ use arrow::datatypes::{DataType, Field, Schema};
 use common::benchmark_utils::print_system_info;
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::query::cache::{
-    CacheInvalidator, ChangeOperation, InvalidationConfig, InvalidationEvent, QueryKey,
-    QueryResultCache, QueryResultCacheConfig,
+    CacheInvalidator, ChangeOperation, FederatedQueryResultCache, InvalidationConfig,
+    InvalidationEvent, QueryKey, QueryResultCacheConfig,
 };
 use proximadb::query::federated::ExecutionResult;
 use std::sync::Arc;
@@ -56,7 +56,7 @@ fn create_test_result(row_count: usize) -> ExecutionResult {
 }
 
 /// Pre-populate a cache with entries (creates a fresh result for each entry)
-fn populate_cache(cache: &QueryResultCache, count: usize, collection: &str) {
+fn populate_cache(cache: &FederatedQueryResultCache, count: usize, collection: &str) {
     for i in 0..count {
         let key = QueryKey::from_sql(&format!("SELECT * FROM {} WHERE id = {}", collection, i));
         let result = create_test_result(10);
@@ -75,7 +75,7 @@ fn bench_cache_hit_latency(c: &mut Criterion) {
     let result_sizes = [10, 100, 1000];
 
     for size in result_sizes {
-        let cache = QueryResultCache::with_defaults();
+        let cache = FederatedQueryResultCache::with_defaults();
         let result = create_test_result(size);
         let key = QueryKey::from_sql("SELECT * FROM products WHERE id = 1");
 
@@ -106,7 +106,7 @@ fn bench_cache_write_overhead(c: &mut Criterion) {
     for size in result_sizes {
         group.throughput(Throughput::Elements(1));
         group.bench_with_input(BenchmarkId::new("result_rows", size), &size, |b, &sz| {
-            let cache = QueryResultCache::with_defaults();
+            let cache = FederatedQueryResultCache::with_defaults();
             let mut counter = 0u64;
             b.iter(|| {
                 counter += 1;
@@ -140,7 +140,7 @@ fn bench_invalidation_cost(c: &mut Criterion) {
                             max_entries: size * 2,
                             ..Default::default()
                         };
-                        let cache = QueryResultCache::new(config);
+                        let cache = FederatedQueryResultCache::new(config);
                         populate_cache(&cache, size, "products");
                         cache
                     },
@@ -164,7 +164,7 @@ fn bench_invalidation_cost(c: &mut Criterion) {
                             max_entries: size * 2,
                             ..Default::default()
                         };
-                        let cache = QueryResultCache::new(config);
+                        let cache = FederatedQueryResultCache::new(config);
                         // Populate with entries from different collections
                         for i in 0..size {
                             let collection = if i % 10 == 0 { "target" } else { "other" };
@@ -198,7 +198,7 @@ fn bench_invalidator_events(c: &mut Criterion) {
     group.bench_function("direct_invalidation", |b| {
         b.iter_with_setup(
             || {
-                let cache = Arc::new(QueryResultCache::with_defaults());
+                let cache = Arc::new(FederatedQueryResultCache::with_defaults());
                 populate_cache(&cache, 1000, "products");
                 let config = InvalidationConfig {
                     batch_invalidations: false,
@@ -218,7 +218,7 @@ fn bench_invalidator_events(c: &mut Criterion) {
     group.bench_function("batched_invalidation", |b| {
         b.iter_with_setup(
             || {
-                let cache = Arc::new(QueryResultCache::with_defaults());
+                let cache = Arc::new(FederatedQueryResultCache::with_defaults());
                 populate_cache(&cache, 1000, "products");
                 let config = InvalidationConfig {
                     batch_invalidations: true,
@@ -252,7 +252,7 @@ fn bench_concurrent_reads(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(15));
 
     for &thread_count in THREAD_COUNTS {
-        let cache = Arc::new(QueryResultCache::with_defaults());
+        let cache = Arc::new(FederatedQueryResultCache::with_defaults());
 
         // Pre-populate with entries
         for i in 0..1000 {
@@ -300,7 +300,7 @@ fn bench_concurrent_read_write(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(15));
 
     for &thread_count in THREAD_COUNTS {
-        let cache = Arc::new(QueryResultCache::new(QueryResultCacheConfig {
+        let cache = Arc::new(FederatedQueryResultCache::new(QueryResultCacheConfig {
             max_entries: 50000,
             ..Default::default()
         }));
@@ -405,7 +405,7 @@ fn bench_cache_lookup_patterns(c: &mut Criterion) {
     let mut group = c.benchmark_group("cache_lookup_patterns");
     group.measurement_time(Duration::from_secs(10));
 
-    let cache = QueryResultCache::with_defaults();
+    let cache = FederatedQueryResultCache::with_defaults();
 
     // Populate cache
     for i in 0..1000 {
@@ -454,7 +454,7 @@ fn bench_cache_cleanup(c: &mut Criterion) {
                             default_ttl: Duration::from_millis(1), // Very short TTL
                             ..Default::default()
                         };
-                        let cache = QueryResultCache::new(config);
+                        let cache = FederatedQueryResultCache::new(config);
                         populate_cache(&cache, size, "products");
                         // Wait for entries to expire
                         std::thread::sleep(Duration::from_millis(5));
@@ -479,7 +479,7 @@ fn bench_cache_cleanup(c: &mut Criterion) {
                             max_entries: size * 2,
                             ..Default::default()
                         };
-                        let cache = QueryResultCache::new(config);
+                        let cache = FederatedQueryResultCache::new(config);
                         populate_cache(&cache, size, "products");
                         cache
                     },
@@ -500,7 +500,7 @@ fn bench_cache_stats(c: &mut Criterion) {
     let mut group = c.benchmark_group("cache_stats");
     group.measurement_time(Duration::from_secs(5));
 
-    let cache = QueryResultCache::with_defaults();
+    let cache = FederatedQueryResultCache::with_defaults();
     populate_cache(&cache, 5000, "products");
 
     // Simulate some operations for realistic stats

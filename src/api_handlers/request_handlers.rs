@@ -2162,6 +2162,7 @@ impl UnifiedHandlers {
         // which rejects relational plans. `require_engagement = false` routes any
         // resolvable relational SELECT here; queries whose tables don't resolve
         // (vector/graph SQL) return None and fall through to the legacy engine.
+        let olap_result_cache = crate::network::postgres::relational_pipeline::olap_result_cache();
         if let Some(dml) = self.get_dml_service()
             && let Some(outcome) = crate::network::postgres::relational_pipeline::try_run_select(
                 &query,
@@ -2171,6 +2172,10 @@ impl UnifiedHandlers {
                 tenant_id,
                 crate::query::execution::ExecutionControls::default(),
                 false,
+                // REST ExecuteQuery has no pgwire search_path; namespace=None
+                // keys under the default (empty) namespace.
+                None,
+                olap_result_cache.as_deref(),
             )
             .await
         {

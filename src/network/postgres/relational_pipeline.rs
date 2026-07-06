@@ -52,6 +52,9 @@ use sqlparser::parser::Parser;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::core::search::VectorFreshnessMode;
+use crate::query::cache::invalidation_coordinator::CacheInvalidationCoordinator;
+use crate::query::cache::query_result_cache::{QueryKey, QueryResultCache, StructuralKey};
 use crate::services::dml::DmlService;
 use crate::storage::tenant::context::TenantContext;
 
@@ -105,6 +108,114 @@ fn bootstrap_demo_table(engine: &Arc<InMemoryRelationalEngine>) {
 }
 
 // =========================================================================
+// Process-wide OLAP result cache (default-OFF; ADR-051 D2 / mandate #16)
+// =========================================================================
+
+/// Master switch for the pgwire OLAP result cache. **Default-OFF.** Set
+/// `PROXIMADB_QUERY_RESULT_CACHE` to a truthy token (`1`/`true`/`on`/`yes`,
+/// case-insensitive) to enable structurally tenant-keyed caching of OLAP SELECT
+/// results with Strong LSN-pinned freshness. Pure + split out so it is
+/// unit-testable without mutating the process environment.
+fn olap_result_cache_on(var: Option<&str>) -> bool {
+    match var.map(str::trim) {
+        Some(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes"),
+        None => false,
+    }
+}
+
+fn olap_result_cache_enabled() -> bool {
+    olap_result_cache_on(
+        std::env::var("PROXIMADB_QUERY_RESULT_CACHE")
+            .ok()
+            .as_deref(),
+    )
+}
+
+/// Process-wide OLAP result cache, keyed structurally on
+/// `(tenant, namespace, query)`. Shared across every pgwire + REST/gRPC
+/// connection (mirrors [`GLOBAL_ENGINE`]'s singleton pattern).
+pub static GLOBAL_OLAP_RESULT_CACHE: Lazy<Arc<QueryResultCache<ExecutionPipelineResult>>> =
+    Lazy::new(|| Arc::new(QueryResultCache::with_defaults()));
+
+/// Process-wide invalidation coordinator with the OLAP result cache attached,
+/// so writes/DDL drop tenant-scoped entries in one fan-out call (mandate #16b).
+pub static GLOBAL_OLAP_CACHE_COORDINATOR: Lazy<Arc<CacheInvalidationCoordinator>> =
+    Lazy::new(|| {
+        Arc::new(
+            CacheInvalidationCoordinator::empty()
+                .with_result_cache(GLOBAL_OLAP_RESULT_CACHE.clone()),
+        )
+    });
+
+/// Returns the shared OLAP result cache only when the feature is enabled
+/// (default-OFF). Callers pass `.as_deref()` of this as the `result_cache`
+/// argument to [`try_run_select`].
+pub fn olap_result_cache() -> Option<Arc<QueryResultCache<ExecutionPipelineResult>>> {
+    if olap_result_cache_enabled() {
+        Some(GLOBAL_OLAP_RESULT_CACHE.clone())
+    } else {
+        None
+    }
+}
+
+/// The shared invalidation coordinator (always reachable; its result-cache arm
+/// is a no-op when the flag is off because nothing was ever inserted).
+pub fn olap_cache_coordinator() -> Arc<CacheInvalidationCoordinator> {
+    GLOBAL_OLAP_CACHE_COORDINATOR.clone()
+}
+
+/// Tenant-scoped invalidation of the OLAP result cache after a write/DDL. Drops
+/// every cached entry registered under `(tenant, normalize_table_key(table))`.
+/// The table name is normalized here (matching the read-side dependency keys,
+/// which are `snapshot.tables` keys) so callers can pass the raw parsed name.
+/// Default-OFF: a cheap no-op when the cache flag is unset. Call from the
+/// pgwire INSERT/UPDATE/DELETE/DDL success paths (mandate #16b).
+pub async fn invalidate_olap_result_cache_for(tenant: &str, table: &str) {
+    if olap_result_cache().is_some() {
+        let normalized = normalize_table_key(table);
+        olap_cache_coordinator()
+            .invalidate_collection(tenant, &normalized, &[])
+            .await;
+    }
+}
+
+/// Cheap canonical-WAL LSN read — the Strong-freshness anchor (ADR-051 D2 /
+/// ADR-046). Returns `0` when WAL-manifest tracking is unavailable, which makes
+/// Strong lookups bypass (never serve) — the safe default. Same source as the
+/// vector-search path (`services::operations::vectors::legacy`).
+async fn current_canonical_lsn() -> u64 {
+    match crate::storage::persistence::write_ahead_log::manifest::get_service() {
+        Some(svc) => svc.current_lsn().await,
+        None => 0,
+    }
+}
+
+/// Stamp a freshly-executed OLAP result into the result cache under its
+/// structural key, with the LSN it was computed at. No-op when the cache is
+/// disabled or LSN tracking is unavailable (`current_lsn == 0` → never
+/// Strong-eligible, so don't waste a slot).
+fn populate_olap_result_cache(
+    cache: Option<&QueryResultCache<ExecutionPipelineResult>>,
+    skey: &StructuralKey,
+    lsn: u64,
+    result: ExecutionPipelineResult,
+    deps_table_keys: &HashMap<String, PreparedTable>,
+) {
+    let Some(cache) = cache else {
+        return;
+    };
+    let computed_at_lsn = (lsn != 0).then_some(lsn);
+    let deps: Vec<String> = deps_table_keys.keys().cloned().collect();
+    if let Err(e) = cache.insert_fresh(skey.clone(), result, deps, computed_at_lsn) {
+        tracing::debug!(
+            target: "proximadb::pgwire::result_cache",
+            error = ?e,
+            "failed to cache OLAP result"
+        );
+    }
+}
+
+// =========================================================================
 // Public entry point
 // =========================================================================
 
@@ -141,6 +252,14 @@ pub async fn try_run_select(
     // whose tables don't resolve return `None` and fall back to the caller's
     // vector/graph engine.
     require_engagement: bool,
+    // Namespace / schema (pgwire `search_path`) — a structural key component so
+    // identical SQL under different namespaces never collides.
+    namespace: Option<&str>,
+    // Shared OLAP result cache (default-OFF — `None` when
+    // `PROXIMADB_QUERY_RESULT_CACHE` is unset). A hit short-circuits routing +
+    // execution; a miss falls through normally and the result is stamped on the
+    // real-data success paths.
+    result_cache: Option<&QueryResultCache<ExecutionPipelineResult>>,
 ) -> Option<Result<ExecutionPipelineResult, String>> {
     // TD-064: the connection's tenant scopes every snapshot read to the tenant's
     // record partition (carried into the SnapshotCatalog → DmlTableReader).
@@ -159,6 +278,32 @@ pub async fn try_run_select(
         );
         return None;
     }
+
+    // OLAP result cache lookup (ADR-051 D2 / mandate #16c). Strong freshness:
+    // a hit is served ONLY when the entry was computed at the current canonical
+    // WAL LSN, so any write since → guaranteed miss → read-after-write correct.
+    // `cache_ctx` carries the (key, lsn) pair so the real-data success paths
+    // below can stamp the result without recomputing it.
+    let cache_ctx: Option<(StructuralKey, u64)> = if let Some(cache) = result_cache {
+        let current_lsn = current_canonical_lsn().await;
+        let skey = StructuralKey::new(
+            tenant.unwrap_or(""),
+            namespace.unwrap_or(""),
+            QueryKey::from_sql(sql),
+        );
+        if let Some(cached) = cache.get_fresh(&skey, &VectorFreshnessMode::Strong, current_lsn) {
+            tracing::debug!(
+                target: "proximadb::pgwire::result_cache",
+                tenant = tenant.unwrap_or(""),
+                lsn = current_lsn,
+                "OLAP result cache hit — short-circuiting route + execution"
+            );
+            return Some(Ok(cached.result.clone()));
+        }
+        Some((skey, current_lsn))
+    } else {
+        None
+    };
 
     // 1) Existing in-memory-engine path (preserves the demo table and any
     //    engine-resident tables). Only engages when the SQL lowers against the
@@ -341,7 +486,15 @@ pub async fn try_run_select(
             &crate::query::compute_scheduler::backend_label(&decision.backend),
             started.elapsed().as_millis() as u64,
         );
-        return Some(engine_result.map_err(|e| e.to_string()));
+        return Some(match engine_result {
+            Ok(result) => {
+                if let Some((skey, lsn)) = &cache_ctx {
+                    populate_olap_result_cache(result_cache, skey, *lsn, result.clone(), &tables);
+                }
+                Ok(result)
+            }
+            Err(e) => Err(e.to_string()),
+        });
     }
 
     let snapshot = SnapshotCatalog {
@@ -356,7 +509,21 @@ pub async fn try_run_select(
         Ok(p) => p,
         Err(e) => return Some(Err(e)),
     };
-    Some(execute_physical(physical, &snapshot, controls).await)
+    match execute_physical(physical, &snapshot, controls).await {
+        Ok(result) => {
+            if let Some((skey, lsn)) = &cache_ctx {
+                populate_olap_result_cache(
+                    result_cache,
+                    skey,
+                    *lsn,
+                    result.clone(),
+                    &snapshot.tables,
+                );
+            }
+            Some(Ok(result))
+        }
+        Err(e) => Some(Err(e)),
+    }
 }
 
 /// Plan + build + drain an executor for `logical` against `factory`, using

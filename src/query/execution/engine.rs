@@ -16,12 +16,26 @@ use std::sync::{
 };
 
 /// Result of a successful query execution.
-#[derive(Debug)]
+///
+/// `Clone` is required so the pgwire OLAP result cache
+/// (`QueryResultCache<ExecutionPipelineResult>`) can retain + serve a copy of
+/// a result without re-executing the query.
+#[derive(Debug, Clone)]
 pub struct ExecutionPipelineResult {
     /// Ordered result schema.
     pub schema: RelationalSchema,
     /// Fully materialized rows.
     pub rows: Vec<RelationalRow>,
+}
+
+impl crate::query::cache::query_result_cache::CacheableResult for ExecutionPipelineResult {
+    fn estimated_size_bytes(&self) -> usize {
+        // Same heuristic the cache historically used for ExecutionResult:
+        // ~100 bytes per field per row + per-field schema overhead.
+        let row_count = self.rows.len();
+        let field_count = self.schema.columns.len();
+        row_count * field_count * 100 + field_count * 64 + 256
+    }
 }
 
 impl ExecutionPipelineResult {
