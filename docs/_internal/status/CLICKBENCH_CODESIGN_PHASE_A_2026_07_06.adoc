@@ -222,6 +222,36 @@ next levers are the metadata-aggregate elision (MIN/MAX from footer) and the q07
 UInt16 compute pathology — NOT an I/O "open floor" (which never existed). The
 re-open cache drops to a minor S3-RTT optimization (`head` is cheap locally).
 
+=== PR-3 MEASURED — MIN/MAX metadata elision kills the q07 outlier
+
+The parquet footer carries exact per-column min/max/null_count. PR-3 reports them
+`Precision::Exact` from `statistics_from_splits` (numeric min/max only — string
+BYTE_ARRAY stats are truncated, so they stay `Inexact`; `null_count` is exact for
+every type). DataFusion's `AggregateStatistics` rule then answers unfiltered
+`MIN`/`MAX`/`COUNT(col)` from metadata with no column scan.
+
+Measured (release, 1M ClickBench, `cb_hits_1m_lc.parquet`, `eventdate`=UInt16,
+`PROXIMADB_DF_STATS_VALUE_BOUNDS=1`):
+
+[cols="1,1,1,1,1",options="header"]
+|===
+| query | baseline wall | PR-3 wall | PR-3 bytes_read | GETs
+| q07 `MIN/MAX(EventDate)` | 10,059 ms | **50 ms** (201×) | 524 KB (footer only) | 1
+| suite total (43) | 12,462 ms | **2,524 ms** (4.9×) | — | —
+|===
+
+Correctness: **35/43 ok — identical pass set to baseline, zero new failures** (the
+8 failures are pre-existing unsupported queries q19/q37–q43). q07 now reads only
+the footer (1 GET, no column data) and returns the same result. This is the direct
+generalization of the shipped exact-`num_rows` → `COUNT(*)` elision (#722).
+
+Gate posture: `null_count: Exact` (→ `COUNT(col)`) is unconditional. Numeric
+`min`/`max: Exact` (→ `MIN`/`MAX`) is emitted under `PROXIMADB_DF_STATS_VALUE_BOUNDS`
+(default OFF) — the gate exists for the *filter-selectivity recursion* on
+TPC-H-Q2-class plans, unrelated to this non-recursive aggregate elision. Flipping
+the gate default (delivering q07 out-of-the-box) is a follow-up pending that
+recursion characterization; PR-3 wires the mechanism and proves it end-to-end.
+
 === Deferred to follow-up PRs (need gating / invalidation design)
 
 * **Per-query re-open cache (was "Phase B").** A read-through cache of
