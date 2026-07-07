@@ -487,6 +487,16 @@ impl RestServer {
         let state_for_v2 = state.clone();
         let mut base_router = create_router(state.clone());
 
+        // ADR-049 M0-c: gate the deprecated /api/v1/* surface behind
+        // PROXIMADB_REST_V1_COMPAT (on by default). When off, /api/v1/* is
+        // answered with 410 Gone + RFC 8594 deprecation headers; /api/v2/* is
+        // never affected. This starts the v1 sunset clock without a flag-day.
+        let rest_v1_compat = crate::network::middleware::v1_sunset::rest_v1_compat_enabled();
+        base_router = base_router.layer(middleware::from_fn_with_state(
+            rest_v1_compat,
+            crate::network::middleware::v1_sunset::v1_sunset_middleware,
+        ));
+
         // Nest metrics router if available
         if let Some(metrics) = metrics_router {
             base_router = base_router.nest("/metrics", metrics);
@@ -788,6 +798,16 @@ impl RestServer {
         // Build base router with all endpoints
         let state_for_v2 = state.clone();
         let mut base_router = create_router(state.clone());
+
+        // ADR-049 M0-c: gate the deprecated /api/v1/* surface behind
+        // PROXIMADB_REST_V1_COMPAT (on by default). When off, /api/v1/* is
+        // answered with 410 Gone + RFC 8594 deprecation headers; /api/v2/* is
+        // never affected. This starts the v1 sunset clock without a flag-day.
+        let rest_v1_compat = crate::network::middleware::v1_sunset::rest_v1_compat_enabled();
+        base_router = base_router.layer(middleware::from_fn_with_state(
+            rest_v1_compat,
+            crate::network::middleware::v1_sunset::v1_sunset_middleware,
+        ));
 
         // Nest metrics router if available
         if let Some(metrics) = metrics_router {
