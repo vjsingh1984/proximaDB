@@ -766,17 +766,17 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
         }
 
         // TD-121 relational SELECT routing — parity with the ROOT handler's
-        // execute_sql_v1 (src/api_handlers/request_handlers.rs). The gRPC
-        // ExecuteQuery path reaches this adapter (not the ROOT handler), so
-        // without this block a standard relational SELECT fell through to the
-        // legacy facade and was rejected ("Standard relational SQL execution is
-        // not configured in FederatedQueryContext"). `require_engagement=false`
+        // execute_sql_v1 (src/api_handlers/request_handlers.rs). Both the gRPC
+        // and REST SQL routes reach this adapter (TD-104 S4 converged REST onto
+        // the runtime handler → adapter), so relational SELECT over EITHER
+        // surface routes through the tenant-scoped pipeline here. `require_engagement=false`
         // routes any resolvable relational SELECT; queries whose tables don't
         // resolve return `None` and fall through to `sql_query` (vector/graph
-        // SQL, unchanged). The OLAP result cache is intentionally NOT consulted
-        // here — the bug fix is routing, not caching; REST/pgwire keep the cache
-        // (wiring it here is a same-crate follow-up, no layering issue).
-        // namespace=None: gRPC ExecuteQuery has no search_path.
+        // SQL, unchanged). The OLAP result cache IS consulted (same-crate call,
+        // no layering issue) — default-OFF behind PROXIMADB_QUERY_RESULT_CACHE,
+        // so this is a no-op unless the flag is set.
+        // namespace=None: SQL port path has no pgwire search_path.
+        let olap_result_cache = crate::network::postgres::relational_pipeline::olap_result_cache();
         if let Some(dml) = self.dml_service.as_ref()
             && let Some(outcome) = crate::network::postgres::relational_pipeline::try_run_select(
                 &query,
@@ -787,7 +787,7 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
                 crate::query::execution::ExecutionControls::default(),
                 false,
                 None,
-                None,
+                olap_result_cache.as_deref(),
             )
             .await
         {
