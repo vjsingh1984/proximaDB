@@ -50,6 +50,7 @@ pub mod filesystem_parquet_reader;
 pub mod helix_adapter;
 pub mod object_store_parquet_reader;
 pub mod pax_adapter;
+pub mod pax_segment_locator;
 pub mod sst_adapter;
 pub mod viper_adapter;
 
@@ -62,6 +63,7 @@ pub use object_store_parquet_reader::{
     ObjectStoreParquetSplitReader, ObjectStoreParquetTable, register_object_store_parquet_location,
 };
 pub use pax_adapter::PaxSplitReader;
+pub use pax_segment_locator::discover_pax_segments;
 pub use sst_adapter::{SstSplitReader, SstTableProvider};
 pub use viper_adapter::{ViperSplitReader, ViperTableProvider};
 
