@@ -134,13 +134,40 @@ scan/registration path.
   (`datafusion_engine.rs:760-867`) — real, but NOT dominant for this workload;
   revisit once the scan floor is removed.
 
-=== Immediate next step (Phase A tail)
+=== Byte-ledger result (Phase A instrumentation landed — DECISIVE)
 
-Capture `io_trace` `bytes_read` + `range_gets` per query in the harness (or run
-with `RUST_LOG=proximadb::io_trace`) to prove the mechanism — a per-query
-`bytes_read` ≈ whole-object confirms re-scan; near-footer-only confirms a
-metadata-open floor. Then Phase C targets the measured mechanism (persistent
-table registration / footer cache; projection pushdown), NOT the result path.
+Added per-query `io_trace` capture to the harness (`set_billing_observer`). The
+byte-ledger re-ranks the levers and is far sharper than the wall time:
+
+|===
+| metric (per query, release, 1M / 116 MB file) | value
+
+| `bytes_read` — EVERY query incl. `COUNT(*)` | **241,608,340 (~241 MB)**
+| `range_gets` — EVERY query | **965**
+| total `bytes_read`, 43 queries | 8.2 GB (~70× the 116 MB file)
+|===
+
+Two facts jump out:
+. **`COUNT(*)` reads 241 MB** — it touches zero columns, so this is the pure
+  signature of NO projection pushdown: every query fetches all 105 column chunks.
+  Reading ~2× the whole file per query = all columns + footer/metadata overhead.
+. **965 ranged GETs per query** — the read is fragmented into ~one GET per
+  column-chunk × row-group (≈105 × 9). This is the "small-GET, per-request-fee-
+  dominated" anti-pattern (§2.1 read granularity) — DuckDB coalesces to a handful.
+
+**This overturns the wall-time-based ordering.** The earlier read ("`COUNT(*)`
+= 329 ms ⇒ re-open floor dominates") was wrong: `COUNT(*)`'s cost is the
+full-column READ (241 MB), not the re-open. So:
+. **Projection pushdown (Phase C) is the #1 lever — even at 1M** (not just SF1).
+  It drops `COUNT(*)` / narrow queries from 241 MB → ~KB.
+. **Read coalescing (new lever)** — 965 tiny GETs → a handful of coalesced ranged
+  reads; the reader/`object_store` coalescing knobs.
+. **Per-query re-open cache (Phase B) is secondary** — real, but a minor share of
+  the 965 GETs vs the full-column scan.
+
+Verification target for Phase C: `COUNT(*)` `bytes_read` → footer-only (KB), narrow
+queries → proportional to projected columns; `range_gets` collapses; results
+unchanged.
 
 == Plan
 

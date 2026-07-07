@@ -20,13 +20,21 @@
 #![cfg(feature = "datafusion-integration")]
 
 use std::net::TcpListener;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use proximadb::core::Config;
 use proximadb::database::ProximaDB;
+use proximadb::observability::io_trace::{self, IoTraceSnapshot};
 use tempfile::TempDir;
 use tokio::time::sleep;
 use tokio_postgres::{NoTls, SimpleQueryMessage};
+
+/// Per-query I/O trace capture. The server fires the billing observer at each
+/// statement's `io_trace` scope close, so we clear before a query and drain
+/// after — the same pattern as `tpc_perf_ledger_e2e.rs`. This turns the ledger
+/// from a wall-clock anecdote into a bytes-scanned ledger (the co-design signal).
+static CAPTURE: Mutex<Vec<IoTraceSnapshot>> = Mutex::new(Vec::new());
 
 const CLICKBENCH_DDL_COLS: &str = "WatchID BIGINT, JavaEnable SMALLINT, Title VARCHAR, GoodEvent SMALLINT, EventTime BIGINT, EventDate INT, CounterID INT, ClientIP INT, RegionID INT, UserID BIGINT, CounterClass SMALLINT, OS SMALLINT, UserAgent SMALLINT, URL VARCHAR, Referer VARCHAR, IsRefresh SMALLINT, RefererCategoryID SMALLINT, RefererRegionID INT, URLCategoryID SMALLINT, URLRegionID INT, ResolutionWidth SMALLINT, ResolutionHeight SMALLINT, ResolutionDepth SMALLINT, FlashMajor SMALLINT, FlashMinor SMALLINT, FlashMinor2 VARCHAR, NetMajor SMALLINT, NetMinor SMALLINT, UserAgentMajor SMALLINT, UserAgentMinor VARCHAR, CookieEnable SMALLINT, JavascriptEnable SMALLINT, IsMobile SMALLINT, MobilePhone SMALLINT, MobilePhoneModel VARCHAR, Params VARCHAR, IPNetworkID INT, TraficSourceID SMALLINT, SearchEngineID SMALLINT, SearchPhrase VARCHAR, AdvEngineID SMALLINT, IsArtifical SMALLINT, WindowClientWidth SMALLINT, WindowClientHeight SMALLINT, ClientTimeZone SMALLINT, ClientEventTime BIGINT, SilverlightVersion1 SMALLINT, SilverlightVersion2 SMALLINT, SilverlightVersion3 INT, SilverlightVersion4 SMALLINT, PageCharset VARCHAR, CodeVersion INT, IsLink SMALLINT, IsDownload SMALLINT, IsNotBounce SMALLINT, FUniqID BIGINT, OriginalURL VARCHAR, HID INT, IsOldCounter SMALLINT, IsEvent SMALLINT, IsParameter SMALLINT, DontCountHits SMALLINT, WithHash SMALLINT, HitColor VARCHAR, LocalEventTime BIGINT, Age SMALLINT, Sex SMALLINT, Income SMALLINT, Interests SMALLINT, Robotness SMALLINT, RemoteIP INT, WindowName INT, OpenerName INT, HistoryLength SMALLINT, BrowserLanguage VARCHAR, BrowserCountry VARCHAR, SocialNetwork VARCHAR, SocialAction VARCHAR, HTTPError SMALLINT, SendTiming INT, DNSTiming INT, ConnectTiming INT, ResponseStartTiming INT, ResponseEndTiming INT, FetchTiming INT, SocialSourceNetworkID SMALLINT, SocialSourcePage VARCHAR, ParamPrice BIGINT, ParamOrderID VARCHAR, ParamCurrency VARCHAR, ParamCurrencyID SMALLINT, OpenstatServiceName VARCHAR, OpenstatCampaignID VARCHAR, OpenstatAdID VARCHAR, OpenstatSourceID VARCHAR, UTMSource VARCHAR, UTMMedium VARCHAR, UTMCampaign VARCHAR, UTMContent VARCHAR, UTMTerm VARCHAR, FromTag VARCHAR, HasGCLID SMALLINT, RefererHash BIGINT, URLHash BIGINT, CLID INT";
 
@@ -267,8 +275,26 @@ struct QueryRecord {
     ok: bool,
     rows: usize,
     wall_ms: u128,
+    /// Object-store bytes read for this query (ProximaDB route only; the
+    /// co-design cost term). `None` for the DuckDB baseline (out-of-process).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bytes_read: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    range_gets: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+}
+
+/// Drain the per-query I/O trace snapshot the server emitted at scope close.
+/// Polls briefly because the billing observer fires asynchronously server-side.
+async fn drain_capture() -> Option<IoTraceSnapshot> {
+    for _ in 0..60 {
+        if let Some(s) = CAPTURE.lock().expect("capture lock").pop() {
+            return Some(s);
+        }
+        sleep(Duration::from_millis(5)).await;
+    }
+    None
 }
 
 /// Rewrite `FROM hits` to a DuckDB `read_parquet(...)` over the same object.
@@ -312,11 +338,21 @@ async fn clickbench_ledger() {
     let queries = clickbench_queries();
     let mut records: Vec<QueryRecord> = Vec::new();
 
+    // Capture the per-query I/O trace the server emits at each statement's scope close.
+    io_trace::set_billing_observer(Some(Box::new(|snap: &IoTraceSnapshot, _tenant| {
+        CAPTURE.lock().expect("capture lock").push(snap.clone());
+    })));
+
     // ProximaDB (DataFusion route).
     for (id, sql) in &queries {
+        CAPTURE.lock().expect("capture lock").clear();
         let t0 = Instant::now();
         let res = client.simple_query(sql).await;
         let wall_ms = t0.elapsed().as_millis();
+        let snap = drain_capture().await;
+        let (bytes_read, range_gets) = snap
+            .map(|s| (Some(s.bytes_read), Some(s.range_gets)))
+            .unwrap_or((None, None));
         match res {
             Ok(msgs) => {
                 let rows = msgs
@@ -329,6 +365,8 @@ async fn clickbench_ledger() {
                     ok: true,
                     rows,
                     wall_ms,
+                    bytes_read,
+                    range_gets,
                     error: None,
                 });
             }
@@ -338,6 +376,8 @@ async fn clickbench_ledger() {
                 ok: false,
                 rows: 0,
                 wall_ms,
+                bytes_read,
+                range_gets,
                 error: Some(
                     e.as_db_error()
                         .map(|d| d.message().to_string())
@@ -346,6 +386,7 @@ async fn clickbench_ledger() {
             }),
         }
     }
+    io_trace::set_billing_observer(None);
 
     // DuckDB baseline (same Parquet), if a binary is provided.
     if let Ok(duckdb) = std::env::var("DUCKDB_BIN") {
@@ -364,6 +405,8 @@ async fn clickbench_ledger() {
                 ok,
                 rows: 0,
                 wall_ms,
+                bytes_read: None,
+                range_gets: None,
                 error: (!ok).then(|| {
                     out.as_ref()
                         .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
@@ -384,8 +427,9 @@ async fn clickbench_ledger() {
         walls.sort_unstable();
         let median = walls.get(walls.len() / 2).copied().unwrap_or(0);
         let total: u128 = walls.iter().sum();
+        let bytes: u64 = rs.iter().filter_map(|r| r.bytes_read).sum();
         eprintln!(
-            "[clickbench/{engine}] ok {ok}/{} · median {median} ms · total {total} ms",
+            "[clickbench/{engine}] ok {ok}/{} · median {median} ms · total {total} ms · total bytes_read {bytes}",
             rs.len()
         );
     }
