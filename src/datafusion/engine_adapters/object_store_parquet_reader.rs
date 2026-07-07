@@ -390,15 +390,16 @@ impl SplitReader for ObjectStoreParquetSplitReader {
                 let mut file_order: Vec<usize> = proj.to_vec();
                 file_order.sort_unstable();
                 file_order.dedup();
+                // Each requested column is in `file_order` by construction (it is
+                // built from `proj`); map fallibly rather than panic (panic policy).
                 let reorder: Vec<usize> = proj
                     .iter()
                     .map(|c| {
-                        file_order
-                            .iter()
-                            .position(|x| x == c)
-                            .expect("projected column present in the selected set")
+                        file_order.iter().position(|x| x == c).ok_or_else(|| {
+                            df_err("projection", "requested column missing from selected set")
+                        })
                     })
-                    .collect();
+                    .collect::<DFResult<Vec<_>>>()?;
                 (builder.with_projection(mask), Some(reorder))
             }
             // Full/absent projection: read every column, no reorder.
