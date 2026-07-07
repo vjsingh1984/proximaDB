@@ -194,8 +194,15 @@ pub fn statistics_from_splits(
         .collect();
 
     Statistics {
+        // Parquet row-group `num_rows` is EXACT metadata (unlike the min/max value
+        // bounds below, which are Inexact zone-maps). Reporting it Exact lets
+        // DataFusion's `AggregateStatistics` rule answer an unfiltered `COUNT(*)`
+        // from the footer alone — zero column scan (TD-OLAP-4). Safe: a `WHERE`
+        // inserts a `FilterExec` that re-marks stats Inexact, so filtered counts
+        // still scan; and only footer-accurate providers use this (the ADR-025
+        // delta-merge path builds its own MemTable when a WAL delta exists).
         num_rows: if any_rows {
-            Precision::Inexact(num_rows)
+            Precision::Exact(num_rows)
         } else {
             Precision::Absent
         },
@@ -590,7 +597,7 @@ mod tests {
 
         let stats = statistics_from_splits(&splits, &schema, None, true);
 
-        assert_eq!(stats.num_rows, Precision::Inexact(5));
+        assert_eq!(stats.num_rows, Precision::Exact(5));
         assert_eq!(stats.total_byte_size, Precision::Inexact(300));
         // Schema-width contract (DataFusion 54 indexes by column position).
         assert_eq!(stats.column_statistics.len(), schema.fields().len());
@@ -688,7 +695,7 @@ mod tests {
         assert_eq!(x.max_value, Precision::Absent);
         // …but the join-ordering inputs still flow.
         assert_eq!(x.null_count, Precision::Inexact(3));
-        assert_eq!(stats.num_rows, Precision::Inexact(2));
+        assert_eq!(stats.num_rows, Precision::Exact(2));
     }
 
     #[test]

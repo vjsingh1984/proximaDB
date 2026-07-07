@@ -1157,7 +1157,7 @@ mod tests {
         // Provider path — value bounds are gated default-OFF
         // (`df_stats_value_bounds_enabled`), but rows/bytes/nulls always flow.
         let stats = TableProvider::statistics(&table).expect("footer-backed statistics");
-        assert_eq!(stats.num_rows, Precision::Inexact(4));
+        assert_eq!(stats.num_rows, Precision::Exact(4));
         // Schema-width contract: one entry per table column.
         assert_eq!(stats.column_statistics.len(), 2);
         assert_eq!(stats.column_statistics[1].null_count, Precision::Inexact(0));

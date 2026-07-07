@@ -169,6 +169,54 @@ Verification target for Phase C: `COUNT(*)` `bytes_read` → footer-only (KB), n
 queries → proportional to projected columns; `range_gets` collapses; results
 unchanged.
 
+=== Implemented + measured (release, 1M ClickBench, byte-ledger)
+
+. **Projection pushdown (Phase C).** Built a `ProjectionMask::roots` into
+  `ParquetRecordBatchStreamBuilder` (fetch only projected column chunks) + reorder
+  the file-order output to projection order. Measured: total `bytes_read`
+  **−40.8%** (8.22 → 4.87 GB), median wall **210 → 60 ms** (3.5×), `COUNT(*)`
+  **290 → 8 ms**, `range_gets` **965 → ~20-29**; 35/43 unchanged, zero row
+  mismatches. `try_new_with_options` preserves the row count for an EMPTY
+  projection (`COUNT(*)`).
+. **Exact `num_rows` stats → metadata-only `COUNT(*)` (co-design refinement).**
+  The footer's per-row-group row count is EXACT, but `statistics_from_splits`
+  reported it `Inexact`, so DataFusion's `AggregateStatistics` rule never elided
+  the scan. Reporting `Precision::Exact(num_rows)` lets an unfiltered `COUNT(*)`
+  answer from footer metadata — zero column scan. Safe: a `WHERE` inserts a
+  `FilterExec` that re-marks stats Inexact (filtered counts still scan), and the
+  ADR-025 delta-merge path uses its own MemTable when a WAL delta exists, so only
+  footer-accurate providers report Exact.
+
+Exact-`num_rows` measured: `COUNT(*)` `range_gets` **20 → 2** and the column scan
+is elided (`AggregateStatistics` fires) — BUT `bytes_read` stayed ~121 MB. Those
+2 GETs read ~the whole 116 MB file, which exposes the NEXT dominant seam:
+
+=== NEW top seam (measurement-driven): per-query OPEN reads the whole file
+
+After projection + exact-stats, the residual **4.86 GB total ≈ 43 queries ×
+~116 MB** is the per-query table OPEN — `register_object_store_parquet_location`
+→ `ObjectStoreParquetTable::open` reads ~the whole file (the parquet footer
+prefetch pulls a huge suffix; at a 116 MB file that is ≈ the whole object), on
+EVERY query, with no cache. This is now the #1 lever. Two independent fixes,
+both PR-2:
+. **Bounded footer prefetch** — pass `ParquetObjectReader::with_footer_size_hint`
+  (or `with_metadata` of a cached `Arc<ParquetMetaData>`) so `open` reads only
+  the footer (a few MB), not a whole-file suffix. Correctness-neutral, no gating.
+. **Re-open cache** — cache `Arc<ObjectStoreParquetTable>` by location so repeat
+  queries skip `open` entirely (needs snapshot-LSN invalidation for MATERIALIZE'd
+  tables; env-gated).
+
+=== Deferred to follow-up PRs (need gating / invalidation design)
+
+* **Per-query re-open cache (was "Phase B").** A read-through cache of
+  `Arc<ObjectStoreParquetTable>` keyed by location removes the per-query
+  LIST+HEAD+footer re-read, but MATERIALIZE'd tables mutate their location on
+  re-materialize — so it needs snapshot-LSN invalidation and an env gate. Its own
+  PR.
+* **Read coalescing** (the residual small-GET count) and the **SOLID harness
+  refactor** (ClickBench + TPC-H + TPC-DS through one router-driven runner) —
+  separate PRs.
+
 == Plan
 
 * **Phase A (this doc):** bar + seams + release per-layer numbers. No optimization
