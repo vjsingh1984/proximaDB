@@ -4,11 +4,16 @@
 //! `IcebergObjectStoreBridge` for base-prefix discovery and Parquet's
 //! `ParquetObjectReader` for range-based footer and row-group reads.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use arrow_schema::{Schema, SchemaRef};
 use async_trait::async_trait;
+use datafusion::arrow::array::{
+    Array, BooleanArray, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array,
+    LargeStringArray, StringArray, UInt8Array, UInt16Array, UInt32Array, UInt64Array,
+};
+use datafusion::arrow::datatypes::DataType;
 use datafusion::catalog::Session;
 use datafusion::common::Statistics;
 use datafusion::datasource::{TableProvider, TableType};
@@ -22,9 +27,11 @@ use futures::StreamExt;
 use object_store::ObjectStore;
 use object_store::ObjectStoreExt;
 use object_store::path::Path;
+use parquet::arrow::ProjectionMask;
 use parquet::arrow::async_reader::{ParquetObjectReader, ParquetRecordBatchStreamBuilder};
 use parquet::file::metadata::ParquetMetaData;
 use parquet::file::statistics::Statistics as ParquetStatistics;
+use proximadb_bloom::{BloomFilterBuilder, BloomFilterStrategy, CoreBloomFilterConfig};
 use proximadb_iceberg_engine::IcebergObjectStoreBridge;
 use proximadb_storage_common::format_splits::{
     ColumnBounds, FileSplit, ScalarPredicate, ScalarValue, SplitStatistics, SplitType,
@@ -68,6 +75,264 @@ fn parquet_reader(
 
 fn df_err(context: &str, err: impl std::fmt::Display) -> DataFusionError {
     DataFusionError::Execution(format!("{context}: {err}"))
+}
+
+/// Runtime-filter (TD-OLAP-3) bloom semi-join gate. Default **OFF** per the
+/// default-OFF mandate for planner-behavior changes; enable per session with
+/// `PROXIMADB_DF_BLOOM_SEMIJOIN=1`. `min_keys` is the in-list cardinality above
+/// which min/max zone-maps collapse (a fact probe against thousands of
+/// dimension keys) and reading a split's key column to bloom-test it pays for
+/// itself (`PROXIMADB_DF_BLOOM_SEMIJOIN_MIN_KEYS`, default 256).
+#[derive(Clone, Copy, Debug)]
+struct SemijoinConfig {
+    enabled: bool,
+    min_keys: usize,
+}
+
+impl SemijoinConfig {
+    const DEFAULT_MIN_KEYS: usize = 256;
+
+    fn from_env() -> Self {
+        let enabled = std::env::var("PROXIMADB_DF_BLOOM_SEMIJOIN")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let min_keys = std::env::var("PROXIMADB_DF_BLOOM_SEMIJOIN_MIN_KEYS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(Self::DEFAULT_MIN_KEYS);
+        Self { enabled, min_keys }
+    }
+}
+
+/// Canonical key family a split's keys were encoded with. Stored so the in-list
+/// bloom encodes its values into the *same* byte layout — a cross-family
+/// encoding mismatch must never silently drop a matching key (a false-negative
+/// prune = wrong results), so on mismatch [`bloom_prunes_split`] declines to
+/// prune rather than guess.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeyFamily {
+    Int,
+    Float,
+    Str,
+    Bool,
+}
+
+/// The distinct join-key values of one split (row group), encoded into the
+/// canonical byte layout of the column's [`KeyFamily`]. Built lazily from a
+/// projected read of just that column and cached per (file, row-group, column).
+///
+/// Semi-join direction (load-bearing): the bloom is built over the *in-list*
+/// (dimension) keys and each *split* key is tested against it — not the reverse.
+/// Testing thousands of in-list keys against a per-split bloom collapses to
+/// "never prune" (≈`fpr` false positives per split keep it, and the target case
+/// is thousands of keys); testing a split's bounded key set against a low-`fpr`
+/// in-list bloom prunes reliably (`P(prune | disjoint) = (1-fpr)^K`). Both
+/// directions are false-negative-free; only this one actually prunes.
+#[derive(Clone, Debug)]
+struct SplitKeys {
+    family: KeyFamily,
+    keys: Vec<Vec<u8>>,
+}
+
+/// A bloom over the probe-side in-list (dimension) keys for one column, plus the
+/// key family its values were encoded with. Built once per query.
+struct InlistBloom {
+    family: KeyFamily,
+    filter: Box<dyn BloomFilterStrategy>,
+}
+
+/// Cap on distinct keys cached per split. Above it a split is not bloom-pruned
+/// (cached as `None`): the memory no longer pays off and a very large key set
+/// prunes with low probability anyway. min/max zone-maps still apply.
+const MAX_SPLIT_DISTINCT_KEYS: usize = 1_000_000;
+
+/// Bits per key for the in-list bloom → ≈6.6e-5 false-positive rate
+/// (`0.6185^20`), low enough that testing a split's key set against it prunes
+/// reliably rather than being defeated by a single false positive.
+const INLIST_BLOOM_BITS_PER_KEY: u32 = 20;
+
+/// Lazily-built per-split key sets, keyed by (file_path, row_group_index,
+/// column). `None` records an attempted-but-unavailable build (error, nested
+/// type, or over the distinct-key cap) so pruning falls back to min/max without
+/// retrying.
+type SplitKeyCache = HashMap<(String, usize, String), Option<Arc<SplitKeys>>>;
+
+/// Read-only view handed to the (synchronous) split-pruning pass once the async
+/// prefetch has populated the split-key cache: the per-column in-list blooms
+/// built from this query's predicates, plus the cached split key sets.
+struct BloomPruneView<'a> {
+    min_keys: usize,
+    inlist_blooms: &'a HashMap<String, InlistBloom>,
+    split_keys: &'a SplitKeyCache,
+}
+
+/// Map an Arrow key-column type to the canonical bloom key family, or `None`
+/// for unsupported/nested types (the bloom is then skipped, min/max is used).
+fn column_key_family(dt: &DataType) -> Option<KeyFamily> {
+    match dt {
+        DataType::Int8
+        | DataType::Int16
+        | DataType::Int32
+        | DataType::Int64
+        | DataType::UInt8
+        | DataType::UInt16
+        | DataType::UInt32
+        | DataType::UInt64 => Some(KeyFamily::Int),
+        DataType::Float32 | DataType::Float64 => Some(KeyFamily::Float),
+        DataType::Utf8 | DataType::LargeUtf8 => Some(KeyFamily::Str),
+        DataType::Boolean => Some(KeyFamily::Bool),
+        _ => None,
+    }
+}
+
+/// Canonical key bytes for a build-side (split column) value at `row`, or
+/// `None` for null / unsupported types. Integers widen to `i64` LE and floats
+/// to `f64` LE so the encoding is stable across Arrow's fixed-width variants
+/// and matches [`probe_key_bytes`].
+fn array_key_bytes(array: &dyn Array, row: usize) -> Option<Vec<u8>> {
+    if array.is_null(row) {
+        return None;
+    }
+    let any = array.as_any();
+    let i64_le = |v: i64| v.to_le_bytes().to_vec();
+    let f64_le = |v: f64| v.to_le_bytes().to_vec();
+    match array.data_type() {
+        DataType::Int8 => any
+            .downcast_ref::<Int8Array>()
+            .map(|a| i64_le(a.value(row) as i64)),
+        DataType::Int16 => any
+            .downcast_ref::<Int16Array>()
+            .map(|a| i64_le(a.value(row) as i64)),
+        DataType::Int32 => any
+            .downcast_ref::<Int32Array>()
+            .map(|a| i64_le(a.value(row) as i64)),
+        DataType::Int64 => any
+            .downcast_ref::<Int64Array>()
+            .map(|a| i64_le(a.value(row))),
+        DataType::UInt8 => any
+            .downcast_ref::<UInt8Array>()
+            .map(|a| i64_le(a.value(row) as i64)),
+        DataType::UInt16 => any
+            .downcast_ref::<UInt16Array>()
+            .map(|a| i64_le(a.value(row) as i64)),
+        DataType::UInt32 => any
+            .downcast_ref::<UInt32Array>()
+            .map(|a| i64_le(a.value(row) as i64)),
+        DataType::UInt64 => any
+            .downcast_ref::<UInt64Array>()
+            .map(|a| i64_le(a.value(row) as i64)),
+        DataType::Float32 => any
+            .downcast_ref::<Float32Array>()
+            .map(|a| f64_le(a.value(row) as f64)),
+        DataType::Float64 => any
+            .downcast_ref::<Float64Array>()
+            .map(|a| f64_le(a.value(row))),
+        DataType::Utf8 => any
+            .downcast_ref::<StringArray>()
+            .map(|a| a.value(row).as_bytes().to_vec()),
+        DataType::LargeUtf8 => any
+            .downcast_ref::<LargeStringArray>()
+            .map(|a| a.value(row).as_bytes().to_vec()),
+        DataType::Boolean => any
+            .downcast_ref::<BooleanArray>()
+            .map(|a| vec![a.value(row) as u8]),
+        _ => None,
+    }
+}
+
+/// Canonical key bytes for a probe-side (in-list) value, encoded into the split
+/// bloom's key family. Returns `None` when the value cannot be encoded into
+/// that family — the caller then treats the value as *possibly present* (no
+/// prune), never a false negative.
+fn probe_key_bytes(family: KeyFamily, value: &ScalarValue) -> Option<Vec<u8>> {
+    match (family, value) {
+        (KeyFamily::Int, ScalarValue::Int64(i)) => Some(i.to_le_bytes().to_vec()),
+        (KeyFamily::Float, ScalarValue::Float64(f)) => Some(f.to_le_bytes().to_vec()),
+        // Int literal against a float key: SQL compares 5 == 5.0, so widen to
+        // the column's f64 layout rather than miss the match.
+        (KeyFamily::Float, ScalarValue::Int64(i)) => Some((*i as f64).to_le_bytes().to_vec()),
+        (KeyFamily::Str, ScalarValue::String(s)) => Some(s.as_bytes().to_vec()),
+        (KeyFamily::Bool, ScalarValue::Bool(b)) => Some(vec![*b as u8]),
+        _ => None,
+    }
+}
+
+/// Build a bloom over the probe-side in-list `values` for a column of the given
+/// key `family`, sized for a low false-positive rate so split-key testing prunes
+/// reliably. Values that cannot be encoded into the family are skipped (they
+/// cannot match a key of that family anyway).
+fn build_inlist_bloom(family: KeyFamily, values: &[ScalarValue]) -> InlistBloom {
+    let config = CoreBloomFilterConfig {
+        bits_per_key: INLIST_BLOOM_BITS_PER_KEY,
+        expected_items: values.len().max(1),
+        ..Default::default()
+    };
+    let mut builder = BloomFilterBuilder::new(config);
+    for value in values {
+        if let Some(bytes) = probe_key_bytes(family, value) {
+            builder.add(&bytes);
+        }
+    }
+    InlistBloom {
+        family,
+        filter: builder.build(),
+    }
+}
+
+/// Prune a split iff *none* of its distinct keys can be in the probe-side
+/// in-list — i.e. every split key misses the in-list bloom. The bloom has no
+/// false negatives, so a split key that really is in the in-list always reports
+/// `might_contain == true` and the split is kept (never a false-negative prune);
+/// a false positive merely keeps a split the hash join then filters exactly.
+fn bloom_prunes_split(inlist: &InlistBloom, split_keys: &SplitKeys) -> bool {
+    // Families must match (both derive from the same column type); if not, stay
+    // conservative and do not prune.
+    if inlist.family != split_keys.family || split_keys.keys.is_empty() {
+        return false;
+    }
+    split_keys
+        .keys
+        .iter()
+        .all(|k| !inlist.filter.might_contain(k))
+}
+
+fn row_group_index(split: &FileSplit) -> Option<usize> {
+    match &split.split_type {
+        SplitType::RowGroup {
+            row_group_index, ..
+        } => Some(*row_group_index),
+        _ => None,
+    }
+}
+
+/// Collect positive in-lists whose cardinality is at/above the semi-join
+/// threshold, as (column, literal values) — the candidates for a per-split
+/// bloom prefilter.
+fn collect_semijoin_inlists(
+    expr: &Expr,
+    min_keys: usize,
+    out: &mut Vec<(String, Vec<ScalarValue>)>,
+) {
+    match expr {
+        Expr::BinaryExpr(binary) if matches!(binary.op, Operator::And | Operator::Or) => {
+            collect_semijoin_inlists(&binary.left, min_keys, out);
+            collect_semijoin_inlists(&binary.right, min_keys, out);
+        }
+        Expr::InList(list) if !list.negated && list.list.len() >= min_keys => {
+            if let Some(column) = column_name(&list.expr) {
+                let values = list
+                    .list
+                    .iter()
+                    .filter_map(literal_value)
+                    .collect::<Vec<_>>();
+                if !values.is_empty() {
+                    out.push((column, values));
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Reads a selected Parquet row group through object_store range requests.
@@ -149,6 +414,9 @@ pub struct ObjectStoreParquetTable {
     /// Registered table/collection name — keys the ADR-037 statistics
     /// registry for the NDV overlay in [`TableProvider::statistics`].
     table_name: Option<String>,
+    /// TD-OLAP-3: lazily-built, cached per-split join-key sets for the high-NDV
+    /// in-list semi-join case (see `prepare_split_keys`).
+    split_key_cache: Arc<Mutex<SplitKeyCache>>,
 }
 
 impl ObjectStoreParquetTable {
@@ -242,6 +510,7 @@ impl ObjectStoreParquetTable {
             file_sizes,
             location,
             table_name: None,
+            split_key_cache: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -286,9 +555,13 @@ impl ObjectStoreParquetTable {
         any.then_some(total)
     }
 
-    /// Count row-group splits that survive the given filters.
+    /// Count row-group splits that survive the given filters. Uses min/max
+    /// zone-maps plus (when `PROXIMADB_DF_BLOOM_SEMIJOIN` is set) any split key
+    /// sets already prefetched into the cache; it does not itself prefetch, so
+    /// EXPLAIN-style callers see the min/max result unless `scan()` — or a
+    /// test — has run the async prefetch first.
     pub fn pruned_split_count(&self, filters: &[Expr]) -> usize {
-        self.prune_splits(filters).len()
+        self.prune_splits(filters, SemijoinConfig::from_env()).len()
     }
 
     fn reader(&self) -> Arc<ObjectStoreParquetSplitReader> {
@@ -299,16 +572,161 @@ impl ObjectStoreParquetTable {
         })
     }
 
-    fn prune_splits(&self, filters: &[Expr]) -> Vec<FileSplit> {
+    fn prune_splits(&self, filters: &[Expr], cfg: SemijoinConfig) -> Vec<FileSplit> {
+        // Build this query's per-column in-list blooms once (cheap; reused across
+        // every split), then hold the split-key cache for the whole pass.
+        let inlist_blooms = if cfg.enabled {
+            self.build_inlist_blooms(filters, cfg)
+        } else {
+            HashMap::new()
+        };
+        let guard = if inlist_blooms.is_empty() {
+            None
+        } else {
+            self.split_key_cache.lock().ok()
+        };
+        let view = guard.as_ref().map(|split_keys| BloomPruneView {
+            min_keys: cfg.min_keys,
+            inlist_blooms: &inlist_blooms,
+            split_keys,
+        });
         self.splits
             .iter()
             .filter(|split| {
                 !filters
                     .iter()
-                    .any(|filter| filter_prunes_split(split, filter))
+                    .any(|filter| filter_prunes_split(split, filter, view.as_ref()))
             })
             .cloned()
             .collect()
+    }
+
+    /// Resolve a column name to its canonical bloom key family via the table
+    /// schema, or `None` for unsupported/nested types.
+    fn column_family(&self, column: &str) -> Option<KeyFamily> {
+        let index = self.schema.index_of(column).ok()?;
+        column_key_family(self.schema.field(index).data_type())
+    }
+
+    /// Build one low-`fpr` bloom per high-NDV in-list column from this query's
+    /// predicates (the probe-side/dimension key set the split keys are tested
+    /// against). When a column carries more than one qualifying in-list, the
+    /// bloom is built over the *union* of their values: a union bloom stays
+    /// false-negative-free for every constituent predicate (it can only
+    /// over-retain a split, never wrongly prune one).
+    fn build_inlist_blooms(
+        &self,
+        filters: &[Expr],
+        cfg: SemijoinConfig,
+    ) -> HashMap<String, InlistBloom> {
+        let mut inlists: Vec<(String, Vec<ScalarValue>)> = Vec::new();
+        for filter in filters {
+            collect_semijoin_inlists(filter, cfg.min_keys, &mut inlists);
+        }
+        let mut per_column: HashMap<String, Vec<ScalarValue>> = HashMap::new();
+        for (column, values) in inlists {
+            per_column.entry(column).or_default().extend(values);
+        }
+        let mut blooms = HashMap::new();
+        for (column, values) in per_column {
+            let Some(family) = self.column_family(&column) else {
+                continue;
+            };
+            blooms.insert(column, build_inlist_bloom(family, &values));
+        }
+        blooms
+    }
+
+    /// TD-OLAP-3 bloom semi-join prefetch: for high-NDV positive in-lists whose
+    /// min/max zone-maps fail to prune a split, materialize that split's distinct
+    /// join-key set via a projected read of just that column and cache it. Splits
+    /// the zone-map already prunes are skipped, so the key-column read is paid
+    /// only where the bloom can actually help.
+    async fn prepare_split_keys(&self, filters: &[Expr], cfg: SemijoinConfig) {
+        if !cfg.enabled {
+            return;
+        }
+        let mut inlists: Vec<(String, Vec<ScalarValue>)> = Vec::new();
+        for filter in filters {
+            collect_semijoin_inlists(filter, cfg.min_keys, &mut inlists);
+        }
+        if inlists.is_empty() {
+            return;
+        }
+        for split in &self.splits {
+            let Some(rg) = row_group_index(split) else {
+                continue;
+            };
+            for (column, values) in &inlists {
+                // Where min/max already prunes, skip the read entirely.
+                if split.can_prune_scalar(column, &ScalarPredicate::In(values.clone())) {
+                    continue;
+                }
+                let key = (split.file_path.clone(), rg, column.clone());
+                let already = self
+                    .split_key_cache
+                    .lock()
+                    .map(|cache| cache.contains_key(&key))
+                    .unwrap_or(true);
+                if already {
+                    continue;
+                }
+                let keys = self.build_split_keys(&split.file_path, rg, column).await;
+                if let Ok(mut cache) = self.split_key_cache.lock() {
+                    cache.insert(key, keys.map(Arc::new));
+                }
+            }
+        }
+    }
+
+    /// Materialize the distinct key bytes of one join-key column of one row group
+    /// via a projected object_store read (only that column's pages are fetched,
+    /// and through the tracing store so its bytes land in the I/O trace). Returns
+    /// `None` on any error, unsupported/nested key type, or when the distinct-key
+    /// count exceeds [`MAX_SPLIT_DISTINCT_KEYS`] — the caller caches the `None`
+    /// and falls back to min/max (never a false negative).
+    async fn build_split_keys(
+        &self,
+        file_path: &str,
+        rg_index: usize,
+        column: &str,
+    ) -> Option<SplitKeys> {
+        let field_index = self.schema.index_of(column).ok()?;
+        let family = column_key_family(self.schema.field(field_index).data_type())?;
+        let path = Path::from(file_path);
+        let file_size = self.file_sizes.get(file_path).copied();
+        let reader = parquet_reader(self.store.clone(), path, file_size);
+        let stream_builder = ParquetRecordBatchStreamBuilder::new(reader).await.ok()?;
+        let mask = ProjectionMask::roots(stream_builder.parquet_schema(), [field_index]);
+        let mut stream = stream_builder
+            .with_row_groups(vec![rg_index])
+            .with_projection(mask)
+            .with_batch_size(8192)
+            .build()
+            .ok()?;
+        let mut seen: HashSet<Vec<u8>> = HashSet::new();
+        while let Some(batch) = stream.next().await {
+            let batch = batch.ok()?;
+            // Projected to exactly the key column; refuse anything else so a
+            // mask/index mismatch can never seed keys from the wrong column
+            // (which would risk a false-negative prune).
+            if batch.num_columns() != 1 || batch.schema().field(0).name() != column {
+                return None;
+            }
+            let array = batch.column(0);
+            for row in 0..array.len() {
+                if let Some(bytes) = array_key_bytes(array.as_ref(), row) {
+                    if seen.len() >= MAX_SPLIT_DISTINCT_KEYS && !seen.contains(&bytes) {
+                        return None; // too many distinct keys — fall back to min/max
+                    }
+                    seen.insert(bytes);
+                }
+            }
+        }
+        Some(SplitKeys {
+            family,
+            keys: seen.into_iter().collect(),
+        })
     }
 }
 
@@ -355,7 +773,12 @@ impl TableProvider for ObjectStoreParquetTable {
         limit: Option<usize>,
     ) -> DFResult<Arc<dyn ExecutionPlan>> {
         let target_partitions = state.config().target_partitions();
-        let pruned = self.prune_splits(filters);
+        let semijoin_cfg = SemijoinConfig::from_env();
+        // TD-OLAP-3 bloom semi-join (default-OFF): prefetch per-split join-key
+        // sets for high-NDV in-lists so `prune_splits` can skip fact splits whose
+        // collapsed min/max window cannot. No-op when disabled/absent.
+        self.prepare_split_keys(filters, semijoin_cfg).await;
+        let pruned = self.prune_splits(filters, semijoin_cfg);
         // Skip-ratio evidence for the runtime-filter promotion gate
         // (TD-OLAP-3/TD-OLAP-4): candidate vs pruned splits, per query.
         crate::observability::io_trace::record_splits(
@@ -465,16 +888,16 @@ fn column_bounds_from_parquet(stats: &ParquetStatistics) -> Option<ColumnBounds>
     })
 }
 
-fn filter_prunes_split(split: &FileSplit, expr: &Expr) -> bool {
+fn filter_prunes_split(split: &FileSplit, expr: &Expr, view: Option<&BloomPruneView>) -> bool {
     match expr {
         Expr::BinaryExpr(binary) => match binary.op {
             Operator::And => {
-                filter_prunes_split(split, &binary.left)
-                    || filter_prunes_split(split, &binary.right)
+                filter_prunes_split(split, &binary.left, view)
+                    || filter_prunes_split(split, &binary.right, view)
             }
             Operator::Or => {
-                filter_prunes_split(split, &binary.left)
-                    && filter_prunes_split(split, &binary.right)
+                filter_prunes_split(split, &binary.left, view)
+                    && filter_prunes_split(split, &binary.right, view)
             }
             _ => comparison_predicate(&binary.left, binary.op, &binary.right)
                 .map(|(column, predicate)| split.can_prune_scalar(&column, &predicate))
@@ -495,7 +918,29 @@ fn filter_prunes_split(split: &FileSplit, expr: &Expr) -> bool {
                 .iter()
                 .filter_map(literal_value)
                 .collect::<Vec<_>>();
-            !values.is_empty() && split.can_prune_scalar(&column, &ScalarPredicate::In(values))
+            if values.is_empty() {
+                return false;
+            }
+            // Min/max zone-map first (cheap; exact for splits with a narrow key
+            // range).
+            if split.can_prune_scalar(&column, &ScalarPredicate::In(values.clone())) {
+                return true;
+            }
+            // High-NDV semi-join fallback (TD-OLAP-3): the zone-map collapses
+            // when the key set spans the split's [min,max]. Test the split's
+            // distinct keys against the low-fpr in-list bloom and prune only when
+            // *none* can be present; the FilterExec above re-checks exactly.
+            if let Some(view) = view
+                && values.len() >= view.min_keys
+                && let Some(inlist) = view.inlist_blooms.get(&column)
+                && let Some(rg) = row_group_index(split)
+                && let Some(Some(split_keys)) =
+                    view.split_keys
+                        .get(&(split.file_path.clone(), rg, column.clone()))
+            {
+                return bloom_prunes_split(inlist, split_keys);
+            }
+            false
         }
         Expr::Between(between) if !between.negated => {
             let Some(column) = column_name(&between.expr) else {
@@ -759,5 +1204,269 @@ mod tests {
 
         assert_eq!(table.split_count(), 2);
         assert_eq!(table.pruned_split_count(&filters), 1);
+    }
+
+    // ---- TD-OLAP-3 bloom semi-join --------------------------------------
+
+    /// Two row groups, one Int64 key column, contents controlled per group via
+    /// an explicit `flush()` between the two write batches.
+    fn write_int_key_parquet(path: &std::path::Path, rg0: &[i64], rg1: &[i64]) -> SchemaRef {
+        let schema = Arc::new(Schema::new(vec![Field::new("k", DataType::Int64, false)]));
+        let file = std::fs::File::create(path).unwrap();
+        let mut writer = ArrowWriter::try_new(file, schema.clone(), None).unwrap();
+        let b0 = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int64Array::from(rg0.to_vec()))],
+        )
+        .unwrap();
+        writer.write(&b0).unwrap();
+        writer.flush().unwrap(); // seal row group 0
+        let b1 = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int64Array::from(rg1.to_vec()))],
+        )
+        .unwrap();
+        writer.write(&b1).unwrap();
+        writer.close().unwrap();
+        schema
+    }
+
+    fn in_list_i64(column: &str, values: &[i64]) -> Expr {
+        Expr::InList(datafusion::logical_expr::expr::InList::new(
+            Box::new(Expr::Column(Column::from_name(column))),
+            values
+                .iter()
+                .map(|&v| Expr::Literal(DfScalarValue::Int64(Some(v)), None))
+                .collect(),
+            false,
+        ))
+    }
+
+    /// The headline case: an in-list whose min/max window overlaps a row group
+    /// but whose keys are all absent from it. Min/max cannot prune; the bloom
+    /// can. Proves the bloom prunes strictly more than the zone-map here.
+    #[tokio::test]
+    async fn bloom_semijoin_prunes_where_minmax_collapses() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        // rg0 = a few odds spanning [1,199]; rg1 = 1000..=1099.
+        let odds: Vec<i64> = vec![1, 51, 99, 149, 199];
+        let far: Vec<i64> = (1000..=1099).collect();
+        write_int_key_parquet(&data_dir.join("part-0.parquet"), &odds, &far);
+
+        let location = format!("file://{}", tmp.path().display());
+        let table = ObjectStoreParquetTable::open(&location).await.unwrap();
+        assert_eq!(table.split_count(), 2);
+
+        // Even keys 2..=300: each ∈ [1,199] for rg0 (min/max cannot prune) but
+        // none is actually present (rg0 holds only odds); all < 1000 for rg1.
+        let evens: Vec<i64> = (2..=300).step_by(2).collect();
+        let filters = vec![in_list_i64("k", &evens)];
+        let on = SemijoinConfig {
+            enabled: true,
+            min_keys: 4,
+        };
+        let off = SemijoinConfig {
+            enabled: false,
+            min_keys: 4,
+        };
+
+        // Baseline (min/max only): rg1 pruned, rg0 survives.
+        assert_eq!(table.prune_splits(&filters, off).len(), 1);
+
+        // With split keys prefetched: rg0 is also pruned — each of its odd keys
+        // misses the even-keyed in-list bloom.
+        table.prepare_split_keys(&filters, on).await;
+        assert_eq!(
+            table.prune_splits(&filters, on).len(),
+            0,
+            "bloom prunes the row group whose collapsed min/max window could not"
+        );
+    }
+
+    /// Correctness invariant (mandate #2/#8): a split that DOES contain a probe
+    /// key must never be pruned. A false-negative prune would drop real rows.
+    #[tokio::test]
+    async fn bloom_semijoin_never_prunes_split_with_a_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        let odds: Vec<i64> = (1..=199).step_by(2).collect();
+        let far: Vec<i64> = (1000..=1099).collect();
+        write_int_key_parquet(&data_dir.join("part-0.parquet"), &odds, &far);
+
+        let location = format!("file://{}", tmp.path().display());
+        let table = ObjectStoreParquetTable::open(&location).await.unwrap();
+
+        // In-list of odd keys that ARE present in rg0 (plus some absent evens).
+        let mut present: Vec<i64> = (1..=197).step_by(2).collect();
+        present.extend([2_i64, 4, 6, 8]);
+        let filters = vec![in_list_i64("k", &present)];
+        let on = SemijoinConfig {
+            enabled: true,
+            min_keys: 4,
+        };
+        table.prepare_split_keys(&filters, on).await;
+        let survivors = table.prune_splits(&filters, on);
+        assert_eq!(survivors.len(), 1, "rg0 contains matches and must survive");
+        assert_eq!(
+            row_group_index(&survivors[0]),
+            Some(0),
+            "the surviving split is the one holding the matching keys"
+        );
+    }
+
+    /// No-false-negative at the bloom layer: every in-list key must report
+    /// `might_contain == true` through the same encoding the split side uses —
+    /// so a split key that really is in the in-list can never be pruned away.
+    #[test]
+    fn inlist_bloom_has_no_false_negative() {
+        let values: Vec<ScalarValue> = (1..=500).map(ScalarValue::Int64).collect();
+        let bloom = build_inlist_bloom(KeyFamily::Int, &values);
+        assert_eq!(bloom.family, KeyFamily::Int);
+        for v in &values {
+            let bytes = probe_key_bytes(KeyFamily::Int, v).unwrap();
+            assert!(
+                bloom.filter.might_contain(&bytes),
+                "in-list key {v:?} must not be a bloom false negative"
+            );
+        }
+    }
+
+    /// `build_split_keys` reads exactly the distinct values of the key column.
+    #[tokio::test]
+    async fn build_split_keys_reads_distinct_column_values() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        // rg0 has a duplicate (7 appears twice) → 3 distinct keys.
+        write_int_key_parquet(&data_dir.join("part-0.parquet"), &[7, 7, 9, 11], &[1000]);
+
+        let location = format!("file://{}", tmp.path().display());
+        let table = ObjectStoreParquetTable::open(&location).await.unwrap();
+        let sk = table
+            .build_split_keys(&table.splits[0].file_path, 0, "k")
+            .await
+            .expect("keys read for the Int64 column");
+        assert_eq!(sk.family, KeyFamily::Int);
+        let mut got: Vec<i64> = sk
+            .keys
+            .iter()
+            .map(|b| i64::from_le_bytes(b.as_slice().try_into().unwrap()))
+            .collect();
+        got.sort_unstable();
+        assert_eq!(got, vec![7, 9, 11]);
+    }
+
+    /// `bloom_prunes_split`: prunes on a disjoint key set, keeps on any overlap.
+    #[test]
+    fn bloom_prunes_split_only_when_disjoint() {
+        let evens: Vec<ScalarValue> = (2..=200).step_by(2).map(ScalarValue::Int64).collect();
+        let inlist = build_inlist_bloom(KeyFamily::Int, &evens);
+
+        let enc = |vs: &[i64]| SplitKeys {
+            family: KeyFamily::Int,
+            keys: vs.iter().map(|v| v.to_le_bytes().to_vec()).collect(),
+        };
+        // All odd → disjoint from the even in-list → prune.
+        assert!(bloom_prunes_split(&inlist, &enc(&[1, 51, 99, 149, 199])));
+        // Contains an even key (in the in-list) → must NOT prune.
+        assert!(!bloom_prunes_split(&inlist, &enc(&[1, 51, 100, 149])));
+        // Family mismatch → never prune.
+        let str_keys = SplitKeys {
+            family: KeyFamily::Str,
+            keys: vec![b"x".to_vec()],
+        };
+        assert!(!bloom_prunes_split(&inlist, &str_keys));
+    }
+
+    /// Two different high-NDV in-lists on the SAME column: the per-column bloom
+    /// is the union of their values, so a split whose keys match one in-list is
+    /// never pruned by the other's bloom. (Keying by column with first-wins
+    /// would false-negative-prune here.)
+    #[tokio::test]
+    async fn bloom_semijoin_union_over_multiple_inlists_is_safe() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        let odds: Vec<i64> = vec![1, 51, 99, 149, 199];
+        let far: Vec<i64> = (1000..=1099).collect();
+        write_int_key_parquet(&data_dir.join("part-0.parquet"), &odds, &far);
+
+        let location = format!("file://{}", tmp.path().display());
+        let table = ObjectStoreParquetTable::open(&location).await.unwrap();
+
+        // `k IN (evens…) AND k IN (rg0 keys…)` — rg0 has rows matching the
+        // second list, so it must survive despite missing the first.
+        let evens: Vec<i64> = (2..=300).step_by(2).collect();
+        let filters = vec![in_list_i64("k", &evens).and(in_list_i64("k", &odds))];
+        let on = SemijoinConfig {
+            enabled: true,
+            min_keys: 4,
+        };
+        table.prepare_split_keys(&filters, on).await;
+        let survivors = table.prune_splits(&filters, on);
+        assert_eq!(
+            survivors.len(),
+            1,
+            "rg0 matches the second in-list; keep it"
+        );
+        assert_eq!(row_group_index(&survivors[0]), Some(0));
+    }
+
+    /// Below the cardinality threshold the bloom is neither built nor consulted;
+    /// pruning falls back to min/max exactly as before.
+    #[tokio::test]
+    async fn bloom_semijoin_gated_out_below_threshold() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        let odds: Vec<i64> = vec![1, 51, 99, 149, 199];
+        let far: Vec<i64> = (1000..=1099).collect();
+        write_int_key_parquet(&data_dir.join("part-0.parquet"), &odds, &far);
+
+        let location = format!("file://{}", tmp.path().display());
+        let table = ObjectStoreParquetTable::open(&location).await.unwrap();
+        let evens: Vec<i64> = (2..=300).step_by(2).collect(); // 150 keys
+        let filters = vec![in_list_i64("k", &evens)];
+        let cfg = SemijoinConfig {
+            enabled: true,
+            min_keys: 1000, // above the 150-key list → gated out
+        };
+        table.prepare_split_keys(&filters, cfg).await;
+        assert_eq!(
+            table.prune_splits(&filters, cfg).len(),
+            1,
+            "rg0 survives via min/max; the bloom path is gated out"
+        );
+    }
+
+    /// Build-side and probe-side encodings must agree byte-for-byte, and a
+    /// cross-family probe must fail to encode (→ conservative keep, never a
+    /// false negative).
+    #[test]
+    fn probe_and_array_key_bytes_agree() {
+        let ints = Int64Array::from(vec![5_i64, 42]);
+        assert_eq!(
+            array_key_bytes(&ints, 0),
+            Some(5_i64.to_le_bytes().to_vec())
+        );
+        assert_eq!(
+            probe_key_bytes(KeyFamily::Int, &ScalarValue::Int64(5)),
+            array_key_bytes(&ints, 0)
+        );
+
+        let strs = StringArray::from(vec!["x", "y"]);
+        assert_eq!(
+            probe_key_bytes(KeyFamily::Str, &ScalarValue::String("x".to_string())),
+            array_key_bytes(&strs, 0)
+        );
+
+        // Cross-family probe (int against a string key) cannot encode.
+        assert_eq!(
+            probe_key_bytes(KeyFamily::Str, &ScalarValue::Int64(5)),
+            None
+        );
     }
 }
