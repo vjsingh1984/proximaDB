@@ -200,6 +200,32 @@ async fn prometheus_metrics_endpoint(
         }
         text.push_str(&wal_scan_text);
     }
+    // Append the DEFAULT prometheus registry. The per-tenant CONSUMPTION families
+    // (`proximadb_object_store_ops_total`, `proximadb_kou_bytes_total`,
+    // `proximadb_storage_bytes_seconds`, `proximadb_object_store_write_bytes_by_tier_total`, …)
+    // register there via `register_*_vec!` in `crate::metrics::consumption_metrics`, and were
+    // otherwise registered-but-never-scraped (they are NOT in the hand-written system exporter
+    // above, and the precision/rank/wal-scan blocks each use their OWN `Registry`, so nothing is
+    // double-counted; the system exporter's `proximadb_storage_bytes` does not collide with the
+    // consumption `proximadb_storage_bytes_seconds`). Neutral usage telemetry only — pricing lives
+    // in the commercial control plane, never OSS.
+    let default_registry_text = {
+        use prometheus::Encoder;
+        let families = prometheus::gather();
+        let mut buf = Vec::new();
+        let encoder = prometheus::TextEncoder::new();
+        if encoder.encode(&families, &mut buf).is_ok() {
+            String::from_utf8(buf).unwrap_or_default()
+        } else {
+            String::new()
+        }
+    };
+    if !default_registry_text.is_empty() {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&default_registry_text);
+    }
     Ok(text)
 }
 

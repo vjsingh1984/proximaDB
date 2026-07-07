@@ -588,6 +588,11 @@ tracing-subscriber = "0.3"
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }
 proptest = "1.0"
+# In-process gather of the default prometheus registry where the per-tenant
+# consumption counters live (tests/documents_convergence_bake.rs measures the
+# metering delta at the registry, not just the /metrics/prometheus endpoint —
+# same pin as the root [dependencies] entry).
+prometheus = "0.14"
 # tempdir = "0.3"  # REMOVED: Deprecated since 2018, has TOCTOU vulnerability (RUSTSEC-2023-0018). Use tempfile instead.
 env_logger = "0.10"
 walkdir = "2"

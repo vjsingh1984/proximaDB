@@ -4,7 +4,14 @@
 
 [cols="1,3"]
 |===
-|Status|Open — HANDOFF. Capability complete + merged (default-OFF); production cutover not started.
+|Status|BAKE COMPLETE 2026-07-06 — all 4 criteria MEASURED-PASS. The metering BLOCKER (a document
+write emitted no per-tenant consumption delta) is CLOSED: `materialize_collection` now emits the
+per-tenant object-store WRITE meter and `/metrics/prometheus` now exports the default registry — a
+canonical document write bills 64,828 B (measured). Cutover MAY proceed via the phased per-collection
+→ widen → default-ON (kill-switch) rollout; follow-ups (not blockers): tenant-attribution audit,
+100k-scale projection test, real access-tier threading. Evidence:
+`docs/_internal/status/TD_DOC_CONV_2_BAKE_RESULTS_2026_07_06.adoc`; harness:
+`tests/documents_convergence_bake.rs`; ledger: `doc_conv2_bake_*` in `BENCHMARK_EVIDENCE.toml`.
 |Priority|MEDIUM (the convergence value is unrealized until this lands)
 |Scope|FEAT
 |Date|2026-07-06

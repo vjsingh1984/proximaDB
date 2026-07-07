@@ -209,6 +209,29 @@ pub async fn materialize_collection(
     let bytes = result.bytes_written.unwrap_or(0);
     let entries_flushed = result.entries_flushed.unwrap_or(0);
 
+    // Per-tenant object-store WRITE metering (co-design KIU/KSU write side). This is the single
+    // tenant-aware flush funnel through which every engine's memtable→object-store segment write
+    // passes, so metering here — rather than at each per-engine PAX/segment write call site —
+    // keeps the emission DRY and engine-neutral (SST/HELIX/NOVA/VIPER all funnel through
+    // `engine.flush()` above). It mirrors the read side's `record_object_store_op(.., "fetch_pax")`.
+    //
+    // OSS boundary: this emits NEUTRAL usage telemetry only (byte + op counts attributed by
+    // tenant) — no pricing, no $/unit weights, no cloud-cost constants. Applying policy weights to
+    // these dimensions is the commercial anvaiops control plane's concern, never OSS code.
+    //
+    // Tier "hot" is the write-time default: a fresh flush writes hot, and an unset
+    // `storage_class` ⇒ the account/backend default. `bytes == 0` (e.g. a tombstone-only flush)
+    // records nothing.
+    if bytes > 0 {
+        let tenant = plan.tenant_id.as_deref();
+        crate::metrics::consumption_metrics::record_object_store_op(tenant, "flush_write");
+        crate::metrics::consumption_metrics::record_object_store_write_bytes_by_tier(
+            tenant.unwrap_or(""),
+            "hot",
+            bytes,
+        );
+    }
+
     // WAL cleanup after a successful flush: clear the memtable batches and delete
     // the now-redundant WAL files (avoids 2× WAL+segment storage overhead). Gated
     // by `free_wal`: the server keeps the WAL until the cold SST read path serves
