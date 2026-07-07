@@ -47,9 +47,11 @@ ownership:
 == The seams ProximaDB owns (execution-path map, `file:line`)
 
 A SQL aggregate over pgwire → router → DataFusion → back to the client passes
-through (agent-traced):
+through (agent-traced). NOTE: the "top suspect" ordering below is the *a-priori*
+code-reading guess; the release measurement (next section) OVERTURNED it — the
+evidence-driven ranking is under "Corrected seam ranking."
 
-. **Arrow → row materialization — TOP SUSPECT.**
+. **Arrow → row materialization — a-priori top suspect, DISPROVEN by measurement.**
   `src/query/execution/datafusion_engine.rs:760-867`
   (`record_batch_to_rows` / `arrow_cell_to_proxima`). DataFusion emits columnar
   Arrow `RecordBatch`; ProximaDB converts them **cell-by-cell** into a
@@ -87,14 +89,58 @@ ProximaDB 35/43, DuckDB 35/43 (same 8 fail — EventDate typed INT vs date
 literals + 2 function shapes). Debug median 250 ms vs DuckDB 25 ms — the ~10× is
 **debug build + the result-path seam**, both ours to remove; NOT an engine gap.
 
-== Release measurement (Phase A deliverable — IN PROGRESS)
+== Release measurement — the hypothesis is OVERTURNED
 
-// PHASE-A-RELEASE-NUMBERS
-A release build collapses most of the debug penalty (the seams are CPU-bound
-per-cell work that release inlines/optimizes heavily). The release run quantifies
-how much of *our* overhead remains after the debug penalty is removed, and — with
-per-layer io_trace + EXPLAIN ANALYZE — splits it into scan I/O vs DataFusion
-compute vs pgwire serialize, so Phase C targets the *measured* dominant seam.
+Prediction: a release build would collapse most of the gap, because the suspected
+seam (Arrow→row→text per-cell materialization) is CPU-bound and release-sensitive.
+
+Measured (scale-0.01 / 1M rows, `c` = 32c/78GB WSL2, both over the same lowercase
+Parquet):
+
+|===
+| build | ProximaDB (35 ok) | DuckDB (35 ok) | ratio
+
+| debug   | median 250 ms · total 18.3 s | median 25 ms | ~14×
+| **release** | **median 230 ms · total 17.4 s** | median 26 ms · total 1.2 s | **~14×**
+|===
+
+**Release did NOT help (250→230 ms).** So the dominant cost is *not* the
+CPU-bound Arrow→row→text path — that would have shrunk sharply with optimization.
+
+Per-query shape confirms it: the walls are **flat ~220–240 ms regardless of query
+complexity**, `COUNT(*)` (q01) is 329 ms (counting rows should be near-free from
+footer stats), and a handful of narrow point-filter queries (q20/q24–27) run at
+~47 ms. A near-constant per-query floor that release can't move is the signature
+of a **fixed I/O / scan cost, not compute** — almost certainly the external
+Parquet being **re-opened and re-scanned on every query** (per-query
+`register_object_store_parquet_location` in `prepare_dataframe`; no persistent
+table registration or footer/metadata cache), and likely reading more than the
+1–3 columns each query needs.
+
+**This is the co-design mandate working as intended: trace before you tune.** The
+first-suspect (result path) was disproven by measurement; the real seam is the
+scan/registration path.
+
+=== Corrected seam ranking (evidence-driven)
+
+. **Per-query external-Parquet re-open + scan (NEW top seam).** No persistent
+  registration/footer cache across queries; `prepare_dataframe` re-opens the
+  object each query. Release-insensitive, flat per-query floor. — the ~230 ms.
+. **Projection pushdown for wide tables.** ClickBench touches 1–3 of 105 columns;
+  verify column projection reaches the Parquet reader (the ~47 ms narrow queries
+  suggest it partly works). Reading all columns is a large I/O amplification.
+. Footer round-trip / metadata cache (`object_store_parquet_reader.rs:102-109`).
+. (Deprioritized by evidence) Arrow→row→text materialization
+  (`datafusion_engine.rs:760-867`) — real, but NOT dominant for this workload;
+  revisit once the scan floor is removed.
+
+=== Immediate next step (Phase A tail)
+
+Capture `io_trace` `bytes_read` + `range_gets` per query in the harness (or run
+with `RUST_LOG=proximadb::io_trace`) to prove the mechanism — a per-query
+`bytes_read` ≈ whole-object confirms re-scan; near-footer-only confirms a
+metadata-open floor. Then Phase C targets the measured mechanism (persistent
+table registration / footer cache; projection pushdown), NOT the result path.
 
 == Plan
 
