@@ -82,12 +82,18 @@ impl DataFusionLocalEngine {
         // F4/F6: when the route owns the vector / graph services, register the cross-modal
         // `vector_search` + `graph_traverse` UDTFs (and `timeseries_range` from the process
         // global) on this ctx so a cross-modal join resolves in the DataFusion SQL fallback.
+        // TD-OLAP-4: time the SessionContext build + UDF/UDAF re-registration —
+        // paid per query today, a candidate for a reusable session template.
+        let session_start = std::time::Instant::now();
         let ctx = crate::datafusion::create_session_context_with_ports(
             context.vector_ops.clone(),
             context.graph_ops.clone(),
             context.tenant_id.clone(),
         )
         .map_err(|e| ExecutionError::Context(format!("session: {e}")))?;
+        crate::observability::io_trace::record_session_ms(
+            session_start.elapsed().as_millis() as u64
+        );
 
         // TD-OLAP-4: time the table-OPEN floor (LIST + HEAD + footer discovery),
         // which happens before execution and is invisible to `record_compute_ms`.

@@ -350,6 +350,10 @@ pub async fn try_run_select(
     // `CatalogLookup`/`ReaderFactory` traits can't await). Rows are fetched
     // lazily per scan in `DmlTableReader::open`, with the executor's
     // projection/predicate/limit pushed into storage.
+    // TD-OLAP-4: time this pre-execution setup (schema pre-resolution + route
+    // classification) — measurement showed this path-2 setup, not open/session/
+    // plan/compute, is the per-query wall floor the native early-return path skips.
+    let setup_start = std::time::Instant::now();
     let mut names = Vec::new();
     collect_table_names(query, &mut names);
     let mut tables: HashMap<String, PreparedTable> = HashMap::new();
@@ -491,6 +495,7 @@ pub async fn try_run_select(
         // ADR-030 / TD-158: time the DataFusion (engine-SQL fallback) execution so
         // the always-on billing observer can attribute KRU to this engine at scope
         // close. `record_compute_ms` no-ops outside an `io_trace` scope.
+        crate::observability::io_trace::record_setup_ms(setup_start.elapsed().as_millis() as u64);
         let started = std::time::Instant::now();
         let engine_result = execute_sql_with_backend(decision.backend.clone(), sql, context).await;
         crate::observability::io_trace::record_compute_ms(
@@ -520,6 +525,7 @@ pub async fn try_run_select(
         Ok(p) => p,
         Err(e) => return Some(Err(e)),
     };
+    crate::observability::io_trace::record_setup_ms(setup_start.elapsed().as_millis() as u64);
     match execute_physical(physical, &snapshot, controls).await {
         Ok(result) => {
             if let Some((skey, lsn)) = &cache_ctx {

@@ -163,6 +163,15 @@ pub struct IoTrace {
     /// in a small map so a single query that touches multiple engines (e.g. a
     /// Volcano point lookup plus a DataFusion aggregate) attributes each.
     compute_ms: Mutex<BTreeMap<String, u64>>,
+    /// pgwire relational-pipeline SETUP wall milliseconds (TD-OLAP-4): per-query
+    /// pre-execution cost in `try_run_select` BEFORE the engine runs — table-name
+    /// collection + xCatalog schema pre-resolution + route classification. Paid
+    /// only on the DataFusion (path-2) route, not the native early-return path.
+    setup_ms: AtomicU64,
+    /// SessionContext build wall milliseconds (TD-OLAP-4): per-query cost of
+    /// creating a fresh DataFusion `SessionContext` and re-registering all
+    /// UDFs/UDAFs — paid before table open, reusable across queries.
+    session_ms: AtomicU64,
     /// Table-OPEN wall milliseconds (TD-OLAP-4): the per-query fixed cost of
     /// discovering + opening the parquet base (LIST + HEAD-per-file + footer
     /// read) BEFORE execution. Distinct from `compute_ms` (execution) — a
@@ -264,6 +273,16 @@ impl IoTrace {
         *g.entry(engine.to_string()).or_insert(0) += ms;
     }
 
+    /// Add to the pgwire relational-pipeline setup wall milliseconds.
+    pub fn record_setup_ms(&self, ms: u64) {
+        self.setup_ms.fetch_add(ms, Ordering::Relaxed);
+    }
+
+    /// Add to the SessionContext build wall milliseconds.
+    pub fn record_session_ms(&self, ms: u64) {
+        self.session_ms.fetch_add(ms, Ordering::Relaxed);
+    }
+
     /// Add to the table-OPEN wall milliseconds (discovery + footer open before
     /// execution). Additive so multiple registered tables accumulate.
     pub fn record_open_ms(&self, ms: u64) {
@@ -335,6 +354,8 @@ impl IoTrace {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .clone(),
+            setup_ms: self.setup_ms.load(Ordering::Relaxed),
+            session_ms: self.session_ms.load(Ordering::Relaxed),
             open_ms: self.open_ms.load(Ordering::Relaxed),
             plan_ms: self.plan_ms.load(Ordering::Relaxed),
             table_open_hits: self.table_open_hits.load(Ordering::Relaxed),
@@ -371,6 +392,13 @@ pub struct IoTraceSnapshot {
     pub embedding_input_tokens: u64,
     pub embedding_output_tokens: u64,
     pub compute_ms: BTreeMap<String, u64>,
+    /// pgwire relational-pipeline setup wall ms — pre-execution xCatalog schema
+    /// resolution + route classification, DataFusion route only (TD-OLAP-4).
+    #[serde(default)]
+    pub setup_ms: u64,
+    /// SessionContext build wall ms — per-query context+UDF setup (TD-OLAP-4).
+    #[serde(default)]
+    pub session_ms: u64,
     /// Table-OPEN wall ms — the per-query discovery+footer floor (TD-OLAP-4).
     #[serde(default)]
     pub open_ms: u64,
@@ -563,6 +591,16 @@ pub fn record_compute_ms(engine: &str, ms: u64) {
 /// Add table-OPEN wall ms (discovery + footer open) to the active query trace.
 pub fn record_open_ms(ms: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_open_ms(ms));
+}
+
+/// Add pgwire relational-pipeline setup wall ms to the active query trace.
+pub fn record_setup_ms(ms: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_setup_ms(ms));
+}
+
+/// Add SessionContext build wall ms to the active query trace.
+pub fn record_session_ms(ms: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_session_ms(ms));
 }
 
 /// Add lowering + planning wall ms to the active query trace.
