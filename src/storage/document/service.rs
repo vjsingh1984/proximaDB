@@ -135,24 +135,39 @@ pub struct DocumentService {
 /// generous but finite — a silent truncation past it would drop reads, so it is logged.
 const CANONICAL_DOC_SCAN_LIMIT: usize = 100_000;
 
-/// Runtime gate for the canonical-vector document route (ADR-009), **DEFAULT-OFF**.
+/// Runtime gate for the canonical-vector document route (ADR-009), **DEFAULT-ON**
+/// (post-bake cutover, TD-DOC-CONV-2). The bake proved recall / single-store /
+/// restart-recovery, and the write path now meters per-tenant; the default is flipped ON
+/// and shipped default-reversible via a global kill-switch.
 ///
-/// The route is enabled for `collection` when env `PROXIMADB_DOC_CANONICAL_VECTOR` is
-/// `1`/`true`/`on`/`all` (all collections), or a comma-separated list containing
-/// `collection`. Unset/empty ⇒ OFF ⇒ today's legacy `document_wal` behavior,
-/// bit-for-bit. Mirrors the graph modality's runtime feature gates; per-collection
-/// opt-in keeps the storage-format migration mixed-read-safe until baked.
+/// `PROXIMADB_DOC_CANONICAL_VECTOR`:
+/// * unset / empty / `1` / `true` / `on` / `all` / `*` ⇒ **ON** (default)
+/// * `0` / `false` / `off` / `none` ⇒ **OFF** for every collection — the global
+///   **kill-switch** (force back to the legacy path, e.g. to roll the cutover back)
+/// * a comma-separated list ⇒ ON **only** for the named collections (a partial-rollback
+///   scoping: unlisted collections are OFF)
+///
+/// NB this is only HALF the routing decision: the canonical route additionally requires
+/// the collection to actually exist as a canonical/vector collection (see
+/// [`DocumentService::canonical_route`]), so a pure-document (non-vector) collection stays
+/// on the legacy path even with the gate ON — the flip is mixed-read/write-safe, no
+/// flag-day. Legacy pre-cutover docs remain reachable via the read-fallback.
 pub fn doc_canonical_vector_enabled(collection: &str) -> bool {
     match std::env::var("PROXIMADB_DOC_CANONICAL_VECTOR") {
+        // Unset ⇒ ON (default-ON post-cutover).
+        Err(_) => true,
         Ok(raw) => {
             let raw = raw.trim();
             match raw.to_ascii_lowercase().as_str() {
-                "" => false,
-                "1" | "true" | "on" | "all" | "*" => true,
+                // Empty ⇒ treat as unset ⇒ ON.
+                "" | "1" | "true" | "on" | "all" | "*" => true,
+                // Global kill-switch ⇒ OFF for every collection (default-reversible).
+                "0" | "false" | "off" | "none" => false,
+                // Explicit allowlist ⇒ ON only for the listed collections; an explicit
+                // list is a deliberate scoping, so it overrides default-ON for the rest.
                 _ => raw.split(',').map(str::trim).any(|c| c == collection),
             }
         }
-        Err(_) => false,
     }
 }
 
@@ -332,16 +347,28 @@ impl DocumentService {
         let _ = self.record_route.set(record_route);
     }
 
-    /// Select the canonical-vector route for `collection` iff a route is wired AND the
-    /// runtime gate is ON for it (default-OFF). `None` ⇒ the legacy `document_wal` path.
-    /// The single decision point for the store-split cutover — every write/read branches
-    /// on this so gate-OFF is today's behavior, bit-for-bit.
-    fn canonical_route(
+    /// Select the canonical-vector route for `collection`, else `None` ⇒ legacy path. The single
+    /// decision point for the store-split cutover — every write/read branches on this. Three
+    /// conditions, all required (mixed-safe under the DEFAULT-ON gate, TD-DOC-CONV-2):
+    ///
+    /// 1. a canonical route is wired,
+    /// 2. the runtime gate is ON for `collection` (default-ON; kill-switch / allowlist honored),
+    /// 3. `collection` actually EXISTS as a canonical/vector collection.
+    ///
+    /// (3) is what makes default-ON safe: a pure-document (non-vector) collection — one never
+    /// created via REST v2 / DDL — is not resolvable canonically, so it stays on the legacy path
+    /// instead of hard-failing the canonical write (`insert_records` errors on an unresolvable
+    /// collection). Legacy pre-cutover docs stay reachable via the read-fallback.
+    async fn canonical_route(
         &self,
         collection: &str,
     ) -> Option<&Arc<dyn proximadb_runtime::RecordRoutePort>> {
         let route = self.record_route.get()?;
-        if doc_canonical_vector_enabled(collection) {
+        if !doc_canonical_vector_enabled(collection) {
+            return None;
+        }
+        let (tenant, clean_collection) = unscope_document_collection(collection);
+        if route.collection_exists(clean_collection, tenant).await {
             Some(route)
         } else {
             None
@@ -1063,7 +1090,7 @@ impl DocumentService {
         // visible cross-surface, metered, and stored once. The legacy `document_wal`/DashMap
         // is skipped on this path (the vector WAL owns recovery); pre-cutover docs stay
         // reachable via the read-fallback in `get_document`/`query_documents`.
-        if let Some(route) = self.canonical_route(collection) {
+        if let Some(route) = self.canonical_route(collection).await {
             let (tenant, clean_collection) = unscope_document_collection(collection);
             let proxima = Self::canonical_document_record(&record, clean_collection, tenant);
             match route
@@ -1175,7 +1202,7 @@ impl DocumentService {
         // (mixed-read-safe). Note: no `get_collection` existence gate here — a canonical
         // collection may live only in the record/vector catalog (e.g. created + written via
         // REST v2), never in this facade's own map.
-        if let Some(route) = self.canonical_route(collection) {
+        if let Some(route) = self.canonical_route(collection).await {
             let (tenant, clean_collection) = unscope_document_collection(collection);
             if let Some(mut doc) = route
                 .get_record(clean_collection, id, tenant)
@@ -1337,7 +1364,7 @@ impl DocumentService {
 
         // ADR-009 canonical-vector route: write the updated document back to the shared
         // vector store (upsert on the raw-id OID) so the update is visible cross-surface.
-        if let Some(route) = self.canonical_route(collection) {
+        if let Some(route) = self.canonical_route(collection).await {
             let (tenant, clean_collection) = unscope_document_collection(collection);
             let proxima = Self::canonical_document_record(&record, clean_collection, tenant);
             match route
@@ -1667,7 +1694,7 @@ impl DocumentService {
         // ADR-009 canonical-vector route: tombstone in the shared vector store (visible
         // cross-surface), and also drop any pre-cutover legacy copy under the scoped key so
         // it cannot resurface (mixed-read-safe). Returns true if either store held the doc.
-        if let Some(route) = self.canonical_route(collection) {
+        if let Some(route) = self.canonical_route(collection).await {
             let (tenant, clean_collection) = unscope_document_collection(collection);
             let deleted = route
                 .delete_records(clean_collection, vec![id.to_string()], tenant)
@@ -1792,7 +1819,7 @@ impl DocumentService {
         // (cross-surface visibility), then run the same in-memory query executor. A queried
         // collection is either opted-in (canonical) or not; pre-cutover point reads stay
         // served by `get_document`'s legacy fallback.
-        if let Some(route) = self.canonical_route(collection) {
+        if let Some(route) = self.canonical_route(collection).await {
             let (tenant, clean_collection) = unscope_document_collection(collection);
             let records = route
                 .scan_records(clean_collection, CANONICAL_DOC_SCAN_LIMIT, tenant)
@@ -1931,7 +1958,9 @@ impl DocumentService {
 
         // Get all documents from the collection — the shared vector store when routed
         // (ADR-009 cross-surface visibility), else the legacy in-memory map.
-        let documents: Vec<DocumentRecord> = if let Some(route) = self.canonical_route(collection) {
+        let documents: Vec<DocumentRecord> = if let Some(route) =
+            self.canonical_route(collection).await
+        {
             let (tenant, clean_collection) = unscope_document_collection(collection);
             let records = route
                 .scan_records(clean_collection, CANONICAL_DOC_SCAN_LIMIT, tenant)
@@ -2826,6 +2855,10 @@ mod tests {
     #[derive(Default)]
     struct MockRecordRoute {
         store: std::sync::Mutex<HashMap<String, HashMap<String, proximadb_records::ProximaRecord>>>,
+        /// Collections the mock should report as NON-canonical (so `canonical_route` sends them
+        /// to the legacy path). Empty ⇒ every collection is treated as an existing canonical
+        /// collection — the common case for the convergence tests.
+        non_canonical: std::sync::Mutex<std::collections::HashSet<String>>,
     }
 
     #[async_trait::async_trait]
@@ -2887,6 +2920,15 @@ mod tests {
             }
             Ok(n)
         }
+
+        async fn collection_exists(&self, collection_id: &str, _tenant: Option<&str>) -> bool {
+            // Every collection is canonical unless a test explicitly marks it non-canonical.
+            !self
+                .non_canonical
+                .lock()
+                .expect("mock route lock")
+                .contains(collection_id)
+        }
     }
 
     /// Scope the process-global `PROXIMADB_DOC_CANONICAL_VECTOR` gate to one collection for
@@ -2897,8 +2939,14 @@ mod tests {
     impl GateGuard {
         fn on(collection: &str) -> Self {
             // SAFETY (edition 2024): under nextest each test owns its process, so this env
-            // mutation is single-threaded; the value is a fixed collection name.
+            // mutation is single-threaded; the value is a fixed collection name (allowlist mode).
             unsafe { std::env::set_var("PROXIMADB_DOC_CANONICAL_VECTOR", collection) };
+            Self
+        }
+        /// Force the global kill-switch OFF (the gate is DEFAULT-ON, so a test that wants the
+        /// legacy path must explicitly force OFF).
+        fn off() -> Self {
+            unsafe { std::env::set_var("PROXIMADB_DOC_CANONICAL_VECTOR", "off") };
             Self
         }
     }
@@ -2993,8 +3041,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gate_off_keeps_legacy_path_and_ignores_route() {
-        // No GateGuard ⇒ gate OFF ⇒ today's behavior, bit-for-bit.
+    async fn kill_switch_forces_legacy_path_and_ignores_route() {
+        // The gate is DEFAULT-ON, so force the global kill-switch OFF to exercise the legacy path.
+        let _gate = GateGuard::off();
         let svc = service_with_collection("legacy_docs").await;
         let route = Arc::new(MockRecordRoute::default());
         svc.set_record_route(route.clone());
@@ -3006,10 +3055,40 @@ mod tests {
         // The shared store was NOT touched; the legacy map serves the doc.
         assert!(
             route.store.lock().expect("lock").is_empty(),
-            "gate OFF must not route to the shared store"
+            "kill-switch OFF must not route to the shared store"
         );
         let got = svc
             .get_document("legacy_docs", "d1", None)
+            .await
+            .expect("get")
+            .expect("present");
+        assert_eq!(got.id, "d1");
+    }
+
+    #[tokio::test]
+    async fn default_on_but_non_canonical_collection_stays_legacy() {
+        // Gate DEFAULT-ON (no guard), route wired — but the collection is NOT a canonical vector
+        // collection, so the mixed-write-safe capability check must keep it on the legacy path
+        // (a pure-document collection must not hard-fail the canonical write under default-ON).
+        let svc = service_with_collection("plain_docs").await;
+        let route = Arc::new(MockRecordRoute::default());
+        route
+            .non_canonical
+            .lock()
+            .expect("lock")
+            .insert("plain_docs".to_string());
+        svc.set_record_route(route.clone());
+
+        svc.insert_document_record("plain_docs", doc_record("d1", "plain_docs", "Delta"))
+            .await
+            .expect("legacy insert for non-canonical collection");
+
+        assert!(
+            route.store.lock().expect("lock").is_empty(),
+            "a non-canonical collection must stay on the legacy path even with the gate ON"
+        );
+        let got = svc
+            .get_document("plain_docs", "d1", None)
             .await
             .expect("get")
             .expect("present");

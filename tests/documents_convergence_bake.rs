@@ -760,9 +760,10 @@ async fn bake_single_store_no_double_gb_month() {
         sleep(Duration::from_millis(500)).await;
     }
 
-    // --- Legacy path (gate OFF) — gRPC CreateDocument writes to document_wal ---
+    // --- Legacy path — gRPC CreateDocument on a NON-canonical collection ---
     {
-        // No GateGuard ⇒ gate OFF ⇒ legacy document_wal path.
+        // legacy_coll is never created as a vector collection, so under the DEFAULT-ON gate the
+        // capability check keeps it on the legacy path (mixed-write-safe), not the canonical route.
         let mut client = ProximaDocumentServiceClient::connect(server.grpc())
             .await
             .expect("gRPC connect");
