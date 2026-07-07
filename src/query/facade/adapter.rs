@@ -693,6 +693,7 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
         &self,
         query: String,
         _collection: Option<String>,
+        tenant_id: Option<&str>,
     ) -> anyhow::Result<serde_json::Value> {
         use crate::query::QueryResultData;
 
@@ -728,6 +729,38 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
             // degrades gracefully (matches ROOT when its DmlService is unset).
         }
 
+        // TD-121 relational SELECT routing — parity with the ROOT handler's
+        // execute_sql_v1 (src/api_handlers/request_handlers.rs). The gRPC
+        // ExecuteQuery path reaches this adapter (not the ROOT handler), so
+        // without this block a standard relational SELECT fell through to the
+        // legacy facade and was rejected ("Standard relational SQL execution is
+        // not configured in FederatedQueryContext"). `require_engagement=false`
+        // routes any resolvable relational SELECT; queries whose tables don't
+        // resolve return `None` and fall through to `sql_query` (vector/graph
+        // SQL, unchanged). The OLAP result cache is intentionally NOT consulted
+        // here — the bug fix is routing, not caching; REST/pgwire keep the cache
+        // (wiring it here is a same-crate follow-up, no layering issue).
+        // namespace=None: gRPC ExecuteQuery has no search_path.
+        if let Some(dml) = self.dml_service.as_ref()
+            && let Some(outcome) = crate::network::postgres::relational_pipeline::try_run_select(
+                &query,
+                Some(dml),
+                None,
+                None,
+                tenant_id,
+                crate::query::execution::ExecutionControls::default(),
+                false,
+                None,
+                None,
+            )
+            .await
+        {
+            return match outcome {
+                Ok(result) => Ok(pipeline_result_to_json(result)),
+                Err(msg) => Err(anyhow!("Relational query execution failed: {msg}")),
+            };
+        }
+
         let query_result = self.sql_query(&query).await?;
 
         let records: Vec<serde_json::Value> = match query_result.data {
@@ -752,6 +785,37 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
 
         Ok(shape_sql_records(records))
     }
+}
+
+/// Convert a relational-pipeline (`try_run_select`) result into the SQL
+/// port-path JSON envelope (`{ columns, column_types, records }`), reusing
+/// [`shape_sql_records`] so the relational route (TD-121) shapes an identical
+/// response to the facade path (TD-104 parity). Each `ProximaValue` cell is
+/// serialized via its `serde::Serialize` impl.
+fn pipeline_result_to_json(
+    result: crate::query::execution::ExecutionPipelineResult,
+) -> serde_json::Value {
+    let col_names: Vec<String> = result
+        .schema
+        .columns
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
+    let records: Vec<serde_json::Value> = result
+        .rows
+        .into_iter()
+        .map(|row| {
+            let mut obj = serde_json::Map::new();
+            for (name, cell) in col_names.iter().zip(row.iter()) {
+                obj.insert(
+                    name.clone(),
+                    serde_json::to_value(cell).unwrap_or(serde_json::Value::Null),
+                );
+            }
+            serde_json::Value::Object(obj)
+        })
+        .collect();
+    shape_sql_records(records)
 }
 
 /// Assemble the SQL port-path response envelope that the runtime handler's
