@@ -1,0 +1,108 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= ClickBench co-design Phase A — the seam is the result path, not the engine (2026-07-06)
+
+Sets the performance bar, maps the execution seams from first principles, and
+frames the co-design target for the single-node OLAP path (ClickBench, TD-OLAP-4
+track). Companion to the v1 ledger (`CLICKBENCH_LEDGER_V1_2026_07_06.adoc`).
+
+== The bar (published ClickBench, c6a.4xlarge, hot total of 43 queries, RELEASE)
+
+|===
+| engine | format | hot total (43q) | note
+
+| DuckDB | native `.duckdb` | ~26 s | native columnar store
+| DuckDB | Parquet | ~32 s | apples-to-apples for a Parquet engine
+| DataFusion | Parquet (partitioned) | ~42 s | **ProximaDB's engine**
+| DataFusion | Parquet (single) | ~46 s |
+|===
+
+Sources: benchmark.clickhouse.com, github.com/ClickHouse/ClickBench result JSONs;
+DataFusion "fastest single-node Parquet" blog (2024-11-18). By ClickBench's
+official *geomean-of-ratios* metric DataFusion took #1 for partitioned Parquet in
+Nov 2024; sum-of-times (above) favors DuckDB because a few heavy queries dominate.
+
+**Key fact:** DataFusion has no native format — it *always* reads Parquet. So the
+apples-to-apples comparison for ProximaDB (a Parquet-backed, DataFusion-engined
+system) is **DataFusion-Parquet vs DuckDB-Parquet ≈ 42–46 s vs 32 s — i.e. DuckDB
+~1.3–1.4× faster**, NOT an order of magnitude.
+
+== Where the gap decomposes (first principles)
+
+ProximaDB's OLAP engine *is* DataFusion, so its ClickBench-Parquet ceiling ≈
+DataFusion's. The gap over DuckDB splits into two buckets with very different
+ownership:
+
+. **DataFusion's own gap vs DuckDB (NOT ours to fix — inherited upstream).**
+  Historically: Parquet scan/filter-pushdown (was ~20× slower, off by default —
+  now fixed with row-group stats + page index + bloom + late materialization),
+  string handling (Arrow `StringView`), cache-efficient partial aggregation
+  (Leis et al.), and a residual ~2× pure-compute gap on some queries. DataFusion
+  improved >30% v34→v43 and continues through v47/v50. **ADR-052 is explicit: do
+  NOT reimplement DataFusion's kernels.** We inherit these by tracking versions.
+. **ProximaDB's *own* added overhead (OUR co-design surface).** Everything
+  ProximaDB layers *around* DataFusion — the result-materialization path and the
+  scan/cache seams — plus, in v1, the debug-build penalty.
+
+== The seams ProximaDB owns (execution-path map, `file:line`)
+
+A SQL aggregate over pgwire → router → DataFusion → back to the client passes
+through (agent-traced):
+
+. **Arrow → row materialization — TOP SUSPECT.**
+  `src/query/execution/datafusion_engine.rs:760-867`
+  (`record_batch_to_rows` / `arrow_cell_to_proxima`). DataFusion emits columnar
+  Arrow `RecordBatch`; ProximaDB converts them **cell-by-cell** into a
+  row-oriented `ProximaValue` enum — O(rows×cols) `downcast_ref` + per-cell heap
+  allocations for strings. Defeats the vectorization DuckDB keeps end to end.
+. **Per-value text encoding for the pgwire wire.**
+  `src/network/postgres/relational_pipeline.rs:954-1024` +
+  `protocol.rs:1506-1534` (`text_encode` / `send_data_row_nullable`). Each cell
+  is `String`-allocated for the text `DataRow`.
+. **`df.collect()` full materialization** (`datafusion_engine.rs:241`) — the
+  streaming path (`execute_datafusion_stream`) exists but is NOT wired to the
+  pgwire aggregate path.
+. **Per-cell type dispatch** (`datafusion_engine.rs:797-856`) — should switch on
+  the Arrow column type once per column, not per cell.
+. **Parquet footer round-trip** (`object_store_parquet_reader.rs:102-109`) — no
+  persistent footer cache across queries (I/O seam; already io_trace-visible).
+
+== The co-design target (measure-first)
+
+* **Target = "≈ DataFusion-Parquet," not "beat DuckDB's engine."** The engine gap
+  is upstream's; our job is to add *near-zero overhead* on top of DataFusion.
+* **Highest-ROI lever already in the architecture: Arrow Flight.** A zero-copy
+  columnar transport on the same multiplexed port — routing bulk/columnar results
+  through it sidesteps the entire Arrow→row→text materialization seam (mandate-3:
+  route bulk/columnar work to Arrow Flight). Cheaper interim wins: wire the
+  streaming path to pgwire; hoist type-dispatch to per-column; persistent footer
+  cache.
+* **Router/DataFusion-first is the right frame.** Optimize the seams *around* the
+  engine; swap/upgrade the engine (or add the native PAX scan, TD-OLAP-1 / #706)
+  behind the `ComputeBackend` boundary without touching the harness or seams.
+
+== v1 measured (debug, 1M-row subset — coverage signal only)
+
+ProximaDB 35/43, DuckDB 35/43 (same 8 fail — EventDate typed INT vs date
+literals + 2 function shapes). Debug median 250 ms vs DuckDB 25 ms — the ~10× is
+**debug build + the result-path seam**, both ours to remove; NOT an engine gap.
+
+== Release measurement (Phase A deliverable — IN PROGRESS)
+
+// PHASE-A-RELEASE-NUMBERS
+A release build collapses most of the debug penalty (the seams are CPU-bound
+per-cell work that release inlines/optimizes heavily). The release run quantifies
+how much of *our* overhead remains after the debug penalty is removed, and — with
+per-layer io_trace + EXPLAIN ANALYZE — splits it into scan I/O vs DataFusion
+compute vs pgwire serialize, so Phase C targets the *measured* dominant seam.
+
+== Plan
+
+* **Phase A (this doc):** bar + seams + release per-layer numbers. No optimization
+  before it.
+* **Phase B:** SOLID harness refactor — `Benchmark` / `LoadStrategy` / `Baseline`
+  / `LedgerSink` traits so ClickBench + TPC-H + TPC-DS run through one
+  router-driven runner (DataFusion as the first `ComputeBackend`).
+* **Phase C:** co-design optimizations targeting the measured dominant seam
+  (Arrow Flight columnar result path / streaming / per-column dispatch / footer
+  cache), each gated on the evidence ledger.
