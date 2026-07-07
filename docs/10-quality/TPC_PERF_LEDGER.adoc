@@ -80,9 +80,31 @@ temperature, ok, error?, rows, wall_ms, ...IoTraceSnapshot}] }`
 
 The `IoTraceSnapshot` fields are flattened per record: `get_ops`, `bytes_read`,
 `range_gets`, `splits_total`/`splits_pruned` (TD-OLAP-3 skip ratio — the
-runtime-filter promotion gate's evidence; totals accumulate across the static
-and runtime pruning stages), `bytes_written`, `footer_hits/misses`,
-`egress_bytes`, `compute_ms` (per-engine map).
+runtime-filter promotion gate's evidence; totals accumulate across the static,
+runtime, and bloom-semijoin pruning stages), `bytes_written`,
+`footer_hits/misses`, `egress_bytes`, `compute_ms` (per-engine map).
+
+== Bloom semi-join (TD-OLAP-3, high-NDV in-list) — evidence status
+
+The bloom semi-join split-prune (default-OFF, `PROXIMADB_DF_BLOOM_SEMIJOIN=1`)
+targets the case min/max zone-maps cannot cover: a positive `IN`-list whose key
+set spans a fact split's `[min,max]` (cardinality ≥
+`PROXIMADB_DF_BLOOM_SEMIJOIN_MIN_KEYS`, default 256 — a fact probe against
+thousands of dimension keys). When it prunes a split, the skipped row-group read
+is reflected in the same `splits_pruned` counter and `bytes_read` drop this
+ledger already meters (the projected key-column read it pays up front is also
+metered through the tracing store), so no new fields are needed.
+
+**Measured status: unit-level only.** Deterministic reader unit tests
+(`object_store_parquet_reader.rs`) show a candidate split surviving min/max but
+being bloom-pruned (surviving splits 1 → 0) with correct rows and no
+false-negative prune. An end-to-end *bytes-scanned* ledger entry is **pending** a
+query that exercises a high-NDV `IN`-list semi-join at scale: today's TPC-H/DS
+suites push fact predicates into the WHERE (Slice A) or reach the fact via a
+join key (Slice B) rather than a large literal `IN`-list, so the ledger harness
+does not yet drive this path. Promotion prerequisite: add such a query (or a
+synthetic high-NDV `IN` case) to the harness and record the `splits_pruned` /
+`bytes_read` delta here before citing any reduction figure (mandate #6/#10).
 
 == Relation to the evidence ledger
 
