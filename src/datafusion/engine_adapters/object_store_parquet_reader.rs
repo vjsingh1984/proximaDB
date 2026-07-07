@@ -14,6 +14,7 @@ use datafusion::arrow::array::{
     LargeStringArray, StringArray, UInt8Array, UInt16Array, UInt32Array, UInt64Array,
 };
 use datafusion::arrow::datatypes::DataType;
+use datafusion::arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::catalog::Session;
 use datafusion::common::Statistics;
 use datafusion::datasource::{TableProvider, TableType};
@@ -46,6 +47,12 @@ use super::super::schema_inference::{
     df_stats_value_bounds_enabled, project_statistics, statistics_from_splits,
 };
 use crate::observability::object_store_trace::TracingObjectStore;
+
+/// True iff `proj` selects every column in ascending order — a no-op projection
+/// where pushing a mask (and reordering) buys nothing, so the reader reads all.
+fn is_identity(proj: &[usize]) -> bool {
+    proj.iter().enumerate().all(|(i, &c)| i == c)
+}
 
 fn project_schema(full: &SchemaRef, projection: Option<&[usize]>) -> SchemaRef {
     match projection {
@@ -365,21 +372,58 @@ impl SplitReader for ObjectStoreParquetSplitReader {
         let path = Path::from(split.file_path.as_str());
         let file_size = self.file_sizes.get(&split.file_path).copied();
         let reader = parquet_reader(self.store.clone(), path, file_size);
-        let mut stream = ParquetRecordBatchStreamBuilder::new(reader)
+        let builder = ParquetRecordBatchStreamBuilder::new(reader)
             .await
-            .map_err(|e| df_err("parquet open", e))?
+            .map_err(|e| df_err("parquet open", e))?;
+
+        let out_schema = project_schema(&self.schema, projection);
+
+        // TRUE projection PUSHDOWN: fetch only the projected column chunks, not
+        // all columns (TD-OLAP-4 co-design — a query touching 3 of 105 columns
+        // was reading every column chunk, ~97% wasted bytes). The reader emits
+        // the selected columns in ascending FILE order; `reorder` maps them back
+        // to the requested projection order so the batch matches `out_schema`.
+        // For a flat schema, root columns == leaf columns, so `roots` is exact.
+        let (builder, reorder) = match projection {
+            Some(proj) if proj.len() != self.schema.fields().len() || !is_identity(proj) => {
+                let mask = ProjectionMask::roots(builder.parquet_schema(), proj.iter().copied());
+                let mut file_order: Vec<usize> = proj.to_vec();
+                file_order.sort_unstable();
+                file_order.dedup();
+                let reorder: Vec<usize> = proj
+                    .iter()
+                    .map(|c| {
+                        file_order
+                            .iter()
+                            .position(|x| x == c)
+                            .expect("projected column present in the selected set")
+                    })
+                    .collect();
+                (builder.with_projection(mask), Some(reorder))
+            }
+            // Full/absent projection: read every column, no reorder.
+            _ => (builder, None),
+        };
+
+        let mut stream = builder
             .with_row_groups(vec![row_group_index])
             .with_batch_size(batch_size)
             .build()
             .map_err(|e| df_err("parquet reader build", e))?;
 
-        let proj_owned = projection.map(|p| p.to_vec());
-        let out_schema = project_schema(&self.schema, projection);
         let mut batches = Vec::new();
         while let Some(batch) = stream.next().await {
             let batch = batch.map_err(|e| df_err("parquet decode", e))?;
-            let batch = match &proj_owned {
-                Some(proj) => batch.project(proj).map_err(|e| df_err("project", e))?,
+            let batch = match &reorder {
+                Some(order) => {
+                    let cols: Vec<_> = order.iter().map(|&i| batch.column(i).clone()).collect();
+                    // `with_row_count` preserves the count for an EMPTY projection
+                    // (e.g. `COUNT(*)`, which reads zero columns) — a 0-column
+                    // batch is otherwise rejected without an explicit row count.
+                    let opts = RecordBatchOptions::new().with_row_count(Some(batch.num_rows()));
+                    RecordBatch::try_new_with_options(out_schema.clone(), cols, &opts)
+                        .map_err(|e| df_err("projection reorder", e))?
+                }
                 None => batch,
             };
             batches.push(Ok(batch));
