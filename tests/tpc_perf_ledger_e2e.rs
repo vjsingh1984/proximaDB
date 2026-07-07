@@ -32,7 +32,9 @@
 //! (`tests/tpch_pgwire_e2e.rs`, `tests/tpcds_pgwire_e2e.rs`) — the repo's
 //! integration tests are self-contained by convention; keep them in sync.
 
+use std::io::Write;
 use std::net::TcpListener;
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -773,6 +775,81 @@ fn push_record(
     out.push(rec);
 }
 
+/// DuckDB external baseline (TD-OLAP-4 "external baselines"). When `DUCKDB_BIN`
+/// is set, load the SAME synthetic-tpc data (the `schema` CREATE TABLEs + the
+/// `inserts` — both DuckDB-compatible standard SQL) into a persistent temp
+/// DuckDB file, then time each query through the DuckDB CLI. Records
+/// `route:"duckdb"` with no IoTrace (out-of-process — the wall_ms comparison is
+/// the signal). **No-op when `DUCKDB_BIN` is unset** (the default — the advisory
+/// ledger stays ProximaDB-self). Mirrors `tests/clickbench_ledger_e2e.rs`. No
+/// new dependency (uses `std::process` + the operator-provided binary); the
+/// result cache (#708) is default-OFF so ProximaDB's latency is already fair.
+fn run_duckdb_baseline(
+    benchmark: &str,
+    schema: &[(&str, &str)],
+    inserts: &[String],
+    queries: &[(&'static str, String)],
+    out: &mut Vec<LedgerRecord>,
+) {
+    let Ok(duckdb) = std::env::var("DUCKDB_BIN") else {
+        return; // no binary ⇒ skip (default)
+    };
+    eprintln!("[{benchmark}] · DuckDB baseline (DUCKDB_BIN={duckdb})");
+
+    // Loader SQL: schema.1 is the full `CREATE TABLE` DDL; inserts are standard
+    // `INSERT INTO … VALUES`. DuckDB accepts both.
+    let mut loader = String::new();
+    for (_, ddl) in schema {
+        loader.push_str(ddl);
+        loader.push_str(";\n");
+    }
+    for ins in inserts {
+        loader.push_str(ins);
+        loader.push_str(";\n");
+    }
+
+    // Load once into a persistent temp DuckDB file (per-query spawns read it,
+    // so the data isn't reloaded per query).
+    let Ok(tmp) = tempfile::tempdir() else {
+        return;
+    };
+    let db_path = tmp.path().join(format!("{benchmark}.duckdb"));
+    let Ok(mut load) = Command::new(&duckdb)
+        .arg(&db_path)
+        .stdin(Stdio::piped())
+        .spawn()
+    else {
+        eprintln!("[{benchmark}] · DuckDB spawn failed");
+        return;
+    };
+    if let Some(mut stdin) = load.stdin.take() {
+        let _ = stdin.write_all(loader.as_bytes());
+    }
+    let _ = load.wait();
+
+    // Per query: time the CLI round-trip. Rows aren't parsed (DuckDB CLI output
+    // shape varies); the comparison signal is wall_ms, recorded honestly with
+    // ok/error per the methodology.
+    for (id, sql) in queries {
+        let t0 = Instant::now();
+        let res = Command::new(&duckdb)
+            .arg(&db_path)
+            .arg("-c")
+            .arg(sql)
+            .output();
+        let wall_ms = t0.elapsed().as_millis();
+        let result = match res {
+            Ok(o) if o.status.success() => Ok((0, wall_ms, IoTraceSnapshot::default())),
+            Ok(o) => Err((
+                wall_ms,
+                String::from_utf8_lossy(&o.stderr).trim().to_string(),
+            )),
+            Err(e) => Err((wall_ms, format!("duckdb spawn: {e}"))),
+        };
+        push_record(out, benchmark, id, "duckdb", "first", result);
+    }
+}
+
 async fn seed(client: &Client, schema: &[(&str, &str)], inserts: Vec<String>) {
     for (name, ddl) in schema {
         let _ = client
@@ -886,6 +963,13 @@ async fn tpc_perf_ledger() {
         )
         .await;
         server.shutdown().await;
+        run_duckdb_baseline(
+            "tpch",
+            TPCH_SCHEMA,
+            &gen_tpch(scale),
+            &keep_queries(tpch_queries()),
+            &mut records,
+        );
     }
     if benchmark_filter.as_deref().is_none_or(|b| b == "tpcds") {
         let server = PgServer::start().await.expect("server start (tpcds)");
@@ -900,11 +984,18 @@ async fn tpc_perf_ledger() {
         )
         .await;
         server.shutdown().await;
+        run_duckdb_baseline(
+            "tpcds",
+            TPCDS_SCHEMA,
+            &gen_tpcds(scale),
+            &keep_queries(tpcds_queries()),
+            &mut records,
+        );
     }
 
     // Console summary: per benchmark × route, pass count + medians.
     for benchmark in ["tpch", "tpcds"] {
-        for route in ["native", "datafusion"] {
+        for route in ["native", "datafusion", "duckdb"] {
             let mut rows: Vec<&LedgerRecord> = records
                 .iter()
                 .filter(|r| {
