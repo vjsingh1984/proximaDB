@@ -2115,14 +2115,21 @@ impl SharedServices {
             None => base_dml,
         });
 
+        // TD-135: one DdlService Arc shared by BOTH the adapter (gRPC port path →
+        // adapter.execute_sql) and request_handlers (REST), so DDL writes over
+        // either surface address the same catalog state and execute tenant-scoped.
+        let ddl_service =
+            std::sync::Arc::new(crate::services::DdlService::new(catalog_manager.clone()));
         // Wire QueryFacadeAdapter to UnifiedHandlers for unified SQL routing.
         // This enables SQL queries to flow through the facade when the
         // unified-facade-routing feature is enabled. The adapter carries the
-        // DmlService so the port path (runtime handler → adapter.execute_sql)
-        // reproduces ROOT's EXPLAIN `<DML>` routing (TD-104 / seam S1).
+        // DmlService (EXPLAIN `<DML>`) AND the DdlService (relational DDL) so the
+        // port path (runtime handler → adapter.execute_sql) reproduces ROOT's
+        // SQL behavior (TD-104 / seam S1, single SQL authority).
         let query_adapter = Arc::new(
             QueryFacadeAdapter::new(query_facade.clone())
-                .with_dml_service(dml_service_for_grpc.clone()),
+                .with_dml_service(dml_service_for_grpc.clone())
+                .with_ddl_service(ddl_service.clone()),
         );
         request_handlers.set_query_adapter(query_adapter.clone());
         debug!("✅ SharedServices::new - QueryFacadeAdapter wired to UnifiedHandlers");
@@ -2143,15 +2150,11 @@ impl SharedServices {
             );
         }
 
-        // TD-135: wire a DdlService built from the SAME catalog_manager pgwire uses
-        // (DdlService is a thin wrapper over the shared catalog), so relational
-        // CREATE/ALTER/DROP submitted over the gRPC ExecuteQuery RPC addresses the
-        // same catalog state and executes tenant-scoped.
-        request_handlers.set_ddl_service(std::sync::Arc::new(crate::services::DdlService::new(
-            catalog_manager.clone(),
-        )));
+        // TD-135: the same shared DdlService Arc (built above) drives relational
+        // CREATE/ALTER/DROP on the REST path too.
+        request_handlers.set_ddl_service(ddl_service);
         debug!(
-            "✅ SharedServices::new - DdlService wired to UnifiedHandlers for relational DDL routing"
+            "✅ SharedServices::new - DdlService wired to UnifiedHandlers + adapter for relational DDL routing"
         );
 
         // Build a port-backed runtime handler for collection/vector REST routes.

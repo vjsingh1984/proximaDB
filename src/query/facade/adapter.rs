@@ -30,7 +30,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use tracing::{debug, info, instrument, warn};
 
 use serde::{Deserialize, Serialize};
@@ -91,6 +91,10 @@ pub struct QueryFacadeAdapter {
     /// degrades gracefully through the facade (parity with ROOT when its
     /// DmlService is unset). Part of TD-104 / seam S1 (single SQL authority).
     dml_service: Option<Arc<crate::services::dml::DmlService>>,
+    /// Optional DdlService for relational DDL (CREATE/ALTER/DROP) on the SQL port
+    /// path (TD-135). Wired in production via `SharedServices`; `None` ⇒ DDL
+    /// falls through. Part of TD-104 / seam S1 (single SQL authority).
+    ddl_service: Option<Arc<crate::services::DdlService>>,
 }
 
 impl QueryFacadeAdapter {
@@ -103,6 +107,7 @@ impl QueryFacadeAdapter {
             validator,
             validation_enabled: true,
             dml_service: None,
+            ddl_service: None,
         }
     }
 
@@ -117,6 +122,7 @@ impl QueryFacadeAdapter {
             validator,
             validation_enabled: false,
             dml_service: None,
+            ddl_service: None,
         }
     }
 
@@ -128,6 +134,13 @@ impl QueryFacadeAdapter {
     /// facade exactly as ROOT does when its DmlService is unwired.
     pub fn with_dml_service(mut self, dml_service: Arc<crate::services::dml::DmlService>) -> Self {
         self.dml_service = Some(dml_service);
+        self
+    }
+
+    /// Attach a `DdlService` so the SQL port path can route relational DDL
+    /// (CREATE/ALTER/DROP) tenant-scoped (TD-135) — parity with the ROOT handler.
+    pub fn with_ddl_service(mut self, ddl_service: Arc<crate::services::DdlService>) -> Self {
+        self.ddl_service = Some(ddl_service);
         self
     }
 
@@ -729,6 +742,29 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
             // degrades gracefully (matches ROOT when its DmlService is unset).
         }
 
+        // TD-135: route relational WRITES (DDL + DML) through the same shared,
+        // tenant-scoped dispatch the ROOT handler uses (TD-104 / seam S1). The
+        // gRPC ExecuteQuery path reaches this adapter (not the ROOT handler), so
+        // without this block CREATE/INSERT fell through to the legacy facade and
+        // was rejected. Returns None for reads / when the service isn't wired →
+        // fall through to TD-121 SELECT routing / sql_query unchanged.
+        if let Some(rows_affected) = try_sql_write_dispatch(
+            &query,
+            tenant_id,
+            self.dml_service.as_ref(),
+            self.ddl_service.as_ref(),
+        )
+        .await?
+        {
+            return Ok(serde_json::json!({
+                "columns": [],
+                "column_types": [],
+                "records": [],
+                // Surfaced as `rows_returned` by the runtime handler (writes).
+                "rows_affected": rows_affected,
+            }));
+        }
+
         // TD-121 relational SELECT routing — parity with the ROOT handler's
         // execute_sql_v1 (src/api_handlers/request_handlers.rs). The gRPC
         // ExecuteQuery path reaches this adapter (not the ROOT handler), so
@@ -785,6 +821,86 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
 
         Ok(shape_sql_records(records))
     }
+}
+
+/// Dispatch a SQL **write** (DDL or DML) through the tenant-scoped service seams.
+///
+/// Shared by the ROOT handler's `execute_sql_v1` and this adapter's
+/// `execute_sql` (TD-104 / seam S1 — single SQL authority) so the two write
+/// paths cannot diverge.
+///
+/// Returns:
+/// - `Ok(Some(rows_affected))` — the statement was a write and was executed
+///   (DDL `affected_count` / DML `rows_affected`).
+/// - `Ok(None)` — not a write keyword, OR the matching service isn't wired → the
+///   caller falls through to read routing / the facade.
+///
+/// `tenant_id` scopes the write to its partition (TD-064); `None` writes
+/// unscoped (as pgwire does for a connection with no `database`), never another
+/// tenant's partition. DML errors use `.context` (NOT `anyhow!`) so a typed
+/// `ProximaDBError::DmlLockConflict` survives in the chain for the protocol
+/// layer (gRPC/pgwire) to downcast + map to ABORTED/55P03.
+pub async fn try_sql_write_dispatch(
+    query: &str,
+    tenant_id: Option<&str>,
+    dml: Option<&Arc<crate::services::dml::DmlService>>,
+    ddl: Option<&Arc<crate::services::DdlService>>,
+) -> Result<Option<u64>> {
+    use crate::query::sql_frontend::SqlFrontendParser;
+    use crate::services::dml::DmlStatement;
+
+    let leading = query.trim_start().get(..7).map(str::to_ascii_uppercase);
+    let leading = leading.as_deref().unwrap_or("");
+
+    // DDL: CREATE / ALTER / DROP.
+    if (leading.starts_with("CREATE ")
+        || leading.starts_with("ALTER ")
+        || leading.starts_with("DROP "))
+        && let Some(ddl) = ddl
+    {
+        match SqlFrontendParser::new().parse_ddl(query) {
+            Ok(Some(statement)) => {
+                let result = ddl
+                    .execute_scoped(statement, tenant_id)
+                    .await
+                    .map_err(|e| anyhow!("DDL failed: {e}"))?;
+                return Ok(Some(result.affected_count as u64));
+            }
+            Ok(None) => {}
+            Err(e) => return Err(anyhow!("DDL parse error: {e}")),
+        }
+    }
+
+    // DML writes: INSERT / UPDATE / DELETE (+ UPSERT/MERGE shapes via parse_dml).
+    if (leading.starts_with("INSERT ")
+        || leading.starts_with("UPDATE ")
+        || leading.starts_with("DELETE ")
+        || leading.starts_with("UPSERT ")
+        || leading.starts_with("MERGE "))
+        && let Some(dml) = dml
+        && let Ok(Some(statement)) = SqlFrontendParser::new().parse_dml(query)
+    {
+        let is_write = matches!(
+            statement,
+            DmlStatement::Insert { .. }
+                | DmlStatement::Update { .. }
+                | DmlStatement::Delete { .. }
+                | DmlStatement::Upsert { .. }
+                | DmlStatement::InsertSelect { .. }
+                | DmlStatement::InsertOverwrite { .. }
+        );
+        if is_write {
+            let tenant_ctx =
+                tenant_id.map(crate::storage::tenant::context::TenantContext::for_tenant_id);
+            let result = dml
+                .execute_scoped(statement, tenant_ctx.as_ref())
+                .await
+                .context("DML failed")?;
+            return Ok(Some(result.rows_affected));
+        }
+    }
+
+    Ok(None)
 }
 
 /// Convert a relational-pipeline (`try_run_select`) result into the SQL

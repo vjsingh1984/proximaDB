@@ -2079,81 +2079,26 @@ impl UnifiedHandlers {
             // DmlService not wired — fall through to legacy path so EXPLAIN degrades gracefully.
         }
 
-        // TD-135: route relational WRITES (DDL + DML) through the same tenant-scoped
-        // service seams pgwire uses, instead of the legacy vector/graph engine which
-        // rejects them. Cheap leading-keyword guards avoid re-parsing read queries.
-        // The request tenant (x-tenant-id, threaded as `tenant_id`) scopes the write
-        // to its partition (TD-064); a None tenant writes unscoped, exactly as pgwire
-        // does for a connection with no `database` — never another tenant's partition.
+        // TD-135: route relational WRITES (DDL + DML) through the SHARED,
+        // tenant-scoped dispatch (also used by QueryFacadeAdapter — the gRPC port
+        // path), so REST and gRPC cannot diverge (TD-104 / seam S1, single SQL
+        // authority). Returns None for reads → fall through to TD-121 SELECT.
+        if let Some(rows_affected) = crate::query::facade::adapter::try_sql_write_dispatch(
+            &query,
+            tenant_id,
+            self.get_dml_service().as_ref(),
+            self.get_ddl_service().as_ref(),
+        )
+        .await?
         {
-            let leading = query.trim_start().get(..7).map(str::to_ascii_uppercase);
-            let leading = leading.as_deref().unwrap_or("");
-            // DDL: CREATE / ALTER / DROP.
-            if (leading.starts_with("CREATE ")
-                || leading.starts_with("ALTER ")
-                || leading.starts_with("DROP "))
-                && let Some(ddl) = self.get_ddl_service()
-            {
-                let parser = crate::query::sql_frontend::SqlFrontendParser::new();
-                match parser.parse_ddl(&query) {
-                    Ok(Some(statement)) => {
-                        let result = ddl
-                            .execute_scoped(statement, tenant_id)
-                            .await
-                            .map_err(|e| anyhow::anyhow!("DDL failed: {e}"))?;
-                        return Ok(crate::proto::proximadb_v1::ExecuteQueryResponse {
-                            rows: vec![],
-                            rows_scanned: 0,
-                            rows_returned: result.affected_count as u64,
-                            execution_time_ms: start_time.elapsed().as_millis() as u64,
-                            columns: vec![],
-                            column_types: vec![],
-                        });
-                    }
-                    Ok(None) => {}
-                    Err(e) => return Err(anyhow::anyhow!("DDL parse error: {e}")),
-                }
-            }
-            // DML writes: INSERT / UPDATE / DELETE (+ UPSERT/MERGE shapes via parse_dml).
-            if (leading.starts_with("INSERT ")
-                || leading.starts_with("UPDATE ")
-                || leading.starts_with("DELETE ")
-                || leading.starts_with("UPSERT ")
-                || leading.starts_with("MERGE "))
-                && let Some(dml) = self.get_dml_service()
-                && let Ok(Some(statement)) =
-                    crate::query::sql_frontend::SqlFrontendParser::new().parse_dml(&query)
-            {
-                use crate::services::dml::DmlStatement;
-                let is_write = matches!(
-                    statement,
-                    DmlStatement::Insert { .. }
-                        | DmlStatement::Update { .. }
-                        | DmlStatement::Delete { .. }
-                        | DmlStatement::Upsert { .. }
-                        | DmlStatement::InsertSelect { .. }
-                        | DmlStatement::InsertOverwrite { .. }
-                );
-                if is_write {
-                    let tenant_ctx = tenant_id
-                        .map(crate::storage::tenant::context::TenantContext::for_tenant_id);
-                    // Use `.context` (NOT `anyhow!("DML failed: {e}")`) so a typed
-                    // ProximaDBError::DmlLockConflict in the chain survives for the
-                    // protocol layer (gRPC/pgwire) to downcast + map to ABORTED/55P03.
-                    let result = dml
-                        .execute_scoped(statement, tenant_ctx.as_ref())
-                        .await
-                        .context("DML failed")?;
-                    return Ok(crate::proto::proximadb_v1::ExecuteQueryResponse {
-                        rows: vec![],
-                        rows_scanned: 0,
-                        rows_returned: result.rows_affected,
-                        execution_time_ms: start_time.elapsed().as_millis() as u64,
-                        columns: vec![],
-                        column_types: vec![],
-                    });
-                }
-            }
+            return Ok(crate::proto::proximadb_v1::ExecuteQueryResponse {
+                rows: vec![],
+                rows_scanned: 0,
+                rows_returned: rows_affected,
+                execution_time_ms: start_time.elapsed().as_millis() as u64,
+                columns: vec![],
+                column_types: vec![],
+            });
         }
 
         // TD-121: route RELATIONAL SQL through the same tenant-scoped relational

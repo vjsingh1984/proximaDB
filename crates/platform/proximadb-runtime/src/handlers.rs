@@ -686,7 +686,12 @@ impl ApiHandlersPort for UnifiedHandlers {
             })
             .collect();
 
-        let rows_returned = rows.len() as u64;
+        // TD-135: a write's affected count is carried in `rows_affected`; reads
+        // carry no such key and report the record count, unchanged.
+        let rows_returned = json_result
+            .get("rows_affected")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(rows.len() as u64);
         let rows_scanned = json_result
             .get("total_count")
             .and_then(|v| v.as_u64())
