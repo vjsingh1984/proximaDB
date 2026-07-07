@@ -1,0 +1,64 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-ROUTE-1: Enabling the live route cost-model override needs a pgwire eval gate
+:toc: macro
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Open** — persistence landed (cells survive restarts); live override (`PROXIMADB_ROUTE_COST_OVERRIDE`) stays OFF until the eval below exists.
+| Severity | Medium — the co-design routing lever is built but inert; enabling it blind risks the TPC-H/TPC-DS ratchets.
+| Component | `src/query/route_cost_model.rs`, `src/query/compute_scheduler.rs`, `tests/route_cost_offline_eval.rs`, `tests/tpch_pgwire_e2e.rs`
+| Pillar | PERF (co-design), REL (ratchets), EVAL (mandate #13)
+|===
+
+toc::[]
+
+== Context
+
+The trace-driven `RouteCostModel` learns per `(shape-class, backend)` from measured
+I/O and can flip *freshness-safe* routes to the cheaper backend when
+`PROXIMADB_ROUTE_COST_OVERRIDE` is on. Two safety gates already constrain it:
+a hard RTT-budget gate (`route_cost_model.rs`, `PROXIMADB_ROUTE_RTT_BUDGET`;
+applied at `compute_scheduler.rs`) and freshness-safety
+(`freshness_safe_backends_from_class` — only `olap/parquet` exposes two safe
+candidates; OLTP/Strong is pinned to Native, with a regression test at
+`compute_scheduler.rs::override_never_flips_freshness_critical_oltp`).
+
+The model's learned cells are now **persisted** across restarts
+(`{data_dir}/route_cost_cells.json`), which removes the cold-start mislearning
+window that would otherwise face a freshly-enabled override.
+
+== The gap
+
+Override remains OFF by default because there is **no safety net for the one
+behavior it changes**. Enabling it only affects `olap/parquet` queries — but
+TPC-H materializes its tables (`tests/tpch_pgwire_e2e.rs`), so TPC-H queries are
+`olap/parquet` and become eligible to flip DataFusion↔Native. The existing
+`tests/route_cost_offline_eval.rs` gates *routing quality on a synthetic,
+isolated model* (regret vs a static heuristic over 4,000 rounds) — it never
+touches the global model, the pgwire path, or real TPC-H correctness. So a
+flipped route that fails or regresses would only surface at the ratchet, not at
+an eval.
+
+== Decision / plan (do NOT enable override until these land)
+
+1. **pgwire integration eval (mandate #13).** A test that: (a) sets
+   `PROXIMADB_ROUTE_COST_OVERRIDE=1`, (b) warms the global model on a TPC-H
+   trace (or loads a checked-in persisted `route_cost_cells.json` fixture),
+   (c) runs the TPC-H suite over pgwire, and asserts **both output correctness
+   (result parity vs the OFF baseline) and trajectory** (the model does not flip
+   a query to a backend that regresses latency/regret beyond a threshold).
+2. **DataFusion read-path stability audit** — confirm the DataFusion arm is
+   production-ready for every shape the override could route to it (course
+   correction §4 flags it as wired-but-unproven for some paths).
+3. **Only then** flip the default (or ship an ops runbook to enable per
+   deployment), gated on the eval as a downward-only regret ratchet.
+
+== Acceptance
+
+* The pgwire override eval is green and CI-gated; TPC-H/TPC-DS ratchets hold with
+  override ON.
+* No freshness-critical (OLTP/Strong) route is ever flipped (existing guard
+  extended to the pgwire suite).
+* Enabling is documented (env/config) with the eval as the gate.
