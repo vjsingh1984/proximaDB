@@ -51,10 +51,21 @@ nxlib  = "nextest run --lib --profile unit"
 nxint  = "nextest run --profile integration"
 
 [target.aarch64-apple-darwin]
-# Apple Silicon specific optimizations
+# Apple Silicon build flags.
+# NOTE: `target-cpu=native` was removed here (2026-07). It broke two things on
+# aarch64-apple-darwin:
+#   1. Distributable wheels — `native` bakes the *builder's* exact CPU features
+#      into the artifact, so a wheel built on one Mac can SIGILL (illegal
+#      instruction) on another. proximadb_embedded ships Apple-Silicon wheels
+#      (TD-EMBED-1), which MUST be portable across M-series chips.
+#   2. `ring 0.17.x` — its darwin.rs const-assertion `CAPS_STATIC ==
+#      MIN_STATIC_FEATURES` fails to compile when `native` enables features
+#      beyond Apple's guaranteed baseline (the exact E0080 the macOS wheel build
+#      hit; see ci.yml's GPU job note about avoiding macos-14 for ring).
+# rustc's default target-cpu for this triple is the portable Apple baseline
+# (NEON/AES/SHA2 already on) — optimized for Apple Silicon AND portable/ring-safe.
 rustflags = [
     "-C", "codegen-units=4",
-    "-C", "target-cpu=native",
 ]
 
 [target.x86_64-unknown-linux-gnu]
