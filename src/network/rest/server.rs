@@ -531,7 +531,12 @@ impl RestServer {
         // Create concurrency limit layer for backpressure (if enabled)
         let concurrency_layer = create_concurrency_limit_layer(&security_config.backpressure);
 
-        // Authentication layer (unified): prefer SecurityCoordinator if available
+        // Authentication layer (unified): prefer SecurityCoordinator if available.
+        // Auth ENABLED with NO coordinator is a security misconfiguration: rather
+        // than serving every request unauthenticated (failing open), we fail
+        // CLOSED — the deny layer applied after the router is built rejects the
+        // data plane with 503. (Computed before the coordinator is moved below.)
+        let auth_misconfigured = security_config.auth.enabled && security_coordinator.is_none();
         let auth_layer = if security_config.auth.enabled {
             if let Some(coordinator) = security_coordinator {
                 Some(middleware::from_fn_with_state(
@@ -539,8 +544,10 @@ impl RestServer {
                     crate::network::auth::middleware::auth_middleware_unified,
                 ))
             } else {
-                tracing::warn!(
-                    "Security enabled but no coordinator available; auth layer disabled"
+                tracing::error!(
+                    "REST auth is enabled but no SecurityCoordinator is configured — \
+                     failing CLOSED: data-plane (/api/*) requests are rejected with 503. \
+                     Wire a SecurityCoordinator or set auth.enabled=false."
                 );
                 None
             }
@@ -650,6 +657,13 @@ impl RestServer {
         // Apply auth layer last so request IDs/backpressure/cors are preserved
         if let Some(auth) = auth_layer {
             router = router.layer(auth);
+        }
+        // Fail closed on an auth misconfiguration (enabled but no coordinator):
+        // deny the data plane with 503 rather than serving it unauthenticated.
+        if auth_misconfigured {
+            router = router.layer(middleware::from_fn(
+                crate::network::middleware::auth_failclosed::auth_misconfigured_deny_data_plane,
+            ));
         }
 
         // Build TLS config if specified

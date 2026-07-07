@@ -40,6 +40,7 @@
 //! ```
 
 pub mod auth;
+pub mod auth_failclosed;
 pub mod backpressure;
 pub mod cors;
 pub mod metrics;
