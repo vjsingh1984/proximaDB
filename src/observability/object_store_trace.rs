@@ -242,6 +242,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn head_records_zero_bytes_not_object_size() {
+        // A `head` (metadata) probe transfers no body; its GetResult.range spans
+        // the whole object, so it must NOT be counted as bytes_read (that was a
+        // per-query over-count that inflated the co-design meter + KRU billing).
+        let inner: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let store = TracingObjectStore::wrap(inner);
+        let path = Path::from("t/data.bin");
+        store
+            .put(&path, PutPayload::from_static(&[0u8; 4096]))
+            .await
+            .unwrap();
+
+        static CAPTURED: Mutex<Option<IoTraceSnapshot>> = Mutex::new(None);
+        io_trace::set_billing_observer(Some(Box::new(|snap, _tenant| {
+            *CAPTURED.lock().unwrap_or_else(|p| p.into_inner()) = Some(snap.clone());
+        })));
+
+        io_trace::instrument(None, "test", async {
+            let meta = store.head(&path).await.unwrap();
+            assert_eq!(meta.size, 4096, "head still reports the true size");
+        })
+        .await;
+        io_trace::set_billing_observer(None);
+
+        let snapshot = CAPTURED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+            .expect("billing observer captured a snapshot");
+        assert_eq!(
+            snapshot.bytes_read, 0,
+            "a head probe transfers no body — zero bytes_read, not the object size"
+        );
+    }
+
+    #[tokio::test]
     async fn no_ops_outside_scope() {
         let inner: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let store = TracingObjectStore::wrap(inner);
