@@ -8717,7 +8717,7 @@ mod tests {
 
             // Read the published location back through the DataFusion OLAP reader.
             let ctx = create_session_context().expect("session ctx");
-            register_object_store_parquet_location(&ctx, "inv_parquet", &location)
+            register_object_store_parquet_location(&ctx, "inv_parquet", &location, None)
                 .await
                 .expect("register parquet location");
             let batches = ctx

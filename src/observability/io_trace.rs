@@ -163,6 +163,19 @@ pub struct IoTrace {
     /// in a small map so a single query that touches multiple engines (e.g. a
     /// Volcano point lookup plus a DataFusion aggregate) attributes each.
     compute_ms: Mutex<BTreeMap<String, u64>>,
+    /// Table-OPEN wall milliseconds (TD-OLAP-4): the per-query fixed cost of
+    /// discovering + opening the parquet base (LIST + HEAD-per-file + footer
+    /// read) BEFORE execution. Distinct from `compute_ms` (execution) — a
+    /// footer-only query does ~0 compute yet pays this floor. Drops to ~0 on a
+    /// warm table-open cache hit, so it is the direct signal for that lever.
+    open_ms: AtomicU64,
+    /// Query lowering + logical/physical planning wall milliseconds (TD-OLAP-4),
+    /// the other half of the per-query floor separate from execution.
+    plan_ms: AtomicU64,
+    /// Table-OPEN cache outcomes (TD-OLAP-4): a hit skips the LIST+HEAD+footer
+    /// discovery and reuses cached schema/splits/file-sizes.
+    table_open_hits: AtomicU64,
+    table_open_misses: AtomicU64,
     /// The route this query was served on, as `(shape_class, backend_label)`
     /// strings (co-design C4). Stamped by the `ComputeScheduler` so the flush can
     /// feed the trace-driven cost model the cost of *this kind of query on that
@@ -251,6 +264,28 @@ impl IoTrace {
         *g.entry(engine.to_string()).or_insert(0) += ms;
     }
 
+    /// Add to the table-OPEN wall milliseconds (discovery + footer open before
+    /// execution). Additive so multiple registered tables accumulate.
+    pub fn record_open_ms(&self, ms: u64) {
+        self.open_ms.fetch_add(ms, Ordering::Relaxed);
+    }
+
+    /// Add to the lowering + planning wall milliseconds.
+    pub fn record_plan_ms(&self, ms: u64) {
+        self.plan_ms.fetch_add(ms, Ordering::Relaxed);
+    }
+
+    /// Record a table-OPEN cache outcome: `true` = hit (discovery reused, no
+    /// LIST/HEAD/footer I/O), `false` = miss (cold open).
+    pub fn record_table_open(&self, hit: bool) {
+        let counter = if hit {
+            &self.table_open_hits
+        } else {
+            &self.table_open_misses
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Record an embedding API call (KEU — Kilo-Embedding-Units metering).
     pub fn record_embedding_calls(&self, calls: u64) {
         self.embedding_calls.fetch_add(calls, Ordering::Relaxed);
@@ -300,6 +335,10 @@ impl IoTrace {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .clone(),
+            open_ms: self.open_ms.load(Ordering::Relaxed),
+            plan_ms: self.plan_ms.load(Ordering::Relaxed),
+            table_open_hits: self.table_open_hits.load(Ordering::Relaxed),
+            table_open_misses: self.table_open_misses.load(Ordering::Relaxed),
         }
     }
 }
@@ -332,6 +371,18 @@ pub struct IoTraceSnapshot {
     pub embedding_input_tokens: u64,
     pub embedding_output_tokens: u64,
     pub compute_ms: BTreeMap<String, u64>,
+    /// Table-OPEN wall ms — the per-query discovery+footer floor (TD-OLAP-4).
+    #[serde(default)]
+    pub open_ms: u64,
+    /// Lowering + planning wall ms — the other half of the floor (TD-OLAP-4).
+    #[serde(default)]
+    pub plan_ms: u64,
+    /// Table-OPEN cache hits (discovery reused, no LIST/HEAD/footer I/O).
+    #[serde(default)]
+    pub table_open_hits: u64,
+    /// Table-OPEN cache misses (cold open).
+    #[serde(default)]
+    pub table_open_misses: u64,
 }
 
 impl IoTraceSnapshot {
@@ -507,6 +558,21 @@ pub fn record_egress_bytes(bytes: u64) {
 /// Attribute compute milliseconds to `engine` for the active query.
 pub fn record_compute_ms(engine: &str, ms: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_compute_ms(engine, ms));
+}
+
+/// Add table-OPEN wall ms (discovery + footer open) to the active query trace.
+pub fn record_open_ms(ms: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_open_ms(ms));
+}
+
+/// Add lowering + planning wall ms to the active query trace.
+pub fn record_plan_ms(ms: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_plan_ms(ms));
+}
+
+/// Record a table-OPEN cache outcome on the active query trace.
+pub fn record_table_open(hit: bool) {
+    let _ = IO_TRACE.try_with(|t| t.record_table_open(hit));
 }
 
 /// Stamp the route (`shape_class`, `backend_label`) onto the active query trace.

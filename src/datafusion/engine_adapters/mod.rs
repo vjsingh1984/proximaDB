@@ -53,6 +53,7 @@ pub mod pax_adapter;
 pub mod pax_segment_locator;
 pub mod pax_table_provider;
 pub mod sst_adapter;
+pub mod table_open_cache;
 pub mod viper_adapter;
 
 // Re-export main types for convenience

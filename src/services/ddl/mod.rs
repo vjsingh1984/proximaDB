@@ -580,6 +580,12 @@ impl DdlService {
                     )
                 })?;
                 let location = materializer.materialize(&name, tenant).await?;
+                // TD-OLAP-4: a re-MATERIALIZE republishes the base at this
+                // location, so any cached table-OPEN discovery (schema/splits/
+                // sizes) for it is now stale — drop it so reads re-discover.
+                crate::datafusion::engine_adapters::table_open_cache::invalidate_location(
+                    &location,
+                );
                 Ok(DdlResult::success(format!(
                     "Materialized table '{name}' to '{location}'"
                 )))
