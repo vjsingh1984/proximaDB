@@ -48,6 +48,7 @@ pub mod request_id;
 pub mod tenant;
 pub mod timeout;
 pub mod tls;
+pub mod v1_sunset;
 
 pub use auth::{AuthLayer, MiddlewareAuthConfig, UserInfo};
 pub use backpressure::{BackpressureConfig, create_concurrency_limit_layer};
