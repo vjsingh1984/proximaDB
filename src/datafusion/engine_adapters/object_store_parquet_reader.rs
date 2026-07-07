@@ -68,12 +68,27 @@ fn project_schema(full: &SchemaRef, projection: Option<&[usize]>) -> SchemaRef {
     }
 }
 
+/// Footer prefetch size (bytes). Without a hint the parquet reader pulls a
+/// whole-file suffix to find the footer on a small object — measured ~116 MB
+/// "open" I/O per query at 1M ClickBench (TD-OLAP-4). 512 KiB covers a
+/// wide-table (105-column) footer in one ranged read; a larger real footer just
+/// costs one extra ranged read (rare). Overridable via
+/// `PROXIMADB_PARQUET_FOOTER_HINT_KB` for tuning at very wide/large scales.
+fn footer_size_hint() -> usize {
+    std::env::var("PROXIMADB_PARQUET_FOOTER_HINT_KB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&kb| kb > 0)
+        .map(|kb| kb * 1024)
+        .unwrap_or(512 * 1024)
+}
+
 fn parquet_reader(
     store: Arc<dyn ObjectStore>,
     path: Path,
     file_size: Option<u64>,
 ) -> ParquetObjectReader {
-    let reader = ParquetObjectReader::new(store, path);
+    let reader = ParquetObjectReader::new(store, path).with_footer_size_hint(footer_size_hint());
     match file_size {
         Some(size) => reader.with_file_size(size),
         None => reader,

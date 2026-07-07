@@ -191,20 +191,36 @@ Exact-`num_rows` measured: `COUNT(*)` `range_gets` **20 → 2** and the column s
 is elided (`AggregateStatistics` fires) — BUT `bytes_read` stayed ~121 MB. Those
 2 GETs read ~the whole 116 MB file, which exposes the NEXT dominant seam:
 
-=== NEW top seam (measurement-driven): per-query OPEN reads the whole file
+=== The "121 MB per-query floor" was a METERING ARTIFACT, not real I/O (root-caused)
 
-After projection + exact-stats, the residual **4.86 GB total ≈ 43 queries ×
-~116 MB** is the per-query table OPEN — `register_object_store_parquet_location`
-→ `ObjectStoreParquetTable::open` reads ~the whole file (the parquet footer
-prefetch pulls a huge suffix; at a 116 MB file that is ≈ the whole object), on
-EVERY query, with no cache. This is now the #1 lever. Two independent fixes,
-both PR-2:
-. **Bounded footer prefetch** — pass `ParquetObjectReader::with_footer_size_hint`
-  (or `with_metadata` of a cached `Arc<ParquetMetaData>`) so `open` reads only
-  the footer (a few MB), not a whole-file suffix. Correctness-neutral, no gating.
-. **Re-open cache** — cache `Arc<ObjectStoreParquetTable>` by location so repeat
-  queries skip `open` entirely (needs snapshot-LSN invalidation for MATERIALIZE'd
-  tables; env-gated).
+The residual ~121 MB/query was NOT the footer prefetch and NOT a whole-file read.
+A backtrace pinned it to `ObjectStoreExt::head` (object_store 0.13) — the file-size
+probe in `ObjectStoreParquetTable::open` (`store.head(&path)`). `head` is a
+metadata-only op per backend (local `stat`, S3 `HEAD`, ABFS Get-Blob-Properties,
+GCS metadata) that transfers NO body — but its `GetResult.range` spans
+`0..object_size`, and our `TracingObjectStore::get_opts` recorded
+`range.end − range.start` as `bytes_read`. So EVERY per-query file-size probe
+over-counted `bytes_read` by the whole object size. This is a real metering bug —
+`bytes_read` feeds the co-design cost model AND per-tenant KRU billing, so every
+`head` over-charged the tenant by the object size.
+
+FIX (PR-2): count zero bytes for head-only requests in `TracingObjectStore`
+(`object_store_trace.rs get_opts`, gate on `options.head`). Measured effect:
+total `bytes_read` **4.99 GB → 382 MB (−92%)**, median wall UNCHANGED (~69 ms),
+35/43 unchanged — confirming the bytes were phantom (head is a cheap metadata op).
+Also add `with_footer_size_hint` to the parquet reader (minor: bounds the real
+ranged metadata read; `range_gets` 29→19).
+
+=== Corrected picture — real I/O is small; the gap is COMPUTE
+
+With accurate metering: `COUNT(*)` reads 0.5 MB (footer only — exact-stats
+elision works), narrow queries ~5 MB (projection works), wide-string queries
+(URL/Title) ~30-51 MB. Real total: 382 MB for 43 queries. The remaining wall gap
+vs DuckDB (~2.2× median) is now clearly **compute + pgwire, not I/O** — dominated
+by the **q07 UInt16 MIN/MAX 10 s outlier** (reads only 5 MB; pure compute). So the
+next levers are the metadata-aggregate elision (MIN/MAX from footer) and the q07
+UInt16 compute pathology — NOT an I/O "open floor" (which never existed). The
+re-open cache drops to a minor S3-RTT optimization (`head` is cheap locally).
 
 === Deferred to follow-up PRs (need gating / invalidation design)
 
