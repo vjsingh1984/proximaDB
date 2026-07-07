@@ -1529,4 +1529,123 @@ mod tests {
             None
         );
     }
+
+    /// Wide fact table: one Int64 key column + 12 Float64 payload columns, one
+    /// row group per `groups` entry (sealed with `flush()`).
+    fn write_wide_fact_parquet(path: &std::path::Path, groups: &[Vec<i64>]) -> SchemaRef {
+        let mut fields = vec![Field::new("k", DataType::Int64, false)];
+        for j in 0..12 {
+            fields.push(Field::new(format!("p{j}"), DataType::Float64, false));
+        }
+        let schema = Arc::new(Schema::new(fields));
+        let file = std::fs::File::create(path).unwrap();
+        let mut writer = ArrowWriter::try_new(file, schema.clone(), None).unwrap();
+        for (gi, ks) in groups.iter().enumerate() {
+            let n = ks.len();
+            let mut cols: Vec<arrow_array::ArrayRef> = vec![Arc::new(Int64Array::from(ks.clone()))];
+            for j in 0..12 {
+                // Distinct-ish floats so the payload does not trivially compress
+                // away (we need the payload read to dominate the key-column read).
+                let vals: Vec<f64> = (0..n)
+                    .map(|i| (i as f64) * 1.000_001 + (j as f64) * 7.0 + gi as f64)
+                    .collect();
+                cols.push(Arc::new(arrow_array::Float64Array::from(vals)));
+            }
+            let batch = RecordBatch::try_new(schema.clone(), cols).unwrap();
+            writer.write(&batch).unwrap();
+            writer.flush().unwrap(); // seal this row group
+        }
+        writer.close().unwrap();
+        schema
+    }
+
+    /// TD-OLAP-4 evidence: on a high-NDV `IN`-list semi-join, the bloom prunes a
+    /// wide fact split whose collapsed min/max window cannot — a *metered*
+    /// bytes-scanned reduction (io_trace `bytes_read`), same rows. Drives the
+    /// real `scan()` path; the store is wrapped inside the io_trace scope so
+    /// spawned-partition reads are attributed (TD-OLAP-3 handle capture).
+    #[tokio::test]
+    async fn bloom_semijoin_reduces_metered_bytes_scanned() {
+        use crate::observability::io_trace;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        // rg0: odds spanning [1,199] (min/max cannot prune vs an even in-list,
+        // but the keys are all absent → the bloom can). rg1: 1000..1099 (min/max
+        // prunes). rg2: evens 2..20 (present in the in-list → the survivor).
+        let rg0: Vec<i64> = (0..300).map(|i| 1 + 2 * (i % 100)).collect();
+        let rg1: Vec<i64> = (0..300).map(|i| 1000 + (i % 100)).collect();
+        let rg2: Vec<i64> = (0..300).map(|i| 2 + 2 * (i % 10)).collect();
+        write_wide_fact_parquet(&data_dir.join("part-0.parquet"), &[rg0, rg1, rg2]);
+
+        let location = format!("file://{}", tmp.path().display());
+        // Wide projection so a pruned row group saves a large payload read; the
+        // bloom prefetch only reads the narrow key column.
+        let evens: Vec<i64> = (2..=300).step_by(2).collect();
+        let in_list = evens
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let query =
+            format!("SELECT p0,p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11 FROM t WHERE k IN ({in_list})");
+
+        async fn measure(location: &str, on: bool, query: &str) -> (usize, u64, u64) {
+            // SAFETY: nextest runs each test in its own process; this test is the
+            // only code in it and toggles the flag single-threaded.
+            unsafe {
+                if on {
+                    std::env::set_var("PROXIMADB_DF_BLOOM_SEMIJOIN", "1");
+                    std::env::set_var("PROXIMADB_DF_BLOOM_SEMIJOIN_MIN_KEYS", "4");
+                } else {
+                    std::env::remove_var("PROXIMADB_DF_BLOOM_SEMIJOIN");
+                }
+            }
+            io_trace::scope(async move {
+                let ctx = SessionContext::new();
+                // Register (wraps the store) INSIDE the scope so the io_trace
+                // handle is captured for spawned-partition reads.
+                register_object_store_parquet_location(&ctx, "t", location)
+                    .await
+                    .unwrap();
+                let batches = ctx.sql(query).await.unwrap().collect().await.unwrap();
+                let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+                let snap = io_trace::snapshot().expect("snapshot inside scope");
+                (rows, snap.bytes_read, snap.splits_pruned)
+            })
+            .await
+        }
+
+        let (rows_off, bytes_off, pruned_off) = measure(&location, false, &query).await;
+        let (rows_on, bytes_on, pruned_on) = measure(&location, true, &query).await;
+        unsafe {
+            std::env::remove_var("PROXIMADB_DF_BLOOM_SEMIJOIN");
+            std::env::remove_var("PROXIMADB_DF_BLOOM_SEMIJOIN_MIN_KEYS");
+        }
+
+        let reduction = 100.0 * (bytes_off.saturating_sub(bytes_on)) as f64 / bytes_off as f64;
+        eprintln!(
+            "TD-OLAP-4 bloom-semijoin evidence: rows off/on = {rows_off}/{rows_on}; \
+             bytes_read off/on = {bytes_off}/{bytes_on} ({reduction:.1}% reduction); \
+             splits_pruned off/on = {pruned_off}/{pruned_on}"
+        );
+
+        // Correctness: identical results with and without the prefilter.
+        assert_eq!(rows_off, rows_on, "bloom prefilter must not change results");
+        assert_eq!(
+            rows_on, 300,
+            "only rg2's 300 even-keyed rows match the in-list"
+        );
+        // The bloom prunes one extra split (rg0) that min/max could not …
+        assert!(
+            pruned_on > pruned_off,
+            "bloom prunes an extra split (off={pruned_off} on={pruned_on})"
+        );
+        // … and pruning that wide split is a metered bytes-scanned reduction.
+        assert!(
+            bytes_on < bytes_off,
+            "bloom must reduce metered bytes_read (off={bytes_off} on={bytes_on})"
+        );
+    }
 }
