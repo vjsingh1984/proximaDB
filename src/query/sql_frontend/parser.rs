@@ -62,6 +62,53 @@ pub fn parse_explain_kind(query: &str) -> Option<(bool, &str)> {
     Some((false, after_explain))
 }
 
+/// Best-effort output-column label for a single SELECT projection item: the
+/// explicit alias when present, else the trailing identifier of the expression
+/// (`a.attname` → `attname`), else the raw expression text. Used to mirror the
+/// client's expected result shape for catalog introspection.
+fn projection_label(item: &SelectItem) -> String {
+    match item {
+        SelectItem::ExprWithAlias { alias, .. } => alias.value.clone(),
+        SelectItem::UnnamedExpr(expr) => {
+            let text = expr.to_string();
+            text.rsplit_once('.')
+                .map(|(_, last)| last.trim().to_string())
+                .unwrap_or(text)
+        }
+        SelectItem::Wildcard(_) => "*".to_string(),
+        _ => item.to_string(),
+    }
+}
+
+/// Parse a single SELECT's projection list and return the output-column labels
+/// the client expects (explicit alias, else a label derived from the
+/// expression). Returns `None` for anything that isn't a single SELECT, for any
+/// projection containing a wildcard (whose width we cannot determine from our
+/// side), or on parse failure — callers fall back to substring-based dispatch
+/// and the width-safety net. This lets catalog introspection answer psql-style
+/// queries (`SELECT ... AS "Name" ... FROM pg_catalog.pg_class ...`) with a
+/// result whose columns match the client's SELECT list by construction.
+pub fn parse_select_aliases(sql: &str) -> Option<Vec<String>> {
+    let statements = Parser::parse_sql(&GenericDialect, sql).ok()?;
+    let [statement] = statements.as_slice() else {
+        return None;
+    };
+    let Statement::Query(query) = statement else {
+        return None;
+    };
+    let SetExpr::Select(select) = &*query.body else {
+        return None;
+    };
+    if select
+        .projection
+        .iter()
+        .any(|item| matches!(item, SelectItem::Wildcard(_)))
+    {
+        return None;
+    }
+    Some(select.projection.iter().map(projection_label).collect())
+}
+
 /// SQL frontend parser that converts SQL text into internal AST nodes
 pub struct SqlFrontendParser {
     dialect: GenericDialect,

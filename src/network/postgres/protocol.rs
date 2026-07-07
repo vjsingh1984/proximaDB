@@ -235,6 +235,77 @@ fn pg_type_for_catalog_column(column_type: &str) -> PgType {
     }
 }
 
+/// Enforce the pgwire width-safety invariant on a catalog-introspection result
+/// before any frame is written: the RowDescription field count MUST equal every
+/// DataRow cell count. `RowDescription` and `DataRow` widths are encoded
+/// independently on the wire (`send_row_description` writes `fields.len()`;
+/// `send_data_row*` writes `values.len()`), so a mismatch emits a desync'd
+/// frame that crashes psql with libpq's `"column number N is out of range 0..M"`.
+///
+/// Rules, in order:
+/// 1. If the client's parsed SELECT aliases are present and their count differs
+///    from the result's column count, dispatch routed the query to a wrong-shape
+///    builder → return a safe EMPTY result (the client's alias names, all `text`,
+///    zero rows) so the client renders nothing instead of crashing.
+/// 2. Pad `column_types` to `columns.len()` with `"text"` (or truncate if longer).
+/// 3. Drop any row whose cell count ≠ column count.
+fn sanitize_catalog_result(
+    mut result: crate::services::CatalogIntrospectionResult,
+    select_aliases: Option<&[String]>,
+    query_for_logs: &str,
+) -> crate::services::CatalogIntrospectionResult {
+    // (1) Dispatch-vs-SELECT shape mismatch → graceful empty.
+    if let Some(aliases) = select_aliases
+        && aliases.len() != result.columns.len()
+    {
+        tracing::warn!(
+            target: "proximadb::pgwire::catalog",
+            query = %query_for_logs,
+            expected_columns = aliases.len(),
+            got_columns = result.columns.len(),
+            "catalog introspection shape mismatch; returning empty result to avoid a width-desync'd pgwire frame"
+        );
+        return crate::services::CatalogIntrospectionResult {
+            columns: aliases.to_vec(),
+            column_types: aliases.iter().map(|_| "text".to_string()).collect(),
+            rows: Vec::new(),
+        };
+    }
+
+    // (2) Make column_types exactly columns.len().
+    let ncols = result.columns.len();
+    if result.column_types.len() < ncols {
+        let missing = ncols - result.column_types.len();
+        result
+            .column_types
+            .extend(std::iter::repeat_n("text".to_string(), missing));
+        tracing::warn!(
+            target: "proximadb::pgwire::catalog",
+            query = %query_for_logs,
+            padded_to = ncols,
+            "padded catalog-introspection column_types with text"
+        );
+    } else if result.column_types.len() > ncols {
+        result.column_types.truncate(ncols);
+    }
+
+    // (3) Drop width-mismatched rows.
+    let before = result.rows.len();
+    result.rows.retain(|row| row.len() == ncols);
+    let dropped = before - result.rows.len();
+    if dropped > 0 {
+        tracing::warn!(
+            target: "proximadb::pgwire::catalog",
+            query = %query_for_logs,
+            dropped,
+            expected_width = ncols,
+            "dropped catalog-introspection rows with mismatched cell count"
+        );
+    }
+
+    result
+}
+
 fn pg_type_for_catalog_data_type(data_type: &ProximaType) -> PgType {
     match data_type {
         ProximaType::Boolean => PgType::Bool,
@@ -1442,6 +1513,14 @@ impl PostgresProtocol {
         let Some(result) = result else {
             return self.send_empty_result().await;
         };
+
+        // Width-safety: guarantee the RowDescription field count equals every
+        // DataRow cell count. If dispatch routed this query to a builder whose
+        // shape doesn't match the client's SELECT list, substitute a safe empty
+        // result rather than emit a desync'd frame (which crashes psql with
+        // libpq's "column number N is out of range"). See `sanitize_catalog_result`.
+        let select_aliases = crate::query::sql_frontend::parse_select_aliases(query);
+        let result = sanitize_catalog_result(result, select_aliases.as_deref(), query);
 
         let fields = result
             .columns
