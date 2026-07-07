@@ -95,16 +95,36 @@ is reflected in the same `splits_pruned` counter and `bytes_read` drop this
 ledger already meters (the projected key-column read it pays up front is also
 metered through the tracing store), so no new fields are needed.
 
-**Measured status: unit-level only.** Deterministic reader unit tests
-(`object_store_parquet_reader.rs`) show a candidate split surviving min/max but
-being bloom-pruned (surviving splits 1 → 0) with correct rows and no
-false-negative prune. An end-to-end *bytes-scanned* ledger entry is **pending** a
-query that exercises a high-NDV `IN`-list semi-join at scale: today's TPC-H/DS
-suites push fact predicates into the WHERE (Slice A) or reach the fact via a
-join key (Slice B) rather than a large literal `IN`-list, so the ledger harness
-does not yet drive this path. Promotion prerequisite: add such a query (or a
-synthetic high-NDV `IN` case) to the harness and record the `splits_pruned` /
-`bytes_read` delta here before citing any reduction figure (mandate #6/#10).
+**Measured status: integration-level (synthetic high-NDV `IN`), 2026-07-07.**
+The reader test `bloom_semijoin_reduces_metered_bytes_scanned`
+(`object_store_parquet_reader.rs`) drives the real `scan()` path over a wide fact
+fixture (3 row groups × 300 rows; 1 Int64 key + 12 Float64 payload columns; the
+store wrapped inside the `io_trace` scope so spawned-partition reads are
+attributed) and records the metered `io_trace` snapshot with the flag OFF vs ON:
+
+[cols="1,1,1,1", options="header"]
+|===
+| Metric | flag OFF (min/max) | flag ON (bloom) | delta
+
+| rows returned      | 300     | 300     | identical (correctness)
+| `bytes_read`       | 194,400 | 166,790 | **−14.2%**
+| `splits_pruned`    | 1 / 3   | 2 / 3   | +1 split (rg0)
+|===
+
+The query is `SELECT p0..p11 FROM t WHERE k IN (150 even literals)`. rg0 holds
+odd keys spanning `[1,199]` — its min/max window overlaps the even in-list so the
+zone-map keeps it, but every key is absent, so the bloom prunes it and its wide
+payload read is skipped; rg1 (`k∈[1000,1099]`) is min/max-pruned in both; rg2
+(the even-keyed survivor) is read in both. The reduction is net of the projected
+key-column read the prefetch pays. This is a *metered* `bytes_read` delta (not a
+row-group-size estimate), reproducible by the test.
+
+**Still pending: SF-scale TPC.** This is a synthetic fixture, not a faithful
+TPC-H/DS query — those push fact predicates into the WHERE (Slice A) or reach the
+fact via a join key (Slice B) rather than a large literal `IN`-list. An
+SF1/SF10 entry through the `tpc_perf_ledger_e2e` harness (a real high-NDV
+semi-join query) remains the bar before any "competitive at scale" claim
+(mandate #6/#10).
 
 == Relation to the evidence ledger
 
