@@ -128,6 +128,9 @@ impl ProximaDB {
         // measured cost of each (shape-class, backend). Observe-mode today —
         // routing is unchanged until a later flag-gated slice.
         crate::query::route_cost_model::install_route_cost_observer();
+        // Warm the cost model from persisted cells so the measured routing
+        // history survives restarts (behavior unchanged while override is off).
+        crate::query::route_cost_model::load_persisted_cost_model(&config.server.data_dir);
         // ADR-030: wire the io_trace flush to the always-on per-tenant billing
         // meters (KRU read-compute from the snapshot's per-engine compute_ms).
         // Same snapshot as the route observer above — billed bytes/ms cannot
@@ -767,6 +770,10 @@ impl ProximaDB {
     /// Shutdown the database instance gracefully.
     pub async fn shutdown(&mut self) -> anyhow::Result<()> {
         info!("Graceful shutdown requested");
+
+        // Persist the learned route cost model so measured history survives the
+        // restart (best-effort; off the hot path, on graceful shutdown only).
+        crate::query::route_cost_model::persist_cost_model(&self._config.server.data_dir);
 
         // 1a. Stop the async-ingest drainer first so it stops consuming
         //     before we shut down the storage layer it inserts into.
