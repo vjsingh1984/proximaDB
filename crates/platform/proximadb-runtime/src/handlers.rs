@@ -626,7 +626,7 @@ impl ApiHandlersPort for UnifiedHandlers {
         query: String,
         _parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
-        _tenant_id: Option<&str>,
+        tenant_id: Option<&str>,
     ) -> Result<ExecuteQueryResponse> {
         let adapter = self
             .query_adapter
@@ -634,7 +634,7 @@ impl ApiHandlersPort for UnifiedHandlers {
             .ok_or_else(|| anyhow!("SQL execution requires QueryAdapterPort (not wired)"))?;
 
         let start = Instant::now();
-        let json_result = adapter.execute_sql(query, collection).await?;
+        let json_result = adapter.execute_sql(query, collection, tenant_id).await?;
 
         let records = json_result
             .get("records")
@@ -889,6 +889,7 @@ mod tests {
             &self,
             _query: String,
             _collection: Option<String>,
+            _tenant_id: Option<&str>,
         ) -> Result<serde_json::Value> {
             Ok(json!({
                 "columns": ["id", "score", "flag", "none", "obj"],
@@ -1155,6 +1156,7 @@ mod tests {
                 &self,
                 _query: String,
                 _collection: Option<String>,
+                _tenant_id: Option<&str>,
             ) -> Result<serde_json::Value> {
                 Ok(json!(["text", 7, false, null, {"shape": "object"}]))
             }

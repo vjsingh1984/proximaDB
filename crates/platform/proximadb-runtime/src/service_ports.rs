@@ -165,5 +165,14 @@ pub trait QueryAdapterPort: Send + Sync {
     /// Returns rows as protocol-neutral JSON so the protocol layer can convert
     /// to v1 `ExecuteQueryResponse`, v2 `ProximaValue` rows, or any wire format
     /// without the port accumulating v1 surface debt.
-    async fn execute_sql(&self, query: String, collection: Option<String>) -> Result<JsonValue>;
+    ///
+    /// `tenant_id` scopes relational SQL to the tenant's partition (TD-064); the
+    /// adapter routes relational SELECT through the tenant-scoped relational
+    /// pipeline (`try_run_select`, TD-121) before falling back to the facade.
+    async fn execute_sql(
+        &self,
+        query: String,
+        collection: Option<String>,
+        tenant_id: Option<&str>,
+    ) -> Result<JsonValue>;
 }

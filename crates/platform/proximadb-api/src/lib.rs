@@ -397,6 +397,7 @@ pub(crate) mod test_support {
             &self,
             _query: String,
             _collection: Option<String>,
+            _tenant_id: Option<&str>,
         ) -> Result<JsonValue> {
             Ok(JsonValue::Array(Vec::new()))
         }
@@ -637,7 +638,7 @@ mod tests {
             .unwrap();
         assert!(
             query
-                .execute_sql("select 1".to_string(), Some("docs".to_string()))
+                .execute_sql("select 1".to_string(), Some("docs".to_string()), None)
                 .await
                 .unwrap()
                 .is_array()

@@ -139,6 +139,16 @@ pub static GLOBAL_OLAP_RESULT_CACHE: Lazy<Arc<QueryResultCache<ExecutionPipeline
 
 /// Process-wide invalidation coordinator with the OLAP result cache attached,
 /// so writes/DDL drop tenant-scoped entries in one fan-out call (mandate #16b).
+///
+/// Only the `result_cache` arm is attached, deliberately:
+/// - **PlanCache** is already invalidated *lazily* — every
+///   `invalidate_collection` call bumps `CorpusVersionRegistry`, and `PlanCache`
+///   consults that version on lookup → stale entries already miss. An eager
+///   `with_plan_cache` arm would only free memory slightly sooner.
+/// - **BatchGroupCache** has no production instance (test-only) and is keyed on
+///   `(batch_id, group_id)`, not `(tenant, collection)` — there's no
+///   `(tenant, collection) → batch_id` mapping to drive it. Wire it when a live
+///   batch registry lands.
 pub static GLOBAL_OLAP_CACHE_COORDINATOR: Lazy<Arc<CacheInvalidationCoordinator>> =
     Lazy::new(|| {
         Arc::new(
