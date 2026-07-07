@@ -120,11 +120,22 @@ impl ObjectStore for TracingObjectStore {
     async fn get_opts(&self, location: &Path, options: GetOptions) -> ObjectStoreResult<GetResult> {
         self.rec_op(IoOp::Get);
         let ranged = options.range.is_some();
+        // A `head` request (`ObjectStoreExt::head` → `get_opts(with_head)`) transfers
+        // metadata only, not the body — but its `GetResult.range` spans the whole
+        // object, so recording `range` here would over-count `bytes_read` by the
+        // full object size on every metadata probe (measured: a spurious ~file-size
+        // per query — TD-OLAP-4). Count zero bytes for head-only requests.
+        let is_head = options.head;
         let result = self.inner.get_opts(location, options).await?;
         if ranged {
             self.rec_range_gets(1);
         }
-        self.rec_bytes_read(result.range.end.saturating_sub(result.range.start));
+        let n = if is_head {
+            0
+        } else {
+            result.range.end.saturating_sub(result.range.start)
+        };
+        self.rec_bytes_read(n);
         Ok(result)
     }
 
