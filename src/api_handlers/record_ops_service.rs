@@ -800,6 +800,22 @@ impl proximadb_runtime::RecordRoutePort for RecordOpsService {
         Ok(records)
     }
 
+    async fn collection_exists(&self, collection_id: &str, tenant: Option<&str>) -> bool {
+        // Resolve through the SAME catalog path the write path uses (so the answer matches
+        // whether an insert would resolve), tenant-scoped. Any error ⇒ false (fail toward
+        // the safe legacy path) so the default-ON document gate never hard-fails a write to
+        // a non-canonical collection.
+        let tenant_context = match self.collection_service.load_tenant_context(tenant) {
+            Ok(tc) => tc,
+            Err(_) => return false,
+        };
+        matches!(
+            self.resolve_collection_id_internal(collection_id, tenant_context.as_ref())
+                .await,
+            Ok(Some(_))
+        )
+    }
+
     async fn delete_records(
         &self,
         collection_id: &str,

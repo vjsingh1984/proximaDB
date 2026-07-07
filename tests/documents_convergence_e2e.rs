@@ -9,7 +9,7 @@
 //! - **Gate ON** (`PROXIMADB_DOC_CANONICAL_VECTOR` = collection): a document ingested via
 //!   REST v2 is visible to a gRPC `GetDocument` — one store, cross-surface. This is the
 //!   headline convergence claim.
-//! - **Gate OFF** (default): the gRPC/`DocumentService` legacy path round-trips unchanged
+//! - **Legacy path** (non-canonical collection, or kill-switch): the gRPC/`DocumentService` legacy path round-trips unchanged
 //!   (create → get), proving the default-OFF gate preserves today's behavior.
 //!
 //! One ProximaDB boot per process (the WAL manifest is a set-once singleton); nextest runs
@@ -243,10 +243,12 @@ async fn rest_ingested_document_is_visible_via_grpc_when_gate_on() {
     assert_eq!(doc.id, "doc-1", "gRPC sees the REST-ingested document id");
 }
 
-/// Gate OFF (default): the gRPC/DocumentService legacy path round-trips unchanged
-/// (create → get), so the default-OFF gate preserves today's behavior bit-for-bit.
+/// Legacy path for a NON-canonical collection: the gate is DEFAULT-ON, but `legacydocs*` is never
+/// created as a vector collection, so the mixed-write-safe capability check keeps the
+/// gRPC/DocumentService write on the legacy path (create → get round-trips unchanged). This proves
+/// default-ON does not hard-fail pure-document collections.
 #[tokio::test]
-async fn grpc_document_round_trips_on_legacy_path_when_gate_off() {
+async fn grpc_document_round_trips_on_legacy_path_for_non_canonical_collection() {
     let server = TestServer::start().await.expect("server start");
     let collection = format!("legacydocs{}", server.grpc_port);
     let mut client =

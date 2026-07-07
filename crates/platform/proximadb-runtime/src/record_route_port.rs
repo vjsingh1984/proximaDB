@@ -61,4 +61,12 @@ pub trait RecordRoutePort: Send + Sync {
         record_ids: Vec<String>,
         tenant: Option<&str>,
     ) -> Result<usize>;
+
+    /// True when `collection_id` resolves to a canonical (vector) collection for `tenant`
+    /// in the record/vector catalog. The document facade uses this to route mixed-safely
+    /// under the default-ON gate (TD-DOC-CONV-2): a collection that is NOT a canonical
+    /// vector collection (e.g. a pure-document collection never created via REST v2/DDL)
+    /// stays on the legacy path instead of hard-failing the canonical write. Best-effort:
+    /// returns `false` on any resolution error (fail toward the safe legacy path).
+    async fn collection_exists(&self, collection_id: &str, tenant: Option<&str>) -> bool;
 }
