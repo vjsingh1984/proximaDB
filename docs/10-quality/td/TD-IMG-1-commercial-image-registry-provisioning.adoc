@@ -8,7 +8,7 @@
 | Field | Value
 | Status | **Open** (blocked — external operator action)
 | Severity | Low — the OSS multi-arch image publishes fine; the commercial overlay is an out-of-band operator/provisioning task, known-red independent of any code in this repo.
-| Component | Release/infra — commercial (AnvaiOps) pipeline that overlays pricing onto the OSS image and pushes to ACR/ECR. OSS base: `.github/workflows/publish-image.yml`, `deploy/docker/Dockerfile` target `runtime`.
+| Component | Release/infra boundary. OSS (this repo): `.github/workflows/publish-image.yml` → Docker Hub `docker.io/vjsingh1984/proximadb`. Commercial (AnvaiOps repo, out of scope here): Azure ACR + pricing overlay.
 | Relates to | `TD-EMBED-1` (the other shipped-release follow-up); `deploy/docker/IMAGE_PUBLISH.md`
 | Pillar | RELEASE/INFRA
 |===
@@ -18,34 +18,43 @@ toc::[]
 == Symptom
 
 The **commercial** ProximaDB image build is red, independent of the OSS work. It is not a
-code defect and not automatable from this repo: it requires an operator to **provision the
-target container registry (Azure ACR / AWS ECR) and supply cloud credentials** to the
-commercial pipeline before the overlay build can push.
+code defect in this repo and not automatable from here: it requires provisioning **Azure ACR
+and cloud credentials** in **AnvaiOps** before the commercial overlay build can push.
 
 == Context / boundary
 
-* This repo publishes the **public OSS** image `vjsingh1984/proximadb` to Docker Hub, built
-  multi-arch (`linux/amd64` + `linux/arm64`, native per-arch runners) by
-  `.github/workflows/publish-image.yml`. That path is healthy.
-* The **commercial** pipeline (AnvaiOps) consumes that OSS image as a base, overlays pricing/
-  entitlement, and pushes to a **commercial registry (ACR/ECR)**. Auth for that push is
-  registry credentials the operator holds — not repo secrets, not something a code change
-  here can satisfy.
-* Therefore the red state is an **infra provisioning dependency**, tracked here so it is not
-  mistaken for a build regression in this repo.
+* This repo publishes the **public OSS** image `docker.io/vjsingh1984/proximadb` to Docker
+  Hub, built multi-arch (`linux/amd64` + `linux/arm64`, native per-arch runners) by
+  `.github/workflows/publish-image.yml`. That path is healthy and fully self-contained here.
+* The **commercial** pipeline lives in **AnvaiOps**: it consumes the OSS Docker Hub image as a
+  base, overlays pricing/entitlement, and pushes to **Azure ACR**. The registry and its push
+  credentials are AnvaiOps-owned — not repo secrets here, not something a code change in
+  ProximaDB can satisfy.
+* Therefore the red state is an **AnvaiOps-side provisioning dependency**, recorded here only
+  so it is not mistaken for a build regression in this repo.
 
-== Fix approach (operator action, out-of-band)
+== Ownership boundary — the Azure provisioning is AnvaiOps', not ProximaDB's
 
-. Provision the commercial registry (ACR or ECR) for the target cloud account.
-. Supply the registry credentials to the AnvaiOps commercial pipeline (scoped push token /
-  service principal / OIDC — prefer keyless OIDC over a long-lived token where the registry
-  supports it, mirroring the OSS Docker Hub setup).
-. Re-run the commercial overlay build; confirm the pushed digest resolves and the pricing
-  overlay is present.
+ProximaDB (this repo, OSS) publishes **only** the public image to **Docker Hub**
+(`docker.io/vjsingh1984/proximadb`) via `publish-image.yml`. It owns no cloud registry and no
+cloud credentials.
 
-No change to this repo's `publish-image.yml` or `Dockerfile` is expected. If the OSS image
-shape needs to change to unblock the overlay (e.g. a new `runtime-*` target), file that as a
-separate, code-scoped TD.
+The **commercial** side — Azure ACR provisioning, the pricing/entitlement overlay, and the
+push credentials — belongs to **AnvaiOps** and is tracked there. The concrete provisioning
+runbook (`az acr create`, federated-identity/OIDC role bindings, the overlay pipeline wiring)
+lives in the AnvaiOps repo, **not** here, so this TD does not reproduce it — that would drift
+against the real owner.
+
+This ProximaDB-side TD exists only to record the boundary so the red commercial build is not
+mistaken for a regression in this repo:
+
+* **ProximaDB obligation (this repo):** keep the OSS Docker Hub image green and stable — it is
+  the base AnvaiOps overlays. Nothing here is blocked.
+* **AnvaiOps obligation (other repo):** provision Azure ACR + creds and run the commercial
+  overlay. That is the out-of-band operator action; track/close it in AnvaiOps.
+
+If — and only if — the OSS image *shape* must change to unblock the overlay (e.g. a new
+`runtime-*` Dockerfile target), that is a code-scoped change filed here as its own TD.
 
 == Verification
 

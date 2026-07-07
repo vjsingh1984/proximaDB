@@ -1,62 +1,104 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
-= TD-EMBED-1: macOS + Windows embedded wheels for proximadb_embedded (fast-follow)
+= TD-EMBED-1: macOS + Windows embedded wheels for proximadb_embedded
 :toc: macro
 
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open** (fast-follow)
+| Status | **macOS: in progress** (wheel matrix wired, CI-validated) · **Windows: Open** (engine-portability effort)
 | Severity | Low — Linux x86_64 + aarch64 wheels ship today and cover the overwhelming majority of embedded/edge/air-gapped/server deployments. macOS/Windows are additive reach, not a correctness or release blocker.
-| Component | Packaging/CI — `.github/workflows/release-python.yml` (`build-embedded-wheels`), root maturin package (`proximadb_embedded`)
+| Component | Packaging/CI — `.github/workflows/release-python.yml` (`build-embedded-wheels`), root maturin package (`proximadb_embedded`); Windows work spans `crates/storage/proximadb-storage-common` + `src/storage`
 | Relates to | Vendored-OpenSSL manylinux fix (PR #701 / #707); `TD-IMG-1` (the other shipped-release follow-up)
-| Pillar | PACKAGING
+| Pillar | PACKAGING / ENGINE-PORTABILITY
 |===
 
 toc::[]
 
 == Symptom
 
-`proximadb_embedded` (the native in-process PyO3 engine, root maturin package) publishes
-**Linux-only** platform wheels. The `build-embedded-wheels` matrix in `release-python.yml`
-builds exactly two targets:
+`proximadb_embedded` (the native in-process PyO3 engine, root maturin package) originally
+published **Linux-only** platform wheels — `x86_64` (ubuntu-latest) and `aarch64`
+(ubuntu-24.04-arm, native ARM runner). macOS and Windows were absent from the
+`build-embedded-wheels` matrix.
 
-* `ubuntu-latest` / `x86_64` / manylinux
-* `ubuntu-24.04-arm` / `aarch64` / manylinux (native ARM runner — the engine's C deps,
-  `aws-lc-sys` and vendored OpenSSL, do not cross-compile to aarch64, so it builds natively)
+== macOS — RESOLVED (aarch64 / Apple Silicon)
 
-macOS and Windows are **not** in the matrix. macOS is *deferred* (a tooling/runner add, no
-known code blocker); Windows is *blocked on engine portability*, not on build config.
+The engine is **unix-native**, not Linux-only: the storage layer uses unix syscalls +
+`memmap2` (cross-platform), and the single Linux-specific path
+(`src/storage/engines/core/ops/performance_optimization.rs`) is already `#[cfg(target_os =
+"linux")]`-gated. So macOS builds with no engine changes — the gap was purely a missing CI
+matrix row.
 
-== Why deferred (not a build-config fix)
+* **Added:** `macos-14` (aarch64/Apple Silicon), native arm64 runner, to
+  `build-embedded-wheels`. maturin resolves the short `aarch64` target to
+  `aarch64-apple-darwin` on the macOS runner.
+* **Intel macOS intentionally NOT built:** `x86_64-apple-darwin` is no longer a produced
+  target (Apple ships only Apple-Silicon hardware). aarch64 also covers Rosetta for the rare
+  Intel host.
+* **No perl-core hook needed on macOS:** system Perl already carries `IPC::Cmd` et al. that
+  openssl-src's Configure needs; `before-script-linux` is a Linux-only maturin-action input
+  and is skipped on macOS.
+* **Publish path:** the `publish-embedded-pypi` job globs `*embedded-wheels*` artifacts, so
+  the `embedded-wheels-macos-14-aarch64` artifact is collected with no publish-side change.
+* **ring/aarch64 `CAPS_STATIC` — hit and fixed.** The first macOS dry-run failed to compile
+  `ring 0.17.14` (E0080: `assert!(CAPS_STATIC == MIN_STATIC_FEATURES)` in `cpu/arm/darwin.rs`).
+  Root cause: `.cargo/config.toml` `[target.aarch64-apple-darwin]` carried
+  `-C target-cpu=native`, which on the Apple runner enables features beyond ring's expected
+  baseline. `native` is *also wrong for a distributable wheel* (bakes the builder's CPU
+  features in → SIGILL risk on other Macs). Fix: dropped `target-cpu=native` on that triple so
+  the build uses rustc's portable Apple-baseline default (NEON/AES/SHA2 on) — ring-safe AND
+  wheel-portable. `codegen-units=4` retained.
 
-* **Windows** — `proximadb_embedded` links the full Rust engine, which is Linux-native
-  (unix storage APIs). `proximadb-storage-common` does not compile under MSVC
-  (E0425/E0433/E0599 — no Windows port of the storage syscalls). This is an **engine
-  portability** effort (abstract/port the unix-only storage paths), not a wheel-matrix
-  entry. Do not add a Windows matrix row until the engine compiles for `*-pc-windows-msvc`.
-* **macOS** — no known code blocker; the gap is CI (add `macos-14`/Apple-Silicon +
-  `macos-13`/x86_64 runners, confirm the vendored-OpenSSL/`aws-lc-sys` build the same way it
-  does on Linux, then add the matrix rows). Lower effort than Windows.
+Validated via `workflow_dispatch` (`dry_run=true`) building the macOS wheel without
+publishing (see the PR that lands this).
 
-The pure-Python SDK `proximadb` (`clients/python`) is a universal wheel and is unaffected —
-this TD is only the native `proximadb_embedded` distribution.
+== Windows — Open (engine-portability effort, NOT a build-config fix)
 
-== Fix approach
+`proximadb_embedded` links the full Rust engine, whose storage layer is written against
+**unix** APIs. Windows/MSVC does not compile it. This is a real port, not a matrix row — do
+**not** add a Windows matrix entry until the engine compiles for `*-pc-windows-msvc`.
 
-. **macOS (do first — additive, no engine work).** Add `macos-14` (aarch64/Apple Silicon)
-  and `macos-13` (x86_64) rows to the `build-embedded-wheels` matrix. System Perl on macOS
-  already carries the `IPC::Cmd`/`Time::Piece`/etc. modules openssl-src's Configure needs, so
-  the `before-script-linux` perl-core hook is not required there. Verify the maturin build
-  produces a valid `.whl`, then wire the artifacts into the publish job.
-. **Windows (gated on engine portability).** Blocked until `proximadb-storage-common` (and
-  any other unix-only crate on the embedded link path) compiles for MSVC. Track that as its
-  own engine-portability effort; only then add the Windows matrix row.
+=== Enumerated blockers (measured)
+
+The unix-only surface on the embedded link path (grep for `std::os::unix` / `libc::` /
+`mmap` / `memmap2` / `O_DIRECT` / `pread`/`pwrite` / `fcntl`):
+
+* `crates/storage/proximadb-storage-common/src/mmap_file.rs` — mmap-backed file (memmap2 is
+  cross-platform, but the surrounding `std::os::unix` fd/advice plumbing is not).
+* `crates/storage/proximadb-storage-common/src/unified_cache_config.rs`, `.../lib.rs`
+* `crates/storage/proximadb-storage-filesystem-types/src/{lib,counting}.rs`
+* `crates/storage/proximadb-storage-encryption/src/filesystem.rs`
+* `crates/storage/proximadb-block-format/src/prune.rs`
+* `src/storage/` — `mmap_file.rs`, `common/mmap_vectors.rs`,
+  `persistence/filesystem/{local,caching_filesystem,mod}.rs`, and the SST/NOVA/SWIFT/RAPTOR
+  engine writers/readers that call the unix fd/mmap primitives directly.
+
+The compile errors on MSVC are the expected `E0425/E0433/E0599` (missing unix items).
+
+=== Port plan (phased, mixed-platform-safe)
+
+. **Introduce a platform seam** for the file/mmap primitives in
+  `proximadb-storage-common` — a `PlatformFile` trait (open, ranged read/write, advise, map)
+  with a `#[cfg(unix)]` impl (current code) and a `#[cfg(windows)]` impl
+  (`FILE_FLAG_*`/`CreateFileMapping`/`MapViewOfFile`). Keep the unix path byte-for-byte to
+  avoid regressing the shipped Linux/macOS wheels.
+. **Gate the advice/`O_DIRECT`-class calls** behind the seam (Windows has no `posix_fadvise`;
+  use `FILE_FLAG_NO_BUFFERING`/no-op fallbacks).
+. **Sweep the engine call sites** (`src/storage/engines/*`) to go through the seam instead of
+  `std::os::unix` directly.
+. **Add a Windows compile-only CI job** (no wheel yet) to ratchet: it must reach `cargo check
+  -p proximadb-storage-common --target x86_64-pc-windows-msvc` green before a wheel row is
+  added.
+. **Only then** add `windows-latest`/`x86_64` to `build-embedded-wheels`.
+
+This is mixed-read/mixed-platform-safe by construction: the seam adds a Windows impl without
+touching the unix one, so no flag-day and no risk to the currently-shipping wheels.
 
 == Verification
 
-* `python-v*` release (or `workflow_dispatch` with `dry_run=true`) produces macOS wheels
-  alongside the existing Linux wheels; `twine check` passes; `import proximadb_embedded`
-  succeeds on a macOS runner.
-* Windows step stays out of the matrix until the engine compiles for MSVC — do not add a
-  row that will fail-fast the release.
+* **macOS:** `workflow_dispatch` (`dry_run=true`) produces `*.whl` tagged `macosx_*_arm64`;
+  `import proximadb_embedded` succeeds on the macos-14 runner. On the next `python-v*` tag the
+  wheel publishes to PyPI alongside the Linux wheels.
+* **Windows:** the compile-only CI job goes green first (phase 4); the wheel row is added last
+  (phase 5). Until then, no Windows matrix entry — it would only fail-fast the release.
