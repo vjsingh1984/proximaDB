@@ -3823,6 +3823,158 @@ mod tests {
         }
     }
 
+    /// P-Trace (TD-DOC-CONV-2 / ADR-054): MEASURE the pre-shred document I/O baseline. A
+    /// representative document corpus (rich, varied `props` — the metadata a hybrid-shred format
+    /// would promote to typed columns) is persisted as ONE PAX segment, then each read op runs
+    /// inside an `io_trace::scope` so the task-local trace is captured. This records the co-design
+    /// baseline the shredding + pushdown work (ADR-054 P-Shred/P-Pushdown) will improve: TODAY every
+    /// document read — point-get AND filtered scan alike — FETCHES THE WHOLE SEGMENT (no pushdown,
+    /// no ranged reads), and the write records its segment bytes (the new `put_pax` hook).
+    /// `range_gets` is gated behind the `io-trace` feature; `bytes_read`/`bytes_written` are always-on.
+    #[tokio::test]
+    async fn doc_iotrace_baseline_preshred() {
+        use proximadb_iceberg_engine::IcebergObjectStoreBridge;
+
+        let bridge: Arc<dyn ObjectStoreBridge> =
+            Arc::new(IcebergObjectStoreBridge::from_url("memory://").unwrap());
+        let store = ObjectStoreVectorRecordStore::new(bridge);
+        let schema = CatalogTableSchema::new("docs")
+            .with_workload_profile(CatalogWorkloadProfile::Vector)
+            .with_storage_specialization(CatalogStorageSpecialization::VectorAnn);
+
+        const N: usize = 500;
+        let mut muts = Vec::with_capacity(N);
+        for i in 0..N {
+            let mut props = HashMap::new();
+            props.insert(
+                "title".to_string(),
+                ProximaTreeNode::Value(ProximaValue::String(format!(
+                    "Document number {i} — a representative title with several words"
+                ))),
+            );
+            props.insert(
+                "status".to_string(),
+                ProximaTreeNode::Value(ProximaValue::String(
+                    if i % 3 == 0 { "active" } else { "archived" }.to_string(),
+                )),
+            );
+            props.insert(
+                "day".to_string(),
+                ProximaTreeNode::Value(ProximaValue::Int64((i % 365) as i64)),
+            );
+            props.insert(
+                "author".to_string(),
+                ProximaTreeNode::Value(ProximaValue::String(format!("author_{}", i % 50))),
+            );
+            props.insert(
+                "body".to_string(),
+                ProximaTreeNode::Value(ProximaValue::String("lorem ipsum dolor sit ".repeat(16))),
+            );
+            let record = ProximaRecord {
+                oid: format!("doc-{i}"),
+                variation_id: Some("docs".to_string()),
+                created_at_ns: 1_700_000_000_000_000_000 + i as i64,
+                props,
+                embeddings: vec![EmbeddingCell {
+                    modality: "dense".into(),
+                    dim: 8,
+                    values: EmbeddingValues::Fp32((0..8).map(|d| ((i + d) as f32).sin()).collect()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            muts.push(TableRecordMutation::new(
+                TableRecordMutationKind::Upsert,
+                record,
+            ));
+        }
+
+        // WRITE — the whole-segment flush; captures bytes_written (the new put_pax hook).
+        let write_snap = io_trace::scope(async {
+            let w = store
+                .write_mutations(&schema, muts, None)
+                .await
+                .expect("write_mutations");
+            assert!(w.success);
+            io_trace::snapshot().expect("snapshot in scope")
+        })
+        .await;
+
+        // POINT-GET — one record, but the WHOLE segment is fetched (fetch_pax).
+        let get_snap = io_trace::scope(async {
+            let got = store
+                .get_by_key(
+                    &schema,
+                    TableRecordGetRequest {
+                        table_id: "docs".to_string(),
+                        key: "doc-250".to_string(),
+                        include_vector: false,
+                        include_props: true,
+                    },
+                    None,
+                )
+                .await
+                .expect("get_by_key");
+            assert!(got.is_some(), "point-get must find the record");
+            io_trace::snapshot().expect("snapshot in scope")
+        })
+        .await;
+
+        // FILTERED SCAN — the query_documents baseline; filter is NOT pushed down, so the whole
+        // segment is fetched and filtered in memory.
+        let scan_snap = io_trace::scope(async {
+            let scanned = store
+                .scan_records(
+                    &schema,
+                    TableRecordScanRequest {
+                        table_id: "docs".to_string(),
+                        limit: None,
+                        include_vector: false,
+                        include_props: true,
+                        filter: None,
+                    },
+                    None,
+                )
+                .await
+                .expect("scan_records");
+            assert_eq!(scanned.len(), N, "all docs read back");
+            io_trace::snapshot().expect("snapshot in scope")
+        })
+        .await;
+
+        eprintln!("BAKE_METRIC doc_trace.corpus_docs={N}");
+        eprintln!(
+            "BAKE_METRIC doc_trace.write.bytes_written={} put_ops={}",
+            write_snap.bytes_written, write_snap.put_ops
+        );
+        eprintln!(
+            "BAKE_METRIC doc_trace.point_get.bytes_read={} get_ops={} range_gets={}",
+            get_snap.bytes_read, get_snap.get_ops, get_snap.range_gets
+        );
+        eprintln!(
+            "BAKE_METRIC doc_trace.filtered_scan.bytes_read={} get_ops={} range_gets={}",
+            scan_snap.bytes_read, scan_snap.get_ops, scan_snap.range_gets
+        );
+        // The pre-shred baseline: a point-get fetches the SAME whole segment a full scan does.
+        eprintln!(
+            "BAKE_METRIC doc_trace.point_get_reads_whole_segment={}",
+            get_snap.bytes_read == scan_snap.bytes_read && get_snap.bytes_read > 0
+        );
+
+        assert!(
+            write_snap.bytes_written > 0,
+            "flush must record bytes_written (the new put_pax hook)"
+        );
+        assert!(
+            get_snap.bytes_read > 0,
+            "point-get must record bytes_read (fetch_pax)"
+        );
+        assert!(
+            scan_snap.bytes_read > 0,
+            "filtered scan must record bytes_read (fetch_pax)"
+        );
+    }
+
     /// Phase D: the recovered `oid` byte-matches the catalog's canonical
     /// composite-key encoding (`CatalogRow::primary_key_string`), not a divergent
     /// local join — so a read-back record carries the same oid the write path
@@ -4268,6 +4420,11 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
         let remove_result = std::fs::remove_file(&segment_meta.path);
 
         let tenant_id = _tenant_context.map(|tc| tc.tenant_id.as_str());
+        // Per-query WRITE trace: the PAX segment PUT is the object-store write boundary. Mirrors the
+        // read side's `record_bytes_read` in `read_all_records`, so a flush's bytes are observable
+        // to the co-design cost model (no-op outside an `io_trace::scope`).
+        io_trace::record_op_str("put_pax");
+        io_trace::record_bytes_written(bytes.len() as u64);
         self.bridge
             .persist_vector_segment(&object_path, &bytes, tenant_id)
             .await
