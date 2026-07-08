@@ -1,0 +1,798 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+
+//! # Native vectorized operators + lowering (ADR-054 Phase 2, TD-OLAP-10)
+//!
+//! The mechanics behind `native_engine::try_vectorized`:
+//! * [`PhysExpr`] — the zero-DataFusion expression IR (the ADR-054 v2 BLOCKER-2
+//!   fix), lowered from `proximadb_relational_types::Expr` and evaluated on an
+//!   Arrow `RecordBatch` via `arrow` compute kernels (comparison + Kleene
+//!   boolean + null-test).
+//! * [`MemoryScanSource`] — an [`ExecutionOperator`] that emits in-memory
+//!   `RecordBatch`es built from a `PhysicalPlan::Values` literal table.
+//! * [`FilterProjectOperator`] — a fused filter+project operator (ADR-054 §4.3):
+//!   one pass per batch — predicate mask via `filter_record_batch`, then column
+//!   selection. No intermediate `RecordBatch`.
+//! * [`lower_physical`] — lowers a supported `PhysicalPlan` shape
+//!   (`Project`/`Filter`/`Limit` over `Values`) to a [`Pipeline`].
+//! * [`execute_pipeline`] — drains a [`Pipeline`] to `Vec<RecordBatch>`.
+//!
+//! All operators work in the *contracts crate's* error space
+//! (`proximadb_execution_contracts::ExecutionError`); `native_engine` converts
+//! to the engine error at the `try_vectorized` seam.
+
+use std::sync::Arc;
+
+use arrow::array::{
+    Array, ArrayRef, BinaryBuilder, BooleanArray, BooleanBuilder, Float32Builder, Float64Builder,
+    Int8Builder, Int16Builder, Int32Builder, Int64Builder, RecordBatch, StringBuilder,
+    UInt8Builder, UInt16Builder, UInt32Builder, UInt64Builder,
+};
+use arrow::compute::kernels::cmp;
+use arrow::compute::{and_kleene, filter_record_batch, is_not_null, is_null, not, or_kleene};
+use arrow::datatypes::{DataType, SchemaRef};
+use async_trait::async_trait;
+use futures::stream::StreamExt;
+use proximadb_data_model::{ProximaType, ProximaValue};
+use proximadb_execution_contracts::{BatchStream, ExecutionError, ExecutionOperator, Pipeline};
+use proximadb_functions::builtins;
+use proximadb_relational_planner::PhysicalPlan;
+use proximadb_relational_types::{BinaryOp, Expr, RelationalSchema, UnaryOp};
+
+// =========================================================================
+// PhysExpr — the zero-DataFusion expression IR
+// =========================================================================
+
+/// A physical expression evaluated on an Arrow `RecordBatch`, with zero
+/// DataFusion dependency. A strict subset of `Expr` — lowering returns `Err`
+/// for anything outside this set, which `try_vectorized` turns into a Volcano
+/// fallback (never a hard failure of the experimental path).
+#[derive(Debug, Clone)]
+enum PhysExpr {
+    /// `Expr::Column(ColumnRef)` — ordinals are pre-resolved at planning time.
+    Column(usize),
+    /// `Expr::Literal { value, .. }` — broadcast to the batch row count at eval.
+    Literal(ProximaValue),
+    /// The six comparison `BinaryOp`s, evaluated via `arrow::compute::kernels::cmp`.
+    Compare {
+        op: BinaryOp,
+        left: Box<PhysExpr>,
+        right: Box<PhysExpr>,
+    },
+    /// SQL `AND` — Kleene (NULL-aware), via `and_kleene`.
+    And(Box<PhysExpr>, Box<PhysExpr>),
+    /// SQL `OR` — Kleene (NULL-aware), via `or_kleene`.
+    Or(Box<PhysExpr>, Box<PhysExpr>),
+    /// SQL `NOT` — null-propagating, via `not`.
+    Not(Box<PhysExpr>),
+    /// `IS NULL` / `IS NOT NULL`, via `is_null` / `is_not_null`.
+    IsNull { expr: Box<PhysExpr>, negated: bool },
+}
+
+impl PhysExpr {
+    /// Lower a relational `Expr` to a `PhysExpr`. Returns `Err(NotImplemented)`
+    /// for any unsupported variant — the caller (`try_vectorized`) maps that to
+    /// a Volcano fallback.
+    fn lower(expr: &Expr) -> Result<Self, ExecutionError> {
+        match expr {
+            Expr::Column(col) => Ok(PhysExpr::Column(col.ordinal)),
+            Expr::Literal { value, .. } => Ok(PhysExpr::Literal(value.clone())),
+            Expr::BinaryOp { op, left, right } => {
+                let l = Box::new(Self::lower(left)?);
+                let r = Box::new(Self::lower(right)?);
+                match op {
+                    BinaryOp::Eq
+                    | BinaryOp::NotEq
+                    | BinaryOp::Lt
+                    | BinaryOp::LtEq
+                    | BinaryOp::Gt
+                    | BinaryOp::GtEq => Ok(PhysExpr::Compare {
+                        op: *op,
+                        left: l,
+                        right: r,
+                    }),
+                    BinaryOp::And => Ok(PhysExpr::And(l, r)),
+                    BinaryOp::Or => Ok(PhysExpr::Or(l, r)),
+                    other => Err(ExecutionError::NotImplemented(format!(
+                        "binary op {other:?} not supported in native vectorized predicate"
+                    ))),
+                }
+            }
+            Expr::IsNull { expr, not } => Ok(PhysExpr::IsNull {
+                expr: Box::new(Self::lower(expr)?),
+                negated: *not,
+            }),
+            Expr::UnaryOp { op, expr } => match op {
+                UnaryOp::Not => Ok(PhysExpr::Not(Box::new(Self::lower(expr)?))),
+                UnaryOp::Neg => Err(ExecutionError::NotImplemented(
+                    "unary Neg not supported in native vectorized predicate".into(),
+                )),
+            },
+            other => Err(ExecutionError::NotImplemented(format!(
+                "expr {other:?} not supported in native vectorized predicate"
+            ))),
+        }
+    }
+
+    /// Evaluate to a column array against `batch`. `Literal` is broadcast to the
+    /// batch row count so that comparison operands share a length (the arrow
+    /// `cmp` kernels require equal-length arrays).
+    fn eval(&self, batch: &RecordBatch) -> Result<ArrayRef, ExecutionError> {
+        match self {
+            PhysExpr::Column(idx) => {
+                let col = batch.column(*idx);
+                if *idx >= batch.num_columns() {
+                    return Err(ExecutionError::Schema(format!(
+                        "column ordinal {idx} out of range ({} columns)",
+                        batch.num_columns()
+                    )));
+                }
+                Ok(col.clone())
+            }
+            PhysExpr::Literal(v) => broadcast_literal(v, batch.num_rows()),
+            PhysExpr::Compare { op, left, right } => {
+                let l = left.eval(batch)?;
+                let r = right.eval(batch)?;
+                compare_arrays(op, &l, &r)
+            }
+            PhysExpr::And(l, r) => {
+                let lv = l.eval_bool(batch)?;
+                let rv = r.eval_bool(batch)?;
+                let out = and_kleene(&lv, &rv)
+                    .map_err(|e| ExecutionError::Execution(format!("and_kleene: {e}")))?;
+                Ok(Arc::new(out))
+            }
+            PhysExpr::Or(l, r) => {
+                let lv = l.eval_bool(batch)?;
+                let rv = r.eval_bool(batch)?;
+                let out = or_kleene(&lv, &rv)
+                    .map_err(|e| ExecutionError::Execution(format!("or_kleene: {e}")))?;
+                Ok(Arc::new(out))
+            }
+            PhysExpr::Not(e) => {
+                let v = e.eval_bool(batch)?;
+                let out = not(&v).map_err(|e| ExecutionError::Execution(format!("not: {e}")))?;
+                Ok(Arc::new(out))
+            }
+            PhysExpr::IsNull { expr, negated } => {
+                let a = expr.eval(batch)?;
+                let out = if *negated {
+                    is_not_null(a.as_ref())
+                } else {
+                    is_null(a.as_ref())
+                }
+                .map_err(|e| ExecutionError::Execution(format!("is_null: {e}")))?;
+                Ok(Arc::new(out))
+            }
+        }
+    }
+
+    /// Evaluate as a boolean mask (downcasts the result of [`Self::eval`]).
+    fn eval_bool(&self, batch: &RecordBatch) -> Result<BooleanArray, ExecutionError> {
+        let arr = self.eval(batch)?;
+        arr.as_any()
+            .downcast_ref::<BooleanArray>()
+            .cloned()
+            .ok_or_else(|| {
+                ExecutionError::Schema(format!(
+                    "predicate evaluated to non-boolean array: {:?}",
+                    arr.data_type()
+                ))
+            })
+    }
+}
+
+/// Broadcast a scalar `ProximaValue` to a length-`n` array. Used so comparison
+/// operands share a length (the arrow `cmp` kernels are array-vs-array). A
+/// later phase can swap this for arrow's scalar/Datum comparison to avoid the
+/// allocation; correctness-first here.
+fn broadcast_literal(value: &ProximaValue, n: usize) -> Result<ArrayRef, ExecutionError> {
+    match value {
+        ProximaValue::Null => Err(ExecutionError::NotImplemented(
+            "null literal in comparison not supported (use IS NULL)".into(),
+        )),
+        ProximaValue::Boolean(b) => Ok(Arc::new(BooleanArray::from(vec![*b; n]))),
+        ProximaValue::Int8(x) => Ok(Arc::new(arrow::array::Int8Array::from_value(*x, n))),
+        ProximaValue::Int16(x) => Ok(Arc::new(arrow::array::Int16Array::from_value(*x, n))),
+        ProximaValue::Int32(x) => Ok(Arc::new(arrow::array::Int32Array::from_value(*x, n))),
+        ProximaValue::Int64(x) => Ok(Arc::new(arrow::array::Int64Array::from_value(*x, n))),
+        ProximaValue::UInt8(x) => Ok(Arc::new(arrow::array::UInt8Array::from_value(*x, n))),
+        ProximaValue::UInt16(x) => Ok(Arc::new(arrow::array::UInt16Array::from_value(*x, n))),
+        ProximaValue::UInt32(x) => Ok(Arc::new(arrow::array::UInt32Array::from_value(*x, n))),
+        ProximaValue::UInt64(x) => Ok(Arc::new(arrow::array::UInt64Array::from_value(*x, n))),
+        ProximaValue::Float32(x) => Ok(Arc::new(arrow::array::Float32Array::from_value(*x, n))),
+        ProximaValue::Float64(x) => Ok(Arc::new(arrow::array::Float64Array::from_value(*x, n))),
+        ProximaValue::String(s) => Ok(Arc::new(arrow::array::StringArray::from_iter_values(
+            std::iter::repeat_n(s.as_str(), n),
+        ))),
+        other => Err(ExecutionError::NotImplemented(format!(
+            "literal type {other:?} not supported in native vectorized predicate"
+        ))),
+    }
+}
+
+/// Apply a comparison `BinaryOp` to two equal-length arrays via the arrow-ord
+/// `cmp` kernels (which take `&dyn Datum`). `&dyn Array` implements `Datum`, so
+/// a reference to it coerces to `&dyn Datum`.
+fn compare_arrays(
+    op: &BinaryOp,
+    left: &ArrayRef,
+    right: &ArrayRef,
+) -> Result<ArrayRef, ExecutionError> {
+    let l: &dyn Array = left.as_ref();
+    let r: &dyn Array = right.as_ref();
+    let mask = match op {
+        BinaryOp::Eq => cmp::eq(&l, &r),
+        BinaryOp::NotEq => cmp::neq(&l, &r),
+        BinaryOp::Lt => cmp::lt(&l, &r),
+        BinaryOp::LtEq => cmp::lt_eq(&l, &r),
+        BinaryOp::Gt => cmp::gt(&l, &r),
+        BinaryOp::GtEq => cmp::gt_eq(&l, &r),
+        other => {
+            return Err(ExecutionError::NotImplemented(format!(
+                "comparison op {other:?} not supported"
+            )));
+        }
+    }
+    .map_err(|e| ExecutionError::Execution(format!("cmp {op:?}: {e}")))?;
+    Ok(Arc::new(mask))
+}
+
+// =========================================================================
+// MemoryScanSource — in-memory RecordBatch source (from PhysicalPlan::Values)
+// =========================================================================
+
+/// A scan source backed by in-memory `RecordBatch`es. Built once from a
+/// `PhysicalPlan::Values` literal table. Phase 2.5 swaps this for a real scan
+/// operator behind the same [`ExecutionOperator`] seam (non-breaking).
+#[derive(Debug)]
+pub(crate) struct MemoryScanSource {
+    batches: Vec<RecordBatch>,
+    schema: SchemaRef,
+}
+
+impl MemoryScanSource {
+    fn new(batches: Vec<RecordBatch>, schema: SchemaRef) -> Self {
+        Self { batches, schema }
+    }
+}
+
+#[async_trait]
+impl ExecutionOperator for MemoryScanSource {
+    fn output_schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    async fn execute(&self, _input: BatchStream) -> Result<BatchStream, ExecutionError> {
+        let batches = self.batches.clone();
+        let stream = futures::stream::iter(batches.into_iter().map(Ok::<_, ExecutionError>));
+        Ok(Box::pin(stream))
+    }
+}
+
+// =========================================================================
+// FilterProjectOperator — fused filter + project (ADR-054 §4.3)
+// =========================================================================
+
+/// Fused filter + project: for each input batch, optionally applies a predicate
+/// mask (`filter_record_batch`) and optionally selects a subset of columns
+/// (`RecordBatch::project`) — in one pass, no intermediate batch. Either or
+/// both of `predicate`/`projection` may be `None`.
+#[derive(Debug)]
+pub(crate) struct FilterProjectOperator {
+    predicate: Option<PhysExpr>,
+    projection: Option<Vec<usize>>,
+    output_schema: SchemaRef,
+}
+
+impl FilterProjectOperator {
+    fn new(
+        predicate: Option<PhysExpr>,
+        projection: Option<Vec<usize>>,
+        output_schema: SchemaRef,
+    ) -> Self {
+        Self {
+            predicate,
+            projection,
+            output_schema,
+        }
+    }
+}
+
+#[async_trait]
+impl ExecutionOperator for FilterProjectOperator {
+    fn output_schema(&self) -> SchemaRef {
+        self.output_schema.clone()
+    }
+
+    async fn execute(&self, input: BatchStream) -> Result<BatchStream, ExecutionError> {
+        let predicate = self.predicate.clone();
+        let projection = self.projection.clone();
+        Ok(Box::pin(input.map(move |result| {
+            let mut batch = result?;
+            if let Some(pred) = &predicate {
+                let mask = pred.eval_bool(&batch)?;
+                batch = filter_record_batch(&batch, &mask)
+                    .map_err(|e| ExecutionError::Execution(format!("filter: {e}")))?;
+            }
+            if let Some(proj) = &projection {
+                batch = batch
+                    .project(proj)
+                    .map_err(|e| ExecutionError::Execution(format!("project: {e}")))?;
+            }
+            Ok(batch)
+        })))
+    }
+}
+
+// =========================================================================
+// PhysicalPlan → Pipeline lowering
+// =========================================================================
+
+/// A lowered pipeline plus an optional trailing `Limit { offset, count }`
+/// (captured from a `PhysicalPlan::Limit` node and applied at collect).
+#[derive(Debug)]
+pub(crate) struct LoweredPipeline {
+    pub pipeline: Pipeline,
+    pub limit: Option<LimitSpec>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LimitSpec {
+    pub offset: u64,
+    pub limit: Option<u64>,
+}
+
+/// The pieces `walk` accumulates while descending a supported plan subtree.
+struct Walked {
+    source: MemoryScanSource,
+    predicate: Option<PhysExpr>,
+    projection: Option<Vec<usize>>,
+    limit: Option<LimitSpec>,
+}
+
+/// Lower a `PhysicalPlan` to a [`LoweredPipeline`]. Returns `Err(NotImplemented)`
+/// for any unsupported shape (Scan, Join, Aggregate, Sort, Distinct, SetOp,
+/// Union, AssertMaxOneRow, nested Project/Limit, non-column projection output).
+/// `try_vectorized` maps the `Err` to a Volcano fallback.
+pub(crate) fn lower_physical(plan: &PhysicalPlan) -> Result<LoweredPipeline, ExecutionError> {
+    let Walked {
+        source,
+        predicate,
+        projection,
+        limit,
+    } = walk(plan)?;
+
+    // Output schema: projected columns if a projection is present, else source.
+    let output_schema: SchemaRef = match &projection {
+        Some(indices) => {
+            let src = source.output_schema();
+            let fields: Vec<_> = indices.iter().map(|i| src.field(*i).clone()).collect();
+            Arc::new(arrow::datatypes::Schema::new(fields))
+        }
+        None => source.output_schema(),
+    };
+
+    let fp = FilterProjectOperator::new(predicate, projection, output_schema.clone());
+    let pipeline = Pipeline::new(vec![Box::new(source), Box::new(fp)]);
+    Ok(LoweredPipeline { pipeline, limit })
+}
+
+fn walk(plan: &PhysicalPlan) -> Result<Walked, ExecutionError> {
+    match plan {
+        PhysicalPlan::Values {
+            rows,
+            output_schema,
+        } => {
+            let arrow_schema = relational_schema_to_arrow(output_schema);
+            let batch = values_to_record_batch(rows, arrow_schema.clone())?;
+            let source = MemoryScanSource::new(vec![batch], arrow_schema);
+            Ok(Walked {
+                source,
+                predicate: None,
+                projection: None,
+                limit: None,
+            })
+        }
+        PhysicalPlan::Filter { input, predicate } => {
+            let mut w = walk(input)?;
+            let p = PhysExpr::lower(predicate)?;
+            w.predicate = Some(match w.predicate.take() {
+                Some(existing) => PhysExpr::And(Box::new(existing), Box::new(p)),
+                None => p,
+            });
+            Ok(w)
+        }
+        PhysicalPlan::Project { input, outputs } => {
+            let mut w = walk(input)?;
+            if w.projection.is_some() {
+                return Err(ExecutionError::NotImplemented(
+                    "nested Project not supported in native vectorized path".into(),
+                ));
+            }
+            // Project output indices are relative to the (post-filter) input.
+            // Phase 2 supports column-reference outputs only.
+            let mut indices = Vec::with_capacity(outputs.len());
+            for ne in outputs {
+                match &ne.expr {
+                    Expr::Column(col) => indices.push(col.ordinal),
+                    other => {
+                        return Err(ExecutionError::NotImplemented(format!(
+                            "project output must be a column reference in Phase 2, got {other:?}"
+                        )));
+                    }
+                }
+            }
+            w.projection = Some(indices);
+            Ok(w)
+        }
+        PhysicalPlan::Limit {
+            input,
+            limit,
+            offset,
+        } => {
+            let mut w = walk(input)?;
+            if w.limit.is_some() {
+                return Err(ExecutionError::NotImplemented(
+                    "nested Limit not supported in native vectorized path".into(),
+                ));
+            }
+            w.limit = Some(LimitSpec {
+                offset: *offset,
+                limit: *limit,
+            });
+            Ok(w)
+        }
+        other => Err(ExecutionError::NotImplemented(format!(
+            "native vectorized path does not support PhysicalPlan::{other:?}"
+        ))),
+    }
+}
+
+/// Drain a [`LoweredPipeline`] to materialized `RecordBatch`es, applying the
+/// trailing `Limit` (offset + optional count) row-wise at the end.
+pub(crate) async fn execute_pipeline(
+    lowered: &LoweredPipeline,
+) -> Result<Vec<RecordBatch>, ExecutionError> {
+    let empty: BatchStream = Box::pin(futures::stream::empty());
+    let mut stream = lowered.pipeline.execute(empty).await?;
+
+    let mut batches = Vec::new();
+    while let Some(result) = stream.next().await {
+        batches.push(result?);
+    }
+
+    if let Some(spec) = lowered.limit {
+        apply_limit(&mut batches, spec)?;
+    }
+    Ok(batches)
+}
+
+/// Apply `offset` + optional `limit` across the collected batches, re-chunking
+/// so the surviving rows are returned in a single batch.
+fn apply_limit(batches: &mut Vec<RecordBatch>, spec: LimitSpec) -> Result<(), ExecutionError> {
+    let schema = batches
+        .first()
+        .map(|b| b.schema())
+        .unwrap_or_else(|| Arc::new(arrow::datatypes::Schema::empty()));
+
+    let total: usize = batches.iter().map(|b| b.num_rows()).sum();
+    let offset = (spec.offset as usize).min(total);
+    let remaining = total - offset;
+    let take = spec
+        .limit
+        .map(|l| (l as usize).min(remaining))
+        .unwrap_or(remaining);
+
+    if offset == 0 && take == total {
+        return Ok(());
+    }
+
+    // Re-chunk: concatenate then slice [offset, offset+take).
+    let batch = if batches.len() == 1 {
+        batches[0].clone()
+    } else {
+        arrow::compute::concat_batches(&schema, batches.iter())
+            .map_err(|e| ExecutionError::Execution(format!("concat for limit: {e}")))?
+    };
+    let columns: Vec<ArrayRef> = batch
+        .columns()
+        .iter()
+        .map(|c| c.slice(offset, take))
+        .collect();
+    let sliced = RecordBatch::try_new(schema, columns)
+        .map_err(|e| ExecutionError::Execution(format!("limit slice: {e}")))?;
+    batches.clear();
+    if sliced.num_rows() > 0 {
+        batches.push(sliced);
+    }
+    Ok(())
+}
+
+// =========================================================================
+// Values → RecordBatch (ProximaValue → Arrow builders)
+// =========================================================================
+
+/// Build a single `RecordBatch` from a `PhysicalPlan::Values` literal table by
+/// evaluating each cell `Expr` (literals) to a `ProximaValue` and constructing
+/// typed Arrow arrays column-major. Reuses `Expr::eval` (the same path the
+/// Volcano `ValuesExec` uses) so e.g. `VALUES (1+1)` works.
+fn values_to_record_batch(
+    rows: &[Vec<Expr>],
+    schema: SchemaRef,
+) -> Result<RecordBatch, ExecutionError> {
+    let ncols = schema.fields().len();
+    let nrows = rows.len();
+    if ncols == 0 {
+        return Err(ExecutionError::NotImplemented(
+            "zero-column Values table not supported in native MemoryScanSource".into(),
+        ));
+    }
+
+    let mut columns: Vec<Vec<ProximaValue>> =
+        (0..ncols).map(|_| Vec::with_capacity(nrows)).collect();
+    for row in rows {
+        if row.len() != ncols {
+            return Err(ExecutionError::Schema(format!(
+                "values row arity {} != schema column count {}",
+                row.len(),
+                ncols
+            )));
+        }
+        for (c, expr) in row.iter().enumerate() {
+            let empty_row: Vec<ProximaValue> = Vec::new();
+            let v = expr
+                .eval(&empty_row, builtins())
+                .map_err(|e| ExecutionError::Execution(format!("values eval: {e}")))?;
+            columns[c].push(v);
+        }
+    }
+
+    let arrays: Vec<ArrayRef> = (0..ncols)
+        .map(|c| build_column_array(&columns[c], schema.field(c).data_type()))
+        .collect::<Result<_, _>>()?;
+
+    RecordBatch::try_new(schema, arrays)
+        .map_err(|e| ExecutionError::Execution(format!("values batch: {e}")))
+}
+
+macro_rules! numeric_col {
+    ($values:expr, $builder:ty, $variant:ident) => {{
+        let mut b = <$builder>::with_capacity($values.len());
+        for v in $values {
+            match v {
+                ProximaValue::$variant(x) => b.append_value(*x),
+                ProximaValue::Null => b.append_null(),
+                other => {
+                    return Err(ExecutionError::Execution(format!(
+                        "type mismatch in values column: expected {}, got {other:?}",
+                        stringify!($variant)
+                    )));
+                }
+            }
+        }
+        Arc::new(b.finish()) as ArrayRef
+    }};
+}
+
+/// Build a typed Arrow array for one column of `ProximaValue`s, dispatching on
+/// the target `DataType`. Unsupported types return `Err` (→ Volcano fallback).
+fn build_column_array(values: &[ProximaValue], dt: &DataType) -> Result<ArrayRef, ExecutionError> {
+    use arrow::datatypes::DataType as D;
+    match dt {
+        D::Boolean => {
+            let mut b = BooleanBuilder::with_capacity(values.len());
+            for v in values {
+                match v {
+                    ProximaValue::Boolean(x) => b.append_value(*x),
+                    ProximaValue::Null => b.append_null(),
+                    other => {
+                        return Err(ExecutionError::Execution(format!(
+                            "type mismatch in Boolean column: got {other:?}"
+                        )));
+                    }
+                }
+            }
+            Ok(Arc::new(b.finish()))
+        }
+        D::Int8 => Ok(numeric_col!(values, Int8Builder, Int8)),
+        D::Int16 => Ok(numeric_col!(values, Int16Builder, Int16)),
+        D::Int32 => Ok(numeric_col!(values, Int32Builder, Int32)),
+        D::Int64 => Ok(numeric_col!(values, Int64Builder, Int64)),
+        D::UInt8 => Ok(numeric_col!(values, UInt8Builder, UInt8)),
+        D::UInt16 => Ok(numeric_col!(values, UInt16Builder, UInt16)),
+        D::UInt32 => Ok(numeric_col!(values, UInt32Builder, UInt32)),
+        D::UInt64 => Ok(numeric_col!(values, UInt64Builder, UInt64)),
+        D::Float32 => Ok(numeric_col!(values, Float32Builder, Float32)),
+        D::Float64 => Ok(numeric_col!(values, Float64Builder, Float64)),
+        D::Utf8 => {
+            let mut b = StringBuilder::with_capacity(values.len(), values.len() * 8);
+            for v in values {
+                match v {
+                    ProximaValue::String(s) => b.append_value(s),
+                    ProximaValue::Null => b.append_null(),
+                    other => {
+                        return Err(ExecutionError::Execution(format!(
+                            "type mismatch in Utf8 column: got {other:?}"
+                        )));
+                    }
+                }
+            }
+            Ok(Arc::new(b.finish()))
+        }
+        D::Binary => {
+            let mut b = BinaryBuilder::with_capacity(values.len(), values.len() * 8);
+            for v in values {
+                match v {
+                    ProximaValue::Binary(x) => b.append_value(x),
+                    ProximaValue::Null => b.append_null(),
+                    other => {
+                        return Err(ExecutionError::Execution(format!(
+                            "type mismatch in Binary column: got {other:?}"
+                        )));
+                    }
+                }
+            }
+            Ok(Arc::new(b.finish()))
+        }
+        other => Err(ExecutionError::NotImplemented(format!(
+            "arrow type {other:?} not supported in native MemoryScanSource"
+        ))),
+    }
+}
+
+/// Convert a `RelationalSchema` (ProximaType) to an Arrow `Schema`.
+fn relational_schema_to_arrow(schema: &RelationalSchema) -> SchemaRef {
+    let fields: Vec<_> = schema
+        .columns
+        .iter()
+        .map(|c| {
+            arrow::datatypes::Field::new(c.name.clone(), proxima_type_to_arrow(&c.ty), c.nullable)
+        })
+        .collect();
+    Arc::new(arrow::datatypes::Schema::new(fields))
+}
+
+fn proxima_type_to_arrow(ty: &ProximaType) -> DataType {
+    use ProximaType as P;
+    match ty {
+        P::Boolean => DataType::Boolean,
+        P::Int8 => DataType::Int8,
+        P::Int16 => DataType::Int16,
+        P::Int32 => DataType::Int32,
+        P::Int64 => DataType::Int64,
+        P::UInt8 => DataType::UInt8,
+        P::UInt16 => DataType::UInt16,
+        P::UInt32 => DataType::UInt32,
+        P::UInt64 => DataType::UInt64,
+        P::Float32 => DataType::Float32,
+        P::Float64 => DataType::Float64,
+        P::String => DataType::Utf8,
+        P::Binary => DataType::Binary,
+        P::Date => DataType::Date32,
+        P::Timestamp(_) => DataType::Timestamp(arrow::datatypes::TimeUnit::Nanosecond, None),
+        P::TimestampTz(_) => DataType::Timestamp(
+            arrow::datatypes::TimeUnit::Nanosecond,
+            Some("+00:00".into()),
+        ),
+        other => {
+            // Unsupported types fall back to Utf8 (stringified) — but note this
+            // only matters if a Values table carries such a column; lower_physical
+            // still attempts the build and the build_column_array path will Err
+            // for non-builder types, sending the query to the Volcano.
+            let _ = other;
+            DataType::Utf8
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::array::Int64Array;
+    use arrow::datatypes::{DataType, Field, Schema};
+    use futures::StreamExt;
+
+    fn int64_schema(name: &str) -> SchemaRef {
+        Arc::new(Schema::new(vec![Field::new(name, DataType::Int64, true)]))
+    }
+
+    fn int64_batch(values: &[i64]) -> RecordBatch {
+        let schema = int64_schema("x");
+        RecordBatch::try_new(schema, vec![Arc::new(Int64Array::from(values.to_vec()))]).unwrap()
+    }
+
+    #[tokio::test]
+    async fn filter_project_filters_and_projects() {
+        // MemoryScanSource(1..=10) → Filter{x>5} → Project{[x]} → expect 6..=10
+        let schema = int64_schema("x");
+        let batch = int64_batch(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        let source = MemoryScanSource::new(vec![batch], schema.clone());
+
+        // predicate: x > 5 (column ordinal 0 > literal 5)
+        let pred = PhysExpr::Compare {
+            op: BinaryOp::Gt,
+            left: Box::new(PhysExpr::Column(0)),
+            right: Box::new(PhysExpr::Literal(ProximaValue::Int64(5))),
+        };
+        let fp = FilterProjectOperator::new(Some(pred), Some(vec![0]), schema.clone());
+
+        let empty: BatchStream = Box::pin(futures::stream::empty());
+        let scanned = source.execute(empty).await.unwrap();
+        let filtered = fp.execute(scanned).await.unwrap();
+
+        let out: Vec<RecordBatch> = filtered
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(out.len(), 1);
+        let arr = out[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let got: Vec<i64> = arr.iter().map(|o| o.unwrap()).collect();
+        assert_eq!(got, vec![6, 7, 8, 9, 10]);
+    }
+
+    #[tokio::test]
+    async fn is_null_predicate() {
+        let schema = int64_schema("x");
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int64Array::from(vec![
+                Some(1),
+                None,
+                Some(3),
+                None,
+            ]))],
+        )
+        .unwrap();
+        let source = MemoryScanSource::new(vec![batch], schema.clone());
+        // predicate: x IS NULL
+        let pred = PhysExpr::IsNull {
+            expr: Box::new(PhysExpr::Column(0)),
+            negated: false,
+        };
+        let fp = FilterProjectOperator::new(Some(pred), None, schema.clone());
+        let empty: BatchStream = Box::pin(futures::stream::empty());
+        let scanned = source.execute(empty).await.unwrap();
+        let filtered = fp.execute(scanned).await.unwrap();
+        let out: Vec<RecordBatch> = filtered
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let arr = out[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let got: Vec<Option<i64>> = arr.iter().collect();
+        assert_eq!(got, vec![None, None]);
+    }
+
+    #[tokio::test]
+    async fn and_kleene_three_valued_logic() {
+        // Evaluate (x>2 AND x<8) on [1,5,9] → [false, true, false]
+        let batch = int64_batch(&[1, 5, 9]);
+        let pred = PhysExpr::And(
+            Box::new(PhysExpr::Compare {
+                op: BinaryOp::Gt,
+                left: Box::new(PhysExpr::Column(0)),
+                right: Box::new(PhysExpr::Literal(ProximaValue::Int64(2))),
+            }),
+            Box::new(PhysExpr::Compare {
+                op: BinaryOp::Lt,
+                left: Box::new(PhysExpr::Column(0)),
+                right: Box::new(PhysExpr::Literal(ProximaValue::Int64(8))),
+            }),
+        );
+        let mask = pred.eval_bool(&batch).unwrap();
+        let got: Vec<bool> = mask.iter().map(|o| o.unwrap_or(false)).collect();
+        assert_eq!(got, vec![false, true, false]);
+    }
+}

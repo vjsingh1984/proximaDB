@@ -16,13 +16,15 @@
 //! Phase 2+: FilterProjectOperator + pipeline execution + LogicalNode lowering.
 
 use crate::query::execution::engine::{
-    ExecutionError, ExecutionPipelineResult, ExecutionStreamResult, QueryExecutionContext,
+    ExecutionError, ExecutionPipelineResult, ExecutionStreamResult,
 };
 use proximadb_data_model::ProximaValue;
+use proximadb_relational_planner::PhysicalPlan;
 use proximadb_relational_types::{ColumnInfo, RelationalRow, RelationalSchema};
 
 /// Gate: is the native vectorized execution path opted in? Default OFF — the
-/// Volcano (row-at-a-time) serves all native-path queries until Phase 2+ lands.
+/// Volcano (row-at-a-time) serves all native-path queries until the vectorized
+/// path is promoted (ledger-gated, per ADR-054 §8).
 pub fn native_vectorized_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
@@ -32,25 +34,52 @@ pub fn native_vectorized_enabled() -> bool {
     })
 }
 
-/// Try the native vectorized execution path for an analytical query.
+/// Try the native vectorized execution path for an already-planned query.
+/// Called from `NativeVolcanoEngine::execute_physical` (the single native
+/// chokepoint, above the Volcano) when [`native_vectorized_enabled`] is set.
 ///
 /// Returns `Ok(Some(result))` if the vectorized engine handled the query.
-/// Returns `Ok(None)` if the vectorized engine doesn't yet support this query
-/// shape (Phase 1: always `None` — pipeline execution is Phase 2).
-/// Returns `Err(...)` if the vectorized engine attempted + failed.
+/// Returns `Ok(None)` when the path is disabled OR the plan shape / constructs
+/// are unsupported (Phase 2: only `Project`/`Filter`/`Limit` over `Values`) OR
+/// execution hit an issue — in every such case the caller falls back to the
+/// Volcano. The experimental, default-off path never fails a query; correctness
+/// is policed by the shadow-comparison harness (TD-OLAP-10 §"Shadow comparison").
 pub async fn try_vectorized(
-    _sql: &str,
-    _context: &QueryExecutionContext,
+    physical: &PhysicalPlan,
 ) -> Result<Option<ExecutionPipelineResult>, ExecutionError> {
-    // Phase 1: the conversion is ready (below) but the pipeline execution
-    // (FilterProjectOperator + LogicalNode lowering) is Phase 2.
-    Ok(None)
+    if !native_vectorized_enabled() {
+        return Ok(None);
+    }
+    // Any decline (unsupported shape) or failure (execution error) → Volcano.
+    let lowered = match super::native_ops::lower_physical(physical) {
+        Ok(l) => l,
+        Err(reason) => {
+            tracing::debug!(
+                target: "proximadb::native_vectorized",
+                %reason,
+                "vectorized path declined; falling back to Volcano"
+            );
+            return Ok(None);
+        }
+    };
+    let batches = match super::native_ops::execute_pipeline(&lowered).await {
+        Ok(b) => b,
+        Err(reason) => {
+            tracing::debug!(
+                target: "proximadb::native_vectorized",
+                %reason,
+                "vectorized path failed mid-execution; falling back to Volcano"
+            );
+            return Ok(None);
+        }
+    };
+    let schema = lowered.pipeline.output_schema.as_ref();
+    Ok(Some(record_batches_to_pipeline_result(schema, &batches)))
 }
 
-/// Streaming variant (same Phase 1 status).
+/// Streaming variant — not yet wired (the materialized path serves Phase 2).
 pub async fn try_vectorized_stream(
-    _sql: &str,
-    _context: &QueryExecutionContext,
+    _physical: &PhysicalPlan,
 ) -> Result<Option<ExecutionStreamResult>, ExecutionError> {
     Ok(None)
 }
@@ -58,19 +87,11 @@ pub async fn try_vectorized_stream(
 // ---------------------------------------------------------------------------
 // Arrow → RelationalRow conversion (Phase 1 — the output bridge)
 // ---------------------------------------------------------------------------
-// These are the native vectorized engine's output bridge. Their only prod
-// caller is Phase 2's `try_vectorized` wire (ADR-054 Phase 2, TD-OLAP-10),
-// which lowers a `PhysicalPlan` → native `Pipeline` → Arrow `RecordBatch`es
-// and then calls `record_batches_to_pipeline_result`. Until Phase 2 lands the
-// wire, the functions are exercised by the unit tests below but have no prod
-// caller — hence the targeted `#[allow(dead_code)]` (sanctioned by the
-// rust-clippy job comment for phased landings). Phase 2 removes these allows.
 
 /// Convert Arrow RecordBatches → ExecutionPipelineResult.
 /// Self-contained (zero DataFusion dependency). Mirrors the DataFusion adapter's
 /// private `record_batches_to_pipeline_result` but lives here so the native
-/// engine doesn't depend on the adapter.
-#[allow(dead_code)]
+/// engine doesn't depend on the adapter. Consumed by `try_vectorized`.
 pub(crate) fn record_batches_to_pipeline_result(
     arrow_schema: &arrow::datatypes::Schema,
     batches: &[arrow_array::RecordBatch],
