@@ -157,7 +157,7 @@ impl MultiServer {
     > {
         crate::network::grpc::v2::ProximaRecordServiceImpl::new(
             services.api_handlers.clone(),
-            services.request_handlers.record_ops(),
+            services.record_ops.clone(),
         )
         .with_segment_registry(services.segment_registry.clone())
         .with_primary_pod_gate(
@@ -735,7 +735,7 @@ impl MultiServer {
 
             let arrow_bind_target = self.config.arrow_bind_target();
             let arrow_target_log = format!("{arrow_bind_target:?}");
-            let arrow_record_ops = services.request_handlers.record_ops();
+            let arrow_record_ops = services.record_ops.clone();
             let arrow_vector_ops = services.vector_operations_service.clone();
             let arrow_collection = services.collection_service.clone();
             let arrow_graph = services.graph_service.clone();
@@ -1161,7 +1161,7 @@ impl MultiServer {
             let flight_service =
                 crate::network::arrow_ipc::service::ProximaFlightService::from_services(
                     services.api_handlers.clone(),
-                    services.request_handlers.record_ops(),
+                    services.record_ops.clone(),
                     services.vector_operations_service.clone(),
                     services.collection_service.clone(),
                     services.graph_service.clone(),
@@ -1675,7 +1675,7 @@ impl MultiServer {
             // `tokio::spawn` below — mirrors the single-node start path's
             // `arrow_target_log` (the value has no `Display` impl).
             let arrow_target_log = format!("{arrow_bind_target:?}");
-            let arrow_record_ops = services.request_handlers.record_ops();
+            let arrow_record_ops = services.record_ops.clone();
             let arrow_vector_ops = services.vector_operations_service.clone();
             let arrow_collection = services.collection_service.clone();
             let arrow_graph = services.graph_service.clone();

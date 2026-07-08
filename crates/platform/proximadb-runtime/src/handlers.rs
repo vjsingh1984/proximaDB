@@ -134,12 +134,11 @@ pub struct HybridRuntimeConfig;
 /// `handle_vector_search_v1_*`, `execute_sql_v1`, …) that this impl bridges to
 /// the ports; those retire with the TD-123 v1→v2 message migration.
 ///
-/// The legacy twin (`api_handlers::UnifiedHandlers` in the root crate) also
-/// impls `ApiHandlersPort`, additionally owns the write/graph/doc/DDL
-/// orchestration services, and is the dev/test default `AppState.api_handlers`
-/// (TD-104); prod overrides that default with THIS handler via
-/// `with_api_handlers` (`rest/server.rs`, `multi_server.rs`). The legacy handler
-/// retires once its orchestration is extracted into runtime ports.
+/// The legacy root-crate twin (`api_handlers::UnifiedHandlers`) was retired in
+/// TD-104 S3-f: its orchestration was extracted onto runtime ports / concrete
+/// services, and every network surface (REST/gRPC/Arrow/pgwire/embedded) now
+/// routes through THIS handler. There is no longer a root-crate `ApiHandlersPort`
+/// impl — this is the sole production handler.
 ///
 /// Composition root that wires service ports into the API surface.
 ///

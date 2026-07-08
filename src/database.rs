@@ -334,9 +334,7 @@ impl ProximaDB {
                 // batch path so direct inserts coerce to the
                 // collection's canonical precision (matches what the
                 // queue drainer does via BulkLoadDrainerSink).
-                shared_services
-                    .request_handlers
-                    .set_precision_resolver(resolver);
+                shared_services.record_ops.set_precision_resolver(resolver);
             }
             Err(e) => {
                 tracing::warn!(
@@ -504,7 +502,7 @@ impl ProximaDB {
         // is moved into MultiServer below. The async-ingest drainer needs them
         // as the production DrainerInsertSink target via the BulkLoadDrainerSink
         // wrapper (TD-104 S3-e: passed directly, no root UnifiedHandlers handle).
-        let record_ops_for_drainer = shared_services.request_handlers.record_ops();
+        let record_ops_for_drainer = shared_services.record_ops.clone();
         let vector_ops_for_drainer = shared_services.vector_operations_service.clone();
         // Capture the catalog_manager Arc the same way — the drainer
         // needs it to construct CanonicalPrecisionResolver so per-payload

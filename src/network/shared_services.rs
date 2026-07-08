@@ -15,7 +15,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use crate::api_handlers::UnifiedHandlers;
 use crate::metrics::MetricsConfig;
 use crate::monitoring::MetricsCollector;
 use crate::observability::query::ObservabilityQueryEngine;
@@ -116,6 +115,10 @@ pub struct SharedServices {
     pub vector_operations_service: Arc<VectorOperationsService>,
     /// Concrete graph database operations service for native graph APIs and gRPC graph endpoints
     pub graph_service: Arc<crate::graph::GraphService>,
+    /// Graph collection CRUD service (create/list/get/delete graph). The same
+    /// shared `Arc<GraphCollectionService>` instance `GraphOperationsService`
+    /// holds internally (TD-104 S3-f: hoisted out of the deleted root handler).
+    pub graph_collection_service: Arc<crate::services::GraphCollectionService>,
     /// Extracted graph query/traversal capability for query-facing orchestration layers
     pub graph_query_service: Arc<dyn GraphQueryService>,
     /// Extracted graph execution capability for planners/executors and API state holders
@@ -124,8 +127,10 @@ pub struct SharedServices {
     pub document_service: Arc<DocumentService>,
     /// Observability service for logs, metrics, and traces
     pub observability_service: Arc<crate::observability::ObservabilityService>,
-    /// Unified request handlers shared across all protocol layers
-    pub request_handlers: Arc<UnifiedHandlers>,
+    /// Canonical record-batch write orchestration (TD-104 S3-f: built once
+    /// here — formerly inside the deleted root `UnifiedHandlers::new` — so
+    /// every former `request_handlers.record_ops()` site shares one `Arc`).
+    pub record_ops: Arc<crate::api_handlers::record_ops_service::RecordOpsService>,
     /// ADR-022 auditable event log (append-only trail). The same
     /// `Arc<EventLogEngine>` handed to the unified handlers; exposed here so
     /// in-process surfaces (e.g. the reference MCP `event` tool) can append
@@ -1777,34 +1782,32 @@ impl SharedServices {
         // Create unified handlers with SHARED graph services
         // IMPORTANT: Pass the pre-created GraphCollectionService and graph execution service
         // to ensure ALL graph endpoints and operations share the same state
-        debug!("🔧 SharedServices::new - Creating UnifiedHandlers with SHARED graph services...");
-        let request_handlers_instance = UnifiedHandlers::new(
-            collection_service.clone(),
-            vector_operations_service.clone(),
-            document_service.clone(),
-            observability_service.clone(),
-            event_log.clone(),
-            graph_collection_service.clone(), // SHARED instance
-            graph_service.clone(),            // Concrete native graph operations service
+        // TD-104 S3-f: build the shared `RecordOpsService` once here (formerly
+        // constructed inside the deleted root `UnifiedHandlers::new`). Every
+        // former `request_handlers.record_ops()` site clones this same `Arc`.
+        // The other services the root handler aggregated (document / graph /
+        // observability / event_log / graph_collection) now live directly on
+        // `SharedServices`.
+        debug!("🔧 SharedServices::new - Creating shared RecordOpsService...");
+        let record_ops = Arc::new(
+            crate::api_handlers::record_ops_service::RecordOpsService::new(
+                collection_service.clone(),
+                vector_operations_service.clone(),
+            ),
         );
-
-        // Apply hybrid runtime config if provided
-        if let Some(cfg) = opt_config
-            && let Some(ref hybrid) = cfg.hybrid
-        {
-            request_handlers_instance.set_hybrid_runtime(hybrid.clone());
-        }
-        let request_handlers = Arc::new(request_handlers_instance);
-        debug!("✅ SharedServices::new - UnifiedHandlers created with shared graph services");
+        debug!("✅ SharedServices::new - Shared RecordOpsService created");
+        // NOTE: the former `set_hybrid_runtime(cfg.hybrid)` on the root handler is
+        // dropped here — `resolve_hybrid_static` (its only consumer) was
+        // root-internal and is deleted with the root handler; the runtime handler
+        // never read it, so the config was already dead wiring.
 
         // ADR-009 document convergence: wire the single shared DocumentService onto the same
-        // tenant-scoped record/vector route REST v2 uses (via RecordOpsService, built inside
-        // UnifiedHandlers above). Default-OFF per-collection gate — this only makes the route
+        // tenant-scoped record/vector route REST v2 uses (via the shared RecordOpsService
+        // built above). Default-OFF per-collection gate — this only makes the route
         // *available*; `doc_canonical_vector_enabled` decides per collection at call time. With
         // this, gRPC/DocumentService and REST v2 writes converge on one store (no store-split).
-        document_service.set_record_route(
-            request_handlers.record_ops() as Arc<dyn proximadb_runtime::RecordRoutePort>
-        );
+        document_service
+            .set_record_route(record_ops.clone() as Arc<dyn proximadb_runtime::RecordRoutePort>);
         debug!(
             "✅ SharedServices::new - DocumentService wired to canonical record route (ADR-009, gate default-OFF)"
         );
@@ -2116,46 +2119,45 @@ impl SharedServices {
         });
 
         // TD-135: one DdlService Arc shared by BOTH the adapter (gRPC port path →
-        // adapter.execute_sql) and request_handlers (REST), so DDL writes over
-        // either surface address the same catalog state and execute tenant-scoped.
+        // adapter.execute_sql) and the RecordOpsService (REST write path), so DDL
+        // writes over either surface address the same catalog state and execute
+        // tenant-scoped.
         let ddl_service =
             std::sync::Arc::new(crate::services::DdlService::new(catalog_manager.clone()));
-        // Wire QueryFacadeAdapter to UnifiedHandlers for unified SQL routing.
+        // Wire QueryFacadeAdapter onto the runtime handler for unified SQL routing.
         // This enables SQL queries to flow through the facade when the
         // unified-facade-routing feature is enabled. The adapter carries the
         // DmlService (EXPLAIN `<DML>`) AND the DdlService (relational DDL) so the
-        // port path (runtime handler → adapter.execute_sql) reproduces ROOT's
-        // SQL behavior (TD-104 / seam S1, single SQL authority).
+        // port path (runtime handler → adapter.execute_sql) reproduces the former
+        // ROOT SQL behavior (TD-104 / seam S1, single SQL authority).
         let query_adapter = Arc::new(
             QueryFacadeAdapter::new(query_facade.clone())
                 .with_dml_service(dml_service_for_grpc.clone())
                 .with_ddl_service(ddl_service.clone()),
         );
-        request_handlers.set_query_adapter(query_adapter.clone());
-        debug!("✅ SharedServices::new - QueryFacadeAdapter wired to UnifiedHandlers");
-
-        request_handlers.set_dml_service(dml_service_for_grpc);
-        debug!("✅ SharedServices::new - DmlService wired to UnifiedHandlers for EXPLAIN routing");
+        // TD-104 S3-f: DML/DDL services and the lease manager are wired onto the
+        // shared RecordOpsService (their real owner — the root handler only
+        // forwarded these setters). The root's `set_query_adapter` is dropped: it
+        // stored the adapter in a field read only inside the (deleted) root, and
+        // the runtime handler already receives `query_adapter` at construction
+        // below.
+        record_ops.set_dml_service(dml_service_for_grpc);
+        debug!("✅ SharedServices::new - DmlService wired to RecordOpsService for EXPLAIN routing");
 
         // Lease-on-write: give RecordOpsService the durable lease manager so the
         // vector-record write path acquires/confirms the collection lease and the
         // shared registry the network gates consult reflects ground truth after
         // restart/partition (Scenario-1 routing truth). Absent → fail-open.
         if let Some(lease_manager) = lease_manager_for_writes {
-            request_handlers
-                .record_ops()
-                .set_lease_manager(lease_manager);
+            record_ops.set_lease_manager(lease_manager);
             debug!(
                 "✅ SharedServices::new - PartitionLeaseManager wired to RecordOpsService (lease-on-write)"
             );
         }
 
-        // TD-135: the same shared DdlService Arc (built above) drives relational
-        // CREATE/ALTER/DROP on the REST path too.
-        request_handlers.set_ddl_service(ddl_service);
-        debug!(
-            "✅ SharedServices::new - DdlService wired to UnifiedHandlers + adapter for relational DDL routing"
-        );
+        // TD-135 note: the shared DdlService drives relational DDL through the
+        // runtime handler's QueryFacadeAdapter (wired above via
+        // `with_ddl_service`); the record write path itself does not need it.
 
         // Build a port-backed runtime handler for collection/vector REST routes.
         // Uses trait objects so API routes are decoupled from root-crate concrete services.
@@ -2413,12 +2415,13 @@ impl SharedServices {
                 segment_registry: Arc::new(crate::catalog::SegmentRegistry::new()),
                 collection_service: collection_service.clone(),
                 vector_operations_service: vector_operations_service.clone(),
-                graph_service,
+                graph_service: graph_service.clone(),
+                graph_collection_service: graph_collection_service.clone(),
                 graph_query_service,
                 graph_execution_service,
                 document_service: document_service.clone(),
                 observability_service: observability_service.clone(),
-                request_handlers: request_handlers.clone(),
+                record_ops: record_ops.clone(),
                 event_log,
                 metrics_collector,
                 metrics_updater: metrics_updater.clone(),
@@ -2454,7 +2457,7 @@ impl SharedServices {
                 // adapter wired (matches the production wiring at
                 // src/network/multi_server.rs:415).
                 graph_port: Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    request_handlers.graph_operations_service.clone(),
+                    graph_service.clone(),
                     runtime_api_handlers.clone(),
                     query_adapter.clone(),
                 )) as Arc<dyn proximadb_runtime::GraphPort>,
