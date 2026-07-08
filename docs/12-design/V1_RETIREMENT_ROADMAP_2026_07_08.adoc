@@ -52,15 +52,29 @@ REST surface), `embedded/mod.rs` (~59).
 
 === Tier 1 — Gateable surfaces (kill-switch → measure → remove)
 
-Pattern is proven: gRPC v1 is already behind `enable_grpc_v1_compat`
-(env `PROXIMADB_GRPC_V1_COMPAT`, **default off**) in `network/multi_server.rs` /
-`network/server_builder.rs`. Extend the same default-off runtime gate, confirm no traffic, then
-delete the dead branch.
+**Both kill-switches already exist** (verified 2026-07-08):
 
-* REST v1 endpoints — `src/network/rest/v1/*` (`graph.rs` ~59 refs, `handlers.rs` ~51). REST `/api/v1`
-  is the deprecated-compat adapter (SUPPORTED_SURFACE); gate behind a config flag (default off),
-  then remove.
-* gRPC v1 services — already gated; schedule the hard delete after the sunset window.
+* **REST v1 — DONE (ADR-049 M0-c).** `src/network/middleware/v1_sunset.rs` gates the entire
+  `/api/v1/*` surface behind `PROXIMADB_REST_V1_COMPAT` (**default ON**), wired into both router
+  builders (`src/network/rest/server.rs:490` unified + `:816` multi-port). When off, `/api/v1/*`
+  answers `410 Gone` + RFC 8594 `deprecation`/`Link`/`Sunset` headers; `/api/v2/*` is never affected.
+  Unit-tested. (An earlier draft of this roadmap listed the REST gate as a to-do — that was wrong.)
+* **gRPC v1 — DONE.** Behind `enable_grpc_v1_compat` (`PROXIMADB_GRPC_V1_COMPAT`, default off) in
+  `network/{multi_server,server_builder}.rs`.
+
+Remaining Tier 1 work is the **cutover** (not the gate), in order:
+
+1. **Migrate the admin dashboard off `/api/v1`.** `src/network/rest/dashboard.html` still calls
+   `/api/v1/collections` (lines 697, 826) — swap to `/api/v2/collections?include_stats=true` (the
+   `include_stats=true` is required: v2 defaults it to `false`, which would zero the "total vectors"
+   card). The dashboard's parsing is defensive (`data.collections || data || []`,
+   `col.config?.name || col.name`), so the shape swap is low-risk. Until this lands, flipping the
+   REST-v1 default off breaks the admin UI.
+2. **Flip the REST-v1 default to OFF** (the breaking cutover — `410`s all `/api/v1` traffic). Gate
+   this on (a) the dashboard migration above and (b) confirming no live `/api/v1` client traffic.
+   Needs explicit sign-off (outward-facing break), per the repo's certify-before-flip posture.
+3. **Hard-delete** the v1 REST handlers (`network/rest/v1/*`) and the gRPC v1 services once each has
+   been default-off through a sunset window.
 
 === Tier 2 — Deprecated-engine v1 usage (retires with the engines)
 
