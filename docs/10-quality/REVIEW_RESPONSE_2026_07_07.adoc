@@ -274,6 +274,11 @@ propagates. ADR-043 (fail-loud, `Result<bool>`) is *Accepted* and TD-186 rolls i
 umbrella covers the *relational* expression path. The bare-`bool` stragglers
 (`typesafe_filter.rs:35`, `storage/engines/core/filter_evaluator.rs:43/49/54/144`,
 `storage/document/query/filter.rs:30`, `storage/engines/sequoia/mod.rs:230`) are the
-*vector-metadata* seam ADR-043 doesn't reach. Filed as TD-FILT-1; slice 1 (typed
-`FilterEvalError` + an `evaluate_strict -> Result<bool, _>` fail-loud path on
-`TypeSafeFilterEvaluator`, behavior-preserving) lands in its own PR.
+*vector-metadata* seam ADR-043 doesn't reach. Filed as TD-FILT-1 and **re-scoped to the v2
+`ProximaValue` path** after discovery: the v1 `TypeSafeFilterEvaluator` (`typesafe_filter.rs`) is
+**dead** (zero callers) on v1 `MetadataValue` — a retirement candidate under v1 sunset (TD-123),
+not something to extend. The canonical v2 filter seam
+(`crates/foundation/proximadb-search-types/src/sql_value_filter.rs`: `evaluate_filter_resolved` /
+`evaluate_filter_proxima`) has the *same* silent-drop (`None => false`) on the `ProximaTree` path.
+Slice 1 (typed `FilterEvalError::MissingField` + `evaluate_filter_resolved_strict` /
+`evaluate_filter_proxima_strict`, behavior-preserving) lands in #747.
