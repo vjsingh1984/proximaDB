@@ -2289,27 +2289,62 @@ mod tests {
     fn parse_ddl_create_index_supports_default_btree() {
         let parser = SqlFrontendParser::new();
 
-        let statement = parser
-            .parse_ddl("CREATE INDEX demo_payload_idx ON demo (payload);")
-            .expect("expected ddl parse to succeed")
-            .expect("expected create index ddl");
+        let cases = [
+            (
+                "CREATE INDEX demo_payload_idx ON demo (payload);",
+                "demo_payload_idx",
+                "demo",
+                vec!["payload".to_string()],
+                false,
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS \"Payload Index\" ON \"Tenant One\".\"Event Store\" (\"Payload Field\");",
+                "Payload Index",
+                "Tenant One.Event Store",
+                vec!["Payload Field".to_string()],
+                true,
+            ),
+        ];
 
-        if let DdlStatement::CreateIndex {
-            index_name,
-            table_name,
-            columns,
-            index_type,
-            if_not_exists,
-            ..
-        } = statement
+        for (
+            sql,
+            expected_index_name,
+            expected_table_name,
+            expected_columns,
+            expected_if_not_exists,
+        ) in cases
         {
-            assert_eq!(index_name, "demo_payload_idx");
-            assert_eq!(table_name, "demo");
-            assert_eq!(columns, vec!["payload".to_string()]);
-            assert!(matches!(index_type, IndexType::BTree));
-            assert!(!if_not_exists);
-        } else {
-            panic!("expected create index statement");
+            let statement = parser
+                .parse_ddl(sql)
+                .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"))
+                .expect("expected create index ddl");
+
+            if let DdlStatement::CreateIndex {
+                index_name,
+                table_name,
+                columns,
+                index_type,
+                if_not_exists,
+                ..
+            } = statement
+            {
+                assert_eq!(
+                    index_name, expected_index_name,
+                    "index mismatch for `{sql}`"
+                );
+                assert_eq!(
+                    table_name, expected_table_name,
+                    "table mismatch for `{sql}`"
+                );
+                assert_eq!(columns, expected_columns, "columns mismatch for `{sql}`");
+                assert!(matches!(index_type, IndexType::BTree));
+                assert_eq!(
+                    if_not_exists, expected_if_not_exists,
+                    "IF NOT EXISTS mismatch for `{sql}`"
+                );
+            } else {
+                panic!("expected create index statement");
+            }
         }
     }
 
@@ -3130,6 +3165,7 @@ impl SqlFrontendParser {
                     .as_ref()
                     .map(|name| name.to_string())
                     .ok_or_else(|| anyhow!("CREATE INDEX requires an index name"))?;
+                let index_name = unquote_identifier_text(&index_name);
                 let table_name = unquote_object_name(&create_index.table_name.to_string());
                 let columns = create_index
                     .columns
