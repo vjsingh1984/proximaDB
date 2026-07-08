@@ -1,6 +1,6 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
-= ADR-054: Native execution engine — a per-query ExecutionEngine variant with internal SOLID contracts for progressive, evidence-gated substitution of DataFusion
+= ADR-054: Native execution engine — internal vectorized contracts for progressive, evidence-gated native execution
 
 [cols="1,3"]
 |===
@@ -8,8 +8,8 @@
 |Date|2026-07-08 (proposed)
 |Deciders|Vijaykumar Singh (pending)
 |Relates to|ADR-039 (`ExecutionEngine` / `LogicalNode` seam), ADR-052 (vectorized-over-Arrow via DataFusion; PAX-native scan as the wedge), ADR-050 (cost-based routing + stats-fed planning), ADR-033 (vertical inside, standard outside), ADR-025 (deletion vectors), ADR-011 (bloom/ANN pre-filter), `CO_DESIGN_HANDOFF.md`, `DATAFUSION_BALLISTA_DISTRIBUTED_EXECUTION_2026_06_05.adoc`, `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`
-|Refines|ADR-052 — does NOT overturn its invariants 3 (scan-avoidance first), 4 (measured not asserted), 5 (non-goals: no codegen now). **Explicitly REVERSES invariant 2** ("Do NOT reimplement HashAgg/HashJoin/Sort natively" at ADR-052:117) — justified by the evidence: Q3 594ms (99% compute_ms, 85-100× gap to DuckDB). DataFusion stays as the *interim* engine; the native engine is a new `ComputeBackend::NativeVectorized` peer variant (per-query seam, ADR-039-respecting), progressively routing queries to native as it matures.
-|Tracked under|Phase 0 contracts = #755 (crate `proximadb-execution-contracts`, no separate TD). link:../../10-quality/td/TD-OLAP-10-native-filterproject-pipeline.adoc[TD-OLAP-10] (native vectorized FilterProject + pipeline executor), TD-OLAP-11 (native radix-partitioned, spilling, bloom-pre-filtered hash join), TD-OLAP-12 (native morsel scheduler), TD-OLAP-13 (fused ANN+filter+aggregate operator). Composes with existing TD-OLAP-1..9. (v3 note C2: TD-OLAP-9 is `iceberg-partition-spec-unblocks-dpp`, not the contracts crate.)
+|Refines|ADR-052 — does NOT overturn its invariants 3 (scan-avoidance first), 4 (measured not asserted), 5 (non-goals: no codegen now). **Explicitly REVERSES invariant 2** ("Do NOT reimplement HashAgg/HashJoin/Sort natively" at ADR-052:117) — justified by the evidence: Q3 594ms (99% compute_ms, 85-100× gap to DuckDB). DataFusion stays as the *interim* Parquet-backed OLAP engine; native vectorized execution is an internal, flag-gated path inside the existing `ComputeBackend::Native` engine (ADR-039-respecting), progressively serving native-storage OLAP shapes as it matures.
+|Tracked under|Phase 0 contracts = #755 (crate `proximadb-execution-contracts`, no separate TD). link:../../10-quality/td/TD-OLAP-10-native-filterproject-pipeline.adoc[TD-OLAP-10] (native vectorized FilterProject + pipeline executor), TD-OLAP-11 (native radix-partitioned, spilling, bloom-pre-filtered hash join), TD-OLAP-12 (native morsel scheduler), TD-OLAP-13 (fused ANN+filter+aggregate operator). Composes with existing TD-OLAP-1..8; TD-OLAP-9 remains separate DPP work (`iceberg-partition-spec-unblocks-dpp`), not the contracts crate.
 |===
 
 == Revision Notes (v2 — post multi-agent review 2026-07-08)
@@ -22,11 +22,11 @@ The initial draft (v1) was reviewed across 9 dimensions. Verdict: **Revise**. Th
 
 | **BLOCKER 1**
 | §3 contracts claimed *per-operator routing* + a DataFusion adapter (`DataFusionOperatorAdapter`). But the actual seam is **per-query** (`ExecutionEngine` at `engine.rs:101-128`; `ComputeScheduler` selects one backend per query at `compute_scheduler.rs:323-348`). And the adapter used sync push/poll while DataFusion is async stream/collect (`datafusion_engine.rs:234-277`).
-a| **FIXED**: The native engine is a new `ComputeBackend::NativeVectorized` peer variant implementing `ExecutionEngine` — NOT per-operator substitution inside DataFusion. The DataFusion adapter is REMOVED. The internal contracts (`ExecutionOperator`, `VectorizedKernel`, `MorselScheduler`) live INSIDE the native engine crate (`crates/query/proximadb-native-engine/`). DataFusion stays as-is; the router selects between `DataFusionLocal` and `NativeVectorized` per query. See the `[v2-fix]` note at §3.
+a| **FIXED (superseded by v3 consolidation)**: The corrected architecture is NOT per-operator substitution inside DataFusion and has no DataFusion operator adapter. After #755 there is one `ComputeBackend::Native`; vectorized execution is an internal, flag-gated hook in the native engine, backed by `proximadb-execution-contracts`. DataFusion stays as-is for `DataFusionLocal`.
 
 | **BLOCKER 2**
 | §5 join sketch used `PhysicalExpr` in native structs — leaks DataFusion concepts outside the adapter boundary (ADR-039 invariant 2).
-a| **FIXED**: The native engine defines its own `ProximaPhysicalExpr` (lowered from `LogicalNode::Expr`, Arrow-typed, zero DataFusion dependency). A CI ratchet (`grep -rn "datafusion::" crates/query/proximadb-native-engine/`) enforces zero leakage. See §5 `[v2-fix]`.
+a| **FIXED**: The native engine defines its own `ProximaPhysicalExpr` (lowered from `LogicalNode::Expr`, Arrow-typed, zero DataFusion dependency). A CI ratchet for the native execution/contracts crates enforces zero DataFusion leakage. See §5 `[v2-fix]`.
 
 | **NR 1**
 | §1.3 evidence said numbers were "NOT IN THE REPO" — but the SF=0.01 release ledger exists at `target/tpc-perf-ledger/ledger.json`. Also: "ProximaDB wins" was the DataFusion route (native Volcano failed 0/4), not labeled correctly.
@@ -95,7 +95,7 @@ ADR-052 (Accepted 2026-07-04) established five invariants. Two are load-bearing 
 
 ADR-052 *retired* (not deferred) the `NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.adoc` end-state of a native push-based, morsel-driven operator core. Its reasoning was sound at the time: reusing DataFusion's vectorized kernels collapses years of work (a 100+ function library, codegen, spill, morsel scheduling) into integration, and the dominant cost term in cloud OLAP is bytes-scanned, not CPU.
 
-**This ADR-053 does not relitigate that trade-off in the abstract.** It refines ADR-052 along two axes the original decision did not have to address, both now backed by measured evidence:
+**This ADR-054 does not relitigate that trade-off in the abstract.** It refines ADR-052 along two axes the original decision did not have to address, both now backed by measured evidence:
 
 . **Axis A — the binding constraint has shifted.** ClickBench Phase A (2026-07-06) measured that with accurate I/O metering the gap to DuckDB is no longer bytes-read-dominated; it is **compute + pgwire**, with a ~2.2× release median gap and specific compute pathologies (the q07 UInt16 MIN/MAX outlier). For a class of queries (heavy joins, multimodal co-execution), DataFusion's kernels *are* the binding constraint, and that is precisely the case ADR-052 said it would accept ("DataFusion's per-op microbenchmark ceiling vs Velox ... the ledger makes the trade explicit rather than hidden").
 . **Axis B — the multimodal wedge is structurally unserveable by a borrowed engine.** ADR-052's own thesis is that ProximaDB's defensible niche is *vector + OLAP + lakehouse co-design on one PAX substrate*. A fused `ANN+filter+aggregate` operator, a graph-traversal operator, and a document-JSON columnar projection cannot be expressed inside DataFusion without re-exporting the CDC/replica Frankenstein stack that ADR-052 cites (arXiv 2506.23071 — vector+SQL silently discards >30% of correct results on JOINs). The wedge *requires* an operator plane we own.
@@ -145,17 +145,20 @@ So DataFusion is ~0.73× of Velox on the same workload. This is the *accepted* c
 
 Aggregate TPC-H DataFusion-route skip: **171/1347 splits = 12.7%** (measured, attributed after the task-local-fix). Star-join runtime-filter reduction (TPC-DS, default-ON as of 2026-07-06): q42 1,138,393→636,355 bytes (−44.1%), q3/q52/q55 −44% to −57%.
 
-==== 1.3.4 What is NOT measured (the honest gaps)
+==== 1.3.4 TPC-H release micro-ledger (SF=0.01, synthetic, 2026-07-08)
 
-[cols="2,3",options="header"]
+[cols="1,2,2,2,3",options="header"]
 |===
-| Claim | Verdict
-| "ProximaDB join latency vs DuckDB" (any number) | **NOT MEASURED.** No head-to-head join benchmark exists. The TD-OLAP-4 ledger wires DuckDB as an external baseline but it has not been run on the TPC track yet.
-| "85-100× join gap" / "Q3 = 594ms" / "Q14 = 296ms" | **NOT IN THE REPO.** These figures are not sourced from any artifact. ADR-052 mandate #11 forbids citing them. (The string "296" in `TECHNICAL_DEBT.adoc:400` is an unrelated marketing-claim-to-scrub.)
-| Native operator latency vs DataFusion | **NOT MEASURED** — the native Volcano executor is row-wise OLTP-only; it has never been benchmarked as an OLAP engine.
+| Query | ProximaDB route/result | DuckDB CLI wall | Interpretation | Caveat
+| Q1 | DataFusion route repeat wall 6ms; `compute_ms.DataFusionLocal=5` | 27ms | Scan+aggregate path is competitive at tiny scale; DuckDB wall includes CLI startup. | This is NOT native Volcano; native failed this query in the harness.
+| Q3 | DataFusion route repeat wall 594ms; `compute_ms.DataFusionLocal=591` | 27ms | 22x wall gap, almost entirely compute. Join path is the bottleneck. | Synthetic SF=0.01; scale-up must verify whether the gap narrows when I/O dominates.
+| Q6 | DataFusion route repeat wall 2ms; `compute_ms.DataFusionLocal=2` | 21ms | Selective scan path is competitive. | DuckDB wall includes CLI startup.
+| Q14 | DataFusion route repeat wall 296ms; `compute_ms.DataFusionLocal=295` | 23ms | 13x wall gap, almost entirely compute. Join+expression path is the bottleneck. | Synthetic SF=0.01; scale-up required.
 |===
 
-**Implication for this design:** the join is the *structural* priority (Section 5), not because a 594 ms number exists, but because (a) DataFusion's hash-join does not spill (`ADR-052:195-197`), (b) DataFusion cannot express the multimodal join semantics that are ProximaDB's wedge, and (c) the ClickBench evidence already shows the residual gap is compute-bound. The latency case for a native join must be *built* by TD-OLAP-11 and *proven* in the TD-OLAP-4 ledger before any promotion — exactly as ADR-052 requires.
+This release run was produced by `tests/tpc_perf_ledger_e2e.rs` using the DuckDB file-loader path (`DUCKDB_BIN`, file-based load, `-csv` verify). It is **advisory evidence**, not an official TPC claim: the harness uses deterministic synthetic TPC-shaped data and defaults to advisory/non-gating execution (`tests/tpc_perf_ledger_e2e.rs:15-29`, `:960-1089`).
+
+**Implication for this design:** the scan path is already competitive on Q1/Q6, while Q3/Q14 show a compute-bound join/expression bottleneck. That is sufficient to justify native operator design work, but not sufficient to promote native operators: TD-OLAP-11 must prove the claim on SF1/SF10 and on both in-memory and spill regimes before any default-on cutover.
 
 == 2. The strategic decision
 
@@ -166,16 +169,16 @@ Aggregate TPC-H DataFusion-route skip: **171/1347 splits = 12.7%** (measured, at
 | Option | Description | Verdict
 | **(A) Upgrade DataFusion (54→55+)** | Track upstream: AQE (#23194), morsel Parquet scan (#20529 landed 54.0), better spill. | **Insufficient alone, but mandatory as the interim.** Projected 1.5-3× on hot spots (the EDBT trend v34→v43 improved >30%). Does not close the ~2× Velox ceiling, does not give spill on the version we pin, and cannot serve the multimodal wedge. Do it anyway — it is free upside behind the seam.
 | **(B) Build a full native engine now** | Reimplement scan+filter+project+agg+join+sort+codegen+morsel+spill, demote DataFusion. | **Rejected.** This is exactly what ADR-052 retired, for the right reasons: a multi-year tail intractable for a small team, and it re-concedes the bytes-scanned-dominant cloud cost term that scan-avoidance owns.
-| **(C) Hybrid: SOLID contracts now, progressive native substitution** *(this ADR)* | Define operator contracts (`ExecutionOperator`, `VectorizedKernel`, `MorselScheduler`, `Pipeline`) that BOTH DataFusion and native implement. Ship native operators incrementally, each behind the contract + a ledger gate, beginning where DataFusion is the proven binding constraint (join spill, multimodal co-execution, kernel pathologies). | **RECOMMENDED.** Keeps DataFusion's full kernel set as the floor and the fallback; lets native grow a best-of-breed operator at a time; preserves the frozen seam; is reversible at every step. This is the "be in control, use DataFusion till native is ready, cutover progressively" the directive asks for.
+| **(C) Hybrid: SOLID contracts now, progressive native substitution** *(this ADR)* | Define native execution contracts (`ExecutionOperator`, `VectorizedKernel`, `MorselScheduler`, `Pipeline`) inside `ComputeBackend::Native`. Ship native vectorized operators incrementally, each behind the contract + a ledger gate, beginning where DataFusion is the proven binding constraint (join spill, multimodal co-execution, kernel pathologies). | **RECOMMENDED.** Keeps DataFusion's full kernel set as the Parquet-backed floor and comparison baseline; lets native grow a best-of-breed operator at a time for native-storage shapes; preserves the frozen seam; is reversible at every step. This is the "be in control, use DataFusion till native is ready, cutover progressively" the directive asks for.
 |===
 
 === 2.2 Why option C (and not just A)
 
-. **Control without reimplementation.** The contracts make "swap one operator" a non-breaking change (Section 3). You own the *boundary*, which is the only thing that has to be right once. You do not own 100+ kernels until you choose to.
+. **Control without reimplementation.** The contracts make "add one native operator inside `ComputeBackend::Native`" a non-breaking change (Section 3). You own the *native execution boundary*, which is the only thing that has to be right once. You do not own 100+ kernels until you choose to.
 . **The wedge is unservable by a borrowed engine.** Section 6 details why a fused `ANN+filter+aggregate`, a graph-traversal operator, and a document columnar projection cannot live inside DataFusion without reintroducing the CDC/replica Frankenstein stack (arXiv 2506.23071). These operators *must* be native; defining the contract now means they land in the same plane as relational operators, not as a bolt-on.
 . **DataFusion's ceiling is accepted, not invisible.** ADR-052 already accepted a ~0.73×-of-Velox ceiling. For the queries where that ceiling is the binding constraint (heavy joins, multimodal), a native operator that *beats* the ceiling is the only lever left after scan-avoidance is exhausted.
-. **Best-of-breed algorithm selection.** Owning the operator contracts means a radix-partitioned, bloom-pre-filtered, spilling, NUMA-aware hash join (Section 5) can be swapped in without touching the planner, the router, or the pgwire surface. Duck-typing is replaced by ports.
-. **Reversibility + safety.** Every native operator is flag-gated, default-off, and demoted on regression (co-design method §3: observe→ingest→act). The router selects per-operator, so a native join can ship while filters stay DataFusion's. There is no big-bang cutover to roll back.
+. **Best-of-breed algorithm selection.** Owning the operator contracts means a radix-partitioned, bloom-pre-filtered, spilling, NUMA-aware hash join (Section 5) can be added behind the existing `ComputeBackend::Native` seam without touching the frontend or pgwire surface. Duck-typing is replaced by ports.
+. **Reversibility + safety.** Every native vectorized operator is flag-gated, default-off, and demoted on regression (co-design method §3: observe→ingest→act). The native engine can fall back to its Volcano path for unsupported or regressed shapes, while DataFusion remains the Parquet-backed OLAP route. There is no big-bang cutover to roll back.
 
 === 2.3 What this ADR does NOT do (the non-goals, inherited + extended from ADR-052)
 
@@ -192,23 +195,23 @@ Aggregate TPC-H DataFusion-route skip: **171/1347 splits = 12.7%** (measured, at
 ====
 The v1 draft proposed per-operator routing + a DataFusion adapter (`DataFusionOperatorAdapter`). **This was a BLOCKER** (the actual seam is per-query `ExecutionEngine`, not per-operator; and DataFusion's async stream execution cannot satisfy sync push/poll contracts).
 
-**Corrected architecture**: the native engine is a new `ComputeBackend::NativeVectorized` peer variant implementing `ExecutionEngine` (the same per-query async trait DataFusion implements). The DataFusion adapter is REMOVED. The internal contracts below (`ExecutionOperator`, `VectorizedKernel`, `MorselScheduler`, `Pipeline`) are **internal to the native engine crate** (`crates/query/proximadb-native-engine/`) — they do NOT wrap DataFusion and do NOT cross the engine boundary. DataFusion stays as-is behind `ComputeBackend::DataFusionLocal`. The router (`ComputeScheduler`) selects between `DataFusionLocal` and `NativeVectorized` per query, based on the query shape + the native engine's capability table (which operators it has implemented). As the native engine matures (more operators), more query shapes route to it.
+**Corrected architecture**: #755 consolidated native execution into one `ComputeBackend::Native`. Vectorized execution is an internal, flag-gated hook (`native_vectorized_enabled()` + `try_vectorized(&PhysicalPlan)`) inside the native engine, not a separate peer backend. The DataFusion operator adapter is REMOVED. The internal contracts below (`ExecutionOperator`, `VectorizedKernel`, `MorselScheduler`, `Pipeline`) live in `crates/query/proximadb-execution-contracts/` and are consumed by the native engine — they do NOT wrap DataFusion and do NOT cross the ADR-039 engine boundary. DataFusion stays as-is behind `ComputeBackend::DataFusionLocal`.
 ====
 
 The contracts are the load-bearing artifact of this ADR. They are defined so that:
 
-. **DataFusion is wrapped as a conforming `ExecutionOperator`** (adapter), so today's full kernel set already satisfies the contract.
-. **A native operator implements the same contract** and is substitutable (LSP) — the planner/router cannot tell them apart.
-. **New operators (multimodal) are added behind the contract** (OCP) without modifying the router or existing operators.
+. **Native vectorized operators implement the same contract** and are substitutable inside `ComputeBackend::Native` (LSP).
+. **Unsupported shapes fall back to the Volcano path** inside the native engine; DataFusion remains a separate `ExecutionEngine` implementation, not a contract adapter.
+. **New operators (multimodal) are added behind the contract** (OCP) without modifying the frontend, pgwire surface, or DataFusion route.
 . **Each contract has one responsibility** (SRP) and depends on abstractions, not engines (DIP/ISP).
 
 [cols="2,4,2",options="header"]
 |===
 | Contract | Responsibility | Implements
-| `ExecutionOperator` | One physical operator: pull morsels, push morsels (or pull batches). The unit the scheduler runs. | DataFusion adapter + each native operator
+| `ExecutionOperator` | One physical operator: pull morsels, push morsels (or pull batches). The unit the scheduler runs. | Each native vectorized operator
 | `VectorizedKernel` | A type-specialized inner loop over one Arrow array (the SIMD seam). Monomorphized, not `dyn`. | Native operators; DataFusion kernels are opaque across the boundary
 | `MorselScheduler` | Parallelism: split input into morsels, assign to pipelines, NUMA-aware. | Native scheduler; DataFusion keeps its own `TaskContext`
-| `Pipeline` | A chain of fused operators sharing one morsel shape (filter+project fusion). | Native + adapter-wrapped DataFusion segments
+| `Pipeline` | A chain of fused operators sharing one morsel shape (filter+project fusion). | Native vectorized segments
 | `RecordReader` / `SplitReader` *(existing)* | The scan seam — already frozen (7 impls). | Unchanged; reused as a leaf `ExecutionOperator`
 |===
 
@@ -221,7 +224,7 @@ All contracts exchange Arrow `RecordBatch` (the `arrow` crate, not `datafusion::
 * SIMD kernels operate on Arrow's columnar layout directly (`&PrimitiveArray<T>`).
 * A future Substrait/Flight exchange reuses the same buffers.
 
-=== 3.2 Trait sketches (Rust, illustrative — final forms land in TD-OLAP-9)
+=== 3.2 Trait sketches (Rust, illustrative — Phase 0 landed in #755)
 
 The crate home is proposed as `crates/query/proximadb-execution-contracts/` (zero DataFusion dependency, mirroring `proximadb-relational-algebra`).
 
@@ -249,8 +252,7 @@ pub enum Morsel {
     Exhausted,
 }
 
-/// One physical operator. Both DataFusion (via adapter) and native operators
-/// implement this. SRP: owns ONE relational transform (filter, project, join
+/// One native physical operator. SRP: owns ONE relational transform (filter, project, join
 /// build, join probe, aggregate, sort, scan, ...).
 ///
 /// Lifecycle: `open` -> repeated `push(morsel)`/`poll_morsel()` -> `close`.
@@ -302,8 +304,8 @@ use arrow::array::PrimitiveArray;
 use arrow::datatypes::ArrowPrimitiveType;
 
 /// A type-specialized inner loop over one column. The native engine writes
-/// these; DataFusion's kernels are opaque (they live behind the adapter and
-/// we do not call into them at this grain).
+/// these; DataFusion's kernels are opaque behind `ComputeBackend::DataFusionLocal`
+/// and are not called through this contract.
 pub trait VectorizedKernel<T: ArrowPrimitiveType>: Send + Sync {
     /// Process `input`, emit selection list (filter) or transformed array
     /// (project). Return the number of rows emitted (for stats).
@@ -355,48 +357,15 @@ pub trait MorselScheduler: Send + Sync {
 }
 ```
 
-=== 3.3 The DataFusion adapter (the contract is satisfied TODAY)
+=== 3.3 No DataFusion operator adapter
 
-DataFusion's `ExecutionPlan` is wrapped as a conforming `ExecutionOperator`. This is the bridge that makes the *current* full DataFusion kernel set immediately satisfy the contract — so native operators can be substituted one at a time while everything else stays DataFusion's.
+There is intentionally **no** `DataFusionOperatorAdapter`. DataFusion remains a separate `ExecutionEngine` implementation behind `ComputeBackend::DataFusionLocal`; it is not decomposed into native `ExecutionOperator` fragments. This preserves ADR-039's per-query engine seam and avoids leaking `datafusion::ExecutionPlan`, `TaskContext`, or `PhysicalExpr` into the native contracts crate.
 
-```rust
-// crates/query/proximadb-execution-contracts/src/datafusion_adapter.rs
-// (Inside the ADR-039 adapter allow-list; gated by feature datafusion-integration.)
-
-use datafusion::physical_plan::ExecutionPlan;
-use datafusion::physical_plan::SendableRecordBatchStream;
-
-/// Wraps any DataFusion ExecutionPlan as a contract ExecutionOperator.
-/// Used as the default for every operator that has NOT been substituted
-/// native yet. The router/planner never sees the difference.
-pub struct DataFusionOperatorAdapter {
-    plan: Arc<dyn ExecutionPlan>,
-    partition: usize,
-    context: Arc<datafusion::execution::TaskContext>,
-    stream: Option<SendableRecordBatchStream>,
-}
-
-impl ExecutionOperator for DataFusionOperatorAdapter {
-    fn output_schema(&self) -> SchemaRef { self.plan.schema() }
-    fn is_blocking(&self) -> bool {
-        // DataFusion marks HashJoinExec build, SortExec, etc. — mirror it.
-        self.plan.properties().output_partitioning().partition_count() == 1
-            && self.plan.children().is_empty() == false /* heuristic */
-    }
-    fn poll_morsel(&self) -> Result<Morsel, ExecutionError> {
-        // Pull one RecordBatch from the underlying DataFusion stream,
-        // wrap as Morsel::Batch. EOF -> Exhausted.
-        todo!("see datafusion_engine.rs:241 df.collect() pattern")
-    }
-    // ...
-}
-```
-
-**Key property:** the adapter is the *only* place `datafusion::` types touch the contract crate (mirroring ADR-039's allow-list discipline). The leakage ratchet extends to cover `proximadb-execution-contracts/`.
+**Key property:** `proximadb-execution-contracts` has zero DataFusion dependency. The existing ADR-039 allow-list remains unchanged: DataFusion types stay under `src/datafusion/**` and the DataFusion engine adapter files.
 
 === 3.4 The scan leaf — reusing the existing `SplitReader`
 
-The already-frozen `SplitReader` trait (`src/datafusion/proxima_scan_exec.rs`, 7 impls) becomes a leaf `ExecutionOperator` unchanged. No new scan contract is invented. `PaxSplitReader` (#706/#736), the parquet readers, and the SST/VIPER/HELIX adapters all already conform to "emit `RecordBatch` for a split with projection+predicate+limit" — they wrap trivially.
+The already-frozen `SplitReader` trait (`src/datafusion/proxima_scan_exec.rs`, 7 impls) defines the existing Arrow stream shape a native scan leaf can reuse. No new external scan contract is invented. `SplitReader::read_split` accepts split, projection, and batch-size inputs and returns `RecordBatch` streams; predicates and limits remain part of the surrounding scan plan / reader construction where supported, not a new method on this trait.
 
 ```rust
 // The existing trait stays authoritative (paraphrased; see source for verbatim).
@@ -433,7 +402,7 @@ A `Filter` directly followed by a `Project` is fused into one `FilterProjectOper
 
 === 4.4 Arrow as the single data plane
 
- reaffirmed from Section 3.1: every operator exchanges `RecordBatch`. PAX decodes to Arrow once; Parquet reads Arrow; Iceberg manifests describe Arrow-typed columns; Flight ships Arrow streams. There is exactly one columnar format in motion.
+As reaffirmed from Section 3.1: every operator exchanges `RecordBatch`. PAX decodes to Arrow once; Parquet reads Arrow; Iceberg manifests describe Arrow-typed columns; Flight ships Arrow streams. There is exactly one columnar format in motion.
 
 == 5. The join — the #1 native priority
 
@@ -453,7 +422,7 @@ The join algorithm is a **radix-partitioned, morsel-driven, bloom-pre-filtered, 
 . **Morsel-driven probe (parallel across partitions).** Each partition's probe is an independent morsel → worker assignment. Build and probe overlap across partitions (Leis 2014: "morsel-driven parallelism on modern hardware").
 . **Bloom-filter pre-filter (TD-OLAP-3 integration).** The build side constructs a bloom filter over the join keys; the probe side consults it *before* the hash lookup, dropping non-matching rows at SIMD speed. This bloom is the same `proximadb-bloom` primitive ADR-052 converges on (one primitive, two consumers: ANN pre-filter ADR-011 + OLAP semi-join).
 . **Spill-to-disk (the DataFusion gap).** When a partition exceeds memory, it spills to a `SpillFile` (Arrow IPC on local NVMe / object store) and is re-read in a second pass. Grace/bucket-variant. This is the *competitive advantage* over version-pinned DataFusion.
-. **Adaptive join selection.** `JoinStrategy::Auto` (already in `LogicalNode`) selects Hash vs SortMerge vs NLJ from cardinality estimates (ADR-050 stats). The native engine implements all three behind `ExecutionOperator`; the router picks.
+. **Adaptive join selection.** `JoinStrategy::Auto` (already in `LogicalNode`) selects Hash vs SortMerge vs NLJ from cardinality estimates (ADR-050 stats). The planner owns join order + strategy; the native engine executes the selected physical strategy behind `ExecutionOperator`.
 
 ```rust
 // Illustrative — the join is THREE operators (build, probe, spill-pass),
@@ -461,14 +430,14 @@ The join algorithm is a **radix-partitioned, morsel-driven, bloom-pre-filtered, 
 // the build fits in memory; falls back to spill when it does not.
 
 pub struct HashJoinBuild {
-    keys: Vec<Arc<dyn PhysicalExpr>>,
+    keys: Vec<Arc<dyn ProximaPhysicalExpr>>,
     bloom: Option<Arc<BloomFilter>>,      // TD-OLAP-3
     partitions: RadixPartitions,           // N cache-sized buckets
     spill: Option<SpillSink>,              // None until memory pressure
 }
 pub struct HashJoinProbe {
     build: Arc<HashJoinBuild>,
-    keys: Vec<Arc<dyn PhysicalExpr>>,
+    keys: Vec<Arc<dyn ProximaPhysicalExpr>>,
     bloom_filter_pushed: bool,             // push bloom into the probe-side SCAN
 }
 ```
@@ -513,7 +482,7 @@ The fused operator is what makes vector+SQL *correct* (not just fast) — the pr
 
 === 6.3 The PAX-native scan feeds both (already done)
 
-`PaxSplitReader` (`src/datafusion/engine_adapters/pax_adapter.rs`, #706/#736) reads real `.pax` segments — `[blocks][index][SEGMENT_MAGIC]` via `PaxSegmentScanner` — with the full prune stack (tenant, time, zone-map, bloom, row-group). It emits Arrow `RecordBatch` consumed by either a DataFusion operator or a native `VectorSearchOperator`. The scan is the seam; the operator plane is what this ADR adds. (Default-off, gated by `PROXIMADB_DF_PAX_READER`; slice-2 routing flip in flight.)
+`PaxSplitReader` (`src/datafusion/engine_adapters/pax_adapter.rs`, #706/#736) reads real `.pax` segments — `[blocks][index][SEGMENT_MAGIC]` via `PaxSegmentScanner` — and bridges relational stripes to Arrow `RecordBatch` with conservative zone-map/bloom pruning. Tenant/time `ScanPredicate` wiring and the route flip remain follow-up work. The scan is the seam; the operator plane is what this ADR adds. (Default-off, gated by `PROXIMADB_DF_PAX_READER`; slice-2 routing flip in flight.)
 
 == 7. Distributed + single-node
 
@@ -521,21 +490,21 @@ The fused operator is what makes vector+SQL *correct* (not just fast) — the pr
 
 The engine must work **single-node** (embedded PyO3 / server / pgwire) AND be **extensible to distributed** (MPP). The 2026 posture (ADR-052 non-goal, reaffirmed) is single-node / pseudo-distributed / embedded first. The evidence: 0.03% of Redshift queries scan >10 TB (MotherDuck/VLDB 2024); DuckDB runs TPC-H SF100,000 (100 TB) on one `i8g.48xlarge`; MotherDuck's <100 ms per-tenant cold-start is the production proof that single-node elastic competes.
 
-=== 7.2 The morsel scheduler extends to distributed
+=== 7.2 Native distributed execution is deferred
 
-The `MorselScheduler` (Section 3.2) is the single-node engine. Distributed is the same model with a **morsel exchange**: partitions live on different nodes; the scheduler ships morsels (or bloom filters, or hash partitions) across nodes instead of across cores. The `Pipeline` abstraction is unchanged — only the transport differs.
+The `MorselScheduler` (Section 3.2) is a single-node engine component. A future native distributed engine would likely extend it with a morsel/hash-partition exchange, but this ADR does **not** commit that transport. Native distributed execution needs its own ADR once single-node native operators have ledger evidence.
 
 === 7.3 Ballista as the distributed adapter (existing blueprint)
 
-`DATAFUSION_BALLISTA_DISTRIBUTED_EXECUTION_2026_06_05.adoc` already sequences this: P0 (`RoutedReadPlan` contract) → P1 (DataFusionLocal consumes planned splits) → P2 (Ballista adapter for `ComputeBackend::DataFusionDistributed`) → P3 (multi-node verification). The native engine composes by being one more `ExecutionEngine` impl behind the same `RoutedReadPlan`. The `ComputeBackend` enum (`Native | DataFusionLocal | DataFusionDistributed | ...`) already has the slot.
+`DATAFUSION_BALLISTA_DISTRIBUTED_EXECUTION_2026_06_05.adoc` already sequences this: P0 (`RoutedReadPlan` contract) → P1 (DataFusionLocal consumes planned splits) → P2 (Ballista adapter for `ComputeBackend::DataFusionDistributed`) → P3 (multi-node verification). That blueprint is DataFusion/Ballista-specific. Native execution composes only at the coarse `RoutedReadPlan` / `ExecutionEngine` boundary today; it does not inherit Ballista's distributed operator graph.
 
 === 7.4 The hybrid distributed topology (end-state)
 
-The end-state topology is hybrid: **morsel-parallel native operators for compute-heavy/multimodal fragments, Ballista-orchestrated DataFusion for the relational remainder, both behind `RoutedReadPlan`.** The cost router (ADR-050) selects per-fragment. This is not a commitment to build it soon — it is the architecture the contracts are designed to admit.
+The possible end-state topology is hybrid: **native vectorized execution for compute-heavy/multimodal native-storage shapes, Ballista-orchestrated DataFusion for distributed Parquet-backed analytical shapes, both selected at the coarse route boundary.** Fragment-level hybrid execution is explicitly deferred to a future ADR.
 
 == 8. The progressive cutover plan
 
-Every phase is **non-breaking** (contracts), **flag-gated** (default-off), and **ledger-gated** for promotion (co-design method §3: observe→ingest→act). The router (`ComputeBackend` + per-operator selection) picks per-component, so a native join can ship while filters stay DataFusion's.
+Every phase is **non-breaking** (contracts), **flag-gated** (default-off), and **ledger-gated** for promotion (co-design method §3: observe→ingest→act). The top-level router remains coarse (`ComputeBackend` per query); inside `ComputeBackend::Native`, the vectorized hook selects supported native operators and falls back to Volcano for unsupported shapes.
 
 [cols="1,3,2,2",options="header"]
 |===
@@ -545,10 +514,10 @@ Every phase is **non-breaking** (contracts), **flag-gated** (default-off), and *
 | **2** | Native vectorized `FilterProject` + pipeline executor behind contracts (the first operator; `HashAgg` split to Phase 2.1 as a blocking operator); benchmark vs the **Volcano** on in-memory data. (Scan source + ClickBench comparison move to Phase 2.5; join to TD-OLAP-11.) | link:../../10-quality/td/TD-OLAP-10-native-filterproject-pipeline.adoc[TD-OLAP-10] (design filed 2026-07-08) | Ledger: ≥ parity on in-memory; conformance unchanged
 | **3** | **Native radix-partitioned, spilling, bloom-pre-filtered hash join.** The #1 priority. | TD-OLAP-11 | Ledger: ≤ DataFusion in-memory; < DataFusion spilling; multimodal join >99% recall
 | **4** | Native morsel scheduler (NUMA-aware); wire native operators into the scheduler; the native engine is now a complete (if narrow) operator set. | TD-OLAP-12 | Ledger: end-to-end ClickBench + TPC-H/TPC-DS at parity-or-better
-| **5** | Native primary, DataFusion fallback (per-operator demotion on regression); the fused multimodal operators (`VectorSearchOperator`, `GraphTraversalOperator`, `DocumentProjectionOperator`, `FusedAnnFilterAggregate`). | TD-OLAP-13 | Multimodal benchmark (the wedge); per-query ledger vs DataFusion
+| **5** | Native vectorized primary for supported native-storage shapes; Volcano fallback inside `ComputeBackend::Native`; DataFusion remains the separate Parquet-backed OLAP route. Add fused multimodal operators (`VectorSearchOperator`, `GraphTraversalOperator`, `DocumentProjectionOperator`, `FusedAnnFilterAggregate`). | TD-OLAP-13 | Multimodal benchmark (the wedge); per-query ledger vs DataFusion
 |===
 
-**There is no big-bang cutover.** At every phase, DataFusion remains the floor and the fallback. A native operator that regresses is demoted by the router; the contract makes this a config flip, not a rollback.
+**There is no big-bang cutover.** At every phase, DataFusion remains the Parquet-backed floor and comparison baseline, while Volcano remains the native-storage fallback. A native vectorized operator that regresses is demoted by the native capability table / flag, not by a rollback.
 
 == 9. Evidence-based justification (decision → citation)
 
@@ -560,7 +529,7 @@ Every phase is **non-breaking** (contracts), **flag-gated** (default-off), and *
 | Pruning dormancy is scale, not engine | splits_pruned=0 at SF=0.01; 12.7% at SF=0.02 | TPC V4/V6 ledger
 | Vectorized, not codegen | Photon/consensus; small-team observability; deferred Phase 6 | Photon SIGMOD 2022; Kersten PVLDB 2018; ADR-052 inv 5
 | Morsel-driven | NUMA + cache efficiency; extends to distributed | Leis SIGMOD 2014; DuckDB/Velox
-| Contracts before algorithms | Swap-one-operator non-breaking; best-of-breed later; no duck-typing | ADR-039 seam discipline; SOLID
+| Contracts before algorithms | Add-one-native-operator non-breaking inside `ComputeBackend::Native`; best-of-breed later; no duck-typing | ADR-039 seam discipline; SOLID
 | DataFusion interim | Full kernel set as floor; free upside on version track | ADR-052 inv 1; EDBT 2026 DataFusion 1.45× trend
 | Single-node first | 99.97% of queries fit one node; MotherDuck/DuckDB proof | MotherDuck/VLDB 2024; DuckDB SF100,000
 |===
@@ -580,29 +549,29 @@ This ADR applies the `CO_DESIGN_HANDOFF.md` method explicitly:
 
 == 11. Verification
 
-* **Seam invariant unchanged.** ADR-039 leakage ratchet stays green; the new `proximadb-execution-contracts` crate is added to the allow-list boundary and ratcheted (zero `datafusion::` outside the adapter file).
-* **Conformance unchanged.** TPC-H (22) / TPC-DS (16) pgwire ratchets pass regardless of which operator (DataFusion adapter or native) serves each fragment.
+* **Seam invariant unchanged.** ADR-039 leakage ratchet stays green; `proximadb-execution-contracts` has zero `datafusion::` dependency and does not require a new DataFusion allow-list entry.
+* **Conformance unchanged.** TPC-H (22) / TPC-DS (16) pgwire ratchets pass through the same `ExecutionEngine` result contract whether a query is served by DataFusion, native Volcano, or the native vectorized hook.
 * **No-DataFusion build still passes.** `--no-default-features` compiles + passes the Volcano-only suite (ADR-039 Verification §3); the contracts crate has no DataFusion dep.
 * **Performance ledger (TD-OLAP-4).** Each native operator lands behind a flag and is promoted only when the ledger shows parity-or-better on ClickBench + TPC-H/TPC-DS SF1, on the same object store, vs DuckDB + plain DataFusion-on-Parquet.
-* **Uniqueness guard.** `python3 scripts/check_td_adr_unique.py` (this ADR + TD-OLAP-9..13).
+* **Uniqueness guard.** `python3 scripts/check_td_adr_unique.py` (this ADR + TD-OLAP-10..13; TD-OLAP-9 is unrelated).
 
 == 12. Open questions for multi-agent review
 
 . **Contract granularity — is `ExecutionOperator` per-operator, or should the join's build/probe/spill be one operator or three?** (Section 5.2 sketches three; review may prefer one for scheduler simplicity.)
-. **Should the native engine live in `proximadb-relational-executor` (today's Volcano crate, extended) or a new `proximadb-native-execution` crate?** Recommendation: new crate, so the Volcano stays OLTP-only and the vectorized engine is a clean sibling.
+. **How much native vectorized execution belongs in the existing native engine module vs a sibling crate?** The current consolidation keeps one `ComputeBackend::Native`; implementation can still keep vectorized internals modular.
 . **Morsel size — 2048 (DuckDB/Velox) or tunable per-operator?** Recommendation: const default, per-operator override.
-. **Does the adapter wrap DataFusion at the `ExecutionPlan` grain (Section 3.3) or at the `LogicalPlan` grain (lower `LogicalNode → datafusion::LogicalPlan`, then wrap)?** Recommendation: `ExecutionPlan` grain — finer substitution, matches ADR-039's per-query seam.
+. **Should native and DataFusion ever interoperate below the `ExecutionEngine` seam?** Current answer: no; any future fragment-level hybrid execution needs a separate ADR.
 . **Promotion threshold — parity, or strict-better?** Recommendation: parity-or-better in-memory, strict-better in the spill regime (the gap-closing claim).
 . **Should the multimodal operators (Section 6) be in this ADR or a follow-on?** Recommendation: in this ADR as the *rationale*, but their TDs (TD-OLAP-13) are Phase 5 — the contracts must be right first.
 
 == 13. Relationship to ADR-052 (the precise refinement)
 
-This ADR-053 makes exactly one change to ADR-052's decision set, and it is a *refinement*, not a reversal:
+This ADR-054 makes exactly one change to ADR-052's decision set, and it is a *refinement*, not a reversal:
 
 [cols="3,3,3",options="header"]
 |===
-| ADR-052 invariant | ADR-053 status | Change
-| 1. OLAP execution = DataFusion; native Volcano is OLTP-only | **Refined:** DataFusion is the *interim* OLAP engine; a native *vectorized* engine (not the Volcano) is added progressively behind contracts. The Volcano stays OLTP-only. | Native vectorized engine added; Volcano role unchanged
+| ADR-052 invariant | ADR-054 status | Change
+| 1. OLAP execution = DataFusion; native Volcano is OLTP-only | **Refined:** DataFusion is the Parquet-backed OLAP engine; `ComputeBackend::Native` gains an internal vectorized path for native-storage OLAP shapes. | Native vectorized path added inside the native engine; DataFusion route unchanged
 | 2. NativeOlap = PAX-native SCAN, not an operator engine | **Refined:** the scan stays the wedge; an *operator plane* is added behind contracts, substituted progressively where the ledger proves DataFusion is binding. | Operator plane added; scan role unchanged
 | 3. Scan-avoidance first | **Unchanged** | —
 | 4. Measured, not asserted | **Unchanged** (strengthened — every native op is ledger-gated) | —
