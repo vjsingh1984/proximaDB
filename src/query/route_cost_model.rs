@@ -818,6 +818,19 @@ impl RouteCostModel {
         }
     }
 
+    /// The `(shape-class, backend-label)` keys that have learned history. Eval/
+    /// introspection support: lets a test discover which shape-classes a workload
+    /// exercised so it can warm a challenger backend and force the override to
+    /// flip a route (see the TD-ROUTE-1 pgwire override eval).
+    pub fn learned_cell_keys(&self) -> Vec<(String, String)> {
+        let cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
+        cells
+            .iter()
+            .filter(|(_, c)| c.samples > 0)
+            .map(|(k, _)| k.clone())
+            .collect()
+    }
+
     /// Current learned estimate for one (shape-class, backend), if any history.
     pub fn estimate(&self, shape_class: &str, backend: &ComputeBackend) -> Option<RouteCost> {
         let key = (shape_class.to_string(), backend_label(backend));

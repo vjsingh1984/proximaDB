@@ -6,13 +6,38 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open** — persistence landed (cells survive restarts); live override (`PROXIMADB_ROUTE_COST_OVERRIDE`) stays OFF until the eval below exists.
+| Status | **Open** — persistence landed (#721); the pgwire override eval landed (`tests/route_cost_override_pgwire_eval.rs`) and **found a hard blocker**: flipping an `olap/parquet` *join* to Native/Volcano errors (Volcano has no join executor). Scan/aggregate flips preserve results; the *global* override stays OFF until the candidate set excludes Volcano for join-bearing plans (see §Finding).
 | Severity | Medium — the co-design routing lever is built but inert; enabling it blind risks the TPC-H/TPC-DS ratchets.
 | Component | `src/query/route_cost_model.rs`, `src/query/compute_scheduler.rs`, `tests/route_cost_offline_eval.rs`, `tests/tpch_pgwire_e2e.rs`
 | Pillar | PERF (co-design), REL (ratchets), EVAL (mandate #13)
 |===
 
 toc::[]
+
+== Finding (eval, 2026-07-08)
+
+The pgwire override eval (`tests/route_cost_override_pgwire_eval.rs`) materializes a
+small dataset, warms the model so Native is the cheaper `olap/parquet` arm, enables
+the override, and compares results to the override-OFF (DataFusion) baseline. Result:
+
+* **Scan / aggregate queries flip safely.** `count(*)`, `GROUP BY … count(*)`, and
+  `sum(col)` flipped DataFusion → Native and returned **identical** results. The
+  override is correctness-safe for these shapes.
+* **A join flip is a hard blocker.** `… FROM orders o, lineitem l WHERE o.o_orderkey =
+  l.l_orderkey GROUP BY …` **errored** (`db error`) once flipped to Native — the
+  row-wise Volcano engine has no join executor, while DataFusion runs it. It fails
+  *loud* (errors, never a silently-wrong answer), but it means the *global* override
+  cannot be enabled as-is.
+
+**Root cause:** `freshness_safe_backends_from_class` returns
+`[Native, DataFusionLocal]` for every `olap/parquet` class, but Native cannot execute
+the join-bearing subset. The freshness-safe candidate set is *capability-unaware*.
+
+**Concrete next action (the real gate now):** make the `olap/parquet` candidate set
+**capability-aware** — exclude Native/Volcano when the plan contains a join (or any
+operator Volcano lacks) so the override only ever flips to a backend that can execute
+the query. Then the eval's join case becomes a parity assert (it already tolerates
+both "errors" today and "matches" post-fix) and the override can be enabled behind it.
 
 == Context
 
