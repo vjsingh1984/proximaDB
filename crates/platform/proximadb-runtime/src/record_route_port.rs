@@ -69,4 +69,18 @@ pub trait RecordRoutePort: Send + Sync {
     /// stays on the legacy path instead of hard-failing the canonical write. Best-effort:
     /// returns `false` on any resolution error (fail toward the safe legacy path).
     async fn collection_exists(&self, collection_id: &str, tenant: Option<&str>) -> bool;
+
+    /// Idempotently ensure a canonical (record/vector) collection exists for `collection_id`
+    /// (create-if-not-exists; an already-existing collection is treated as success). `dimension`
+    /// is the embedding width — `0` ⇒ vectorless (a pure-document collection: documents are still
+    /// stored, point-gettable and scannable, but excluded from ANN). The document facade calls
+    /// this at collection-create so a document collection CONVERGES on the canonical store
+    /// (P-Provision, ADR-055) instead of the legacy `document_wal`/DashMap path. Callers treat it
+    /// best-effort (a failure leaves the legacy path intact — mixed-safe).
+    async fn ensure_collection(
+        &self,
+        collection_id: &str,
+        dimension: u32,
+        tenant: Option<&str>,
+    ) -> Result<()>;
 }

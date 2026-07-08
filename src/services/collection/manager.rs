@@ -576,6 +576,38 @@ impl CollectionService {
         Ok(response)
     }
 
+    /// Idempotent get-or-create by name for the document canonical-vector route (ADR-055
+    /// P-Provision): build a minimal `CollectionConfig` and create it, treating an already-existing
+    /// collection as success. `dimension == 0` ⇒ a vectorless (pure-document) collection. The v1
+    /// `CollectionConfig`/`StorageEngine` construction lives HERE (where those types are already in
+    /// scope) so callers (e.g. `RecordOpsService::ensure_collection`) stay v1-proto-free (TD-123).
+    pub async fn get_or_create_by_name(
+        &self,
+        name: &str,
+        dimension: u32,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
+    ) -> Result<()> {
+        let config = CollectionConfig {
+            name: name.to_string(),
+            dimension,
+            storage_engine: Some(StorageEngine::Sst as i32),
+            enable_proxima_record: Some(true),
+            ..Default::default()
+        };
+        let resp = self
+            .create_collection_with_tenant_context(&config, tenant_context)
+            .await?;
+        if resp.success || resp.error_code.as_deref() == Some("COLLECTION_EXISTS") {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "get_or_create_by_name '{}' failed: {:?}",
+                name,
+                resp.error_code
+            ))
+        }
+    }
+
     /// Create collection with tenant context validation
     pub async fn create_collection_with_tenant_context(
         &self,
