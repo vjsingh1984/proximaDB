@@ -259,12 +259,14 @@ impl ProximaFlightService {
         self
     }
 
-    /// Boot adapter that derives the injected pieces from a root `UnifiedHandlers`.
-    ///
-    /// The Flight write path is wired to the runtime `RecordOpsService` (via
-    /// `UnifiedHandlers::record_ops`) rather than ROOT's `RecordOpsPort` impl, so
-    /// `do_put` ingest no longer routes through ROOT even via this convenience.
-    pub fn from_unified_handlers(request_handlers: Arc<UnifiedHandlers>) -> Self {
+    /// Boot adapter that injects the runtime `api_port` (TD-104 S3-c: the Flight
+    /// service's API surface is now the runtime handler, not ROOT) while deriving
+    /// the remaining services from the root `UnifiedHandlers` at boot (one-time
+    /// extraction; the service holds ports, not the root handler).
+    pub fn from_services(
+        api_port: Arc<dyn proximadb_runtime::ApiHandlersPort>,
+        request_handlers: &UnifiedHandlers,
+    ) -> Self {
         let storage_locations = request_handlers
             .storage_config()
             .map(|config| {
@@ -276,7 +278,6 @@ impl ProximaFlightService {
             })
             .unwrap_or_default();
 
-        let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> = request_handlers.clone();
         let record_port: Arc<dyn proximadb_runtime::RecordOpsPort> = request_handlers.record_ops();
         let vector_operations_service = request_handlers.vector_operations_service.clone();
         let collection_service = request_handlers.collection_service.clone();
