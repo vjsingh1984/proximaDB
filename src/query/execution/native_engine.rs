@@ -217,6 +217,7 @@ mod tests {
     use super::*;
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow_array::{Int64Array, RecordBatch};
+    use std::sync::Arc;
 
     #[test]
     fn convert_int64_batch_to_pipeline_result() {
