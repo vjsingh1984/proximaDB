@@ -285,6 +285,14 @@ impl NativeVolcanoEngine {
     ) -> Result<ExecutionPipelineResult, ExecutionError> {
         controls.check_cancelled()?;
         let physical = cap_plan(physical, &controls);
+        // ADR-054 Phase 2 (TD-OLAP-10): try the native vectorized path before
+        // the Volcano. Runs after `cap_plan` so a request-scoped row cap (added
+        // as a trailing `Limit`) is honored by the vectorized lowering too.
+        // Default-off; any decline or failure falls back to the Volcano inside
+        // `try_vectorized` (the experimental path never fails a query).
+        if let Some(result) = super::native_engine::try_vectorized(&physical).await? {
+            return finalize_row_limit(result, &controls);
+        }
         let mut exec = build_executor(physical, factory, &VolcanoExecutionContext::default())
             .map_err(|e| ExecutionError::Execution(format!("build_executor: {e}")))?;
         controls.check_cancelled()?;
