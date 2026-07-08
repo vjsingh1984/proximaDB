@@ -922,12 +922,22 @@ impl ProximaDB {
                 let interval = std::time::Duration::from_secs(RL_CHECKPOINT_INTERVAL_SECS);
                 let mut ticker = tokio::time::interval(interval);
                 ticker.tick().await;
+                // Dirty-flag: only rewrite the policy when learning actually
+                // advanced since the last checkpoint. A long-running idle server
+                // otherwise rewrites an identical multi-KB file every tick.
+                let mut last_saved_updates: Option<u64> = None;
 
                 loop {
                     ticker.tick().await;
                     if let Some(planner) = query::rl_planner::get_rl_planner() {
+                        let updates = planner.total_updates().await;
+                        if last_saved_updates == Some(updates) {
+                            continue;
+                        }
                         if let Err(e) = planner.save_policy(&checkpoint_path).await {
                             tracing::warn!("Failed to save RL policy checkpoint: {}", e);
+                        } else {
+                            last_saved_updates = Some(updates);
                         }
                     } else {
                         break;
