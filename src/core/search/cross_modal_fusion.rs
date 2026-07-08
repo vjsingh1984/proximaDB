@@ -76,6 +76,21 @@ pub enum Operator {
     Rrf { k: u32 },
 }
 
+/// How [`FusionPolicy::pool_cap`] reacts when a source's candidate pool exceeds the cap (TD-XMODAL-9).
+/// Mirrors `RowLimitMode` (`src/query/execution/engine.rs`) for the cross-modal fusion path: the live
+/// graph-fusion serving path routes through this `Fuser`, so a fail-loud mode here bounds the OOM /
+/// saturation path where a wide fan-out buffers the full source union before the output trim.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PoolCapMode {
+    /// Silently truncate each source to its top-N by raw score (today's behavior).
+    #[default]
+    Truncate,
+    /// Truncate *and* surface the total overflow in [`FusionStats::pool_cap_exceeded`], so a caller
+    /// that wants fail-loud semantics can reject the (still-bounded) result rather than accept a
+    /// silently trimmed set.
+    Error,
+}
+
 /// Fusion policy: calibration + operator + consensus boost + the cost/quality gates (D5).
 #[derive(Debug, Clone)]
 pub struct FusionPolicy {
@@ -84,8 +99,13 @@ pub struct FusionPolicy {
     /// CombMNZ-style consensus boost added once to any `oid` present in ≥2 sources (D4/D6).
     pub consensus_beta: f32,
     /// Cap each source's candidate pool (keep top-N by raw score) before fusing — bounds the
-    /// pool-explosion failure mode (D5).
+    /// pool-explosion failure mode (D5). Defaults to `None` (unbounded) because a default value
+    /// changes fusion *results* (drops low-ranked candidates); enable explicitly or via the
+    /// `PROXIMADB_FUSION_POOL_CAP` env overlay on the live path (TD-XMODAL-9).
     pub pool_cap: Option<usize>,
+    /// How `pool_cap` reacts when a source exceeds it (TD-XMODAL-9): `Truncate` (default, silent) or
+    /// `Error` (surface the overflow in [`FusionStats::pool_cap_exceeded`] for fail-loud callers).
+    pub pool_cap_mode: PoolCapMode,
     /// Skip a source whose best raw score is below this threshold (saturation / didn't-fire gate, D5).
     pub min_source_score: Option<f32>,
 }
@@ -97,6 +117,7 @@ impl Default for FusionPolicy {
             operator: Operator::CalibratedLinear,
             consensus_beta: 0.0,
             pool_cap: None,
+            pool_cap_mode: PoolCapMode::default(),
             min_source_score: None,
         }
     }
@@ -132,6 +153,11 @@ pub struct FusionStats {
     pub sources_skipped: usize,
     pub candidates_in: usize,
     pub items_out: usize,
+    /// Set when at least one source exceeded [`FusionPolicy::pool_cap`] in [`PoolCapMode::Error`]:
+    /// the total number of candidates dropped across over-cap sources. `None` when `pool_cap` is
+    /// unset or in [`PoolCapMode::Truncate`] (the default). A fail-loud caller checks this and
+    /// rejects the (still-truncated) result instead of accepting a silently trimmed set (TD-XMODAL-9).
+    pub pool_cap_exceeded: Option<usize>,
 }
 
 /// The neutral calibrate + fuse + rank core. Modality-agnostic: it operates only on `(oid, score)`
@@ -155,6 +181,9 @@ impl Fuser {
     ) -> (Vec<FusedItem>, FusionStats) {
         let mut stats = FusionStats::default();
         let mut acc: HashMap<String, FusedItem> = HashMap::new();
+        // TD-XMODAL-9: total candidates dropped by `pool_cap` across over-cap sources. Surfaced via
+        // `stats.pool_cap_exceeded` only in `PoolCapMode::Error` (fail-loud); `Truncate` leaves it at 0.
+        let mut pool_cap_excess: usize = 0;
 
         for mut src in sources {
             stats.candidates_in += src.scores.len();
@@ -170,9 +199,14 @@ impl Fuser {
                 continue;
             }
             // Pool cap (D5): bound each source to its top-N by raw score before fusing.
+            // In `PoolCapMode::Error` (TD-XMODAL-9) the overflow is also tallied so a fail-loud
+            // caller can reject the result; `Truncate` (default) stays silent and behavior-identical.
             if let Some(cap) = self.policy.pool_cap
                 && src.scores.len() > cap
             {
+                if matches!(self.policy.pool_cap_mode, PoolCapMode::Error) {
+                    pool_cap_excess += src.scores.len() - cap;
+                }
                 let mut entries: Vec<(String, f32)> = src.scores.into_iter().collect();
                 entries.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
                 entries.truncate(cap);
@@ -192,6 +226,12 @@ impl Fuser {
                 item.per_source.insert(src.source.clone(), value);
                 item.source_count += 1;
             }
+        }
+
+        // TD-XMODAL-9: surface the pooled overflow only in fail-loud mode (and only if any source
+        // actually exceeded). `Truncate` mode leaves `pool_cap_exceeded` at `None` (default).
+        if pool_cap_excess > 0 {
+            stats.pool_cap_exceeded = Some(pool_cap_excess);
         }
 
         // Consensus boost (D4/D6): reward an `oid` that ≥2 sources agree on.
@@ -421,6 +461,63 @@ mod tests {
         assert_eq!(items.len(), 2);
         let oids: Vec<&str> = items.iter().map(|i| i.oid.as_str()).collect();
         assert!(oids.contains(&"c") && oids.contains(&"d"));
+    }
+
+    /// TD-XMODAL-9: the default (`PoolCapMode::Truncate`) bounds each source but stays silent —
+    /// `pool_cap_exceeded` is `None`, and the result is otherwise byte-identical to the pre-cap path
+    /// (behavior-preserving). This is the default-off guardrail.
+    #[test]
+    fn pool_cap_truncate_mode_is_silent_default() {
+        let big = src(
+            SourceId::Vector,
+            1.0,
+            &[("a", 0.1), ("b", 0.2), ("c", 0.3), ("d", 0.4)],
+        );
+        let policy = FusionPolicy {
+            pool_cap: Some(2),
+            ..FusionPolicy::default()
+        };
+        let (items, stats) = Fuser::new(policy).fuse(vec![big], 10);
+        assert_eq!(items.len(), 2, "source bounded to top-2");
+        assert_eq!(
+            stats.pool_cap_exceeded, None,
+            "Truncate mode (default) stays silent"
+        );
+    }
+
+    /// TD-XMODAL-9: `PoolCapMode::Error` tallies the overflow so a fail-loud caller can reject the
+    /// result. A 4-candidate source capped at 2 drops 2; a source under the cap contributes nothing.
+    #[test]
+    fn pool_cap_error_mode_records_excess() {
+        let big = src(
+            SourceId::Vector,
+            1.0,
+            &[("a", 0.1), ("b", 0.2), ("c", 0.3), ("d", 0.4)], // 4 → cap 2 ⇒ 2 dropped
+        );
+        let small = src(SourceId::Graph, 1.0, &[("e", 0.9)]); // 1 ≤ cap 2 ⇒ 0 dropped
+        let policy = FusionPolicy {
+            pool_cap: Some(2),
+            pool_cap_mode: PoolCapMode::Error,
+            ..FusionPolicy::default()
+        };
+        let (items, stats) = Fuser::new(policy).fuse(vec![big, small], 10);
+        // Still bounded to top-2 of the over-cap source + the under-cap source = 3 unique oids.
+        assert_eq!(items.len(), 3);
+        assert_eq!(
+            stats.pool_cap_exceeded,
+            Some(2),
+            "Error mode surfaces the 2 dropped candidates"
+        );
+
+        // No source exceeds ⇒ no overflow surfaced even in Error mode.
+        let under = src(SourceId::Vector, 1.0, &[("a", 0.1), ("b", 0.2)]);
+        let policy_under = FusionPolicy {
+            pool_cap: Some(10),
+            pool_cap_mode: PoolCapMode::Error,
+            ..FusionPolicy::default()
+        };
+        let (_items, stats_under) = Fuser::new(policy_under).fuse(vec![under], 10);
+        assert_eq!(stats_under.pool_cap_exceeded, None);
     }
 
     /// Relational prefilter (D2): the predicate's `oid` set restricts every source BEFORE fusion, so the

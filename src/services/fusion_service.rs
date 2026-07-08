@@ -93,6 +93,20 @@ fn fusion_calibration_disabled() -> bool {
     std::env::var_os(DISABLE_CALIBRATION_ENV).is_some()
 }
 
+/// TD-XMODAL-9: default-off per-source candidate cap for the live fusion path. When set to N, each
+/// modality's candidate pool is bounded to its top-N by raw score before fusing, so a wide fan-out
+/// (large vector leg + high-degree graph expansion) cannot buffer the full source union in RAM before
+/// the output trim. Unset ⇒ unbounded (today's behavior). Mirrors the `PROXIMADB_*` env convention.
+/// The fail-loud `PoolCapMode::Error` is set programmatically via `FusionPolicy` by callers that want
+/// to reject over-cap results rather than accept a silently trimmed set.
+const POOL_CAP_ENV: &str = "PROXIMADB_FUSION_POOL_CAP";
+
+fn fusion_pool_cap_from_env() -> Option<usize> {
+    std::env::var(POOL_CAP_ENV)
+        .ok()
+        .and_then(|v| v.parse().ok())
+}
+
 /// RBAC predicate over a resolved backing record (TD-134). `None` ⇒ the record is not in the canonical
 /// store (or the store is unwired), so within-tenant row RBAC cannot bite ⇒ **allow** (the tenant
 /// boundary stays structural). The predicate is pure so the gate is unit-testable without engines.
@@ -143,6 +157,9 @@ pub(crate) fn raw_union(
         sources_skipped: 0,
         candidates_in,
         items_out: items.len(),
+        // raw_union is the kill-switch fallback; it does not enforce `pool_cap` (the calibrated
+        // `Fuser` path does). Leave the fail-loud flag unset here.
+        pool_cap_exceeded: None,
     };
     (items, stats)
 }
@@ -683,7 +700,14 @@ impl FusionService {
             );
             raw_union(sources, params.limit)
         } else {
-            Fuser::new(params.policy).fuse(sources, params.limit)
+            // TD-XMODAL-9: overlay the default-off pool cap from config unless the caller already set
+            // one. Bounds each source's candidate pool so a wide fan-out can't buffer the full source
+            // union in RAM before the output trim (fail-loud mode is the caller's via `FusionPolicy`).
+            let mut policy = params.policy;
+            if policy.pool_cap.is_none() {
+                policy.pool_cap = fusion_pool_cap_from_env();
+            }
+            Fuser::new(policy).fuse(sources, params.limit)
         };
 
         // T1.1: Record fusion metrics for observability.
