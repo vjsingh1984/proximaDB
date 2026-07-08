@@ -209,3 +209,71 @@ the TD on `develop`, follow the convention: branch off `origin/develop` via
 `scripts/worktree.sh new docs/review-response-2026-07-07` (the main checkout currently carries
 uncommitted catalog/parser/ddl work and must not be used as the PR base). This document and the
 TD are written but **uncommitted** pending that.
+
+== 8. Round 2 — Antigravity's 30 recommendations (2026-07-07)
+
+Antigravity produced a second artifact (`architectural_recommendations.md`, 30 items, P0–P4).
+Same discipline applies — verify before acting. Outcome: **~25/30 are already-tracked ADRs/TDs,
+2 are ghost repeats, 1 is already done, and 1 is a genuinely-new confirmed finding.** No new TDs
+were filed for the tracked majority (would duplicate the `td-adr-unique` guard).
+
+=== Ghosts / already-handled (do NOT chase)
+
+* **B01 — "TD-CAT-2" again.** `find docs -iname '*TD-CAT*'` → nothing. This is the *same phantom
+  TD* from round 1; Antigravity did not learn. Real tracker:
+  link:../12-design/adr/ADR-032-durable-tenant-prefixed-object-store-catalog.adoc[ADR-032]
+  (Proposed) + in-flight `src/catalog/mod.rs` + per-modality TDs (DOC/ENTITY/GRAPH-TENANT-1,
+  IOTRACE-2, XMODAL-8).
+* **B08 — 100K QPS scrub.** Repeat: README is already caveatted; the figure lives correctly in
+  `BENCHMARK_EVIDENCE.toml` unverified. See §2.2.
+* **B20 — Azure HNS-off / `ObjectAccessTier`.** *Already landed* (`azure_blob.rs`, `aws_s3.rs`,
+  `gcs_store.rs` all carry access-tier; ADR-036). Stale.
+* **B21 — "Small" v1 hard-delete.** Mislabeled: the staged TD-123 ratchet (thousands of refs),
+  multi-PR. See §2.4.
+
+=== Already-tracked (mapped, no new TD)
+
+[cols="1,2", options="header"]
+|===
+| Item | Tracked as
+
+| B02 (LSN read-after-write) | ADR-051 (Proposed) / TD-STRONG-1 — LSN-pinning **shipped** on the cached paths (`storage/cache/specialized/query_cache.rs`, `network/postgres/relational_pipeline.rs`); ADR ratification incomplete, not a new hole
+| B04 (canonical ProximaType) | ADR-024
+| B05 / B11 (god object / dissolve UnifiedHandlers) | TD-104 (+ `TD104_HANDLER_CONVERGENCE_PLAN`)
+| B06 (PAX range coalescing) | TD-151
+| B07 (force DataFusion OLAP) | TD-OLAP-1 / ADR-039
+| B09 (retire legacy engines / PAX stacked quant) | ADR-026 (M1 landed)
+| B10 (trace+meter seam) | ADR-030
+| B12 (symbol object_id) | ADR-044
+| B13 (ORION LSN-correlation) | TD-066 / ADR-034
+| B14 (capability registry) | ADR-001 / ADR-043
+| B15 (fusion latency benchmarks) | ADR-034 measurement mandate / TD-OLAP-4
+| B16 (deletion vectors) | ADR-025 (design shipped; impl P4)
+| B17 (3-tier catalog cache) | ADR-035 / TD-SC-1
+| B18 (Parquet interop-only) | ADR-033 / ADR-027 (settled)
+| B19 (cross-modal fabric UDTFs) | ADR-053
+| B22 (SDK codegen) | ADR-041
+| B23 (nextest / flaky tests) | test hygiene (Volcano-flake history)
+| B24 (differential accuracy) | ADR-040 / TD-182
+| B25 (consolidate casts) | ADR-043 / TD-186
+| B26 (SegmentStatistics contract) | ADR-042
+| B27 (distributed MPP) | TD-078 (deferred)
+| B28 (multi-table ACID) | ADR-018 (deferred)
+| B29 (LTAP without CDC) | ADR-046
+| B30 (refocus GTM) | product decision (see §5)
+|===
+
+=== The one genuinely-new, confirmed finding (filed)
+
+**B03 — silent fail-open/fail-closed in the *vector-metadata* filter path.** Verified at
+`src/core/search/typesafe_filter.rs:35` (`evaluate() -> bool`): `compare_typed_values` returns
+`Option<Ordering>`, and on a **type-mismatched stored value** (`None`) the result silently folds —
+positive comparisons (`Equals`/`LessThan`/…) → `false` (row dropped); `NotEquals`/`NotIn` → `true`
+(row kept, fail-open); missing field → the catch-all `_ => false` (line 187, row dropped). No error
+propagates. ADR-043 (fail-loud, `Result<bool>`) is *Accepted* and TD-186 rolls it out — but that
+umbrella covers the *relational* expression path. The bare-`bool` stragglers
+(`typesafe_filter.rs:35`, `storage/engines/core/filter_evaluator.rs:43/49/54/144`,
+`storage/document/query/filter.rs:30`, `storage/engines/sequoia/mod.rs:230`) are the
+*vector-metadata* seam ADR-043 doesn't reach. Filed as TD-FILT-1; slice 1 (typed
+`FilterEvalError` + an `evaluate_strict -> Result<bool, _>` fail-loud path on
+`TypeSafeFilterEvaluator`, behavior-preserving) lands in its own PR.
