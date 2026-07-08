@@ -9,8 +9,8 @@
     "/v1_pb2/",
     "check_v1_proto_usage.py"
   ],
-  "file_count": 483,
-  "generated_at": "2026-07-04T21:08:21Z",
+  "file_count": 481,
+  "generated_at": "2026-07-08T04:19:03Z",
   "mode": "report",
   "patterns": [
     "proximadb_v1",
@@ -20,7 +20,7 @@
   "per_root": {
     "clients": 41,
     "crates": 99,
-    "src": 2403,
+    "src": 2399,
     "tests": 374
   },
   "roots": [
@@ -30,5 +30,5 @@
     "tests"
   ],
   "schema_version": 1,
-  "total": 2917
+  "total": 2913
 }
