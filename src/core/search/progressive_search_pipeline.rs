@@ -15,6 +15,7 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::FilterExpression;
 use crate::core::search::query_preprocessing::{QueryPreprocessor, QueryVectorCache};
 use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::search::sql_value_filter::FilterEvalError;
 use crate::proto::proximadb_v1::QuantizationConfig;
 use proximadb_records::ProximaRecord;
 
@@ -321,7 +322,7 @@ impl UnifiedProgressiveSearchPipeline {
 
         // Apply metadata filter first if present
         if let Some(filter) = metadata_filter {
-            current_records = self.apply_metadata_filter(current_records, filter);
+            current_records = self.apply_metadata_filter(current_records, filter)?;
         }
 
         // Get dynamic thresholds
@@ -669,18 +670,15 @@ impl UnifiedProgressiveSearchPipeline {
             .min(self.config.max_candidates)
     }
 
-    /// Apply metadata filter to records
+    /// Apply metadata filter to records. In strict mode (`PROXIMADB_FILTER_STRICT`), an
+    /// unresolved filter field surfaces as [`FilterEvalError`] (fail-loud, TD-FILT-1 slice 2)
+    /// instead of silently dropping the record. Default off — preserves today's silent behavior.
     fn apply_metadata_filter(
         &self,
         records: Vec<Arc<ProximaRecord>>,
         filter: &FilterExpression,
-    ) -> Vec<Arc<ProximaRecord>> {
-        use crate::core::search::sql_value_filter::evaluate_filter_proxima;
-
-        records
-            .into_iter()
-            .filter(|record| evaluate_filter_proxima(filter, &record.props))
-            .collect()
+    ) -> Result<Vec<Arc<ProximaRecord>>, FilterEvalError> {
+        filter_records_by_props(records, filter, filter_strict_enabled())
     }
 
     /// Check if we should terminate early
@@ -843,6 +841,49 @@ impl Default for PipelineConfig {
     }
 }
 
+/// TD-FILT-1 slice 2: when set (`1`/`true`/`on`/`yes`), metadata filtering on the progressive-search
+/// path runs fail-loud — an unresolved filter field errors the query instead of silently dropping
+/// the record. Default off (today's silent behavior). Mirrors the `PROXIMADB_*` env convention.
+fn filter_strict_enabled() -> bool {
+    match std::env::var("PROXIMADB_FILTER_STRICT") {
+        Ok(v) => matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "on" | "yes"
+        ),
+        Err(_) => false,
+    }
+}
+
+/// Filter `records` by `filter` against each record's `props` (`ProximaTree`). `strict` selects
+/// fail-loud ([`evaluate_filter_proxima_strict`], surfacing [`FilterEvalError`]) vs the legacy
+/// silent ([`evaluate_filter_proxima`]) path. Extracted to a free fn so the strict/legacy routing
+/// is unit-testable without the pipeline struct (TD-FILT-1 slice 2).
+fn filter_records_by_props(
+    records: Vec<Arc<ProximaRecord>>,
+    filter: &FilterExpression,
+    strict: bool,
+) -> Result<Vec<Arc<ProximaRecord>>, FilterEvalError> {
+    use crate::core::search::sql_value_filter::{
+        evaluate_filter_proxima, evaluate_filter_proxima_strict,
+    };
+    if strict {
+        let mut kept = Vec::with_capacity(records.len());
+        for record in records {
+            match evaluate_filter_proxima_strict(filter, &record.props) {
+                Ok(true) => kept.push(record),
+                Ok(false) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(kept)
+    } else {
+        Ok(records
+            .into_iter()
+            .filter(|record| evaluate_filter_proxima(filter, &record.props))
+            .collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -908,5 +949,67 @@ mod tests {
 
         let different = pipeline.compute_hamming_distance(&a, &c);
         assert_eq!(different, 0.0); // Completely different
+    }
+
+    // ---- TD-FILT-1 slice 2: strict-mode wiring on the progressive-search filter path ----
+
+    use crate::core::search::ComparisonOperator;
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{ProximaTree, ProximaTreeNode};
+
+    fn filt1_record_with_props(pairs: &[(&str, ProximaValue)]) -> Arc<ProximaRecord> {
+        let mut props = ProximaTree::new();
+        for (k, v) in pairs {
+            props.insert((*k).to_string(), ProximaTreeNode::Value(v.clone()));
+        }
+        Arc::new(ProximaRecord {
+            props,
+            ..Default::default()
+        })
+    }
+
+    fn filt1_tier_equals(v: serde_json::Value) -> FilterExpression {
+        FilterExpression::Comparison {
+            field: "tier".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: v,
+        }
+    }
+
+    #[test]
+    fn strict_mode_surfaces_unresolved_filter_field() {
+        // Record has no "tier" prop; filter on tier in strict mode → Err (not a silent drop).
+        let rec = filt1_record_with_props(&[]);
+        let res =
+            filter_records_by_props(vec![rec], &filt1_tier_equals(serde_json::json!(2)), true);
+        assert!(
+            matches!(
+                res,
+                Err(crate::core::search::sql_value_filter::FilterEvalError::MissingField { .. })
+            ),
+            "strict mode surfaces the unresolved field instead of silently dropping"
+        );
+    }
+
+    #[test]
+    fn legacy_mode_silently_drops_unresolved_field() {
+        // Same record/filter, legacy (strict=false) → Ok with the record silently filtered out.
+        let rec = filt1_record_with_props(&[]);
+        let kept =
+            filter_records_by_props(vec![rec], &filt1_tier_equals(serde_json::json!(2)), false)
+                .unwrap();
+        assert!(
+            kept.is_empty(),
+            "legacy mode silently drops the unresolved-field record"
+        );
+    }
+
+    #[test]
+    fn strict_mode_keeps_matching_record() {
+        let rec = filt1_record_with_props(&[("tier", ProximaValue::Int64(2))]);
+        let kept =
+            filter_records_by_props(vec![rec], &filt1_tier_equals(serde_json::json!(2)), true)
+                .unwrap();
+        assert_eq!(kept.len(), 1, "a matching record is kept in strict mode");
     }
 }
