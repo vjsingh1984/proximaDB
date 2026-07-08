@@ -84,28 +84,13 @@ use crate::services::operations::{BatchOperationResult, BulkWriteRouter, Operati
 use crate::storage::cache::specialized::query_cache::{QueryCache, QueryKey};
 use crate::storage::engines::sst::SstEngine;
 
-/// Canonical rich record batch request for internal callers.
-#[derive(Debug, Clone)]
-pub struct RichRecordBatchRequest {
-    pub collection_id: String,
-    pub records: Vec<ProximaRecord>,
-}
-
-/// Canonical rich record delete request for v2 and internal callers.
-#[derive(Debug, Clone)]
-pub struct RichRecordDeleteBatchRequest {
-    pub collection_id: String,
-    pub record_ids: Vec<String>,
-}
-
-/// Canonical rich record get request for v2 and internal callers.
-#[derive(Debug, Clone)]
-pub struct RichRecordGetRequest {
-    pub collection_id: String,
-    pub record_id: String,
-    pub include_vector: bool,
-    pub include_props: bool,
-}
+// TD-104 Phase 0: these types now live in `proximadb-runtime` (so the
+// `RecordOpsPort` contract is self-contained). Re-exported here so existing
+// `crate::services::operations::vectors::legacy::RichRecord*` callers are
+// unaffected (mirrors the S3a `BatchOperationResult` relocation pattern).
+pub use proximadb_runtime::rich_record::{
+    RichRecordBatchRequest, RichRecordDeleteBatchRequest, RichRecordGetRequest,
+};
 
 /// Canonical rich search request for v2 and internal callers.
 #[derive(Debug, Clone)]
