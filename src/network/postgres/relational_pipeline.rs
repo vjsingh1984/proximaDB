@@ -433,6 +433,7 @@ pub async fn try_run_select(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: true,
             parquet_backed,
+            pax_backed: false,
             partition_fanout,
             cardinality,
         },

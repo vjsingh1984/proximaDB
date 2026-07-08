@@ -1178,6 +1178,7 @@ mod tests {
             parquet_backed: true,
             cardinality: CardinalityClass::Large,
             partition_fanout: PartitionFanout::Many,
+            pax_backed: false,
         });
         assert_eq!(class, "olap/parquet/card=l/part=m");
         // A partially-known shape only appends the known suffix.
@@ -1798,12 +1799,14 @@ mod tests {
             parquet_backed: true,
             cardinality: CardinalityClass::Large,
             partition_fanout: PartitionFanout::Many,
+            pax_backed: false,
         });
         let small = shape_class(&QueryShape {
             engages_relational: true,
             parquet_backed: true,
             cardinality: CardinalityClass::Small,
             partition_fanout: PartitionFanout::Single,
+            pax_backed: false,
         });
         assert_ne!(big, coarse);
         assert_ne!(small, coarse);
@@ -1830,6 +1833,7 @@ mod tests {
             parquet_backed: true,
             cardinality: CardinalityClass::Large,
             partition_fanout: PartitionFanout::Many,
+            pax_backed: false,
         };
         let class = shape_class(&big);
         // Observe Native as confidently cheaper than DataFusion for THIS fine
