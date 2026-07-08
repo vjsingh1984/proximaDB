@@ -2202,7 +2202,8 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         // V2CollectionConfig so v2 GetSchema returns the catalog-authoritative view
         // (richer/multi-vector schemas can be layered on via CreateSchema). The
         // authority flows through the runtime `UnifiedHandlers` impl of
-        // `ApiHandlersPort` (NOT the legacy `request_handlers.rs` twin).
+        // `ApiHandlersPort` (the sole production handler since TD-104 S3-f
+        // deleted the legacy root twin).
         // Best-effort: the read path already tolerates an absent sidecar (legacy
         // fallback), so a failure here must not fail the already-provisioned collection.
         let canonical_update = CollectionSchemaUpdate {

@@ -765,11 +765,11 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
             }));
         }
 
-        // TD-121 relational SELECT routing — parity with the ROOT handler's
-        // execute_sql_v1 (src/api_handlers/request_handlers.rs). Both the gRPC
-        // and REST SQL routes reach this adapter (TD-104 S4 converged REST onto
-        // the runtime handler → adapter), so relational SELECT over EITHER
-        // surface routes through the tenant-scoped pipeline here. `require_engagement=false`
+        // TD-121 relational SELECT routing — parity with the runtime handler's
+        // execute_sql_v1. Both the gRPC and REST SQL routes reach this adapter
+        // (TD-104 S4 converged REST onto the runtime handler → adapter), so
+        // relational SELECT over EITHER surface routes through the tenant-scoped
+        // pipeline here. `require_engagement=false`
         // routes any resolvable relational SELECT; queries whose tables don't
         // resolve return `None` and fall through to `sql_query` (vector/graph
         // SQL, unchanged). The OLAP result cache IS consulted (same-crate call,
