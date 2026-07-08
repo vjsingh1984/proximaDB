@@ -748,11 +748,13 @@ impl MultiServer {
             // three see identical routing decisions.
             let primary_pod_registry = services.primary_pod_registry.clone();
             let self_pod_id = services.self_pod_id.clone();
+            let api_handlers = services.api_handlers.clone();
 
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
 
-                let flight_service = ProximaFlightService::from_unified_handlers(request_handlers);
+                let flight_service =
+                    ProximaFlightService::from_services(api_handlers, &request_handlers);
                 match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
@@ -1143,8 +1145,9 @@ impl MultiServer {
 
             // Arrow Flight service (HTTP/2-based, shares internal gRPC server)
             let flight_service =
-                crate::network::arrow_ipc::service::ProximaFlightService::from_unified_handlers(
-                    services.request_handlers.clone(),
+                crate::network::arrow_ipc::service::ProximaFlightService::from_services(
+                    services.api_handlers.clone(),
+                    &services.request_handlers,
                 )
                 .with_security_coordinator(if self.rest_auth_enabled {
                     self.security_coordinator.clone()
@@ -1668,11 +1671,13 @@ impl MultiServer {
             // three see identical routing decisions.
             let primary_pod_registry = services.primary_pod_registry.clone();
             let self_pod_id = services.self_pod_id.clone();
+            let api_handlers = services.api_handlers.clone();
 
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
 
-                let flight_service = ProximaFlightService::from_unified_handlers(request_handlers);
+                let flight_service =
+                    ProximaFlightService::from_services(api_handlers, &request_handlers);
                 match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
