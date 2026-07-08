@@ -334,9 +334,7 @@ impl ProximaDB {
                 // batch path so direct inserts coerce to the
                 // collection's canonical precision (matches what the
                 // queue drainer does via BulkLoadDrainerSink).
-                shared_services
-                    .request_handlers
-                    .set_precision_resolver(resolver);
+                shared_services.record_ops.set_precision_resolver(resolver);
             }
             Err(e) => {
                 tracing::warn!(
@@ -500,11 +498,12 @@ impl ProximaDB {
         let rest_multi_tenant_required = security_config.as_ref().is_some_and(|s| {
             s.authentication.require_authentication && s.mode != security::SecurityMode::Development
         });
-        // Capture an Arc to the request handlers BEFORE shared_services
-        // is moved into MultiServer below. The async-ingest drainer
-        // needs it as the production DrainerInsertSink target via the
-        // BulkLoadDrainerSink wrapper.
-        let handlers_for_drainer = shared_services.request_handlers.clone();
+        // Capture the drainer's record + vector services BEFORE shared_services
+        // is moved into MultiServer below. The async-ingest drainer needs them
+        // as the production DrainerInsertSink target via the BulkLoadDrainerSink
+        // wrapper (TD-104 S3-e: passed directly, no root UnifiedHandlers handle).
+        let record_ops_for_drainer = shared_services.record_ops.clone();
+        let vector_ops_for_drainer = shared_services.vector_operations_service.clone();
         // Capture the catalog_manager Arc the same way — the drainer
         // needs it to construct CanonicalPrecisionResolver so per-payload
         // canonical_embedding_precision lookup populates
@@ -620,7 +619,8 @@ impl ProximaDB {
             Some(
                 spawn_embedding_drainer_from_resolved(
                     qc.clone(),
-                    handlers_for_drainer,
+                    record_ops_for_drainer,
+                    vector_ops_for_drainer,
                     catalog_manager_for_drainer,
                     rq,
                     default_storage_root,
@@ -1268,7 +1268,8 @@ async fn open_queue_client_from_resolved(
 /// into a `Vec<u32>`.
 async fn spawn_embedding_drainer_from_resolved(
     queue: Arc<proximadb_queue::QueueClient>,
-    handlers: Arc<crate::api_handlers::request_handlers::UnifiedHandlers>,
+    record_ops: Arc<dyn proximadb_runtime::RecordOpsPort>,
+    vector_operations_service: Arc<crate::services::VectorOperationsService>,
     catalog_manager: Arc<crate::catalog::CatalogManager>,
     rq: &core::config::ResolvedQueueConfig,
     default_storage_root: String,
@@ -1277,8 +1278,8 @@ async fn spawn_embedding_drainer_from_resolved(
     tokio::sync::oneshot::Sender<()>,
 )> {
     let bulk_loader = Arc::new(crate::services::bulk_load::BulkLoader::new(
-        handlers.record_ops() as Arc<dyn proximadb_runtime::RecordOpsPort>,
-        handlers.vector_operations_service.clone(),
+        record_ops,
+        vector_operations_service,
         default_storage_root,
     ));
     let sink: Arc<dyn crate::services::DrainerInsertSink> = Arc::new(
@@ -1379,7 +1380,8 @@ async fn open_queue_client_if_configured()
 #[allow(dead_code)]
 async fn spawn_embedding_drainer(
     queue: Arc<proximadb_queue::QueueClient>,
-    handlers: Arc<crate::api_handlers::request_handlers::UnifiedHandlers>,
+    record_ops: Arc<dyn proximadb_runtime::RecordOpsPort>,
+    vector_operations_service: Arc<crate::services::VectorOperationsService>,
 ) -> anyhow::Result<(
     tokio::task::JoinHandle<()>,
     tokio::sync::oneshot::Sender<()>,
@@ -1388,8 +1390,8 @@ async fn spawn_embedding_drainer(
     // the canonical storage_locations URL instead of this hard default.
     let default_storage_root = "file:///tmp/proximadb".to_string();
     let bulk_loader = Arc::new(crate::services::bulk_load::BulkLoader::new(
-        handlers.record_ops() as Arc<dyn proximadb_runtime::RecordOpsPort>,
-        handlers.vector_operations_service.clone(),
+        record_ops,
+        vector_operations_service,
         default_storage_root,
     ));
     let sink: Arc<dyn crate::services::DrainerInsertSink> = Arc::new(
