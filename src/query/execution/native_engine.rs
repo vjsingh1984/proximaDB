@@ -15,8 +15,6 @@
 //!
 //! Phase 2+: FilterProjectOperator + pipeline execution + LogicalNode lowering.
 
-use std::sync::Arc;
-
 use crate::query::execution::engine::{
     ExecutionError, ExecutionPipelineResult, ExecutionStreamResult, QueryExecutionContext,
 };
@@ -60,11 +58,19 @@ pub async fn try_vectorized_stream(
 // ---------------------------------------------------------------------------
 // Arrow → RelationalRow conversion (Phase 1 — the output bridge)
 // ---------------------------------------------------------------------------
+// These are the native vectorized engine's output bridge. Their only prod
+// caller is Phase 2's `try_vectorized` wire (ADR-054 Phase 2, TD-OLAP-10),
+// which lowers a `PhysicalPlan` → native `Pipeline` → Arrow `RecordBatch`es
+// and then calls `record_batches_to_pipeline_result`. Until Phase 2 lands the
+// wire, the functions are exercised by the unit tests below but have no prod
+// caller — hence the targeted `#[allow(dead_code)]` (sanctioned by the
+// rust-clippy job comment for phased landings). Phase 2 removes these allows.
 
 /// Convert Arrow RecordBatches → ExecutionPipelineResult.
 /// Self-contained (zero DataFusion dependency). Mirrors the DataFusion adapter's
 /// private `record_batches_to_pipeline_result` but lives here so the native
 /// engine doesn't depend on the adapter.
+#[allow(dead_code)]
 pub(crate) fn record_batches_to_pipeline_result(
     arrow_schema: &arrow::datatypes::Schema,
     batches: &[arrow_array::RecordBatch],
