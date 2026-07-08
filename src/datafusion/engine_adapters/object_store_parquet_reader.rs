@@ -30,6 +30,7 @@ use object_store::ObjectStoreExt;
 use object_store::path::Path;
 use parquet::arrow::ProjectionMask;
 use parquet::arrow::async_reader::{ParquetObjectReader, ParquetRecordBatchStreamBuilder};
+use parquet::bloom_filter::Sbbf;
 use parquet::file::metadata::ParquetMetaData;
 use parquet::file::statistics::Statistics as ParquetStatistics;
 use proximadb_bloom::{BloomFilterBuilder, BloomFilterStrategy, CoreBloomFilterConfig};
@@ -164,6 +165,13 @@ struct InlistBloom {
     filter: Box<dyn BloomFilterStrategy>,
 }
 
+/// Native Parquet row-group bloom filter for one join-key column.
+#[derive(Debug)]
+struct RowGroupBloom {
+    family: KeyFamily,
+    filter: Sbbf,
+}
+
 /// Cap on distinct keys cached per split. Above it a split is not bloom-pruned
 /// (cached as `None`): the memory no longer pays off and a very large key set
 /// prunes with low probability anyway. min/max zone-maps still apply.
@@ -180,12 +188,18 @@ const INLIST_BLOOM_BITS_PER_KEY: u32 = 20;
 /// retrying.
 type SplitKeyCache = HashMap<(String, usize, String), Option<Arc<SplitKeys>>>;
 
+/// Lazily-read native Parquet row-group bloom filters keyed by
+/// (file_path, row_group_index, column). `None` records an absent/unreadable
+/// bloom filter and allows the older key-column fallback.
+type RowGroupBloomCache = HashMap<(String, usize, String), Option<Arc<RowGroupBloom>>>;
+
 /// Read-only view handed to the (synchronous) split-pruning pass once the async
 /// prefetch has populated the split-key cache: the per-column in-list blooms
 /// built from this query's predicates, plus the cached split key sets.
 struct BloomPruneView<'a> {
     min_keys: usize,
     inlist_blooms: &'a HashMap<String, InlistBloom>,
+    row_group_blooms: &'a RowGroupBloomCache,
     split_keys: &'a SplitKeyCache,
 }
 
@@ -317,6 +331,23 @@ fn bloom_prunes_split(inlist: &InlistBloom, split_keys: &SplitKeys) -> bool {
         .keys
         .iter()
         .all(|k| !inlist.filter.might_contain(k))
+}
+
+/// Prune using a native Parquet row-group bloom iff every probe-side in-list
+/// key is definitely absent from the split's persisted key bloom. This is
+/// false-negative-free: an unsupported value or a bloom hit keeps the split.
+fn parquet_bloom_prunes_split(row_group_bloom: &RowGroupBloom, values: &[ScalarValue]) -> bool {
+    let mut checked_any = false;
+    for value in values {
+        let Some(bytes) = probe_key_bytes(row_group_bloom.family, value) else {
+            return false;
+        };
+        checked_any = true;
+        if row_group_bloom.filter.check(&bytes) {
+            return false;
+        }
+    }
+    checked_any
 }
 
 fn row_group_index(split: &FileSplit) -> Option<usize> {
@@ -477,6 +508,10 @@ pub struct ObjectStoreParquetTable {
     /// TD-OLAP-3: lazily-built, cached per-split join-key sets for the high-NDV
     /// in-list semi-join case (see `prepare_split_keys`).
     split_key_cache: Arc<Mutex<SplitKeyCache>>,
+    /// Native Parquet row-group bloom filters, preferred over query-time
+    /// key-column materialization because they let pruning happen from metadata
+    /// without reading the data column first.
+    row_group_bloom_cache: Arc<Mutex<RowGroupBloomCache>>,
 }
 
 impl ObjectStoreParquetTable {
@@ -571,6 +606,7 @@ impl ObjectStoreParquetTable {
             location,
             table_name: None,
             split_key_cache: Arc::new(Mutex::new(HashMap::new())),
+            row_group_bloom_cache: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -643,13 +679,19 @@ impl ObjectStoreParquetTable {
         let guard = if inlist_blooms.is_empty() {
             None
         } else {
-            self.split_key_cache.lock().ok()
+            self.split_key_cache
+                .lock()
+                .ok()
+                .zip(self.row_group_bloom_cache.lock().ok())
         };
-        let view = guard.as_ref().map(|split_keys| BloomPruneView {
-            min_keys: cfg.min_keys,
-            inlist_blooms: &inlist_blooms,
-            split_keys,
-        });
+        let view = guard
+            .as_ref()
+            .map(|(split_keys, row_group_blooms)| BloomPruneView {
+                min_keys: cfg.min_keys,
+                inlist_blooms: &inlist_blooms,
+                row_group_blooms,
+                split_keys,
+            });
         self.splits
             .iter()
             .filter(|split| {
@@ -698,10 +740,11 @@ impl ObjectStoreParquetTable {
     }
 
     /// TD-OLAP-3 bloom semi-join prefetch: for high-NDV positive in-lists whose
-    /// min/max zone-maps fail to prune a split, materialize that split's distinct
-    /// join-key set via a projected read of just that column and cache it. Splits
-    /// the zone-map already prunes are skipped, so the key-column read is paid
-    /// only where the bloom can actually help.
+    /// min/max zone-maps fail to prune a split, prefer native Parquet row-group
+    /// blooms; only files without those blooms fall back to materializing that
+    /// split's distinct join-key set via a projected read of just that column.
+    /// Splits the zone-map already prunes are skipped, so extra metadata/key
+    /// reads are paid only where the bloom can actually help.
     async fn prepare_split_keys(&self, filters: &[Expr], cfg: SemijoinConfig) {
         if !cfg.enabled {
             return;
@@ -713,6 +756,8 @@ impl ObjectStoreParquetTable {
         if inlists.is_empty() {
             return;
         }
+
+        let mut missing_native: HashMap<(String, String), Vec<usize>> = HashMap::new();
         for split in &self.splits {
             let Some(rg) = row_group_index(split) else {
                 continue;
@@ -723,6 +768,53 @@ impl ObjectStoreParquetTable {
                     continue;
                 }
                 let key = (split.file_path.clone(), rg, column.clone());
+                let known = self
+                    .row_group_bloom_cache
+                    .lock()
+                    .ok()
+                    .map(|cache| cache.contains_key(&key))
+                    .unwrap_or(true);
+                if !known {
+                    missing_native
+                        .entry((split.file_path.clone(), column.clone()))
+                        .or_default()
+                        .push(rg);
+                }
+            }
+        }
+
+        for ((file_path, column), mut row_groups) in missing_native {
+            row_groups.sort_unstable();
+            row_groups.dedup();
+            let blooms = self
+                .read_row_group_blooms(&file_path, &column, &row_groups)
+                .await;
+            if let Ok(mut cache) = self.row_group_bloom_cache.lock() {
+                for (rg, bloom) in blooms {
+                    cache.insert((file_path.clone(), rg, column.clone()), bloom);
+                }
+            }
+        }
+
+        for split in &self.splits {
+            let Some(rg) = row_group_index(split) else {
+                continue;
+            };
+            for (column, values) in &inlists {
+                if split.can_prune_scalar(column, &ScalarPredicate::In(values.clone())) {
+                    continue;
+                }
+                let key = (split.file_path.clone(), rg, column.clone());
+                let has_native = self
+                    .row_group_bloom_cache
+                    .lock()
+                    .ok()
+                    .and_then(|cache| cache.get(&key).cloned())
+                    .flatten()
+                    .is_some();
+                if has_native {
+                    continue;
+                }
                 let already = self
                     .split_key_cache
                     .lock()
@@ -737,6 +829,41 @@ impl ObjectStoreParquetTable {
                 }
             }
         }
+    }
+
+    /// Read native Parquet row-group bloom filters for one join-key column.
+    /// This is the preferred semi-join pruning substrate: the bloom lives in
+    /// row-group metadata, so the scan can skip a data row group without first
+    /// materializing its key column.
+    async fn read_row_group_blooms(
+        &self,
+        file_path: &str,
+        column: &str,
+        row_groups: &[usize],
+    ) -> Vec<(usize, Option<Arc<RowGroupBloom>>)> {
+        let Some(field_index) = self.schema.index_of(column).ok() else {
+            return row_groups.iter().map(|&rg| (rg, None)).collect();
+        };
+        let Some(family) = column_key_family(self.schema.field(field_index).data_type()) else {
+            return row_groups.iter().map(|&rg| (rg, None)).collect();
+        };
+        let path = Path::from(file_path);
+        let file_size = self.file_sizes.get(file_path).copied();
+        let reader = parquet_reader(self.store.clone(), path, file_size);
+        let Ok(mut stream_builder) = ParquetRecordBatchStreamBuilder::new(reader).await else {
+            return row_groups.iter().map(|&rg| (rg, None)).collect();
+        };
+        let mut out = Vec::with_capacity(row_groups.len());
+        for &rg_index in row_groups {
+            let bloom = stream_builder
+                .get_row_group_column_bloom_filter(rg_index, field_index)
+                .await
+                .ok()
+                .flatten()
+                .map(|filter| Arc::new(RowGroupBloom { family, filter }));
+            out.push((rg_index, bloom));
+        }
+        out
     }
 
     /// Materialize the distinct key bytes of one join-key column of one row group
@@ -992,13 +1119,16 @@ fn filter_prunes_split(split: &FileSplit, expr: &Expr, view: Option<&BloomPruneV
             // *none* can be present; the FilterExec above re-checks exactly.
             if let Some(view) = view
                 && values.len() >= view.min_keys
-                && let Some(inlist) = view.inlist_blooms.get(&column)
-                && let Some(rg) = row_group_index(split)
-                && let Some(Some(split_keys)) =
-                    view.split_keys
-                        .get(&(split.file_path.clone(), rg, column.clone()))
+                && let (Some(inlist), Some(rg)) =
+                    (view.inlist_blooms.get(&column), row_group_index(split))
             {
-                return bloom_prunes_split(inlist, split_keys);
+                let key = (split.file_path.clone(), rg, column.clone());
+                if let Some(Some(row_group_bloom)) = view.row_group_blooms.get(&key) {
+                    return parquet_bloom_prunes_split(row_group_bloom, &values);
+                }
+                if let Some(Some(split_keys)) = view.split_keys.get(&key) {
+                    return bloom_prunes_split(inlist, split_keys);
+                }
             }
             false
         }
@@ -1095,6 +1225,7 @@ mod tests {
     use datafusion::logical_expr::BinaryExpr;
     use parquet::arrow::ArrowWriter;
     use parquet::file::properties::WriterProperties;
+    use parquet::schema::types::ColumnPath;
 
     fn write_two_row_group_parquet(path: &std::path::Path) -> SchemaRef {
         let schema = Arc::new(Schema::new(vec![
@@ -1538,8 +1669,13 @@ mod tests {
             fields.push(Field::new(format!("p{j}"), DataType::Float64, false));
         }
         let schema = Arc::new(Schema::new(fields));
+        let props = WriterProperties::builder()
+            .set_column_bloom_filter_enabled(ColumnPath::from("k"), true)
+            .set_column_bloom_filter_fpp(ColumnPath::from("k"), 0.000_001)
+            .set_column_bloom_filter_ndv(ColumnPath::from("k"), 256)
+            .build();
         let file = std::fs::File::create(path).unwrap();
-        let mut writer = ArrowWriter::try_new(file, schema.clone(), None).unwrap();
+        let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props)).unwrap();
         for (gi, ks) in groups.iter().enumerate() {
             let n = ks.len();
             let mut cols: Vec<arrow_array::ArrayRef> = vec![Arc::new(Int64Array::from(ks.clone()))];
@@ -1557,6 +1693,53 @@ mod tests {
         }
         writer.close().unwrap();
         schema
+    }
+
+    /// Native Parquet row-group blooms are the profitable path: they let the
+    /// scan decide whether a row group can match without first reading the key
+    /// column from that same row group. The older key-column fallback remains
+    /// for files that do not carry native blooms, but must not run when native
+    /// blooms are available.
+    #[tokio::test]
+    async fn bloom_semijoin_prefers_native_parquet_bloom_over_key_scan() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        let rg0: Vec<i64> = (0..300).map(|i| 1 + 2 * (i % 100)).collect();
+        let rg1: Vec<i64> = (0..300).map(|i| 1000 + (i % 100)).collect();
+        let rg2: Vec<i64> = (0..300).map(|i| 2 + 2 * (i % 10)).collect();
+        write_wide_fact_parquet(&data_dir.join("part-0.parquet"), &[rg0, rg1, rg2]);
+
+        let location = format!("file://{}", tmp.path().display());
+        let table = ObjectStoreParquetTable::open(&location).await.unwrap();
+        let evens: Vec<i64> = (2..=300).step_by(2).collect();
+        let filters = vec![in_list_i64("k", &evens)];
+        let cfg = SemijoinConfig {
+            enabled: true,
+            min_keys: 4,
+        };
+
+        table.prepare_split_keys(&filters, cfg).await;
+        let survivors = table.prune_splits(&filters, cfg);
+        assert_eq!(
+            survivors.len(),
+            1,
+            "native row-group bloom prunes rg0; min/max prunes rg1; rg2 survives"
+        );
+        assert_eq!(row_group_index(&survivors[0]), Some(2));
+        assert!(
+            table
+                .row_group_bloom_cache
+                .lock()
+                .unwrap()
+                .values()
+                .any(|entry| entry.is_some()),
+            "native Parquet row-group blooms were read"
+        );
+        assert!(
+            table.split_key_cache.lock().unwrap().is_empty(),
+            "native blooms must avoid query-time key-column materialization"
+        );
     }
 
     /// TD-OLAP-4 evidence: on a high-NDV `IN`-list semi-join, the bloom prunes a
