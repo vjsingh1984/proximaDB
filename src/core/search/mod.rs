@@ -30,7 +30,6 @@ pub mod rank;
 pub mod search_interface;
 pub mod smart_execution_strategy;
 pub mod strategies;
-pub mod typesafe_filter;
 
 #[cfg(test)]
 mod early_termination_tests;
