@@ -4388,6 +4388,23 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
             .unwrap_or(TableRecordMutationKind::Insert);
         let object_path = object_store_pax_segment_path(schema, kind, _tenant_context);
         let local_path = temp_pax_segment_path(schema, kind);
+        // P-Shred (ADR-055): resolve the shred-list from the catalog's props-auto-promotion
+        // policy — each promoted prop key maps to a typed user-column (by name → id). Sorted by
+        // column id for deterministic stripe layout. Empty ⇒ no shredding (byte-for-byte today's
+        // output). The msgpack PROPS tail stays authoritative; these columns are a pruning index.
+        let mut shred_spec: Vec<(String, i32)> = schema
+            .props_auto_promotion
+            .promoted_keys
+            .iter()
+            .filter_map(|(prop_key, col_name)| {
+                schema
+                    .columns
+                    .iter()
+                    .find(|c| &c.name == col_name)
+                    .map(|c| (prop_key.clone(), c.id))
+            })
+            .collect();
+        shred_spec.sort_by_key(|(_, id)| *id);
         let mut writer = PaxSegmentWriter::new(
             &local_path,
             BlockMode::Pax,
@@ -4396,7 +4413,8 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
             0,
             embedding_count_for_records(&records),
             None,
-        );
+        )
+        .with_shred_spec(shred_spec);
         for record in &records {
             writer.add_record(record).map_err(|err| {
                 anyhow!(
