@@ -536,9 +536,10 @@ impl DdlService {
 
     /// Execute a DDL statement within a tenant scope (TD-064). The tenant
     /// scopes table-targeting DDL (CREATE/DROP/ALTER TABLE, CREATE/DROP INDEX)
-    /// onto the same tenant-prefixed catalog namespace the DML path resolves, so
-    /// a tenant's CREATE-then-INSERT address one schema row. `None` ⇒
-    /// single-tenant, identical to the legacy path.
+    /// and explicit namespace creation onto the same tenant-prefixed catalog
+    /// namespace the DML path resolves, so a tenant's CREATE-then-INSERT
+    /// address one schema row. `None` ⇒ single-tenant, identical to the legacy
+    /// path.
     pub async fn execute_scoped(
         &self,
         statement: DdlStatement,
@@ -613,14 +614,17 @@ impl DdlService {
                 if_not_exists,
                 properties,
             } => {
-                self.create_namespace(&namespace, if_not_exists, properties)
+                self.create_namespace(&namespace, if_not_exists, properties, tenant)
                     .await
             }
             DdlStatement::DropNamespace {
                 namespace,
                 if_exists,
                 cascade,
-            } => self.drop_namespace(&namespace, if_exists, cascade).await,
+            } => {
+                self.drop_namespace(&namespace, if_exists, cascade, tenant)
+                    .await
+            }
             DdlStatement::CreateCollection {
                 collection_name,
                 dimension,
@@ -1060,18 +1064,40 @@ impl DdlService {
     // Namespace Operations
     // ========================
 
+    fn tenant_scoped_namespace(namespace: &[String], tenant: Option<&str>) -> Result<Vec<String>> {
+        let Some(tenant) = tenant.filter(|tenant| !tenant.is_empty()) else {
+            return Ok(namespace.to_vec());
+        };
+        if tenant.starts_with('_') {
+            anyhow::bail!(
+                "tenant '{tenant}' is invalid: tenant identifiers must not begin with '_' \
+                 (reserved for system/control-plane catalog subtrees)"
+            );
+        }
+        if namespace.first().is_some_and(|segment| segment == tenant) {
+            return Ok(namespace.to_vec());
+        }
+
+        let mut scoped = Vec::with_capacity(namespace.len() + 1);
+        scoped.push(tenant.to_string());
+        scoped.extend(namespace.iter().cloned());
+        Ok(scoped)
+    }
+
     /// Create a new namespace (schema grouping) in the default catalog.
     async fn create_namespace(
         &self,
         namespace: &[String],
         if_not_exists: bool,
         properties: HashMap<String, String>,
+        tenant: Option<&str>,
     ) -> Result<DdlResult> {
         let catalog = self.catalog_manager.default_catalog().await?;
+        let namespace = Self::tenant_scoped_namespace(namespace, tenant)?;
         let ns_name = namespace.join(".");
 
         // Check if namespace exists
-        if catalog.namespace_exists(namespace).await? {
+        if catalog.namespace_exists(&namespace).await? {
             if if_not_exists {
                 return Ok(DdlResult::already_exists("Namespace", &ns_name));
             } else {
@@ -1079,8 +1105,20 @@ impl DdlService {
             }
         }
 
-        // Create the namespace
-        catalog.create_namespace(namespace, properties).await?;
+        // Create the namespace. In a tenant-scoped request, persist the owning
+        // tenant so downstream DrPathBuilder users can fail closed on
+        // cross-tenant materialize/read paths instead of treating the namespace
+        // as legacy/unowned.
+        match tenant {
+            Some(tenant) if !tenant.is_empty() => {
+                catalog
+                    .create_namespace_for_tenant(&namespace, properties, Some(tenant))
+                    .await?;
+            }
+            _ => {
+                catalog.create_namespace(&namespace, properties).await?;
+            }
+        }
 
         info!(namespace = %ns_name, "Created namespace");
         Ok(DdlResult::success(format!(
@@ -1095,12 +1133,14 @@ impl DdlService {
         namespace: &[String],
         if_exists: bool,
         cascade: bool,
+        tenant: Option<&str>,
     ) -> Result<DdlResult> {
         let catalog = self.catalog_manager.default_catalog().await?;
+        let namespace = Self::tenant_scoped_namespace(namespace, tenant)?;
         let ns_name = namespace.join(".");
 
         // Check if namespace exists
-        if !catalog.namespace_exists(namespace).await? {
+        if !catalog.namespace_exists(&namespace).await? {
             if if_exists {
                 return Ok(DdlResult::not_found("Namespace", &ns_name));
             } else {
@@ -1109,7 +1149,7 @@ impl DdlService {
         }
 
         // Drop the namespace
-        catalog.drop_namespace(namespace, cascade).await?;
+        catalog.drop_namespace(&namespace, cascade).await?;
 
         info!(namespace = %ns_name, cascade = cascade, "Dropped namespace");
         Ok(DdlResult::success(format!(
@@ -2361,6 +2401,80 @@ mod tests {
             indexes
                 .iter()
                 .any(|index| index.index_type == CatalogIndexType::Hnsw)
+        );
+    }
+
+    #[tokio::test]
+    async fn scoped_create_namespace_records_owning_tenant() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute_scoped(
+            DdlStatement::CreateNamespace {
+                namespace: vec!["analytics".to_string()],
+                if_not_exists: false,
+                properties: HashMap::new(),
+            },
+            Some("acmecorp"),
+        )
+        .await
+        .expect("tenant-scoped create namespace");
+
+        let catalog = manager.default_catalog().await.expect("default catalog");
+        let ns = catalog
+            .get_namespace(&["acmecorp".to_string(), "analytics".to_string()])
+            .await
+            .expect("get tenant-scoped namespace");
+
+        assert_eq!(ns.tenant_id.as_deref(), Some("acmecorp"));
+        assert!(ns.namespace_id.is_some());
+        assert!(ns.is_dr_addressable(), "namespace must be DR-addressable");
+    }
+
+    #[tokio::test]
+    async fn scoped_drop_namespace_uses_tenant_prefixed_namespace() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute_scoped(
+            DdlStatement::CreateNamespace {
+                namespace: vec!["analytics".to_string()],
+                if_not_exists: false,
+                properties: HashMap::new(),
+            },
+            Some("acmecorp"),
+        )
+        .await
+        .expect("tenant-scoped create namespace");
+
+        ddl.execute_scoped(
+            DdlStatement::DropNamespace {
+                namespace: vec!["analytics".to_string()],
+                if_exists: false,
+                cascade: false,
+            },
+            Some("acmecorp"),
+        )
+        .await
+        .expect("tenant-scoped drop namespace");
+
+        let catalog = manager.default_catalog().await.expect("default catalog");
+        assert!(
+            !catalog
+                .namespace_exists(&["acmecorp".to_string(), "analytics".to_string()])
+                .await
+                .expect("namespace_exists"),
+            "tenant-scoped DROP NAMESPACE must remove the tenant-prefixed namespace"
         );
     }
 
