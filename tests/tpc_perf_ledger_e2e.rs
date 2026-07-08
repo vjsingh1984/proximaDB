@@ -32,7 +32,6 @@
 //! (`tests/tpch_pgwire_e2e.rs`, `tests/tpcds_pgwire_e2e.rs`) — the repo's
 //! integration tests are self-contained by convention; keep them in sync.
 
-use std::io::Write;
 use std::net::TcpListener;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -814,18 +813,55 @@ fn run_duckdb_baseline(
         return;
     };
     let db_path = tmp.path().join(format!("{benchmark}.duckdb"));
-    let Ok(mut load) = Command::new(&duckdb)
-        .arg(&db_path)
-        .stdin(Stdio::piped())
-        .spawn()
-    else {
-        eprintln!("[{benchmark}] · DuckDB spawn failed");
+
+    // Write loader SQL to a file (more reliable than stdin pipe — the pipe can
+    // close before DuckDB finishes reading, silently truncating the load).
+    let loader_path = tmp.path().join("loader.sql");
+    if std::fs::write(&loader_path, &loader).is_err() {
+        eprintln!("[{benchmark}] · DuckDB loader write failed");
         return;
-    };
-    if let Some(mut stdin) = load.stdin.take() {
-        let _ = stdin.write_all(loader.as_bytes());
     }
-    let _ = load.wait();
+
+    // Load: `duckdb db.duckdb < loader.sql` (stdin redirected from the file).
+    let loader_file = match std::fs::File::open(&loader_path) {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+    let load_output = Command::new(&duckdb)
+        .arg(&db_path)
+        .stdin(Stdio::from(loader_file))
+        .output();
+    if let Ok(o) = &load_output {
+        if !o.status.success() {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            eprintln!(
+                "[{benchmark}] · DuckDB load FAILED: {}",
+                stderr.lines().next().unwrap_or("?")
+            );
+            return; // don't run queries against a failed load
+        }
+    }
+
+    // Verify: confirm data actually loaded (COUNT on the first table).
+    let first_table = schema[0].0;
+    let verify = Command::new(&duckdb)
+        .arg("-csv")
+        .arg(&db_path)
+        .arg("-c")
+        .arg(format!("SELECT count(*) FROM {first_table}"))
+        .output();
+    let row_count = verify
+        .as_ref()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .find(|l| l.trim().chars().all(|c| c.is_ascii_digit()))
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_else(|| "??".to_string());
+    eprintln!("[{benchmark}] · DuckDB loaded: {row_count} rows in {first_table}");
 
     // Per query: time the CLI round-trip. Rows aren't parsed (DuckDB CLI output
     // shape varies); the comparison signal is wall_ms, recorded honestly with
