@@ -38,6 +38,32 @@ use proximadb_proto::proximadb_v1::SqlValue;
 use proximadb_proto::proximadb_v1::sql_value::Value as SqlVal;
 use proximadb_records::{ProximaTree, ProximaTreeNode};
 
+/// Fail-loud error from the strict v2 metadata-filter evaluators (TD-FILT-1). The legacy
+/// [`evaluate_filter_resolved`] silently folds an unresolved field into `false` (dropping the row);
+/// the strict variants surface it so a caller can reject the result instead of accepting a silently
+/// wrong set. v2-canonical: this lives on the `ProximaValue`/`ProximaTree` seam (ADR-024), not the
+/// deprecated v1 `MetadataValue` path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FilterEvalError {
+    /// A value comparison referenced a field the resolver could not lower to a comparable value —
+    /// either absent from the record, or a non-scalar leaf. (`IsNull`/`IsNotNull` are NOT errors:
+    /// field absence is their domain, per SQL semantics.)
+    MissingField { field: String },
+}
+
+impl std::fmt::Display for FilterEvalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FilterEvalError::MissingField { field } => write!(
+                f,
+                "filter field {field:?} could not be resolved to a comparable value (absent or non-scalar leaf)"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for FilterEvalError {}
+
 /// Evaluate a filter expression against proto `SqlValue` (wire-format) metadata.
 ///
 /// Thin adapter over the canonical [`evaluate_filter_resolved`] seam: each field's
@@ -342,6 +368,69 @@ where
     }
 }
 
+/// Fail-loud variant of [`evaluate_filter_resolved`] (TD-FILT-1, v2-canonical). Returns
+/// `Err(MissingField)` for a value comparison whose field the resolver cannot lower (absent or a
+/// non-scalar leaf), instead of silently returning `false`. `IsNull`/`IsNotNull` keep SQL absence
+/// semantics (`Ok`, never an error). The comparison layer is unchanged (it total-orders by JSON
+/// type precedence, so there is no per-comparison type mismatch to surface on this path).
+///
+/// Callers wanting ADR-043 fail-loud semantics migrate here; the legacy `evaluate_filter*` stay the
+/// silent default until call-sites are migrated slice-by-slice (default-off / behavior-preserving).
+pub fn evaluate_filter_resolved_strict<F>(
+    expr: &FilterExpression,
+    resolve: &F,
+) -> Result<bool, FilterEvalError>
+where
+    F: Fn(&str) -> Option<serde_json::Value>,
+{
+    match expr {
+        FilterExpression::And(exprs) => {
+            // Non-short-circuit: evaluate every child so a MissingField in a later arm surfaces
+            // (fail-loud) rather than being hidden by an earlier Ok(false).
+            let mut acc = true;
+            for e in exprs {
+                acc &= evaluate_filter_resolved_strict(e, resolve)?;
+            }
+            Ok(acc)
+        }
+        FilterExpression::Or(exprs) => {
+            let mut pending_err: Option<FilterEvalError> = None;
+            for e in exprs {
+                match evaluate_filter_resolved_strict(e, resolve) {
+                    Ok(true) => return Ok(true),
+                    Ok(false) => {}
+                    Err(e) => pending_err = pending_err.or(Some(e)),
+                }
+            }
+            // No arm was true; surface a deferred error if any arm failed (fail-loud), else false.
+            match pending_err {
+                Some(e) => Err(e),
+                None => Ok(false),
+            }
+        }
+        FilterExpression::Not(e) => Ok(!evaluate_filter_resolved_strict(e, resolve)?),
+        FilterExpression::Comparison {
+            field,
+            operator,
+            value,
+        } => match operator {
+            // Null tests are decided by presence (SQL: an absent field IS NULL) — never an error.
+            ComparisonOperator::IsNull => {
+                Ok(resolve(field).is_none_or(|json_val| json_val.is_null()))
+            }
+            ComparisonOperator::IsNotNull => {
+                Ok(resolve(field).is_some_and(|json_val| !json_val.is_null()))
+            }
+            _ => match resolve(field) {
+                Some(json_val) => Ok(compare_json_op(operator, &json_val, value)),
+                None => Err(FilterEvalError::MissingField {
+                    field: field.clone(),
+                }),
+            },
+        },
+    }
+}
+
 /// Evaluate a filter expression against a `ProximaTree` (canonical v2 path).
 ///
 /// Thin adapter over [`evaluate_filter_resolved`]: each field resolves to its
@@ -349,6 +438,19 @@ where
 /// absent fields resolve to `None`.
 pub fn evaluate_filter_proxima(expr: &FilterExpression, props: &ProximaTree) -> bool {
     evaluate_filter_resolved(expr, &|field| match props.get(field) {
+        Some(ProximaTreeNode::Value(pv)) => Some(proxima_value_to_json(pv)),
+        _ => None,
+    })
+}
+
+/// Fail-loud variant of [`evaluate_filter_proxima`] (TD-FILT-1) on the canonical `ProximaTree`
+/// path. Mirrors its resolver and surfaces an unresolved field (absent or a non-scalar leaf) as
+/// [`FilterEvalError::MissingField`] instead of silently dropping the row.
+pub fn evaluate_filter_proxima_strict(
+    expr: &FilterExpression,
+    props: &ProximaTree,
+) -> Result<bool, FilterEvalError> {
+    evaluate_filter_resolved_strict(expr, &|field| match props.get(field) {
         Some(ProximaTreeNode::Value(pv)) => Some(proxima_value_to_json(pv)),
         _ => None,
     })
@@ -729,5 +831,87 @@ mod tests {
             },
         ]);
         assert!(evaluate_filter(&filter, &metadata));
+    }
+
+    // ---- TD-FILT-1: evaluate_filter_proxima_strict (fail-loud, v2 ProximaValue path) ----
+
+    fn proxima_props_one(field: &str, pv: ProximaValue) -> ProximaTree {
+        let mut props = ProximaTree::new();
+        props.insert(field.to_string(), ProximaTreeNode::Value(pv));
+        props
+    }
+
+    #[test]
+    fn strict_clean_match_agrees_with_legacy() {
+        let props = proxima_props_one("tier", ProximaValue::Int64(2));
+        let filter = FilterExpression::Comparison {
+            field: "tier".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!(2),
+        };
+        assert_eq!(evaluate_filter_proxima(&filter, &props), true);
+        assert!(evaluate_filter_proxima_strict(&filter, &props).unwrap());
+    }
+
+    #[test]
+    fn strict_missing_field_surfaces_error_legacy_silently_drops() {
+        // No "tier" field in the (empty) props.
+        let props = ProximaTree::new();
+        let filter = FilterExpression::Comparison {
+            field: "tier".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!(2),
+        };
+        // The bug (TD-FILT-1): the legacy path silently drops the row (`None => false`).
+        assert!(
+            !evaluate_filter_proxima(&filter, &props),
+            "legacy evaluate_filter_proxima silently drops the unresolved-field row"
+        );
+        // The fix: strict surfaces it as a typed error.
+        assert_eq!(
+            evaluate_filter_proxima_strict(&filter, &props),
+            Err(FilterEvalError::MissingField {
+                field: "tier".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn strict_isnull_on_missing_is_ok_not_error() {
+        // Absent field IS NULL (SQL semantics) — not a MissingField error.
+        let props = ProximaTree::new();
+        let filter = FilterExpression::Comparison {
+            field: "tier".to_string(),
+            operator: ComparisonOperator::IsNull,
+            value: json!(null),
+        };
+        assert!(evaluate_filter_proxima_strict(&filter, &props).unwrap());
+    }
+
+    #[test]
+    fn strict_and_surfaces_missing_field_even_when_an_earlier_arm_is_false() {
+        // arm1 (a==2) is false (a is 1); arm2 references a missing field. Non-short-circuit strict
+        // must surface the MissingField rather than hide it behind arm1's Ok(false).
+        let mut props = ProximaTree::new();
+        props.insert(
+            "a".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Int64(1)),
+        );
+        let filter = FilterExpression::And(vec![
+            FilterExpression::Comparison {
+                field: "a".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: json!(2),
+            },
+            FilterExpression::Comparison {
+                field: "missing".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: json!(1),
+            },
+        ]);
+        assert!(matches!(
+            evaluate_filter_proxima_strict(&filter, &props),
+            Err(FilterEvalError::MissingField { .. })
+        ));
     }
 }
