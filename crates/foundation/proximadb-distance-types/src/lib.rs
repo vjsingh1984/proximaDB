@@ -18,7 +18,7 @@
 //!
 //! ## Migration
 //!
-//! If you're using legacy distance types (`CompactDistanceMetric`, `DuckDBDistanceMetric`, etc.),
+//! If you're using legacy distance types (`DuckDBDistanceMetric`, etc.),
 //! migrate to this crate's types using the provided conversion traits.
 //!
 //! ```rust
@@ -46,7 +46,6 @@ use std::str::FromStr;
 /// ## Migration Notes
 ///
 /// Legacy type mappings:
-/// - `CompactDistanceMetric::Euclidean` → `DistanceMetric::L2`
 /// - `DistanceMetric::Euclidean` → `DistanceMetric::L2`
 /// - `DistanceMetric::DotProduct` → `DistanceMetric::InnerProduct`
 /// - `DistanceMetric::Manhattan` → `DistanceMetric::L1`
@@ -367,84 +366,6 @@ mod tests {
     #[test]
     fn test_distance_mode_default() {
         assert_eq!(DistanceMode::default(), DistanceMode::Exact);
-    }
-
-    #[test]
-    fn test_legacy_compact_distance_metric_conversion() {
-        // Legacy -> New
-        assert_eq!(
-            DistanceMetric::from(CompactDistanceMetric::Euclidean),
-            DistanceMetric::L2
-        );
-        assert_eq!(
-            DistanceMetric::from(CompactDistanceMetric::Cosine),
-            DistanceMetric::Cosine
-        );
-        assert_eq!(
-            DistanceMetric::from(CompactDistanceMetric::DotProduct),
-            DistanceMetric::InnerProduct
-        );
-        assert_eq!(
-            DistanceMetric::from(CompactDistanceMetric::Manhattan),
-            DistanceMetric::L1
-        );
-
-        // New -> Legacy
-        assert_eq!(
-            CompactDistanceMetric::from(DistanceMetric::L2),
-            CompactDistanceMetric::Euclidean
-        );
-        assert_eq!(
-            CompactDistanceMetric::from(DistanceMetric::Cosine),
-            CompactDistanceMetric::Cosine
-        );
-        assert_eq!(
-            CompactDistanceMetric::from(DistanceMetric::InnerProduct),
-            CompactDistanceMetric::DotProduct
-        );
-        assert_eq!(
-            CompactDistanceMetric::from(DistanceMetric::L1),
-            CompactDistanceMetric::Manhattan
-        );
-    }
-
-    #[test]
-    fn test_legacy_network_distance_metric_conversion() {
-        // Legacy -> New
-        assert_eq!(
-            DistanceMetric::from(NetworkDistanceMetric::Euclidean),
-            DistanceMetric::L2
-        );
-        assert_eq!(
-            DistanceMetric::from(NetworkDistanceMetric::Cosine),
-            DistanceMetric::Cosine
-        );
-        assert_eq!(
-            DistanceMetric::from(NetworkDistanceMetric::DotProduct),
-            DistanceMetric::InnerProduct
-        );
-        assert_eq!(
-            DistanceMetric::from(NetworkDistanceMetric::Manhattan),
-            DistanceMetric::L1
-        );
-
-        // New -> Legacy
-        assert_eq!(
-            NetworkDistanceMetric::from(DistanceMetric::L2),
-            NetworkDistanceMetric::Euclidean
-        );
-        assert_eq!(
-            NetworkDistanceMetric::from(DistanceMetric::Cosine),
-            NetworkDistanceMetric::Cosine
-        );
-        assert_eq!(
-            NetworkDistanceMetric::from(DistanceMetric::InnerProduct),
-            NetworkDistanceMetric::DotProduct
-        );
-        assert_eq!(
-            NetworkDistanceMetric::from(DistanceMetric::L1),
-            NetworkDistanceMetric::Manhattan
-        );
     }
 
     #[test]
