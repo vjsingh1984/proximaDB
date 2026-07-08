@@ -63,7 +63,6 @@ use std::time::Instant;
 use tonic::{Request, Response, Status};
 use tracing::{debug, error, info, warn};
 
-use crate::api_handlers::UnifiedHandlers;
 use crate::graph::canonical::{
     ErrorCode as CanonicalErrorCode, TraversalStats as CanonicalTraversalStats,
 };
@@ -402,28 +401,36 @@ fn create_query_response_for_edges(
 
 /// gRPC implementation of GraphService
 pub struct GraphServiceImpl {
-    request_handlers: Arc<UnifiedHandlers>,
+    /// Graph operations service (held directly, TD-104 S3-d: peeled off ROOT).
+    graph_operations_service: Arc<crate::graph::GraphOperationsService>,
+    /// API handlers port (for execute_hybrid_query — TD-104 S3-d).
+    api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort>,
     /// Query facade adapter for unified query execution (optional for backward compatibility)
     query_adapter: Option<Arc<QueryFacadeAdapter>>,
 }
 
 impl GraphServiceImpl {
     /// Create new GraphServiceImpl
-    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
+    pub fn new(
+        graph_operations_service: Arc<crate::graph::GraphOperationsService>,
+        api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort>,
+    ) -> Self {
         Self {
-            request_handlers,
+            graph_operations_service,
+            api_handlers,
             query_adapter: None,
         }
     }
 
     /// Create new GraphServiceImpl with query facade adapter
-    #[allow(dead_code)]
     pub fn with_adapter(
-        request_handlers: Arc<UnifiedHandlers>,
+        graph_operations_service: Arc<crate::graph::GraphOperationsService>,
+        api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort>,
         query_adapter: Arc<QueryFacadeAdapter>,
     ) -> Self {
         Self {
-            request_handlers,
+            graph_operations_service,
+            api_handlers,
             query_adapter: Some(query_adapter),
         }
     }
@@ -452,7 +459,6 @@ impl GraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("Node is required"))?;
 
         match self
-            .request_handlers
             .graph_operations_service
             .create_node(&req.graph_id, node.into())
             .await
@@ -477,7 +483,6 @@ impl GraphServiceImpl {
         );
 
         match self
-            .request_handlers
             .graph_operations_service
             .get_node(&req.graph_id, &req.node_id)
             .await
@@ -516,7 +521,6 @@ impl GraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("Node is required"))?;
 
         match self
-            .request_handlers
             .graph_operations_service
             .update_node(&req.graph_id, node.into())
             .await
@@ -544,7 +548,6 @@ impl GraphServiceImpl {
         );
 
         match self
-            .request_handlers
             .graph_operations_service
             .delete_node(&req.graph_id, &req.node_id)
             .await
@@ -583,7 +586,6 @@ impl GraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("Edge is required"))?;
 
         match self
-            .request_handlers
             .graph_operations_service
             .create_edge(&req.graph_id, edge.into())
             .await
@@ -608,7 +610,6 @@ impl GraphServiceImpl {
         );
 
         match self
-            .request_handlers
             .graph_operations_service
             .get_edge(&req.graph_id, &req.edge_id)
             .await
@@ -647,7 +648,6 @@ impl GraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("Edge is required"))?;
 
         match self
-            .request_handlers
             .graph_operations_service
             .update_edge(&req.graph_id, edge.into())
             .await
@@ -675,7 +675,6 @@ impl GraphServiceImpl {
         );
 
         match self
-            .request_handlers
             .graph_operations_service
             .delete_edge(&req.graph_id, &req.edge_id)
             .await
@@ -718,7 +717,6 @@ impl GraphServiceImpl {
         }
 
         match self
-            .request_handlers
             .graph_operations_service
             .query_nodes(&query.graph_id, query.clone().into())
             .await
@@ -754,7 +752,6 @@ impl GraphServiceImpl {
         }
 
         match self
-            .request_handlers
             .graph_operations_service
             .query_edges(&query.graph_id, query.clone().into())
             .await
@@ -786,7 +783,6 @@ impl GraphServiceImpl {
         );
 
         match self
-            .request_handlers
             .graph_operations_service
             .get_neighbors(&req.graph_id, &req.node_id)
             .await
@@ -825,7 +821,6 @@ impl GraphServiceImpl {
         );
 
         match self
-            .request_handlers
             .graph_operations_service
             .traverse(&req.graph_id, req.clone().into())
             .await
@@ -878,7 +873,6 @@ impl GraphServiceImpl {
             .and_then(|s| s.parse::<usize>().ok());
 
         match self
-            .request_handlers
             .graph_operations_service
             .shortest_path(
                 &req.graph_id,
@@ -924,12 +918,7 @@ impl GraphServiceImpl {
         let req = request.into_inner();
         debug!("gRPC GetGraphStats request for graph: {}", req.graph_id);
 
-        match self
-            .request_handlers
-            .graph_operations_service
-            .get_stats(&req.graph_id)
-            .await
-        {
+        match self.graph_operations_service.get_stats(&req.graph_id).await {
             Ok(stats) => {
                 info!("Successfully retrieved graph statistics via gRPC");
                 Ok(Response::new(stats.into()))
@@ -954,7 +943,6 @@ impl GraphServiceImpl {
         );
 
         match self
-            .request_handlers
             .graph_operations_service
             .batch_create_nodes(
                 &req.graph_id,
@@ -989,7 +977,6 @@ impl GraphServiceImpl {
         );
 
         match self
-            .request_handlers
             .graph_operations_service
             .batch_create_edges(
                 &req.graph_id,
@@ -1018,7 +1005,6 @@ impl GraphServiceImpl {
     ) -> Result<Response<ConnectedComponentsResponse>, Status> {
         let req = request.into_inner();
         match self
-            .request_handlers
             .graph_operations_service
             .connected_components(&req.graph_id)
             .await
@@ -1040,12 +1026,7 @@ impl GraphServiceImpl {
         request: Request<GetStatsRequest>,
     ) -> Result<Response<CycleCheckResponse>, Status> {
         let req = request.into_inner();
-        match self
-            .request_handlers
-            .graph_operations_service
-            .has_cycle(&req.graph_id)
-            .await
-        {
+        match self.graph_operations_service.has_cycle(&req.graph_id).await {
             Ok(has) => Ok(Response::new(CycleCheckResponse { has_cycle: has })),
             Err(e) => Err(create_grpc_error("check for cycles", e)),
         }
@@ -1058,7 +1039,6 @@ impl GraphServiceImpl {
     ) -> Result<Response<UniqueConstraintResponse>, Status> {
         let req = request.into_inner();
         match self
-            .request_handlers
             .graph_operations_service
             .add_unique_constraint(&req.graph_id, &req.label, &req.property)
             .await
@@ -1081,7 +1061,6 @@ impl GraphServiceImpl {
     ) -> Result<Response<UniqueConstraintResponse>, Status> {
         let req = request.into_inner();
         match self
-            .request_handlers
             .graph_operations_service
             .remove_unique_constraint(&req.graph_id, &req.label, &req.property)
             .await
@@ -1113,7 +1092,7 @@ impl GraphServiceImpl {
             req.combination_strategy
         );
 
-        match self.request_handlers.execute_hybrid_query(req).await {
+        match self.api_handlers.execute_hybrid_query(req).await {
             Ok(response) => {
                 info!("Successfully executed hybrid query via gRPC");
                 Ok(Response::new(response))
@@ -1436,8 +1415,7 @@ impl proximadb_runtime::GraphPort for GraphServiceImpl {
         &self,
         request: CreateGraphRequest,
     ) -> anyhow::Result<GraphCollection> {
-        self.request_handlers
-            .graph_operations_service
+        self.graph_operations_service
             .create_graph_collection(request)
             .await
             .map(|collection| (*collection).clone())
@@ -1448,8 +1426,7 @@ impl proximadb_runtime::GraphPort for GraphServiceImpl {
         &self,
         graph_id: String,
     ) -> anyhow::Result<Option<GraphCollection>> {
-        self.request_handlers
-            .graph_operations_service
+        self.graph_operations_service
             .get_graph_collection(&graph_id)
             .await
             .map(|collection| collection.map(|collection| (*collection).clone()))
@@ -1457,16 +1434,14 @@ impl proximadb_runtime::GraphPort for GraphServiceImpl {
     }
 
     async fn delete_graph_collection(&self, graph_id: String) -> anyhow::Result<bool> {
-        self.request_handlers
-            .graph_operations_service
+        self.graph_operations_service
             .delete_graph_collection(&graph_id)
             .await
             .map_err(|err| anyhow::anyhow!("{}", err))
     }
 
     async fn list_graph_collections(&self) -> anyhow::Result<Vec<GraphCollection>> {
-        self.request_handlers
-            .graph_operations_service
+        self.graph_operations_service
             .list_graph_collections()
             .await
             .map(|collections| {
@@ -1483,8 +1458,7 @@ impl proximadb_runtime::GraphPort for GraphServiceImpl {
         graph_id: String,
         schema: GraphSchema,
     ) -> anyhow::Result<GraphCollection> {
-        self.request_handlers
-            .graph_operations_service
+        self.graph_operations_service
             .update_graph_schema(&graph_id, schema)
             .await
             .map(|collection| (*collection).clone())

@@ -2424,7 +2424,7 @@ impl SharedServices {
                 metrics_updater: metrics_updater.clone(),
                 query_facade,
                 query_adapter: query_adapter.clone(),
-                api_handlers: runtime_api_handlers,
+                api_handlers: runtime_api_handlers.clone(),
                 // Task #72: ClusterPort wiring slot. Defaults to None for
                 // single-node bootstrap; populate via builder when [distributed]
                 // config is present and a ClusterManager has been constructed.
@@ -2454,7 +2454,8 @@ impl SharedServices {
                 // adapter wired (matches the production wiring at
                 // src/network/multi_server.rs:415).
                 graph_port: Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    request_handlers.clone(),
+                    request_handlers.graph_operations_service.clone(),
+                    runtime_api_handlers.clone(),
                     query_adapter.clone(),
                 )) as Arc<dyn proximadb_runtime::GraphPort>,
                 // T3.2 Slice 1: shared full-text index map for hybrid

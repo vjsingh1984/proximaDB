@@ -581,7 +581,8 @@ impl MultiServer {
 
             let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
                 Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    services.request_handlers.clone(),
+                    services.request_handlers.graph_operations_service.clone(),
+                    services.api_handlers.clone(),
                     services.query_adapter(),
                 ));
             // ADR-015 step 2: bare DocumentService impls DocumentPort directly;
@@ -1012,7 +1013,8 @@ impl MultiServer {
             let services = self.shared_services.clone();
             let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
                 Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    services.request_handlers.clone(),
+                    services.request_handlers.graph_operations_service.clone(),
+                    services.api_handlers.clone(),
                     services.query_adapter(),
                 ));
             // ADR-015 step 2 (DocumentPort).
@@ -1096,7 +1098,8 @@ impl MultiServer {
             // ── Build core gRPC services via factory ──────────────────────────
             let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
                 Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    services.request_handlers.clone(),
+                    services.request_handlers.graph_operations_service.clone(),
+                    services.api_handlers.clone(),
                     services.query_adapter(),
                 ));
             // ADR-015 step 2 (DocumentPort).
@@ -1515,7 +1518,8 @@ impl MultiServer {
             // ── Build standard services via factory ───────────────────────────
             let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
                 Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    services.request_handlers.clone(),
+                    services.request_handlers.graph_operations_service.clone(),
+                    services.api_handlers.clone(),
                     services.query_adapter(),
                 ));
             let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
