@@ -42,11 +42,12 @@ use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::execution::SendableRecordBatchStream;
 use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use futures::{future, stream};
+use futures::stream;
 use tracing::trace;
 
 use proximadb_block_format::{ColumnRole, PaxBlockReader};
 use proximadb_storage_common::format_splits::{ScalarPredicate, ScalarValue};
+use proximadb_storage_common::pax_block::{PaxSegmentScanner, ScanPredicate};
 
 use crate::datafusion::physical_filter_translate::pruning_predicates;
 use crate::datafusion::proxima_scan_exec::{EmptyRecordBatchStream, SplitReader};
@@ -65,9 +66,11 @@ pub fn pax_reader_enabled() -> bool {
     })
 }
 
-/// PAX-native OLAP split reader. Loads a PAX segment, opens the canonical
-/// [`PaxBlockReader`], applies zone-map/bloom pruning from the pushed filters,
-/// then decodes the projected relational stripes into one Arrow `RecordBatch`.
+/// PAX-native OLAP split reader. Loads a PAX **segment** and iterates its blocks
+/// via the canonical [`PaxSegmentScanner`] (each yielded block is a
+/// [`PaxBlockReader`]), applies zone-map/bloom pruning from the pushed filters,
+/// then decodes the projected relational stripes into one Arrow `RecordBatch`
+/// per surviving block.
 #[derive(Debug)]
 pub struct PaxSplitReader {
     schema: SchemaRef,
@@ -118,26 +121,33 @@ impl PaxSplitReader {
             })
     }
 
-    /// Core decode (no I/O): bytes → `PaxBlockReader` → prune → decode → batch.
-    /// Returns `Ok(None)` when the block is pruned by the zone maps. Pure / SRP
+    /// Core decode (no I/O): segment bytes → [`PaxSegmentScanner`] → per-block
+    /// prune → decode → one `RecordBatch` per surviving block. Pure / SRP
     /// boundary so the bridge + prune stack can be exercised without a filesystem.
-    fn decode_block(&self, bytes: &[u8], out_schema: &SchemaRef) -> DFResult<Option<RecordBatch>> {
-        let reader = PaxBlockReader::open(bytes)
-            .map_err(|e| DataFusionError::Execution(format!("PAX open failed: {e}")))?;
-
-        if self.block_pruned(&reader) {
-            trace!("PAX scan: block pruned by zone map");
-            return Ok(None);
+    ///
+    /// Real `.pax` files are *segments* (`[blocks][index][SEGMENT_MAGIC]`); a bare
+    /// `PaxBlockReader::open(whole_file)` CRC-fails on them, so the segment
+    /// scanner is mandatory (slice 1.5 fix to #706).
+    fn decode_segment(&self, bytes: &[u8], out_schema: &SchemaRef) -> DFResult<Vec<RecordBatch>> {
+        let predicate = ScanPredicate::default(); // tenant/time wired in slice 2
+        let mut scanner = PaxSegmentScanner::from_bytes(bytes.to_vec(), predicate)
+            .map_err(|e| DataFusionError::Execution(format!("PAX segment open failed: {e}")))?;
+        let mut batches = Vec::new();
+        while let Some(reader) = scanner.next_block() {
+            if self.block_pruned(&reader) {
+                trace!("PAX scan: block pruned by zone map");
+                continue;
+            }
+            let arrays: Vec<ArrayRef> = out_schema
+                .fields()
+                .iter()
+                .map(|f| self.decode_column(&reader, f.name()))
+                .collect::<DFResult<_>>()?;
+            let batch = RecordBatch::try_new(out_schema.clone(), arrays)
+                .map_err(|e| DataFusionError::Execution(format!("PAX batch build failed: {e}")))?;
+            batches.push(batch);
         }
-
-        let arrays: Vec<ArrayRef> = out_schema
-            .fields()
-            .iter()
-            .map(|f| self.decode_column(&reader, f.name()))
-            .collect::<DFResult<_>>()?;
-        let batch = RecordBatch::try_new(out_schema.clone(), arrays)
-            .map_err(|e| DataFusionError::Execution(format!("PAX batch build failed: {e}")))?;
-        Ok(Some(batch))
+        Ok(batches)
     }
 
     /// AND-semantics block prune: returns `true` if ANY conjunctive predicate
@@ -200,12 +210,14 @@ impl SplitReader for PaxSplitReader {
             None => self.schema.clone(),
         };
         let bytes = self.load_bytes(split).await?;
-        match self.decode_block(&bytes, &out_schema)? {
-            Some(batch) => Ok(Box::pin(RecordBatchStreamAdapter::new(
+        let batches = self.decode_segment(&bytes, &out_schema)?;
+        if batches.is_empty() {
+            Ok(Box::pin(EmptyRecordBatchStream::new(out_schema)))
+        } else {
+            Ok(Box::pin(RecordBatchStreamAdapter::new(
                 out_schema,
-                stream::once(future::ok(batch)),
-            ))),
-            None => Ok(Box::pin(EmptyRecordBatchStream::new(out_schema))),
+                stream::iter(batches.into_iter().map(Ok)),
+            )))
         }
     }
 
@@ -292,8 +304,10 @@ mod tests {
     use arrow_schema::{DataType, Field, Schema};
     use datafusion::logical_expr::Operator;
     use datafusion::physical_expr::expressions::{BinaryExpr, col, lit};
-    use proximadb_block_format::{BlockCompression, BlockMode, PaxBlockWriter, col_id};
+    use proximadb_block_format::{VectorQuant, col_id};
     use proximadb_records::ProximaRecord;
+
+    use crate::storage::engines::sst::segment_format::write_pax_segment;
 
     fn record(oid: &str, tenant: &str, ts: i64) -> ProximaRecord {
         ProximaRecord {
@@ -305,11 +319,17 @@ mod tests {
         }
     }
 
-    fn block_with_created_at(r1: i64, r2: i64) -> Vec<u8> {
-        let mut w = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 0);
-        w.add_record(&record("r1", "t", r1)).unwrap();
-        w.add_record(&record("r2", "t", r2)).unwrap();
-        w.flush().unwrap()
+    /// Write a REAL `.pax` segment (`[blocks][index][SEGMENT_MAGIC]`) with two
+    /// records and return its bytes. This is the live SST format — a bare
+    /// `PaxBlockReader::open(whole_file)` CRC-fails on it (the #706 latent bug
+    /// this slice fixes).
+    fn segment_bytes(r1: i64, r2: i64) -> Vec<u8> {
+        let records = vec![record("r1", "t", r1), record("r2", "t", r2)];
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("seg.pax");
+        write_pax_segment(&path, &records, "col", 0, VectorQuant::Auto, None)
+            .expect("write_pax_segment");
+        std::fs::read(&path).expect("read segment back")
     }
 
     /// `[created_at]` schema + its name→column_id map.
@@ -333,16 +353,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn decodes_relational_stripes_to_arrow() {
-        // Zone map for created_at is [1000, 3000].
-        let bytes = block_with_created_at(1000, 3000);
+    async fn decodes_real_segment_to_arrow() {
+        // The segment's block has a created_at zone map of [1000, 3000].
+        let bytes = segment_bytes(1000, 3000);
         let (schema, map) = created_at_schema();
         let reader = new_reader(schema.clone(), map, vec![]).await;
 
-        let batch = reader
-            .decode_block(&bytes, &schema)
-            .unwrap()
-            .expect("unfiltered block must not prune");
+        let batches = reader.decode_segment(&bytes, &schema).unwrap();
+        assert_eq!(batches.len(), 1, "one block ⇒ one batch");
+        let batch = &batches[0];
         assert_eq!(batch.num_rows(), 2);
         let ca = batch
             .column(0)
@@ -355,10 +374,10 @@ mod tests {
 
     #[tokio::test]
     async fn zone_map_prunes_disjoint_block() {
-        let bytes = block_with_created_at(1000, 3000);
+        let bytes = segment_bytes(1000, 3000);
         let (schema, map) = created_at_schema();
 
-        // `created_at >= 4000` — range [4000, MAX] is disjoint from [1000, 3000] ⇒ prune.
+        // `created_at >= 4000` — disjoint from [1000, 3000] ⇒ block prunes ⇒ no batches.
         let ge_4000: Arc<dyn PhysicalExpr> = Arc::new(BinaryExpr::new(
             col("created_at", schema.as_ref()).unwrap(),
             Operator::GtEq,
@@ -366,11 +385,11 @@ mod tests {
         ));
         let reader = new_reader(schema.clone(), map, vec![ge_4000]).await;
         assert!(
-            reader.decode_block(&bytes, &schema).unwrap().is_none(),
-            "block [1000,3000] must be pruned under created_at >= 4000"
+            reader.decode_segment(&bytes, &schema).unwrap().is_empty(),
+            "block [1000,3000] must prune under created_at >= 4000"
         );
 
-        // `created_at <= 500` — range [MIN, 500] is disjoint ⇒ prune.
+        // `created_at <= 500` — disjoint ⇒ prune.
         let le_500: Arc<dyn PhysicalExpr> = Arc::new(BinaryExpr::new(
             col("created_at", schema.as_ref()).unwrap(),
             Operator::LtEq,
@@ -378,11 +397,11 @@ mod tests {
         ));
         let reader = new_reader(schema.clone(), created_at_schema().1, vec![le_500]).await;
         assert!(
-            reader.decode_block(&bytes, &schema).unwrap().is_none(),
-            "block [1000,3000] must be pruned under created_at <= 500"
+            reader.decode_segment(&bytes, &schema).unwrap().is_empty(),
+            "block [1000,3000] must prune under created_at <= 500"
         );
 
-        // `created_at >= 2000` — range [2000, MAX] overlaps [1000, 3000] ⇒ NOT pruned.
+        // `created_at >= 2000` — overlaps [1000, 3000] ⇒ NOT pruned ⇒ ≥1 batch.
         let ge_2000: Arc<dyn PhysicalExpr> = Arc::new(BinaryExpr::new(
             col("created_at", schema.as_ref()).unwrap(),
             Operator::GtEq,
@@ -390,17 +409,17 @@ mod tests {
         ));
         let reader = new_reader(schema.clone(), created_at_schema().1, vec![ge_2000]).await;
         assert!(
-            reader.decode_block(&bytes, &schema).unwrap().is_some(),
+            !reader.decode_segment(&bytes, &schema).unwrap().is_empty(),
             "block [1000,3000] must NOT prune under created_at >= 2000 (overlaps)"
         );
     }
 
     #[tokio::test]
     async fn empty_filter_set_never_prunes() {
-        let bytes = block_with_created_at(1000, 3000);
+        let bytes = segment_bytes(1000, 3000);
         let (schema, map) = created_at_schema();
         let reader = new_reader(schema.clone(), map, vec![]).await;
         // No predicates ⇒ never pruned, regardless of data.
-        assert!(reader.decode_block(&bytes, &schema).unwrap().is_some());
+        assert!(!reader.decode_segment(&bytes, &schema).unwrap().is_empty());
     }
 }
