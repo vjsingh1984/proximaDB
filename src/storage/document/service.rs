@@ -961,6 +961,24 @@ impl DocumentService {
             collections.insert(name.to_string(), collection);
         }
 
+        // P-Provision (ADR-055): also provision the canonical (record/vector) collection so this
+        // document collection CONVERGES on the shared store instead of the legacy path — even for
+        // pure-document (vectorless) use. Uses the CLEAN name (the catalog registers bare names,
+        // resolved per-tenant); dimension 0 = vectorless (documents that carry vectors are inserted
+        // through the metered /documents path). Best-effort + mixed-safe: on failure we warn and
+        // keep the legacy path (the canonical route's capability check just stays false).
+        // `ensure_or_create_collection` funnels through here too, so first-write auto-create is
+        // covered without a second hook.
+        if let Some(route) = self.record_route.get() {
+            let (tenant, clean_collection) = unscope_document_collection(name);
+            if let Err(e) = route.ensure_collection(clean_collection, 0, tenant).await {
+                warn!(
+                    "P-Provision: canonical collection provision for '{}' failed (staying on legacy path): {}",
+                    name, e
+                );
+            }
+        }
+
         info!("Created document collection: {}", name);
         Ok(name.to_string())
     }
@@ -2686,6 +2704,8 @@ impl proximadb_runtime::DocumentPort for DocumentService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The convergence tests call `RecordRoutePort` methods (collection_exists / ensure_collection)
+    // directly on the mock, so the trait must be in scope (the impls use the fully-qualified path).
     use crate::proto::proximadb_v1::{
         DocFilterCondition, DocFilterOperator, DocIndexType, DocumentCollectionConfig,
         DocumentFilter, DocumentUpdate, IndexDefinition, SqlObject, SqlValue, UpdateOperation,
@@ -2696,6 +2716,7 @@ mod tests {
         StorageFormatStrategy, UnifiedStorageFormat,
     };
     use async_trait::async_trait;
+    use proximadb_runtime::RecordRoutePort;
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -2929,6 +2950,21 @@ mod tests {
                 .expect("mock route lock")
                 .contains(collection_id)
         }
+
+        async fn ensure_collection(
+            &self,
+            collection_id: &str,
+            _dimension: u32,
+            _tenant: Option<&str>,
+        ) -> anyhow::Result<()> {
+            // Provisioning makes a (possibly previously non-canonical) collection canonical —
+            // idempotent (removing an absent entry is a no-op).
+            self.non_canonical
+                .lock()
+                .expect("mock route lock")
+                .remove(collection_id);
+            Ok(())
+        }
     }
 
     /// Scope the process-global `PROXIMADB_DOC_CANONICAL_VECTOR` gate to one collection for
@@ -3093,6 +3129,106 @@ mod tests {
             .expect("get")
             .expect("present");
         assert_eq!(got.id, "d1");
+    }
+
+    // =========================================================================
+    // P-Provision (ADR-055): document-collection create provisions the canonical collection
+    // =========================================================================
+
+    #[tokio::test]
+    async fn create_collection_provisions_canonical_collection() {
+        // With a route wired, creating a document collection provisions the canonical (record/
+        // vector) collection, so a pure-document collection converges on the shared store.
+        let svc = create_test_service();
+        let route = Arc::new(MockRecordRoute::default());
+        // Start NON-canonical (legacy) so provisioning is observable as a flip.
+        route
+            .non_canonical
+            .lock()
+            .expect("lock")
+            .insert("provdocs".to_string());
+        svc.set_record_route(route.clone());
+
+        assert!(
+            !route.collection_exists("provdocs", None).await,
+            "precondition: collection starts non-canonical (legacy)"
+        );
+
+        svc.create_collection(
+            "provdocs",
+            DocumentCollectionConfig {
+                name: "provdocs".to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("create document collection");
+
+        assert!(
+            route.collection_exists("provdocs", None).await,
+            "create_collection must provision the canonical collection (P-Provision)"
+        );
+
+        // A subsequent document write now routes CANONICAL (shared store), not the legacy map.
+        svc.insert_document_record("provdocs", doc_record("d1", "provdocs", "Zeta"))
+            .await
+            .expect("canonical insert after provisioning");
+        assert!(
+            route
+                .store
+                .lock()
+                .expect("lock")
+                .get("provdocs")
+                .is_some_and(|c| c.contains_key("d1")),
+            "insert routes canonical after provisioning (lands in the shared store)"
+        );
+        assert!(
+            !svc.documents
+                .get("provdocs")
+                .is_some_and(|d| d.contains_key("d1")),
+            "canonical write must NOT populate the legacy in-memory map"
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_collection_is_idempotent() {
+        let route = MockRecordRoute::default();
+        route
+            .non_canonical
+            .lock()
+            .expect("lock")
+            .insert("c".to_string());
+        route
+            .ensure_collection("c", 0, None)
+            .await
+            .expect("first ensure");
+        route
+            .ensure_collection("c", 0, None)
+            .await
+            .expect("second ensure is idempotent");
+        assert!(route.collection_exists("c", None).await);
+    }
+
+    #[tokio::test]
+    async fn create_collection_without_route_stays_legacy_no_panic() {
+        // No route wired ⇒ create provisions nothing and does not panic (pure legacy path).
+        let svc = create_test_service();
+        svc.create_collection(
+            "legacyonly",
+            DocumentCollectionConfig {
+                name: "legacyonly".to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("create without route");
+        assert!(
+            svc.get_collection("legacyonly")
+                .await
+                .expect("get")
+                .is_some(),
+            "collection created on the legacy path when no route is wired"
+        );
     }
 
     /// Set up a canonical-record-backed service with a pre-created collection.
