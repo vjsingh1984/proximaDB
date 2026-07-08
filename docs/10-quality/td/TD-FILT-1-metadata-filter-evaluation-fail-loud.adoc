@@ -5,11 +5,11 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | In Progress — slice 1 (typed `FilterEvalError` + `evaluate_filter_resolved_strict` / `evaluate_filter_proxima_strict` on the canonical v2 seam) landed in this PR (2026-07-07). Re-scoped from a v1 `MetadataValue` target the same day (see below).
+| Status | In Progress — slice 1 (typed `FilterEvalError` + `evaluate_filter_resolved_strict` / `evaluate_filter_proxima_strict` on the canonical v2 seam) landed 2026-07-07. Slice 2a now wires the strict evaluator into the live hybrid metadata-gating path behind `PROXIMADB_FILTER_FAIL_LOUD` (default-off), so unresolved v2 metadata fields can fail the query instead of silently narrowing results. Re-scoped from a v1 `MetadataValue` target the same day (see below).
 | Severity | High (silent correctness loss in results — records whose filter field is absent, or a non-scalar leaf, are silently dropped from every non-null comparison with no error)
 | Component | Canonical v2 filter seam: `crates/foundation/proximadb-search-types/src/sql_value_filter.rs` — `evaluate_filter_resolved` (the shared spine, line ~315), `evaluate_filter_proxima` (ProximaTree/ProximaValue adapter, line ~350), `evaluate_filter` (SqlValue adapter).
 | Governs | link:../../12-design/adr/ADR-024-single-canonical-data-type-and-schema.adoc[ADR-024] (single canonical `ProximaValue`/`ProximaRecord` type) + link:../../12-design/adr/ADR-043-unified-relational-expression-evaluation.adoc[ADR-043] (fail-loud predicate evaluation). v2-canonical: only the `ProximaValue`/`ProximaTree` path is extended; the v1 `MetadataValue`/`VectorRecord` path is *not* (see "Re-scope note").
-| Relates | link:TD-186-relational-expr-eval-unification.adoc[TD-186] (relational fail-loud rollout), link:../REVIEW_RESPONSE_2026_07_07.adoc[REVIEW_RESPONSE_2026_07_07] §8/B03, link:TECHNICAL_DEBT.adoc[TD-123] (v1-proto ratchet / v1 sunset), link:TECHNICAL_DEBT.adoc[TD-182] (accuracy harness)
+| Relates | link:TD-186-relational-expr-eval-unification.adoc[TD-186] (relational fail-loud rollout), link:../REVIEW_RESPONSE_2026_07_07.adoc[REVIEW_RESPONSE_2026_07_07] §6/B03, link:../TECHNICAL_DEBT.adoc[TD-123] (v1-proto ratchet / v1 sunset), link:../TECHNICAL_DEBT.adoc[TD-182] (accuracy harness)
 | Surfaced by | Antigravity architectural recommendations round 2, item B03
 |===
 
@@ -58,22 +58,27 @@ there is no per-comparison "type mismatch" to surface here. The silent drop on t
 
 == Plan (behavior-preserving slices)
 
-* **Slice 1 (this PR):** add a typed `FilterEvalError` (`MissingField`) and
+* **Slice 1 (landed):** add a typed `FilterEvalError` (`MissingField`) and
   `evaluate_filter_resolved_strict<F>(expr, resolve) -> Result<bool, FilterEvalError>` plus the
   `evaluate_filter_proxima_strict` / `evaluate_filter_strict` adapters. A value comparison against
   an unresolved field returns `Err(MissingField)` instead of silently `false`; `IsNull`/`IsNotNull`
   keep SQL absence semantics (`Ok`, not an error). The legacy `evaluate_filter*` are **untouched**
   (zero behavior change) — strict is opt-in.
-* **Slice 2 (wiring):** migrate the live v2 search call-sites that want ADR-043 fail-loud semantics
-  to the strict variants, propagating the error to a query-level failure behind a config flag
-  (default preserve-current). The point at which silent drops become loud in production.
+* **Slice 2a (landed):** `src/services/operations/vectors/legacy.rs` routes hybrid metadata
+  candidate gating through `evaluate_filter_proxima_strict` when
+  `PROXIMADB_FILTER_FAIL_LOUD` is set. Default-off keeps existing behavior; flag-on propagates
+  `MissingField` as a query error.
+* **Slice 2b (remaining):** migrate lower-level vector/storage predicates once their interfaces
+  can return `Result` instead of bare `bool`. Do not fake fail-loud semantics by logging and
+  returning `false`.
 * **Slice 3 (cleanup):** delete the dead v1 `TypeSafeFilterEvaluator` under v1 sunset (TD-123).
 
 == Why default-off / behavior-preserving
 
 Making the live `evaluate_filter*` fail-loud by default would change query *results* (rows silently
 dropped today would instead error the query). Correct end-state, but must be gated
-(ADR-052 observe→ingest→act) so it is an explicit opt-in. Slice 1 only *adds* a fail-loud path.
+(ADR-052 observe→ingest→act) so it is an explicit opt-in. Slice 1 only added a fail-loud path;
+slice 2a enables it on one live service seam only when `PROXIMADB_FILTER_FAIL_LOUD` is set.
 
 == How to apply / verify
 

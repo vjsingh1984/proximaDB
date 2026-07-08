@@ -84,6 +84,41 @@ use crate::services::operations::{BatchOperationResult, BulkWriteRouter, Operati
 use crate::storage::cache::specialized::query_cache::{QueryCache, QueryKey};
 use crate::storage::engines::sst::SstEngine;
 
+const FILTER_FAIL_LOUD_ENV: &str = "PROXIMADB_FILTER_FAIL_LOUD";
+
+fn filter_fail_loud_enabled() -> bool {
+    std::env::var_os(FILTER_FAIL_LOUD_ENV).is_some()
+}
+
+fn evaluate_v2_filter_for_record(
+    filter: &FilterExpression,
+    record: &ProximaRecord,
+) -> Result<bool> {
+    evaluate_v2_filter_for_record_with_mode(filter, record, filter_fail_loud_enabled())
+}
+
+fn evaluate_v2_filter_for_record_with_mode(
+    filter: &FilterExpression,
+    record: &ProximaRecord,
+    fail_loud: bool,
+) -> Result<bool> {
+    if fail_loud {
+        crate::core::search::sql_value_filter::evaluate_filter_proxima_strict(filter, &record.props)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "metadata filter evaluation failed for record '{}': {e}",
+                    if record.oid.is_empty() {
+                        record.local_id.as_deref().unwrap_or("<unknown>")
+                    } else {
+                        record.oid.as_str()
+                    }
+                )
+            })
+    } else {
+        Ok(crate::core::search::sql_value_filter::evaluate_filter_proxima(filter, &record.props))
+    }
+}
+
 // TD-104 Phase 0: these types now live in `proximadb-runtime` (so the
 // `RecordOpsPort` contract is self-contained). Re-exported here so existing
 // `crate::services::operations::vectors::legacy::RichRecord*` callers are
@@ -4366,6 +4401,34 @@ mod tenant_tests {
     }
 
     #[test]
+    fn filter_fail_loud_gate_preserves_default_and_errors_when_enabled() {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
+
+        let filter = FilterExpression::Comparison {
+            field: "missing".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!("books"),
+        };
+        let record = ProximaRecord {
+            oid: "rec-1".to_string(),
+            ..Default::default()
+        };
+
+        assert!(
+            !evaluate_v2_filter_for_record_with_mode(&filter, &record, false)
+                .expect("legacy evaluator returns bool")
+        );
+
+        let err = evaluate_v2_filter_for_record_with_mode(&filter, &record, true).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("metadata filter evaluation failed")
+        );
+        assert!(err.to_string().contains("missing"));
+    }
+
+    #[test]
     fn ensure_tenant_on_records_rejects_mismatched_tenant_id_on_record() {
         let mut records = vec![ProximaRecord {
             oid: "rec-1".to_string(),
@@ -5645,21 +5708,31 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
 
         let matching = records
             .into_iter()
-            .filter(|record| {
-                crate::core::search::sql_value_filter::evaluate_filter_proxima(&expr, &record.props)
-            })
+            .filter_map(
+                |record| match evaluate_v2_filter_for_record(&expr, &record) {
+                    Ok(true) => Some(Ok(record)),
+                    Ok(false) => None,
+                    Err(e) => Some(Err(e)),
+                },
+            )
             .map(|record| {
+                let record = record?;
                 // Mirror the v2 scan serializer's id selection (oid, then the
                 // caller-supplied local id) so the ids line up with the BM25
                 // document ids and the vector leg's result ids.
-                if record.oid.is_empty() {
+                let id = if record.oid.is_empty() {
                     record.local_id.unwrap_or_default()
                 } else {
                     record.oid
-                }
+                };
+                Ok(id)
             })
-            .filter(|id| !id.is_empty())
-            .collect();
+            .filter_map(|id| match id {
+                Ok(id) if !id.is_empty() => Some(Ok(id)),
+                Ok(_) => None,
+                Err(e) => Some(Err(e)),
+            })
+            .collect::<Result<_>>()?;
 
         Ok(matching)
     }

@@ -131,7 +131,7 @@ pub struct MultiServer {
     pub shared_services: SharedServices,
     security_coordinator: Option<Arc<SecurityCoordinator>>,
     rest_auth_enabled: bool,
-    rest_multi_tenant_required: bool,
+    tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
     server_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     /// LLM engine for semantic operations
     llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
@@ -235,7 +235,7 @@ impl MultiServer {
         shared_services: SharedServices,
         security_coordinator: Option<Arc<SecurityCoordinator>>,
         rest_auth_enabled: bool,
-        rest_multi_tenant_required: bool,
+        tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
         Self::new_with_queue_client(
@@ -243,7 +243,7 @@ impl MultiServer {
             shared_services,
             security_coordinator,
             rest_auth_enabled,
-            rest_multi_tenant_required,
+            tenant_deployment_mode,
             llm_engine,
             None,
         )
@@ -257,7 +257,7 @@ impl MultiServer {
         shared_services: SharedServices,
         security_coordinator: Option<Arc<SecurityCoordinator>>,
         rest_auth_enabled: bool,
-        rest_multi_tenant_required: bool,
+        tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
         queue_client: Option<Arc<proximadb_queue::QueueClient>>,
     ) -> Self {
@@ -276,7 +276,7 @@ impl MultiServer {
             shared_services,
             security_coordinator,
             rest_auth_enabled,
-            rest_multi_tenant_required,
+            tenant_deployment_mode,
             server_handles: Arc::new(Mutex::new(Vec::new())),
             llm_engine,
             queue_client,
@@ -807,7 +807,7 @@ impl MultiServer {
             let metrics_collector = services.metrics_collector.clone();
             let security_coordinator = self.security_coordinator.clone();
             let rest_auth_enabled = self.rest_auth_enabled;
-            let rest_multi_tenant_required = self.rest_multi_tenant_required;
+            let tenant_deployment_mode = self.tenant_deployment_mode.clone();
             let data_dir = self.config.data_dir.clone();
             let query_adapter = Some(services.query_adapter());
             let graph_execution_service = services.graph_execution_service.clone();
@@ -834,11 +834,18 @@ impl MultiServer {
 
                 let max_request_size_mb = api_config.map(|c| c.max_request_size_mb);
                 let auth_enabled = security_coordinator.is_some() && rest_auth_enabled;
-                let mut rest_security = if auth_enabled && rest_multi_tenant_required {
+                let mut rest_security = if matches!(
+                    &tenant_deployment_mode,
+                    proximadb_tenant::TenantDeploymentMode::MultiTenant
+                ) {
                     RestServerSecurityConfig::multi_tenant()
                 } else {
                     RestServerSecurityConfig::default()
                 };
+                rest_security.tenant =
+                    crate::network::middleware::tenant::TenantExtractorConfig::from_deployment_mode(
+                        tenant_deployment_mode,
+                    );
                 rest_security.auth.enabled = auth_enabled;
 
                 // Pass port objects so document/graph/observability routes use
@@ -1736,7 +1743,7 @@ impl MultiServer {
             let metrics_collector = services.metrics_collector.clone();
             let security_coordinator = self.security_coordinator.clone();
             let rest_auth_enabled = self.rest_auth_enabled;
-            let rest_multi_tenant_required = self.rest_multi_tenant_required;
+            let tenant_deployment_mode = self.tenant_deployment_mode.clone();
             let data_dir = self.config.data_dir.clone();
             let query_adapter = Some(services.query_adapter());
             let graph_execution_service = services.graph_execution_service.clone();
@@ -1758,11 +1765,18 @@ impl MultiServer {
 
                 let max_request_size_mb = api_config.map(|c| c.max_request_size_mb);
                 let auth_enabled = security_coordinator.is_some() && rest_auth_enabled;
-                let mut rest_security = if auth_enabled && rest_multi_tenant_required {
+                let mut rest_security = if matches!(
+                    &tenant_deployment_mode,
+                    proximadb_tenant::TenantDeploymentMode::MultiTenant
+                ) {
                     RestServerSecurityConfig::multi_tenant()
                 } else {
                     RestServerSecurityConfig::default()
                 };
+                rest_security.tenant =
+                    crate::network::middleware::tenant::TenantExtractorConfig::from_deployment_mode(
+                        tenant_deployment_mode,
+                    );
                 rest_security.auth.enabled = auth_enabled;
 
                 let rest_ports = RestServerPorts {

@@ -7,6 +7,12 @@ bind_address = "127.0.0.1"
 port = 5678
 data_dir = "/tmp/proximadb/data"
 
+# Request tenant resolution at protocol edges.
+# mode = "auto" preserves compatibility; set "multi_tenant" for SaaS.
+[server.tenant]
+mode = "single_tenant"
+default_tenant = "default"
+
 # Read-only embedded admin dashboard at /admin. Off by default; enable only for
 # local standalone instances (not Kubernetes pods or embedded/UDS deployments).
 # See docs/04-operations/admin-dashboard.adoc.
