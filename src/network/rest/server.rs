@@ -1095,8 +1095,7 @@ impl RestServer {
     }
 }
 
-/// Dashboard handler - serves a comprehensive professional dashboard
-/// Router fallback for unmatched paths. Returns the canonical error envelope
+/// 404 fallback handler for unmatched paths. Returns the canonical error envelope
 /// and, for paths under the removed `/api/v1/*` surfaces, a migration hint
 /// pointing at the v2 replacement.
 async fn not_found_fallback(uri: axum::http::Uri) -> axum::response::Response {
