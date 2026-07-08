@@ -1772,6 +1772,158 @@ mod tests {
     }
 
     #[test]
+    fn parse_ddl_alter_table_normalizes_quoted_identifiers() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl(
+                "ALTER TABLE \"Tenant One\".\"Event Store\" \
+                 ALTER COLUMN \"Payload Field\" SET DATA TYPE JSONB;",
+            )
+            .expect("expected ddl parse to succeed")
+            .expect("expected alter table ddl");
+
+        match statement {
+            DdlStatement::AlterTable {
+                table_name,
+                changes,
+            } => {
+                assert_eq!(table_name, "Tenant One.Event Store");
+                assert_eq!(changes.len(), 1);
+                match &changes[0] {
+                    AlterTableChange::ChangeType {
+                        column_name,
+                        new_type,
+                    } => {
+                        assert_eq!(column_name, "Payload Field");
+                        assert!(matches!(new_type, SqlDataType::Jsonb));
+                    }
+                    other => panic!("expected ChangeType, got {other:?}"),
+                }
+            }
+            other => panic!("expected AlterTable, got {other:?}"),
+        }
+
+        let statement = parser
+            .parse_ddl(
+                "ALTER TABLE \"Tenant One\".\"Event Store\" \
+                 RENAME COLUMN \"Payload Field\" TO \"Payload Body\";",
+            )
+            .expect("expected ddl parse to succeed")
+            .expect("expected alter table ddl");
+
+        match statement {
+            DdlStatement::AlterTable {
+                table_name,
+                changes,
+            } => {
+                assert_eq!(table_name, "Tenant One.Event Store");
+                assert_eq!(changes.len(), 1);
+                match &changes[0] {
+                    AlterTableChange::RenameColumn { old_name, new_name } => {
+                        assert_eq!(old_name, "Payload Field");
+                        assert_eq!(new_name, "Payload Body");
+                    }
+                    other => panic!("expected RenameColumn, got {other:?}"),
+                }
+            }
+            other => panic!("expected AlterTable, got {other:?}"),
+        }
+
+        let statement = parser
+            .parse_ddl(
+                "ALTER TABLE \"Tenant One\".\"Event Store\" \
+                 ADD CONSTRAINT \"Unique Payload\" UNIQUE (\"Payload Field\");",
+            )
+            .expect("expected ddl parse to succeed")
+            .expect("expected alter table ddl");
+
+        match statement {
+            DdlStatement::AlterTable {
+                table_name,
+                changes,
+            } => {
+                assert_eq!(table_name, "Tenant One.Event Store");
+                assert_eq!(changes.len(), 1);
+                match &changes[0] {
+                    AlterTableChange::AddConstraint {
+                        constraint_name,
+                        constraint: TableConstraint::Unique { columns },
+                    } => {
+                        assert_eq!(constraint_name.as_deref(), Some("Unique Payload"));
+                        assert_eq!(columns, &vec!["Payload Field".to_string()]);
+                    }
+                    other => panic!("expected UNIQUE AddConstraint, got {other:?}"),
+                }
+            }
+            other => panic!("expected AlterTable, got {other:?}"),
+        }
+
+        let statement = parser
+            .parse_ddl(
+                "ALTER TABLE \"Tenant One\".\"Event Store\" \
+                 ADD CONSTRAINT \"FK Payload Parent\" FOREIGN KEY (\"Payload Field\") \
+                 REFERENCES \"Tenant One\".\"Parent Store\" (\"Parent Id\");",
+            )
+            .expect("expected ddl parse to succeed")
+            .expect("expected alter table ddl");
+
+        match statement {
+            DdlStatement::AlterTable {
+                table_name,
+                changes,
+            } => {
+                assert_eq!(table_name, "Tenant One.Event Store");
+                assert_eq!(changes.len(), 1);
+                match &changes[0] {
+                    AlterTableChange::AddConstraint {
+                        constraint_name,
+                        constraint:
+                            TableConstraint::ForeignKey {
+                                columns,
+                                references_table,
+                                references_columns,
+                                ..
+                            },
+                    } => {
+                        assert_eq!(constraint_name.as_deref(), Some("FK Payload Parent"));
+                        assert_eq!(columns, &vec!["Payload Field".to_string()]);
+                        assert_eq!(references_table, "Tenant One.Parent Store");
+                        assert_eq!(references_columns, &vec!["Parent Id".to_string()]);
+                    }
+                    other => panic!("expected FOREIGN KEY AddConstraint, got {other:?}"),
+                }
+            }
+            other => panic!("expected AlterTable, got {other:?}"),
+        }
+
+        let statement = parser
+            .parse_ddl(
+                "ALTER TABLE \"Tenant One\".\"Event Store\" \
+                 DROP CONSTRAINT \"Unique Payload\";",
+            )
+            .expect("expected ddl parse to succeed")
+            .expect("expected alter table ddl");
+
+        match statement {
+            DdlStatement::AlterTable {
+                table_name,
+                changes,
+            } => {
+                assert_eq!(table_name, "Tenant One.Event Store");
+                assert_eq!(changes.len(), 1);
+                match &changes[0] {
+                    AlterTableChange::DropConstraint { constraint_name } => {
+                        assert_eq!(constraint_name, "Unique Payload");
+                    }
+                    other => panic!("expected DropConstraint, got {other:?}"),
+                }
+            }
+            other => panic!("expected AlterTable, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parse_ddl_create_table_supports_jsonb() {
         let parser = SqlFrontendParser::new();
 
@@ -2946,7 +3098,7 @@ impl SqlFrontendParser {
                 operations,
                 ..
             } => {
-                let table_name = name.to_string();
+                let table_name = unquote_object_name(&name.to_string());
                 let mut changes = Vec::new();
 
                 for op in operations {
@@ -2958,7 +3110,9 @@ impl SqlFrontendParser {
                         AlterTableOperation::DropColumn { column_names, .. } => {
                             // Take the first column name (most ALTER DROP COLUMN has single column)
                             if let Some(col_name) = column_names.first() {
-                                changes.push(AlterTableChange::DropColumn(col_name.to_string()));
+                                changes.push(AlterTableChange::DropColumn(
+                                    unquote_identifier_text(&col_name.to_string()),
+                                ));
                             }
                         }
                         AlterTableOperation::RenameColumn {
@@ -2966,41 +3120,42 @@ impl SqlFrontendParser {
                             new_column_name,
                         } => {
                             changes.push(AlterTableChange::RenameColumn {
-                                old_name: old_column_name.to_string(),
-                                new_name: new_column_name.to_string(),
+                                old_name: unquote_identifier_text(&old_column_name.to_string()),
+                                new_name: unquote_identifier_text(&new_column_name.to_string()),
                             });
                         }
                         AlterTableOperation::AlterColumn { column_name, op } => {
                             use sqlparser::ast::AlterColumnOperation;
+                            let column_name = unquote_identifier_text(&column_name.to_string());
                             match op {
                                 AlterColumnOperation::SetNotNull => {
                                     changes.push(AlterTableChange::SetNullable {
-                                        column_name: column_name.to_string(),
+                                        column_name: column_name.clone(),
                                         nullable: false,
                                     });
                                 }
                                 AlterColumnOperation::DropNotNull => {
                                     changes.push(AlterTableChange::SetNullable {
-                                        column_name: column_name.to_string(),
+                                        column_name: column_name.clone(),
                                         nullable: true,
                                     });
                                 }
                                 AlterColumnOperation::SetDefault { value } => {
                                     changes.push(AlterTableChange::SetDefault {
-                                        column_name: column_name.to_string(),
+                                        column_name: column_name.clone(),
                                         default_value: Some(format!("{}", value)),
                                     });
                                 }
                                 AlterColumnOperation::DropDefault => {
                                     changes.push(AlterTableChange::SetDefault {
-                                        column_name: column_name.to_string(),
+                                        column_name: column_name.clone(),
                                         default_value: None,
                                     });
                                 }
                                 AlterColumnOperation::SetDataType { data_type, .. } => {
                                     let new_type = self.convert_data_type(data_type)?;
                                     changes.push(AlterTableChange::ChangeType {
-                                        column_name: column_name.to_string(),
+                                        column_name: column_name.clone(),
                                         new_type,
                                     });
                                 }
@@ -3016,16 +3171,22 @@ impl SqlFrontendParser {
                             use sqlparser::ast::TableConstraint as SqlConstraint;
                             match constraint {
                                 SqlConstraint::Unique { name, columns, .. } => {
-                                    let cols: Vec<String> =
-                                        columns.iter().map(|c| c.to_string()).collect();
+                                    let cols: Vec<String> = columns
+                                        .iter()
+                                        .map(|c| unquote_identifier_text(&c.to_string()))
+                                        .collect();
                                     changes.push(AlterTableChange::AddConstraint {
-                                        constraint_name: name.as_ref().map(|n| n.to_string()),
+                                        constraint_name: name
+                                            .as_ref()
+                                            .map(|n| unquote_identifier_text(&n.to_string())),
                                         constraint: TableConstraint::Unique { columns: cols },
                                     });
                                 }
                                 SqlConstraint::Check { name, expr, .. } => {
                                     changes.push(AlterTableChange::AddConstraint {
-                                        constraint_name: name.as_ref().map(|n| n.to_string()),
+                                        constraint_name: name
+                                            .as_ref()
+                                            .map(|n| unquote_identifier_text(&n.to_string())),
                                         constraint: TableConstraint::Check {
                                             expression: format!("{}", expr),
                                         },
@@ -3040,15 +3201,23 @@ impl SqlFrontendParser {
                                     on_update,
                                     ..
                                 } => {
-                                    let cols: Vec<String> =
-                                        columns.iter().map(|c| c.to_string()).collect();
-                                    let ref_cols: Vec<String> =
-                                        referred_columns.iter().map(|c| c.to_string()).collect();
+                                    let cols: Vec<String> = columns
+                                        .iter()
+                                        .map(|c| unquote_identifier_text(&c.to_string()))
+                                        .collect();
+                                    let ref_cols: Vec<String> = referred_columns
+                                        .iter()
+                                        .map(|c| unquote_identifier_text(&c.to_string()))
+                                        .collect();
                                     changes.push(AlterTableChange::AddConstraint {
-                                        constraint_name: name.as_ref().map(|n| n.to_string()),
+                                        constraint_name: name
+                                            .as_ref()
+                                            .map(|n| unquote_identifier_text(&n.to_string())),
                                         constraint: TableConstraint::ForeignKey {
                                             columns: cols,
-                                            references_table: foreign_table.to_string(),
+                                            references_table: unquote_object_name(
+                                                &foreign_table.to_string(),
+                                            ),
                                             references_columns: ref_cols,
                                             on_delete: on_delete.map(map_referential_action),
                                             on_update: on_update.map(map_referential_action),
@@ -3062,7 +3231,7 @@ impl SqlFrontendParser {
                         }
                         AlterTableOperation::DropConstraint { name, .. } => {
                             changes.push(AlterTableChange::DropConstraint {
-                                constraint_name: name.to_string(),
+                                constraint_name: unquote_identifier_text(&name.to_string()),
                             });
                         }
                         AlterTableOperation::ChangeColumn {
@@ -3073,15 +3242,17 @@ impl SqlFrontendParser {
                             ..
                         } => {
                             // MySQL-style CHANGE COLUMN (rename + type change)
-                            if old_name.to_string() != new_name.to_string() {
+                            let old_name = unquote_identifier_text(&old_name.to_string());
+                            let new_name = unquote_identifier_text(&new_name.to_string());
+                            if old_name != new_name {
                                 changes.push(AlterTableChange::RenameColumn {
-                                    old_name: old_name.to_string(),
-                                    new_name: new_name.to_string(),
+                                    old_name: old_name.clone(),
+                                    new_name: new_name.clone(),
                                 });
                             }
                             let new_type = self.convert_data_type(data_type)?;
                             changes.push(AlterTableChange::ChangeType {
-                                column_name: new_name.to_string(),
+                                column_name: new_name.clone(),
                                 new_type,
                             });
                             // Handle FIRST/AFTER positioning
@@ -3091,7 +3262,7 @@ impl SqlFrontendParser {
                                     let cs_str = cs.to_string().to_uppercase();
                                     if cs_str == "FIRST" {
                                         changes.push(AlterTableChange::MoveColumn {
-                                            column_name: new_name.to_string(),
+                                            column_name: new_name.clone(),
                                             position: ColumnPosition::First,
                                         });
                                     }
