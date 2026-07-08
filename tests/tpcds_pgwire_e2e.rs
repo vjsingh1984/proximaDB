@@ -21,7 +21,7 @@ use tempfile::TempDir;
 use tokio::time::sleep;
 
 /// TPC-DS subset queries expected to execute cleanly over pgwire (the ratchet).
-const TPCDS_RATCHET: usize = 16;
+const TPCDS_RATCHET: usize = 18;
 
 fn free_port() -> u16 {
     let l = TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -200,6 +200,10 @@ fn tpcds_queries() -> Vec<(&'static str, String)> {
         ("win_rank", "select i_category, i_brand, sum(ss_ext_sales_price) as rev, rank() over (partition by i_category order by sum(ss_ext_sales_price) desc) as rnk from store_sales, item where ss_item_sk = i_item_sk group by i_category, i_brand order by i_category, rnk".to_string()),
         // WINDOW: running sum (frame).
         ("win_running", "select d_date, sum(ss_ext_sales_price) as daily, sum(sum(ss_ext_sales_price)) over (order by d_date rows between unbounded preceding and current row) as running from store_sales, date_dim where ss_sold_date_sk = d_date_sk group by d_date order by d_date".to_string()),
+        // WINDOW: RANGE value-offset frame (must NOT execute as ROWS).
+        ("win_range", "select ss_quantity, sum(ss_net_profit) over (order by ss_quantity range between 1 preceding and current row) as s from store_sales order by ss_quantity".to_string()),
+        // WINDOW: GROUPS peer-group frame (must NOT execute as ROWS).
+        ("win_groups", "select ss_quantity, sum(ss_net_profit) over (order by ss_quantity groups between 1 preceding and current row) as s from store_sales order by ss_quantity".to_string()),
         // ROLLUP.
         ("rollup", "select i_category, i_class, sum(ss_net_profit) as profit from store_sales, item where ss_item_sk = i_item_sk group by rollup(i_category, i_class) order by i_category, i_class".to_string()),
         // GROUPING SETS.
@@ -383,4 +387,48 @@ async fn tpcds_pgwire_conformance() {
         "rank() window: per-category brand revenue ranking"
     );
     eprintln!("✓ value-correctness: ROLLUP / CUBE / rank() window anchored");
+
+    // Window FRAME-UNIT correctness (RANGE vs GROUPS) on a key WITH TIES — a
+    // frame that silently executed as ROWS would give wrong numbers here.
+    // ORDER BY ss_quantity is [1,1,2,3,5] (the two q=1 rows carry profits 8 and
+    // 6). BETWEEN 1 PRECEDING AND CURRENT ROW over sum(ss_net_profit):
+    //   RANGE  — value window [q-1, q]:  q1→8+6=14, q2→8+6+12=26, q3→12+10=22, q5→20
+    //   GROUPS — whole peer groups:      q1→14,      q2→26,        q3→22,       q5→10+20=30
+    // The two units agree everywhere except q=5 (20 vs 30) — proof the declared
+    // unit is honoured, not collapsed. (ROWS is order-sensitive on ties, so its
+    // per-row values are non-deterministic here; the ROWS frame is anchored by
+    // the deterministic `win_running` ratchet query above.)
+    let mut exp_range = vec![
+        row(&["1", "14"]),
+        row(&["1", "14"]),
+        row(&["2", "26"]),
+        row(&["3", "22"]),
+        row(&["5", "20"]),
+    ];
+    exp_range.sort();
+    assert_eq!(
+        canon_rows(&client, "select ss_quantity, sum(ss_net_profit) over (order by ss_quantity range between 1 preceding and current row) as s from store_sales").await,
+        exp_range,
+        "RANGE frame: value-window sums over a tied ORDER BY key"
+    );
+
+    let mut exp_groups = vec![
+        row(&["1", "14"]),
+        row(&["1", "14"]),
+        row(&["2", "26"]),
+        row(&["3", "22"]),
+        row(&["5", "30"]),
+    ];
+    exp_groups.sort();
+    assert_eq!(
+        canon_rows(&client, "select ss_quantity, sum(ss_net_profit) over (order by ss_quantity groups between 1 preceding and current row) as s from store_sales").await,
+        exp_groups,
+        "GROUPS frame: peer-group sums over a tied ORDER BY key"
+    );
+
+    assert_ne!(
+        exp_range, exp_groups,
+        "RANGE and GROUPS must differ on ties — else the frame unit was collapsed to ROWS"
+    );
+    eprintln!("✓ value-correctness: RANGE vs GROUPS frame units honoured on ties");
 }
