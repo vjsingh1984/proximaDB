@@ -64,15 +64,15 @@ REST surface), `embedded/mod.rs` (~59).
 
 Remaining Tier 1 work is the **cutover** (not the gate), in order:
 
-1. **Migrate the admin dashboard off `/api/v1`.** `src/network/rest/dashboard.html` still calls
-   `/api/v1/collections` (lines 697, 826) — swap to `/api/v2/collections?include_stats=true` (the
-   `include_stats=true` is required: v2 defaults it to `false`, which would zero the "total vectors"
-   card). The dashboard's parsing is defensive (`data.collections || data || []`,
-   `col.config?.name || col.name`), so the shape swap is low-risk. Until this lands, flipping the
-   REST-v1 default off breaks the admin UI.
-2. **Flip the REST-v1 default to OFF** (the breaking cutover — `410`s all `/api/v1` traffic). Gate
-   this on (a) the dashboard migration above and (b) confirming no live `/api/v1` client traffic.
-   Needs explicit sign-off (outward-facing break), per the repo's certify-before-flip posture.
+1. **(done, #756)** The served admin UI (`crates/platform/proximadb-admin-ui/assets/admin.html`,
+   embedded via `include_str!` at `/admin` + `/dashboard`) is **already v2-clean** — only
+   `/api/v2/*` + `/metrics/json`. The only `/api/v1` dashboard caller was the *orphaned*
+   `src/network/rest/dashboard.html` (not embedded, not served by any route), deleted in #756. So
+   the cutover is **not** dashboard-blocked. (An earlier draft of this roadmap assumed a dashboard
+   migration was required — that was based on the orphan file, not the served UI.)
+2. **Flip the REST-v1 default to OFF** (the breaking cutover — `410`s all `/api/v1` traffic). Now
+   gated *only* on confirming there is no live external `/api/v1` client traffic. Needs explicit
+   sign-off (outward-facing break), per the repo's certify-before-flip posture.
 3. **Hard-delete** the v1 REST handlers (`network/rest/v1/*`) and the gRPC v1 services once each has
    been default-off through a sunset window.
 
