@@ -41,8 +41,11 @@ use proximadb_storage_common::format_splits::FileSplit;
 /// (Arc'd schema; the split vec is small — one entry per row group).
 #[derive(Clone)]
 pub struct TableOpenDiscovery {
+    /// Arrow schema inferred from the parquet footer (first file wins).
     pub schema: SchemaRef,
+    /// Row-group splits with their footer statistics (one entry per row group).
     pub splits: Vec<FileSplit>,
+    /// Per-file byte sizes, keyed by the full object path.
     pub file_sizes: HashMap<String, u64>,
 }
 

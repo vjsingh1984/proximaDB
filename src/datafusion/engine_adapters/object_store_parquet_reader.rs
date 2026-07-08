@@ -656,6 +656,9 @@ impl ObjectStoreParquetTable {
             location: location.to_string(),
             table_name: None,
             split_key_cache: Arc::new(Mutex::new(HashMap::new())),
+            // Per-query caches start empty (#742) — the table-OPEN cache reuses the
+            // immutable footer discovery, not these query-time bloom/key caches.
+            row_group_bloom_cache: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -1855,7 +1858,7 @@ mod tests {
                 let ctx = SessionContext::new();
                 // Register (wraps the store) INSIDE the scope so the io_trace
                 // handle is captured for spawned-partition reads.
-                register_object_store_parquet_location(&ctx, "t", location)
+                register_object_store_parquet_location(&ctx, "t", location, None)
                     .await
                     .unwrap();
                 let batches = ctx.sql(query).await.unwrap().collect().await.unwrap();
