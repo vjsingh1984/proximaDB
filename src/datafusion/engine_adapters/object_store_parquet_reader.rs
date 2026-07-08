@@ -1307,7 +1307,9 @@ mod tests {
         assert_eq!(stats.num_rows, Precision::Exact(4));
         // Schema-width contract: one entry per table column.
         assert_eq!(stats.column_statistics.len(), 2);
-        assert_eq!(stats.column_statistics[1].null_count, Precision::Inexact(0));
+        // `null_count` is exact footer metadata → `Exact` (gate-independent; enables
+        // `COUNT(col)` elision).
+        assert_eq!(stats.column_statistics[1].null_count, Precision::Exact(0));
         assert_eq!(
             stats.column_statistics[1].min_value,
             Precision::Absent,
@@ -1325,16 +1327,16 @@ mod tests {
             k.max_value,
             Precision::Inexact(DfScalarValue::Utf8(Some("b".to_string())))
         );
+        // Numeric column: parquet min/max are exact → `Exact` (elidable MIN/MAX);
+        // null_count exact for every type. (The string column `k` above stays
+        // Inexact — parquet truncates BYTE_ARRAY stats.)
         let x = &full.column_statistics[1];
-        assert_eq!(
-            x.min_value,
-            Precision::Inexact(DfScalarValue::Int64(Some(1)))
-        );
+        assert_eq!(x.min_value, Precision::Exact(DfScalarValue::Int64(Some(1))));
         assert_eq!(
             x.max_value,
-            Precision::Inexact(DfScalarValue::Int64(Some(101)))
+            Precision::Exact(DfScalarValue::Int64(Some(101)))
         );
-        assert_eq!(x.null_count, Precision::Inexact(0));
+        assert_eq!(x.null_count, Precision::Exact(0));
     }
 
     /// TD-OLAP-3 slice A: with `supports_filters_pushdown` (Inexact), a WHERE
