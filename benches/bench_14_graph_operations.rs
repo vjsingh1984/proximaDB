@@ -21,10 +21,10 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::{
-    graph::{Edge, Node, PropertyValue, service::GraphOperationsService},
+    graph::{Edge, Node, PropertyValue, property_value::Value, service::GraphOperationsService},
     proto::proximadb_v1::{
         CreateGraphRequest, NodeQuery, PropertyFilter, PropertyFilterOperator, TraversalAlgorithm,
-        TraversalRequest, property_value::Value,
+        TraversalRequest,
     },
     services::graph_collection::GraphCollectionService,
 };

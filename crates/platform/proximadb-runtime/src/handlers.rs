@@ -9,9 +9,10 @@
 //!
 //! ## Migration status
 //!
-//! The real implementation still lives in `src/api_handlers/request_handlers.rs`
-//! in the root crate, which implements `ApiHandlersPort` via delegation.  This
-//! stub will replace it once the concrete services are extracted to this crate.
+//! This is the **sole production** `ApiHandlersPort` implementation. The legacy
+//! root-crate twin (`src/api_handlers/request_handlers.rs`) was retired in
+//! TD-104 S3-f — every REST/gRPC/Arrow/pgwire/embedded surface now routes
+//! through this handler, which delegates to injected service ports.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -432,11 +433,9 @@ fn supports_range_filter(value: &ProximaType) -> bool {
 }
 
 // ── ApiHandlersPort implementation ───────────────────────────────────────────
-// CANONICAL impl. New schema/port methods belong here (runtime-native shape).
-// The legacy twin lives in `src/api_handlers/request_handlers.rs`
-// (`impl ApiHandlersPort for UnifiedHandlers` on the root-crate struct) and
-// bridges to v1 CollectionRequest/CollectionOperation — edit that one only to
-// keep the bridge compiling; do not extend it for new functionality.
+// CANONICAL impl — and the sole production one. New schema/port methods belong
+// here (runtime-native shape). (The legacy root-crate twin that used to bridge
+// to v1 CollectionRequest/CollectionOperation was deleted in TD-104 S3-f.)
 
 #[async_trait]
 impl ApiHandlersPort for UnifiedHandlers {

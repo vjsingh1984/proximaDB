@@ -994,12 +994,6 @@ name = "bench_graph_adjacency_vs_csr"
 harness = false
 path = "benches/bench_graph_adjacency_vs_csr.rs"
 
-# 7. GRAPH ENGINES COMPARISON (17)
-[[bench]]
-name = "bench_17_graph_engines"
-harness = false
-path = "benches/bench_17_graph_engines.rs"
-
 # 8. GRAPH ENGINE REPORTER (CSV)
 [[bench]]
 name = "graph_engine_reporter"

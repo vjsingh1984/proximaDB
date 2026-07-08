@@ -129,7 +129,7 @@ fn graph_flight_err(e: anyhow::Error) -> FlightError {
 /// - **.parquet**: Parquet files (from Nova, VIPER engines)
 pub struct ProximaFlightService {
     // TD-104 S3: the Flight service depends on ports + the concrete services it
-    // actually uses, not the root `UnifiedHandlers`. Vector search goes through
+    // actually uses, not a monolithic handler. Vector search goes through
     // `ApiHandlersPort`, record-batch ingest through `RecordOpsPort`; the
     // vector-ops/collection services are held directly (same Arcs as before).
     api_port: Arc<dyn proximadb_runtime::ApiHandlersPort>,
