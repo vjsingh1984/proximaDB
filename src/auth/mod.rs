@@ -14,9 +14,6 @@ pub mod federated_delegation_complete;
 pub mod rbac;
 pub mod sso;
 
-#[allow(deprecated)]
-#[deprecated(note = "Use `AuthenticationResult` from this module; this alias is temporary.")]
-pub use federated_delegation_complete::FederatedAuthenticationResult;
 pub use federated_delegation_complete::{
     AuthenticationResult, CompleteDelegationResult, CompleteFederatedIdentityDelegation,
 };
