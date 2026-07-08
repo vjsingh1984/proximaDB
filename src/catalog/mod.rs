@@ -788,6 +788,13 @@ impl CatalogManager {
         let (catalog, id) = self.resolve_table(fqn).await?;
         match tenant {
             Some(tenant) if !tenant.is_empty() => {
+                if id
+                    .namespace
+                    .first()
+                    .is_some_and(|segment| segment == tenant)
+                {
+                    return Ok((catalog, id));
+                }
                 let mut namespace = Vec::with_capacity(id.namespace.len() + 1);
                 namespace.push(tenant.to_string());
                 namespace.extend(id.namespace.iter().cloned());
@@ -989,6 +996,27 @@ mod tests {
                 "unexpected error for tenant {tenant}: {err}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn resolve_table_scoped_does_not_double_prefix_explicit_tenant_namespace() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = CatalogManager::new();
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let (_, table_id) = manager
+            .resolve_table_scoped("native.acmecorp.analytics.events", Some("acmecorp"))
+            .await
+            .expect("resolve table");
+
+        assert_eq!(
+            table_id.namespace,
+            vec!["acmecorp".to_string(), "analytics".to_string()]
+        );
+        assert_eq!(table_id.name, "events");
     }
 
     #[tokio::test]

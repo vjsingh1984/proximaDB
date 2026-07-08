@@ -2299,22 +2299,132 @@ mod tests {
     fn parse_ddl_drop_table_supports_table_name() {
         let parser = SqlFrontendParser::new();
 
-        let statement = parser
-            .parse_ddl("DROP TABLE demo;")
-            .expect("expected ddl parse to succeed")
-            .expect("expected drop table ddl");
+        let cases = [
+            ("DROP TABLE demo;", "demo", false, false),
+            (
+                "DROP TABLE IF EXISTS \"Tenant One\".\"Event Store\";",
+                "Tenant One.Event Store",
+                true,
+                false,
+            ),
+        ];
 
-        if let DdlStatement::DropTable {
-            table_name,
-            if_exists,
-            purge,
-        } = statement
-        {
-            assert_eq!(table_name, "demo");
-            assert!(!if_exists);
-            assert!(!purge);
-        } else {
-            panic!("expected drop table statement");
+        for (sql, expected_table_name, expected_if_exists, expected_purge) in cases {
+            let statement = parser
+                .parse_ddl(sql)
+                .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"))
+                .expect("expected drop table ddl");
+
+            if let DdlStatement::DropTable {
+                table_name,
+                if_exists,
+                purge,
+            } = statement
+            {
+                assert_eq!(
+                    table_name, expected_table_name,
+                    "table mismatch for `{sql}`"
+                );
+                assert_eq!(
+                    if_exists, expected_if_exists,
+                    "IF EXISTS mismatch for `{sql}`"
+                );
+                assert_eq!(purge, expected_purge, "PURGE mismatch for `{sql}`");
+            } else {
+                panic!("expected drop table statement");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_ddl_create_namespace_routes_through_pre_parser() {
+        let parser = SqlFrontendParser::new();
+
+        let cases = [
+            ("CREATE NAMESPACE analytics", vec!["analytics"], false),
+            (
+                "CREATE NAMESPACE IF NOT EXISTS acmecorp.analytics;",
+                vec!["acmecorp", "analytics"],
+                true,
+            ),
+            (
+                "create namespace if not exists \"Tenant One\".\"Event Store\"",
+                vec!["Tenant One", "Event Store"],
+                true,
+            ),
+        ];
+
+        for (sql, expected_namespace, expected_if_not_exists) in cases {
+            let statement = parser
+                .parse_ddl(sql)
+                .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"))
+                .expect("expected create namespace ddl");
+
+            match statement {
+                DdlStatement::CreateNamespace {
+                    namespace,
+                    if_not_exists,
+                    properties,
+                } => {
+                    assert_eq!(
+                        namespace, expected_namespace,
+                        "namespace mismatch for `{sql}`"
+                    );
+                    assert_eq!(
+                        if_not_exists, expected_if_not_exists,
+                        "IF NOT EXISTS mismatch for `{sql}`"
+                    );
+                    assert!(properties.is_empty());
+                }
+                other => panic!("expected CreateNamespace for `{sql}`, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_ddl_drop_namespace_routes_through_pre_parser() {
+        let parser = SqlFrontendParser::new();
+
+        let cases = [
+            ("DROP NAMESPACE analytics", vec!["analytics"], false, false),
+            (
+                "DROP NAMESPACE IF EXISTS acmecorp.analytics CASCADE;",
+                vec!["acmecorp", "analytics"],
+                true,
+                true,
+            ),
+            (
+                "drop namespace if exists \"Tenant One\".\"Event Store\" restrict",
+                vec!["Tenant One", "Event Store"],
+                true,
+                false,
+            ),
+        ];
+
+        for (sql, expected_namespace, expected_if_exists, expected_cascade) in cases {
+            let statement = parser
+                .parse_ddl(sql)
+                .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"))
+                .expect("expected drop namespace ddl");
+
+            match statement {
+                DdlStatement::DropNamespace {
+                    namespace,
+                    if_exists,
+                    cascade,
+                } => {
+                    assert_eq!(
+                        namespace, expected_namespace,
+                        "namespace mismatch for `{sql}`"
+                    );
+                    assert_eq!(
+                        if_exists, expected_if_exists,
+                        "IF EXISTS mismatch for `{sql}`"
+                    );
+                    assert_eq!(cascade, expected_cascade, "CASCADE mismatch for `{sql}`");
+                }
+                other => panic!("expected DropNamespace for `{sql}`, got {:?}", other),
+            }
         }
     }
 
@@ -2349,22 +2459,48 @@ mod tests {
     fn parse_ddl_drop_index_supports_drop_index() {
         let parser = SqlFrontendParser::new();
 
-        let statement = parser
-            .parse_ddl("DROP INDEX demo_payload_idx ON demo;")
-            .expect("expected ddl parse to succeed")
-            .expect("expected drop index ddl");
+        let cases = [
+            (
+                "DROP INDEX demo_payload_idx ON demo;",
+                "demo_payload_idx",
+                "demo",
+                false,
+            ),
+            (
+                "DROP INDEX IF EXISTS \"Payload Index\" ON \"Tenant One\".\"Event Store\";",
+                "Payload Index",
+                "Tenant One.Event Store",
+                true,
+            ),
+        ];
 
-        if let DdlStatement::DropIndex {
-            index_name,
-            table_name,
-            if_exists,
-        } = statement
-        {
-            assert_eq!(index_name, "demo_payload_idx");
-            assert_eq!(table_name, "demo");
-            assert!(!if_exists);
-        } else {
-            panic!("expected drop index statement");
+        for (sql, expected_index_name, expected_table_name, expected_if_exists) in cases {
+            let statement = parser
+                .parse_ddl(sql)
+                .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"))
+                .expect("expected drop index ddl");
+
+            if let DdlStatement::DropIndex {
+                index_name,
+                table_name,
+                if_exists,
+            } = statement
+            {
+                assert_eq!(
+                    index_name, expected_index_name,
+                    "index mismatch for `{sql}`"
+                );
+                assert_eq!(
+                    table_name, expected_table_name,
+                    "table mismatch for `{sql}`"
+                );
+                assert_eq!(
+                    if_exists, expected_if_exists,
+                    "IF EXISTS mismatch for `{sql}`"
+                );
+            } else {
+                panic!("expected drop index statement");
+            }
         }
     }
 
@@ -2585,6 +2721,14 @@ impl SqlFrontendParser {
         }
         // Pattern: CREATE [OR REPLACE] FUNCTION <name>(params) RETURNS <ty> AS '<body>' (F5)
         if let Some(result) = try_parse_create_function(sql)? {
+            return Ok(Some(result));
+        }
+        // Pattern: CREATE NAMESPACE [IF NOT EXISTS] <qualified_namespace>
+        if let Some(result) = try_parse_create_namespace(sql)? {
+            return Ok(Some(result));
+        }
+        // Pattern: DROP NAMESPACE [IF EXISTS] <qualified_namespace> [CASCADE|RESTRICT]
+        if let Some(result) = try_parse_drop_namespace(sql)? {
             return Ok(Some(result));
         }
         // Pattern: ALTER TABLE <name> MATERIALIZE (warehouse publish → Parquet-backed)
@@ -2969,6 +3113,7 @@ impl SqlFrontendParser {
                         .first()
                         .ok_or_else(|| anyhow!("DROP TABLE requires a table name"))?
                         .to_string();
+                    let table_name = unquote_object_name(&table_name);
                     Ok(Some(DdlStatement::DropTable {
                         table_name,
                         if_exists: *if_exists,
@@ -2980,10 +3125,12 @@ impl SqlFrontendParser {
                         .first()
                         .ok_or_else(|| anyhow!("DROP INDEX requires an index name"))?
                         .to_string();
+                    let index_name = unquote_identifier_text(&index_name);
                     let table_name = table
                         .as_ref()
                         .map(|table_name| table_name.to_string())
                         .ok_or_else(|| anyhow!("DROP INDEX requires a table name"))?;
+                    let table_name = unquote_object_name(&table_name);
 
                     Ok(Some(DdlStatement::DropIndex {
                         index_name,
@@ -3332,6 +3479,180 @@ pub fn unquote_identifier_text(value: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+fn consume_keyword<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
+    let trimmed = input.trim_start();
+    if trimmed.len() < keyword.len() {
+        return None;
+    }
+
+    let (candidate, rest) = trimmed.split_at(keyword.len());
+    if !candidate.eq_ignore_ascii_case(keyword) {
+        return None;
+    }
+    if rest.chars().next().is_some_and(|ch| !ch.is_whitespace()) {
+        return None;
+    }
+    Some(rest)
+}
+
+fn parse_qualified_identifier_parts(input: &str, statement_name: &str) -> Result<Vec<String>> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut chars = input.trim().chars().peekable();
+    let mut in_quotes = false;
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                if in_quotes && chars.peek() == Some(&'"') {
+                    current.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = !in_quotes;
+                }
+            }
+            '.' if !in_quotes => {
+                let part = current.trim();
+                if part.is_empty() {
+                    return Err(anyhow!(
+                        "{statement_name} contains an empty identifier part"
+                    ));
+                }
+                parts.push(part.to_string());
+                current.clear();
+            }
+            ch if ch.is_whitespace() && !in_quotes => {
+                return Err(anyhow!(
+                    "{statement_name} expects a single qualified namespace identifier"
+                ));
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if in_quotes {
+        return Err(anyhow!(
+            "{statement_name} has an unterminated quoted identifier"
+        ));
+    }
+
+    let part = current.trim();
+    if part.is_empty() {
+        return Err(anyhow!("{statement_name} requires a namespace name"));
+    }
+    parts.push(part.to_string());
+    Ok(parts)
+}
+
+fn try_parse_create_namespace(sql: &str) -> Result<Option<DdlStatement>> {
+    let normalised = sql.trim().trim_end_matches(';').trim();
+    let Some(rest) = consume_keyword(normalised, "CREATE") else {
+        return Ok(None);
+    };
+    let Some(mut rest) = consume_keyword(rest, "NAMESPACE") else {
+        return Ok(None);
+    };
+
+    let mut if_not_exists = false;
+    if let Some(after_if) = consume_keyword(rest, "IF")
+        && let Some(after_not) = consume_keyword(after_if, "NOT")
+        && let Some(after_exists) = consume_keyword(after_not, "EXISTS")
+    {
+        if_not_exists = true;
+        rest = after_exists;
+    }
+
+    let namespace = parse_qualified_identifier_parts(rest, "CREATE NAMESPACE")?;
+    Ok(Some(DdlStatement::CreateNamespace {
+        namespace,
+        if_not_exists,
+        properties: HashMap::new(),
+    }))
+}
+
+fn split_sql_words_respecting_quotes(input: &str, statement_name: &str) -> Result<Vec<String>> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut chars = input.trim().chars().peekable();
+    let mut in_quotes = false;
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                current.push(ch);
+                if in_quotes && chars.peek() == Some(&'"') {
+                    current.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = !in_quotes;
+                }
+            }
+            ch if ch.is_whitespace() && !in_quotes => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if in_quotes {
+        return Err(anyhow!(
+            "{statement_name} has an unterminated quoted identifier"
+        ));
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    Ok(words)
+}
+
+fn try_parse_drop_namespace(sql: &str) -> Result<Option<DdlStatement>> {
+    let normalised = sql.trim().trim_end_matches(';').trim();
+    let Some(rest) = consume_keyword(normalised, "DROP") else {
+        return Ok(None);
+    };
+    let Some(mut rest) = consume_keyword(rest, "NAMESPACE") else {
+        return Ok(None);
+    };
+
+    let mut if_exists = false;
+    if let Some(after_if) = consume_keyword(rest, "IF")
+        && let Some(after_exists) = consume_keyword(after_if, "EXISTS")
+    {
+        if_exists = true;
+        rest = after_exists;
+    }
+
+    let mut words = split_sql_words_respecting_quotes(rest, "DROP NAMESPACE")?;
+    if words.is_empty() {
+        return Err(anyhow!("DROP NAMESPACE requires a namespace name"));
+    }
+
+    let mut cascade = false;
+    if let Some(last) = words.last() {
+        if last.eq_ignore_ascii_case("CASCADE") {
+            cascade = true;
+            words.pop();
+        } else if last.eq_ignore_ascii_case("RESTRICT") {
+            words.pop();
+        }
+    }
+
+    if words.len() != 1 {
+        return Err(anyhow!(
+            "DROP NAMESPACE expects a single qualified namespace identifier"
+        ));
+    }
+
+    let namespace = parse_qualified_identifier_parts(&words[0], "DROP NAMESPACE")?;
+    Ok(Some(DdlStatement::DropNamespace {
+        namespace,
+        if_exists,
+        cascade,
+    }))
 }
 
 // =========================================================================
