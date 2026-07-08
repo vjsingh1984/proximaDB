@@ -1,0 +1,73 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-XMODAL-9: Cross-modal fusion streams lack `ExecutionControls` row/byte caps (OOM / saturation risk)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open
+| Severity | Medium-High (robustness / reliability — unbounded late-materialization buffers under large fan-out or adversarial inputs)
+| Component | Cross-modal query fusion — `src/core/search/hybrid`, `src/services/operations/vectors/hybrid`, `src/graph/hybrid`; the resource-control contract lives at `src/query/execution/engine.rs` (`ExecutionControls`)
+| Governs | link:../../12-design/adr/ADR-053-cross-modal-query-fabric.adoc[ADR-053] (cross-modal query fabric — modalities as composable SQL relations)
+| Relates | link:TD-XMODAL-7-crossmodal-udtf-subquery-stack-overflow.adoc[TD-XMODAL-7] (sibling resource-bound defect — unbounded recursion), link:TD-186-relational-expr-eval-unification.adoc[TD-186] / link:../../12-design/adr/ADR-043-unified-relational-expression-evaluation.adoc[ADR-043] (unified execution lowering), link:TD-OLAP-1-pax-native-vectorized-scan-feeds-datafusion.adoc[TD-OLAP-1], link:TECHNICAL_DEBT.adoc#td-104[TD-104] (handler convergence)
+| Surfaced by | External architectural review (2026-07-07) — the one genuinely-untracked finding; see link:../REVIEW_RESPONSE_2026_07_07.adoc[review response]
+|===
+
+== Problem
+
+The relational engine has a resource-control contract — `ExecutionControls` (defined at
+`src/query/execution/engine.rs`, threaded through `src/query/execution/datafusion_engine.rs`
+and the pgwire boundary at `src/network/postgres/protocol.rs`) — that is meant to enforce
+row / byte / time ceilings on physical streams so a query cannot grow an unbounded buffer.
+
+That contract is **not wired into the cross-modal fusion streams**. The fusion executors at
+`src/core/search/hybrid`, `src/services/operations/vectors/hybrid`, and `src/graph/hybrid`
+materialize per-leg result sets and the fused output with **no row or byte cap**:
+
+* `grep -r "ExecutionControls\|execution_controls" src/core/search/hybrid src/services/operations/vectors/hybrid src/graph/hybrid` → no hits.
+* `grep -rln "struct ExecutionControls" src crates` → only the relational-execution sites above; nothing in any fusion path.
+
+Consequence: a cross-modal query that fans out a wide vector leg + a high-degree graph
+expansion + a per-record document fetch can buffer arbitrarily many `ScoredRecord`s / fused
+rows in RAM before ranking + projection drain them. Under adversarial input or a fat k / large
+top-k this is an OOM / saturation path — the same class of unbounded-resource defect as
+link:TD-XMODAL-7-crossmodal-udtf-subquery-stack-overflow.adoc[TD-XMODAL-7] (stack), but on the
+heap side of the fusion stream.
+
+This is *not* a correctness bug (results are right); it is a robustness gap that matters the
+moment cross-modal queries leave the single-node developer bench (the ADR-053 fabric is
+intended to compose arbitrarily).
+
+== Next action
+
+Thread `ExecutionControls` (or a shared `StreamLimits { max_rows, max_bytes, deadline }`)
+into the fusion executors' stream adapters, enforced at the **fusion-materialization
+boundary** — i.e. where each leg's output is collected into the fused buffer, not at the leaf
+scan (leaf caps are the engines' job). Concretely:
+
+1. Define one shared limit type (reuse `ExecutionControls` if its shape fits; else a thin
+   `FusionStreamLimits` in `crates/query/proximadb-query-fusion`) so the cap is defined once.
+2. Enforce `max_rows` / `max_bytes` at the collector that buffers leg outputs before RRF /
+   PIT-calibrated fusion (`src/core/search/hybrid`); fail loud (a `ResourceExhausted`-style
+   error with the limit + which leg tripped it), never silent truncation.
+3. Default the caps conservatively (config + env override) so single-node dev workloads are
+   unaffected but a runaway fan-out fails closed instead of OOMing.
+4. Test: an adversarial cross-modal query whose natural fan-out exceeds the cap returns the
+   bounded error, not a kill; a normal query is untouched (regression guard).
+
+== Dependencies / sequencing
+
+* Independent of TD-104 (handler convergence) — can land first; the limit type just needs a
+  stable home.
+* Pairs naturally with TD-XMODAL-7 (both are "the cross-modal fabric needs bounded resource
+  semantics before it's production-safe"); consider a shared `FusionResourcePolicy`.
+* No format/storage change — mixed-read-safe, magic bytes untouched, recall ratchet unaffected.
+
+== How to apply
+
+Start at `src/core/search/hybrid` (the canonical fusion seam per
+`CROSS_MODAL_FUSION_SEAM_2026_06_22.adoc`), find the collector that assembles per-leg results
+by `oid`, and bound it. Then propagate the same limit to the graph-leg expander
+(`src/graph/hybrid`) and the vector hybrid path
+(`src/services/operations/vectors/hybrid`). Verify with a fan-out stress test before promoting
+any default.

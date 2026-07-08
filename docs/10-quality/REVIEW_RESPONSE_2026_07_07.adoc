@@ -1,0 +1,211 @@
+= Response to Antigravity Architectural Review (2026-07-07)
+:toc: left
+:toclevels: 2
+:icons: font
+:last-updated: 2026-07-07
+
+[.lead]
+This document responds to the comprehensive architectural review produced by Antigravity on
+2026-07-07 (`architectural_review.md`, grade B-). It (1) corrects several load-bearing claims
+that are stale or miscited, (2) maps every "real" finding to the Technical-Debt entry that
+already tracks it, (3) records the one genuinely-new finding filed from the review, and (4)
+separates engineering work from product/strategy decisions that are the maintainer's call, not
+code edits. Predecessor: link:REVIEW_RESPONSE_FEB_2025.adoc[the February 2025 review response].
+
+[IMPORTANT]
+====
+The review is broadly sound in its *themes* (god objects, twin handlers, DataFusion/Volcano
+divergence, single-node-vs-MPP gap, agent-memory wedge). Its *citations* are not: it invents a
+`TD-CAT-2` that does not exist, treats already-tracked TDs as new discoveries, and overstates
+two items that are in fact already resolved or in-flight. **Acting on the review as written
+would duplicate in-flight work and chase ghost items.** This doc is the corrected action plan.
+====
+
+== 1. Executive Summary
+
+* The review's three top risks (vision-vs-reality gap, handler monolith, catalog tenancy) are
+  real in *theme* but two of the three are **already tracked, in-progress TDs** the review
+  filed under wrong/non-existent IDs.
+* **~9 of 11 backlog items map to existing TD entries** (TD-104, TD-151, TD-186/ADR-043,
+  TD-168/ADR-034, TD-123, TD-ENGINE-1, TD-078, ADR-018, the measurement mandate). Filing new
+  TDs for these would violate the collision-free convention and be rejected by the
+  `td-adr-unique` guard.
+* **One genuinely-new finding** — cross-modal fusion streams lack `ExecutionControls` row/byte
+  caps — is filed as link:td/TD-XMODAL-9-crossmodal-fusion-stream-resource-bounds.adoc[TD-XMODAL-9].
+* **Two items are product/strategy decisions**, not code (warehouse positioning, defer
+  multi-table ACID). These are flagged for the maintainer; this doc does not enact them.
+* **No new release blocker is uncovered.** The nearest real SaaS risk — catalog metadata
+  path isolation — is ADR-032 (Proposed) and is already in-flight in the working tree.
+
+== 2. Corrections — stale, miscited, or already-resolved items
+
+=== 2.1. `TD-CAT-2` (cited as a P0 catalog-isolation blocker) does not exist
+
+*Review claim:* "Treat TD-CAT-2 as a P0 release blocker for SaaS multi-tenant."
+
+*Actual state:* There is no `TD-CAT-2` file in `docs/10-quality/td/` or row in the legacy
+`TECHNICAL_DEBT.adoc`. The catalog-isolation gap is real but it is **already documented and
+in-flight**:
+
+* link:../12-design/adr/ADR-032-durable-tenant-prefixed-object-store-catalog.adoc[ADR-032]
+  (status: **Proposed**) names the exact gap — Decision F2: `NativeCatalog` persists flat
+  `base_path/metadata/tables/<namespace>/<table>.json` with no `{tenant_id}` segment, so the
+  catalog metadata authority is the one place tenant data is not path-isolated, even though
+  `DrPathBuilder` handles the data path.
+* `src/catalog/mod.rs` **already ships substantial isolation machinery**: `resolve_table_within_tenant`
+  (TD-064), the reserved-segment denylist guarding `_operator`/`_metering`/`_trace`, ADR-035
+  per-tenant hot cache (TD-SC-1), and a fail-closed `parse_storage_url` (line 298).
+* **`src/catalog/mod.rs` is currently modified in the working tree** — i.e. this is active
+  work, not an undiscovered hole. Per-modality isolation is tracked separately: TD-DOC-TENANT-1,
+  TD-ENTITY-TENANT-1, TD-GRAPH-TENANT-1, TD-IOTRACE-2, TD-XMODAL-8.
+
+*Action:* Do **not** open a new "catalog tenant isolation" TD — it would duplicate ADR-032 +
+collide with the in-flight catalog changes. Drive ADR-032 to Accepted and execute its phased
+rollout (it already specifies fail-closed `DeploymentMode::{SingleTenant, MultiTenant}`).
+
+=== 2.2. "100K QPS / sub-ms in public docs" is largely already handled
+
+*Review claim:* "Scrub the README and marketing docs. Only publish numbers marked
+`status = "measured"`."
+
+*Actual state:* The README perf section is **already explicitly caveated** —
+*"treat as headroom indicators, not a published SLA,"* recall marked
+*"not an SLA — see SUPPORTED_SURFACE,"* plus a NOTE clarifying v0.2 is a narrow single-node cut
+with Beta/Experimental tiers enumerated. The "100K QPS" figure the review flags lives in
+`docs/_internal/roadmap/BENCHMARK_EVIDENCE.toml` marked **unverified** — which is exactly the
+correct placement (internal ledger, not public claim). The only loose thread is positioning
+copy in link:../00-product/PRD.adoc[PRD] / link:../00-product/VISION.adoc[VISION]
+("sub-millisecond latency in a single Rust binary", "sub-ms OHLC") — aspirational product
+descriptors, not benchmark claims.
+
+*Action:* Minor wording tightening in PRD/VISION positioning sentences (swap "sub-millisecond"
+for "low-latency, single-node" or route to a measured ledger entry). Not a scrub.
+
+=== 2.3. "Repo clutter" scratch directories are already gitignored
+
+*Review implication:* scratch top-level dirs (`test_metadata*`, `footer_cache.bin`, …) clutter
+the tree.
+
+*Actual state:* `test_metadata`, `test_metadata_atomic`, `test_schema[2,3,5]`, `log/`,
+`footer_cache.bin`, `pytest_debug.log` are **all gitignored** (`git check-ignore` confirms).
+Only `data/` is tracked. There is no committed clutter to remove.
+
+=== 2.4. "B04 hard-delete v1 = quick win (S effort)" is mislabeled
+
+*Review claim:* v1 deletion is a quick win.
+
+*Actual state:* v1 removal is the **staged v1-proto ratchet** (link:td/../TECHNICAL_DEBT.adoc[TD-123]),
+baseline at `docs/_internal/roadmap/V1_PROTO_USAGE_BASELINE.json`, enforced downward-only by
+`scripts/check_v1_proto_usage.py`, with thousands of references to retire across catalog /
+query / records. This is a deliberate multi-PR effort, not an `S`. The deprecated-engine
+sibling is link:td/TD-ENGINE-1-deprecated-engine-removal-entanglement.adoc[TD-ENGINE-1].
+
+== 3. Findings → existing TD mapping
+
+Every review item below is already tracked. New TDs were **not** filed (would duplicate).
+
+[cols="1,3,2,1", options="header"]
+|===
+| Review item | Already tracked as | Status | Verdict
+
+| B02 / R03 — god objects, twin `UnifiedHandlers`
+  (`request_handlers.rs` 4273L, `protocol.rs` 6556L, `database.rs` 1439L)
+| link:../12-design/TD104_HANDLER_CONVERGENCE_PLAN_2026_06_03.adoc[TD-104] "Phase 9 handler/service extraction (seam S1)" +
+  design docs: `TD104_HANDLER_CONVERGENCE_PLAN_2026_06_03.adoc`, `ROOT_CRATE_DECOMPOSITION_SLICE_D_PORT_INVERSION_2026_06_26.adoc`
+| In Progress (D4 / OE)
+| Real. Review accurate on sizes (verified). Drive TD-104 to completion; note `protocol.rs` (6556L) is the largest monolith and was under-emphasized by the review.
+
+| B05 / R10 — PAX ranged-read coalescing / S3 GET fees
+| link:TECHNICAL_DEBT.adoc[TD-151] "PAX ranged-read range-coalescing + block pruning"
+| Open (D1 / COST)
+| Real, exactly tracked. Note TD-167 (PAX read-path depth collapse) is already *Resolved*.
+
+| R08 / B06 — DataFusion/Volcano divergence; capability-registry routing
+| link:td/TD-186-relational-expr-eval-unification.adoc[TD-186] + link:../12-design/adr/ADR-043-unified-relational-expression-evaluation.adoc[ADR-043] (single logical lowering) +
+  link:td/TD-OLAP-1-pax-native-vectorized-scan-feeds-datafusion.adoc[TD-OLAP-1] (retire Volcano-for-OLAP)
+| Open
+| Real. The review's own remedy ("rely on relational-algebra single lowering") *is* ADR-043.
+
+| B08 / R05 — ORION projection drift / WAL LSN-correlation
+| link:TECHNICAL_DEBT.adoc[TD-168] / link:../12-design/adr/ADR-034-objectstore-access-path-codesign.adoc[ADR-034] re-scope (cold-start O(E) rebuild; make graph object-storage-native) + TD-066 (scoped graph WAL replay)
+| Open
+| Real. ADR-034's runtime audit already corrected the original framing (CSR is RAM-resident; the gap is cold-start rebuild + RAM-boundedness).
+
+| B04 / R07 — deprecated v1 REST/gRPC weight
+| TD-123 (v1-proto ratchet) + link:td/TD-ENGINE-1-deprecated-engine-removal-entanglement.adoc[TD-ENGINE-1]
+| Open
+| Real, staged. Not a quick win (see §2.4).
+
+| B07 — distributed MPP (Ballista) unwired
+| link:TECHNICAL_DEBT.adoc[TD-078] federated execution; strategically deferred per the 2026-06-04 course correction
+| Open / deferred
+| Real. Strategic bet, explicitly not MVP.
+
+| B11 — multi-table ACID (BEGIN/COMMIT)
+| pgwire parity roadmap (link:../12-design/adr/ADR-018-pgwire-sql-parity-roadmap.adoc[ADR-018])
+| Planned
+| Review itself tags this **DEFER (P4)**. Agreed.
+
+| B09 — cross-modal fusion latency unverified at scale
+| The ADR-034 measurement mandate (scale + trace harness: SF≥1 dbgen/dsdgen, SIFT1M/768-d N≥1M, real object-store, concurrency, captured io_traces) + link:td/TD-OLAP-4-tpcds-performance-evidence-ledger.adoc[TD-OLAP-4] ledger + link:TECHNICAL_DEBT.adoc[TD-182] accuracy harness
+| Open
+| Real. The substrate to turn "proven" into "measured" is already scoped.
+
+| R06 — in-memory pod-restart rebuild tax
+| TD-168 / ADR-034 (graph O(E) cold-start) + the storage-format decision framework (in-memory-vs-streaming restart tax)
+| Open
+| Real, graph-specific tracked; broader restart tax is the documented in-memory trade-off.
+
+| B03 / R04 — unverified perf claims in public docs
+| README already caveatted; `BENCHMARK_EVIDENCE.toml` ledger exists and is the authority
+| Largely handled
+| See §2.2. Minor positioning-copy tightening only.
+
+| B01 / R01 — catalog tenant isolation "P0 blocker"
+| link:../12-design/adr/ADR-032-durable-tenant-prefixed-object-store-catalog.adoc[ADR-032] (Proposed) + in-flight `src/catalog/mod.rs` + per-modality TDs
+| In-flight
+| Miscited (no `TD-CAT-2`). See §2.1.
+|===
+
+== 4. Genuinely-new finding (filed)
+
+link:td/TD-XMODAL-9-crossmodal-fusion-stream-resource-bounds.adoc[TD-XMODAL-9] — Cross-modal
+fusion streams (`src/core/search/hybrid`, `src/services/operations/vectors/hybrid`,
+`src/graph/hybrid`) lack the `ExecutionControls` row/byte caps that the relational engine
+enforces (`src/query/execution/engine.rs`). Unbounded late-materialization buffers → OOM /
+saturation under wide fan-out or adversarial input. Sibling of TD-XMODAL-7 (heap-side vs
+stack-side). This was the only review finding not already covered by an existing TD.
+
+== 5. Product / strategy decisions (the maintainer's call — not enacted here)
+
+These are business judgments, not code. The review's recommendations are recorded for the
+maintainer; this document does not rewrite `VISION.adoc` or positioning:
+
+* **B10 / thesis** — "Defer the warehouse fight; position as the AI-agent memory layer."
+  Defensible (the supported surface is single-node CRUD today), but reversing the 2026-06-04
+  course correction is a strategic call. Recommendation: narrow *marketing* to the agent-memory
+  wedge while keeping the pgwire/object-store foundation (the code investment holds either way).
+* **B11** — defer multi-table ACID. The review agrees (P4). No action.
+* **G / H** — persona focus on AI/ML Engineer for the near term. A positioning decision.
+
+== 6. Recommended sequencing
+
+* **P0 / release blocker:** none *new*. The real SaaS blocker — ADR-032 F2 catalog path
+  isolation — is already Proposed and in-flight in the working tree. Land it before any
+  multi-tenant claim.
+* **Quick wins (safe, doc-only):** tighten PRD/VISION "sub-millisecond" positioning copy (§2.2).
+  That is the only zero-risk change the review implies.
+* **Real engineering (each its own PR, all already tracked):** TD-104 (decomposition — lead
+  with `protocol.rs` 6556L), TD-151 (range coalescing), TD-186/ADR-043 (expr unification),
+  link:td/TD-XMODAL-9-crossmodal-fusion-stream-resource-bounds.adoc[TD-XMODAL-9] (new — fusion
+  resource bounds).
+* **Strategic / deferred:** TD-078 (distributed MPP), multi-table ACID (ADR-018).
+
+== 7. Filing note
+
+TD-XMODAL-9 was filed per the collision-free per-file convention
+(`docs/12-design/HOW_TO_FILE_TD_AND_ADR.adoc`); `td-adr-unique` is green. To land this doc +
+the TD on `develop`, follow the convention: branch off `origin/develop` via
+`scripts/worktree.sh new docs/review-response-2026-07-07` (the main checkout currently carries
+uncommitted catalog/parser/ddl work and must not be used as the PR base). This document and the
+TD are written but **uncommitted** pending that.
