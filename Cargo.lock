@@ -6593,6 +6593,7 @@ dependencies = [
  "proximadb-document-query",
  "proximadb-embedded-common",
  "proximadb-embedding",
+ "proximadb-execution-contracts",
  "proximadb-filter-expression",
  "proximadb-functions",
  "proximadb-graph",
@@ -6988,6 +6989,18 @@ version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "proximadb-execution-contracts"
+version = "0.2.0"
+dependencies = [
+ "arrow",
+ "arrow-array",
+ "arrow-schema",
+ "async-trait",
+ "futures",
  "thiserror 1.0.69",
 ]
 

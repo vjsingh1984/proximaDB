@@ -93,6 +93,7 @@ members = [
     "crates/query/proximadb-graph-subset",
     "crates/query/proximadb-multimodel-query",
     "crates/query/proximadb-multimodel-plan",
+    "crates/query/proximadb-execution-contracts",
     "crates/query/proximadb-relational-algebra",
     "crates/query/proximadb-relational-reader",
     "crates/query/proximadb-relational-planner",
@@ -178,6 +179,7 @@ proximadb-index-traits = { path = "crates/foundation/proximadb-index-traits" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
 proximadb-functions = { path = "crates/foundation/proximadb-functions" }
+proximadb-execution-contracts = { path = "crates/query/proximadb-execution-contracts" }
 proximadb-relational-algebra = { path = "crates/query/proximadb-relational-algebra" }
 proximadb-relational-reader = { path = "crates/query/proximadb-relational-reader" }
 proximadb-relational-planner = { path = "crates/query/proximadb-relational-planner" }
@@ -298,6 +300,7 @@ proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
 proximadb-functions = { path = "crates/foundation/proximadb-functions" }
+proximadb-execution-contracts = { path = "crates/query/proximadb-execution-contracts" }
 proximadb-relational-algebra = { path = "crates/query/proximadb-relational-algebra" }
 proximadb-relational-reader = { path = "crates/query/proximadb-relational-reader" }
 proximadb-relational-planner = { path = "crates/query/proximadb-relational-planner" }
