@@ -1117,19 +1117,17 @@ fn filter_prunes_split(split: &FileSplit, expr: &Expr, view: Option<&BloomPruneV
             // when the key set spans the split's [min,max]. Test the split's
             // distinct keys against the low-fpr in-list bloom and prune only when
             // *none* can be present; the FilterExec above re-checks exactly.
-            if let Some(view) = view {
-                if values.len() >= view.min_keys {
-                    if let (Some(inlist), Some(rg)) =
-                        (view.inlist_blooms.get(&column), row_group_index(split))
-                    {
-                        let key = (split.file_path.clone(), rg, column.clone());
-                        if let Some(Some(row_group_bloom)) = view.row_group_blooms.get(&key) {
-                            return parquet_bloom_prunes_split(row_group_bloom, &values);
-                        }
-                        if let Some(Some(split_keys)) = view.split_keys.get(&key) {
-                            return bloom_prunes_split(inlist, split_keys);
-                        }
-                    }
+            if let Some(view) = view
+                && values.len() >= view.min_keys
+                && let (Some(inlist), Some(rg)) =
+                    (view.inlist_blooms.get(&column), row_group_index(split))
+            {
+                let key = (split.file_path.clone(), rg, column.clone());
+                if let Some(Some(row_group_bloom)) = view.row_group_blooms.get(&key) {
+                    return parquet_bloom_prunes_split(row_group_bloom, &values);
+                }
+                if let Some(Some(split_keys)) = view.split_keys.get(&key) {
+                    return bloom_prunes_split(inlist, split_keys);
                 }
             }
             false
