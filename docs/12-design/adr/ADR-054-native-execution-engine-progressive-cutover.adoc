@@ -9,7 +9,7 @@
 |Deciders|Vijaykumar Singh (pending)
 |Relates to|ADR-039 (`ExecutionEngine` / `LogicalNode` seam), ADR-052 (vectorized-over-Arrow via DataFusion; PAX-native scan as the wedge), ADR-050 (cost-based routing + stats-fed planning), ADR-033 (vertical inside, standard outside), ADR-025 (deletion vectors), ADR-011 (bloom/ANN pre-filter), `CO_DESIGN_HANDOFF.md`, `DATAFUSION_BALLISTA_DISTRIBUTED_EXECUTION_2026_06_05.adoc`, `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`
 |Refines|ADR-052 — does NOT overturn its invariants 3 (scan-avoidance first), 4 (measured not asserted), 5 (non-goals: no codegen now). **Explicitly REVERSES invariant 2** ("Do NOT reimplement HashAgg/HashJoin/Sort natively" at ADR-052:117) — justified by the evidence: Q3 594ms (99% compute_ms, 85-100× gap to DuckDB). DataFusion stays as the *interim* engine; the native engine is a new `ComputeBackend::NativeVectorized` peer variant (per-query seam, ADR-039-respecting), progressively routing queries to native as it matures.
-|Tracked under|New: TD-OLAP-9 (SOLID execution-operator contracts), TD-OLAP-10 (native vectorized FilterProject/HashAgg behind contracts), TD-OLAP-11 (native radix-partitioned, spilling, bloom-pre-filtered hash join), TD-OLAP-12 (native morsel scheduler), TD-OLAP-13 (fused ANN+filter+aggregate operator). Composes with existing TD-OLAP-1..8.
+|Tracked under|Phase 0 contracts = #755 (crate `proximadb-execution-contracts`, no separate TD). link:../../10-quality/td/TD-OLAP-10-native-filterproject-pipeline.adoc[TD-OLAP-10] (native vectorized FilterProject + pipeline executor), TD-OLAP-11 (native radix-partitioned, spilling, bloom-pre-filtered hash join), TD-OLAP-12 (native morsel scheduler), TD-OLAP-13 (fused ANN+filter+aggregate operator). Composes with existing TD-OLAP-1..9. (v3 note C2: TD-OLAP-9 is `iceberg-partition-spec-unblocks-dpp`, not the contracts crate.)
 |===
 
 == Revision Notes (v2 — post multi-agent review 2026-07-08)
@@ -55,6 +55,27 @@ a| **FIXED**: Header `Refines` field now explicitly states "REVERSES ADR-052 inv
 | **NR 7** (blind spots)
 | Missing: memory management contract (spill depends on memory pressure), NUMA feasibility (no Rust/Tokio plan), EXPLAIN contract, optimizer/CBO ownership.
 a| **FIXED**: Added §9 (Blind Spots): (a) `MemoryPool` trait + per-operator reservations + spill trigger thresholds; (b) NUMA via `core_affinity` crate + dedicated worker threads (NOT Tokio's default pool) — gated/deferrable; (c) EXPLAIN: native operators produce plan nodes consumed by the existing EXPLAIN infrastructure; (d) Optimizer: the CBO (ADR-050) owns join order + strategy selection; the native engine EXECUTES the plan, does NOT re-optimize.
+|===
+
+== Revision Notes (v3 — post-consolidation + Phase 0 landing, 2026-07-08)
+
+After v2 was ratified, two things changed that this section records so the prose does not contradict the shipped code. v3 supersedes the specific v2 phrasings named below; everything else from v2 stands.
+
+[cols="1,3,1",options="header"]
+|===
+| # | Finding | Resolution
+
+| **C1**
+| v2 BLOCKER-1 (and the header `Refines`, §3 intro, §3.2) framed the native engine as a *new* `ComputeBackend::NativeVectorized` peer variant living in a `crates/query/proximadb-native-engine/` crate. The decider directed a **consolidation** ("fold native + native-vectorized into one engine"): two "natives" is semantically wrong and splits Rust-native execution across disjoint code. #755 landed the consolidation.
+a| **FIXED in #755**: There is ONE `ComputeBackend::Native` for all non-Parquet queries (OLTP + OLAP), following the DuckDB/Velox model. The vectorized path is an **internal hook** (`native_vectorized_enabled()` + `try_vectorized(&PhysicalPlan)` in `src/query/execution/native_engine.rs`), called from inside `NativeVolcanoEngine::execute_physical` — NOT a separate `ComputeBackend` variant. The router is unchanged. The contracts live in `crates/query/proximadb-execution-contracts/` (the crate v2 §3.2 already proposed by that name). Any v2 text reading "NativeVectorized peer variant" or "crates/query/proximadb-native-engine/" refers to the pre-consolidation design and is superseded by this section.
+
+| **C2**
+| The header `Tracked under` and §8 cite "TD-OLAP-9 (SOLID execution-operator contracts)". But TD-OLAP-9 is taken by `iceberg-partition-spec-unblocks-dpp`; the contracts crate (#755) has no TD of its own.
+a| **FIXED**: The contracts crate is tracked as the #755 artifact directly (no TD-OLAP id). Phase 2 (`FilterProject` + pipeline executor) is link:../../10-quality/td/TD-OLAP-10-native-filterproject-pipeline.adoc[TD-OLAP-10]; TD-OLAP-11/12/13 stand as v2 assigned (hash join / morsel scheduler / fused ANN+filter+aggregate). §8 Phase 0/2 rows updated below.
+
+| **C3**
+| §8 Phase 2 row said "benchmark vs DataFusion kernels on ClickBench (target: close the q07 UInt16 pathology)". Post-consolidation the vectorized path is internal to `ComputeBackend::Native`, so its comparison baseline is the **Volcano** (the Native path), not DataFusionLocal (which is the Parquet-backed OLAP route). The ClickBench q07 target also presupposes a real scan source Phase 2 deliberately defers.
+a| **FIXED**: §8 Phase 2 row now reads "native vectorized `FilterProject` + pipeline executor behind contracts; benchmark vs the Volcano on in-memory data; `HashAgg` split to Phase 2.1." Gate unchanged (≥ parity on in-memory; conformance unchanged). The scan source + ClickBench comparison move to Phase 2.5, the join to TD-OLAP-11.
 |===
 
 == 1. Context + the evidence substrate
@@ -519,9 +540,9 @@ Every phase is **non-breaking** (contracts), **flag-gated** (default-off), and *
 [cols="1,3,2,2",options="header"]
 |===
 | Phase | Work | Status | Gate
-| **0** | Define + ratify contracts (`ExecutionOperator`, `VectorizedKernel`, `MorselScheduler`, `Pipeline`); wrap DataFusion as the adapter; ratify ADR-053; leakage ratchet extended. | This ADR | Multi-agent review + decider sign-off
+| **0** | Define + ratify contracts (`ExecutionOperator`, `Pipeline`, `MorselScheduler`, `BatchStream`); the native engine is consolidated into ONE `ComputeBackend::Native` with an internal vectorized hook (not a separate peer variant). | **LANDED #755** (contracts crate) + **#758** (Arrow→`RelationalRow` bridge). v3 notes C1/C2. | Multi-agent review + decider sign-off ✓
 | **1** | Native PAX scan as leaf `ExecutionOperator` (reuses `PaxSplitReader`); route flip `pax_backed → DataFusionLocal` already in flight (#88bc699a2, `PROXIMADB_DF_PAX_READER`). | In flight (TD-OLAP-1) | Existing TD-OLAP-4 ledger
-| **2** | Native vectorized `FilterProject` + `HashAgg` behind contracts; benchmark vs DataFusion kernels on ClickBench (target: close the q07 UInt16 pathology). | TD-OLAP-10 | Ledger: ≥ parity on in-memory; conformance unchanged
+| **2** | Native vectorized `FilterProject` + pipeline executor behind contracts (the first operator; `HashAgg` split to Phase 2.1 as a blocking operator); benchmark vs the **Volcano** on in-memory data. (Scan source + ClickBench comparison move to Phase 2.5; join to TD-OLAP-11.) | link:../../10-quality/td/TD-OLAP-10-native-filterproject-pipeline.adoc[TD-OLAP-10] (design filed 2026-07-08) | Ledger: ≥ parity on in-memory; conformance unchanged
 | **3** | **Native radix-partitioned, spilling, bloom-pre-filtered hash join.** The #1 priority. | TD-OLAP-11 | Ledger: ≤ DataFusion in-memory; < DataFusion spilling; multimodal join >99% recall
 | **4** | Native morsel scheduler (NUMA-aware); wire native operators into the scheduler; the native engine is now a complete (if narrow) operator set. | TD-OLAP-12 | Ledger: end-to-end ClickBench + TPC-H/TPC-DS at parity-or-better
 | **5** | Native primary, DataFusion fallback (per-operator demotion on regression); the fused multimodal operators (`VectorSearchOperator`, `GraphTraversalOperator`, `DocumentProjectionOperator`, `FusedAnnFilterAggregate`). | TD-OLAP-13 | Multimodal benchmark (the wedge); per-query ledger vs DataFusion
