@@ -390,3 +390,22 @@ hardware = "WSL2 Linux 5.15, 32 cores, 78 GB RAM, local NVMe tempdir, debug prof
 date = "2026-07-06"
 version = "v0.2"
 notes = "500 docs ingested UNFLUSHED (recovery rests purely on vector-WAL replay; canonical path drops legacy document_wal); pre-restart query 500, post-restart query 500, id spot-check 10/10, recovery window ~1.68-1.79 s. Extends #709 single-doc restart to a populated collection. TD-DOC-CONV-2 criterion 5 satisfied at this scale (100k-scale projection-cost test remains follow-up)."
+
+# ---------------------------------------------------------------------------
+# ADR-055 P-Trace — document I/O baseline (pre-shred). The number the
+# hybrid-shredding + pushdown phases (P-Shred/P-DFSource/P-Pushdown) must beat.
+# ---------------------------------------------------------------------------
+
+[[claims]]
+id = "doc_conv2_ptrace_preshred_baseline"
+claim = "A filtered document read fetches the WHOLE PAX segment (no pruning/ranged reads) — 329,111 B for both a 1-record point-get and a 500-record scan; the pre-shred baseline"
+metric = "bytes_read"
+status = "measured"
+asserted_in = ["docs/_internal/status/DOC_PTRACE_PRESHRED_BASELINE_2026_07_07.adoc"]
+bench_source = "src/services/record_store.rs"
+bench_command = "cargo nextest run --features io-trace --lib doc_iotrace_baseline_preshred --no-capture"
+artifact = "docs/_internal/status/DOC_PTRACE_PRESHRED_BASELINE_2026_07_07.adoc"
+hardware = "WSL2 Linux 5.15, 32 cores, 78 GB RAM, in-process memory:// object-store bridge, debug profile"
+date = "2026-07-07"
+version = "v0.2"
+notes = "P-Trace (ADR-055 first phase; trace before you tune). 500-doc corpus, one PAX segment: point_get.bytes_read = filtered_scan.bytes_read = 329,111 B (get_ops=1, range_gets=0), write.bytes_written=329,111 (put_ops=1). A document read fetches the ENTIRE segment whether it wants 1 or 500 records — no block/zone-map pruning, no ranged reads. Wired the write-side put_pax hook (record_bytes_written at the object-store PUT in record_store.rs; shared with vectors); reads already record fetch_pax+bytes_read. range_gets is io-trace-feature-gated but legitimately 0 (whole-segment fetch path). Target for P-Pushdown: a filtered query reads strictly < 329,111 B with range_gets>0, results identical."
