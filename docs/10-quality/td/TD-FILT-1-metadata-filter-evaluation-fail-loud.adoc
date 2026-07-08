@@ -1,0 +1,86 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-FILT-1: v2 metadata-filter silently drops rows on unresolved fields (add a fail-loud strict path on the canonical ProximaValue seam)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | In Progress — slice 1 (typed `FilterEvalError` + `evaluate_filter_resolved_strict` / `evaluate_filter_proxima_strict` on the canonical v2 seam) landed in this PR (2026-07-07). Re-scoped from a v1 `MetadataValue` target the same day (see below).
+| Severity | High (silent correctness loss in results — records whose filter field is absent, or a non-scalar leaf, are silently dropped from every non-null comparison with no error)
+| Component | Canonical v2 filter seam: `crates/foundation/proximadb-search-types/src/sql_value_filter.rs` — `evaluate_filter_resolved` (the shared spine, line ~315), `evaluate_filter_proxima` (ProximaTree/ProximaValue adapter, line ~350), `evaluate_filter` (SqlValue adapter).
+| Governs | link:../../12-design/adr/ADR-024-single-canonical-data-type-and-schema.adoc[ADR-024] (single canonical `ProximaValue`/`ProximaRecord` type) + link:../../12-design/adr/ADR-043-unified-relational-expression-evaluation.adoc[ADR-043] (fail-loud predicate evaluation). v2-canonical: only the `ProximaValue`/`ProximaTree` path is extended; the v1 `MetadataValue`/`VectorRecord` path is *not* (see "Re-scope note").
+| Relates | link:TD-186-relational-expr-eval-unification.adoc[TD-186] (relational fail-loud rollout), link:../REVIEW_RESPONSE_2026_07_07.adoc[REVIEW_RESPONSE_2026_07_07] §8/B03, link:TECHNICAL_DEBT.adoc[TD-123] (v1-proto ratchet / v1 sunset), link:TECHNICAL_DEBT.adoc[TD-182] (accuracy harness)
+| Surfaced by | Antigravity architectural recommendations round 2, item B03
+|===
+
+== Re-scope note (2026-07-07) — v2-canonical alignment
+
+The original filing targeted `src/core/search/typesafe_filter.rs` (`TypeSafeFilterEvaluator`),
+which operates on the **v1** `proto::proximadb_v1::MetadataValue`. Two facts make that the wrong
+target:
+
+1. **`TypeSafeFilterEvaluator` is dead** — `grep -rn TypeSafeFilterEvaluator` finds only its own
+   definition + two test sites; **zero production callers**. It is stranded v1-type legacy.
+2. **The canonical v2 filter path already exists on `ProximaValue`/`ProximaTree`** in
+   `crates/foundation/proximadb-search-types/src/sql_value_filter.rs` (`evaluate_filter_resolved`,
+   `evaluate_filter_proxima`), and it has the *same* silent-drop bug. Per ADR-024 + the v2-canonical
+   mandate (only maintain v2 surfaces; v1 sunsets via TD-123), the fix belongs on the `ProximaValue`
+   path. Extending the v1 `MetadataValue` evaluator would build new API on a deprecated, dead
+   component — the same anti-pattern as patching the v1 fusion path.
+
+The v1 `TypeSafeFilterEvaluator` is a **retirement candidate** under v1 sunset (TD-123 / ADR-049),
+not something to harden. (It additionally silent-folds type-mismatches because its
+`compare_typed_values -> Option<Ordering>` folds `None` to `false`/`true`; that dies with the file.)
+
+== Problem (v2 path)
+
+`evaluate_filter_resolved` is the shared spine every `FilterExpression` evaluator funnels through.
+For every operator except the null tests, an unresolved field silently becomes `false`:
+
+```rust
+// sql_value_filter.rs, evaluate_filter_resolved
+_ => match resolve(field) {
+    Some(json_val) => compare_json_op(operator, &json_val, value),
+    None => false,                       // ← silent drop: absent field OR non-scalar leaf
+},
+```
+
+`resolve` returns `None` both when the field is **absent** and when it is a **non-scalar leaf** the
+adapter doesn't lower (e.g. `evaluate_filter_proxima` maps `Object`/non-`Value` nodes to `None`).
+In both cases the record is silently excluded from the result of any `Equals`/`In`/`<`/… predicate
+— no error surfaces, so a query can quietly return fewer rows than it should with no signal. This is
+the B03 failure mode, on the canonical path.
+
+(Note: the v2 comparison layer — `compare_json_op` / `compare_json_values` — *intentionally*
+total-orders across JSON types by type precedence, so unlike the v1 `Option<Ordering>` evaluator
+there is no per-comparison "type mismatch" to surface here. The silent drop on the v2 path is the
+*unresolved-field* case.)
+
+== Plan (behavior-preserving slices)
+
+* **Slice 1 (this PR):** add a typed `FilterEvalError` (`MissingField`) and
+  `evaluate_filter_resolved_strict<F>(expr, resolve) -> Result<bool, FilterEvalError>` plus the
+  `evaluate_filter_proxima_strict` / `evaluate_filter_strict` adapters. A value comparison against
+  an unresolved field returns `Err(MissingField)` instead of silently `false`; `IsNull`/`IsNotNull`
+  keep SQL absence semantics (`Ok`, not an error). The legacy `evaluate_filter*` are **untouched**
+  (zero behavior change) — strict is opt-in.
+* **Slice 2 (wiring):** migrate the live v2 search call-sites that want ADR-043 fail-loud semantics
+  to the strict variants, propagating the error to a query-level failure behind a config flag
+  (default preserve-current). The point at which silent drops become loud in production.
+* **Slice 3 (cleanup):** delete the dead v1 `TypeSafeFilterEvaluator` under v1 sunset (TD-123).
+
+== Why default-off / behavior-preserving
+
+Making the live `evaluate_filter*` fail-loud by default would change query *results* (rows silently
+dropped today would instead error the query). Correct end-state, but must be gated
+(ADR-052 observe→ingest→act) so it is an explicit opt-in. Slice 1 only *adds* a fail-loud path.
+
+== How to apply / verify
+
+Acceptance (slice 1):
+
+* `evaluate_filter_proxima_strict` returns `Err(MissingField)` for a value comparison on an absent
+  field (where `evaluate_filter_proxima` silently returns `false`).
+* `IsNull`/`IsNotNull` return `Ok` (absence is not an error).
+* A clean match returns the same `Ok(bool)` as the legacy path.
+* The legacy `evaluate_filter*` are byte-identical (regression guard).
