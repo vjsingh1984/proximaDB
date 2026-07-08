@@ -8,7 +8,6 @@
 //! crate. The full implementation exists in `src/network/arrow_ipc/service.rs`.
 
 use std::pin::Pin;
-use std::sync::Arc;
 
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
@@ -18,29 +17,30 @@ use arrow_flight::{
 use futures::Stream;
 use tonic::{Request, Response, Status, Streaming};
 
-use proximadb_runtime::UnifiedHandlers;
-
 type BoxStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send>>;
 
 /// ProximaDB Arrow Flight service implementation
 ///
-/// Thin wrapper around UnifiedHandlers that converts Arrow Flight messages
-/// to/from ProximaDB record types for high-throughput bulk ingestion.
-pub struct ProximaFlightService {
-    _handlers: Arc<UnifiedHandlers>,
-}
+/// Placeholder service boundary in the API crate; the real implementation
+/// lives in `src/network/arrow_ipc/service.rs` (TD-104 S3-e: the dead
+/// `_handlers: Arc<UnifiedHandlers>` field was removed).
+pub struct ProximaFlightService;
 
 impl ProximaFlightService {
-    /// Create a new Flight service backed by unified handlers
-    pub fn new(handlers: Arc<UnifiedHandlers>) -> Self {
-        Self {
-            _handlers: handlers,
-        }
+    /// Create a new placeholder Flight service.
+    pub fn new() -> Self {
+        Self
     }
 
     /// Convert into a tonic service server
     pub fn into_server(self) -> FlightServiceServer<Self> {
         FlightServiceServer::new(self)
+    }
+}
+
+impl Default for ProximaFlightService {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -128,7 +128,6 @@ impl FlightService for ProximaFlightService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::noop_unified_handlers;
     use tonic::Code;
 
     fn assert_unimplemented<T>(result: Result<Response<T>, Status>) {
@@ -142,8 +141,8 @@ mod tests {
 
     #[tokio::test]
     async fn placeholder_flight_service_rejects_unary_and_output_streaming_rpcs() {
-        let service = ProximaFlightService::new(noop_unified_handlers());
-        let _server = ProximaFlightService::new(noop_unified_handlers()).into_server();
+        let service = ProximaFlightService::new();
+        let _server = ProximaFlightService::new().into_server();
 
         assert_unimplemented(
             service

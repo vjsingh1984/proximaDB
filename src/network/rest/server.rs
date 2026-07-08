@@ -26,8 +26,7 @@ use tower_http::compression::CompressionLayer;
 use tower_http::decompression::DecompressionLayer;
 use tower_http::trace::TraceLayer;
 
-use super::v1::handlers::{AppState, create_router};
-use crate::api_handlers::UnifiedHandlers;
+use super::v1::handlers::{AppState, RestCoreServices, create_router};
 use crate::monitoring::MetricsCollector;
 use crate::network::middleware::backpressure::{
     BackpressureConfig, create_concurrency_limit_layer,
@@ -261,7 +260,7 @@ impl RestServer {
     /// - Compression: Optional based on parameter
     pub fn new(
         bind_addr: SocketAddr,
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -269,7 +268,7 @@ impl RestServer {
     ) -> Self {
         Self::with_security(
             bind_addr,
-            request_handlers,
+            core,
             max_request_size_mb,
             compression,
             metrics_collector,
@@ -284,7 +283,7 @@ impl RestServer {
     /// **WARNING**: Only use for local development and testing!
     pub fn new_development(
         bind_addr: SocketAddr,
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -293,7 +292,7 @@ impl RestServer {
         tracing::warn!("🚨 Starting REST server in DEVELOPMENT mode - security is relaxed!");
         Self::with_security(
             bind_addr,
-            request_handlers,
+            core,
             max_request_size_mb,
             compression,
             metrics_collector,
@@ -306,7 +305,7 @@ impl RestServer {
     /// Create new REST server with custom security configuration.
     pub fn with_security(
         bind_addr: SocketAddr,
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -314,10 +313,11 @@ impl RestServer {
         security_config: RestServerSecurityConfig,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
-        let graph_execution_service = request_handlers.graph_execution_service.clone();
+        let graph_execution_service: Arc<dyn GraphExecutionService> =
+            core.graph_operations_service.clone();
         Self::with_security_and_config(
             bind_addr,
-            request_handlers,
+            core,
             graph_execution_service,
             max_request_size_mb,
             compression,
@@ -333,7 +333,7 @@ impl RestServer {
     /// Create new REST server with custom security configuration and data directory from config.
     pub fn with_security_and_config(
         bind_addr: SocketAddr,
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         graph_execution_service: Arc<dyn GraphExecutionService>,
         max_request_size_mb: Option<u64>,
         compression: bool,
@@ -346,7 +346,7 @@ impl RestServer {
     ) -> Self {
         Self::with_security_and_config_and_ports(
             bind_addr,
-            request_handlers,
+            core,
             graph_execution_service,
             max_request_size_mb,
             compression,
@@ -373,7 +373,7 @@ impl RestServer {
     /// routes through `producer.send`; otherwise it falls back to inline embed.
     pub fn with_security_and_config_and_ports(
         bind_addr: SocketAddr,
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         graph_execution_service: Arc<dyn GraphExecutionService>,
         max_request_size_mb: Option<u64>,
         compression: bool,
@@ -415,7 +415,7 @@ impl RestServer {
         }
 
         let mut base_state = AppState::new(
-            request_handlers,
+            core,
             graph_execution_service,
             security_coordinator.clone(),
             data_dir,
@@ -704,7 +704,7 @@ impl RestServer {
     /// graph, and observability routes. When `None`, the legacy root-crate
     /// handlers are used.
     pub fn build_router_for_unified(
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         graph_execution_service: Arc<dyn GraphExecutionService>,
         metrics_collector: Option<Arc<MetricsCollector>>,
         security_coordinator: Option<Arc<SecurityCoordinator>>,
@@ -727,7 +727,7 @@ impl RestServer {
         admin_ui_enabled: bool,
     ) -> Router {
         let mut base_state = AppState::new(
-            request_handlers,
+            core,
             graph_execution_service,
             security_coordinator.clone(),
             data_dir,

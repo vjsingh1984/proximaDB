@@ -31,7 +31,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::api_handlers::request_handlers::UnifiedHandlers;
 use crate::catalog::CatalogManager;
 use crate::network::auth::middleware::DataPlaneCapability;
 use crate::proto::proximadb_v1::VectorSearchRequest;
@@ -259,28 +258,24 @@ impl ProximaFlightService {
         self
     }
 
-    /// Boot adapter that injects the runtime `api_port` (TD-104 S3-c: the Flight
-    /// service's API surface is now the runtime handler, not ROOT) while deriving
-    /// the remaining services from the root `UnifiedHandlers` at boot (one-time
-    /// extraction; the service holds ports, not the root handler).
+    /// Boot adapter (TD-104 S3-c/S3-e): build a `ProximaFlightService` from the
+    /// runtime `api_port` plus the concrete services it needs, all passed
+    /// directly (no root `UnifiedHandlers` indirection). `storage_locations` is
+    /// derived from the collection service's storage config — the same read the
+    /// former root `storage_config()` delegated to.
     pub fn from_services(
         api_port: Arc<dyn proximadb_runtime::ApiHandlersPort>,
-        request_handlers: &UnifiedHandlers,
+        record_port: Arc<dyn proximadb_runtime::RecordOpsPort>,
+        vector_operations_service: Arc<crate::services::VectorOperationsService>,
+        collection_service: Arc<crate::services::CollectionService>,
+        graph_service: Arc<crate::graph::GraphOperationsService>,
     ) -> Self {
-        let storage_locations = request_handlers
+        let storage_locations: Vec<String> = collection_service
             .storage_config()
-            .map(|config| {
-                config
-                    .storage_locations
-                    .iter()
-                    .map(|loc| loc.url.clone())
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let record_port: Arc<dyn proximadb_runtime::RecordOpsPort> = request_handlers.record_ops();
-        let vector_operations_service = request_handlers.vector_operations_service.clone();
-        let collection_service = request_handlers.collection_service.clone();
+            .storage_locations
+            .iter()
+            .map(|loc| loc.url.clone())
+            .collect();
 
         Self::new(
             api_port,
@@ -289,7 +284,7 @@ impl ProximaFlightService {
             collection_service,
             storage_locations,
         )
-        .with_graph_service(request_handlers.graph_operations_service.clone())
+        .with_graph_service(graph_service)
     }
 
     /// Slice 6.2: attach the primary-pod write router. Once set,

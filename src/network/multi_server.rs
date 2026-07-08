@@ -176,7 +176,7 @@ impl MultiServer {
         crate::network::grpc::v2::ProximaGraphServiceImpl,
     > {
         crate::network::grpc::v2::ProximaGraphServiceImpl::new(
-            services.request_handlers.graph_operations_service.clone(),
+            services.graph_service.clone(),
             Some(services.query_adapter.clone()),
         )
         .into_server()
@@ -203,7 +203,7 @@ impl MultiServer {
     > {
         crate::network::grpc::v2::ProximaFusionServiceImpl::new(
             services.vector_operations_service.clone(),
-            services.request_handlers.graph_operations_service.clone(),
+            services.graph_service.clone(),
             // TD-138: share the live full-text index map so the document modality is
             // powered over gRPC (parity with REST #508).
             services.fulltext_indexes.clone(),
@@ -221,7 +221,7 @@ impl MultiServer {
         crate::network::grpc::v2::ProximaEntityServiceImpl,
     > {
         crate::network::grpc::v2::ProximaEntityServiceImpl::new(
-            services.request_handlers.graph_operations_service.clone(),
+            services.graph_service.clone(),
             services.vector_operations_service.clone(),
             services.document_service.clone(),
         )
@@ -581,7 +581,7 @@ impl MultiServer {
 
             let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
                 Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    services.request_handlers.graph_operations_service.clone(),
+                    services.graph_service.clone(),
                     services.api_handlers.clone(),
                     services.query_adapter(),
                 ));
@@ -735,7 +735,10 @@ impl MultiServer {
 
             let arrow_bind_target = self.config.arrow_bind_target();
             let arrow_target_log = format!("{arrow_bind_target:?}");
-            let request_handlers = services.request_handlers.clone();
+            let arrow_record_ops = services.request_handlers.record_ops();
+            let arrow_vector_ops = services.vector_operations_service.clone();
+            let arrow_collection = services.collection_service.clone();
+            let arrow_graph = services.graph_service.clone();
             let catalog_manager = services.catalog_manager.clone();
             let security_coordinator = if self.rest_auth_enabled {
                 self.security_coordinator.clone()
@@ -753,8 +756,13 @@ impl MultiServer {
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
 
-                let flight_service =
-                    ProximaFlightService::from_services(api_handlers, &request_handlers);
+                let flight_service = ProximaFlightService::from_services(
+                    api_handlers,
+                    arrow_record_ops,
+                    arrow_vector_ops,
+                    arrow_collection,
+                    arrow_graph,
+                );
                 match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
@@ -791,7 +799,10 @@ impl MultiServer {
                 .as_ref()
                 .map(|p| format!("unix:{}", p.display()))
                 .unwrap_or_else(|| rest_bind_addr.to_string());
-            let request_handlers = services.request_handlers.clone();
+            let rest_core =
+                crate::network::rest::v1::handlers::RestCoreServices::from_shared_services(
+                    &services,
+                );
             let catalog_manager = services.catalog_manager.clone();
             let metrics_collector = services.metrics_collector.clone();
             let security_coordinator = self.security_coordinator.clone();
@@ -834,7 +845,7 @@ impl MultiServer {
                 // the port-backed handlers from proximadb-api.
                 match RestServer::with_security_and_config_and_ports(
                     rest_bind_addr,
-                    request_handlers,
+                    rest_core,
                     graph_execution_service,
                     max_request_size_mb,
                     enable_compression,
@@ -1015,7 +1026,7 @@ impl MultiServer {
             let services = self.shared_services.clone();
             let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
                 Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    services.request_handlers.graph_operations_service.clone(),
+                    services.graph_service.clone(),
                     services.api_handlers.clone(),
                     services.query_adapter(),
                 ));
@@ -1035,7 +1046,10 @@ impl MultiServer {
         // 1. Start REST server on internal port (HTTP/1.1) using axum with port-backed handlers
         {
             let services = self.shared_services.clone();
-            let request_handlers = services.request_handlers.clone();
+            let rest_core =
+                crate::network::rest::v1::handlers::RestCoreServices::from_shared_services(
+                    &services,
+                );
             let graph_execution_service = services.graph_execution_service.clone();
             let metrics_collector = services.metrics_collector.clone();
             // Mirror the Arrow IPC gate above: pass the coordinator only when
@@ -1053,7 +1067,7 @@ impl MultiServer {
             let llm_engine = self.llm_engine.clone();
 
             let router = crate::network::rest::server::RestServer::build_router_for_unified(
-                request_handlers,
+                rest_core,
                 graph_execution_service,
                 metrics_collector,
                 security_coordinator,
@@ -1100,7 +1114,7 @@ impl MultiServer {
             // ── Build core gRPC services via factory ──────────────────────────
             let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
                 Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    services.request_handlers.graph_operations_service.clone(),
+                    services.graph_service.clone(),
                     services.api_handlers.clone(),
                     services.query_adapter(),
                 ));
@@ -1147,7 +1161,10 @@ impl MultiServer {
             let flight_service =
                 crate::network::arrow_ipc::service::ProximaFlightService::from_services(
                     services.api_handlers.clone(),
-                    &services.request_handlers,
+                    services.request_handlers.record_ops(),
+                    services.vector_operations_service.clone(),
+                    services.collection_service.clone(),
+                    services.graph_service.clone(),
                 )
                 .with_security_coordinator(if self.rest_auth_enabled {
                     self.security_coordinator.clone()
@@ -1521,7 +1538,7 @@ impl MultiServer {
             // ── Build standard services via factory ───────────────────────────
             let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
                 Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    services.request_handlers.graph_operations_service.clone(),
+                    services.graph_service.clone(),
                     services.api_handlers.clone(),
                     services.query_adapter(),
                 ));
@@ -1658,7 +1675,10 @@ impl MultiServer {
             // `tokio::spawn` below — mirrors the single-node start path's
             // `arrow_target_log` (the value has no `Display` impl).
             let arrow_target_log = format!("{arrow_bind_target:?}");
-            let request_handlers = services.request_handlers.clone();
+            let arrow_record_ops = services.request_handlers.record_ops();
+            let arrow_vector_ops = services.vector_operations_service.clone();
+            let arrow_collection = services.collection_service.clone();
+            let arrow_graph = services.graph_service.clone();
             let catalog_manager = services.catalog_manager.clone();
             let security_coordinator = if self.rest_auth_enabled {
                 self.security_coordinator.clone()
@@ -1676,8 +1696,13 @@ impl MultiServer {
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
 
-                let flight_service =
-                    ProximaFlightService::from_services(api_handlers, &request_handlers);
+                let flight_service = ProximaFlightService::from_services(
+                    api_handlers,
+                    arrow_record_ops,
+                    arrow_vector_ops,
+                    arrow_collection,
+                    arrow_graph,
+                );
                 match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
@@ -1704,7 +1729,10 @@ impl MultiServer {
             info!("Starting REST Server on port 5678");
 
             let rest_bind_addr = self.config.http_bind_address();
-            let request_handlers = services.request_handlers.clone();
+            let rest_core =
+                crate::network::rest::v1::handlers::RestCoreServices::from_shared_services(
+                    &services,
+                );
             let metrics_collector = services.metrics_collector.clone();
             let security_coordinator = self.security_coordinator.clone();
             let rest_auth_enabled = self.rest_auth_enabled;
@@ -1746,7 +1774,7 @@ impl MultiServer {
 
                 match RestServer::with_security_and_config_and_ports(
                     rest_bind_addr,
-                    request_handlers,
+                    rest_core,
                     graph_execution_service,
                     max_request_size_mb,
                     false, // compression disabled
