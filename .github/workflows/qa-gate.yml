@@ -196,7 +196,10 @@ jobs:
   cloud-emulator-object-store:
     name: Cloud object-store emulators (Azurite/MinIO/fake-gcs)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The --all scope compiles the full main crate under CARGO_BUILD_JOBS=1 (the OOM
+    # mitigation — see scripts/run_cloud_emulator_tests.sh); serialized compile is
+    # ~35-40m, so 60m leaves headroom over the old 45m budget that the OOM-kill hit.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0

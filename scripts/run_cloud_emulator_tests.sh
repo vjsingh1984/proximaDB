@@ -3,8 +3,17 @@
 # Docker, create the test bucket+container, and run the #[ignore]d object-store
 # tier integration tests against them — the TD-168 "validate the Cool tier on a
 # real cloud API" check. Used by .github/workflows/qa-gate.yml (the develop→qa
-# gate) and `make cloud-emulator-test` (local). Single source of truth so the CI
-# path is exactly the locally-runnable path.
+# gate), .github/workflows/ci.yml (the develop early-detection job, --fast), and
+# `make cloud-emulator-test` (local). Single source of truth so every CI path is
+# exactly the locally-runnable path.
+#
+# Usage: run_cloud_emulator_tests.sh [--fast|--all]
+#   --fast : run ONLY the cheap object-store tier tests (~3-5 min — compiles just
+#            the small object-store crate, no main-crate compile, no OOM risk).
+#            Used by the develop early-detection job so a tier regression is caught
+#            on the introducing feat→develop PR.
+#   --all  : (default) also run cold_graph_record_store_round_trips_on_real_azure,
+#            which compiles the full main crate and runs under CARGO_BUILD_JOBS=1.
 #
 # Requires: docker, cargo, aws CLI (MinIO bucket), az CLI (Azurite container),
 # curl (fake-gcs bucket). On GitHub ubuntu-latest all are preinstalled.
@@ -16,6 +25,18 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+
+# Scope selection (see header). --fast = object-store tier tests only; --all (default)
+# adds the cold-payload azure round-trip, which compiles the full main crate.
+SCOPE="all"
+for arg in "$@"; do
+  case "$arg" in
+    --fast) SCOPE="fast" ;;
+    --all)  SCOPE="all" ;;
+    *) echo "::error::unknown argument: $arg"; echo "usage: $0 [--fast|--all]"; exit 2 ;;
+  esac
+done
+echo "==> Scope: $SCOPE"
 
 CONTAINER_BUCKET="proximadb-test"
 AZURITE_CONN="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
@@ -59,7 +80,7 @@ curl -sf -X POST "http://127.0.0.1:4443/storage/v1/b?project=proximadb" \
   -H "Content-Type: application/json" -d "{\"name\":\"$CONTAINER_BUCKET\"}" >/dev/null 2>&1 \
   || echo "  (fake-gcs bucket exists)"
 
-echo "==> Running object-store tier integration tests"
+echo "==> Running object-store tier integration tests (scope: $SCOPE)"
 # Azure (Azurite) + S3 (MinIO) through the production from_url + env path; GCS via builder.
 export AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true
 export AWS_ENDPOINT=http://127.0.0.1:9000 AWS_ALLOW_HTTP=true AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false
@@ -70,8 +91,15 @@ cargo test -p proximadb-object-store --features aws,azure,gcp -- --ignored --noc
   put_with_tier_accepted_by_azurite \
   put_with_tier_accepted_by_minio \
   put_with_tier_against_fake_gcs
-cargo test -p proximadb --features azure -- --ignored --nocapture \
-  cold_graph_record_store_round_trips_on_real_azure
+
+if [ "$SCOPE" = "all" ]; then
+  # Compiles the full main `proximadb` crate (~8400-test binary). CARGO_BUILD_JOBS=1
+  # serializes crate compilation so the 16GB hosted runner is NOT OOM-killed mid-link
+  # — the exact failure that made the qa-gate job red ("runner received a shutdown
+  # signal"). Same mitigation as ci.yml's rust-test unit job (see its comment).
+  CARGO_BUILD_JOBS=1 cargo test -p proximadb --features azure -- --ignored --nocapture \
+    cold_graph_record_store_round_trips_on_real_azure
+fi
 
 echo "==> Strong read-back: confirm Azurite persisted the Cool tier"
 TIER="$(az storage blob show --container-name "$CONTAINER_BUCKET" --name cold/probe-azure.bin \
