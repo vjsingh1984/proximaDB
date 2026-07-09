@@ -367,11 +367,6 @@ pub use storage::formats::{
 /// for API-layer conversion (REST status codes, gRPC status).
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Legacy boxed result type kept for gradual migration of call sites
-/// that cannot yet propagate the typed error.
-#[deprecated(note = "Use the typed `Result<T>` alias instead of boxed errors")]
-pub type BoxedResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-
 // Re-export the main database instance from the database module
 pub use database::ProximaDB;
 
