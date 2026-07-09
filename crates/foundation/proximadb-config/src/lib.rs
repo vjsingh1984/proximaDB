@@ -277,23 +277,18 @@ pub struct AdminUiConfig {
 }
 
 /// Request-tenant resolution mode encoded in TOML.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ServerTenantMode {
     /// Preserve the pre-existing runtime heuristic while operators roll out an
     /// explicit mode. This is compatibility-only; production SaaS deployments
     /// should set `multi_tenant`.
+    #[default]
     Auto,
     /// Missing tenant signal resolves to `default_tenant`.
     SingleTenant,
     /// Every request must carry an explicit tenant signal at the edge.
     MultiTenant,
-}
-
-impl Default for ServerTenantMode {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 /// Server-level tenant configuration.
