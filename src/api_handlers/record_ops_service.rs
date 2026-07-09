@@ -959,14 +959,21 @@ impl proximadb_runtime::RecordRoutePort for RecordOpsService {
         collection_id: &str,
         dimension: u32,
         tenant: Option<&str>,
+        promote_keys: &[String],
     ) -> Result<()> {
         // Idempotent create-if-not-exists so a document collection becomes a resolvable canonical
         // collection (P-Provision, ADR-055). Delegates to the CollectionService helper (which owns
         // the v1 `CollectionConfig` construction) — this keeps `record_ops_service` v1-proto-free
         // (TD-123 ratchet). `dimension == 0` ⇒ a vectorless (pure-document) collection.
+        // `promote_keys` seed props-auto-promotion so declared hot fields shred (P-Shred follow-up).
         let tenant_context = self.collection_service.load_tenant_context(tenant)?;
         self.collection_service
-            .get_or_create_by_name(collection_id, dimension, tenant_context.as_ref())
+            .get_or_create_by_name(
+                collection_id,
+                dimension,
+                tenant_context.as_ref(),
+                promote_keys,
+            )
             .await
     }
 

@@ -77,10 +77,15 @@ pub trait RecordRoutePort: Send + Sync {
     /// this at collection-create so a document collection CONVERGES on the canonical store
     /// (P-Provision, ADR-055) instead of the legacy `document_wal`/DashMap path. Callers treat it
     /// best-effort (a failure leaves the legacy path intact — mixed-safe).
+    ///
+    /// `promote_keys` are declared hot prop keys (from the document collection's indexes) to seed
+    /// as props-auto-promotion columns, so those fields shred into typed user-columns at flush
+    /// (P-Shred follow-up, ADR-055). Empty ⇒ no seeded shredding.
     async fn ensure_collection(
         &self,
         collection_id: &str,
         dimension: u32,
         tenant: Option<&str>,
+        promote_keys: &[String],
     ) -> Result<()>;
 }
