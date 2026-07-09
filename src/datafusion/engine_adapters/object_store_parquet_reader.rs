@@ -100,6 +100,25 @@ fn df_err(context: &str, err: impl std::fmt::Display) -> DataFusionError {
     DataFusionError::Execution(format!("{context}: {err}"))
 }
 
+/// Build the per-query traced object store for `location` WITHOUT any discovery
+/// I/O (no LIST/HEAD/footer). Used on a table-OPEN cache hit: the store must be
+/// re-created per query because [`TracingObjectStore::wrap`] captures the
+/// io-trace handle at construction, so a shared/cached store would misattribute
+/// later queries' `bytes_read`. Mirrors the store creation inside
+/// `open_direct_object` / `open_bridge_base`.
+fn build_traced_store(location: &str) -> DFResult<Arc<dyn ObjectStore>> {
+    if location.ends_with(".parquet") {
+        let parsed = Url::parse(location).map_err(|e| df_err("parse object-store url", e))?;
+        let (store, _path) =
+            object_store::parse_url(&parsed).map_err(|e| df_err("object_store parse_url", e))?;
+        Ok(TracingObjectStore::wrap(Arc::from(store)))
+    } else {
+        let bridge = IcebergObjectStoreBridge::from_url(location)
+            .map_err(|e| df_err(&format!("object-store bridge({location})"), e))?;
+        Ok(TracingObjectStore::wrap(bridge.inner_store()))
+    }
+}
+
 /// Runtime-filter (TD-OLAP-3) bloom semi-join gate. Default **OFF** per the
 /// default-OFF mandate for planner-behavior changes; enable per session with
 /// `PROXIMADB_DF_BLOOM_SEMIJOIN=1`. `min_keys` is the in-list cardinality above
@@ -606,6 +625,39 @@ impl ObjectStoreParquetTable {
             location,
             table_name: None,
             split_key_cache: Arc::new(Mutex::new(HashMap::new())),
+            row_group_bloom_cache: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
+
+    /// The immutable footer-derived discovery result (schema + splits + file
+    /// sizes), for seeding the table-OPEN cache. The object store is not part of
+    /// it — see [`table_open_cache`](super::table_open_cache).
+    fn discovery(&self) -> super::table_open_cache::TableOpenDiscovery {
+        super::table_open_cache::TableOpenDiscovery {
+            schema: self.schema.clone(),
+            splits: self.splits.clone(),
+            file_sizes: self.file_sizes.clone(),
+        }
+    }
+
+    /// Assemble a table from a cached [`TableOpenDiscovery`](super::table_open_cache::TableOpenDiscovery)
+    /// plus a freshly-built (per-query) traced store — the table-OPEN cache-hit
+    /// path, which skips LIST + HEAD + footer discovery entirely.
+    fn from_cached(
+        disc: &super::table_open_cache::TableOpenDiscovery,
+        location: &str,
+    ) -> DFResult<Self> {
+        let store = build_traced_store(location)?;
+        Ok(Self {
+            schema: disc.schema.clone(),
+            store,
+            splits: disc.splits.clone(),
+            file_sizes: disc.file_sizes.clone(),
+            location: location.to_string(),
+            table_name: None,
+            split_key_cache: Arc::new(Mutex::new(HashMap::new())),
+            // Per-query caches start empty (#742) — the table-OPEN cache reuses the
+            // immutable footer discovery, not these query-time bloom/key caches.
             row_group_bloom_cache: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -1206,12 +1258,27 @@ pub async fn register_object_store_parquet_location(
     ctx: &SessionContext,
     name: &str,
     location: &str,
+    tenant: Option<&str>,
 ) -> DFResult<Arc<ObjectStoreParquetTable>> {
+    // Table-OPEN cache (TD-OLAP-4): on a hit, skip LIST + HEAD + footer discovery
+    // and rebuild the table from cached metadata + a fresh per-query traced store.
+    // Gated default-OFF; the cache is a pure function of the immutable snapshot,
+    // invalidated on re-MATERIALIZE.
+    if let Some(disc) = super::table_open_cache::get(tenant, location) {
+        let table =
+            Arc::new(ObjectStoreParquetTable::from_cached(&disc, location)?.with_table_name(name));
+        ctx.register_table(name, table.clone())?;
+        crate::observability::io_trace::record_table_open(true);
+        return Ok(table);
+    }
+
     let table = Arc::new(
         ObjectStoreParquetTable::open(location)
             .await?
             .with_table_name(name),
     );
+    super::table_open_cache::insert(tenant, location, table.discovery());
+    crate::observability::io_trace::record_table_open(false);
     ctx.register_table(name, table.clone())?;
     Ok(table)
 }
@@ -1352,7 +1419,7 @@ mod tests {
 
         let location = format!("file://{}", tmp.path().display());
         let ctx = SessionContext::new();
-        register_object_store_parquet_location(&ctx, "t", &location)
+        register_object_store_parquet_location(&ctx, "t", &location, None)
             .await
             .unwrap();
 
@@ -1791,7 +1858,7 @@ mod tests {
                 let ctx = SessionContext::new();
                 // Register (wraps the store) INSIDE the scope so the io_trace
                 // handle is captured for spawned-partition reads.
-                register_object_store_parquet_location(&ctx, "t", location)
+                register_object_store_parquet_location(&ctx, "t", location, None)
                     .await
                     .unwrap();
                 let batches = ctx.sql(query).await.unwrap().collect().await.unwrap();

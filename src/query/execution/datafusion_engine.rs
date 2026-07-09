@@ -82,13 +82,22 @@ impl DataFusionLocalEngine {
         // F4/F6: when the route owns the vector / graph services, register the cross-modal
         // `vector_search` + `graph_traverse` UDTFs (and `timeseries_range` from the process
         // global) on this ctx so a cross-modal join resolves in the DataFusion SQL fallback.
+        // TD-OLAP-4: time the SessionContext build + UDF/UDAF re-registration —
+        // paid per query today, a candidate for a reusable session template.
+        let session_start = std::time::Instant::now();
         let ctx = crate::datafusion::create_session_context_with_ports(
             context.vector_ops.clone(),
             context.graph_ops.clone(),
             context.tenant_id.clone(),
         )
         .map_err(|e| ExecutionError::Context(format!("session: {e}")))?;
+        crate::observability::io_trace::record_session_ms(
+            session_start.elapsed().as_millis() as u64
+        );
 
+        // TD-OLAP-4: time the table-OPEN floor (LIST + HEAD + footer discovery),
+        // which happens before execution and is invisible to `record_compute_ms`.
+        let open_start = std::time::Instant::now();
         for (name, location) in &context.parquet_tables {
             // ADR-025 (relational cold path): a materialized table reads its cold
             // Parquet base reconciled with the authoritative post-snapshot WAL
@@ -112,14 +121,16 @@ impl DataFusionLocalEngine {
                 .await?;
                 continue;
             }
-            let table =
-                crate::datafusion::register_object_store_parquet_location(&ctx, name, location)
-                    .await
-                    .map_err(|e| {
-                        ExecutionError::Context(format!(
-                            "register object-store parquet table {name}: {e}"
-                        ))
-                    })?;
+            let table = crate::datafusion::register_object_store_parquet_location(
+                &ctx,
+                name,
+                location,
+                context.tenant_id.as_deref(),
+            )
+            .await
+            .map_err(|e| {
+                ExecutionError::Context(format!("register object-store parquet table {name}: {e}"))
+            })?;
             // Warm the route-time shape cache for free — the footer is already
             // read, so the next route decision can classify this location's
             // fan-out / cardinality without a cold read (co-design: zero extra
@@ -131,10 +142,15 @@ impl DataFusionLocalEngine {
             );
         }
 
+        crate::observability::io_trace::record_open_ms(open_start.elapsed().as_millis() as u64);
+
         context.controls.check_cancelled()?;
         // §5 shared logical plane (P4): lower the SQL through the SAME relational
         // frontend the Volcano path uses, then lower that `LogicalNode` to a DataFusion
         // `LogicalPlan`.
+        // TD-OLAP-4: time lowering + logical/physical planning (the other half of
+        // the per-query floor, separate from execution).
+        let plan_start = std::time::Instant::now();
         let mut schemas: HashMap<String, RelationalSchema> = HashMap::new();
         for (name, _) in &context.parquet_tables {
             let provider = ctx
@@ -216,6 +232,7 @@ impl DataFusionLocalEngine {
                     .map_err(|e| ExecutionError::Execution(format!("sql: {e}")))?
             }
         };
+        crate::observability::io_trace::record_plan_ms(plan_start.elapsed().as_millis() as u64);
         let df = match context.controls.max_rows {
             Some(max_rows) => {
                 let fetch = match context.controls.row_limit_mode {
@@ -636,7 +653,7 @@ async fn register_merged_olap_table(
         .await
         .map_err(|e| ExecutionError::Context(format!("olap-merge delta {name}: {e}")))?;
     if changed.is_empty() {
-        crate::datafusion::register_object_store_parquet_location(ctx, name, location)
+        crate::datafusion::register_object_store_parquet_location(ctx, name, location, tenant)
             .await
             .map_err(|e| {
                 ExecutionError::Context(format!("olap-merge bare register {name}: {e}"))
@@ -649,7 +666,7 @@ async fn register_merged_olap_table(
     //    registration never leaks into the query's table namespace.
     let base_ctx = crate::datafusion::create_session_context()
         .map_err(|e| ExecutionError::Context(format!("olap-merge base session: {e}")))?;
-    crate::datafusion::register_object_store_parquet_location(&base_ctx, name, location)
+    crate::datafusion::register_object_store_parquet_location(&base_ctx, name, location, tenant)
         .await
         .map_err(|e| ExecutionError::Context(format!("olap-merge base register {name}: {e}")))?;
     let base_schema = base_ctx

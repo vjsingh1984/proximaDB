@@ -281,6 +281,26 @@ struct QueryRecord {
     bytes_read: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     range_gets: Option<u64>,
+    /// pgwire relational-pipeline setup wall ms — pre-execution xCatalog schema
+    /// resolution + route classification (TD-OLAP-4).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    setup_ms: Option<u64>,
+    /// SessionContext build wall ms — per-query context+UDF setup (TD-OLAP-4).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_ms: Option<u64>,
+    /// Execution (compute) wall ms attributed by the engine (TD-OLAP-4).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compute_ms: Option<u64>,
+    /// Table-OPEN floor (discovery + footer) wall ms — TD-OLAP-4. Drops to ~0 on a
+    /// warm table-open cache hit; the direct signal for the cache lever.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    open_ms: Option<u64>,
+    /// Lowering + planning wall ms — the other half of the per-query floor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_ms: Option<u64>,
+    /// Table-OPEN cache hits recorded for this query (1 per registered table).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    table_open_hits: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
@@ -350,9 +370,29 @@ async fn clickbench_ledger() {
         let res = client.simple_query(sql).await;
         let wall_ms = t0.elapsed().as_millis();
         let snap = drain_capture().await;
-        let (bytes_read, range_gets) = snap
-            .map(|s| (Some(s.bytes_read), Some(s.range_gets)))
-            .unwrap_or((None, None));
+        let (
+            bytes_read,
+            range_gets,
+            setup_ms,
+            session_ms,
+            compute_ms,
+            open_ms,
+            plan_ms,
+            table_open_hits,
+        ) = snap
+            .map(|s| {
+                (
+                    Some(s.bytes_read),
+                    Some(s.range_gets),
+                    Some(s.setup_ms),
+                    Some(s.session_ms),
+                    Some(s.total_compute_ms()),
+                    Some(s.open_ms),
+                    Some(s.plan_ms),
+                    Some(s.table_open_hits),
+                )
+            })
+            .unwrap_or((None, None, None, None, None, None, None, None));
         match res {
             Ok(msgs) => {
                 let rows = msgs
@@ -367,6 +407,12 @@ async fn clickbench_ledger() {
                     wall_ms,
                     bytes_read,
                     range_gets,
+                    setup_ms,
+                    session_ms,
+                    compute_ms,
+                    open_ms,
+                    plan_ms,
+                    table_open_hits,
                     error: None,
                 });
             }
@@ -378,6 +424,12 @@ async fn clickbench_ledger() {
                 wall_ms,
                 bytes_read,
                 range_gets,
+                setup_ms,
+                session_ms,
+                compute_ms,
+                open_ms,
+                plan_ms,
+                table_open_hits,
                 error: Some(
                     e.as_db_error()
                         .map(|d| d.message().to_string())
@@ -407,6 +459,12 @@ async fn clickbench_ledger() {
                 wall_ms,
                 bytes_read: None,
                 range_gets: None,
+                setup_ms: None,
+                session_ms: None,
+                compute_ms: None,
+                open_ms: None,
+                plan_ms: None,
+                table_open_hits: None,
                 error: (!ok).then(|| {
                     out.as_ref()
                         .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
