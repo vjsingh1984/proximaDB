@@ -119,9 +119,14 @@ fn build_traced_store(location: &str) -> DFResult<Arc<dyn ObjectStore>> {
     }
 }
 
-/// Runtime-filter (TD-OLAP-3) bloom semi-join gate. Default **OFF** per the
-/// default-OFF mandate for planner-behavior changes; enable per session with
-/// `PROXIMADB_DF_BLOOM_SEMIJOIN=1`. `min_keys` is the in-list cardinality above
+/// Runtime-filter (TD-OLAP-3) bloom semi-join gate. Default **ON** (ADR-056
+/// MVP-1, 2026-07-08): measured 30–57% `bytes_read` reduction on TPC-DS star
+/// joins where the fact table has no direct predicate and is reached only via
+/// the dimension (evidence v5/v6 in the TD-OLAP-3 ledger). Correctness-neutral:
+/// the bloom has no false negatives (a matching split key always reads present;
+/// the `FilterExec` above re-checks exactly), so promotion is gated only on the
+/// qa-gate `bytes_read` ratchet — a regression fails CI. Opt out with
+/// `PROXIMADB_DF_BLOOM_SEMIJOIN=0`. `min_keys` is the in-list cardinality above
 /// which min/max zone-maps collapse (a fact probe against thousands of
 /// dimension keys) and reading a split's key column to bloom-test it pays for
 /// itself (`PROXIMADB_DF_BLOOM_SEMIJOIN_MIN_KEYS`, default 256).
@@ -137,7 +142,7 @@ impl SemijoinConfig {
     fn from_env() -> Self {
         let enabled = std::env::var("PROXIMADB_DF_BLOOM_SEMIJOIN")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+            .unwrap_or(true);
         let min_keys = std::env::var("PROXIMADB_DF_BLOOM_SEMIJOIN_MIN_KEYS")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
@@ -704,7 +709,8 @@ impl ObjectStoreParquetTable {
     }
 
     /// Count row-group splits that survive the given filters. Uses min/max
-    /// zone-maps plus (when `PROXIMADB_DF_BLOOM_SEMIJOIN` is set) any split key
+    /// zone-maps plus (bloom semi-join default-ON; disable with
+    /// `PROXIMADB_DF_BLOOM_SEMIJOIN=0`) any split key
     /// sets already prefetched into the cache; it does not itself prefetch, so
     /// EXPLAIN-style callers see the min/max result unless `scan()` — or a
     /// test — has run the async prefetch first.
@@ -1851,7 +1857,9 @@ mod tests {
                     std::env::set_var("PROXIMADB_DF_BLOOM_SEMIJOIN", "1");
                     std::env::set_var("PROXIMADB_DF_BLOOM_SEMIJOIN_MIN_KEYS", "4");
                 } else {
-                    std::env::remove_var("PROXIMADB_DF_BLOOM_SEMIJOIN");
+                    // Explicit opt-out: the gate defaults ON (ADR-056 MVP-1), so
+                    // the "off" arm must set `=0`, not merely remove the var.
+                    std::env::set_var("PROXIMADB_DF_BLOOM_SEMIJOIN", "0");
                 }
             }
             io_trace::scope(async move {

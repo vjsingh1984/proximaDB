@@ -86,7 +86,7 @@ runtime, and bloom-semijoin pruning stages), `bytes_written`,
 
 == Bloom semi-join (TD-OLAP-3, high-NDV in-list) — evidence status
 
-The bloom semi-join split-prune (default-OFF, `PROXIMADB_DF_BLOOM_SEMIJOIN=1`)
+The bloom semi-join split-prune (default-ON since 2026-07-08 per ADR-056 MVP-1; opt out with `PROXIMADB_DF_BLOOM_SEMIJOIN=0`)
 targets the case min/max zone-maps cannot cover: a positive `IN`-list whose key
 set spans a fact split's `[min,max]` (cardinality ≥
 `PROXIMADB_DF_BLOOM_SEMIJOIN_MIN_KEYS`, default 256 — a fact probe against
