@@ -88,10 +88,16 @@ A read-strategy chooser that helps real workloads must live in the **PAX cascade
 
 The crossover is exactly ADR-052's cost model (`per_get·n_gets + per_mib·n_bytes`, tier-aware): on cold
 object storage a selective read of a low-selectivity query wins; on hot NVMe or a high-selectivity
-query the single whole-segment GET wins. This requires (a) **building** the selective striped PAX read,
-then (b) a chooser at the cascade — a materially larger effort than the `.sst`-path wiring, and
-sequenced behind the SIFT1M recall validation. The existing `choose_read_strategy`
-(`coalesce_strategy.rs`, pure + unit-tested) is reusable as the decision core.
+query the single whole-segment GET wins. Notably the selective read is **already modelled** — the
+cascade's two stages (RaBitQ codes stripe → SQ8/f32 candidate rerank) are exactly what
+`segment_format.rs:424` logically traces — and the read substrate **already exists**
+(`proximadb-block-format::ranged` stripe reads + `FileSystem::read_ranges` + `PaxSplitReader`), so the
+work is *routing + a chooser at one call site*, not a from-scratch build. The existing
+`choose_read_strategy` (`coalesce_strategy.rs`, pure + unit-tested) is reusable as the decision core.
+
+**This follow-up is now specified in
+link:../../12-design/adr/ADR-057-pax-cascade-selective-striped-read-and-chooser.adoc[ADR-057]** (PAX
+cascade selective striped read + chooser; Proposed), tracked under a to-be-filed TD-RDSTRAT-3.
 
 == Recommendation
 
@@ -99,7 +105,8 @@ sequenced behind the SIFT1M recall validation. The existing `choose_read_strateg
   artifact. Do NOT flip `PROXIMADB_READ_STRATEGY_CHOOSER` default-on — it is a no-op on real data.
 * **Consider retiring** the dead `.sst`-path coalescing/chooser sites (or explicitly gating them as
   legacy-`.sst`-only) so they stop reading as live capability.
-* **Follow-up TD/ADR:** the PAX-cascade selective-striped-read + chooser (the real co-design lever).
+* **Follow-up:** link:../../12-design/adr/ADR-057-pax-cascade-selective-striped-read-and-chooser.adoc[ADR-057]
+  (the PAX-cascade selective-striped-read + chooser — the real co-design lever), tracked under TD-RDSTRAT-3.
 
 == Non-goals
 
