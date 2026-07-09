@@ -403,21 +403,6 @@ impl ViperEngine {
         Self::from_caching_filesystem_and_factory(core_config, unified_fs, filesystem).await
     }
 
-    /// Deprecated: Use new() instead - engines should be stateless
-    #[deprecated(note = "Use new() - engines should be stateless")]
-    pub async fn new_with_location(
-        collection_id: String,
-        core_config: crate::core::config::ViperConfig,
-        filesystem: Arc<FilesystemFactory>,
-        distance_compute: Arc<proximadb_distance_kernel::engine::UnifiedDistanceCompute>,
-        _base_location: String, // Ignored
-    ) -> Result<Self> {
-        // Just call the stateless new() method
-        _ = collection_id; // Ignore collection_id
-        _ = _base_location; // Ignore base_location
-        Self::new_with_config(core_config, filesystem, distance_compute).await
-    }
-
     /// Internal constructor with both configs
     ///
     /// ## Initialization Process:

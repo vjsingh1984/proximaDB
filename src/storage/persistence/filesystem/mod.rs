@@ -336,23 +336,6 @@ impl FilesystemFactory {
         ))
     }
 
-    /// Create filesystem factory with default configuration
-    ///
-    /// **DEPRECATED**: Use `create_default()` instead. This method creates a non-functional
-    /// factory without registered filesystems and exists only for backward compatibility.
-    #[deprecated(
-        since = "0.1.5",
-        note = "Use `create_default()` instead - this creates a broken factory"
-    )]
-    #[allow(clippy::should_implement_trait)]
-    pub fn default() -> Self {
-        Self {
-            config: FilesystemConfig::default(),
-            filesystems: HashMap::new(),
-            tier_mapping: HashMap::new(),
-        }
-    }
-
     /// Create a fully initialized filesystem factory with default configuration
     ///
     /// This is the preferred way to create a FilesystemFactory. It initializes all
@@ -397,19 +380,6 @@ impl FilesystemFactory {
         factory.initialize_tier_mapping();
 
         Ok(factory)
-    }
-
-    /// Create new filesystem factory with configuration
-    ///
-    /// **DEPRECATED**: Use `create()` instead for clearer semantics.
-    /// Having `new()` on a factory is confusing - factories should have static
-    /// creation methods like `create()`, `create_default()`, etc.
-    #[deprecated(
-        since = "0.1.5",
-        note = "Use `create(config)` instead for clearer factory semantics"
-    )]
-    pub async fn new(config: FilesystemConfig) -> FsResult<Self> {
-        Self::create(config).await
     }
 
     /// Initialize all configured filesystem backends
@@ -587,48 +557,6 @@ impl FilesystemFactory {
         } else {
             Ok(fs)
         }
-    }
-
-    /// Get an IntelligentFilesystem with automatic scheme-specific filesystem selection.
-    ///
-    /// This is the RECOMMENDED method for engines to get filesystems.
-    /// It automatically:
-    /// 1. Selects the right filesystem based on URL scheme
-    /// 2. Wraps it with IntelligentFilesystem for caching
-    /// 3. Returns a ready-to-use cached filesystem
-    ///
-    /// ## Benefits
-    ///
-    /// - **Cloud Storage**: Dramatically reduces API calls through metadata caching
-    /// - **Local Storage**: Adds bloom filter and block caching
-    /// - **All Storage**: Access pattern learning and predictive prefetching
-    ///
-    /// ## Example
-    ///
-    /// ```rust,ignore
-    /// // Instead of:
-    /// let fs = factory.get_filesystem("s3://bucket")?;
-    /// let cached_fs = IntelligentFilesystem::new(fs, collection_id, engine_type);
-    ///
-    /// // Just do:
-    /// let cached_fs = factory.get_intelligent_filesystem(
-    ///     "s3://bucket",
-    ///     collection_id,
-    ///     engine_type,
-    /// )?;
-    /// ```text
-    #[deprecated(
-        since = "1.0.0",
-        note = "Use get_unified_caching_filesystem instead. This method now redirects to it."
-    )]
-    pub fn get_intelligent_filesystem(
-        &self,
-        url: &str,
-        collection_id: String,
-        engine_type: String,
-    ) -> FsResult<Arc<dyn FileSystem>> {
-        // Redirect to the new unified filesystem
-        self.get_unified_caching_filesystem(url, collection_id, engine_type)
     }
 
     /// Create filesystem with unified caching
