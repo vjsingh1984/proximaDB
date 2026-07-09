@@ -142,6 +142,14 @@ pub struct IoTrace {
     /// promotion gate consumes.
     splits_total: AtomicU64,
     splits_pruned: AtomicU64,
+    /// Runtime-filter wait outcomes (ADR-056 AQE-S11): how often the probe scan's
+    /// `wait_complete()` rendezvous resolved with the filter arrived (pruning
+    /// enabled) vs timed out (filterless, conservative), plus the wall ms spent
+    /// waiting. The route cost model consumes the arrived/(arrived+timed_out)
+    /// ratio to learn per-workload whether the wait budget pays.
+    runtime_filter_arrived: AtomicU64,
+    runtime_filter_timed_out: AtomicU64,
+    runtime_filter_wait_ms: AtomicU64,
     /// Bytes written to object storage (ingest/flush — KIU).
     bytes_written: AtomicU64,
     /// Footer/metadata cache outcomes (Dimension 3 — the highest-ROI cache).
@@ -238,6 +246,21 @@ impl IoTrace {
     pub fn record_splits(&self, total: u64, pruned: u64) {
         self.splits_total.fetch_add(total, Ordering::Relaxed);
         self.splits_pruned.fetch_add(pruned, Ordering::Relaxed);
+    }
+
+    /// Record a runtime-filter wait outcome (ADR-056 AQE-S11): `arrived` = the
+    /// filter completed within the wait budget (pruning enabled); otherwise it
+    /// timed out (splits read filterless, conservative). `waited_ms` = the wall
+    /// ms actually spent at the rendezvous.
+    pub fn record_runtime_filter_wait(&self, arrived: bool, waited_ms: u64) {
+        if arrived {
+            self.runtime_filter_arrived.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.runtime_filter_timed_out
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        self.runtime_filter_wait_ms
+            .fetch_add(waited_ms, Ordering::Relaxed);
     }
 
     /// Add to bytes written to object storage.
@@ -342,6 +365,9 @@ impl IoTrace {
             range_gets: self.range_gets.load(Ordering::Relaxed),
             splits_total: self.splits_total.load(Ordering::Relaxed),
             splits_pruned: self.splits_pruned.load(Ordering::Relaxed),
+            runtime_filter_arrived: self.runtime_filter_arrived.load(Ordering::Relaxed),
+            runtime_filter_timed_out: self.runtime_filter_timed_out.load(Ordering::Relaxed),
+            runtime_filter_wait_ms: self.runtime_filter_wait_ms.load(Ordering::Relaxed),
             bytes_written: self.bytes_written.load(Ordering::Relaxed),
             footer_hits: self.footer_hits.load(Ordering::Relaxed),
             footer_misses: self.footer_misses.load(Ordering::Relaxed),
@@ -384,6 +410,15 @@ pub struct IoTraceSnapshot {
     /// Splits skipped before fetch — with `splits_total`, the skip ratio.
     #[serde(default)]
     pub splits_pruned: u64,
+    /// Runtime-filter wait outcomes (ADR-056 AQE-S11): arrived vs timed-out +
+    /// the wall ms spent waiting. `arrived / (arrived + timed_out)` is the
+    /// per-workload signal the route cost model learns to tune the wait budget.
+    #[serde(default)]
+    pub runtime_filter_arrived: u64,
+    #[serde(default)]
+    pub runtime_filter_timed_out: u64,
+    #[serde(default)]
+    pub runtime_filter_wait_ms: u64,
     pub bytes_written: u64,
     pub footer_hits: u64,
     pub footer_misses: u64,
@@ -550,6 +585,11 @@ pub fn record_range_gets(gets: u64) {
 /// snapshot. Silently no-ops outside an active scope.
 pub fn record_splits(total: u64, pruned: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_splits(total, pruned));
+}
+
+/// Record a runtime-filter wait outcome for the active query (ADR-056 AQE-S11).
+pub fn record_runtime_filter_wait(arrived: bool, waited_ms: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_runtime_filter_wait(arrived, waited_ms));
 }
 
 /// Add to bytes written to object storage for the active query.
