@@ -290,7 +290,7 @@ impl NativeVolcanoEngine {
         // as a trailing `Limit`) is honored by the vectorized lowering too.
         // Default-off; any decline or failure falls back to the Volcano inside
         // `try_vectorized` (the experimental path never fails a query).
-        if let Some(result) = super::native_engine::try_vectorized(&physical).await? {
+        if let Some(result) = super::native_engine::try_vectorized(&physical, None).await? {
             return finalize_row_limit(result, &controls);
         }
         let mut exec = build_executor(physical, factory, &VolcanoExecutionContext::default())
