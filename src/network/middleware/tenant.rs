@@ -181,6 +181,16 @@ impl Default for TenantExtractorConfig {
 }
 
 impl TenantExtractorConfig {
+    /// Create config from the explicit foundation deployment-mode contract (TD-CAT-3).
+    pub fn from_deployment_mode(mode: proximadb_tenant::TenantDeploymentMode) -> Self {
+        match mode {
+            proximadb_tenant::TenantDeploymentMode::SingleTenant { default_tenant } => {
+                Self::single_tenant(default_tenant)
+            }
+            proximadb_tenant::TenantDeploymentMode::MultiTenant => Self::multi_tenant(),
+        }
+    }
+
     /// Create config for single-tenant deployment
     pub fn single_tenant(default_tenant: impl Into<String>) -> Self {
         Self {
@@ -378,6 +388,14 @@ pub async fn tenant_middleware(
     // Extract tenant ID
     match extractor.extract_tenant_id(&req) {
         Ok(Some((tenant_id, source))) => {
+            if let Err(err) = proximadb_tenant::validate_request_tenant(&tenant_id) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid tenant id '{}': {err}", tenant_id),
+                )
+                    .into_response();
+            }
+
             // Validate tenant if configured
             if !extractor.validate_tenant(&tenant_id) {
                 return (
@@ -553,6 +571,23 @@ mod tests {
         assert!(config.default_tenant.is_none());
         assert!(config.require_tenant);
         assert!(config.validate_tenant);
+    }
+
+    #[test]
+    fn config_from_deployment_mode_matches_explicit_contract() {
+        let single = TenantExtractorConfig::from_deployment_mode(
+            proximadb_tenant::TenantDeploymentMode::single_tenant("tenant_a"),
+        );
+        assert_eq!(single.default_tenant.as_deref(), Some("tenant_a"));
+        assert!(!single.require_tenant);
+        assert!(!single.validate_tenant);
+
+        let multi = TenantExtractorConfig::from_deployment_mode(
+            proximadb_tenant::TenantDeploymentMode::MultiTenant,
+        );
+        assert!(multi.default_tenant.is_none());
+        assert!(multi.require_tenant);
+        assert!(multi.validate_tenant);
     }
 
     #[test]

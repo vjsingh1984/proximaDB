@@ -252,6 +252,14 @@ pub struct ServerConfig {
     /// without the section keep parsing (and keep the dashboard off).
     #[serde(default)]
     pub admin_ui: AdminUiConfig,
+
+    /// Request tenant resolution mode for protocol edges.
+    ///
+    /// Defaults to `auto` for mixed-read-safe compatibility: startup derives
+    /// the historic behavior from security mode until operators explicitly set
+    /// `single_tenant` or `multi_tenant`.
+    #[serde(default)]
+    pub tenant: ServerTenantConfig,
 }
 
 /// Configuration for the read-only embedded admin dashboard served at `/admin`.
@@ -268,6 +276,47 @@ pub struct AdminUiConfig {
     pub enabled: bool,
 }
 
+/// Request-tenant resolution mode encoded in TOML.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerTenantMode {
+    /// Preserve the pre-existing runtime heuristic while operators roll out an
+    /// explicit mode. This is compatibility-only; production SaaS deployments
+    /// should set `multi_tenant`.
+    #[default]
+    Auto,
+    /// Missing tenant signal resolves to `default_tenant`.
+    SingleTenant,
+    /// Every request must carry an explicit tenant signal at the edge.
+    MultiTenant,
+}
+
+/// Server-level tenant configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServerTenantConfig {
+    /// Deployment mode: `auto`, `single_tenant`, or `multi_tenant`.
+    #[serde(default)]
+    pub mode: ServerTenantMode,
+
+    /// Default tenant used only in `single_tenant` mode, or when `auto`
+    /// resolves to single-tenant.
+    #[serde(default = "default_request_tenant")]
+    pub default_tenant: String,
+}
+
+impl Default for ServerTenantConfig {
+    fn default() -> Self {
+        Self {
+            mode: ServerTenantMode::Auto,
+            default_tenant: default_request_tenant(),
+        }
+    }
+}
+
+fn default_request_tenant() -> String {
+    "default".to_string()
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -277,6 +326,7 @@ impl Default for ServerConfig {
             grpc_port: None,
             data_dir: PathBuf::from("./data"),
             admin_ui: AdminUiConfig::default(),
+            tenant: ServerTenantConfig::default(),
         }
     }
 }

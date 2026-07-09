@@ -2,283 +2,189 @@
 :toc: left
 :toclevels: 2
 :icons: font
-:last-updated: 2026-07-07
+:last-updated: 2026-07-08
 
 [.lead]
-This document responds to the comprehensive architectural review produced by Antigravity on
-2026-07-07 (`architectural_review.md`, grade B-). It (1) corrects several load-bearing claims
-that are stale or miscited, (2) maps every "real" finding to the Technical-Debt entry that
-already tracks it, (3) records the one genuinely-new finding filed from the review, and (4)
-separates engineering work from product/strategy decisions that are the maintainer's call, not
-code edits. Predecessor: link:REVIEW_RESPONSE_FEB_2025.adoc[the February 2025 review response].
+This document is the durable response to Antigravity's architectural review and follow-up
+recommendation matrix. It verifies the claims against the repository, corrects stale or miscited
+items, maps real issues to existing ADR/TD trackers, and defines the critical trajectory for
+ProximaDB as a multimodal context database.
 
 [IMPORTANT]
 ====
-The review is broadly sound in its *themes* (god objects, twin handlers, DataFusion/Volcano
-divergence, single-node-vs-MPP gap, agent-memory wedge). Its *citations* are not: it invents a
-`TD-CAT-2` that does not exist, treats already-tracked TDs as new discoveries, and overstates
-two items that are in fact already resolved or in-flight. **Acting on the review as written
-would duplicate in-flight work and chase ghost items.** This doc is the corrected action plan.
+The review is directionally useful: handler monoliths, DataFusion/Volcano drift, SaaS catalog
+isolation, bounded cross-modal execution, and evidence-gated claims are real concerns. Its
+citations and priorities needed correction: several items were already tracked, some were stale,
+and the original text under-specified the product architecture. This is the corrected action plan.
 ====
 
 == 1. Executive Summary
 
-* The review's three top risks (vision-vs-reality gap, handler monolith, catalog tenancy) are
-  real in *theme* but two of the three are **already tracked, in-progress TDs** the review
-  filed under wrong/non-existent IDs.
-* **~9 of 11 backlog items map to existing TD entries** (TD-104, TD-151, TD-186/ADR-043,
-  TD-168/ADR-034, TD-123, TD-ENGINE-1, TD-078, ADR-018, the measurement mandate). Filing new
-  TDs for these would violate the collision-free convention and be rejected by the
-  `td-adr-unique` guard.
-* **One genuinely-new finding** — cross-modal fusion streams lack `ExecutionControls` row/byte
-  caps — is filed as link:td/TD-XMODAL-9-crossmodal-fusion-stream-resource-bounds.adoc[TD-XMODAL-9].
-* **Two items are product/strategy decisions**, not code (warehouse positioning, defer
-  multi-table ACID). These are flagged for the maintainer; this doc does not enact them.
-* **No new release blocker is uncovered.** The nearest real SaaS risk — catalog metadata
-  path isolation — is ADR-032 (Proposed) and is already in-flight in the working tree.
+* The top risks are real in theme, but mostly already tracked: TD-104, TD-151, TD-186/ADR-043,
+  TD-168/ADR-034, TD-123, TD-ENGINE-1, TD-078, ADR-018, ADR-032, and the measurement ledger.
+* `TD-CAT-2` is **real**, not phantom: it is the tenant-prefixed catalog-path slice of ADR-032.
+  The correct SaaS blocker is ADR-032 / TD-CAT-1/2/3, not a new ticket.
+* The one confirmed new correctness item is TD-FILT-1: v2 metadata filters silently drop rows on
+  unresolved fields. Slice 1 added strict evaluators; this PR wires one live hybrid metadata-gating
+  seam behind `PROXIMADB_FILTER_FAIL_LOUD`.
+* The cross-modal resource-bound finding is TD-XMODAL-9. The current state is partial: one
+  graph-fusion path can use the canonical bounded `Fuser`, but residual v2 paths still need the
+  same cap/fail-loud contract.
+* The development path is: structural isolation and correctness first, bounded multimodal fabric
+  second, decomposition and PAX/DataFusion cost work third, distributed MPP and warehouse parity
+  later.
 
-== 2. Corrections — stale, miscited, or already-resolved items
+== 2. North-Star Architecture Lens
 
-=== 2.1. `TD-CAT-2` (cited as a P0 catalog-isolation blocker) does not exist
+ProximaDB should not be developed as "a vector database plus extra APIs" or "a warehouse clone with
+embeddings bolted on." The defensible target is a **multimodal context database** with one durable
+identity, type, storage, freshness, and tenancy spine:
+
+* **One canonical record spine.** `ProximaRecord` / `ProximaType` / `ProximaValue`, stable `oid`,
+  tenant id, namespace id, and WAL LSN are the authority. Vector, document, graph, event, and
+  relational views are projections over that spine, not separate durable truths.
+* **One physical locality substrate.** PAX is the native random-access / vector / multimodal
+  substrate; Parquet and Iceberg are interop and lakehouse surfaces. The advantage is co-designing
+  ANN, metadata filters, graph expansion, and analytical scans over one geometry.
+* **One query-lowering contract.** SQL and UQL converge through typed logical plans and shared
+  expression/function semantics. DataFusion owns analytical operators; native execution serves
+  OLTP/point lookup and the PAX-native scan bridge, not a parallel OLAP engine.
+* **One cross-modal fabric.** Retrieval should be `seed -> expand -> calibrate -> fuse-by-oid ->
+  rank`, with bounded resource controls and evidence-carrying traces at every stage.
+* **Structural isolation and freshness.** Tenant isolation is a path/catalog/edge property, never
+  a predicate added late to a query. Strong read-after-write remains the default and is made cheap
+  with LSN-aware cache eligibility.
+* **Evidence-gated claims.** Product language follows `SUPPORTED_SURFACE.adoc`; performance
+  language follows `BENCHMARK_EVIDENCE.toml`. Everything else is roadmap, not a claim.
+
+== 3. Corrections
+
+=== 3.1. TD-CAT-2 is real, but not new
 
 *Review claim:* "Treat TD-CAT-2 as a P0 release blocker for SaaS multi-tenant."
 
-*Actual state:* There is no `TD-CAT-2` file in `docs/10-quality/td/` or row in the legacy
-`TECHNICAL_DEBT.adoc`. The catalog-isolation gap is real but it is **already documented and
-in-flight**:
+*Actual state:* `TD-CAT-2` exists in `TECHNICAL_DEBT.adoc` and is referenced by ADR-032. It is the
+tenant-prefixed catalog-path slice, not a new Antigravity discovery:
 
-* link:../12-design/adr/ADR-032-durable-tenant-prefixed-object-store-catalog.adoc[ADR-032]
-  (status: **Proposed**) names the exact gap — Decision F2: `NativeCatalog` persists flat
-  `base_path/metadata/tables/<namespace>/<table>.json` with no `{tenant_id}` segment, so the
-  catalog metadata authority is the one place tenant data is not path-isolated, even though
-  `DrPathBuilder` handles the data path.
-* `src/catalog/mod.rs` **already ships substantial isolation machinery**: `resolve_table_within_tenant`
-  (TD-064), the reserved-segment denylist guarding `_operator`/`_metering`/`_trace`, ADR-035
-  per-tenant hot cache (TD-SC-1), and a fail-closed `parse_storage_url` (line 298).
-* **`src/catalog/mod.rs` is currently modified in the working tree** — i.e. this is active
-  work, not an undiscovered hole. Per-modality isolation is tracked separately: TD-DOC-TENANT-1,
-  TD-ENTITY-TENANT-1, TD-GRAPH-TENANT-1, TD-IOTRACE-2, TD-XMODAL-8.
+* ADR-032 D1 / TD-CAT-1: persist the native catalog through `FilesystemFactory`.
+* ADR-032 D2 / TD-CAT-2: route catalog metadata through tenant-prefixed physical paths.
+* ADR-032 D3 / TD-CAT-3: make request tenant resolution explicit and fail-closed at edges.
 
-*Action:* Do **not** open a new "catalog tenant isolation" TD — it would duplicate ADR-032 +
-collide with the in-flight catalog changes. Drive ADR-032 to Accepted and execute its phased
-rollout (it already specifies fail-closed `DeploymentMode::{SingleTenant, MultiTenant}`).
+*Action:* Do not open a duplicate catalog-isolation TD. Drive TD-CAT-1/2/3 to completion and do not
+make SaaS multi-tenant claims until catalog paths and all protocol edges are fail-closed.
 
-=== 2.2. "100K QPS / sub-ms in public docs" is largely already handled
+=== 3.2. Performance claims are mostly already gated
 
-*Review claim:* "Scrub the README and marketing docs. Only publish numbers marked
-`status = "measured"`."
+The README already caveats benchmark-style figures; the 100K QPS figure lives in the internal
+`BENCHMARK_EVIDENCE.toml` ledger as unverified. The remaining work is wording discipline in
+product docs: aspirational "sub-ms" phrases should either be measured ledger entries or softened to
+"low-latency single-node."
 
-*Actual state:* The README perf section is **already explicitly caveated** —
-*"treat as headroom indicators, not a published SLA,"* recall marked
-*"not an SLA — see SUPPORTED_SURFACE,"* plus a NOTE clarifying v0.2 is a narrow single-node cut
-with Beta/Experimental tiers enumerated. The "100K QPS" figure the review flags lives in
-`docs/_internal/roadmap/BENCHMARK_EVIDENCE.toml` marked **unverified** — which is exactly the
-correct placement (internal ledger, not public claim). The only loose thread is positioning
-copy in link:../00-product/PRD.adoc[PRD] / link:../00-product/VISION.adoc[VISION]
-("sub-millisecond latency in a single Rust binary", "sub-ms OHLC") — aspirational product
-descriptors, not benchmark claims.
+=== 3.3. v1 removal is not a small task
 
-*Action:* Minor wording tightening in PRD/VISION positioning sentences (swap "sub-millisecond"
-for "low-latency, single-node" or route to a measured ledger entry). Not a scrub.
+Hard-deleting v1 surfaces is the staged TD-123 ratchet plus TD-ENGINE-1. Treating it as a small
+cleanup would create unnecessary blast radius.
 
-=== 2.3. "Repo clutter" scratch directories are already gitignored
+=== 3.4. Strategic items stay strategic
 
-*Review implication:* scratch top-level dirs (`test_metadata*`, `footer_cache.bin`, …) clutter
-the tree.
+Distributed MPP (TD-078), multi-table ACID (ADR-018), and broad warehouse parity are valid future
+directions, but they should not pull capacity from the single-node multimodal core before P0/P1/P2
+are stable.
 
-*Actual state:* `test_metadata`, `test_metadata_atomic`, `test_schema[2,3,5]`, `log/`,
-`footer_cache.bin`, `pytest_debug.log` are **all gitignored** (`git check-ignore` confirms).
-Only `data/` is tracked. There is no committed clutter to remove.
-
-=== 2.4. "B04 hard-delete v1 = quick win (S effort)" is mislabeled
-
-*Review claim:* v1 deletion is a quick win.
-
-*Actual state:* v1 removal is the **staged v1-proto ratchet** (link:td/../TECHNICAL_DEBT.adoc[TD-123]),
-baseline at `docs/_internal/roadmap/V1_PROTO_USAGE_BASELINE.json`, enforced downward-only by
-`scripts/check_v1_proto_usage.py`, with thousands of references to retire across catalog /
-query / records. This is a deliberate multi-PR effort, not an `S`. The deprecated-engine
-sibling is link:td/TD-ENGINE-1-deprecated-engine-removal-entanglement.adoc[TD-ENGINE-1].
-
-== 3. Findings → existing TD mapping
-
-Every review item below is already tracked. New TDs were **not** filed (would duplicate).
+== 4. Finding Map
 
 [cols="1,3,2,1", options="header"]
 |===
-| Review item | Already tracked as | Status | Verdict
+| Review item | Existing tracker | Status | Verdict
 
-| B02 / R03 — god objects, twin `UnifiedHandlers`
-  (`request_handlers.rs` 4273L, `protocol.rs` 6556L, `database.rs` 1439L)
-| link:../12-design/TD104_HANDLER_CONVERGENCE_PLAN_2026_06_03.adoc[TD-104] "Phase 9 handler/service extraction (seam S1)" +
-  design docs: `TD104_HANDLER_CONVERGENCE_PLAN_2026_06_03.adoc`, `ROOT_CRATE_DECOMPOSITION_SLICE_D_PORT_INVERSION_2026_06_26.adoc`
-| In Progress (D4 / OE)
-| Real. Review accurate on sizes (verified). Drive TD-104 to completion; note `protocol.rs` (6556L) is the largest monolith and was under-emphasized by the review.
+| Handler monoliths / twin `UnifiedHandlers`
+| TD-104 and decomposition plans
+| In Progress
+| Real. Continue port/service extraction.
 
-| B05 / R10 — PAX ranged-read coalescing / S3 GET fees
-| link:TECHNICAL_DEBT.adoc[TD-151] "PAX ranged-read range-coalescing + block pruning"
-| Open (D1 / COST)
-| Real, exactly tracked. Note TD-167 (PAX read-path depth collapse) is already *Resolved*.
-
-| R08 / B06 — DataFusion/Volcano divergence; capability-registry routing
-| link:td/TD-186-relational-expr-eval-unification.adoc[TD-186] + link:../12-design/adr/ADR-043-unified-relational-expression-evaluation.adoc[ADR-043] (single logical lowering) +
-  link:td/TD-OLAP-1-pax-native-vectorized-scan-feeds-datafusion.adoc[TD-OLAP-1] (retire Volcano-for-OLAP)
+| PAX ranged-read coalescing / S3 GET cost
+| TD-151
 | Open
-| Real. The review's own remedy ("rely on relational-algebra single lowering") *is* ADR-043.
+| Real. Cost work after correctness gates.
 
-| B08 / R05 — ORION projection drift / WAL LSN-correlation
-| link:TECHNICAL_DEBT.adoc[TD-168] / link:../12-design/adr/ADR-034-objectstore-access-path-codesign.adoc[ADR-034] re-scope (cold-start O(E) rebuild; make graph object-storage-native) + TD-066 (scoped graph WAL replay)
+| DataFusion/Volcano divergence
+| TD-186, ADR-043, TD-OLAP-1
 | Open
-| Real. ADR-034's runtime audit already corrected the original framing (CSR is RAM-resident; the gap is cold-start rebuild + RAM-boundedness).
+| Real. DataFusion owns OLAP; native path bridges PAX.
 
-| B04 / R07 — deprecated v1 REST/gRPC weight
-| TD-123 (v1-proto ratchet) + link:td/TD-ENGINE-1-deprecated-engine-removal-entanglement.adoc[TD-ENGINE-1]
+| ORION cold-start / LSN correlation
+| TD-168, TD-066, ADR-034
 | Open
-| Real, staged. Not a quick win (see §2.4).
+| Real, graph-specific tracked.
 
-| B07 — distributed MPP (Ballista) unwired
-| link:TECHNICAL_DEBT.adoc[TD-078] federated execution; strategically deferred per the 2026-06-04 course correction
-| Open / deferred
-| Real. Strategic bet, explicitly not MVP.
-
-| B11 — multi-table ACID (BEGIN/COMMIT)
-| pgwire parity roadmap (link:../12-design/adr/ADR-018-pgwire-sql-parity-roadmap.adoc[ADR-018])
-| Planned
-| Review itself tags this **DEFER (P4)**. Agreed.
-
-| B09 — cross-modal fusion latency unverified at scale
-| The ADR-034 measurement mandate (scale + trace harness: SF≥1 dbgen/dsdgen, SIFT1M/768-d N≥1M, real object-store, concurrency, captured io_traces) + link:td/TD-OLAP-4-tpcds-performance-evidence-ledger.adoc[TD-OLAP-4] ledger + link:TECHNICAL_DEBT.adoc[TD-182] accuracy harness
+| Deprecated v1 REST/gRPC
+| TD-123, TD-ENGINE-1
 | Open
-| Real. The substrate to turn "proven" into "measured" is already scoped.
+| Real, staged.
 
-| R06 — in-memory pod-restart rebuild tax
-| TD-168 / ADR-034 (graph O(E) cold-start) + the storage-format decision framework (in-memory-vs-streaming restart tax)
-| Open
-| Real, graph-specific tracked; broader restart tax is the documented in-memory trade-off.
+| Distributed MPP
+| TD-078
+| Deferred
+| Strategic, not foundation.
 
-| B03 / R04 — unverified perf claims in public docs
-| README already caveatted; `BENCHMARK_EVIDENCE.toml` ledger exists and is the authority
-| Largely handled
-| See §2.2. Minor positioning-copy tightening only.
+| Multi-table ACID
+| ADR-018
+| Deferred
+| Review agrees to defer.
 
-| B01 / R01 — catalog tenant isolation "P0 blocker"
-| link:../12-design/adr/ADR-032-durable-tenant-prefixed-object-store-catalog.adoc[ADR-032] (Proposed) + in-flight `src/catalog/mod.rs` + per-modality TDs
-| In-flight
-| Miscited (no `TD-CAT-2`). See §2.1.
+| Cross-modal fusion resource bounds
+| TD-XMODAL-9 / TD-XMODAL-7
+| Partial
+| Real. Complete live v2 wiring.
+
+| Metadata-filter silent drops
+| TD-FILT-1 / ADR-043
+| In Progress
+| Real. Target v2 `ProximaValue` path, not dead v1 evaluator.
+
+| Catalog tenant isolation
+| ADR-032 / TD-CAT-1/2/3
+| Partial
+| Real and release-blocking for SaaS claims.
 |===
 
-== 4. Genuinely-new finding (filed)
+== 5. Critical Trajectory
 
-link:td/TD-XMODAL-9-crossmodal-fusion-stream-resource-bounds.adoc[TD-XMODAL-9] — Cross-modal
-fusion streams (`src/core/search/hybrid`, `src/services/operations/vectors/hybrid`,
-`src/graph/hybrid`) lack the `ExecutionControls` row/byte caps that the relational engine
-enforces (`src/query/execution/engine.rs`). Unbounded late-materialization buffers → OOM /
-saturation under wide fan-out or adversarial input. Sibling of TD-XMODAL-7 (heap-side vs
-stack-side). This was the only review finding not already covered by an existing TD.
+* **P0a — structural SaaS isolation.** Finish ADR-032 in order. TD-CAT-1 cloud catalog root
+  injection is present but needs backend smoke/failure tests. TD-CAT-2 is partial and must route
+  physical catalog object keys through `DrPathBuilder`. TD-CAT-3 now has
+  `proximadb_tenant::TenantDeploymentMode`, `[server.tenant]` startup resolution, and REST
+  extraction from that mode. Remaining edge work is gRPC/pgwire/Flight.
+* **P0b — fail-loud correctness seams.** Continue TD-FILT-1 from the strict evaluator and
+  `PROXIMADB_FILTER_FAIL_LOUD` hybrid gate into lower-level vector/storage predicates once those
+  interfaces can return `Result` instead of bare `bool`.
+* **P0c — bounded cross-modal execution.** Complete TD-XMODAL-9 by making all live v2 fusion paths
+  use the bounded/fail-loud contract, with saturation telemetry and byte/cancellation caps where
+  row caps are insufficient.
+* **P1 — engineering velocity.** Continue TD-104 decomposition so REST, gRPC, pgwire, and Flight
+  call bounded ports without modality-specific god-object reach-through.
+* **P2 — PAX/DataFusion cost spine.** Prioritize TD-151, TD-OLAP-1, and ADR-042 after correctness.
+  Any claimed performance win must land in `BENCHMARK_EVIDENCE.toml`.
+* **Deferred by design.** TD-078 distributed MPP, full multi-table ACID, and warehouse parity wait
+  until the single-node multimodal context database foundation is solid.
 
-== 5. Product / strategy decisions (the maintainer's call — not enacted here)
+== 6. Round 2 Recommendation Notes
 
-These are business judgments, not code. The review's recommendations are recorded for the
-maintainer; this document does not rewrite `VISION.adoc` or positioning:
+* **B01 catalog isolation:** real but already tracked as ADR-032 / TD-CAT-1/2/3.
+* **B03 metadata filters:** confirmed; correct target is the canonical v2 `ProximaValue` seam.
+* **B08 benchmark scrub:** mostly already handled by caveats and the evidence ledger.
+* **B20 Azure HNS-off / access tier:** ADR-036 settled the orientation; do not reopen.
+* **B21 v1 hard-delete:** not small; keep the staged TD-123 ratchet.
+* **B30 GTM/persona focus:** product decision. Engineering should keep the foundation coherent
+  while marketing narrows claims to supported surfaces.
 
-* **B10 / thesis** — "Defer the warehouse fight; position as the AI-agent memory layer."
-  Defensible (the supported surface is single-node CRUD today), but reversing the 2026-06-04
-  course correction is a strategic call. Recommendation: narrow *marketing* to the agent-memory
-  wedge while keeping the pgwire/object-store foundation (the code investment holds either way).
-* **B11** — defer multi-table ACID. The review agrees (P4). No action.
-* **G / H** — persona focus on AI/ML Engineer for the near term. A positioning decision.
+== 7. Acceptance Criteria
 
-== 6. Recommended sequencing
+The path is on track when:
 
-* **P0 / release blocker:** none *new*. The real SaaS blocker — ADR-032 F2 catalog path
-  isolation — is already Proposed and in-flight in the working tree. Land it before any
-  multi-tenant claim.
-* **Quick wins (safe, doc-only):** tighten PRD/VISION "sub-millisecond" positioning copy (§2.2).
-  That is the only zero-risk change the review implies.
-* **Real engineering (each its own PR, all already tracked):** TD-104 (decomposition — lead
-  with `protocol.rs` 6556L), TD-151 (range coalescing), TD-186/ADR-043 (expr unification),
-  link:td/TD-XMODAL-9-crossmodal-fusion-stream-resource-bounds.adoc[TD-XMODAL-9] (new — fusion
-  resource bounds).
-* **Strategic / deferred:** TD-078 (distributed MPP), multi-table ACID (ADR-018).
-
-== 7. Filing note
-
-TD-XMODAL-9 was filed per the collision-free per-file convention
-(`docs/12-design/HOW_TO_FILE_TD_AND_ADR.adoc`); `td-adr-unique` is green. To land this doc +
-the TD on `develop`, follow the convention: branch off `origin/develop` via
-`scripts/worktree.sh new docs/review-response-2026-07-07` (the main checkout currently carries
-uncommitted catalog/parser/ddl work and must not be used as the PR base). This document and the
-TD are written but **uncommitted** pending that.
-
-== 8. Round 2 — Antigravity's 30 recommendations (2026-07-07)
-
-Antigravity produced a second artifact (`architectural_recommendations.md`, 30 items, P0–P4).
-Same discipline applies — verify before acting. Outcome: **~25/30 are already-tracked ADRs/TDs,
-2 are ghost repeats, 1 is already done, and 1 is a genuinely-new confirmed finding.** No new TDs
-were filed for the tracked majority (would duplicate the `td-adr-unique` guard).
-
-=== Ghosts / already-handled (do NOT chase)
-
-* **B01 — "TD-CAT-2" again.** `find docs -iname '*TD-CAT*'` → nothing. This is the *same phantom
-  TD* from round 1; Antigravity did not learn. Real tracker:
-  link:../12-design/adr/ADR-032-durable-tenant-prefixed-object-store-catalog.adoc[ADR-032]
-  (Proposed) + in-flight `src/catalog/mod.rs` + per-modality TDs (DOC/ENTITY/GRAPH-TENANT-1,
-  IOTRACE-2, XMODAL-8).
-* **B08 — 100K QPS scrub.** Repeat: README is already caveatted; the figure lives correctly in
-  `BENCHMARK_EVIDENCE.toml` unverified. See §2.2.
-* **B20 — Azure HNS-off / `ObjectAccessTier`.** *Already landed* (`azure_blob.rs`, `aws_s3.rs`,
-  `gcs_store.rs` all carry access-tier; ADR-036). Stale.
-* **B21 — "Small" v1 hard-delete.** Mislabeled: the staged TD-123 ratchet (thousands of refs),
-  multi-PR. See §2.4.
-
-=== Already-tracked (mapped, no new TD)
-
-[cols="1,2", options="header"]
-|===
-| Item | Tracked as
-
-| B02 (LSN read-after-write) | ADR-051 (Proposed) / TD-STRONG-1 — LSN-pinning **shipped** on the cached paths (`storage/cache/specialized/query_cache.rs`, `network/postgres/relational_pipeline.rs`); ADR ratification incomplete, not a new hole
-| B04 (canonical ProximaType) | ADR-024
-| B05 / B11 (god object / dissolve UnifiedHandlers) | TD-104 (+ `TD104_HANDLER_CONVERGENCE_PLAN`)
-| B06 (PAX range coalescing) | TD-151
-| B07 (force DataFusion OLAP) | TD-OLAP-1 / ADR-039
-| B09 (retire legacy engines / PAX stacked quant) | ADR-026 (M1 landed)
-| B10 (trace+meter seam) | ADR-030
-| B12 (symbol object_id) | ADR-044
-| B13 (ORION LSN-correlation) | TD-066 / ADR-034
-| B14 (capability registry) | ADR-001 / ADR-043
-| B15 (fusion latency benchmarks) | ADR-034 measurement mandate / TD-OLAP-4
-| B16 (deletion vectors) | ADR-025 (design shipped; impl P4)
-| B17 (3-tier catalog cache) | ADR-035 / TD-SC-1
-| B18 (Parquet interop-only) | ADR-033 / ADR-027 (settled)
-| B19 (cross-modal fabric UDTFs) | ADR-053
-| B22 (SDK codegen) | ADR-041
-| B23 (nextest / flaky tests) | test hygiene (Volcano-flake history)
-| B24 (differential accuracy) | ADR-040 / TD-182
-| B25 (consolidate casts) | ADR-043 / TD-186
-| B26 (SegmentStatistics contract) | ADR-042
-| B27 (distributed MPP) | TD-078 (deferred)
-| B28 (multi-table ACID) | ADR-018 (deferred)
-| B29 (LTAP without CDC) | ADR-046
-| B30 (refocus GTM) | product decision (see §5)
-|===
-
-=== The one genuinely-new, confirmed finding (filed)
-
-**B03 — silent fail-open/fail-closed in the *vector-metadata* filter path.** Verified at
-`src/core/search/typesafe_filter.rs:35` (`evaluate() -> bool`): `compare_typed_values` returns
-`Option<Ordering>`, and on a **type-mismatched stored value** (`None`) the result silently folds —
-positive comparisons (`Equals`/`LessThan`/…) → `false` (row dropped); `NotEquals`/`NotIn` → `true`
-(row kept, fail-open); missing field → the catch-all `_ => false` (line 187, row dropped). No error
-propagates. ADR-043 (fail-loud, `Result<bool>`) is *Accepted* and TD-186 rolls it out — but that
-umbrella covers the *relational* expression path. The bare-`bool` stragglers
-(`typesafe_filter.rs:35`, `storage/engines/core/filter_evaluator.rs:43/49/54/144`,
-`storage/document/query/filter.rs:30`, `storage/engines/sequoia/mod.rs:230`) are the
-*vector-metadata* seam ADR-043 doesn't reach. Filed as TD-FILT-1 and **re-scoped to the v2
-`ProximaValue` path** after discovery: the v1 `TypeSafeFilterEvaluator` (`typesafe_filter.rs`) is
-**dead** (zero callers) on v1 `MetadataValue` — a retirement candidate under v1 sunset (TD-123),
-not something to extend. The canonical v2 filter seam
-(`crates/foundation/proximadb-search-types/src/sql_value_filter.rs`: `evaluate_filter_resolved` /
-`evaluate_filter_proxima`) has the *same* silent-drop (`None => false`) on the `ProximaTree` path.
-Slice 1 (typed `FilterEvalError::MissingField` + `evaluate_filter_resolved_strict` /
-`evaluate_filter_proxima_strict`, behavior-preserving) lands in #747.
+* Two tenants can create the same namespace/table name with distinct catalog rows and object paths.
+* `multi_tenant` mode rejects REST/gRPC/pgwire/Flight requests without a tenant signal.
+* `single_tenant` mode injects the configured default tenant everywhere.
+* Every tenant id is structurally validated before becoming a catalog key or object-store segment.
+* Strict metadata filtering can fail a query rather than silently narrowing results.
+* Every live cross-modal fusion path has row caps, saturation telemetry, and a fail-loud mode.

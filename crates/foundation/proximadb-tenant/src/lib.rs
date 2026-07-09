@@ -98,6 +98,77 @@ pub fn resolve_request_tenant(raw: Option<&str>) -> String {
     }
 }
 
+/// Explicit deployment-mode contract for request-tenant resolution.
+///
+/// `SingleTenant` preserves the existing compatibility default: an absent tenant signal resolves
+/// to the configured default tenant. `MultiTenant` is fail-closed: every request must carry an
+/// explicit tenant signal at the edge (REST header, gRPC/Flight metadata, pgwire database, or an
+/// authenticated tenant claim). Both modes validate the resolved tenant before callers compose it
+/// into catalog namespaces or object-store paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TenantDeploymentMode {
+    /// Back-compatible single-tenant mode with a named default tenant.
+    SingleTenant { default_tenant: String },
+    /// SaaS/multi-tenant mode: a tenant signal is mandatory on every request.
+    MultiTenant,
+}
+
+impl TenantDeploymentMode {
+    /// Back-compatible default single-tenant mode.
+    pub fn single_tenant_default() -> Self {
+        Self::SingleTenant {
+            default_tenant: DEFAULT_TENANT.to_string(),
+        }
+    }
+
+    /// Construct a single-tenant mode with an explicit default tenant.
+    pub fn single_tenant(default_tenant: impl Into<String>) -> Self {
+        Self::SingleTenant {
+            default_tenant: default_tenant.into(),
+        }
+    }
+}
+
+/// Request-tenant resolution failure under an explicit [`TenantDeploymentMode`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveRequestTenantError {
+    /// Multi-tenant mode requires an explicit request tenant.
+    MissingTenant,
+    /// The resolved tenant is not safe as a structural catalog/path key.
+    InvalidTenant(TenantError),
+}
+
+impl std::fmt::Display for ResolveRequestTenantError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResolveRequestTenantError::MissingTenant => {
+                write!(f, "tenant id is required in multi-tenant mode")
+            }
+            ResolveRequestTenantError::InvalidTenant(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for ResolveRequestTenantError {}
+
+/// Resolve and validate the request tenant under an explicit deployment mode.
+pub fn resolve_request_tenant_for_mode(
+    raw: Option<&str>,
+    mode: &TenantDeploymentMode,
+) -> Result<String, ResolveRequestTenantError> {
+    let raw = raw.map(str::trim).filter(|tenant| !tenant.is_empty());
+    let tenant = match (mode, raw) {
+        (_, Some(tenant)) => tenant.to_string(),
+        (TenantDeploymentMode::SingleTenant { default_tenant }, None) => default_tenant.clone(),
+        (TenantDeploymentMode::MultiTenant, None) => {
+            return Err(ResolveRequestTenantError::MissingTenant);
+        }
+    };
+
+    validate_request_tenant(&tenant).map_err(ResolveRequestTenantError::InvalidTenant)?;
+    Ok(tenant)
+}
+
 /// Why a tenant id is not safe to compose into a storage key / path / catalog
 /// `namespace[0]`. Returned by [`validate_request_tenant`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,6 +247,45 @@ mod tests {
         let c = collection(&["tenant:acme", "tenant_isolated:true"], Some("someone"));
         // Tag precedence beats the isolated/owner path.
         assert_eq!(tenant_id_of(&c).as_deref(), Some("acme"));
+    }
+
+    #[test]
+    fn deployment_mode_single_tenant_defaults_and_validates() {
+        let mode = TenantDeploymentMode::single_tenant("tenant_a");
+
+        assert_eq!(
+            resolve_request_tenant_for_mode(None, &mode).as_deref(),
+            Ok("tenant_a")
+        );
+        assert_eq!(
+            resolve_request_tenant_for_mode(Some(" tenant_b "), &mode).as_deref(),
+            Ok("tenant_b")
+        );
+
+        assert!(matches!(
+            resolve_request_tenant_for_mode(Some("_operator"), &mode),
+            Err(ResolveRequestTenantError::InvalidTenant(
+                TenantError::ReservedPrefix
+            ))
+        ));
+    }
+
+    #[test]
+    fn deployment_mode_multi_tenant_requires_explicit_tenant() {
+        let mode = TenantDeploymentMode::MultiTenant;
+
+        assert_eq!(
+            resolve_request_tenant_for_mode(Some("tenant_a"), &mode).as_deref(),
+            Ok("tenant_a")
+        );
+        assert_eq!(
+            resolve_request_tenant_for_mode(None, &mode),
+            Err(ResolveRequestTenantError::MissingTenant)
+        );
+        assert_eq!(
+            resolve_request_tenant_for_mode(Some("   "), &mode),
+            Err(ResolveRequestTenantError::MissingTenant)
+        );
     }
 
     #[test]

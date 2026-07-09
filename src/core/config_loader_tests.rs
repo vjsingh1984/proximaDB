@@ -745,6 +745,34 @@ mmap_enabled = false
     }
 
     #[test]
+    fn test_server_tenant_config_loads_from_toml() -> anyhow::Result<()> {
+        let config_content = r#"
+[server]
+node_id = "tenant-mode-test"
+
+[server.tenant]
+mode = "multi_tenant"
+default_tenant = "ignored_in_multi"
+"#;
+
+        let temp_dir = TempDir::new()?;
+        let config_path = temp_dir.path().join("tenant_config.toml");
+        fs::write(&config_path, config_content)?;
+
+        let config = ConfigLoader::load_with_defaults(config_path.to_string_lossy().as_ref())
+            .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
+
+        assert_eq!(config.server.node_id, "tenant-mode-test");
+        assert_eq!(
+            config.server.tenant.mode,
+            proximadb_config::ServerTenantMode::MultiTenant
+        );
+        assert_eq!(config.server.tenant.default_tenant, "ignored_in_multi");
+
+        Ok(())
+    }
+
+    #[test]
     fn test_validate_config() -> anyhow::Result<()> {
         let mut config = Config::default();
 

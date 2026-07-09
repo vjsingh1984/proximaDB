@@ -18,6 +18,7 @@ use tracing::info;
 const RL_CHECKPOINT_INTERVAL_SECS: u64 = 300;
 
 use crate::{core, graph, network, proto, query, security, storage};
+use proximadb_config::ServerTenantMode;
 
 /// Main ProximaDB database instance
 pub struct ProximaDB {
@@ -48,6 +49,35 @@ pub struct ProximaDB {
         tokio::task::JoinHandle<()>,
         tokio::sync::oneshot::Sender<()>,
     )>,
+}
+
+fn resolve_server_tenant_mode(
+    server_tenant: &proximadb_config::ServerTenantConfig,
+    security_config: Option<&security::SecurityConfig>,
+) -> anyhow::Result<proximadb_tenant::TenantDeploymentMode> {
+    let legacy_multi_tenant_required = security_config.is_some_and(|s| {
+        s.authentication.require_authentication && s.mode != security::SecurityMode::Development
+    });
+
+    let mode = match server_tenant.mode {
+        ServerTenantMode::Auto if legacy_multi_tenant_required => {
+            proximadb_tenant::TenantDeploymentMode::MultiTenant
+        }
+        ServerTenantMode::Auto | ServerTenantMode::SingleTenant => {
+            proximadb_tenant::TenantDeploymentMode::single_tenant(
+                server_tenant.default_tenant.clone(),
+            )
+        }
+        ServerTenantMode::MultiTenant => proximadb_tenant::TenantDeploymentMode::MultiTenant,
+    };
+
+    if let proximadb_tenant::TenantDeploymentMode::SingleTenant { default_tenant } = &mode {
+        proximadb_tenant::validate_request_tenant(default_tenant).map_err(|err| {
+            anyhow::anyhow!("invalid [server.tenant] default_tenant '{default_tenant}': {err}")
+        })?;
+    }
+
+    Ok(mode)
 }
 
 impl ProximaDB {
@@ -495,9 +525,8 @@ impl ProximaDB {
         // Create MultiServer with SharedServices (network orchestrator)
         tracing::debug!("🔧 ProximaDB::new - Creating MultiServer...");
         let rest_auth_enabled = security_config.is_some();
-        let rest_multi_tenant_required = security_config.as_ref().is_some_and(|s| {
-            s.authentication.require_authentication && s.mode != security::SecurityMode::Development
-        });
+        let tenant_deployment_mode =
+            resolve_server_tenant_mode(&config.server.tenant, security_config.as_ref())?;
         // Capture the drainer's record + vector services BEFORE shared_services
         // is moved into MultiServer below. The async-ingest drainer needs them
         // as the production DrainerInsertSink target via the BulkLoadDrainerSink
@@ -582,7 +611,7 @@ impl ProximaDB {
             shared_services,
             security.clone(),
             rest_auth_enabled,
-            rest_multi_tenant_required,
+            tenant_deployment_mode,
             llm_engine,
             queue_client.clone(),
         );

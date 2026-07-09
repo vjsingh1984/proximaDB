@@ -26,18 +26,19 @@ precise gaps are:
 2. **Silent truncate only** — there is no fail-loud `RowLimitMode::Error` analog (cf.
    `engine.rs:132` `RowLimitMode`, `engine.rs:247` `cap_plan`). An over-cap source is silently
    trimmed; nothing surfaces the saturation.
-3. **Zero production callers of `Fuser`** — `grep -rn 'Fuser::new\|FusionPolicy\|pool_cap:'` outside
-   the module returns nothing. `Fuser` is the converged *target* (contract #280, Phase-1 F-A
-   landed); route integration is ongoing. The **live v2** path (`fusion_service.rs::fuse_optimized`,
-   via the entity-orchestrator) and `ResultFuser` (`proximadb-query/src/fusion.rs`) do **not** use
+3. **Partial production wiring** — `graph_fusion_search_with_labels` now overlays
+   `PROXIMADB_FUSION_POOL_CAP` and executes through `Fuser`, so the canonical graph-fusion path can
+   be bounded default-off. Residual live paths remain: `fusion_service.rs::fuse_optimized` (entity
+   orchestrator) and `ResultFuser` (`proximadb-query/src/fusion.rs`) do **not** yet use
    `Fuser`/`pool_cap` — each materializes the full per-`oid` union then `truncate(limit)`
    (`fusion_service.rs:130-140`, `proximadb-query/src/fusion.rs:114/148`).
 
-So: the protective mechanism exists in the canonical v2 core but is unwired, default-off, and
-non-fail-loud; the live v2 paths lack it. A wide fan-out (large vector leg + high-degree graph
-expansion) buffers the entire source union in RAM before the output trim — the OOM / saturation
-path. Sibling of link:TD-XMODAL-7-crossmodal-udtf-subquery-stack-overflow.adoc[TD-XMODAL-7]
-(heap-side vs stack-side).
+So: the protective mechanism exists in the canonical v2 core and is wired into one live graph
+fusion path, but remains default-off and incomplete across the full cross-modal fabric. Residual
+wide fan-out paths can still buffer the entire source union in RAM before the output trim — the
+OOM / saturation path. Sibling of
+link:TD-XMODAL-7-crossmodal-udtf-subquery-stack-overflow.adoc[TD-XMODAL-7] (heap-side vs
+stack-side).
 
 == v2-canonical alignment
 
@@ -49,17 +50,14 @@ v1 fusion; retire it.
 
 == Next action (corrected scope, behavior-preserving — all default-OFF)
 
-1. **Fail-loud mode.** Add `pool_cap_mode: PoolCapMode { Truncate, Error }` to `FusionPolicy`
-   mirroring `RowLimitMode` (`engine.rs:132`); default `Truncate` (today's behavior). In `Error`
-   mode, a source exceeding `pool_cap` surfaces the overflow (the canonical `fuse` returns
-   `(Vec, FusionStats)` — add `pool_cap_exceeded: Option<usize>` to `FusionStats`, or convert
-   `fuse` to `Result` given its caller count is currently zero).
-2. **Wire through the live v2 path.** Thread `pool_cap` + `pool_cap_mode` into
-   `fusion_service.rs::fuse_optimized` (the entity-orchestrator serving path) from `FusionService`
-   config / request, default-off. `Fuser` becomes the single place the cap is enforced once the
-   live path migrates fully onto it (TD-138).
-3. **Test.** Error-mode + an over-cap source fails loud / is bounded; a normal query is
-   byte-identical (regression guard on the existing `fuse_by_oid_dedups_and_counts_sources` test).
+1. **Complete fail-loud propagation.** `PoolCapMode` and `FusionStats.pool_cap_exceeded` exist;
+   remaining callers must reject or surface `pool_cap_exceeded` when configured for fail-loud mode.
+2. **Wire residual v2 paths.** Thread `pool_cap` + `pool_cap_mode` into
+   `fusion_service.rs::fuse_optimized` (entity-orchestrator serving path) and
+   `proximadb-query::ResultFuser`, default-off. `Fuser` becomes the single enforcement point once
+   the live paths migrate fully onto it (TD-138).
+3. **Test.** Error-mode + an over-cap source fails loud / is bounded on each live path; normal
+   queries are byte-identical with caps unset.
 
 == Deferred (separate, gated)
 
