@@ -117,6 +117,32 @@ cost` becomes populated:**
 Only after Slice 0 is the engine dimension observable; Dimension-0 routing (below)
 then has evidence to act on and grows automatically as native coverage grows.
 
+== Unblock — native CAN serve parquet: the scan source is separable from the engine
+
+A natural objection: "native only reads PAX/`Values`, so it can't compete on the
+external-parquet ClickBench." That is a *sequencing* limit, not an architectural one.
+**Reading parquet and executing operators are two different jobs:**
+
+* Turning parquet bytes → Arrow `RecordBatch` is pure **arrow-rs**
+  (`ParquetRecordBatchStreamBuilder` + `ProjectionMask` — exactly what
+  `object_store_parquet_reader.rs` already uses). No DataFusion required.
+* The native engine's `ExecutionOperator` contract **consumes `RecordBatch`es**
+  (`MemoryScanSource` from `Values`; the Phase-2.5 `PaxScanOperator` from PAX).
+
+So a **native `ParquetScanOperator`** — mirroring `native_scan.rs`'s PAX source but
+driving the *same arrow-rs parquet reader* — feeds parquet `RecordBatch`es straight
+into the native pipeline (`FilterProject` → `HashAggregate` → `HashJoin`). Native
+then serves external-parquet queries wherever its operators are superior. Nothing in
+ADR-052/054 forbids this; parquet was simply DataFusion's lane first because PAX is
+the canonical inside format (ADR-055) and DataFusion gave breadth for free.
+
+**This is the concrete unblock for the whole engine dimension:** with a native
+parquet scan source, native runs the *same* ClickBench queries as DataFusion →
+Slice 0's shadow finally has a real native-vs-DataFusion sample on the actual
+benchmark → Dimension-0 routing has evidence. It moves ahead of "native only on PAX."
+Roadmap: **native `ParquetScanOperator`** (reuse the arrow-rs reader) → shadow on
+ClickBench → route per shape to the measured winner.
+
 == Dimension 0 in depth — engine selection at the router (native vs DataFusion)
 
 Today native (ADR-054) covers few operations (FilterProject, HashAggregate,
