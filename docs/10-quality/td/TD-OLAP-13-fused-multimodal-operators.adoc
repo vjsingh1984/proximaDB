@@ -1,0 +1,56 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-OLAP-13: Fused multimodal operator set — the wedge (ADR-054 Phase 5)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Open — scoped, not yet designed in detail. The strategic end-state; sequenced last (after TD-OLAP-10/11/12).** Filed to resolve the dangling reference from link:../../12-design/adr/ADR-054-native-execution-engine-progressive-cutover.adoc[ADR-054] §8 Phase 5. The contracts must be right first (ADR-054 §12 Q6): the multimodal operators land in the *same* `ExecutionOperator` plane as the relational operators, not as a bolt-on — so this TD is deliberately downstream of the relational operator set + join. No implementation exists yet.
+| Priority | **P3 — strategic (the defensible niche), non-gating on current execution.** This is the wedge no incumbent co-designs (ADR-054 §6.2), but it is only servable once the native operator plane exists; building it before the plane repeats the CDC/replica anti-pattern ADR-054 §6 rejects.
+| Severity | High (strategic) — this is *why* ADR-054 reverses ADR-052 invariant 2: a fused `ANN+filter+aggregate` cannot be expressed inside DataFusion, and post-filtering an ANN result silently discards >30% of correct rows (arXiv 2506.23071). The correctness argument — not just speed — is the load-bearing case. But it does not gate the TD-OLAP-1..12 single-node-competitiveness foundation.
+| Component | *new* `src/query/execution/native_multimodal_ops.rs` (`VectorSearchOperator`, `GraphTraversalOperator`, `DocumentProjectionOperator`, `FusedAnnFilterAggregate`); consumes the same Arrow `RecordBatch` data plane + `PhysExpr` (Phase 2); reuses the ANN engines (`src/storage/engines/`), `proximadb-bloom` (ADR-011 pre-filter), the ORION graph engine, and the PAX-native scan (TD-OLAP-1/TD-OLAP-14) that already feeds both AXIS/ANN and DataFusion.
+| Governs | link:../../12-design/adr/ADR-054-native-execution-engine-progressive-cutover.adoc[ADR-054] §6 (the multimodal wedge), §8 Phase 5 row; realizes the TD-OLAP-7 "fused ANN+filter+agg wedge" inside the native operator plane.
+| Relates to | TD-OLAP-7 (selective GPU OLAP + the fused-operator wedge — same target, different substrate), TD-OLAP-10/11/12 (the relational operator plane this extends), TD-OLAP-11 §"Gate" (the multimodal-join >99%-recall gate is shared), ADR-011 (bloom/ANN pre-filter), ADR-052 invariant 4 (measured), `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` (the operator sketches). Stretch modes (graph/document) per ADR-052/054 non-goal: 3-mode is the defensible niche, graph/document are stretch.
+|===
+
+== Scope (the four operators — ADR-054 §6.1)
+
+All four live behind the one `ExecutionOperator` contract, consume the same Arrow
+`RecordBatch`, and co-execute in one pipeline — the co-design that no incumbent owns:
+
+[cols="2,4", options="header"]
+|===
+| Operator | Why it must be native (not expressible in DataFusion)
+| `VectorSearchOperator` | The SQL filter must constrain the ANN *search*, not post-filter its results — post-filter loses >30% recall (arXiv 2506.23071). DataFusion has no ANN operator and cannot express pre-filter semantics.
+| `FusedAnnFilterAggregate` | One operator: ANN candidates → filter → aggregate, **no materialization between**. The TD-OLAP-7 wedge; structurally unhostable in DataFusion.
+| `GraphTraversalOperator` | BFS/DFS/shortest-path over a PAX edge table — iterative, data-dependent termination, not a fixed relational plan; joins back to relational in the same plane.
+| `DocumentProjectionOperator` | Project a JSON path as a typed Arrow column once (columnar), avoiding the per-row `serde_json` tax; downstream operators see a normal column.
+|===
+
+== Gate (ADR-052 mandate #4 — measured, not asserted)
+
+Ships behind a flag, default-off, shadow-compared, demoted on regression. Promotion
+requires the **TD-OLAP-4 ledger**:
+
+* **Correctness (the load-bearing claim):** a vector+SQL join returns **>99% recall@k**
+  vs the >30% loss cited for the CDC/replica post-filter stack (arXiv 2506.23071). This
+  is the shared gate with TD-OLAP-11 Phase 5.
+* **Performance:** per-query ledger vs DataFusion (which cannot serve the fused shape at
+  all) + vs a naive post-filter baseline, on the same object store, in CI.
+* **Conformance unchanged:** TPC-H (22) / TPC-DS (16) ratchets stay green (the multimodal
+  operators are additive; they do not touch the relational conformance path).
+
+== Non-goals
+
+* **No new external surface** — the multimodal operators are internal verticality behind
+  the Arrow / `LogicalNode` / pgwire seams (ADR-054 §10 "vertical inside, standard outside").
+* **No overclaim of five-mode parity** — vector + OLAP + lakehouse is the defensible niche;
+  graph/document are stretch modes served by the same plane (ADR-052/054 non-goal).
+* **No build before the plane** — depends on TD-OLAP-10/11 (operators + join) and benefits
+  from TD-OLAP-12 (scheduler); building the wedge on a borrowed engine is the anti-pattern
+  this ADR exists to avoid.
+
+== Primary-source citations
+
+* Vector+SQL post-filter recall loss (>30% on JOINs): arXiv 2506.23071.
+* Operator sketches: `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`.
