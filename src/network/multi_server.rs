@@ -627,6 +627,7 @@ impl MultiServer {
             let grpc_handle = tokio::spawn(async move {
                 let result = match grpc_bind_target {
                     BindTarget::Tcp(addr) => server.serve(addr).await,
+                    #[cfg(unix)]
                     BindTarget::Uds(path) => match crate::network::uds::bind_unix_listener(&path) {
                         Ok(listener) => {
                             let incoming =
@@ -638,6 +639,14 @@ impl MultiServer {
                             return;
                         }
                     },
+                    #[cfg(not(unix))]
+                    BindTarget::Uds(path) => {
+                        tracing::error!(
+                            "gRPC UDS (unix:{}) is not supported on this platform; use TCP",
+                            path.display()
+                        );
+                        return;
+                    }
                 };
                 if let Err(e) = result {
                     tracing::error!("gRPC server error: {}", e);

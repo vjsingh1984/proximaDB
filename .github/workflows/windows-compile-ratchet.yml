@@ -14,10 +14,15 @@ name: Windows Compile Ratchet
 
 on:
   pull_request:
+    # Scoped to the areas on the remaining Windows-compile path (grown one rung at
+    # a time as blockers are fixed), so this Windows runner only fires on relevant
+    # PRs — not every src change across concurrent sessions.
     paths:
       - 'crates/storage/**'
+      - 'crates/platform/proximadb-runtime/**'
       - 'src/storage/**'
       - 'src/embedded/**'
+      - 'src/network/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/windows-compile-ratchet.yml'
