@@ -718,11 +718,40 @@ pub struct ScanTableInfo {
 /// The pieces `walk` accumulates while descending a supported plan subtree.
 /// `ops` is bottom-up: the source feeds the first, the last emits the output.
 struct Walked {
+    /// The scan leaf: `MemoryScanSource` for `Values`, a `PaxScanOperator` for a
+    /// `Scan` with a threaded [`ScanCtx`] (PAX segments), or a
+    /// `ParquetScanOperator` injected via [`lower_physical_over_source`] for a
+    /// `Scan` over external parquet (TD-OLAP-4) — generalized so native serves
+    /// real storage, not just literal tables.
     source: Box<dyn ExecutionOperator>,
     ops: Vec<OpSpec>,
     /// Output schema of the last op (or the source if `ops` is empty).
     cur_schema: SchemaRef,
     limit: Option<LimitSpec>,
+}
+
+thread_local! {
+    /// Scan source injected by [`lower_physical_over_source`] for the `Scan` leaf
+    /// (TD-OLAP-4 native-parquet). Set immediately before the sync `walk`, taken
+    /// at the `Scan` arm, cleared after — never held across an await.
+    static INJECTED_SCAN_SOURCE: std::cell::RefCell<Option<Box<dyn ExecutionOperator>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Lower `plan` to a native pipeline using `source` as the `Scan` leaf — the
+/// entry the native-parquet shadow uses to run the SAME plan DataFusion runs, but
+/// over a [`super::native_parquet_scan::ParquetScanOperator`]. Declines (like
+/// `lower_physical`) for any op native does not support.
+pub(crate) fn lower_physical_over_source(
+    plan: &PhysicalPlan,
+    source: Box<dyn ExecutionOperator>,
+) -> Result<LoweredPipeline, ExecutionError> {
+    INJECTED_SCAN_SOURCE.with(|s| *s.borrow_mut() = Some(source));
+    // No `ScanCtx`: the `Scan` leaf resolves to the injected parquet source, which
+    // the `Scan` arm checks before the PAX path.
+    let result = lower_physical(plan, None);
+    INJECTED_SCAN_SOURCE.with(|s| *s.borrow_mut() = None);
+    result
 }
 
 /// Lower a `PhysicalPlan` to a [`LoweredPipeline`]. Returns `Err(NotImplemented)`
@@ -982,6 +1011,18 @@ fn walk(plan: &PhysicalPlan, scan_ctx: Option<&ScanCtx>) -> Result<Walked, Execu
             output_schema,
             ..
         } => {
+            // TD-OLAP-4: a parquet source injected via `lower_physical_over_source`
+            // takes precedence — this is how native serves external parquet for the
+            // shadow probe. Absent an injection, fall through to the PAX path (#807).
+            if let Some(source) = INJECTED_SCAN_SOURCE.with(|s| s.borrow_mut().take()) {
+                let cur_schema = source.output_schema();
+                return Ok(Walked {
+                    source,
+                    ops: Vec::new(),
+                    cur_schema,
+                    limit: None,
+                });
+            }
             use crate::query::execution::native_scan::PaxScanOperator;
             let ctx = scan_ctx.ok_or_else(|| {
                 ExecutionError::NotImplemented(

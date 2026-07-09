@@ -149,6 +149,69 @@ mod tests {
         assert_eq!(op.output_schema().fields().len(), 2);
     }
 
+    /// End-to-end: a relational `PhysicalPlan::Scan` lowers over an injected
+    /// `ParquetScanOperator` (via `lower_physical_over_source`) and drains all
+    /// rows through the native vectorized engine — proving native serves external
+    /// parquet with ZERO DataFusion (TD-OLAP-4 engine dimension).
+    #[tokio::test]
+    async fn native_lowers_scan_over_parquet_source() {
+        use crate::query::execution::native_ops::{execute_pipeline, lower_physical_over_source};
+        use proximadb_data_model::ProximaType;
+        use proximadb_relational_algebra::TableId;
+        use proximadb_relational_planner::{PhysicalPlan, ScanAccess};
+        use proximadb_relational_types::{ColumnInfo, RelationalSchema};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let file_path = tmp.path().join("t.parquet");
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("k", DataType::Utf8, false),
+            Field::new("x", DataType::Int64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["a", "b", "c", "d"])),
+                Arc::new(Int64Array::from(vec![10, 20, 30, 40])),
+            ],
+        )
+        .unwrap();
+        let f = std::fs::File::create(&file_path).unwrap();
+        let mut w = ArrowWriter::try_new(f, schema.clone(), None).unwrap();
+        w.write(&batch).unwrap();
+        w.close().unwrap();
+
+        let store = Arc::new(LocalFileSystem::new_with_prefix(tmp.path()).unwrap());
+        let size = std::fs::metadata(&file_path).unwrap().len();
+        let source = Box::new(ParquetScanOperator::new(
+            store,
+            vec![(Path::from("t.parquet"), Some(size))],
+            None,
+            schema.clone(),
+        ));
+
+        // Relational plan: a bare Scan whose leaf is the injected parquet source.
+        let plan = PhysicalPlan::Scan {
+            table: TableId::new("hits"),
+            output_schema: RelationalSchema::new(vec![
+                ColumnInfo::new("k", ProximaType::String, false),
+                ColumnInfo::new("x", ProximaType::Int64, false),
+            ]),
+            projection: None,
+            predicate: None,
+            limit: None,
+            access: ScanAccess::FullScan,
+        };
+
+        let lowered = lower_physical_over_source(&plan, source).unwrap();
+        let batches = execute_pipeline(&lowered).await.unwrap();
+        let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(
+            rows, 4,
+            "native drained every parquet row via the Scan leaf"
+        );
+        assert_eq!(batches[0].num_columns(), 2);
+    }
+
     #[tokio::test]
     async fn parquet_scan_projection_narrows_columns() {
         let tmp = tempfile::tempdir().unwrap();
