@@ -971,7 +971,26 @@ impl DocumentService {
         // covered without a second hook.
         if let Some(route) = self.record_route.get() {
             let (tenant, clean_collection) = unscope_document_collection(name);
-            if let Err(e) = route.ensure_collection(clean_collection, 0, tenant).await {
+            // P-Shred follow-up (ADR-055): seed props-auto-promotion from the collection's declared
+            // indexes so those hot fields shred into typed columns at flush. Only simple top-level
+            // SCALAR keys shred usefully (a nested `$.user.email` top-level is a Map, not a scalar);
+            // skip nested/array paths rather than promoting a column that would never populate.
+            let promote_keys: Vec<String> = config
+                .indexes
+                .iter()
+                .filter_map(|idx| {
+                    let key = idx.path.trim_start_matches('$').trim_start_matches('.');
+                    if key.is_empty() || key.contains('.') || key.contains('[') {
+                        None
+                    } else {
+                        Some(key.to_string())
+                    }
+                })
+                .collect();
+            if let Err(e) = route
+                .ensure_collection(clean_collection, 0, tenant, &promote_keys)
+                .await
+            {
                 warn!(
                     "P-Provision: canonical collection provision for '{}' failed (staying on legacy path): {}",
                     name, e
@@ -2880,6 +2899,9 @@ mod tests {
         /// to the legacy path). Empty ⇒ every collection is treated as an existing canonical
         /// collection — the common case for the convergence tests.
         non_canonical: std::sync::Mutex<std::collections::HashSet<String>>,
+        /// Per-collection promote keys captured from `ensure_collection` (P-Shred follow-up):
+        /// lets a test assert the document facade forwarded the declared index fields.
+        promoted: std::sync::Mutex<HashMap<String, Vec<String>>>,
     }
 
     #[async_trait::async_trait]
@@ -2956,13 +2978,19 @@ mod tests {
             collection_id: &str,
             _dimension: u32,
             _tenant: Option<&str>,
+            promote_keys: &[String],
         ) -> anyhow::Result<()> {
             // Provisioning makes a (possibly previously non-canonical) collection canonical —
-            // idempotent (removing an absent entry is a no-op).
+            // idempotent (removing an absent entry is a no-op). Record the seeded promote keys so
+            // tests can assert the document facade forwarded the declared index fields.
             self.non_canonical
                 .lock()
                 .expect("mock route lock")
                 .remove(collection_id);
+            self.promoted
+                .lock()
+                .expect("mock route lock")
+                .insert(collection_id.to_string(), promote_keys.to_vec());
             Ok(())
         }
     }
@@ -3191,6 +3219,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_collection_forwards_top_level_index_keys_as_promote_keys() {
+        // P-Shred follow-up (ADR-055): the document facade extracts the TOP-LEVEL scalar key from
+        // each declared index path and forwards it to `ensure_collection` as a promote key (which
+        // the catalog then seeds as a props-auto-promotion column). Nested/array paths are skipped.
+        let svc = create_test_service();
+        let route = Arc::new(MockRecordRoute::default());
+        svc.set_record_route(route.clone());
+
+        svc.create_collection(
+            "idxdocs",
+            DocumentCollectionConfig {
+                name: "idxdocs".to_string(),
+                indexes: vec![
+                    IndexDefinition {
+                        path: "$.status".to_string(),
+                        index_type: DocIndexType::Btree as i32,
+                        ..Default::default()
+                    },
+                    IndexDefinition {
+                        path: "priority".to_string(),
+                        index_type: DocIndexType::Btree as i32,
+                        ..Default::default()
+                    },
+                    IndexDefinition {
+                        path: "$.user.email".to_string(), // nested ⇒ skipped for promotion
+                        index_type: DocIndexType::Btree as i32,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("create document collection");
+
+        let promoted = route.promoted.lock().expect("lock");
+        let keys = promoted.get("idxdocs").expect("promote keys captured");
+        assert!(
+            keys.contains(&"status".to_string()),
+            "top-level $.status promoted"
+        );
+        assert!(keys.contains(&"priority".to_string()), "bare key promoted");
+        assert!(
+            !keys
+                .iter()
+                .any(|k| k.contains("email") || k.contains("user")),
+            "nested $.user.email is skipped (would shred nothing useful)"
+        );
+    }
+
+    #[tokio::test]
     async fn ensure_collection_is_idempotent() {
         let route = MockRecordRoute::default();
         route
@@ -3199,11 +3278,11 @@ mod tests {
             .expect("lock")
             .insert("c".to_string());
         route
-            .ensure_collection("c", 0, None)
+            .ensure_collection("c", 0, None, &[])
             .await
             .expect("first ensure");
         route
-            .ensure_collection("c", 0, None)
+            .ensure_collection("c", 0, None, &[])
             .await
             .expect("second ensure is idempotent");
         assert!(route.collection_exists("c", None).await);

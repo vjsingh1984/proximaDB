@@ -586,12 +586,28 @@ impl CollectionService {
         name: &str,
         dimension: u32,
         tenant_context: Option<&crate::storage::tenant::TenantContext>,
+        promote_keys: &[String],
     ) -> Result<()> {
+        // P-Shred follow-up (ADR-055): declared hot keys become filterable columns (typed, id >= 100
+        // in the catalog schema), which `catalog_schema_from_collection` then registers as
+        // props-auto-promotion `promoted_keys` for document collections — so those props shred into
+        // typed user-columns at flush. Default type Text/String; the shred writer coerces per value.
+        let filterable_columns = promote_keys
+            .iter()
+            .filter(|k| !k.is_empty())
+            .map(|k| crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: k.clone(),
+                indexed: true,
+                supports_range: true,
+                ..Default::default()
+            })
+            .collect();
         let config = CollectionConfig {
             name: name.to_string(),
             dimension,
             storage_engine: Some(StorageEngine::Sst as i32),
             enable_proxima_record: Some(true),
+            filterable_columns,
             ..Default::default()
         };
         let resp = self
