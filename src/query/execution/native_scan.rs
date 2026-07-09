@@ -160,3 +160,80 @@ fn decode_column(
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::engines::sst::segment_format::write_pax_segment;
+    use arrow_array::Int64Array;
+    use arrow_schema::{DataType, Field, Schema};
+    use futures::StreamExt;
+    use proximadb_block_format::{VectorQuant, col_id};
+    use proximadb_records::ProximaRecord;
+
+    fn record(oid: &str, tenant: &str, ts: i64) -> ProximaRecord {
+        ProximaRecord {
+            oid: oid.into(),
+            tenant_id: tenant.into(),
+            created_at_ns: ts,
+            updated_at_ns: ts,
+            ..Default::default()
+        }
+    }
+
+    /// `[created_at]` schema + its name→column_id map (mirrors pax_adapter tests).
+    fn created_at_schema() -> (SchemaRef, HashMap<String, i32>) {
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "created_at",
+            DataType::Int64,
+            true,
+        )]));
+        let map = HashMap::from([(String::from("created_at"), col_id::CREATED_AT)]);
+        (schema, map)
+    }
+
+    #[tokio::test]
+    async fn pax_scan_reads_real_pax_data() {
+        // Write a REAL .pax segment with 2 records (created_at = 1000, 3000).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("seg.pax");
+        let records = vec![record("r1", "t", 1000), record("r2", "t", 3000)];
+        write_pax_segment(&path, &records, "col", 0, VectorQuant::Auto, None)
+            .expect("write_pax_segment");
+
+        // Construct the PaxScanOperator with a real FilesystemFactory.
+        let fs = Arc::new(
+            FilesystemFactory::create_default()
+                .await
+                .expect("FilesystemFactory"),
+        );
+        let (schema, map) = created_at_schema();
+        let split = FileSplit::new_block(path.to_str().unwrap().to_string(), 0, 0, 0, 0);
+        let scan = PaxScanOperator::new(vec![split], fs, map, schema.clone());
+
+        // Execute the scan.
+        let empty: BatchStream = Box::pin(futures::stream::empty());
+        let stream = scan.execute(empty).await.expect("scan execute");
+        let batches: Vec<RecordBatch> = stream
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<_, _>>()
+            .expect("drain stream");
+
+        // Assert: 2 rows total with created_at values 1000 and 3000.
+        assert!(!batches.is_empty(), "expected at least one batch");
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 2, "expected 2 rows from the PAX segment");
+        let arr = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("Int64Array for created_at");
+        let vals: Vec<i64> = arr.iter().map(|o| o.unwrap()).collect();
+        assert!(
+            vals.contains(&1000) && vals.contains(&3000),
+            "expected created_at values [1000, 3000], got {vals:?}"
+        );
+    }
+}
