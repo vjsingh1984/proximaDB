@@ -34,6 +34,19 @@ pub fn native_vectorized_enabled() -> bool {
     })
 }
 
+/// Gate: should the native hash-join path be used? Default OFF — distinct from
+/// `PROXIMADB_NATIVE_VECTORIZED` so FilterProject/HashAgg can serve without
+/// forcing the join on. When ON, `lower_physical::Join` wires the #779
+/// `HashJoinBuildOperator`/`HashJoinProbeOperator` (ADR-054 Phase 3, TD-OLAP-11).
+pub fn native_join_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("PROXIMADB_NATIVE_JOIN")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
+
 /// Try the native vectorized execution path for an already-planned query.
 /// Called from `NativeVolcanoEngine::execute_physical` (the single native
 /// chokepoint, above the Volcano) when [`native_vectorized_enabled`] is set.

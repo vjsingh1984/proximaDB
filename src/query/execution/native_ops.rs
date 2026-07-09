@@ -716,10 +716,25 @@ struct Walked {
 /// aggregates, STRING_AGG/Custom aggregates, HAVING). `try_vectorized` maps the
 /// `Err` to a Volcano fallback.
 pub(crate) fn lower_physical(plan: &PhysicalPlan) -> Result<LoweredPipeline, ExecutionError> {
+    // Join is handled specially — it produces two pipelines (build + probe).
+    if matches!(plan, PhysicalPlan::Join { .. }) {
+        return lower_join(plan);
+    }
+    let walked = walk(plan)?;
+    let (operators, limit) = walked_to_operators(walked);
+    Ok(LoweredPipeline {
+        pipeline: Pipeline::new(operators),
+        build_pipeline: None,
+        limit,
+    })
+}
+
+/// Convert a [`Walked`] (source + OpSpec chain) into a concrete operator chain
+/// + the trailing `Limit`. Extracted so `lower_join` can reuse it for each side.
+fn walked_to_operators(walked: Walked) -> (Vec<Box<dyn ExecutionOperator>>, Option<LimitSpec>) {
     let Walked {
         source, ops, limit, ..
-    } = walk(plan)?;
-
+    } = walked;
     let mut operators: Vec<Box<dyn ExecutionOperator>> = Vec::with_capacity(ops.len() + 1);
     operators.push(Box::new(source));
     let mut cur_schema = operators[0].output_schema();
@@ -758,11 +773,171 @@ pub(crate) fn lower_physical(plan: &PhysicalPlan) -> Result<LoweredPipeline, Exe
             }
         }
     }
+    (operators, limit)
+}
+
+/// Lower a `PhysicalPlan::Join` into a two-pipeline `LoweredPipeline` (build +
+/// probe) using the #779 `HashJoinBuildOperator`/`HashJoinProbeOperator`.
+fn lower_join(plan: &PhysicalPlan) -> Result<LoweredPipeline, ExecutionError> {
+    use crate::query::execution::native_engine::native_join_enabled;
+    use crate::query::execution::native_join_ops::{
+        HashJoinBuildOperator, HashJoinProbeOperator, JoinColumn,
+    };
+    use proximadb_relational_algebra::{JoinKind, JoinSide, JoinStrategy};
+    use std::sync::OnceLock;
+
+    let PhysicalPlan::Join {
+        left,
+        right,
+        kind,
+        on,
+        strategy,
+    } = plan
+    else {
+        unreachable!()
+    };
+
+    if !native_join_enabled() {
+        return Err(ExecutionError::NotImplemented(
+            "native join disabled (set PROXIMADB_NATIVE_JOIN=1)".into(),
+        ));
+    }
+    let JoinStrategy::Hash { build_side } = strategy else {
+        return Err(ExecutionError::NotImplemented(
+            "non-hash join strategy not supported in native path".into(),
+        ));
+    };
+
+    // Equi-key extraction: ON is an AND-conjunction of `col = col` in
+    // concatenated left++right schema space (left: 0..L-1, right: L..L+R-1).
+    let left_width = left.output_schema().columns.len();
+    let equi_keys = on
+        .as_ref()
+        .and_then(|e| extract_equi_keys(e, left_width))
+        .unwrap_or_default();
+    if equi_keys.is_empty() {
+        return Err(ExecutionError::NotImplemented(
+            "join has no equi-keys (non-equi ON not supported in native path)".into(),
+        ));
+    }
+
+    // Walk both subtrees.
+    let left_walked = walk(left)?;
+    let right_walked = walk(right)?;
+    let left_schema = left_walked.cur_schema.clone();
+    let right_schema = right_walked.cur_schema.clone();
+    let (left_ops, _) = walked_to_operators(left_walked);
+    let (right_ops, _) = walked_to_operators(right_walked);
+
+    // Build/probe assignment from `build_side`.
+    let (build_ops, probe_ops, build_key_ords, probe_key_ords, build_schema, probe_schema) =
+        match build_side {
+            JoinSide::Right => (
+                right_ops,
+                left_ops,
+                equi_keys.iter().map(|(_, r)| *r).collect::<Vec<_>>(),
+                equi_keys.iter().map(|(l, _)| *l).collect::<Vec<_>>(),
+                right_schema.clone(),
+                left_schema.clone(),
+            ),
+            JoinSide::Left => (
+                left_ops,
+                right_ops,
+                equi_keys.iter().map(|(l, _)| *l).collect::<Vec<_>>(),
+                equi_keys.iter().map(|(_, r)| *r).collect::<Vec<_>>(),
+                left_schema.clone(),
+                right_schema.clone(),
+            ),
+        };
+
+    let table_slot = Arc::new(OnceLock::new());
+
+    // Build pipeline: subtree ops + HashJoinBuildOperator.
+    let mut build_operators = build_ops;
+    build_operators.push(Box::new(HashJoinBuildOperator {
+        build_keys: build_key_ords,
+        build_schema: build_schema.clone(),
+        table_slot: table_slot.clone(),
+        bloom_enabled: false,
+    }));
+    let build_pipeline = Pipeline::new(build_operators);
+
+    // Probe pipeline: subtree ops + HashJoinProbeOperator.
+    let probe_ncols = probe_schema.fields().len();
+    let build_ncols = build_schema.fields().len();
+    let output_columns: Vec<JoinColumn> = match kind {
+        JoinKind::Semi | JoinKind::Anti => (0..probe_ncols).map(JoinColumn::Probe).collect(),
+        _ => (0..probe_ncols)
+            .map(JoinColumn::Probe)
+            .chain((0..build_ncols).map(JoinColumn::Build))
+            .collect(),
+    };
+
+    // Output schema: [probe fields, build fields] (probe-only for Semi/Anti).
+    let mut out_fields: Vec<_> = probe_schema.fields().iter().cloned().collect();
+    if !matches!(kind, JoinKind::Semi | JoinKind::Anti) {
+        out_fields.extend(build_schema.fields().iter().cloned());
+    }
+    let output_schema = Arc::new(arrow::datatypes::Schema::new(out_fields));
+
+    let mut probe_operators = probe_ops;
+    probe_operators.push(Box::new(HashJoinProbeOperator {
+        table_slot: table_slot.clone(),
+        probe_keys: probe_key_ords,
+        output_columns,
+        kind: *kind,
+        output_schema: output_schema.clone(),
+    }));
+    let probe_pipeline = Pipeline::new(probe_operators);
+
     Ok(LoweredPipeline {
-        pipeline: Pipeline::new(operators),
-        build_pipeline: None,
-        limit,
+        pipeline: probe_pipeline,
+        build_pipeline: Some(build_pipeline),
+        limit: None,
     })
+}
+
+/// Extract equi-join key pairs from the ON expression. The ON is an
+/// AND-conjunction of `BinaryOp(Eq, Column, Column)` in concatenated left++right
+/// schema space (left: `0..L-1`, right: `L..L+R-1`).
+fn extract_equi_keys(expr: &Expr, left_width: usize) -> Option<Vec<(usize, usize)>> {
+    fn collect(expr: &Expr, left_width: usize, out: &mut Vec<(usize, usize)>) -> bool {
+        match expr {
+            Expr::BinaryOp {
+                op: BinaryOp::Eq,
+                left,
+                right,
+            } => {
+                let (l, r) = match (left.as_ref(), right.as_ref()) {
+                    (Expr::Column(c1), Expr::Column(c2)) => (c1.ordinal, c2.ordinal),
+                    _ => return false,
+                };
+                if l < left_width && r >= left_width {
+                    out.push((l, r - left_width));
+                    true
+                } else if r < left_width && l >= left_width {
+                    out.push((r, l - left_width));
+                    true
+                } else {
+                    false
+                }
+            }
+            Expr::BinaryOp {
+                op: BinaryOp::And,
+                left,
+                right,
+            } => {
+                collect(left.as_ref(), left_width, out) && collect(right.as_ref(), left_width, out)
+            }
+            _ => false,
+        }
+    }
+    let mut keys = Vec::new();
+    if collect(expr, left_width, &mut keys) {
+        Some(keys)
+    } else {
+        None
+    }
 }
 
 fn walk(plan: &PhysicalPlan) -> Result<Walked, ExecutionError> {
@@ -1682,5 +1857,111 @@ mod tests {
             .map(|o| o.unwrap())
             .collect();
         assert_eq!(anti_k, vec![1, 3]);
+    }
+
+    // --- Join routing through lower_physical (ADR-054 Phase 3 routing) ---
+
+    #[tokio::test]
+    async fn join_routes_through_lower_physical() {
+        use proximadb_relational_algebra::{JoinKind, JoinSide, JoinStrategy};
+        use proximadb_relational_types::{ColumnInfo, ColumnRef};
+
+        // Enable the native join gate (nextest: fresh process, OnceLock fresh).
+        // SAFETY: test-only; nextest process isolation ensures no concurrent access.
+        unsafe { std::env::set_var("PROXIMADB_NATIVE_JOIN", "1") };
+
+        let schema = RelationalSchema::new(vec![ColumnInfo::new("k", ProximaType::Int64, true)]);
+
+        // Left table: k = [1, 2, 3]
+        let left = PhysicalPlan::Values {
+            rows: vec![
+                vec![Expr::Literal {
+                    value: ProximaValue::Int64(1),
+                    ty: ProximaType::Int64,
+                }],
+                vec![Expr::Literal {
+                    value: ProximaValue::Int64(2),
+                    ty: ProximaType::Int64,
+                }],
+                vec![Expr::Literal {
+                    value: ProximaValue::Int64(3),
+                    ty: ProximaType::Int64,
+                }],
+            ],
+            output_schema: schema.clone(),
+        };
+
+        // Right table: k = [2, 3, 4]
+        let right = PhysicalPlan::Values {
+            rows: vec![
+                vec![Expr::Literal {
+                    value: ProximaValue::Int64(2),
+                    ty: ProximaType::Int64,
+                }],
+                vec![Expr::Literal {
+                    value: ProximaValue::Int64(3),
+                    ty: ProximaType::Int64,
+                }],
+                vec![Expr::Literal {
+                    value: ProximaValue::Int64(4),
+                    ty: ProximaType::Int64,
+                }],
+            ],
+            output_schema: schema.clone(),
+        };
+
+        // Inner join on k (col0 = col1 in concatenated left++right schema).
+        let on = Expr::BinaryOp {
+            op: BinaryOp::Eq,
+            left: Box::new(Expr::Column(ColumnRef {
+                name: "k".to_string(),
+                ordinal: 0,
+                ty: ProximaType::Int64,
+                nullable: true,
+            })),
+            right: Box::new(Expr::Column(ColumnRef {
+                name: "k".to_string(),
+                ordinal: 1, // left_width(1) + 0
+                ty: ProximaType::Int64,
+                nullable: true,
+            })),
+        };
+        let plan = PhysicalPlan::Join {
+            left: Box::new(left),
+            right: Box::new(right),
+            kind: JoinKind::Inner,
+            on: Some(on),
+            strategy: JoinStrategy::Hash {
+                build_side: JoinSide::Right,
+            },
+        };
+
+        // Lower + execute.
+        let lowered = lower_physical(&plan).expect("lower_physical for Join");
+        let batches = execute_pipeline(&lowered)
+            .await
+            .expect("execute_pipeline for Join");
+
+        // Assert: 2 matched rows (k=2↔2, k=3↔3). Output = [left_k, right_k].
+        assert!(!batches.is_empty(), "expected at least one output batch");
+        let total: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total, 2, "expected 2 matched rows (k=2, k=3)");
+        let left_k = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("Int64Array for left k");
+        let right_k = batches[0]
+            .column(1)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("Int64Array for right k");
+        let pairs: Vec<(i64, i64)> = (0..batches[0].num_rows())
+            .map(|r| (left_k.value(r), right_k.value(r)))
+            .collect();
+        assert!(
+            pairs.contains(&(2, 2)) && pairs.contains(&(3, 3)),
+            "expected matched pairs (2,2) + (3,3), got {pairs:?}"
+        );
     }
 }
