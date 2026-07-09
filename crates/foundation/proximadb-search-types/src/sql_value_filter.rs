@@ -443,17 +443,125 @@ pub fn evaluate_filter_proxima(expr: &FilterExpression, props: &ProximaTree) -> 
     })
 }
 
+/// Native, allocation-free ordering for the filter's common scalar types, matching
+/// [`crate::json_comparison::compare_json_values`] over the JSON-lowered value. Returns `None`
+/// (→ JSON-path fallback) for numbers, `Decimal`, and exotic types: `compare_json_numbers` uses an
+/// epsilon for float/huge-int *equality* that a single ordering can't express, so a native numeric
+/// ordering would risk diverging from the JSON path (breaking the strict≡default parity this slice
+/// guarantees). The real, parity-safe win here is `String`/`Symbol` (avoids the per-field clone).
+/// (TD-FILT-1 slice 3.)
+fn native_scalar_order(
+    pv: &ProximaValue,
+    literal: &serde_json::Value,
+) -> Option<std::cmp::Ordering> {
+    use serde_json::Value as J;
+    match (pv, literal) {
+        (ProximaValue::Boolean(b), J::Bool(jb)) => Some(b.cmp(jb)),
+        (ProximaValue::String(s) | ProximaValue::Symbol(s), J::String(js)) => {
+            Some(s.as_str().cmp(js.as_str()))
+        }
+        _ => None,
+    }
+}
+
+/// Map an ordering result onto a comparison operator's boolean outcome.
+fn apply_op(op: &ComparisonOperator, ord: std::cmp::Ordering) -> bool {
+    use std::cmp::Ordering::*;
+    match op {
+        ComparisonOperator::Equals => ord == Equal,
+        ComparisonOperator::NotEquals => ord != Equal,
+        ComparisonOperator::LessThan => ord == Less,
+        ComparisonOperator::LessThanOrEqual => matches!(ord, Less | Equal),
+        ComparisonOperator::GreaterThan => ord == Greater,
+        ComparisonOperator::GreaterThanOrEqual => matches!(ord, Greater | Equal),
+        // Unreachable: compare_proxima_op only routes the six ordering/equality ops here.
+        _ => false,
+    }
+}
+
+/// Compare a stored [`ProximaValue`] against a query literal (`serde_json::Value`). Native
+/// (allocation-free) for `Boolean` and `String`/`Symbol` — matching the JSON-path semantics
+/// exactly — and a JSON-path fallback for everything else. Guarantees strict ≡ default on which
+/// rows match (native cases match by construction; fallback cases ARE the JSON path).
+/// (TD-FILT-1 slice 3.)
+fn compare_proxima_op(
+    pv: &ProximaValue,
+    op: &ComparisonOperator,
+    literal: &serde_json::Value,
+) -> bool {
+    use ComparisonOperator::*;
+    match op {
+        Equals | NotEquals | LessThan | LessThanOrEqual | GreaterThan | GreaterThanOrEqual => {
+            match native_scalar_order(pv, literal) {
+                Some(ord) => apply_op(op, ord),
+                None => compare_json_op(op, &proxima_value_to_json(pv), literal),
+            }
+        }
+        // Operators that don't reduce to a single ordering always use the JSON path.
+        _ => compare_json_op(op, &proxima_value_to_json(pv), literal),
+    }
+}
+
 /// Fail-loud variant of [`evaluate_filter_proxima`] (TD-FILT-1) on the canonical `ProximaTree`
-/// path. Mirrors its resolver and surfaces an unresolved field (absent or a non-scalar leaf) as
-/// [`FilterEvalError::MissingField`] instead of silently dropping the row.
+/// path. Resolves each field to its raw [`ProximaValue`] (no JSON lowering at resolve time) and
+/// compares via [`compare_proxima_op`]. Surfaces an unresolved field (absent or a non-scalar leaf)
+/// as [`FilterEvalError::MissingField`] instead of silently dropping the row. Match results are
+/// identical to the (JSON-lowering) [`evaluate_filter_proxima`]; only unresolved fields differ
+/// (strict errors, default silently drops).
 pub fn evaluate_filter_proxima_strict(
     expr: &FilterExpression,
     props: &ProximaTree,
 ) -> Result<bool, FilterEvalError> {
-    evaluate_filter_resolved_strict(expr, &|field| match props.get(field) {
-        Some(ProximaTreeNode::Value(pv)) => Some(proxima_value_to_json(pv)),
-        _ => None,
-    })
+    fn resolve<'a>(props: &'a ProximaTree, field: &'a str) -> Option<&'a ProximaValue> {
+        match props.get(field) {
+            Some(ProximaTreeNode::Value(pv)) => Some(pv),
+            _ => None,
+        }
+    }
+    match expr {
+        FilterExpression::And(exprs) => {
+            // Non-short-circuit: evaluate every child so a MissingField in a later arm surfaces.
+            let mut acc = true;
+            for e in exprs {
+                acc &= evaluate_filter_proxima_strict(e, props)?;
+            }
+            Ok(acc)
+        }
+        FilterExpression::Or(exprs) => {
+            let mut pending: Option<FilterEvalError> = None;
+            for e in exprs {
+                match evaluate_filter_proxima_strict(e, props) {
+                    Ok(true) => return Ok(true),
+                    Ok(false) => {}
+                    Err(e) => pending = pending.or(Some(e)),
+                }
+            }
+            match pending {
+                Some(e) => Err(e),
+                None => Ok(false),
+            }
+        }
+        FilterExpression::Not(e) => Ok(!evaluate_filter_proxima_strict(e, props)?),
+        FilterExpression::Comparison {
+            field,
+            operator,
+            value,
+        } => match operator {
+            // Null tests are decided by presence (SQL: an absent field IS NULL) — never an error.
+            ComparisonOperator::IsNull => {
+                Ok(resolve(props, field).is_none_or(|pv| matches!(pv, ProximaValue::Null)))
+            }
+            ComparisonOperator::IsNotNull => {
+                Ok(resolve(props, field).is_some_and(|pv| !matches!(pv, ProximaValue::Null)))
+            }
+            _ => match resolve(props, field) {
+                Some(pv) => Ok(compare_proxima_op(pv, operator, value)),
+                None => Err(FilterEvalError::MissingField {
+                    field: field.clone(),
+                }),
+            },
+        },
+    }
 }
 
 /// Numeric-aware equality for JSON values — the single equality primitive for
@@ -913,5 +1021,77 @@ mod tests {
             evaluate_filter_proxima_strict(&filter, &props),
             Err(FilterEvalError::MissingField { .. })
         ));
+    }
+
+    // ---- TD-FILT-1 slice 3: native comparator parity (strict ≡ default on matches) ----
+
+    #[test]
+    fn native_compare_matches_json_path_for_supported_scalars() {
+        // For every (pv, literal, op) the native path handles (Boolean↔Bool, String/Symbol↔String),
+        // compare_proxima_op MUST equal the JSON path — so strict and default agree on matches.
+        let pvs = [
+            ProximaValue::Boolean(true),
+            ProximaValue::Boolean(false),
+            ProximaValue::String("apple".to_string()),
+            ProximaValue::String("banana".to_string()),
+            ProximaValue::Symbol("sym".to_string()),
+            ProximaValue::String("".to_string()),
+        ];
+        let lits = [
+            json!(true),
+            json!(false),
+            json!("apple"),
+            json!("mango"),
+            json!("banana"),
+            json!("sym"),
+            json!(""),
+        ];
+        let ops = [
+            ComparisonOperator::Equals,
+            ComparisonOperator::NotEquals,
+            ComparisonOperator::LessThan,
+            ComparisonOperator::LessThanOrEqual,
+            ComparisonOperator::GreaterThan,
+            ComparisonOperator::GreaterThanOrEqual,
+        ];
+        for pv in &pvs {
+            for lit in &lits {
+                if native_scalar_order(pv, lit).is_some() {
+                    for op in &ops {
+                        let native = compare_proxima_op(pv, op, lit);
+                        let json_path = compare_json_op(op, &proxima_value_to_json(pv), lit);
+                        assert_eq!(
+                            native, json_path,
+                            "parity break: pv={pv:?} lit={lit} op={op:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn numbers_and_exotic_types_fall_back_to_json_path() {
+        // Numbers / Decimal / exotic / type-mismatched pairs are not handled natively (the
+        // epsilon-equality semantics make a native numeric ordering unsafe for parity), so
+        // compare_proxima_op IS the JSON path for them.
+        let cases = [
+            (ProximaValue::Int64(5), json!(5)),
+            (ProximaValue::Int64(2), json!(2.0)),
+            (ProximaValue::Float64(2.5), json!(2.5)),
+            (ProximaValue::Boolean(true), json!(5)),
+        ];
+        for (pv, lit) in cases {
+            assert!(
+                native_scalar_order(&pv, &lit).is_none(),
+                "expected JSON-path fallback: {pv:?} vs {lit}"
+            );
+            let op = ComparisonOperator::Equals;
+            assert_eq!(
+                compare_proxima_op(&pv, &op, &lit),
+                compare_json_op(&op, &proxima_value_to_json(&pv), &lit),
+                "fallback parity: {pv:?} vs {lit}"
+            );
+        }
     }
 }
