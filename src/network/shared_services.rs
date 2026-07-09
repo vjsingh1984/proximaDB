@@ -1692,6 +1692,9 @@ impl SharedServices {
         // Create DocumentService (moved up for UnifiedHandlers)
         debug!("🔧 SharedServices::new - Creating DocumentService for document queries...");
         let document_base_path = storage_config.metadata_url.replace("file://", "");
+        // TD-DOC-RETIRE-1 P2 rewires this to the canonical constructor
+        // (with_canonical_record_store_and_wal); the deprecated call is intentional until then.
+        #[allow(deprecated)]
         let document_service = match DocumentService::new_with_wal(
             sst_engine_for_documents,
             &document_base_path,
