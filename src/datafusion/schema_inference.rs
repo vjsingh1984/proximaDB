@@ -173,14 +173,37 @@ pub fn statistics_from_splits(
             // this column — a partially-covered column would understate.
             if covered == splits.len() && covered > 0 {
                 if include_value_bounds {
+                    // Parquet min/max are EXACT for numeric columns but TRUNCATED
+                    // for BYTE_ARRAY (string/binary) — a truncated string bound is a
+                    // prefix, not the true value. Report `Exact` only for numeric
+                    // types so DataFusion's `AggregateStatistics` rule can elide
+                    // `MIN`/`MAX` from the footer (e.g. ClickBench q07's
+                    // `MIN/MAX(EventDate)`, a 10 s scan today); keep string bounds
+                    // `Inexact` (zone-map pruning only). A `WHERE` inserts a
+                    // `FilterExec` that re-marks stats Inexact, so filtered
+                    // aggregates still scan; the ADR-025 delta-merge path uses its
+                    // own MemTable, never this provider.
+                    let numeric = field.data_type().is_numeric();
                     if let Some(min) = min {
-                        cs.min_value = Precision::Inexact(min);
+                        cs.min_value = if numeric {
+                            Precision::Exact(min)
+                        } else {
+                            Precision::Inexact(min)
+                        };
                     }
                     if let Some(max) = max {
-                        cs.max_value = Precision::Inexact(max);
+                        cs.max_value = if numeric {
+                            Precision::Exact(max)
+                        } else {
+                            Precision::Inexact(max)
+                        };
                     }
                 }
-                cs.null_count = Precision::Inexact(nulls);
+                // `null_count` from the footer is exact metadata (not a truncatable
+                // bound), so report `Exact` unconditionally — this lets the rule
+                // answer `COUNT(col)` as `num_rows − null_count` with no scan,
+                // independent of the value-bounds gate above.
+                cs.null_count = Precision::Exact(nulls);
             }
             if let Some(ndv) = registry_fields
                 .iter()
@@ -194,8 +217,15 @@ pub fn statistics_from_splits(
         .collect();
 
     Statistics {
+        // Parquet row-group `num_rows` is EXACT metadata (unlike the min/max value
+        // bounds below, which are Inexact zone-maps). Reporting it Exact lets
+        // DataFusion's `AggregateStatistics` rule answer an unfiltered `COUNT(*)`
+        // from the footer alone — zero column scan (TD-OLAP-4). Safe: a `WHERE`
+        // inserts a `FilterExec` that re-marks stats Inexact, so filtered counts
+        // still scan; and only footer-accurate providers use this (the ADR-025
+        // delta-merge path builds its own MemTable when a WAL delta exists).
         num_rows: if any_rows {
-            Precision::Inexact(num_rows)
+            Precision::Exact(num_rows)
         } else {
             Precision::Absent
         },
@@ -216,6 +246,14 @@ pub fn statistics_from_splits(
 /// is already borderline on some environments. Enable with
 /// `PROXIMADB_DF_STATS_VALUE_BOUNDS=1` once that recursion depth is
 /// characterized; row/null/NDV statistics flow regardless.
+///
+/// When ON, numeric bounds are reported `Exact` (see `statistics_from_splits`),
+/// which additionally unlocks the *non-recursive* `AggregateStatistics` rule to
+/// elide unfiltered `MIN`/`MAX` from the footer (e.g. ClickBench q07's
+/// `MIN/MAX(EventDate)` — a 10 s full scan today answered from metadata). That
+/// aggregate-elision path is unrelated to the filter-selectivity recursion that
+/// keeps the default OFF; `COUNT(col)` elision (via exact `null_count`) is wired
+/// unconditionally and needs no gate.
 pub fn df_stats_value_bounds_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
@@ -590,22 +628,26 @@ mod tests {
 
         let stats = statistics_from_splits(&splits, &schema, None, true);
 
-        assert_eq!(stats.num_rows, Precision::Inexact(5));
+        assert_eq!(stats.num_rows, Precision::Exact(5));
         assert_eq!(stats.total_byte_size, Precision::Inexact(300));
         // Schema-width contract (DataFusion 54 indexes by column position).
         assert_eq!(stats.column_statistics.len(), schema.fields().len());
 
+        // Numeric column: parquet min/max are exact → `Exact` (elidable MIN/MAX);
+        // null_count is exact footer metadata → `Exact`.
         let x = &stats.column_statistics[0];
         assert_eq!(
             x.min_value,
-            Precision::Inexact(DfScalarValue::Int64(Some(-5)))
+            Precision::Exact(DfScalarValue::Int64(Some(-5)))
         );
         assert_eq!(
             x.max_value,
-            Precision::Inexact(DfScalarValue::Int64(Some(10)))
+            Precision::Exact(DfScalarValue::Int64(Some(10)))
         );
-        assert_eq!(x.null_count, Precision::Inexact(2));
+        assert_eq!(x.null_count, Precision::Exact(2));
 
+        // String column: parquet BYTE_ARRAY min/max are truncated → stay `Inexact`
+        // (zone-map pruning only); null_count is still exact → `Exact`.
         let name = &stats.column_statistics[1];
         assert_eq!(
             name.min_value,
@@ -615,7 +657,7 @@ mod tests {
             name.max_value,
             Precision::Inexact(DfScalarValue::Utf8(Some("z".to_string())))
         );
-        assert_eq!(name.null_count, Precision::Inexact(1));
+        assert_eq!(name.null_count, Precision::Exact(1));
     }
 
     #[test]
@@ -686,9 +728,51 @@ mod tests {
         // Bounds suppressed (the recursive interval-analysis trigger)…
         assert_eq!(x.min_value, Precision::Absent);
         assert_eq!(x.max_value, Precision::Absent);
-        // …but the join-ordering inputs still flow.
-        assert_eq!(x.null_count, Precision::Inexact(3));
-        assert_eq!(stats.num_rows, Precision::Inexact(2));
+        // …but the join-ordering inputs still flow — null_count is exact footer
+        // metadata (COUNT(col) elision is independent of the value-bounds gate).
+        assert_eq!(x.null_count, Precision::Exact(3));
+        assert_eq!(stats.num_rows, Precision::Exact(2));
+    }
+
+    #[test]
+    fn statistics_from_splits_numeric_bounds_exact_string_inexact() {
+        // The MIN/MAX metadata-elision contract: DataFusion's `AggregateStatistics`
+        // rule elides `MIN`/`MAX` only when the column bound is `Exact`. Parquet
+        // numeric stats are exact, so those must be `Exact` (killing ClickBench
+        // q07's `MIN/MAX(EventDate)` scan); BYTE_ARRAY (string) stats are truncated
+        // prefixes, so they must stay `Inexact` — an elided string MIN/MAX off a
+        // truncated bound would be WRONG.
+        let schema = ArrowSchema::new(vec![
+            Field::new("f", ArrowDataType::Float64, false),
+            Field::new("s", ArrowDataType::Utf8, true),
+        ]);
+        let splits = vec![split_with_bounds(
+            4,
+            40,
+            &[
+                ("f", serde_json::json!(1.5), serde_json::json!(9.5), 0),
+                ("s", serde_json::json!("aaa"), serde_json::json!("zzz"), 2),
+            ],
+        )];
+
+        let stats = statistics_from_splits(&splits, &schema, None, true);
+
+        let f = &stats.column_statistics[0];
+        assert_eq!(
+            f.min_value,
+            Precision::Exact(DfScalarValue::Float64(Some(1.5)))
+        );
+        assert_eq!(
+            f.max_value,
+            Precision::Exact(DfScalarValue::Float64(Some(9.5)))
+        );
+        assert_eq!(f.null_count, Precision::Exact(0));
+
+        let s = &stats.column_statistics[1];
+        assert!(matches!(s.min_value, Precision::Inexact(_)));
+        assert!(matches!(s.max_value, Precision::Inexact(_)));
+        // null_count is exact metadata for every column type.
+        assert_eq!(s.null_count, Precision::Exact(2));
     }
 
     #[test]

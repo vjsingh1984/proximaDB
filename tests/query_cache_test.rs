@@ -11,8 +11,8 @@ use arrow::array::{ArrayRef, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 
 use proximadb::query::cache::{
-    CacheInvalidator, ChangeOperation, InvalidationConfig, InvalidationEvent, QueryKey,
-    QueryResultCache, QueryResultCacheConfig,
+    CacheInvalidator, ChangeOperation, FederatedQueryResultCache, InvalidationConfig,
+    InvalidationEvent, QueryKey, QueryResultCacheConfig,
 };
 use proximadb::query::federated::ExecutionResult;
 
@@ -46,7 +46,7 @@ fn create_simple_result() -> ExecutionResult {
 /// Test that cache hit returns the cached result
 #[test]
 fn test_cache_hit_returns_cached_result() {
-    let cache = QueryResultCache::with_defaults();
+    let cache = FederatedQueryResultCache::with_defaults();
     let key = QueryKey::from_sql("SELECT * FROM products WHERE id = 1");
     let result = create_simple_result();
 
@@ -71,7 +71,7 @@ fn test_cache_hit_returns_cached_result() {
 /// Test that cache miss for unknown query
 #[test]
 fn test_cache_miss_for_unknown_query() {
-    let cache = QueryResultCache::with_defaults();
+    let cache = FederatedQueryResultCache::with_defaults();
     let key = QueryKey::from_sql("SELECT * FROM unknown_table");
 
     let cached = cache.get(&key);
@@ -88,7 +88,7 @@ fn test_cache_miss_for_unknown_query() {
 /// Test multiple cache hits for the same query
 #[test]
 fn test_multiple_cache_hits() {
-    let cache = QueryResultCache::with_defaults();
+    let cache = FederatedQueryResultCache::with_defaults();
     let key = QueryKey::from_sql("SELECT name FROM users LIMIT 10");
 
     cache
@@ -121,7 +121,7 @@ fn test_ttl_expiration_removes_entries() {
         default_ttl: Duration::from_millis(50),
         ..Default::default()
     };
-    let cache = QueryResultCache::new(config);
+    let cache = FederatedQueryResultCache::new(config);
 
     let key = QueryKey::from_sql("SELECT * FROM products");
     cache
@@ -157,7 +157,7 @@ fn test_cleanup_expired_batch_removal() {
         default_ttl: Duration::from_millis(20),
         ..Default::default()
     };
-    let cache = QueryResultCache::new(config);
+    let cache = FederatedQueryResultCache::new(config);
 
     // Insert multiple entries
     for i in 0..5 {
@@ -181,7 +181,7 @@ fn test_cleanup_expired_batch_removal() {
 /// Test custom TTL per entry
 #[test]
 fn test_custom_ttl_per_entry() {
-    let cache = QueryResultCache::with_defaults();
+    let cache = FederatedQueryResultCache::with_defaults();
 
     // Insert with short TTL
     let short_key = QueryKey::from_sql("SELECT * FROM short_lived");
@@ -224,7 +224,7 @@ fn test_custom_ttl_per_entry() {
 /// Test invalidation on collection write removes affected entries
 #[test]
 fn test_invalidation_on_collection_write() {
-    let cache = Arc::new(QueryResultCache::with_defaults());
+    let cache = Arc::new(FederatedQueryResultCache::with_defaults());
     let config = InvalidationConfig {
         batch_invalidations: false, // Direct invalidation
         ..Default::default()
@@ -268,7 +268,7 @@ fn test_invalidation_on_collection_write() {
 /// Test direct collection invalidation
 #[test]
 fn test_direct_collection_invalidation() {
-    let cache = Arc::new(QueryResultCache::with_defaults());
+    let cache = Arc::new(FederatedQueryResultCache::with_defaults());
     let invalidator = CacheInvalidator::new(cache.clone());
 
     // Insert entries
@@ -295,7 +295,7 @@ fn test_direct_collection_invalidation() {
 /// Test invalidation of multiple collections
 #[test]
 fn test_invalidate_multiple_collections() {
-    let cache = Arc::new(QueryResultCache::with_defaults());
+    let cache = Arc::new(FederatedQueryResultCache::with_defaults());
     let invalidator = CacheInvalidator::new(cache.clone());
 
     for i in 0..5 {
@@ -322,7 +322,7 @@ fn test_invalidate_multiple_collections() {
 /// Test different change operations trigger invalidation
 #[test]
 fn test_change_operations_trigger_invalidation() {
-    let cache = Arc::new(QueryResultCache::with_defaults());
+    let cache = Arc::new(FederatedQueryResultCache::with_defaults());
     let config = InvalidationConfig {
         batch_invalidations: false,
         ..Default::default()
@@ -363,7 +363,7 @@ fn test_change_operations_trigger_invalidation() {
 /// Test multi-collection query invalidation on any dependency change
 #[test]
 fn test_multi_collection_query_invalidation() {
-    let cache = QueryResultCache::with_defaults();
+    let cache = FederatedQueryResultCache::with_defaults();
 
     // Query depends on multiple collections (join query)
     let join_key =
@@ -398,7 +398,7 @@ fn test_multi_collection_query_invalidation() {
 /// Test query with three dependencies invalidates correctly
 #[test]
 fn test_triple_dependency_invalidation() {
-    let cache = QueryResultCache::with_defaults();
+    let cache = FederatedQueryResultCache::with_defaults();
 
     // Query depends on three collections
     let key = QueryKey::from_sql("SELECT * FROM a JOIN b ON a.id = b.a_id JOIN c ON b.id = c.b_id");
@@ -420,7 +420,7 @@ fn test_triple_dependency_invalidation() {
 /// Test that independent queries are not affected by unrelated invalidation
 #[test]
 fn test_independent_queries_not_affected() {
-    let cache = QueryResultCache::with_defaults();
+    let cache = FederatedQueryResultCache::with_defaults();
 
     // Insert independent queries
     let key1 = QueryKey::from_sql("SELECT * FROM table_a");
@@ -460,7 +460,7 @@ fn test_lru_eviction_on_capacity() {
         max_entries: 3,
         ..Default::default()
     };
-    let cache = QueryResultCache::new(config);
+    let cache = FederatedQueryResultCache::new(config);
 
     // Insert 3 entries (at capacity)
     for i in 0..3 {
@@ -506,7 +506,7 @@ fn test_eviction_prioritizes_expired() {
         default_ttl: Duration::from_millis(50),
         ..Default::default()
     };
-    let cache = QueryResultCache::new(config);
+    let cache = FederatedQueryResultCache::new(config);
 
     // Insert entries
     for i in 0..3 {
@@ -605,7 +605,7 @@ fn test_fingerprint_whitespace_sensitivity() {
 /// Test transaction-aware invalidation defers until commit
 #[test]
 fn test_transaction_aware_invalidation_deferred() {
-    let cache = Arc::new(QueryResultCache::with_defaults());
+    let cache = Arc::new(FederatedQueryResultCache::with_defaults());
     let config = InvalidationConfig {
         batch_invalidations: false,
         transaction_aware: true,
@@ -635,7 +635,7 @@ fn test_transaction_aware_invalidation_deferred() {
 /// Test transaction commit triggers deferred invalidation
 #[test]
 fn test_transaction_commit_triggers_invalidation() {
-    let cache = Arc::new(QueryResultCache::with_defaults());
+    let cache = Arc::new(FederatedQueryResultCache::with_defaults());
     let config = InvalidationConfig {
         batch_invalidations: false,
         transaction_aware: true,
@@ -673,7 +673,7 @@ fn test_transaction_commit_triggers_invalidation() {
 /// Test transaction rollback discards pending invalidation
 #[test]
 fn test_transaction_rollback_discards_invalidation() {
-    let cache = Arc::new(QueryResultCache::with_defaults());
+    let cache = Arc::new(FederatedQueryResultCache::with_defaults());
     let config = InvalidationConfig {
         batch_invalidations: false,
         transaction_aware: true,
@@ -713,7 +713,7 @@ fn test_transaction_rollback_discards_invalidation() {
 /// Test cache statistics accuracy
 #[test]
 fn test_cache_statistics_accuracy() {
-    let cache = QueryResultCache::with_defaults();
+    let cache = FederatedQueryResultCache::with_defaults();
 
     // Insert
     let key1 = QueryKey::from_sql("SELECT 1");
@@ -754,7 +754,7 @@ fn test_cache_statistics_accuracy() {
 /// Test cache clear functionality
 #[test]
 fn test_cache_clear() {
-    let cache = QueryResultCache::with_defaults();
+    let cache = FederatedQueryResultCache::with_defaults();
 
     // Insert multiple entries
     for i in 0..10 {
@@ -783,7 +783,7 @@ fn test_cache_clear() {
 fn test_concurrent_cache_access() {
     use std::thread;
 
-    let cache = Arc::new(QueryResultCache::with_defaults());
+    let cache = Arc::new(FederatedQueryResultCache::with_defaults());
     let mut handles = vec![];
 
     // Spawn multiple threads doing inserts
@@ -829,7 +829,7 @@ fn test_concurrent_cache_access() {
 fn test_concurrent_invalidation() {
     use std::thread;
 
-    let cache = Arc::new(QueryResultCache::with_defaults());
+    let cache = Arc::new(FederatedQueryResultCache::with_defaults());
     let config = InvalidationConfig {
         batch_invalidations: false,
         ..Default::default()
@@ -878,7 +878,7 @@ fn test_concurrent_invalidation() {
 /// Test empty query string
 #[test]
 fn test_empty_query_string() {
-    let cache = QueryResultCache::with_defaults();
+    let cache = FederatedQueryResultCache::with_defaults();
     let key = QueryKey::from_sql("");
 
     cache
@@ -892,7 +892,7 @@ fn test_empty_query_string() {
 /// Test very long query string
 #[test]
 fn test_long_query_string() {
-    let cache = QueryResultCache::with_defaults();
+    let cache = FederatedQueryResultCache::with_defaults();
 
     // Create a very long query
     let mut long_query = "SELECT * FROM t WHERE ".to_string();
@@ -914,7 +914,7 @@ fn test_long_query_string() {
 /// Test cache with no dependencies
 #[test]
 fn test_query_with_no_dependencies() {
-    let cache = QueryResultCache::with_defaults();
+    let cache = FederatedQueryResultCache::with_defaults();
 
     let key = QueryKey::from_sql("SELECT 1 + 1");
     cache
@@ -931,7 +931,7 @@ fn test_query_with_no_dependencies() {
 /// Test cache remove functionality
 #[test]
 fn test_cache_remove() {
-    let cache = QueryResultCache::with_defaults();
+    let cache = FederatedQueryResultCache::with_defaults();
 
     let key = QueryKey::from_sql("SELECT * FROM removable");
     cache

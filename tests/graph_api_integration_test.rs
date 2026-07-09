@@ -27,9 +27,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 #[tokio::test]
-async fn test_graph_collection_service_isolation_bug() {
-    // This test demonstrates the bug where graph_collection_service and
-    // graph_operations_service have DIFFERENT GraphCollectionService instances
+async fn test_graph_ops_auto_provisions_missing_collection() {
+    // Formerly `test_graph_collection_service_isolation_bug`: it asserted that a node create hard-
+    // fails "does not exist" when `GraphOperationsService` is wired to a DIFFERENT
+    // `GraphCollectionService` instance than the one a graph was created in. Under lazy
+    // auto-provision (get-or-create, TD-GRAPH-TENANT-1) the create no longer hard-fails — the ops
+    // service provisions the missing collection on first write. So this now asserts the new
+    // get-or-create behavior. The correct SHARED wiring is guarded by
+    // `test_graph_collection_service_shared_correctly`.
 
     // Simulate UnifiedHandlers::new() which creates TWO instances
     let graph_collection_service_external = Arc::new(GraphCollectionService::new());
@@ -82,23 +87,24 @@ async fn test_graph_collection_service_isolation_bug() {
         updated_at_ms: 0,
     };
 
-    // This should FAIL because GraphOperationsService has a DIFFERENT GraphCollectionService instance
-    let result = graph_operations_service
+    // Under get-or-create, this SUCCEEDS: the ops service lazily provisions "test_graph" in its
+    // OWN collection service on first write (instead of erroring "does not exist").
+    let created = graph_operations_service
         .create_node("test_graph", node)
-        .await;
+        .await
+        .expect("create_node auto-provisions the missing collection (get-or-create)");
+    assert_eq!(created.id, "node1");
 
-    match result {
-        Err(proximadb::core::error::ProximaDBError::InvalidInput(msg)) => {
-            assert!(
-                msg.contains("Graph collection 'test_graph' does not exist"),
-                "Expected 'does not exist' error, got: {}",
-                msg
-            );
-            println!("✓ Bug confirmed: GraphCollectionService instances are isolated");
-        }
-        Ok(_) => panic!("Bug NOT reproduced - node creation should have failed!"),
-        Err(e) => panic!("Unexpected error: {:?}", e),
-    }
+    // The auto-provisioned node is retrievable from the ops service.
+    let fetched = graph_operations_service
+        .get_node("test_graph", &"node1".to_string())
+        .await
+        .expect("get_node should succeed");
+    assert!(
+        fetched.is_some(),
+        "auto-provisioned node should be retrievable from the ops service"
+    );
+    println!("✓ ops service lazily provisioned the missing collection on first write");
 }
 
 #[tokio::test]

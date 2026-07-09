@@ -14,24 +14,17 @@ pub mod federated_delegation_complete;
 pub mod rbac;
 pub mod sso;
 
-#[allow(deprecated)]
-#[deprecated(note = "Use `AuthenticationResult` from this module; this alias is temporary.")]
-pub use federated_delegation_complete::FederatedAuthenticationResult;
 pub use federated_delegation_complete::{
     AuthenticationResult, CompleteDelegationResult, CompleteFederatedIdentityDelegation,
 };
 pub use rbac::{EnhancedRBACManager, Permission, TenantRole};
 pub use sso::{EnterpriseUserContext, SSOIntegrationManager, SSOProvider, SSOToken};
 
+use crate::security::rbac_service::{UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext};
 use crate::security::security_coordinator::{
     AuthorizedContext as SecurityAuthorizedContext, SessionMetadata as SecuritySessionMetadata,
 };
 use anyhow::Result;
-#[deprecated(
-    note = "Canonical security result type now lives in crate::security::SecurityAuthenticationResult."
-)]
-pub type SecurityAuthenticationResult = crate::security::SecurityAuthenticationResult;
-use crate::security::rbac_service::{UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext};
 
 /// Enterprise authentication coordinator
 pub struct EnterpriseAuthManager {
@@ -117,13 +110,6 @@ pub enum AuthorizedOperation {
     },
     // Additional operations to be added
 }
-
-#[deprecated(
-    note = "Moved to crate::security::security_coordinator::AuthorizedContext. \
-            Auth shim retained temporarily during consolidation."
-)]
-/// Temporary compatibility alias for phased auth/security migration.
-pub type AuthorizedContext = crate::security::security_coordinator::AuthorizedContext;
 
 fn map_authorized_operation_permission(operation: &AuthorizedOperation) -> UnifiedPermission {
     match operation {

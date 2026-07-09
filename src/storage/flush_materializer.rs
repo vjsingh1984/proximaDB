@@ -140,9 +140,18 @@ pub async fn materialize_collection(
         .collect();
     let vector_count = vector_records.len() as u64;
 
-    // Resolve + create the collection's configured engine (proven factory path).
-    let proto_engine =
-        ProtoStorageEngine::try_from(plan.engine_type).unwrap_or(ProtoStorageEngine::Sst);
+    // Resolve the collection's configured engine (proven factory path). An
+    // unrecognized engine id is a misconfiguration — fail loudly rather than
+    // silently substituting SST, which would write the collection's data in a
+    // different on-disk format than it was configured for.
+    let proto_engine = ProtoStorageEngine::try_from(plan.engine_type).map_err(|_| {
+        anyhow::anyhow!(
+            "flush: collection '{}' declares an unrecognized storage engine id {} — \
+             refusing to substitute a default engine",
+            plan.wal_key,
+            plan.engine_type
+        )
+    })?;
     let engine =
         match crate::storage::engines::factory::StorageFormatFactory::create_from_proto_async(
             proto_engine,
@@ -199,6 +208,29 @@ pub async fn materialize_collection(
     let result = engine.flush(flush_params).await?;
     let bytes = result.bytes_written.unwrap_or(0);
     let entries_flushed = result.entries_flushed.unwrap_or(0);
+
+    // Per-tenant object-store WRITE metering (co-design KIU/KSU write side). This is the single
+    // tenant-aware flush funnel through which every engine's memtable→object-store segment write
+    // passes, so metering here — rather than at each per-engine PAX/segment write call site —
+    // keeps the emission DRY and engine-neutral (SST/HELIX/NOVA/VIPER all funnel through
+    // `engine.flush()` above). It mirrors the read side's `record_object_store_op(.., "fetch_pax")`.
+    //
+    // OSS boundary: this emits NEUTRAL usage telemetry only (byte + op counts attributed by
+    // tenant) — no pricing, no $/unit weights, no cloud-cost constants. Applying policy weights to
+    // these dimensions is the commercial anvaiops control plane's concern, never OSS code.
+    //
+    // Tier "hot" is the write-time default: a fresh flush writes hot, and an unset
+    // `storage_class` ⇒ the account/backend default. `bytes == 0` (e.g. a tombstone-only flush)
+    // records nothing.
+    if bytes > 0 {
+        let tenant = plan.tenant_id.as_deref();
+        crate::metrics::consumption_metrics::record_object_store_op(tenant, "flush_write");
+        crate::metrics::consumption_metrics::record_object_store_write_bytes_by_tier(
+            tenant.unwrap_or(""),
+            "hot",
+            bytes,
+        );
+    }
 
     // WAL cleanup after a successful flush: clear the memtable batches and delete
     // the now-redundant WAL files (avoids 2× WAL+segment storage overhead). Gated

@@ -14,20 +14,21 @@
  * limitations under the License.
  */
 
-//! Unified handlers module for shared business logic between REST and gRPC
+//! API-handler support modules.
+//!
+//! The legacy root `UnifiedHandlers` (4k+ lines, formerly `request_handlers.rs`)
+//! was retired in TD-104 S3-f: every network/embedded surface now routes through
+//! the runtime `proximadb_runtime::UnifiedHandlers` port handler, and the record
+//! write path lives in [`record_ops_service::RecordOpsService`]. This module
+//! keeps the surviving handler-support crates/modules.
 
 #[cfg(feature = "ai_endpoints")]
 pub mod ai_endpoints;
 pub mod enterprise;
 pub mod record_ops_service;
-pub mod request_handlers;
-
-#[cfg(test)]
-mod request_handlers_tests;
 
 pub use crate::services::operations::vectors::{
     RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordDeleteBatchRequest,
     RichRecordGetRequest, RichRecordGetResponse, RichSearchRequest, RichSearchResponse,
     RichSearchResult,
 };
-pub use request_handlers::UnifiedHandlers;

@@ -31,7 +31,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::api_handlers::request_handlers::UnifiedHandlers;
 use crate::catalog::CatalogManager;
 use crate::network::auth::middleware::DataPlaneCapability;
 use crate::proto::proximadb_v1::VectorSearchRequest;
@@ -130,7 +129,7 @@ fn graph_flight_err(e: anyhow::Error) -> FlightError {
 /// - **.parquet**: Parquet files (from Nova, VIPER engines)
 pub struct ProximaFlightService {
     // TD-104 S3: the Flight service depends on ports + the concrete services it
-    // actually uses, not the root `UnifiedHandlers`. Vector search goes through
+    // actually uses, not a monolithic handler. Vector search goes through
     // `ApiHandlersPort`, record-batch ingest through `RecordOpsPort`; the
     // vector-ops/collection services are held directly (same Arcs as before).
     api_port: Arc<dyn proximadb_runtime::ApiHandlersPort>,
@@ -259,27 +258,24 @@ impl ProximaFlightService {
         self
     }
 
-    /// Boot adapter that derives the injected pieces from a root `UnifiedHandlers`.
-    ///
-    /// The Flight write path is wired to the runtime `RecordOpsService` (via
-    /// `UnifiedHandlers::record_ops`) rather than ROOT's `RecordOpsPort` impl, so
-    /// `do_put` ingest no longer routes through ROOT even via this convenience.
-    pub fn from_unified_handlers(request_handlers: Arc<UnifiedHandlers>) -> Self {
-        let storage_locations = request_handlers
+    /// Boot adapter (TD-104 S3-c/S3-e): build a `ProximaFlightService` from the
+    /// runtime `api_port` plus the concrete services it needs, all passed
+    /// directly (no root `UnifiedHandlers` indirection). `storage_locations` is
+    /// derived from the collection service's storage config — the same read the
+    /// former root `storage_config()` delegated to.
+    pub fn from_services(
+        api_port: Arc<dyn proximadb_runtime::ApiHandlersPort>,
+        record_port: Arc<dyn proximadb_runtime::RecordOpsPort>,
+        vector_operations_service: Arc<crate::services::VectorOperationsService>,
+        collection_service: Arc<crate::services::CollectionService>,
+        graph_service: Arc<crate::graph::GraphOperationsService>,
+    ) -> Self {
+        let storage_locations: Vec<String> = collection_service
             .storage_config()
-            .map(|config| {
-                config
-                    .storage_locations
-                    .iter()
-                    .map(|loc| loc.url.clone())
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> = request_handlers.clone();
-        let record_port: Arc<dyn proximadb_runtime::RecordOpsPort> = request_handlers.record_ops();
-        let vector_operations_service = request_handlers.vector_operations_service.clone();
-        let collection_service = request_handlers.collection_service.clone();
+            .storage_locations
+            .iter()
+            .map(|loc| loc.url.clone())
+            .collect();
 
         Self::new(
             api_port,
@@ -288,7 +284,7 @@ impl ProximaFlightService {
             collection_service,
             storage_locations,
         )
-        .with_graph_service(request_handlers.graph_operations_service.clone())
+        .with_graph_service(graph_service)
     }
 
     /// Slice 6.2: attach the primary-pod write router. Once set,
@@ -2650,19 +2646,6 @@ impl ProximaFlightService {
         Ok(TonicResponse::new(Box::pin(stream)))
     }
 
-    /// Derive the effective backing graph namespace from the request tenant.
-    ///
-    /// Structural isolation: the tenant is folded into the graph storage key
-    /// (mirrors the gRPC v2 graph surface's `effective_graph_id`), never a
-    /// per-query predicate. Unauthenticated calls (no tenant) fall back to the
-    /// raw graph id.
-    fn effective_graph_id(tenant: Option<&str>, graph_id: &str) -> String {
-        match tenant {
-            Some(t) if !t.is_empty() => format!("{t}::{graph_id}"),
-            _ => graph_id.to_string(),
-        }
-    }
-
     /// Handle the batched columnar graph ingest exchange (`graph_nodes` /
     /// `graph_edges`). Each streamed Arrow `RecordBatch` is decoded via
     /// [`super::graph_codec`] into neutral nodes/edges and upserted through the
@@ -2679,7 +2662,10 @@ impl ProximaFlightService {
         let graph = self.graph_service.as_ref().ok_or_else(|| {
             TonicStatus::unimplemented("graph Flight path requires the graph backing service")
         })?;
-        let effective_graph_id = Self::effective_graph_id(tenant_id.as_deref(), &graph_id);
+        // Structural isolation: resolve the tenant and route through the scoped handle,
+        // which composes `{tenant}/{graph_id}` once. The graph_id stays tenant-clean.
+        let tenant = proximadb_tenant::resolve_request_tenant(tenant_id.as_deref());
+        let ops = graph.for_tenant(&tenant);
 
         let mut total_rows = 0u64;
         let mut total_batches = 0u64;
@@ -2695,15 +2681,13 @@ impl ProximaFlightService {
             let written = if is_nodes {
                 let nodes = super::graph_codec::batch_to_nodes(&batch)
                     .map_err(|e| TonicStatus::invalid_argument(format!("decode nodes: {}", e)))?;
-                graph
-                    .batch_create_nodes_with_strategy(&effective_graph_id, nodes, "update")
+                ops.batch_create_nodes_with_strategy(&graph_id, nodes, "update")
                     .await
                     .map(|created| created.len() as u64)
             } else {
                 let edges = super::graph_codec::batch_to_edges(&batch)
                     .map_err(|e| TonicStatus::invalid_argument(format!("decode edges: {}", e)))?;
-                graph
-                    .batch_create_edges(&effective_graph_id, edges)
+                ops.batch_create_edges(&graph_id, edges)
                     .await
                     .map(|created| created.len() as u64)
             };
@@ -2712,7 +2696,7 @@ impl ProximaFlightService {
                 Ok(n) => (n, true),
                 Err(e) => {
                     all_success = false;
-                    tracing::error!(graph_id = %effective_graph_id, error = %e, "graph Flight ingest batch failed");
+                    tracing::error!(graph_id = %graph_id, error = %e, "graph Flight ingest batch failed");
                     (0, false)
                 }
             };
@@ -2748,7 +2732,7 @@ impl ProximaFlightService {
         }));
 
         info!(
-            graph_id = %effective_graph_id,
+            graph_id = %graph_id,
             kind = if is_nodes { "graph_nodes" } else { "graph_edges" },
             total_batches = total_batches,
             total_rows_written = total_rows,
@@ -2785,7 +2769,10 @@ impl ProximaFlightService {
         let graph = self.graph_service.clone().ok_or_else(|| {
             TonicStatus::unimplemented("graph Flight path requires the graph backing service")
         })?;
-        let gid = Self::effective_graph_id(tenant_id.as_deref(), &ticket.graph_id);
+        // Read the SAME structural key the write path composes (`{tenant}/{graph_id}`).
+        let tenant = proximadb_tenant::resolve_request_tenant(tenant_id.as_deref());
+        let gid = crate::graph::scoped_graph_id(&tenant, &ticket.graph_id)
+            .map_err(|e| TonicStatus::invalid_argument(format!("invalid tenant: {e}")))?;
         let page = ticket
             .limit
             .map(|l| l as usize)

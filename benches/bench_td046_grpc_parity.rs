@@ -174,7 +174,7 @@ fn bench_graph_operations(c: &mut Criterion) {
                             properties: HashMap::from([(
                                 "index".to_string(),
                                 PropertyValue {
-                                    value: Some(proximadb::proto::proximadb_v1::property_value::Value::IntValue(i as i64)),
+                                    value: Some(proximadb::graph::property_value::Value::IntValue(i as i64)),
                                 },
                             )]),
                             embedding: None,
@@ -267,7 +267,7 @@ fn bench_serialization_performance(c: &mut Criterion) {
                 "name".to_string(),
                 PropertyValue {
                     value: Some(
-                        proximadb::proto::proximadb_v1::property_value::Value::StringValue(
+                        proximadb::graph::property_value::Value::StringValue(
                             "John Doe".to_string(),
                         ),
                     ),
@@ -277,7 +277,7 @@ fn bench_serialization_performance(c: &mut Criterion) {
                 "age".to_string(),
                 PropertyValue {
                     value: Some(
-                        proximadb::proto::proximadb_v1::property_value::Value::IntValue(30),
+                        proximadb::graph::property_value::Value::IntValue(30),
                     ),
                 },
             ),
@@ -285,7 +285,7 @@ fn bench_serialization_performance(c: &mut Criterion) {
                 "score".to_string(),
                 PropertyValue {
                     value: Some(
-                        proximadb::proto::proximadb_v1::property_value::Value::DoubleValue(0.95),
+                        proximadb::graph::property_value::Value::DoubleValue(0.95),
                     ),
                 },
             ),

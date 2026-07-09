@@ -46,7 +46,7 @@ use std::time::Duration;
 use dashmap::DashMap;
 use tracing::{debug, info};
 
-use super::query_result_cache::QueryResultCache;
+use super::query_result_cache::FederatedQueryResultCache;
 
 /// Types of change operations that trigger invalidation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -209,7 +209,7 @@ pub struct InvalidationStatsSnapshot {
 /// 2. Event-driven mode: Subscribe to CDC/WAL events and call `on_change_event`
 pub struct CacheInvalidator {
     /// Reference to the query result cache
-    cache: Arc<QueryResultCache>,
+    cache: Arc<FederatedQueryResultCache>,
     /// Configuration
     config: InvalidationConfig,
     /// Collections to watch (empty = watch all)
@@ -224,12 +224,12 @@ pub struct CacheInvalidator {
 
 impl CacheInvalidator {
     /// Create a new cache invalidator
-    pub fn new(cache: Arc<QueryResultCache>) -> Self {
+    pub fn new(cache: Arc<FederatedQueryResultCache>) -> Self {
         Self::with_config(cache, InvalidationConfig::default())
     }
 
     /// Create a new cache invalidator with custom configuration
-    pub fn with_config(cache: Arc<QueryResultCache>, config: InvalidationConfig) -> Self {
+    pub fn with_config(cache: Arc<FederatedQueryResultCache>, config: InvalidationConfig) -> Self {
         Self {
             cache,
             config,
@@ -441,7 +441,7 @@ impl CacheInvalidator {
     }
 
     /// Get the underlying cache reference
-    pub fn cache(&self) -> &Arc<QueryResultCache> {
+    pub fn cache(&self) -> &Arc<FederatedQueryResultCache> {
         &self.cache
     }
 }
@@ -524,14 +524,14 @@ impl BroadcastInvalidator {
 mod tests {
     use super::*;
 
-    fn create_test_cache() -> Arc<QueryResultCache> {
+    fn create_test_cache() -> Arc<FederatedQueryResultCache> {
         use super::super::query_result_cache::{QueryKey, QueryResultCacheConfig};
         use crate::query::federated::ExecutionResult;
         use arrow::array::{ArrayRef, RecordBatch, StringArray};
         use arrow::datatypes::{DataType, Field, Schema};
 
         let config = QueryResultCacheConfig::default();
-        let cache = Arc::new(QueryResultCache::new(config));
+        let cache = Arc::new(FederatedQueryResultCache::new(config));
 
         // Pre-populate with some entries
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Utf8, false)]));

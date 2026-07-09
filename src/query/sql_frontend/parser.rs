@@ -62,6 +62,53 @@ pub fn parse_explain_kind(query: &str) -> Option<(bool, &str)> {
     Some((false, after_explain))
 }
 
+/// Best-effort output-column label for a single SELECT projection item: the
+/// explicit alias when present, else the trailing identifier of the expression
+/// (`a.attname` → `attname`), else the raw expression text. Used to mirror the
+/// client's expected result shape for catalog introspection.
+fn projection_label(item: &SelectItem) -> String {
+    match item {
+        SelectItem::ExprWithAlias { alias, .. } => alias.value.clone(),
+        SelectItem::UnnamedExpr(expr) => {
+            let text = expr.to_string();
+            text.rsplit_once('.')
+                .map(|(_, last)| last.trim().to_string())
+                .unwrap_or(text)
+        }
+        SelectItem::Wildcard(_) => "*".to_string(),
+        _ => item.to_string(),
+    }
+}
+
+/// Parse a single SELECT's projection list and return the output-column labels
+/// the client expects (explicit alias, else a label derived from the
+/// expression). Returns `None` for anything that isn't a single SELECT, for any
+/// projection containing a wildcard (whose width we cannot determine from our
+/// side), or on parse failure — callers fall back to substring-based dispatch
+/// and the width-safety net. This lets catalog introspection answer psql-style
+/// queries (`SELECT ... AS "Name" ... FROM pg_catalog.pg_class ...`) with a
+/// result whose columns match the client's SELECT list by construction.
+pub fn parse_select_aliases(sql: &str) -> Option<Vec<String>> {
+    let statements = Parser::parse_sql(&GenericDialect, sql).ok()?;
+    let [statement] = statements.as_slice() else {
+        return None;
+    };
+    let Statement::Query(query) = statement else {
+        return None;
+    };
+    let SetExpr::Select(select) = &*query.body else {
+        return None;
+    };
+    if select
+        .projection
+        .iter()
+        .any(|item| matches!(item, SelectItem::Wildcard(_)))
+    {
+        return None;
+    }
+    Some(select.projection.iter().map(projection_label).collect())
+}
+
 /// SQL frontend parser that converts SQL text into internal AST nodes
 pub struct SqlFrontendParser {
     dialect: GenericDialect,
@@ -1725,6 +1772,158 @@ mod tests {
     }
 
     #[test]
+    fn parse_ddl_alter_table_normalizes_quoted_identifiers() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl(
+                "ALTER TABLE \"Tenant One\".\"Event Store\" \
+                 ALTER COLUMN \"Payload Field\" SET DATA TYPE JSONB;",
+            )
+            .expect("expected ddl parse to succeed")
+            .expect("expected alter table ddl");
+
+        match statement {
+            DdlStatement::AlterTable {
+                table_name,
+                changes,
+            } => {
+                assert_eq!(table_name, "Tenant One.Event Store");
+                assert_eq!(changes.len(), 1);
+                match &changes[0] {
+                    AlterTableChange::ChangeType {
+                        column_name,
+                        new_type,
+                    } => {
+                        assert_eq!(column_name, "Payload Field");
+                        assert!(matches!(new_type, SqlDataType::Jsonb));
+                    }
+                    other => panic!("expected ChangeType, got {other:?}"),
+                }
+            }
+            other => panic!("expected AlterTable, got {other:?}"),
+        }
+
+        let statement = parser
+            .parse_ddl(
+                "ALTER TABLE \"Tenant One\".\"Event Store\" \
+                 RENAME COLUMN \"Payload Field\" TO \"Payload Body\";",
+            )
+            .expect("expected ddl parse to succeed")
+            .expect("expected alter table ddl");
+
+        match statement {
+            DdlStatement::AlterTable {
+                table_name,
+                changes,
+            } => {
+                assert_eq!(table_name, "Tenant One.Event Store");
+                assert_eq!(changes.len(), 1);
+                match &changes[0] {
+                    AlterTableChange::RenameColumn { old_name, new_name } => {
+                        assert_eq!(old_name, "Payload Field");
+                        assert_eq!(new_name, "Payload Body");
+                    }
+                    other => panic!("expected RenameColumn, got {other:?}"),
+                }
+            }
+            other => panic!("expected AlterTable, got {other:?}"),
+        }
+
+        let statement = parser
+            .parse_ddl(
+                "ALTER TABLE \"Tenant One\".\"Event Store\" \
+                 ADD CONSTRAINT \"Unique Payload\" UNIQUE (\"Payload Field\");",
+            )
+            .expect("expected ddl parse to succeed")
+            .expect("expected alter table ddl");
+
+        match statement {
+            DdlStatement::AlterTable {
+                table_name,
+                changes,
+            } => {
+                assert_eq!(table_name, "Tenant One.Event Store");
+                assert_eq!(changes.len(), 1);
+                match &changes[0] {
+                    AlterTableChange::AddConstraint {
+                        constraint_name,
+                        constraint: TableConstraint::Unique { columns },
+                    } => {
+                        assert_eq!(constraint_name.as_deref(), Some("Unique Payload"));
+                        assert_eq!(columns, &vec!["Payload Field".to_string()]);
+                    }
+                    other => panic!("expected UNIQUE AddConstraint, got {other:?}"),
+                }
+            }
+            other => panic!("expected AlterTable, got {other:?}"),
+        }
+
+        let statement = parser
+            .parse_ddl(
+                "ALTER TABLE \"Tenant One\".\"Event Store\" \
+                 ADD CONSTRAINT \"FK Payload Parent\" FOREIGN KEY (\"Payload Field\") \
+                 REFERENCES \"Tenant One\".\"Parent Store\" (\"Parent Id\");",
+            )
+            .expect("expected ddl parse to succeed")
+            .expect("expected alter table ddl");
+
+        match statement {
+            DdlStatement::AlterTable {
+                table_name,
+                changes,
+            } => {
+                assert_eq!(table_name, "Tenant One.Event Store");
+                assert_eq!(changes.len(), 1);
+                match &changes[0] {
+                    AlterTableChange::AddConstraint {
+                        constraint_name,
+                        constraint:
+                            TableConstraint::ForeignKey {
+                                columns,
+                                references_table,
+                                references_columns,
+                                ..
+                            },
+                    } => {
+                        assert_eq!(constraint_name.as_deref(), Some("FK Payload Parent"));
+                        assert_eq!(columns, &vec!["Payload Field".to_string()]);
+                        assert_eq!(references_table, "Tenant One.Parent Store");
+                        assert_eq!(references_columns, &vec!["Parent Id".to_string()]);
+                    }
+                    other => panic!("expected FOREIGN KEY AddConstraint, got {other:?}"),
+                }
+            }
+            other => panic!("expected AlterTable, got {other:?}"),
+        }
+
+        let statement = parser
+            .parse_ddl(
+                "ALTER TABLE \"Tenant One\".\"Event Store\" \
+                 DROP CONSTRAINT \"Unique Payload\";",
+            )
+            .expect("expected ddl parse to succeed")
+            .expect("expected alter table ddl");
+
+        match statement {
+            DdlStatement::AlterTable {
+                table_name,
+                changes,
+            } => {
+                assert_eq!(table_name, "Tenant One.Event Store");
+                assert_eq!(changes.len(), 1);
+                match &changes[0] {
+                    AlterTableChange::DropConstraint { constraint_name } => {
+                        assert_eq!(constraint_name, "Unique Payload");
+                    }
+                    other => panic!("expected DropConstraint, got {other:?}"),
+                }
+            }
+            other => panic!("expected AlterTable, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parse_ddl_create_table_supports_jsonb() {
         let parser = SqlFrontendParser::new();
 
@@ -2242,27 +2441,62 @@ mod tests {
     fn parse_ddl_create_index_supports_default_btree() {
         let parser = SqlFrontendParser::new();
 
-        let statement = parser
-            .parse_ddl("CREATE INDEX demo_payload_idx ON demo (payload);")
-            .expect("expected ddl parse to succeed")
-            .expect("expected create index ddl");
+        let cases = [
+            (
+                "CREATE INDEX demo_payload_idx ON demo (payload);",
+                "demo_payload_idx",
+                "demo",
+                vec!["payload".to_string()],
+                false,
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS \"Payload Index\" ON \"Tenant One\".\"Event Store\" (\"Payload Field\");",
+                "Payload Index",
+                "Tenant One.Event Store",
+                vec!["Payload Field".to_string()],
+                true,
+            ),
+        ];
 
-        if let DdlStatement::CreateIndex {
-            index_name,
-            table_name,
-            columns,
-            index_type,
-            if_not_exists,
-            ..
-        } = statement
+        for (
+            sql,
+            expected_index_name,
+            expected_table_name,
+            expected_columns,
+            expected_if_not_exists,
+        ) in cases
         {
-            assert_eq!(index_name, "demo_payload_idx");
-            assert_eq!(table_name, "demo");
-            assert_eq!(columns, vec!["payload".to_string()]);
-            assert!(matches!(index_type, IndexType::BTree));
-            assert!(!if_not_exists);
-        } else {
-            panic!("expected create index statement");
+            let statement = parser
+                .parse_ddl(sql)
+                .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"))
+                .expect("expected create index ddl");
+
+            if let DdlStatement::CreateIndex {
+                index_name,
+                table_name,
+                columns,
+                index_type,
+                if_not_exists,
+                ..
+            } = statement
+            {
+                assert_eq!(
+                    index_name, expected_index_name,
+                    "index mismatch for `{sql}`"
+                );
+                assert_eq!(
+                    table_name, expected_table_name,
+                    "table mismatch for `{sql}`"
+                );
+                assert_eq!(columns, expected_columns, "columns mismatch for `{sql}`");
+                assert!(matches!(index_type, IndexType::BTree));
+                assert_eq!(
+                    if_not_exists, expected_if_not_exists,
+                    "IF NOT EXISTS mismatch for `{sql}`"
+                );
+            } else {
+                panic!("expected create index statement");
+            }
         }
     }
 
@@ -2299,22 +2533,132 @@ mod tests {
     fn parse_ddl_drop_table_supports_table_name() {
         let parser = SqlFrontendParser::new();
 
-        let statement = parser
-            .parse_ddl("DROP TABLE demo;")
-            .expect("expected ddl parse to succeed")
-            .expect("expected drop table ddl");
+        let cases = [
+            ("DROP TABLE demo;", "demo", false, false),
+            (
+                "DROP TABLE IF EXISTS \"Tenant One\".\"Event Store\";",
+                "Tenant One.Event Store",
+                true,
+                false,
+            ),
+        ];
 
-        if let DdlStatement::DropTable {
-            table_name,
-            if_exists,
-            purge,
-        } = statement
-        {
-            assert_eq!(table_name, "demo");
-            assert!(!if_exists);
-            assert!(!purge);
-        } else {
-            panic!("expected drop table statement");
+        for (sql, expected_table_name, expected_if_exists, expected_purge) in cases {
+            let statement = parser
+                .parse_ddl(sql)
+                .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"))
+                .expect("expected drop table ddl");
+
+            if let DdlStatement::DropTable {
+                table_name,
+                if_exists,
+                purge,
+            } = statement
+            {
+                assert_eq!(
+                    table_name, expected_table_name,
+                    "table mismatch for `{sql}`"
+                );
+                assert_eq!(
+                    if_exists, expected_if_exists,
+                    "IF EXISTS mismatch for `{sql}`"
+                );
+                assert_eq!(purge, expected_purge, "PURGE mismatch for `{sql}`");
+            } else {
+                panic!("expected drop table statement");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_ddl_create_namespace_routes_through_pre_parser() {
+        let parser = SqlFrontendParser::new();
+
+        let cases = [
+            ("CREATE NAMESPACE analytics", vec!["analytics"], false),
+            (
+                "CREATE NAMESPACE IF NOT EXISTS acmecorp.analytics;",
+                vec!["acmecorp", "analytics"],
+                true,
+            ),
+            (
+                "create namespace if not exists \"Tenant One\".\"Event Store\"",
+                vec!["Tenant One", "Event Store"],
+                true,
+            ),
+        ];
+
+        for (sql, expected_namespace, expected_if_not_exists) in cases {
+            let statement = parser
+                .parse_ddl(sql)
+                .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"))
+                .expect("expected create namespace ddl");
+
+            match statement {
+                DdlStatement::CreateNamespace {
+                    namespace,
+                    if_not_exists,
+                    properties,
+                } => {
+                    assert_eq!(
+                        namespace, expected_namespace,
+                        "namespace mismatch for `{sql}`"
+                    );
+                    assert_eq!(
+                        if_not_exists, expected_if_not_exists,
+                        "IF NOT EXISTS mismatch for `{sql}`"
+                    );
+                    assert!(properties.is_empty());
+                }
+                other => panic!("expected CreateNamespace for `{sql}`, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_ddl_drop_namespace_routes_through_pre_parser() {
+        let parser = SqlFrontendParser::new();
+
+        let cases = [
+            ("DROP NAMESPACE analytics", vec!["analytics"], false, false),
+            (
+                "DROP NAMESPACE IF EXISTS acmecorp.analytics CASCADE;",
+                vec!["acmecorp", "analytics"],
+                true,
+                true,
+            ),
+            (
+                "drop namespace if exists \"Tenant One\".\"Event Store\" restrict",
+                vec!["Tenant One", "Event Store"],
+                true,
+                false,
+            ),
+        ];
+
+        for (sql, expected_namespace, expected_if_exists, expected_cascade) in cases {
+            let statement = parser
+                .parse_ddl(sql)
+                .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"))
+                .expect("expected drop namespace ddl");
+
+            match statement {
+                DdlStatement::DropNamespace {
+                    namespace,
+                    if_exists,
+                    cascade,
+                } => {
+                    assert_eq!(
+                        namespace, expected_namespace,
+                        "namespace mismatch for `{sql}`"
+                    );
+                    assert_eq!(
+                        if_exists, expected_if_exists,
+                        "IF EXISTS mismatch for `{sql}`"
+                    );
+                    assert_eq!(cascade, expected_cascade, "CASCADE mismatch for `{sql}`");
+                }
+                other => panic!("expected DropNamespace for `{sql}`, got {:?}", other),
+            }
         }
     }
 
@@ -2325,13 +2669,24 @@ mod tests {
         for sql in [
             "ALTER TABLE inv MATERIALIZE",
             "alter table \"inv\" materialize;",
+            "ALTER TABLE \"Tenant One\".\"Event Store\" MATERIALIZE",
+            "ALTER TABLE \"tenant.with.dot\".\"events.with.dot\" MATERIALIZE",
         ] {
             let statement = parser
                 .parse_ddl(sql)
                 .expect("expected ddl parse to succeed")
                 .expect("expected materialize ddl");
             match statement {
-                DdlStatement::MaterializeTable { name } => assert_eq!(name, "inv"),
+                DdlStatement::MaterializeTable { name } => {
+                    let expected = if sql.contains("Tenant One") {
+                        "Tenant One.Event Store"
+                    } else if sql.contains("tenant.with.dot") {
+                        "tenant.with.dot.events.with.dot"
+                    } else {
+                        "inv"
+                    };
+                    assert_eq!(name, expected, "table mismatch for `{sql}`");
+                }
                 other => panic!("expected MaterializeTable, got {:?}", other),
             }
         }
@@ -2349,22 +2704,48 @@ mod tests {
     fn parse_ddl_drop_index_supports_drop_index() {
         let parser = SqlFrontendParser::new();
 
-        let statement = parser
-            .parse_ddl("DROP INDEX demo_payload_idx ON demo;")
-            .expect("expected ddl parse to succeed")
-            .expect("expected drop index ddl");
+        let cases = [
+            (
+                "DROP INDEX demo_payload_idx ON demo;",
+                "demo_payload_idx",
+                "demo",
+                false,
+            ),
+            (
+                "DROP INDEX IF EXISTS \"Payload Index\" ON \"Tenant One\".\"Event Store\";",
+                "Payload Index",
+                "Tenant One.Event Store",
+                true,
+            ),
+        ];
 
-        if let DdlStatement::DropIndex {
-            index_name,
-            table_name,
-            if_exists,
-        } = statement
-        {
-            assert_eq!(index_name, "demo_payload_idx");
-            assert_eq!(table_name, "demo");
-            assert!(!if_exists);
-        } else {
-            panic!("expected drop index statement");
+        for (sql, expected_index_name, expected_table_name, expected_if_exists) in cases {
+            let statement = parser
+                .parse_ddl(sql)
+                .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"))
+                .expect("expected drop index ddl");
+
+            if let DdlStatement::DropIndex {
+                index_name,
+                table_name,
+                if_exists,
+            } = statement
+            {
+                assert_eq!(
+                    index_name, expected_index_name,
+                    "index mismatch for `{sql}`"
+                );
+                assert_eq!(
+                    table_name, expected_table_name,
+                    "table mismatch for `{sql}`"
+                );
+                assert_eq!(
+                    if_exists, expected_if_exists,
+                    "IF EXISTS mismatch for `{sql}`"
+                );
+            } else {
+                panic!("expected drop index statement");
+            }
         }
     }
 
@@ -2426,30 +2807,46 @@ mod tests {
     fn parse_ddl_promote_props_key_basic_types() {
         let parser = SqlFrontendParser::new();
 
-        let cases: &[(&str, &str, &str)] = &[
+        let cases: &[(&str, &str, &str, &str)] = &[
             (
                 "ALTER TABLE events PROMOTE PROPS KEY user_id TYPE BIGINT",
+                "events",
                 "user_id",
                 "BigInt",
             ),
             (
                 "ALTER TABLE events PROMOTE PROPS KEY label TYPE TEXT;",
+                "events",
                 "label",
                 "Text",
             ),
             (
                 "ALTER TABLE logs PROMOTE PROPS KEY score TYPE FLOAT",
+                "logs",
                 "score",
                 "Float",
             ),
             (
                 "ALTER TABLE docs PROMOTE PROPS KEY meta TYPE JSONB",
+                "docs",
                 "meta",
+                "Jsonb",
+            ),
+            (
+                "ALTER TABLE \"Tenant One\".\"Event Store\" PROMOTE PROPS KEY payload TYPE JSONB",
+                "Tenant One.Event Store",
+                "payload",
+                "Jsonb",
+            ),
+            (
+                "ALTER TABLE \"tenant.with.dot\".\"events.with.dot\" PROMOTE PROPS KEY payload TYPE JSONB",
+                "tenant.with.dot.events.with.dot",
+                "payload",
                 "Jsonb",
             ),
         ];
 
-        for (sql, expected_key, expected_type_fragment) in cases {
+        for (sql, expected_table, expected_key, expected_type_fragment) in cases {
             let result = parser
                 .parse_ddl(sql)
                 .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"));
@@ -2457,9 +2854,10 @@ mod tests {
             let stmt = result.expect("expected DdlStatement");
             match stmt {
                 crate::services::ddl::DdlStatement::AlterTable {
-                    table_name: _,
+                    table_name,
                     changes,
                 } => {
+                    assert_eq!(table_name, *expected_table, "table mismatch for `{sql}`");
                     assert_eq!(changes.len(), 1, "expected exactly one change");
                     match &changes[0] {
                         crate::services::ddl::AlterTableChange::PromotePropsKey {
@@ -2587,6 +2985,14 @@ impl SqlFrontendParser {
         if let Some(result) = try_parse_create_function(sql)? {
             return Ok(Some(result));
         }
+        // Pattern: CREATE NAMESPACE [IF NOT EXISTS] <qualified_namespace>
+        if let Some(result) = try_parse_create_namespace(sql)? {
+            return Ok(Some(result));
+        }
+        // Pattern: DROP NAMESPACE [IF EXISTS] <qualified_namespace> [CASCADE|RESTRICT]
+        if let Some(result) = try_parse_drop_namespace(sql)? {
+            return Ok(Some(result));
+        }
         // Pattern: ALTER TABLE <name> MATERIALIZE (warehouse publish → Parquet-backed)
         if let Some(result) = self.try_parse_materialize_table(sql)? {
             return Ok(Some(result));
@@ -2624,7 +3030,7 @@ impl SqlFrontendParser {
         }
 
         // Expected exactly: ALTER TABLE <name> MATERIALIZE
-        let tokens: Vec<&str> = normalised.split_whitespace().collect();
+        let tokens = split_sql_words_respecting_quotes(normalised, "ALTER TABLE MATERIALIZE")?;
         if tokens.len() != 4 {
             return Ok(None);
         }
@@ -2636,7 +3042,7 @@ impl SqlFrontendParser {
             return Ok(None);
         }
 
-        let name = tokens[2].trim_matches('"').to_string();
+        let name = unquote_object_name(&tokens[2]);
         if name.is_empty() {
             return Ok(None);
         }
@@ -2655,10 +3061,10 @@ impl SqlFrontendParser {
             return Ok(None);
         }
 
-        // Tokenise by whitespace for a simple hand-rolled parse.
         // Expected token sequence (case-insensitive):
         //   ALTER TABLE <name> PROMOTE PROPS KEY <key> TYPE <type…>
-        let tokens: Vec<&str> = normalised.split_whitespace().collect();
+        let tokens =
+            split_sql_words_respecting_quotes(normalised, "ALTER TABLE PROMOTE PROPS KEY")?;
 
         // Need at least 9 tokens: ALTER TABLE name PROMOTE PROPS KEY key TYPE type
         if tokens.len() < 9 {
@@ -2677,8 +3083,8 @@ impl SqlFrontendParser {
             return Ok(None);
         }
 
-        let table_name = unquote_object_name(tokens[2]);
-        let key = tokens[6].to_string();
+        let table_name = unquote_object_name(&tokens[2]);
+        let key = unquote_identifier_text(&tokens[6]);
         // Remaining tokens after TYPE form the type string (e.g. "VARCHAR(255)").
         let type_str = tokens[8..].join(" ");
 
@@ -2720,7 +3126,7 @@ impl SqlFrontendParser {
                 operations,
                 ..
             } => {
-                let table_name = name.to_string();
+                let table_name = unquote_object_name(&name.to_string());
                 let mut changes = Vec::new();
 
                 for op in operations {
@@ -2732,7 +3138,9 @@ impl SqlFrontendParser {
                         AlterTableOperation::DropColumn { column_names, .. } => {
                             // Take the first column name (most ALTER DROP COLUMN has single column)
                             if let Some(col_name) = column_names.first() {
-                                changes.push(AlterTableChange::DropColumn(col_name.to_string()));
+                                changes.push(AlterTableChange::DropColumn(
+                                    unquote_identifier_text(&col_name.to_string()),
+                                ));
                             }
                         }
                         AlterTableOperation::RenameColumn {
@@ -2740,41 +3148,42 @@ impl SqlFrontendParser {
                             new_column_name,
                         } => {
                             changes.push(AlterTableChange::RenameColumn {
-                                old_name: old_column_name.to_string(),
-                                new_name: new_column_name.to_string(),
+                                old_name: unquote_identifier_text(&old_column_name.to_string()),
+                                new_name: unquote_identifier_text(&new_column_name.to_string()),
                             });
                         }
                         AlterTableOperation::AlterColumn { column_name, op } => {
                             use sqlparser::ast::AlterColumnOperation;
+                            let column_name = unquote_identifier_text(&column_name.to_string());
                             match op {
                                 AlterColumnOperation::SetNotNull => {
                                     changes.push(AlterTableChange::SetNullable {
-                                        column_name: column_name.to_string(),
+                                        column_name: column_name.clone(),
                                         nullable: false,
                                     });
                                 }
                                 AlterColumnOperation::DropNotNull => {
                                     changes.push(AlterTableChange::SetNullable {
-                                        column_name: column_name.to_string(),
+                                        column_name: column_name.clone(),
                                         nullable: true,
                                     });
                                 }
                                 AlterColumnOperation::SetDefault { value } => {
                                     changes.push(AlterTableChange::SetDefault {
-                                        column_name: column_name.to_string(),
+                                        column_name: column_name.clone(),
                                         default_value: Some(format!("{}", value)),
                                     });
                                 }
                                 AlterColumnOperation::DropDefault => {
                                     changes.push(AlterTableChange::SetDefault {
-                                        column_name: column_name.to_string(),
+                                        column_name: column_name.clone(),
                                         default_value: None,
                                     });
                                 }
                                 AlterColumnOperation::SetDataType { data_type, .. } => {
                                     let new_type = self.convert_data_type(data_type)?;
                                     changes.push(AlterTableChange::ChangeType {
-                                        column_name: column_name.to_string(),
+                                        column_name: column_name.clone(),
                                         new_type,
                                     });
                                 }
@@ -2790,16 +3199,22 @@ impl SqlFrontendParser {
                             use sqlparser::ast::TableConstraint as SqlConstraint;
                             match constraint {
                                 SqlConstraint::Unique { name, columns, .. } => {
-                                    let cols: Vec<String> =
-                                        columns.iter().map(|c| c.to_string()).collect();
+                                    let cols: Vec<String> = columns
+                                        .iter()
+                                        .map(|c| unquote_identifier_text(&c.to_string()))
+                                        .collect();
                                     changes.push(AlterTableChange::AddConstraint {
-                                        constraint_name: name.as_ref().map(|n| n.to_string()),
+                                        constraint_name: name
+                                            .as_ref()
+                                            .map(|n| unquote_identifier_text(&n.to_string())),
                                         constraint: TableConstraint::Unique { columns: cols },
                                     });
                                 }
                                 SqlConstraint::Check { name, expr, .. } => {
                                     changes.push(AlterTableChange::AddConstraint {
-                                        constraint_name: name.as_ref().map(|n| n.to_string()),
+                                        constraint_name: name
+                                            .as_ref()
+                                            .map(|n| unquote_identifier_text(&n.to_string())),
                                         constraint: TableConstraint::Check {
                                             expression: format!("{}", expr),
                                         },
@@ -2814,15 +3229,23 @@ impl SqlFrontendParser {
                                     on_update,
                                     ..
                                 } => {
-                                    let cols: Vec<String> =
-                                        columns.iter().map(|c| c.to_string()).collect();
-                                    let ref_cols: Vec<String> =
-                                        referred_columns.iter().map(|c| c.to_string()).collect();
+                                    let cols: Vec<String> = columns
+                                        .iter()
+                                        .map(|c| unquote_identifier_text(&c.to_string()))
+                                        .collect();
+                                    let ref_cols: Vec<String> = referred_columns
+                                        .iter()
+                                        .map(|c| unquote_identifier_text(&c.to_string()))
+                                        .collect();
                                     changes.push(AlterTableChange::AddConstraint {
-                                        constraint_name: name.as_ref().map(|n| n.to_string()),
+                                        constraint_name: name
+                                            .as_ref()
+                                            .map(|n| unquote_identifier_text(&n.to_string())),
                                         constraint: TableConstraint::ForeignKey {
                                             columns: cols,
-                                            references_table: foreign_table.to_string(),
+                                            references_table: unquote_object_name(
+                                                &foreign_table.to_string(),
+                                            ),
                                             references_columns: ref_cols,
                                             on_delete: on_delete.map(map_referential_action),
                                             on_update: on_update.map(map_referential_action),
@@ -2836,7 +3259,7 @@ impl SqlFrontendParser {
                         }
                         AlterTableOperation::DropConstraint { name, .. } => {
                             changes.push(AlterTableChange::DropConstraint {
-                                constraint_name: name.to_string(),
+                                constraint_name: unquote_identifier_text(&name.to_string()),
                             });
                         }
                         AlterTableOperation::ChangeColumn {
@@ -2847,15 +3270,17 @@ impl SqlFrontendParser {
                             ..
                         } => {
                             // MySQL-style CHANGE COLUMN (rename + type change)
-                            if old_name.to_string() != new_name.to_string() {
+                            let old_name = unquote_identifier_text(&old_name.to_string());
+                            let new_name = unquote_identifier_text(&new_name.to_string());
+                            if old_name != new_name {
                                 changes.push(AlterTableChange::RenameColumn {
-                                    old_name: old_name.to_string(),
-                                    new_name: new_name.to_string(),
+                                    old_name: old_name.clone(),
+                                    new_name: new_name.clone(),
                                 });
                             }
                             let new_type = self.convert_data_type(data_type)?;
                             changes.push(AlterTableChange::ChangeType {
-                                column_name: new_name.to_string(),
+                                column_name: new_name.clone(),
                                 new_type,
                             });
                             // Handle FIRST/AFTER positioning
@@ -2865,7 +3290,7 @@ impl SqlFrontendParser {
                                     let cs_str = cs.to_string().to_uppercase();
                                     if cs_str == "FIRST" {
                                         changes.push(AlterTableChange::MoveColumn {
-                                            column_name: new_name.to_string(),
+                                            column_name: new_name.clone(),
                                             position: ColumnPosition::First,
                                         });
                                     }
@@ -2939,6 +3364,7 @@ impl SqlFrontendParser {
                     .as_ref()
                     .map(|name| name.to_string())
                     .ok_or_else(|| anyhow!("CREATE INDEX requires an index name"))?;
+                let index_name = unquote_identifier_text(&index_name);
                 let table_name = unquote_object_name(&create_index.table_name.to_string());
                 let columns = create_index
                     .columns
@@ -2969,6 +3395,7 @@ impl SqlFrontendParser {
                         .first()
                         .ok_or_else(|| anyhow!("DROP TABLE requires a table name"))?
                         .to_string();
+                    let table_name = unquote_object_name(&table_name);
                     Ok(Some(DdlStatement::DropTable {
                         table_name,
                         if_exists: *if_exists,
@@ -2980,10 +3407,12 @@ impl SqlFrontendParser {
                         .first()
                         .ok_or_else(|| anyhow!("DROP INDEX requires an index name"))?
                         .to_string();
+                    let index_name = unquote_identifier_text(&index_name);
                     let table_name = table
                         .as_ref()
                         .map(|table_name| table_name.to_string())
                         .ok_or_else(|| anyhow!("DROP INDEX requires a table name"))?;
+                    let table_name = unquote_object_name(&table_name);
 
                     Ok(Some(DdlStatement::DropIndex {
                         index_name,
@@ -3318,11 +3747,15 @@ fn sql_option_value_to_string(value: &SqlExpr) -> String {
 }
 
 pub fn unquote_object_name(value: &str) -> String {
-    value
-        .split('.')
-        .map(unquote_identifier_text)
-        .collect::<Vec<_>>()
-        .join(".")
+    parse_qualified_identifier_parts(value, "qualified identifier")
+        .map(|parts| parts.join("."))
+        .unwrap_or_else(|_| {
+            value
+                .split('.')
+                .map(unquote_identifier_text)
+                .collect::<Vec<_>>()
+                .join(".")
+        })
 }
 
 pub fn unquote_identifier_text(value: &str) -> String {
@@ -3332,6 +3765,180 @@ pub fn unquote_identifier_text(value: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+fn consume_keyword<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
+    let trimmed = input.trim_start();
+    if trimmed.len() < keyword.len() {
+        return None;
+    }
+
+    let (candidate, rest) = trimmed.split_at(keyword.len());
+    if !candidate.eq_ignore_ascii_case(keyword) {
+        return None;
+    }
+    if rest.chars().next().is_some_and(|ch| !ch.is_whitespace()) {
+        return None;
+    }
+    Some(rest)
+}
+
+fn parse_qualified_identifier_parts(input: &str, statement_name: &str) -> Result<Vec<String>> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut chars = input.trim().chars().peekable();
+    let mut in_quotes = false;
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                if in_quotes && chars.peek() == Some(&'"') {
+                    current.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = !in_quotes;
+                }
+            }
+            '.' if !in_quotes => {
+                let part = current.trim();
+                if part.is_empty() {
+                    return Err(anyhow!(
+                        "{statement_name} contains an empty identifier part"
+                    ));
+                }
+                parts.push(part.to_string());
+                current.clear();
+            }
+            ch if ch.is_whitespace() && !in_quotes => {
+                return Err(anyhow!(
+                    "{statement_name} expects a single qualified namespace identifier"
+                ));
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if in_quotes {
+        return Err(anyhow!(
+            "{statement_name} has an unterminated quoted identifier"
+        ));
+    }
+
+    let part = current.trim();
+    if part.is_empty() {
+        return Err(anyhow!("{statement_name} requires a namespace name"));
+    }
+    parts.push(part.to_string());
+    Ok(parts)
+}
+
+fn try_parse_create_namespace(sql: &str) -> Result<Option<DdlStatement>> {
+    let normalised = sql.trim().trim_end_matches(';').trim();
+    let Some(rest) = consume_keyword(normalised, "CREATE") else {
+        return Ok(None);
+    };
+    let Some(mut rest) = consume_keyword(rest, "NAMESPACE") else {
+        return Ok(None);
+    };
+
+    let mut if_not_exists = false;
+    if let Some(after_if) = consume_keyword(rest, "IF")
+        && let Some(after_not) = consume_keyword(after_if, "NOT")
+        && let Some(after_exists) = consume_keyword(after_not, "EXISTS")
+    {
+        if_not_exists = true;
+        rest = after_exists;
+    }
+
+    let namespace = parse_qualified_identifier_parts(rest, "CREATE NAMESPACE")?;
+    Ok(Some(DdlStatement::CreateNamespace {
+        namespace,
+        if_not_exists,
+        properties: HashMap::new(),
+    }))
+}
+
+fn split_sql_words_respecting_quotes(input: &str, statement_name: &str) -> Result<Vec<String>> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut chars = input.trim().chars().peekable();
+    let mut in_quotes = false;
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                current.push(ch);
+                if in_quotes && chars.peek() == Some(&'"') {
+                    current.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = !in_quotes;
+                }
+            }
+            ch if ch.is_whitespace() && !in_quotes => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if in_quotes {
+        return Err(anyhow!(
+            "{statement_name} has an unterminated quoted identifier"
+        ));
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    Ok(words)
+}
+
+fn try_parse_drop_namespace(sql: &str) -> Result<Option<DdlStatement>> {
+    let normalised = sql.trim().trim_end_matches(';').trim();
+    let Some(rest) = consume_keyword(normalised, "DROP") else {
+        return Ok(None);
+    };
+    let Some(mut rest) = consume_keyword(rest, "NAMESPACE") else {
+        return Ok(None);
+    };
+
+    let mut if_exists = false;
+    if let Some(after_if) = consume_keyword(rest, "IF")
+        && let Some(after_exists) = consume_keyword(after_if, "EXISTS")
+    {
+        if_exists = true;
+        rest = after_exists;
+    }
+
+    let mut words = split_sql_words_respecting_quotes(rest, "DROP NAMESPACE")?;
+    if words.is_empty() {
+        return Err(anyhow!("DROP NAMESPACE requires a namespace name"));
+    }
+
+    let mut cascade = false;
+    if let Some(last) = words.last() {
+        if last.eq_ignore_ascii_case("CASCADE") {
+            cascade = true;
+            words.pop();
+        } else if last.eq_ignore_ascii_case("RESTRICT") {
+            words.pop();
+        }
+    }
+
+    if words.len() != 1 {
+        return Err(anyhow!(
+            "DROP NAMESPACE expects a single qualified namespace identifier"
+        ));
+    }
+
+    let namespace = parse_qualified_identifier_parts(&words[0], "DROP NAMESPACE")?;
+    Ok(Some(DdlStatement::DropNamespace {
+        namespace,
+        if_exists,
+        cascade,
+    }))
 }
 
 // =========================================================================

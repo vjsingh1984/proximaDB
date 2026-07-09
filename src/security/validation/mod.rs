@@ -57,9 +57,6 @@ pub use text_validator::{
     TextStorageValidationConfig, TextStorageValidationResult, TextValidationError, TextValidator,
     TextValidatorBuilder,
 };
-#[allow(deprecated)]
-#[deprecated(note = "Use TypeValidationResult instead.")]
-pub use type_validators::ValidationResult;
 pub use type_validators::{
     BinaryValidator, DecimalValidator, FieldValidationConfig, JsonValidator, TimestampValidator,
     TypeValidationResult, TypedValueValidator, UuidValidator, ValidationError,

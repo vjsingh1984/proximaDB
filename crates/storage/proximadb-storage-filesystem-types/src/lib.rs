@@ -530,6 +530,16 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
+    /// Sync file *data* to disk (fdatasync): flush contents without necessarily
+    /// flushing inode metadata (size/mtime) separately — a cheaper durability
+    /// barrier than [`FileSystem::sync_file`] on local disks. The default
+    /// delegates to `sync_file` (a full fsync, a safe superset), so backends
+    /// without a distinct data-only barrier (object stores, etc.) need not
+    /// override it. `LocalFileSystem` overrides this with a real `fdatasync`.
+    async fn sync_data(&self, path: &str) -> FsResult<()> {
+        self.sync_file(path).await
+    }
+
     /// Append to file
     async fn append(&self, path: &str, data: &[u8]) -> FsResult<()>;
 

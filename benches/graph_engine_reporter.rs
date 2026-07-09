@@ -11,11 +11,11 @@
 
 use anyhow::Result;
 use criterion::{Criterion, criterion_group, criterion_main};
-use proximadb::graph::{Edge, Node, PropertyValue, service::GraphOperationsService};
-use proximadb::proto::proximadb_v1::{
-    CreateGraphRequest, GraphEngineConfig, TraversalAlgorithm, TraversalRequest,
-    property_value::Value,
+use proximadb::graph::{
+    Edge, Node, PropertyValue, TraversalRequest, property_value::Value,
+    service::GraphOperationsService,
 };
+use proximadb::proto::proximadb_v1::{CreateGraphRequest, GraphEngineConfig, TraversalAlgorithm};
 use proximadb::services::graph_collection::GraphCollectionService;
 use std::collections::HashMap;
 use std::fs::File;

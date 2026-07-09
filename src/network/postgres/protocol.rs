@@ -235,6 +235,77 @@ fn pg_type_for_catalog_column(column_type: &str) -> PgType {
     }
 }
 
+/// Enforce the pgwire width-safety invariant on a catalog-introspection result
+/// before any frame is written: the RowDescription field count MUST equal every
+/// DataRow cell count. `RowDescription` and `DataRow` widths are encoded
+/// independently on the wire (`send_row_description` writes `fields.len()`;
+/// `send_data_row*` writes `values.len()`), so a mismatch emits a desync'd
+/// frame that crashes psql with libpq's `"column number N is out of range 0..M"`.
+///
+/// Rules, in order:
+/// 1. If the client's parsed SELECT aliases are present and their count differs
+///    from the result's column count, dispatch routed the query to a wrong-shape
+///    builder → return a safe EMPTY result (the client's alias names, all `text`,
+///    zero rows) so the client renders nothing instead of crashing.
+/// 2. Pad `column_types` to `columns.len()` with `"text"` (or truncate if longer).
+/// 3. Drop any row whose cell count ≠ column count.
+fn sanitize_catalog_result(
+    mut result: crate::services::CatalogIntrospectionResult,
+    select_aliases: Option<&[String]>,
+    query_for_logs: &str,
+) -> crate::services::CatalogIntrospectionResult {
+    // (1) Dispatch-vs-SELECT shape mismatch → graceful empty.
+    if let Some(aliases) = select_aliases
+        && aliases.len() != result.columns.len()
+    {
+        tracing::warn!(
+            target: "proximadb::pgwire::catalog",
+            query = %query_for_logs,
+            expected_columns = aliases.len(),
+            got_columns = result.columns.len(),
+            "catalog introspection shape mismatch; returning empty result to avoid a width-desync'd pgwire frame"
+        );
+        return crate::services::CatalogIntrospectionResult {
+            columns: aliases.to_vec(),
+            column_types: aliases.iter().map(|_| "text".to_string()).collect(),
+            rows: Vec::new(),
+        };
+    }
+
+    // (2) Make column_types exactly columns.len().
+    let ncols = result.columns.len();
+    if result.column_types.len() < ncols {
+        let missing = ncols - result.column_types.len();
+        result
+            .column_types
+            .extend(std::iter::repeat_n("text".to_string(), missing));
+        tracing::warn!(
+            target: "proximadb::pgwire::catalog",
+            query = %query_for_logs,
+            padded_to = ncols,
+            "padded catalog-introspection column_types with text"
+        );
+    } else if result.column_types.len() > ncols {
+        result.column_types.truncate(ncols);
+    }
+
+    // (3) Drop width-mismatched rows.
+    let before = result.rows.len();
+    result.rows.retain(|row| row.len() == ncols);
+    let dropped = before - result.rows.len();
+    if dropped > 0 {
+        tracing::warn!(
+            target: "proximadb::pgwire::catalog",
+            query = %query_for_logs,
+            dropped,
+            expected_width = ncols,
+            "dropped catalog-introspection rows with mismatched cell count"
+        );
+    }
+
+    result
+}
+
 fn pg_type_for_catalog_data_type(data_type: &ProximaType) -> PgType {
     match data_type {
         ProximaType::Boolean => PgType::Bool,
@@ -1218,6 +1289,22 @@ impl PostgresProtocol {
                     // CREATE-then-INSERT address one tenant-prefixed schema row.
                     let ddl_tenant = self.pgwire_resolve_write_tenant().await;
                     let ddl_scope = (!ddl_tenant.is_empty()).then_some(ddl_tenant);
+                    // Capture the target table BEFORE the statement is moved into
+                    // execute_scoped, so the success branch can invalidate the
+                    // tenant-scoped OLAP result cache for it.
+                    let ddl_table: Option<String> = match &statement {
+                        crate::services::DdlStatement::CreateTable { table_name, .. }
+                        | crate::services::DdlStatement::DropTable { table_name, .. }
+                        | crate::services::DdlStatement::AlterTable { table_name, .. }
+                        | crate::services::DdlStatement::CreateIndex { table_name, .. }
+                        | crate::services::DdlStatement::DropIndex { table_name, .. } => {
+                            Some(table_name.clone())
+                        }
+                        crate::services::DdlStatement::MaterializeTable { name, .. } => {
+                            Some(name.clone())
+                        }
+                        _ => None,
+                    };
                     match ddl_service
                         .execute_scoped(statement, ddl_scope.as_deref())
                         .await
@@ -1246,6 +1333,15 @@ impl PostgresProtocol {
                             } else {
                                 "OK"
                             };
+                            // Mandate #16b: invalidate the tenant-scoped OLAP
+                            // result cache for the DDL'd table (default-OFF no-op).
+                            if let Some(table) = &ddl_table {
+                                super::relational_pipeline::invalidate_olap_result_cache_for(
+                                    ddl_scope.as_deref().unwrap_or(""),
+                                    table,
+                                )
+                                .await;
+                            }
                             info!(message = %result.message, "DDL executed via catalog service");
                             return self.send_command_complete(tag).await;
                         }
@@ -1418,6 +1514,14 @@ impl PostgresProtocol {
             return self.send_empty_result().await;
         };
 
+        // Width-safety: guarantee the RowDescription field count equals every
+        // DataRow cell count. If dispatch routed this query to a builder whose
+        // shape doesn't match the client's SELECT list, substitute a safe empty
+        // result rather than emit a desync'd frame (which crashes psql with
+        // libpq's "column number N is out of range"). See `sanitize_catalog_result`.
+        let select_aliases = crate::query::sql_frontend::parse_select_aliases(query);
+        let result = sanitize_catalog_result(result, select_aliases.as_deref(), query);
+
         let fields = result
             .columns
             .iter()
@@ -1484,17 +1588,30 @@ impl PostgresProtocol {
         controls: ExecutionControls,
     ) -> Option<Result<ExecutionPipelineResult, String>> {
         let read_tenant = self.pgwire_resolve_read_tenant().await;
+        // Namespace (pgwire `search_path`) + the shared OLAP result cache are a
+        // structural key component / a short-circuit. The cache is default-OFF
+        // (`PROXIMADB_QUERY_RESULT_CACHE`); `None` ⇒ this path is byte-identical
+        // to the pre-cache behavior.
+        let namespace = self.session.read().await.current_schema();
+        let olap_cache = super::relational_pipeline::olap_result_cache();
         super::relational_pipeline::try_run_select(
             query,
             self.dml_service.as_ref(),
             // F4: hand the OLAP route the live vector service so a cross-modal
             // `... JOIN vector_search('coll','[..]',k)` resolves over pgwire.
             Some(self.vector_ops.clone() as Arc<dyn proximadb_runtime::VectorOpsPort>),
+            // F6: likewise the graph read service for `... JOIN graph_traverse(...)`
+            // (`GraphService = GraphOperationsService: GraphQueryReadService`).
+            self.graph_service
+                .clone()
+                .map(|g| g as Arc<dyn proximadb_graph_query::service::GraphQueryReadService>),
             Some(read_tenant.as_str()),
             controls,
             // pgwire keeps simple single-table SELECTs on its hardened legacy
             // path; only relational-engaging shapes go through this pipeline.
             true,
+            Some(namespace.as_str()),
+            olap_cache.as_deref(),
         )
         .await
     }
@@ -1684,11 +1801,14 @@ impl PostgresProtocol {
             .iter()
             .map(|(k, v)| (k.to_ascii_lowercase(), v.clone()))
             .collect();
-        normalized
+        // One canonical default across all surfaces (foundation): a bare connection
+        // with no session var resolves to `DEFAULT_TENANT`, not `""` — the empty
+        // string used to split pgwire reads/writes from REST's `"default"` bucket.
+        let session_var = normalized
             .get("proximadb.write.tenant_id")
             .or_else(|| normalized.get("proximadb.write_tenant_id"))
-            .cloned()
-            .unwrap_or_default()
+            .map(String::as_str);
+        proximadb_tenant::resolve_request_tenant(session_var)
     }
 
     /// TD-064 S1 (read-half): resolve the tenant/catalog scope used to authorize
@@ -3598,6 +3718,13 @@ impl PostgresProtocol {
                             rows_affected = result.rows_affected,
                             "INSERT executed via DmlService"
                         );
+                        // Mandate #16b: invalidate the tenant-scoped OLAP result
+                        // cache for the written table (default-OFF no-op).
+                        super::relational_pipeline::invalidate_olap_result_cache_for(
+                            &write_tenant,
+                            &table,
+                        )
+                        .await;
                         self.send_command_complete(&format!("INSERT 0 {}", result.rows_affected))
                             .await
                     }
@@ -3713,6 +3840,13 @@ impl PostgresProtocol {
                             rows_affected = result.rows_affected,
                             "DELETE executed via DmlService"
                         );
+                        // Mandate #16b: invalidate the tenant-scoped OLAP result
+                        // cache for the written table (default-OFF no-op).
+                        super::relational_pipeline::invalidate_olap_result_cache_for(
+                            &write_tenant,
+                            &table,
+                        )
+                        .await;
                         self.send_command_complete(&format!("DELETE {}", result.rows_affected))
                             .await
                     }
@@ -3822,6 +3956,13 @@ impl PostgresProtocol {
                             rows_affected = result.rows_affected,
                             "UPDATE executed via DmlService"
                         );
+                        // Mandate #16b: invalidate the tenant-scoped OLAP result
+                        // cache for the written table (default-OFF no-op).
+                        super::relational_pipeline::invalidate_olap_result_cache_for(
+                            &write_tenant,
+                            &table,
+                        )
+                        .await;
                         self.send_command_complete(&format!("UPDATE {}", result.rows_affected))
                             .await
                     }
@@ -4449,10 +4590,12 @@ impl PostgresProtocol {
         // Read statement name (source prepared statement)
         let statement_name = self.read_cstring(&mut cursor)?;
 
-        // Read format codes count (currently ignored - we use text format)
+        // Read parameter format codes. Per the PG protocol: 0 codes → all params
+        // are text; 1 code → it applies to every param; N codes → one per param.
         let format_code_count = cursor.get_i16() as usize;
+        let mut format_codes: Vec<i16> = Vec::with_capacity(format_code_count);
         for _ in 0..format_code_count {
-            let _format_code = cursor.get_i16();
+            format_codes.push(cursor.get_i16());
         }
 
         // Read parameter values count
@@ -4477,13 +4620,22 @@ impl PostgresProtocol {
             let _ = cursor.get_i16();
         }
 
+        // Normalize parameter format codes to one-per-parameter.
+        let param_formats: Vec<i16> = (0..param_count)
+            .map(|i| match format_codes.len() {
+                0 => 0,
+                1 => format_codes[0],
+                _ => format_codes.get(i).copied().unwrap_or(0),
+            })
+            .collect();
+
         // Get the prepared statement data (extract to avoid borrow conflicts)
         let stmt_data = self
             .prepared_statements
             .get(&statement_name)
-            .map(|s| (s.query.clone(), s.translated.clone()));
+            .map(|s| (s.query.clone(), s.translated.clone(), s.param_types.clone()));
 
-        let (stmt_query, stmt_translated) = match stmt_data {
+        let (stmt_query, stmt_translated, stmt_param_types) = match stmt_data {
             Some(data) => data,
             None => {
                 // If unnamed statement (""), use the query directly
@@ -4500,8 +4652,19 @@ impl PostgresProtocol {
             }
         };
 
-        // Bind parameters to the query
-        let bound_query = self.bind_parameters(&stmt_query, &param_values)?;
+        // Bind parameters to the query (format- and type-aware).
+        let bound_query = match self.bind_parameters(
+            &stmt_query,
+            &param_values,
+            &param_formats,
+            &stmt_param_types,
+        ) {
+            Ok(q) => q,
+            Err(e) => {
+                // 22P03 = invalid_binary_representation.
+                return self.send_error("ERROR", "22P03", &format!("{}", e)).await;
+            }
+        };
 
         // Create portal
         let portal = Portal {
@@ -4517,25 +4680,44 @@ impl PostgresProtocol {
         self.send_bind_complete().await
     }
 
-    /// Bind parameter values to a query string
-    fn bind_parameters(&self, query: &str, param_values: &[Option<Vec<u8>>]) -> Result<String> {
-        let mut result = query.to_string();
-
+    /// Bind parameter values into a query by substituting `$N` placeholders.
+    ///
+    /// Fixes two long-standing bugs in the old ordered `str::replace` approach:
+    /// (1) replacing `$1` before `$10` corrupted every placeholder ≥ 10 (and any
+    /// injected value that happened to contain a later `$N`); (2) every parameter
+    /// was decoded as UTF-8 text, silently mangling **binary-format** params
+    /// (int/float/vector sent with format code 1). Substitution is now a single
+    /// left-to-right pass ([`substitute_placeholders`]) and binary params are
+    /// decoded per their type ([`decode_binary_param`]) before rendering.
+    ///
+    /// `param_formats[i]` is the wire format code for parameter i (0 = text,
+    /// 1 = binary); `param_types[i]` is its type (from Parse / inferred).
+    fn bind_parameters(
+        &self,
+        query: &str,
+        param_values: &[Option<Vec<u8>>],
+        param_formats: &[i16],
+        param_types: &[PgType],
+    ) -> Result<String> {
+        let mut rendered: Vec<Option<String>> = Vec::with_capacity(param_values.len());
         for (i, value) in param_values.iter().enumerate() {
-            let placeholder = format!("${}", i + 1);
-            let replacement = match value {
-                Some(v) => {
-                    // Convert bytes to string (assuming UTF-8 text format)
-                    let s = String::from_utf8_lossy(v);
-                    // Escape single quotes
-                    format!("'{}'", s.replace('\'', "''"))
+            match value {
+                None => rendered.push(None),
+                Some(bytes) => {
+                    let is_binary = param_formats.get(i).copied().unwrap_or(0) == 1;
+                    let text = if is_binary {
+                        let ty = param_types.get(i).cloned().unwrap_or(PgType::Unknown);
+                        decode_binary_param(bytes, &ty).map_err(|e| {
+                            anyhow::anyhow!("parameter ${} binary decode failed: {}", i + 1, e)
+                        })?
+                    } else {
+                        String::from_utf8_lossy(bytes).into_owned()
+                    };
+                    rendered.push(Some(text));
                 }
-                None => "NULL".to_string(),
-            };
-            result = result.replace(&placeholder, &replacement);
+            }
         }
-
-        Ok(result)
+        Ok(substitute_placeholders(query, &rendered))
     }
 
     /// Handle Execute message - executes a portal
@@ -4991,6 +5173,165 @@ impl PostgresProtocol {
     }
 }
 
+/// Substitute `$N` placeholders in `query` with the rendered parameter values in
+/// a single left-to-right pass. `rendered[N-1]` is the parameter's textual value
+/// (`None` = SQL NULL); present values are emitted as quoted, `''`-escaped string
+/// literals (implicit-cast in the SQL layer, matching the historical behavior).
+///
+/// Correctness properties the old ordered `str::replace` lacked:
+/// - Each `$N` is matched by its **full digit run**, so `$10` is never clobbered
+///   by the `$1` substitution, and a substituted value that itself contains a
+///   `$K` sequence is never re-substituted (single forward pass).
+/// - `$N` inside single-quoted string literals is left untouched.
+/// - UTF-8 is preserved (verbatim spans are copied as `&str` slices).
+///
+/// An out-of-range or unparsable `$N` is passed through verbatim.
+fn substitute_placeholders(query: &str, rendered: &[Option<String>]) -> String {
+    let bytes = query.as_bytes();
+    let mut out = String::with_capacity(query.len() + 16);
+    let mut last = 0usize; // start of the not-yet-copied verbatim span
+    let mut i = 0usize;
+    let mut in_squote = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_squote {
+            if c == b'\'' {
+                // '' is an escaped quote inside the literal — stay inside.
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                    i += 2;
+                    continue;
+                }
+                in_squote = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'\'' => {
+                in_squote = true;
+                i += 1;
+            }
+            b'$' if i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() => {
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if let Ok(num) = query[i + 1..j].parse::<usize>()
+                    && num >= 1
+                    && num <= rendered.len()
+                {
+                    out.push_str(&query[last..i]);
+                    match &rendered[num - 1] {
+                        Some(v) => {
+                            out.push('\'');
+                            out.push_str(&v.replace('\'', "''"));
+                            out.push('\'');
+                        }
+                        None => out.push_str("NULL"),
+                    }
+                    last = j;
+                }
+                i = j;
+            }
+            _ => i += 1,
+        }
+    }
+    out.push_str(&query[last..]);
+    out
+}
+
+/// Decode a **binary-format** (format code 1) bound parameter into its textual
+/// representation, per the parameter's PostgreSQL type. Integers/floats are
+/// big-endian per the wire protocol; text-like types pass through as UTF-8.
+/// Returns an error (surfaced to the client as SQLSTATE 22P03) for types whose
+/// binary layout we do not decode — better than silently mangling the value,
+/// which the previous UTF-8-only path did.
+fn decode_binary_param(bytes: &[u8], ty: &PgType) -> std::result::Result<String, String> {
+    let fixed = |n: usize| -> std::result::Result<(), String> {
+        if bytes.len() == n {
+            Ok(())
+        } else {
+            Err(format!(
+                "{} expects {n} bytes, got {}",
+                ty.name(),
+                bytes.len()
+            ))
+        }
+    };
+    match ty {
+        PgType::Bool => {
+            fixed(1)?;
+            Ok(if bytes[0] == 0 { "false" } else { "true" }.to_string())
+        }
+        PgType::Int2 => {
+            fixed(2)?;
+            Ok(i16::from_be_bytes([bytes[0], bytes[1]]).to_string())
+        }
+        PgType::Int4 => {
+            fixed(4)?;
+            Ok(i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]).to_string())
+        }
+        PgType::Int8 => {
+            fixed(8)?;
+            let mut a = [0u8; 8];
+            a.copy_from_slice(bytes);
+            Ok(i64::from_be_bytes(a).to_string())
+        }
+        PgType::Float4 => {
+            fixed(4)?;
+            Ok(f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]).to_string())
+        }
+        PgType::Float8 => {
+            fixed(8)?;
+            let mut a = [0u8; 8];
+            a.copy_from_slice(bytes);
+            Ok(f64::from_be_bytes(a).to_string())
+        }
+        PgType::Text | PgType::Varchar | PgType::Json | PgType::Jsonb | PgType::Uuid => {
+            Ok(String::from_utf8_lossy(bytes).into_owned())
+        }
+        PgType::Vector => decode_binary_vector(bytes),
+        other => Err(format!(
+            "binary format for parameter type '{}' is not supported",
+            other.name()
+        )),
+    }
+}
+
+/// Decode a pgvector binary parameter (`int16 dim`, `int16 unused`, then
+/// `dim × big-endian float4`) into the `[a,b,c]` text literal the SQL layer
+/// parses.
+fn decode_binary_vector(bytes: &[u8]) -> std::result::Result<String, String> {
+    if bytes.len() < 4 {
+        return Err("vector binary too short for header".to_string());
+    }
+    let dim = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+    let expected = 4 + dim * 4;
+    if bytes.len() < expected {
+        return Err(format!(
+            "vector binary: expected {expected} bytes for dim {dim}, got {}",
+            bytes.len()
+        ));
+    }
+    let mut vals = Vec::with_capacity(dim);
+    let mut off = 4;
+    for _ in 0..dim {
+        vals.push(f32::from_be_bytes([
+            bytes[off],
+            bytes[off + 1],
+            bytes[off + 2],
+            bytes[off + 3],
+        ]));
+        off += 4;
+    }
+    let joined = vals
+        .iter()
+        .map(|f| f.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    Ok(format!("[{joined}]"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5002,6 +5343,80 @@ mod tests {
     fn test_frontend_message() {
         assert_eq!(FrontendMessage::Query as u8, b'Q');
         assert_eq!(FrontendMessage::Terminate as u8, b'X');
+    }
+
+    #[test]
+    fn substitute_placeholders_handles_two_digit_indices() {
+        // The old ordered str::replace turned "$10" into "<val1>0"; verify each
+        // placeholder is matched by its full digit run.
+        let rendered: Vec<Option<String>> = (1..=12).map(|n| Some(format!("v{n}"))).collect();
+        let out = substitute_placeholders("a=$1 b=$10 c=$11 d=$2 e=$12", &rendered);
+        assert_eq!(out, "a='v1' b='v10' c='v11' d='v2' e='v12'");
+    }
+
+    #[test]
+    fn substitute_placeholders_null_and_escaping_and_literals() {
+        let rendered = vec![None, Some("O'Brien".to_string())];
+        // $1 -> NULL (unquoted); $2 -> quoted with '' escaping.
+        let out = substitute_placeholders("x=$1, y=$2", &rendered);
+        assert_eq!(out, "x=NULL, y='O''Brien'");
+
+        // A `$1` inside a single-quoted string literal must NOT be substituted.
+        let out2 = substitute_placeholders("SELECT '$1', $2", &rendered);
+        assert_eq!(out2, "SELECT '$1', 'O''Brien'");
+
+        // A substituted value that itself contains `$2` is not re-substituted.
+        let rendered2 = vec![
+            Some("has $2 inside".to_string()),
+            Some("second".to_string()),
+        ];
+        let out3 = substitute_placeholders("$1 | $2", &rendered2);
+        assert_eq!(out3, "'has $2 inside' | 'second'");
+    }
+
+    #[test]
+    fn decode_binary_param_integers_and_floats_are_big_endian() {
+        assert_eq!(
+            decode_binary_param(&258i16.to_be_bytes(), &PgType::Int2).unwrap(),
+            "258"
+        );
+        assert_eq!(
+            decode_binary_param(&70000i32.to_be_bytes(), &PgType::Int4).unwrap(),
+            "70000"
+        );
+        assert_eq!(
+            decode_binary_param(&5_000_000_000i64.to_be_bytes(), &PgType::Int8).unwrap(),
+            "5000000000"
+        );
+        assert_eq!(
+            decode_binary_param(&1.5f32.to_be_bytes(), &PgType::Float4).unwrap(),
+            "1.5"
+        );
+        assert_eq!(
+            decode_binary_param(&2.25f64.to_be_bytes(), &PgType::Float8).unwrap(),
+            "2.25"
+        );
+        assert_eq!(decode_binary_param(&[1], &PgType::Bool).unwrap(), "true");
+        assert_eq!(decode_binary_param(&[0], &PgType::Bool).unwrap(), "false");
+    }
+
+    #[test]
+    fn decode_binary_param_rejects_bad_width_and_unsupported() {
+        // Wrong byte width is rejected rather than mis-decoded.
+        assert!(decode_binary_param(&[0, 0, 0], &PgType::Int4).is_err());
+        // Unsupported binary type errors instead of silently mangling.
+        assert!(decode_binary_param(&[0x01, 0x02], &PgType::Timestamp).is_err());
+    }
+
+    #[test]
+    fn decode_binary_vector_roundtrips_pgvector_layout() {
+        // [int16 dim=2][int16 unused=0][f32 be * 2]
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&2u16.to_be_bytes());
+        buf.extend_from_slice(&0u16.to_be_bytes());
+        buf.extend_from_slice(&0.5f32.to_be_bytes());
+        buf.extend_from_slice(&(-1.0f32).to_be_bytes());
+        assert_eq!(decode_binary_vector(&buf).unwrap(), "[0.5,-1]");
     }
 
     // pgvector WHERE-filter + extended-protocol param tests (TD-100/TD-102)

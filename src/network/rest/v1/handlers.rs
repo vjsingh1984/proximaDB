@@ -16,7 +16,6 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::health;
@@ -33,15 +32,63 @@ use crate::query::aql::sources::observability::ObservabilityAqlSource;
 use crate::query::aql::sources::vector::VectorAqlSource;
 use serde::{Deserialize, Serialize};
 
+/// The concrete core services the REST `AppState` needs, extracted once at boot
+/// (TD-104 S3-e/S3-f — ROOT decoupling). Every field here is also a
+/// `SharedServices` field, so the REST server no longer reaches into the
+/// (deleted) root `UnifiedHandlers` boot-adapter. Built via
+/// [`RestCoreServices::from_shared_services`] at the boot call sites.
+pub struct RestCoreServices {
+    /// Vector CRUD/search — same `Arc` as `SharedServices.vector_operations_service`.
+    pub vector_operations_service: Arc<crate::services::VectorOperationsService>,
+    /// Document storage — same `Arc` as `SharedServices.document_service`.
+    pub document_service: Arc<crate::storage::document::DocumentService>,
+    /// Collection lifecycle — same `Arc` as `SharedServices.collection_service`.
+    pub collection_service: Arc<crate::services::CollectionService>,
+    /// Graph ops (`GraphService` is an alias for `GraphOperationsService`) —
+    /// same `Arc` as `SharedServices.graph_service`.
+    pub graph_operations_service: Arc<crate::graph::GraphOperationsService>,
+    /// Graph collection CRUD (create/list/get/delete graph) — the same
+    /// `Arc<GraphCollectionService>` the former root handler held (shared with
+    /// `GraphOperationsService`'s internal collection service).
+    pub graph_collection_service: Arc<crate::services::GraphCollectionService>,
+    /// Record write-path orchestration — the same `Arc<RecordOpsService>` the
+    /// former root handler's `record_ops()` returned (it already impls
+    /// `RecordOpsPort` independently).
+    pub record_ops: Arc<crate::api_handlers::record_ops_service::RecordOpsService>,
+    /// Observability — same `Arc` as `SharedServices.observability_service`.
+    pub observability_service: Arc<crate::observability::ObservabilityService>,
+    /// Event-log engine — same `Option<Arc>` as `SharedServices.event_log`.
+    pub event_log: Option<Arc<crate::storage::engines::eventlog::EventLogEngine>>,
+    /// Port-backed API handler (the runtime `UnifiedHandlers`) — same `Arc` as
+    /// `SharedServices.api_handlers`.
+    pub api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort>,
+}
+
+impl RestCoreServices {
+    /// Build the REST core-service bundle from `SharedServices`. Single source
+    /// of truth for the ROOT→port mapping; the boot call sites
+    /// (`RestServer::*`, `build_router_for_unified`) pass the result to
+    /// [`AppState::new`].
+    pub fn from_shared_services(
+        services: &crate::network::shared_services::SharedServices,
+    ) -> Self {
+        Self {
+            vector_operations_service: services.vector_operations_service.clone(),
+            document_service: services.document_service.clone(),
+            collection_service: services.collection_service.clone(),
+            graph_operations_service: services.graph_service.clone(),
+            graph_collection_service: services.graph_collection_service.clone(),
+            record_ops: services.record_ops.clone(),
+            observability_service: services.observability_service.clone(),
+            event_log: services.event_log.clone(),
+            api_handlers: services.api_handlers.clone(),
+        }
+    }
+}
+
 /// Shared application state
 #[derive(Clone)]
 pub struct AppState {
-    /// Shared unified handlers — retained ONLY for the (deprecating) v1 REST
-    /// graph surface (`rest/v1/graph.rs`, ~27 sites). All v2/canonical reads
-    /// — record, collection, vector, graph-ops — are off this field (TD-104
-    /// S5 / REST phases 1–2 + graph-field extraction); it goes away when v1
-    /// graph is deleted.
-    pub request_handlers: Arc<UnifiedHandlers>,
     /// Extracted graph execution capability for query planning/execution helpers
     pub graph_execution_service: Arc<dyn GraphExecutionService>,
     /// Vector operations service, extracted at boot so the REST router-build
@@ -60,6 +107,10 @@ pub struct AppState {
     /// orchestrator; same `Arc` as the root handler. Replaces per-request
     /// `state.request_handlers.graph_operations_service` reads.
     pub graph_operations_service: Arc<crate::graph::GraphOperationsService>,
+    /// Graph collection CRUD service (create/list/get/delete graph), extracted
+    /// at boot (TD-104 S3-e). Feeds the v1 REST graph-collection handlers;
+    /// same `Arc` as the former root handler.
+    pub graph_collection_service: Arc<crate::services::GraphCollectionService>,
     /// Record write-path service (TD-104 S5). Owns record-batch insert/delete
     /// orchestration; same `Arc` the root handler's `record_ops()` returns.
     pub record_ops: Arc<crate::api_handlers::record_ops_service::RecordOpsService>,
@@ -132,13 +183,11 @@ pub struct AppState {
     /// record operations through this `ApiHandlersPort`
     /// (`CollectionPort`/`VectorOpsPort` trait objects).
     ///
-    /// TD-104 2(b): non-optional. `AppState::new` defaults it to the concrete
-    /// root `UnifiedHandlers` cast to its `ApiHandlersPort` impl (the boot
-    /// adapter — every constructor already has `request_handlers`), and
-    /// `with_api_handlers` overrides it with the runtime port-based handler in
-    /// production (unified, multi-port, cluster boots). This removed the
-    /// `create_router` `ports=None` fallback that read the concrete
-    /// `request_handlers` field directly.
+    /// TD-104 S3-e: non-optional. Set at construction from
+    /// [`RestCoreServices::api_handlers`] (the runtime port-based handler);
+    /// `with_api_handlers` may still override it in tests. The legacy
+    /// root-`UnifiedHandlers`-as-port default and the `create_router`
+    /// `ports=None` fallback are gone.
     pub api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort>,
     /// Optional queue client for async ingest. When `Some`, the v3
     /// `/documents?mode=async` handler routes through `producer.send`
@@ -188,24 +237,27 @@ pub struct AppState {
 impl AppState {
     /// Create REST app state with the standard shared runtime components.
     pub fn new(
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         graph_execution_service: Arc<dyn GraphExecutionService>,
         security_coordinator: Option<Arc<crate::security::SecurityCoordinator>>,
         data_dir: std::path::PathBuf,
         query_adapter: Option<Arc<QueryFacadeAdapter>>,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
-        // TD-104 S5: extract the concrete services once, at construction (the
-        // boot adapter), so the router-build reads `state.<service>` rather
-        // than scattering `state.request_handlers.<service>` across ~13 sites.
-        // Mirrors how `graph_execution_service` is already threaded.
-        let vector_operations_service = request_handlers.vector_operations_service.clone();
-        let document_service = request_handlers.document_service.clone();
-        let collection_service = request_handlers.collection_service.clone();
-        let graph_operations_service = request_handlers.graph_operations_service.clone();
-        let record_ops = request_handlers.record_ops();
-        let observability_service = request_handlers.observability_service.clone();
-        let event_log = request_handlers.event_log.clone();
+        // TD-104 S3-e: the concrete services arrive pre-extracted in `core`
+        // (built once from `SharedServices` at the boot call site) instead of
+        // being pulled out of the deleted root `UnifiedHandlers` here.
+        let RestCoreServices {
+            vector_operations_service,
+            document_service,
+            collection_service,
+            graph_operations_service,
+            graph_collection_service,
+            record_ops,
+            observability_service,
+            event_log,
+            api_handlers,
+        } = core;
         // Cross-modal fusion port — built once at boot from the vector + graph services and the
         // shared full-text index map (search-surface contract: one retrieval engine, shared port).
         // The empty default map here powers the document expander fail-closed; production replaces
@@ -219,20 +271,14 @@ impl AppState {
                 graph_operations_service.clone(),
                 fulltext_indexes.clone(),
             ));
-        // TD-104 2(b): default `api_handlers` to the root handler cast to its
-        // `ApiHandlersPort` impl. Production overrides via `with_api_handlers`
-        // with the runtime port-based handler; legacy/dev/test paths that never
-        // call it keep this default — so `create_router` never needs the old
-        // `ports=None` fallback that reached into the concrete `request_handlers`.
-        let api_handlers = request_handlers.clone() as Arc<dyn proximadb_runtime::ApiHandlersPort>;
         Self {
-            request_handlers,
             api_handlers,
             graph_execution_service,
             vector_operations_service,
             document_service,
             collection_service,
             graph_operations_service,
+            graph_collection_service,
             record_ops,
             fusion_service,
             observability_service,
@@ -2306,7 +2352,7 @@ mod tests {
         .expect("failed to initialize shared services for test app state");
 
         let state = AppState::new(
-            shared_services.request_handlers,
+            RestCoreServices::from_shared_services(&shared_services),
             shared_services.graph_execution_service,
             None,
             data_dir,

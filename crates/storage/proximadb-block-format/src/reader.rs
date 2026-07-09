@@ -16,6 +16,7 @@
 //! stripes are read at that index position.
 
 use anyhow::{Result, bail};
+use crc32fast::Hasher as Crc32;
 use proximadb_codec::{ProximaScheme, functions};
 
 use crate::{
@@ -23,9 +24,7 @@ use crate::{
     row_dir::{ROW_ENTRY_SIZE, RowDirectory},
     rowgroup::RowGroupBlock,
     stripe::{COLUMN_META_SIZE, ColumnMeta},
-    vparam::{
-        QUANT_FP16, QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock,
-    },
+    vparam::{QUANT_FP16, QUANT_RABITQ, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock},
     writer::{BLOCK_FOOTER_SIZE, BlockFooter},
 };
 use proximadb_codec::functions::{rabitq, sq8};
@@ -69,6 +68,17 @@ impl<'a> PaxBlockReader<'a> {
             bail!("block too small: {} bytes", data.len());
         }
         let header = BlockHeader::from_bytes(&data[..HEADER_SIZE])?;
+
+        // Verify block integrity before interpreting any footer offsets. The
+        // writer stamps crc32(body) where body = bytes [HEADER_SIZE..block_size]
+        // (everything after the 64-byte header); a mismatch means the block was
+        // silently corrupted on disk or in flight, so we fail closed rather than
+        // decode garbage. This guards the whole-block read path (compaction,
+        // local reads, OLTP full-row reads); the footer-first ranged path
+        // (`ranged.rs`) fetches partial byte ranges and cannot run this
+        // whole-block check — extending integrity to per-stripe/per-range CRCs
+        // for the ranged reader is a known follow-up.
+        verify_block_checksum(data, &header)?;
 
         // Read block footer (last BLOCK_FOOTER_SIZE bytes)
         let footer_start = data.len() - BLOCK_FOOTER_SIZE;
@@ -303,7 +313,7 @@ impl<'a> PaxBlockReader<'a> {
         let raw = self.read_stripe_raw(column_id)?;
         let n = self.row_count() as usize;
         let entry = self.vparams.get(column_id)?;
-        if entry.quant_kind == QUANT_RABITQ_RESERVED {
+        if entry.quant_kind == QUANT_RABITQ {
             // RaBitQ is a search representation; reconstruction is coarse (direction
             // preserved, magnitude approximate). Exact rerank uses a full-f32 tier.
             let col = self.vparams.rabitq_column(column_id)?;
@@ -321,7 +331,7 @@ impl<'a> PaxBlockReader<'a> {
         column_id: i32,
     ) -> Option<(RaBitQParams, Vec<Option<RaBitQCode>>)> {
         let entry = self.vparams.get(column_id)?;
-        if entry.quant_kind != QUANT_RABITQ_RESERVED {
+        if entry.quant_kind != QUANT_RABITQ {
             return None;
         }
         let col = self.vparams.rabitq_column(column_id)?;
@@ -591,6 +601,32 @@ impl<'a> PaxBlockReader<'a> {
         }
         Some(out)
     }
+}
+
+/// Recompute and check the block's CRC32 against the value stamped in its
+/// header. `body` is `data[HEADER_SIZE..block_size]` — exactly the bytes the
+/// writer hashed (see `PaxBlockWriter::flush`). Returns an error on a truncated
+/// buffer or a checksum mismatch (silent corruption), so the reader never
+/// decodes bytes it cannot vouch for.
+fn verify_block_checksum(data: &[u8], header: &BlockHeader) -> Result<()> {
+    let block_size = header.block_size as usize;
+    if block_size < HEADER_SIZE || block_size > data.len() {
+        bail!(
+            "block size {block_size} inconsistent with buffer {} bytes (truncated or corrupt)",
+            data.len()
+        );
+    }
+    let mut hasher = Crc32::new();
+    hasher.update(&data[HEADER_SIZE..block_size]);
+    let actual = hasher.finalize();
+    if actual != header.checksum {
+        bail!(
+            "block checksum mismatch: header {:#010x} != computed {:#010x} (corruption)",
+            header.checksum,
+            actual
+        );
+    }
+    Ok(())
 }
 
 fn scheme_from_encoding_id(encoding_id: u8) -> Option<ProximaScheme> {
@@ -1010,6 +1046,46 @@ mod tests {
     }
 
     #[test]
+    fn open_rejects_corrupted_block() {
+        // A block whose body is mutated after the writer stamped its CRC must be
+        // rejected by `open` — silent corruption is caught, not decoded.
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 0);
+        writer.add_record(&make_record("r1", "t", 1000)).unwrap();
+        writer.add_record(&make_record("r2", "t", 2000)).unwrap();
+        let block = writer.flush().unwrap();
+
+        // Sanity: the pristine block opens.
+        assert!(PaxBlockReader::open(&block).is_ok());
+
+        // Flip one body byte (past the 64-byte header) → checksum must fail.
+        // (`PaxBlockReader` has no Debug impl, so we can't use `unwrap_err`.)
+        let mut corrupt = block.clone();
+        corrupt[HEADER_SIZE + 1] ^= 0xff;
+        let err = match PaxBlockReader::open(&corrupt) {
+            Ok(_) => panic!("expected corrupted block to be rejected"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("checksum mismatch"),
+            "expected checksum rejection, got: {err}"
+        );
+
+        // A buffer whose declared block_size exceeds its length is rejected as
+        // truncated before any offset is interpreted.
+        let truncated = &block[..block.len() - 1];
+        let err = match PaxBlockReader::open(truncated) {
+            Ok(_) => panic!("expected truncated block to be rejected"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("truncated")
+                || err.to_string().contains("checksum")
+                || err.to_string().contains("too small"),
+            "expected truncation/checksum rejection, got: {err}"
+        );
+    }
+
+    #[test]
     fn reader_decode_str_stripe() {
         let mut writer = PaxBlockWriter::new(BlockMode::Olap, BlockCompression::None, "col", 0, 0);
         writer.add_record(&make_record("id_one", "t", 1)).unwrap();
@@ -1394,7 +1470,7 @@ mod tests {
                 .get(col_id::EMBED_BASE)
                 .unwrap()
                 .quant_kind,
-            crate::vparam::QUANT_RABITQ_RESERVED
+            crate::vparam::QUANT_RABITQ
         );
         assert_eq!(
             reader
@@ -1462,7 +1538,7 @@ mod tests {
                 .get(crate::col_id::EMBED_BASE)
                 .unwrap()
                 .quant_kind,
-            crate::vparam::QUANT_RABITQ_RESERVED
+            crate::vparam::QUANT_RABITQ
         );
 
         // Rerank the full candidate set against a query; FP16 distances must
@@ -1737,7 +1813,7 @@ mod tests {
 
         // Both vector columns present and correctly quantized.
         let emb = reader.vector_params().get(col_id::EMBED_BASE).unwrap();
-        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ_RESERVED);
+        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ);
         let rer = reader
             .vector_params()
             .get(crate::col_id::RERANK_BASE)
@@ -1792,7 +1868,7 @@ mod tests {
 
         // The cosine path uses the same RaBitQ + SQ8 columns as L2.
         let emb = reader.vector_params().get(col_id::EMBED_BASE).unwrap();
-        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ_RESERVED);
+        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ);
         assert_eq!(
             reader
                 .vector_params()

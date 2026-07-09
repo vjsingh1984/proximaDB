@@ -14,22 +14,24 @@
 //! one query.
 //!
 //! ## Scope
-//! Two modalities are now joinable relations, both live-backed and reachable from the pgwire
-//! DataFusion path (registered by `build_session_context`):
+//! All three non-relational modalities are now joinable relations, live-backed and reachable
+//! from the pgwire DataFusion path (registered by `build_session_context`), so a four-way
+//! `relational ⋈ vector ⋈ timeseries ⋈ graph` join executes in ONE data-local plan instead of a
+//! client-side fan-out + intersect (ADR-053):
 //!   * `vector_search(collection, query, k)` → `(id, score)` — via [`VectorSearchTableFunction`].
 //!   * `timeseries_range(collection, start_ms, end_ms)` → `(timestamp, metric, value)` — via
-//!     [`TimeseriesRangeTableFunction`]; the timeseries analogue, so a graph/relational ⋈
-//!     timeseries anomaly-scan executes in ONE data-local plan instead of a client-side fan-out
-//!     + intersect (ADR-053).
+//!     [`TimeseriesRangeTableFunction`].
+//!   * `graph_traverse(graph_id, start_id, edge_type, max_depth)` → `(node_id, depth)` — via
+//!     [`GraphTraverseTableFunction`], over the variable-length reachability traversal.
 //!
-//! Next slices (ADR-053): a `graph_traverse(graph, start, edge, depth)` source over the
-//! variable-length traversal (fixed `(node_id, depth)` schema), and a frontend source node that
-//! lowers (via the P4 `logical_lowering`) into the shared logical plane. All reuse the
-//! `*_to_batch` bridges below.
+//! Next slices (ADR-053): a single depth-carrying graph pass (vs the derived-depth `*k..k`
+//! passes), and a frontend source node that lowers (via the P4 `logical_lowering`) into the
+//! shared logical plane. All reuse the `*_to_batch` bridges below.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use arrow_array::{Float32Array, Float64Array, Int64Array, RecordBatch, StringArray};
+use arrow_array::{Float32Array, Float64Array, Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableFunctionImpl};
@@ -38,9 +40,18 @@ use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::scalar::ScalarValue;
+use proximadb_graph_query::service::GraphQueryReadService;
+use proximadb_query::graph_lowering::parse_supported_graph_query;
+use proximadb_query::graph_runtime::{
+    execute_supported_graph_query_with_start_nodes, graph_query_row_id,
+};
 
 use crate::proto::proximadb_v1::{SearchQuery, SearchVectorRecord, VectorSearchRequest};
 use crate::services::timeseries_service::{TimeSeriesService, TsPoint};
+
+/// Hard cap on `graph_traverse` depth — bounds the number of `*k..k` traversal passes
+/// (each is O(V+E)) regardless of a user-supplied `max_depth`.
+const MAX_GRAPH_TRAVERSE_DEPTH: i64 = 64;
 
 /// The lean Arrow schema a vector-search source exposes for joins: `(id, score)`.
 /// `id` joins against a relational key; `score` is the similarity the SQL can rank
@@ -160,12 +171,28 @@ impl TableProvider for VectorSearchTableProvider {
 /// `ctx.register_udtf("vector_search", Arc::new(VectorSearchTableFunction::new(ops)))`.
 pub struct VectorSearchTableFunction {
     vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
+    /// The connection tenant, forwarded to `VectorOpsPort::search` so the search runs under the
+    /// same `TenantContext` the REST write used. `None` ⇒ unscoped (reads only tenant-less data).
+    tenant: Option<String>,
 }
 
 impl VectorSearchTableFunction {
-    /// Capture the live vector service the function will search.
+    /// Capture the live vector service the function will search (no tenant scope).
     pub fn new(vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>) -> Self {
-        Self { vector_ops }
+        Self {
+            vector_ops,
+            tenant: None,
+        }
+    }
+
+    /// Capture the vector service AND the connection tenant — so the search reads the same
+    /// tenant partition a REST insert wrote. Without this the search runs `tenant_id=None` and
+    /// returns 0 rows for tenant-scoped data (TD-XMODAL-6).
+    pub fn with_tenant(
+        vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
+        tenant: Option<String>,
+    ) -> Self {
+        Self { vector_ops, tenant }
     }
 }
 
@@ -217,7 +244,7 @@ impl TableFunctionImpl for VectorSearchTableFunction {
             collection,
             query_vector,
             top_k as u32,
-            None,
+            self.tenant.clone(),
         )))
     }
 }
@@ -302,9 +329,12 @@ pub fn timeseries_points_to_batch(points: &[TsPoint]) -> Result<RecordBatch, Arr
 /// with a fixed set of points, independent of the process time-series service.
 #[async_trait]
 pub trait TimeseriesScanPort: Send + Sync {
-    /// Read the points of `collection` in `[start_ms, end_ms]` (epoch millis).
+    /// Read the points of `tenant`'s `collection` in `[start_ms, end_ms]` (epoch millis). The
+    /// tenant scopes the read structurally (the service selects the tenant's engine); the
+    /// collection name is tenant-clean.
     async fn range(
         &self,
+        tenant: &str,
         collection: &str,
         start_ms: i64,
         end_ms: i64,
@@ -318,11 +348,14 @@ struct TimeSeriesServiceScan(Arc<TimeSeriesService>);
 impl TimeseriesScanPort for TimeSeriesServiceScan {
     async fn range(
         &self,
+        tenant: &str,
         collection: &str,
         start_ms: i64,
         end_ms: i64,
     ) -> anyhow::Result<Vec<TsPoint>> {
-        self.0.query(collection, start_ms, end_ms, None).await
+        self.0
+            .query(tenant, collection, start_ms, end_ms, None)
+            .await
     }
 }
 
@@ -331,21 +364,24 @@ impl TimeseriesScanPort for TimeSeriesServiceScan {
 /// can join a timeseries scan against relational/graph data.
 pub struct TimeseriesRangeTableProvider {
     scan: Arc<dyn TimeseriesScanPort>,
+    tenant: String,
     collection: String,
     start_ms: i64,
     end_ms: i64,
 }
 
 impl TimeseriesRangeTableProvider {
-    /// Build a provider for one parameterized time-range read.
+    /// Build a provider for one parameterized time-range read, scoped to `tenant`.
     pub fn new(
         scan: Arc<dyn TimeseriesScanPort>,
+        tenant: impl Into<String>,
         collection: impl Into<String>,
         start_ms: i64,
         end_ms: i64,
     ) -> Self {
         Self {
             scan,
+            tenant: tenant.into(),
             collection: collection.into(),
             start_ms,
             end_ms,
@@ -356,6 +392,7 @@ impl TimeseriesRangeTableProvider {
 impl std::fmt::Debug for TimeseriesRangeTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TimeseriesRangeTableProvider")
+            .field("tenant", &self.tenant)
             .field("collection", &self.collection)
             .field("start_ms", &self.start_ms)
             .field("end_ms", &self.end_ms)
@@ -382,7 +419,7 @@ impl TableProvider for TimeseriesRangeTableProvider {
     ) -> DFResult<Arc<dyn ExecutionPlan>> {
         let points = self
             .scan
-            .range(&self.collection, self.start_ms, self.end_ms)
+            .range(&self.tenant, &self.collection, self.start_ms, self.end_ms)
             .await
             .map_err(|e| DataFusionError::Execution(format!("timeseries range: {e}")))?;
         let batch = timeseries_points_to_batch(&points).map_err(DataFusionError::from)?;
@@ -401,18 +438,40 @@ impl TableProvider for TimeseriesRangeTableProvider {
 /// `ctx.register_udtf("timeseries_range", Arc::new(TimeseriesRangeTableFunction::new(port)))`.
 pub struct TimeseriesRangeTableFunction {
     scan: Arc<dyn TimeseriesScanPort>,
+    /// The connection tenant, passed structurally to the scan port (which selects the tenant's
+    /// engine) — NOT folded into the collection name. `None` ⇒ the canonical `DEFAULT_TENANT`.
+    tenant: Option<String>,
 }
 
 impl TimeseriesRangeTableFunction {
-    /// Capture the scan port the function will read.
+    /// Capture the scan port the function will read (no tenant scope).
     pub fn new(scan: Arc<dyn TimeseriesScanPort>) -> Self {
-        Self { scan }
+        Self { scan, tenant: None }
     }
 
-    /// Build the function backed by the process time-series service.
+    /// Capture the scan port AND the connection tenant, so the range read folds the collection
+    /// key the same way the REST write path does (TD-XMODAL-6).
+    pub fn with_tenant(scan: Arc<dyn TimeseriesScanPort>, tenant: Option<String>) -> Self {
+        Self { scan, tenant }
+    }
+
+    /// Build the function backed by the process time-series service (no tenant scope).
     pub fn from_service(service: Arc<TimeSeriesService>) -> Self {
         Self {
             scan: Arc::new(TimeSeriesServiceScan(service)),
+            tenant: None,
+        }
+    }
+
+    /// Build the function backed by the process time-series service, scoped to the connection
+    /// tenant — the pgwire OLAP route wiring that makes `timeseries_range` read REST-written data.
+    pub fn from_service_with_tenant(
+        service: Arc<TimeSeriesService>,
+        tenant: Option<String>,
+    ) -> Self {
+        Self {
+            scan: Arc::new(TimeSeriesServiceScan(service)),
+            tenant,
         }
     }
 }
@@ -448,11 +507,250 @@ impl TableFunctionImpl for TimeseriesRangeTableFunction {
                 "timeseries_range: end_ms must be >= start_ms".into(),
             ));
         }
+        // Structural tenant scoping: pass the connection tenant (defaulting to the one canonical
+        // DEFAULT_TENANT) + the tenant-CLEAN collection name to the service, which selects the
+        // tenant's engine. No name-folding — the read hits the same per-tenant engine the REST
+        // ingest wrote to.
+        let tenant = proximadb_tenant::resolve_request_tenant(self.tenant.as_deref());
         Ok(Arc::new(TimeseriesRangeTableProvider::new(
             self.scan.clone(),
+            tenant,
             collection,
             start_ms,
             end_ms,
+        )))
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Graph slice (§8 moat, third modality) — `graph_traverse(graph_id, start_id, edge_type,
+// max_depth)` as a joinable table. The graph analogue of vector_search / timeseries_range:
+// it turns a variable-length reachability traversal into a DataFusion `(node_id, depth)`
+// relation, so a SINGLE SQL plan can join graph reachability against relational / vector /
+// timeseries data — the four-way zero-ETL cross-modal join over the pgwire OLAP route.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The Arrow schema a graph-traversal source exposes for joins: `(node_id, depth)`.
+pub fn graph_traverse_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        Field::new("node_id", DataType::Utf8, false),
+        Field::new("depth", DataType::Int32, false),
+    ]))
+}
+
+/// Convert `(node_id, depth)` reachable-node rows into a [`RecordBatch`].
+pub fn graph_nodes_to_batch(nodes: &[(String, i32)]) -> Result<RecordBatch, ArrowError> {
+    let ids: Vec<&str> = nodes.iter().map(|(id, _)| id.as_str()).collect();
+    let depths: Vec<i32> = nodes.iter().map(|(_, d)| *d).collect();
+    RecordBatch::try_new(
+        graph_traverse_schema(),
+        vec![
+            Arc::new(StringArray::from(ids)),
+            Arc::new(Int32Array::from(depths)),
+        ],
+    )
+}
+
+/// A DataFusion [`TableProvider`] whose `scan` walks a graph's variable-length reachability
+/// (`start_id -[:edge_type*1..max_depth]-> x`) live through a [`GraphQueryReadService`] and
+/// exposes the reachable `(node_id, depth)` set — so a single SQL plan can join graph
+/// reachability against relational / vector / timeseries data.
+pub struct GraphTraverseTableProvider {
+    graph_ops: Arc<dyn GraphQueryReadService>,
+    graph_id: String,
+    start_id: String,
+    edge_type: String,
+    max_depth: i64,
+    /// The connection tenant. `scan` composes the SAME structural scope the graph write path
+    /// uses (`{tenant}/{graph_id}` via [`crate::graph::scoped_graph_id`]), so a traverse reads
+    /// exactly the tenant's graph. `None` ⇒ the canonical default tenant.
+    tenant: Option<String>,
+}
+
+impl GraphTraverseTableProvider {
+    /// Build a provider for one parameterized reachability traversal, scoped to `tenant`.
+    pub fn new(
+        graph_ops: Arc<dyn GraphQueryReadService>,
+        graph_id: impl Into<String>,
+        start_id: impl Into<String>,
+        edge_type: impl Into<String>,
+        max_depth: i64,
+        tenant: Option<String>,
+    ) -> Self {
+        Self {
+            graph_ops,
+            graph_id: graph_id.into(),
+            start_id: start_id.into(),
+            edge_type: edge_type.into(),
+            max_depth,
+            tenant,
+        }
+    }
+}
+
+impl std::fmt::Debug for GraphTraverseTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GraphTraverseTableProvider")
+            .field("graph_id", &self.graph_id)
+            .field("start_id", &self.start_id)
+            .field("edge_type", &self.edge_type)
+            .field("max_depth", &self.max_depth)
+            .field("tenant", &self.tenant)
+            .finish_non_exhaustive()
+    }
+}
+
+#[async_trait]
+impl TableProvider for GraphTraverseTableProvider {
+    fn schema(&self) -> SchemaRef {
+        graph_traverse_schema()
+    }
+
+    fn table_type(&self) -> TableType {
+        TableType::Base
+    }
+
+    async fn scan(
+        &self,
+        state: &dyn Session,
+        projection: Option<&Vec<usize>>,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> DFResult<Arc<dyn ExecutionPlan>> {
+        // Derived-depth traversal: one `*k..k` reachability pass per depth k in 1..=max, tagging
+        // each first-seen node with its (shortest) depth. The inner BFS is visited-set bounded,
+        // so each pass is O(V+E); a single depth-carrying pass is a follow-on TD.
+        let max_depth = self.max_depth.clamp(1, MAX_GRAPH_TRAVERSE_DEPTH);
+        // Structural tenant scope: read the SAME `{tenant}/{graph_id}` key the graph write path
+        // composes (`TenantGraphOps`/`for_tenant`), so a cross-modal traverse sees exactly this
+        // tenant's graph and never another's. `None` ⇒ the canonical default tenant.
+        let tenant = proximadb_tenant::resolve_request_tenant(self.tenant.as_deref());
+        let scoped_graph_id = crate::graph::scoped_graph_id(&tenant, &self.graph_id)
+            .map_err(|e| DataFusionError::Execution(format!("graph_traverse tenant scope: {e}")))?;
+        let mut rows: Vec<(String, i32)> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for k in 1..=max_depth {
+            let cypher = format!(
+                "MATCH (a)-[:{edge}*{k}..{k}]->(x) RETURN x.id AS node_id",
+                edge = self.edge_type
+            );
+            let parsed = parse_supported_graph_query(&cypher, None, Some(&scoped_graph_id))
+                .map_err(|e| DataFusionError::Execution(format!("graph_traverse parse: {e}")))?;
+            let executed = execute_supported_graph_query_with_start_nodes(
+                &*self.graph_ops,
+                &parsed,
+                Some(std::slice::from_ref(&self.start_id)),
+            )
+            .await
+            .map_err(|e| DataFusionError::Execution(format!("graph_traverse: {e}")))?;
+            for row in &executed.rows {
+                let id = graph_query_row_id(row, 0);
+                if !id.is_empty() && seen.insert(id.clone()) {
+                    rows.push((id, k as i32));
+                }
+            }
+        }
+        let batch = graph_nodes_to_batch(&rows).map_err(DataFusionError::from)?;
+        let mem = MemTable::try_new(graph_traverse_schema(), vec![vec![batch]])?;
+        mem.scan(state, projection, filters, limit).await
+    }
+}
+
+/// DataFusion table-valued function `graph_traverse(graph_id, start_id, edge_type, max_depth)`
+/// returning a [`GraphTraverseTableProvider`] — makes the reachability ⋈ relational join
+/// expressible directly in SQL (reachable from the pgwire DataFusion path):
+/// `SELECT a.tier, g.node_id, g.depth
+///  FROM accounts a JOIN graph_traverse('aml','acct-7','sent_to',4) g ON a.id = g.node_id`.
+/// Register once per `SessionContext`:
+/// `ctx.register_udtf("graph_traverse", Arc::new(GraphTraverseTableFunction::new(graph_ops)))`.
+pub struct GraphTraverseTableFunction {
+    graph_ops: Arc<dyn GraphQueryReadService>,
+    /// The connection tenant, forwarded to each provider so the traverse reads the same
+    /// `{tenant}/{graph_id}` scope the graph write path composes. `None` ⇒ the canonical
+    /// default tenant (matches a default-tenant write).
+    tenant: Option<String>,
+}
+
+impl GraphTraverseTableFunction {
+    /// Capture the live graph read service the function will traverse (no tenant scope ⇒
+    /// the canonical default tenant). Prefer [`with_tenant`](Self::with_tenant) on the pgwire
+    /// path so the traverse reads the connection's tenant.
+    pub fn new(graph_ops: Arc<dyn GraphQueryReadService>) -> Self {
+        Self {
+            graph_ops,
+            tenant: None,
+        }
+    }
+
+    /// Capture the graph read service AND the connection tenant — so the traverse reads the
+    /// SAME structural scope (`{tenant}/{graph_id}`) the graph write path (`TenantGraphOps` on
+    /// gRPC/Flight) composed. Without this the read would hit a different (or default) scope and
+    /// return 0 rows for tenant-scoped graphs (closes TD-XMODAL-6 for the graph modality).
+    pub fn with_tenant(graph_ops: Arc<dyn GraphQueryReadService>, tenant: Option<String>) -> Self {
+        Self { graph_ops, tenant }
+    }
+}
+
+impl std::fmt::Debug for GraphTraverseTableFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GraphTraverseTableFunction")
+            .field("tenant", &self.tenant)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A bare identifier (edge type / relationship name) safe to interpolate into the internal
+/// Cypher: non-empty ASCII alphanumerics + `_`. (The start-node id is passed out-of-band via
+/// `execute_supported_graph_query_with_start_nodes`, so it never enters the query string.)
+fn is_bare_identifier(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+impl TableFunctionImpl for GraphTraverseTableFunction {
+    fn call(&self, args: &[Expr]) -> DFResult<Arc<dyn TableProvider>> {
+        let graph_id = arg_string(args, 0).ok_or_else(|| {
+            DataFusionError::Plan(
+                "graph_traverse(graph_id, start_id, edge_type, max_depth): arg 1 must be a graph-id string"
+                    .into(),
+            )
+        })?;
+        let start_id = arg_string(args, 1).ok_or_else(|| {
+            DataFusionError::Plan("graph_traverse: arg 2 must be a start-node-id string".into())
+        })?;
+        let edge_type = arg_string(args, 2).ok_or_else(|| {
+            DataFusionError::Plan("graph_traverse: arg 3 must be an edge-type string".into())
+        })?;
+        let max_depth = arg_i64(args, 3).ok_or_else(|| {
+            DataFusionError::Plan("graph_traverse: arg 4 must be an integer max_depth".into())
+        })?;
+        if graph_id.trim().is_empty() {
+            return Err(DataFusionError::Plan(
+                "graph_traverse: graph_id must not be empty".into(),
+            ));
+        }
+        if start_id.trim().is_empty() {
+            return Err(DataFusionError::Plan(
+                "graph_traverse: start_id must not be empty".into(),
+            ));
+        }
+        if !is_bare_identifier(&edge_type) {
+            return Err(DataFusionError::Plan(
+                "graph_traverse: edge_type must be a bare identifier (letters, digits, underscore)"
+                    .into(),
+            ));
+        }
+        if max_depth <= 0 {
+            return Err(DataFusionError::Plan(
+                "graph_traverse: max_depth must be greater than zero".into(),
+            ));
+        }
+        Ok(Arc::new(GraphTraverseTableProvider::new(
+            self.graph_ops.clone(),
+            graph_id,
+            start_id,
+            edge_type,
+            max_depth,
+            self.tenant.clone(),
         )))
     }
 }
@@ -781,6 +1079,7 @@ mod tests {
     impl TimeseriesScanPort for FixedTimeseriesScan {
         async fn range(
             &self,
+            _tenant: &str,
             _collection: &str,
             _start_ms: i64,
             _end_ms: i64,
@@ -885,5 +1184,407 @@ mod tests {
                 "expected {expected:?} in {error}"
             );
         }
+    }
+
+    /// TD-XMODAL-7 repro: a UDTF wrapped in an aggregating derived table that is then JOINed with
+    /// a base table (`FROM base o CROSS JOIN (SELECT max(value) FROM timeseries_range(...)) ts`)
+    /// must not blow the stack. A top-level UDTF (even two joined) plans fine; only the
+    /// join-to-a-derived-table-over-a-UDTF shape recursed over pgwire's DataFusion fallback.
+    #[tokio::test]
+    async fn udtf_in_aggregating_subquery_does_not_recurse() {
+        let port: Arc<dyn TimeseriesScanPort> = Arc::new(FixedTimeseriesScan {
+            points: vec![tp(1, "amount", 5.0), tp(2, "amount", 9.0)],
+        });
+        let ctx = SessionContext::new();
+        ctx.register_udtf(
+            "timeseries_range",
+            Arc::new(TimeseriesRangeTableFunction::new(port)),
+        );
+        // A base relation to join against, mirroring the pgwire `orders` table.
+        let base_schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Utf8, false)]));
+        let base = RecordBatch::try_new(
+            base_schema.clone(),
+            vec![Arc::new(StringArray::from(vec!["acct-7"]))],
+        )
+        .unwrap();
+        ctx.register_table(
+            "orders",
+            Arc::new(MemTable::try_new(base_schema, vec![vec![base]]).unwrap()),
+        )
+        .unwrap();
+        let n: usize = ctx
+            .sql(
+                "SELECT o.id, ts.peak \
+                 FROM orders o \
+                 CROSS JOIN (SELECT max(value) AS peak FROM timeseries_range('c', 0, 9)) ts \
+                 WHERE o.id = 'acct-7' \
+                 GROUP BY o.id, ts.peak",
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.num_rows())
+            .sum();
+        assert_eq!(n, 1);
+    }
+
+    /// A `TimeseriesScanPort` that records the `(tenant, collection)` it was asked to read — used
+    /// to prove `timeseries_range` passes the tenant STRUCTURALLY and keeps the collection name
+    /// tenant-clean (no `{tenant}::` folding).
+    struct RecordingTimeseriesScan {
+        seen: Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    }
+
+    #[async_trait]
+    impl TimeseriesScanPort for RecordingTimeseriesScan {
+        async fn range(
+            &self,
+            tenant: &str,
+            collection: &str,
+            _start_ms: i64,
+            _end_ms: i64,
+        ) -> anyhow::Result<Vec<TsPoint>> {
+            self.seen
+                .lock()
+                .unwrap()
+                .push((tenant.to_string(), collection.to_string()));
+            Ok(vec![tp(1_000, "amount", 1.0)])
+        }
+    }
+
+    /// Structural isolation: `timeseries_range` passes the connection tenant to the scan port
+    /// (which selects the tenant's engine) and keeps the collection name tenant-CLEAN — no
+    /// `{tenant}::` folding. An empty/absent tenant resolves to the one canonical `DEFAULT_TENANT`.
+    #[tokio::test]
+    async fn timeseries_range_udtf_passes_tenant_structurally_with_clean_name() {
+        for (tenant, expected_tenant) in [
+            (Some("acme".to_string()), "acme"),
+            (Some(String::new()), "default"),
+            (None, "default"),
+        ] {
+            let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let port: Arc<dyn TimeseriesScanPort> = Arc::new(RecordingTimeseriesScan {
+                seen: Arc::clone(&seen),
+            });
+            let ctx = SessionContext::new();
+            ctx.register_udtf(
+                "timeseries_range",
+                Arc::new(TimeseriesRangeTableFunction::with_tenant(port, tenant)),
+            );
+            let _ = ctx
+                .sql("SELECT * FROM timeseries_range('sensor', 0, 9999)")
+                .await
+                .unwrap()
+                .collect()
+                .await
+                .unwrap();
+            // The collection stays "sensor" (no `::`); the tenant is passed as a distinct arg.
+            assert_eq!(
+                seen.lock().unwrap().as_slice(),
+                &[(expected_tenant.to_string(), "sensor".to_string())]
+            );
+        }
+    }
+
+    /// A `VectorOpsPort` that records the `tenant_id` its `search` was called with — proves
+    /// `vector_search` forwards the connection tenant (TD-XMODAL-6).
+    struct RecordingVectorOps {
+        seen: Arc<std::sync::Mutex<Vec<Option<String>>>>,
+    }
+
+    #[async_trait]
+    impl proximadb_runtime::VectorOpsPort for RecordingVectorOps {
+        async fn search(
+            &self,
+            _request: VectorSearchRequest,
+            tenant_id: Option<&str>,
+        ) -> anyhow::Result<VectorOperationResponse> {
+            self.seen
+                .lock()
+                .unwrap()
+                .push(tenant_id.map(str::to_string));
+            Ok(VectorOperationResponse {
+                results: Some(SearchResult {
+                    results: vec![],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        }
+        async fn batch_upsert(
+            &self,
+            _r: VectorBatchRequest,
+            _t: Option<&str>,
+        ) -> anyhow::Result<VectorOperationResponse> {
+            unimplemented!()
+        }
+        async fn get_vector(
+            &self,
+            _c: &str,
+            _v: &str,
+            _iv: bool,
+            _im: bool,
+            _t: Option<&str>,
+        ) -> anyhow::Result<VectorOperationResponse> {
+            unimplemented!()
+        }
+        async fn flush_all(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn metrics(&self) -> anyhow::Result<serde_json::Value> {
+            Ok(serde_json::Value::Null)
+        }
+    }
+
+    /// TD-XMODAL-6: a tenant-scoped `vector_search` forwards the connection tenant to the search
+    /// (vectors are `TenantContext`-partitioned, not name-folded), so it reads the tenant's data
+    /// instead of the unscoped partition.
+    #[tokio::test]
+    async fn vector_search_udtf_forwards_tenant_to_search() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let ops: Arc<dyn proximadb_runtime::VectorOpsPort> = Arc::new(RecordingVectorOps {
+            seen: Arc::clone(&seen),
+        });
+        let ctx = SessionContext::new();
+        ctx.register_udtf(
+            "vector_search",
+            Arc::new(VectorSearchTableFunction::with_tenant(
+                ops,
+                Some("acme".to_string()),
+            )),
+        );
+        let _ = ctx
+            .sql("SELECT * FROM vector_search('docs_vec', '[0.1,0.2]', 5)")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_eq!(seen.lock().unwrap().as_slice(), &[Some("acme".to_string())]);
+    }
+
+    // ── graph slice ───────────────────────────────────────────────────────────────
+    use crate::proto::proximadb_v1::{Edge, EdgeQuery, Node, NodeQuery};
+    use proximadb_graph_query::service::GraphQueryResult;
+
+    /// A fixed in-memory graph read service — a linear chain over one edge type, enough to
+    /// exercise the variable-length `*k..k` traversal the `graph_traverse` provider runs.
+    #[derive(Default)]
+    struct FixedGraphOps {
+        nodes: HashMap<String, Arc<Node>>,
+        edges: Vec<Arc<Edge>>,
+    }
+
+    impl FixedGraphOps {
+        fn chain(ids: &[&str], edge_type: &str) -> Self {
+            let mut s = Self::default();
+            for id in ids {
+                s.nodes.insert(
+                    (*id).to_string(),
+                    Arc::new(Node {
+                        id: (*id).to_string(),
+                        labels: vec!["N".to_string()],
+                        ..Default::default()
+                    }),
+                );
+            }
+            for w in ids.windows(2) {
+                s.edges.push(Arc::new(Edge {
+                    id: format!("{}->{}", w[0], w[1]),
+                    from_node_id: w[0].to_string(),
+                    to_node_id: w[1].to_string(),
+                    edge_type: edge_type.to_string(),
+                    ..Default::default()
+                }));
+            }
+            s
+        }
+    }
+
+    #[async_trait]
+    impl GraphQueryReadService for FixedGraphOps {
+        async fn list_graphs(&self) -> GraphQueryResult<Vec<String>> {
+            Ok(vec!["g".to_string()])
+        }
+        async fn get_node(&self, _g: &str, id: &str) -> GraphQueryResult<Option<Arc<Node>>> {
+            Ok(self.nodes.get(id).cloned())
+        }
+        async fn query_nodes(&self, _g: &str, _q: NodeQuery) -> GraphQueryResult<Vec<Arc<Node>>> {
+            Ok(self.nodes.values().cloned().collect())
+        }
+        async fn query_edges(&self, _g: &str, q: EdgeQuery) -> GraphQueryResult<Vec<Arc<Edge>>> {
+            Ok(self
+                .edges
+                .iter()
+                .filter(|e| {
+                    q.from_node_id
+                        .as_deref()
+                        .is_none_or(|f| e.from_node_id == f)
+                        && (q.edge_types.is_empty()
+                            || q.edge_types.iter().any(|t| t == &e.edge_type))
+                })
+                .cloned()
+                .collect())
+        }
+    }
+
+    /// The moat proof for the third modality: a graph reachability set JOINs a relational table
+    /// in ONE DataFusion SQL plan — the shape a pgwire client writes for `relational ⋈ graph`.
+    #[tokio::test]
+    async fn graph_traverse_udtf_joins_relational_in_sql() {
+        // n0 -> n1 -> n2 -> n3 over LINK.
+        let graph: Arc<dyn GraphQueryReadService> =
+            Arc::new(FixedGraphOps::chain(&["n0", "n1", "n2", "n3"], "LINK"));
+        let ctx = SessionContext::new();
+        ctx.register_udtf(
+            "graph_traverse",
+            Arc::new(GraphTraverseTableFunction::new(graph)),
+        );
+
+        // `*1..3` from n0 reaches n1 (d1), n2 (d2), n3 (d3).
+        let rows: usize = ctx
+            .sql("SELECT node_id, depth FROM graph_traverse('g','n0','LINK',3) ORDER BY depth")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.num_rows())
+            .sum();
+        assert_eq!(rows, 3);
+
+        // Join reachability with a relational dimension.
+        let dim_schema = Arc::new(Schema::new(vec![
+            Field::new("node_id", DataType::Utf8, false),
+            Field::new("tier", DataType::Utf8, false),
+        ]));
+        let dim = RecordBatch::try_new(
+            dim_schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["n1", "n3", "z"])),
+                Arc::new(StringArray::from(vec!["hot", "hot", "cold"])),
+            ],
+        )
+        .unwrap();
+        ctx.register_table(
+            "acct",
+            Arc::new(MemTable::try_new(dim_schema, vec![vec![dim]]).unwrap()),
+        )
+        .unwrap();
+        let joined: usize = ctx
+            .sql(
+                "SELECT a.tier, g.depth FROM acct a \
+                 JOIN graph_traverse('g','n0','LINK',4) g ON a.node_id = g.node_id",
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.num_rows())
+            .sum();
+        assert_eq!(joined, 2); // n1 + n3 reachable & in acct; z has no reachable node
+    }
+
+    #[tokio::test]
+    async fn graph_traverse_udtf_rejects_invalid_inputs() {
+        let graph: Arc<dyn GraphQueryReadService> = Arc::new(FixedGraphOps::default());
+        let ctx = SessionContext::new();
+        ctx.register_udtf(
+            "graph_traverse",
+            Arc::new(GraphTraverseTableFunction::new(graph)),
+        );
+
+        for (sql, expected) in [
+            (
+                "SELECT * FROM graph_traverse('','n0','LINK',3)",
+                "graph_id must not be empty",
+            ),
+            (
+                "SELECT * FROM graph_traverse('g','','LINK',3)",
+                "start_id must not be empty",
+            ),
+            (
+                "SELECT * FROM graph_traverse('g','n0','bad edge',3)",
+                "edge_type must be a bare identifier",
+            ),
+            (
+                "SELECT * FROM graph_traverse('g','n0','LINK',0)",
+                "max_depth must be greater than zero",
+            ),
+        ] {
+            let error = ctx.sql(sql).await.expect_err("invalid graph_traverse");
+            assert!(
+                error.to_string().contains(expected),
+                "expected {expected:?} in {error}"
+            );
+        }
+    }
+
+    /// Records the graph id each read is issued against — so we can assert the `graph_traverse`
+    /// UDTF composes the SAME `{tenant}/{graph_id}` structural scope the graph write path uses.
+    #[derive(Default)]
+    struct RecordingGraphOps {
+        seen_graph_ids: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl GraphQueryReadService for RecordingGraphOps {
+        async fn list_graphs(&self) -> GraphQueryResult<Vec<String>> {
+            Ok(Vec::new())
+        }
+        async fn get_node(&self, g: &str, _id: &str) -> GraphQueryResult<Option<Arc<Node>>> {
+            self.seen_graph_ids.lock().unwrap().push(g.to_string());
+            Ok(None)
+        }
+        async fn query_nodes(&self, g: &str, _q: NodeQuery) -> GraphQueryResult<Vec<Arc<Node>>> {
+            self.seen_graph_ids.lock().unwrap().push(g.to_string());
+            Ok(Vec::new())
+        }
+        async fn query_edges(&self, g: &str, _q: EdgeQuery) -> GraphQueryResult<Vec<Arc<Edge>>> {
+            self.seen_graph_ids.lock().unwrap().push(g.to_string());
+            Ok(Vec::new())
+        }
+    }
+
+    /// TD-XMODAL-6 (graph modality): a tenant-scoped `graph_traverse` reads the SAME
+    /// `{tenant}/{graph_id}` structural scope the graph write path (`TenantGraphOps`) composes —
+    /// never the raw `graph_id` — so a cross-modal traverse sees exactly the tenant's graph and
+    /// the composed scope carries no `::` fold.
+    #[tokio::test]
+    async fn graph_traverse_udtf_scopes_read_by_tenant() {
+        let ops = Arc::new(RecordingGraphOps::default());
+        let ops_dyn: Arc<dyn GraphQueryReadService> = ops.clone();
+        let ctx = SessionContext::new();
+        ctx.register_udtf(
+            "graph_traverse",
+            Arc::new(GraphTraverseTableFunction::with_tenant(
+                ops_dyn,
+                Some("tenantA".to_string()),
+            )),
+        );
+        // The logical graph_id in SQL is tenant-CLEAN ("shared"); the tenant is applied by the UDTF.
+        let _ = ctx
+            .sql("SELECT node_id, depth FROM graph_traverse('shared','n0','LINK',1)")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let seen = ops.seen_graph_ids.lock().unwrap();
+        assert!(!seen.is_empty(), "the read path was exercised");
+        assert!(
+            seen.iter().all(|g| g == "tenantA/shared"),
+            "every graph read is scoped to the tenant: {seen:?}"
+        );
+        assert!(
+            seen.iter().all(|g| !g.contains("::")),
+            "structural scope carries no `::` fold: {seen:?}"
+        );
     }
 }

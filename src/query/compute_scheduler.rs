@@ -141,6 +141,20 @@ pub struct QueryShape {
     pub cardinality: CardinalityClass,
     /// Bucketed partition/row-group fan-out (§5.2 Phase-1). `Unknown` default.
     pub partition_fanout: PartitionFanout,
+    /// TD-OLAP-1 slice 2: tables backed by PAX segments (not Parquet). When
+    /// true + `pax_reader_enabled()`, routes to DataFusion via PaxSplitReader.
+    pub pax_backed: bool,
+}
+
+/// TD-OLAP-1 slice 2: PAX-native OLAP scan gate (inline — not imported from
+/// `pax_adapter` so compute_scheduler compiles without `datafusion-integration`).
+fn pax_reader_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("PROXIMADB_DF_PAX_READER")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
 }
 
 /// What produced a [`SelectRouteDecision`] — a `route_decisions_total` metric
@@ -332,13 +346,28 @@ impl ComputeScheduler {
             },
             // OLAP shape on native storage — Volcano serves it from WAL+RecordStorage
             // until the relational base tier is Parquet/Iceberg (course-correction §6 P3).
-            (true, false) => SelectRouteDecision {
-                backend: ComputeBackend::Native,
-                workload_profile: CatalogWorkloadProfile::Olap,
-                reason: "OLAP shape (join/group-by/aggregate/set-op) on native storage — Volcano"
-                    .to_string(),
-                source: RouteSource::Static,
-            },
+            (true, false) => {
+                // TD-OLAP-1 slice 2: PAX-backed analytical → DataFusion via
+                // PaxSplitReader (flag-gated, default OFF per ADR-052).
+                if shape.pax_backed && pax_reader_enabled() {
+                    SelectRouteDecision {
+                        backend: ComputeBackend::DataFusionLocal,
+                        workload_profile: CatalogWorkloadProfile::Olap,
+                        reason: "OLAP shape on PAX-backed table(s) — DataFusion via PaxSplitReader"
+                            .to_string(),
+                        source: RouteSource::Static,
+                    }
+                } else {
+                    SelectRouteDecision {
+                        backend: ComputeBackend::Native,
+                        workload_profile: CatalogWorkloadProfile::Olap,
+                        reason:
+                            "OLAP shape (join/group-by/aggregate/set-op) on native storage — Volcano"
+                                .to_string(),
+                        source: RouteSource::Static,
+                    }
+                }
+            }
             (false, _) => SelectRouteDecision {
                 backend: ComputeBackend::Native,
                 workload_profile: CatalogWorkloadProfile::Oltp,

@@ -14,8 +14,10 @@
 //!
 //! Per `SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`: retrieval delegates to the
 //! fusion seam (`FusionService`) — this orchestrator owns no ranking. Tenant
-//! isolation is structural (the caller folds the tenant into the `collection`
-//! key before calling here).
+//! isolation is structural: the caller passes a tenant-CLEAN `collection` + the
+//! request `tenant`, and each leg is scoped here — graph via `for_tenant`, vector
+//! via `TenantContext`, provenance document via the scoped collection key — never a
+//! `{tenant}::collection` name fold.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -159,10 +161,22 @@ impl EntityOrchestrator {
             created_at_ms: now_ms,
             updated_at_ms: now_ms,
         };
-        match self.graph.create_node(collection, node.clone()).await {
+        // Route graph ops through the tenant-scoped handle (structural isolation composed once);
+        // the collection name stays tenant-clean.
+        match self
+            .graph
+            .for_tenant(tenant_id)
+            .create_node(collection, node.clone())
+            .await
+        {
             Ok(_) => debug!("Created graph node {node_id}"),
             Err(create_err) => {
-                if let Err(update_err) = self.graph.update_node(collection, node).await {
+                if let Err(update_err) = self
+                    .graph
+                    .for_tenant(tenant_id)
+                    .update_node(collection, node)
+                    .await
+                {
                     error!("Entity node upsert failed: create={create_err}; update={update_err}");
                     return Err(update_err).context("entity node upsert");
                 }
@@ -201,7 +215,17 @@ impl EntityOrchestrator {
                 props,
                 ..Default::default()
             };
-            match self.vector.insert_batch(collection, vec![record]).await {
+            // Tenant-context write: validates access + stamps tenant_id on the record so the vector
+            // leg isolates by TenantContext (clean collection name), matching the fusion read path.
+            match self
+                .vector
+                .insert_batch_with_tenant_context(
+                    collection,
+                    vec![record],
+                    Some(&crate::storage::tenant::context::TenantContext::for_tenant_id(tenant_id)),
+                )
+                .await
+            {
                 Ok(r) => {
                     if !r.success {
                         warn!(
@@ -250,14 +274,26 @@ impl EntityOrchestrator {
                 "_entity_collection".to_string(),
                 ProximaTreeNode::Value(ProximaValue::String(collection.to_string())),
             );
+            // Scope the provenance doc collection to the tenant (both the storage key and the
+            // record's collection_id — they key the same OID), matching the document fix. The
+            // tenant is already validated (graph create above would have failed otherwise).
+            let scoped_doc_collection =
+                crate::storage::document::service::scoped_document_collection(
+                    tenant_id, collection,
+                )
+                .context("scope provenance document collection")?;
             let doc = DocumentRecord::from_tree(
                 doc_id.clone(),
                 tree,
-                collection.to_string(),
+                scoped_doc_collection.clone(),
                 None,
                 Some("entity_provenance".to_string()),
             );
-            match self.document.insert_document_record(collection, doc).await {
+            match self
+                .document
+                .insert_document_record(&scoped_doc_collection, doc)
+                .await
+            {
                 Ok(_) => debug!("Provenance document inserted doc_id={doc_id}"),
                 Err(e) => warn!("Provenance insert failed (non-fatal) for {doc_id}: {e}"),
             }
@@ -283,7 +319,12 @@ impl EntityOrchestrator {
                 created_at_ms: now_ms,
                 updated_at_ms: now_ms,
             };
-            match self.graph.create_edge(collection, edge).await {
+            match self
+                .graph
+                .for_tenant(tenant_id)
+                .create_edge(collection, edge)
+                .await
+            {
                 Ok(_) => debug!("Created edge {edge_id}"),
                 Err(e) => warn!("Edge create failed (non-fatal) for {edge_id}: {e}"),
             }
@@ -292,10 +333,16 @@ impl EntityOrchestrator {
         Ok(entity_id)
     }
 
-    /// Fetch the entity graph node, if present.
-    pub async fn get(&self, collection: &str, entity_id: &str) -> Result<Option<Arc<Node>>> {
+    /// Fetch the entity graph node, if present. `tenant` scopes the graph read structurally.
+    pub async fn get(
+        &self,
+        collection: &str,
+        tenant: &str,
+        entity_id: &str,
+    ) -> Result<Option<Arc<Node>>> {
         let node_id = Self::entity_node_id(collection, entity_id);
         self.graph
+            .for_tenant(tenant)
             .get_node(collection, &node_id)
             .await
             .context("get entity node")
@@ -303,11 +350,12 @@ impl EntityOrchestrator {
 
     /// Delete the entity graph node. Returns whether it existed. (Associated
     /// vectors/provenance are not cascaded — callers remove them via the
-    /// auxiliary-id convention.)
-    pub async fn delete(&self, collection: &str, entity_id: &str) -> Result<bool> {
+    /// auxiliary-id convention.) `tenant` scopes the graph delete structurally.
+    pub async fn delete(&self, collection: &str, tenant: &str, entity_id: &str) -> Result<bool> {
         let node_id = Self::entity_node_id(collection, entity_id);
         Ok(self
             .graph
+            .for_tenant(tenant)
             .delete_node(collection, &node_id)
             .await
             .context("delete entity node")?
@@ -321,6 +369,7 @@ impl EntityOrchestrator {
     pub async fn search(
         &self,
         collection: &str,
+        tenant: &str,
         query_vector: Option<Vec<f32>>,
         filters: Vec<PropertyFilter>,
         top_k: usize,
@@ -332,6 +381,8 @@ impl EntityOrchestrator {
                 route_policy: None,
                 graph_id: collection.to_string(),
                 vector_collection: collection.to_string(),
+                // Structural tenant boundary — scopes BOTH fusion legs (clean names in, TD-ENTITY-TENANT-1).
+                tenant: Some(tenant.to_string()),
                 query_vector,
                 // TD-146 scope B: graph-augmented entity fusion. `EntityNode` keying normalizes
                 // the auxiliary vector oid + canonical graph oid to the entity `node_id` so the
@@ -357,7 +408,12 @@ impl EntityOrchestrator {
             let mut hits = Vec::with_capacity(items.len());
             for item in items {
                 let node_id = Self::node_id_from_auxiliary_oid(&item.oid).to_owned();
-                if let Ok(Some(node)) = self.graph.get_node(collection, &node_id).await {
+                if let Ok(Some(node)) = self
+                    .graph
+                    .for_tenant(tenant)
+                    .get_node(collection, &node_id)
+                    .await
+                {
                     hits.push(EntitySearchHit {
                         node,
                         score: item.score,
@@ -379,6 +435,7 @@ impl EntityOrchestrator {
         };
         let nodes = self
             .graph
+            .for_tenant(tenant)
             .query_nodes(collection, query)
             .await
             .context("entity node scan")?;

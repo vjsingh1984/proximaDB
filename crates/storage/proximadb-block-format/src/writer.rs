@@ -35,8 +35,8 @@ use crate::{
     rowgroup::{RowGroupBlock, RowGroupEntry, f64_bounds, i64_bounds},
     stripe::{COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe},
     vparam::{
-        QUANT_FP16, QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn,
-        VectorParamBlock, VectorParamEntry,
+        QUANT_FP16, QUANT_RABITQ, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock,
+        VectorParamEntry,
     },
 };
 
@@ -177,6 +177,17 @@ pub struct PaxBlockWriter {
     /// One `Vec<Vec<f32>>` per embedding position.
     embeddings: Vec<Vec<Option<Vec<f32>>>>,
 
+    /// P-Shred (ADR-055): declared/hot props keys to shred into typed user-columns,
+    /// as `(prop_key, user_col_id ≥ USER_BASE)`. Empty ⇒ no shredding (byte-for-byte
+    /// today's behavior). These columns are a DUPLICATED pruning/projection index;
+    /// the msgpack `PROPS` tail stays the source of truth (the reader reconstructs
+    /// from the tail and ignores `USER_BASE+` columns), so this is additive and
+    /// mixed-read-safe with no format-version bump.
+    shred_spec: Vec<(String, i32)>,
+    /// One buffer per `shred_spec` entry: the CLONED prop value per row (never
+    /// removed from `props` — the tail must remain complete).
+    user_col_buffers: Vec<Vec<Option<proximadb_data_model::ProximaValue>>>,
+
     // MVCC metadata for row directory
     tenant_id_hash_set: u64,
     min_ts: i64,
@@ -216,6 +227,8 @@ impl PaxBlockWriter {
             edge_type: Vec::new(),
             edge_weight: Vec::new(),
             embeddings: vec![Vec::new(); embedding_count],
+            shred_spec: Vec::new(),
+            user_col_buffers: Vec::new(),
             tenant_id_hash_set: 0,
             min_ts: i64::MAX,
             max_ts: i64::MIN,
@@ -251,6 +264,16 @@ impl PaxBlockWriter {
     /// exact. Only used when tier 1 is RaBitQ.
     pub fn with_rerank_quant(mut self, quant: VectorQuant) -> Self {
         self.rerank_quant = quant;
+        self
+    }
+
+    /// P-Shred (ADR-055): shred the given props keys into typed user-columns
+    /// (`USER_BASE`+) for future zone-map/bloom pruning + projection pushdown, while
+    /// keeping the full msgpack `PROPS` tail intact. `spec` is `(prop_key, col_id)`;
+    /// empty ⇒ no shredding. Builder form mirroring [`with_quant`].
+    pub fn with_shred_spec(mut self, spec: Vec<(String, i32)>) -> Self {
+        self.user_col_buffers = vec![Vec::new(); spec.len()];
+        self.shred_spec = spec;
         self
     }
 
@@ -321,6 +344,18 @@ impl PaxBlockWriter {
         for i in 0..self.embedding_count {
             let v = flat.embeddings.get(i).cloned();
             self.embeddings[i].push(v);
+        }
+
+        // P-Shred: buffer the shredded prop values BY CLONE. `FlatRow::from_record`
+        // above kept the FULL props tree in `props_bytes` (the source of truth), so
+        // reading each key here with `.get(..).cloned()` — never `.remove(..)` —
+        // guarantees the shredded column equals the tail value and loses nothing.
+        for (i, (key, _col_id)) in self.shred_spec.iter().enumerate() {
+            let v = match record.props.get(key) {
+                Some(proximadb_records::ProximaTreeNode::Value(v)) => Some(v.clone()),
+                _ => None,
+            };
+            self.user_col_buffers[i].push(v);
         }
 
         Ok(())
@@ -500,6 +535,15 @@ impl PaxBlockWriter {
                     stripes.push(f32_stripe);
                     vparam_entries.push(f32_entry);
                 }
+            }
+
+            // P-Shred (ADR-055): one typed user-column stripe per shredded prop key,
+            // at its catalog-assigned `col_id` (≥ USER_BASE). A DUPLICATED pruning/
+            // projection index — the `PROPS` tail above is authoritative, so the
+            // reader ignores these on reconstruction (mixed-read-safe). Empty spec ⇒
+            // this loop is a no-op ⇒ byte-for-byte today's output.
+            for (i, (_key, col_id)) in self.shred_spec.iter().enumerate() {
+                stripes.push(self.build_shred_stripe(*col_id, &self.user_col_buffers[i])?);
             }
         }
 
@@ -729,12 +773,7 @@ impl PaxBlockWriter {
         };
         let (data, scheme, quant_kind, rabitq_col) = if use_rabitq {
             let (bytes, col) = encode_f32_vec_rabitq(vals, dim, id);
-            (
-                bytes,
-                ProximaScheme::RaBitQ,
-                QUANT_RABITQ_RESERVED,
-                Some(col),
-            )
+            (bytes, ProximaScheme::RaBitQ, QUANT_RABITQ, Some(col))
         } else if use_sq8 {
             (
                 encode_f32_vec_sq8(vals, dim, &params),
@@ -1001,6 +1040,43 @@ impl PaxBlockWriter {
         self.build_str_stripe(id, "", role, true, &refs)
     }
 
+    /// P-Shred: build ONE typed user-column stripe (`ColumnRole::UserDefined`) from the
+    /// buffered `ProximaValue`s for a shredded prop key. The physical type is inferred from
+    /// the first non-null value (int-family → i64, float-family → f64, else → string), and
+    /// every row is coerced to it (a value that doesn't fit the chosen type is `None`). This
+    /// is a best-effort PRUNING/PROJECTION index — imperfect coercion is safe because the
+    /// msgpack `PROPS` tail is the source of truth for reconstruction.
+    fn build_shred_stripe(
+        &self,
+        id: i32,
+        vals: &[Option<proximadb_data_model::ProximaValue>],
+    ) -> Result<ColumnStripe> {
+        match vals.iter().flatten().next().map(shred_class) {
+            Some(ShredClass::Int) => {
+                let col: Vec<Option<i64>> = vals
+                    .iter()
+                    .map(|o| o.as_ref().and_then(pv_to_i64))
+                    .collect();
+                self.build_i64_stripe(id, ColumnRole::UserDefined, true, &col)
+            }
+            Some(ShredClass::Float) => {
+                let col: Vec<Option<f64>> = vals
+                    .iter()
+                    .map(|o| o.as_ref().and_then(pv_to_f64))
+                    .collect();
+                self.build_f64_stripe(id, ColumnRole::UserDefined, true, &col)
+            }
+            // String class, or an all-null column (default to a nullable string stripe).
+            _ => {
+                let col: Vec<Option<String>> = vals
+                    .iter()
+                    .map(|o| o.as_ref().and_then(pv_to_str))
+                    .collect();
+                Ok(self.build_str_opt_stripe(id, ColumnRole::UserDefined, &col))
+            }
+        }
+    }
+
     fn build_i64_stripe(
         &self,
         id: i32,
@@ -1081,6 +1157,74 @@ impl PaxBlockWriter {
             bloom_len: 0,
         };
         ColumnStripe::new(meta, data)
+    }
+}
+
+/// Physical type class chosen for a shredded user-column (P-Shred), inferred from
+/// the first non-null `ProximaValue`.
+enum ShredClass {
+    Int,
+    Float,
+    Str,
+}
+
+/// Classify a `ProximaValue` into the shred physical type. Integer-like and temporal
+/// values map to i64, float-like to f64, everything scalar-textual to string; complex
+/// values (Array/Map/Struct/Binary/vectors/etc.) fall through to string, where their
+/// coercion returns `None` (not shreddable) — the `PROPS` tail still holds them.
+fn shred_class(v: &proximadb_data_model::ProximaValue) -> ShredClass {
+    use proximadb_data_model::ProximaValue as PV;
+    match v {
+        PV::Boolean(_)
+        | PV::Int8(_)
+        | PV::Int16(_)
+        | PV::Int32(_)
+        | PV::Int64(_)
+        | PV::UInt8(_)
+        | PV::UInt16(_)
+        | PV::UInt32(_)
+        | PV::UInt64(_)
+        | PV::Date(_)
+        | PV::Time(..)
+        | PV::Timestamp(..)
+        | PV::TimestampTz(..) => ShredClass::Int,
+        PV::Float16(_) | PV::Float32(_) | PV::Float64(_) => ShredClass::Float,
+        _ => ShredClass::Str,
+    }
+}
+
+fn pv_to_i64(v: &proximadb_data_model::ProximaValue) -> Option<i64> {
+    use proximadb_data_model::ProximaValue as PV;
+    match v {
+        PV::Boolean(b) => Some(*b as i64),
+        PV::Int8(x) => Some(*x as i64),
+        PV::Int16(x) => Some(*x as i64),
+        PV::Int32(x) => Some(*x as i64),
+        PV::Int64(x) => Some(*x),
+        PV::UInt8(x) => Some(*x as i64),
+        PV::UInt16(x) => Some(*x as i64),
+        PV::UInt32(x) => Some(*x as i64),
+        PV::UInt64(x) => i64::try_from(*x).ok(),
+        PV::Date(d) => Some(*d as i64),
+        PV::Time(t, _) | PV::Timestamp(t, _) | PV::TimestampTz(t, _) => Some(*t),
+        _ => None,
+    }
+}
+
+fn pv_to_f64(v: &proximadb_data_model::ProximaValue) -> Option<f64> {
+    use proximadb_data_model::ProximaValue as PV;
+    match v {
+        PV::Float16(x) | PV::Float32(x) => Some(*x as f64),
+        PV::Float64(x) => Some(*x),
+        _ => None,
+    }
+}
+
+fn pv_to_str(v: &proximadb_data_model::ProximaValue) -> Option<String> {
+    use proximadb_data_model::ProximaValue as PV;
+    match v {
+        PV::String(s) | PV::Symbol(s) | PV::Decimal(s) => Some(s.clone()),
+        _ => None,
     }
 }
 
@@ -1750,5 +1894,119 @@ mod tests {
         let header = BlockHeader::from_bytes(&block).unwrap();
         // OLAP has no MVCC or DIR_SORTED flags
         assert_eq!(header.flags & flags::HAS_MVCC, 0);
+    }
+
+    // ---- P-Shred (ADR-055): hybrid props shredding ----
+
+    fn record_with_props(oid: &str, ts: i64) -> ProximaRecord {
+        use proximadb_data_model::ProximaValue as PV;
+        use proximadb_records::ProximaTreeNode as Node;
+        let mut rec = make_record(oid, "tenant-A", ts);
+        rec.props
+            .insert("status".into(), Node::Value(PV::String("active".into())));
+        rec.props.insert("age".into(), Node::Value(PV::Int64(42)));
+        rec.props
+            .insert("score".into(), Node::Value(PV::Float64(0.75)));
+        rec.props.insert(
+            "note".into(),
+            Node::Value(PV::String("keep me only in the tail".into())),
+        );
+        rec
+    }
+
+    /// (a) Losslessness ratchet: shredding declared keys must NOT lose or mutate any prop —
+    /// the reader rebuilds ProximaRecord from the msgpack tail (ignoring user columns), so every
+    /// prop (shredded or not) must come back identical. This is the load-bearing clone-not-remove
+    /// guarantee.
+    #[test]
+    fn shredding_preserves_the_full_props_tail() {
+        use crate::reader::PaxBlockReader;
+        let rec = record_with_props("d1", 100);
+        let original_props = rec.props.clone();
+
+        let spec = vec![
+            ("status".to_string(), col_id::USER_BASE),
+            ("age".to_string(), col_id::USER_BASE + 1),
+        ];
+        let mut w = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "c", 0, 0)
+            .with_shred_spec(spec);
+        w.add_record(&rec).unwrap();
+        let block = w.flush().unwrap();
+
+        let reader = PaxBlockReader::open(&block).unwrap();
+        // Reconstruct with NO user_column_keys — every prop must be served by the tail alone.
+        let flat = FlatRow::from_block_reader(&reader).unwrap().remove(0);
+        let record = flat.into_record(&[], &[], None).unwrap();
+        assert_eq!(
+            record.props, original_props,
+            "shredding must preserve the full props tail byte-for-byte (clone-not-remove)"
+        );
+    }
+
+    /// (b) The shredded columns are present at their assigned ids and their decoded values equal
+    /// the tail values (the pruning/projection index is correct).
+    #[test]
+    fn shredded_columns_present_and_equal_tail() {
+        use crate::reader::PaxBlockReader;
+        let rec = record_with_props("d1", 100);
+        let spec = vec![
+            ("status".to_string(), col_id::USER_BASE),
+            ("age".to_string(), col_id::USER_BASE + 1),
+        ];
+        let mut w = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "c", 0, 0)
+            .with_shred_spec(spec);
+        w.add_record(&rec).unwrap();
+        let block = w.flush().unwrap();
+        let reader = PaxBlockReader::open(&block).unwrap();
+
+        assert!(
+            reader
+                .column_metas()
+                .iter()
+                .any(|m| m.column_id == col_id::USER_BASE),
+            "string shred column present at USER_BASE"
+        );
+        assert!(
+            reader
+                .column_metas()
+                .iter()
+                .any(|m| m.column_id == col_id::USER_BASE + 1),
+            "i64 shred column present at USER_BASE+1"
+        );
+        assert_eq!(
+            reader.decode_str_stripe(col_id::USER_BASE),
+            Some(vec![Some("active".to_string())]),
+            "shredded string column equals the tail value"
+        );
+        assert_eq!(
+            reader.decode_i64_stripe(col_id::USER_BASE + 1),
+            Some(vec![Some(42)]),
+            "shredded i64 column equals the tail value"
+        );
+    }
+
+    /// (c) An empty shred spec is byte-for-byte today's behavior: no user columns, props intact.
+    #[test]
+    fn empty_shred_spec_is_unchanged() {
+        use crate::reader::PaxBlockReader;
+        let rec = record_with_props("d1", 100);
+        let original_props = rec.props.clone();
+
+        let mut w = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "c", 0, 0)
+            .with_shred_spec(vec![]);
+        w.add_record(&rec).unwrap();
+        let block = w.flush().unwrap();
+        let reader = PaxBlockReader::open(&block).unwrap();
+
+        assert!(
+            !reader
+                .column_metas()
+                .iter()
+                .any(|m| m.column_id >= col_id::USER_BASE && m.column_id < col_id::RERANK_BASE),
+            "empty shred spec must emit no user columns"
+        );
+        let flat = FlatRow::from_block_reader(&reader).unwrap().remove(0);
+        let record = flat.into_record(&[], &[], None).unwrap();
+        assert_eq!(record.props, original_props);
     }
 }

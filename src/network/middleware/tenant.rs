@@ -91,9 +91,10 @@ impl MiddlewareTenantContext {
         }
     }
 
-    /// Create a default/anonymous tenant context
+    /// Create a default/anonymous tenant context. Uses the ONE canonical default
+    /// (`proximadb_tenant::DEFAULT_TENANT`) shared by every surface.
     pub fn default_tenant() -> Self {
-        Self::new("default", TenantIdSource::Default)
+        Self::new(proximadb_tenant::DEFAULT_TENANT, TenantIdSource::Default)
     }
 
     /// Set the owning customer account (Phase 5). Activates the account-rooted
@@ -170,7 +171,8 @@ pub struct TenantExtractorConfig {
 impl Default for TenantExtractorConfig {
     fn default() -> Self {
         Self {
-            default_tenant: Some("default".to_string()),
+            // The ONE canonical default shared by every surface (foundation).
+            default_tenant: Some(proximadb_tenant::DEFAULT_TENANT.to_string()),
             require_tenant: false,  // Allow single-tenant mode by default
             validate_tenant: false, // Disable validation by default (enable in production)
             system_tenants: vec!["system".to_string(), "admin".to_string()],
@@ -179,6 +181,16 @@ impl Default for TenantExtractorConfig {
 }
 
 impl TenantExtractorConfig {
+    /// Create config from the explicit foundation deployment-mode contract (TD-CAT-3).
+    pub fn from_deployment_mode(mode: proximadb_tenant::TenantDeploymentMode) -> Self {
+        match mode {
+            proximadb_tenant::TenantDeploymentMode::SingleTenant { default_tenant } => {
+                Self::single_tenant(default_tenant)
+            }
+            proximadb_tenant::TenantDeploymentMode::MultiTenant => Self::multi_tenant(),
+        }
+    }
+
     /// Create config for single-tenant deployment
     pub fn single_tenant(default_tenant: impl Into<String>) -> Self {
         Self {
@@ -376,6 +388,14 @@ pub async fn tenant_middleware(
     // Extract tenant ID
     match extractor.extract_tenant_id(&req) {
         Ok(Some((tenant_id, source))) => {
+            if let Err(err) = proximadb_tenant::validate_request_tenant(&tenant_id) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid tenant id '{}': {err}", tenant_id),
+                )
+                    .into_response();
+            }
+
             // Validate tenant if configured
             if !extractor.validate_tenant(&tenant_id) {
                 return (
@@ -510,6 +530,21 @@ mod tests {
     }
 
     #[test]
+    fn rest_default_uses_the_one_canonical_constant() {
+        // The middleware default context AND the extractor config default both
+        // derive from the single `proximadb_tenant::DEFAULT_TENANT`, so REST can
+        // never drift from pgwire/gRPC (which resolve the same constant).
+        assert_eq!(
+            MiddlewareTenantContext::default_tenant().tenant_id,
+            proximadb_tenant::DEFAULT_TENANT
+        );
+        assert_eq!(
+            TenantExtractorConfig::default().default_tenant.as_deref(),
+            Some(proximadb_tenant::DEFAULT_TENANT)
+        );
+    }
+
+    #[test]
     fn test_account_tier_inert_until_set() {
         // Unset account → resolves to the reserved default-account ID.
         let ctx = MiddlewareTenantContext::new("tnt_acme", TenantIdSource::Header);
@@ -536,6 +571,23 @@ mod tests {
         assert!(config.default_tenant.is_none());
         assert!(config.require_tenant);
         assert!(config.validate_tenant);
+    }
+
+    #[test]
+    fn config_from_deployment_mode_matches_explicit_contract() {
+        let single = TenantExtractorConfig::from_deployment_mode(
+            proximadb_tenant::TenantDeploymentMode::single_tenant("tenant_a"),
+        );
+        assert_eq!(single.default_tenant.as_deref(), Some("tenant_a"));
+        assert!(!single.require_tenant);
+        assert!(!single.validate_tenant);
+
+        let multi = TenantExtractorConfig::from_deployment_mode(
+            proximadb_tenant::TenantDeploymentMode::MultiTenant,
+        );
+        assert!(multi.default_tenant.is_none());
+        assert!(multi.require_tenant);
+        assert!(multi.validate_tenant);
     }
 
     #[test]

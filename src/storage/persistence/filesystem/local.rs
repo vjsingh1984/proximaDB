@@ -972,6 +972,39 @@ impl FileSystem for LocalFileSystem {
         Ok(())
     }
 
+    async fn sync_data(&self, path: &str) -> FsResult<()> {
+        // fdatasync: flush the file's data (and only the metadata required to
+        // read it back) without the full inode metadata flush of `sync_all`.
+        // This is the genuine `DurabilityLevel::SyncData` fast-path on local
+        // disks; remote backends fall back to a full `sync_file` via the trait
+        // default.
+        let path_str = self.resolve_path(path)?;
+        let resolved_path = PathBuf::from(path_str);
+
+        if !self.config.sync_enabled {
+            return Ok(());
+        }
+
+        let file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&resolved_path)
+            .await
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => {
+                    FilesystemError::NotFound(resolved_path.display().to_string())
+                }
+                _ => FilesystemError::Io(e),
+            })?;
+
+        // sync_data() maps to fdatasync(2) — data durability without the extra
+        // metadata barrier of fsync(2)/sync_all().
+        file.sync_data().await.map_err(FilesystemError::Io)?;
+
+        tracing::debug!("✅ File data synced to disk: {}", resolved_path.display());
+        Ok(())
+    }
+
     async fn open_file(&self, path: &str, create: bool) -> FsResult<Box<dyn FilesystemFile>> {
         let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);

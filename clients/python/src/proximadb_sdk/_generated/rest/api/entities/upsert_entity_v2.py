@@ -13,15 +13,18 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_response import ErrorResponse
 from ...models.upsert_entity_request import UpsertEntityRequest
 from ...models.upsert_entity_response import UpsertEntityResponse
-from ...types import UNSET, Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     collection_id: str,
     *,
     body: UpsertEntityRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_tenant_id, Unset):
+        headers["X-Tenant-ID"] = x_tenant_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -76,10 +79,12 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: UpsertEntityRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[ErrorResponse, UpsertEntityResponse]]:
     """
     Args:
         collection_id (str):
+        x_tenant_id (Union[Unset, str]):
         body (UpsertEntityRequest):
 
     Raises:
@@ -93,6 +98,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         collection_id=collection_id,
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -107,10 +113,12 @@ def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     body: UpsertEntityRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[ErrorResponse, UpsertEntityResponse]]:
     """
     Args:
         collection_id (str):
+        x_tenant_id (Union[Unset, str]):
         body (UpsertEntityRequest):
 
     Raises:
@@ -125,6 +133,7 @@ def sync(
         collection_id=collection_id,
         client=client,
         body=body,
+        x_tenant_id=x_tenant_id,
     ).parsed
 
 
@@ -133,10 +142,12 @@ async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: UpsertEntityRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[ErrorResponse, UpsertEntityResponse]]:
     """
     Args:
         collection_id (str):
+        x_tenant_id (Union[Unset, str]):
         body (UpsertEntityRequest):
 
     Raises:
@@ -150,6 +161,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         collection_id=collection_id,
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -162,10 +174,12 @@ async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     body: UpsertEntityRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[ErrorResponse, UpsertEntityResponse]]:
     """
     Args:
         collection_id (str):
+        x_tenant_id (Union[Unset, str]):
         body (UpsertEntityRequest):
 
     Raises:
@@ -181,5 +195,6 @@ async def asyncio(
             collection_id=collection_id,
             client=client,
             body=body,
+            x_tenant_id=x_tenant_id,
         )
     ).parsed

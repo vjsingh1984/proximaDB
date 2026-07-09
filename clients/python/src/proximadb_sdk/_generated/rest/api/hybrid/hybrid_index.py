@@ -12,14 +12,17 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.hybrid_index_body import HybridIndexBody
 from ...models.hybrid_index_response_200 import HybridIndexResponse200
-from ...types import UNSET, Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
     body: HybridIndexBody,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_tenant_id, Unset):
+        headers["X-Tenant-ID"] = x_tenant_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -63,10 +66,12 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: HybridIndexBody,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[HybridIndexResponse200]:
     """Index documents for BM25 full-text search.
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (HybridIndexBody):
 
     Raises:
@@ -79,6 +84,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -92,10 +98,12 @@ def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     body: HybridIndexBody,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[HybridIndexResponse200]:
     """Index documents for BM25 full-text search.
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (HybridIndexBody):
 
     Raises:
@@ -109,6 +117,7 @@ def sync(
     return sync_detailed(
         client=client,
         body=body,
+        x_tenant_id=x_tenant_id,
     ).parsed
 
 
@@ -116,10 +125,12 @@ async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: HybridIndexBody,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[HybridIndexResponse200]:
     """Index documents for BM25 full-text search.
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (HybridIndexBody):
 
     Raises:
@@ -132,6 +143,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -143,10 +155,12 @@ async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     body: HybridIndexBody,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[HybridIndexResponse200]:
     """Index documents for BM25 full-text search.
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (HybridIndexBody):
 
     Raises:
@@ -161,5 +175,6 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             body=body,
+            x_tenant_id=x_tenant_id,
         )
     ).parsed

@@ -319,12 +319,93 @@ notes = "Co-design T3.2. The bench measures the raw object-store round-trip floo
 id = "tpc_perf_ledger_dual_route"
 claim = "TPC-H/TPC-DS per-query latency + bytes-scanned on both routes (native Volcano vs DataFusion-on-Parquet), measured into a versioned JSON ledger"
 metric = "wall_ms + bytes_read per query x route x temperature"
-status = "unverified"
+status = "measured"
 asserted_in = ["docs/10-quality/TPC_PERF_LEDGER.adoc:10"]
 bench_source = "tests/tpc_perf_ledger_e2e.rs"
-bench_command = "TPC_PERF_SCALE=0.001 cargo test --test tpc_perf_ledger_e2e -- --ignored --nocapture"
-artifact = ""
-hardware = ""
-date = ""
-version = ""
-notes = "TD-OLAP-4 P0b skeleton (ADR-052 invariant 4). Datagen is synthetic-tpc-shaped (seeded, deterministic, NON-audited dbgen/dsdgen) at TPC_PERF_SCALE row ratios — no TPC-official or external-comparative claim may cite this until a faithful generator + bulk-load path lands. Storage regime local-tempdir only; regimes are separate ledger sections, never averaged. Advisory `tpc-perf-ledger` CI job (continue-on-error, not in ci-success) uploads the artifact on develop pushes. Promote to `measured` only with a dated, checked-in ledger artifact from a quiet machine."
+bench_command = "TPC_PERF_SCALE=0.01 cargo test --test tpc_perf_ledger_e2e -- --ignored --nocapture"
+artifact = "docs/_internal/status/TPC_PERF_GATE_EVIDENCE_2026_07_04.adoc"
+hardware = "WSL2 Linux 5.15, 32 cores, 78 GB RAM, local NVMe tempdir, debug profile"
+date = "2026-07-04"
+version = "v0.2"
+notes = "TD-OLAP-4 (ADR-052 invariant 4). First dated run (gate-promotion evidence): DF route 38/38 under baseline/runtime-filter/value-bounds gates, latency parity; skip ratio 0% because the synthetic generator is UNIFORM (zone maps cannot prune unclustered data) - gates stay default-off, promotion prerequisite = clustered datagen; native-route Q21 = 316.8s vs DF ~4.5s median (the retire-Volcano-for-OLAP premise, measured). Datagen synthetic-tpc-shaped (non-audited) - no TPC-official or external-comparative claim may cite this. Debug-profile latencies are RELATIVE evidence only; local-tempdir regime, never averaged with object-store runs. V2 follow-up (TPC_PERF_GATE_EVIDENCE_V2_2026_07_04.adoc): clustering alone did not move skip (still 0%) - full chain root-caused; date-literal translation + row-group geometry fixed; final blocker = TD-OLAP-6 sort-on-materialize. V3 (TPC_PERF_GATE_EVIDENCE_V3_2026_07_05.adoc): sort-on-materialize LANDED - static pruning 0% -> 19.2% TPC-H split skip (Q6: 12/15 groups, 50ms); runtime-filter gate measured zero incremental benefit, stays off pending absorption-path instrumentation."
+
+# ---------------------------------------------------------------------------
+# TD-DOC-CONV-2 — document store-convergence BAKE (2026-07-06).
+# Bake harness: tests/documents_convergence_bake.rs (real REST v2 + gRPC, gate ON).
+# 3 of 4 criteria met; the metering criterion is a measured BLOCKER (see artifact).
+# ---------------------------------------------------------------------------
+
+[[claims]]
+id = "doc_conv2_bake_metering_delta"
+claim = "A canonical-route document write bills the per-tenant object-store WRITE dimensions (KIU op + KSU write bytes) on materialization, observable at /metrics/prometheus — metering blocker CLOSED"
+metric = "per_tenant_write_bytes"
+status = "measured"
+asserted_in = ["docs/_internal/status/TD_DOC_CONV_2_BAKE_RESULTS_2026_07_06.adoc"]
+bench_source = "tests/documents_convergence_bake.rs"
+bench_command = "cargo nextest run --test documents_convergence_bake bake_metering --no-capture"
+artifact = "docs/_internal/status/TD_DOC_CONV_2_BAKE_RESULTS_2026_07_06.adoc"
+hardware = "WSL2 Linux 5.15, 32 cores, 78 GB RAM, local NVMe tempdir, debug profile"
+date = "2026-07-06"
+version = "v0.2"
+notes = "Blocker CLOSED by two OSS-side neutral-telemetry fixes. Re-measured: registry AND endpoint write_bytes_by_tier delta = ~64 KB (63,788-64,828 B across runs; RaBitQ segment size varies slightly), object_store_ops delta = 1 (was 0/0). Fix 1 (export): prometheus_metrics_endpoint now appends prometheus::gather() (default registry) — no double-count (sub-registries separate) or name collision. Fix 2 (write instrumentation): materialize_collection (flush_materializer.rs), the single tenant-aware engine.flush() funnel, emits record_object_store_op(tenant,'flush_write') + record_object_store_write_bytes_by_tier(tenant,'hot',bytes), attributed to catalog-resolved proximadb_tenant::tenant_id_of. Neutral counts only — $-weights are the commercial anvaiops plane's concern; OSS boundary + layering guards pass. NB force_flush_collection is a no-op for materialization; the meter fires on the shutdown/coordinator flush (test drives it via restart). Vectorless gRPC docs correctly bill 0 segment bytes. TD-DOC-CONV-2 criterion 1 satisfied."
+
+[[claims]]
+id = "doc_conv2_bake_ann_recall"
+claim = "Canonical-route documents that carry vectors are ANN-searchable at recall@10 within the f32 baseline; vectorless documents excluded from ANN, gettable by id"
+metric = "recall_at_10"
+status = "measured"
+asserted_in = ["docs/_internal/status/TD_DOC_CONV_2_BAKE_RESULTS_2026_07_06.adoc"]
+bench_source = "tests/documents_convergence_bake.rs"
+bench_command = "cargo nextest run --test documents_convergence_bake bake_ann_recall --no-capture"
+artifact = "docs/_internal/status/TD_DOC_CONV_2_BAKE_RESULTS_2026_07_06.adoc"
+hardware = "WSL2 Linux 5.15, 32 cores, 78 GB RAM, local NVMe tempdir, debug profile"
+date = "2026-07-06"
+version = "v0.2"
+notes = "mean recall@10 = 1.0000 over 300 embedded docs / 20 queries (ratchet floor 0.90) vs in-test brute-force f32 cosine baseline; 0 empty results; 0 of 30 vectorless (metadata-only, gRPC-created) docs leaked into ANN; vectorless doc gettable by id. Small-N exact regime (as with vector_ann_recall_e2e). TD-DOC-CONV-2 criterion 2 satisfied."
+
+[[claims]]
+id = "doc_conv2_bake_single_store"
+claim = "A converged (canonical-route) collection stores each document body ONCE — zero bytes in the legacy document_wal"
+metric = "document_wal_bytes"
+status = "measured"
+asserted_in = ["docs/_internal/status/TD_DOC_CONV_2_BAKE_RESULTS_2026_07_06.adoc"]
+bench_source = "tests/documents_convergence_bake.rs"
+bench_command = "cargo nextest run --test documents_convergence_bake bake_single_store --no-capture"
+artifact = "docs/_internal/status/TD_DOC_CONV_2_BAKE_RESULTS_2026_07_06.adoc"
+hardware = "WSL2 Linux 5.15, 32 cores, 78 GB RAM, local NVMe tempdir, debug profile"
+date = "2026-07-06"
+version = "v0.2"
+notes = "Canonical collection (200 docs, dim 8): 0 bytes in any document_wal path; all 91,260 bytes under the shared vector store — no double GB-month. CAVEAT: the gate-OFF legacy contrast was inconclusive (legacy gRPC writes also produced 0 on-disk document_wal bytes — DocumentService runs WAL-less/in-memory DashMap in the default in-process config), so 'legacy uses document_wal' is unproven on this path; the canonical single-store fact stands independently. TD-DOC-CONV-2 criterion 3 satisfied."
+
+[[claims]]
+id = "doc_conv2_bake_restart_recovery"
+claim = "A populated canonical-route collection recovers fully from the vector WAL after a full restart"
+metric = "docs_recovered"
+status = "measured"
+asserted_in = ["docs/_internal/status/TD_DOC_CONV_2_BAKE_RESULTS_2026_07_06.adoc"]
+bench_source = "tests/documents_convergence_bake.rs"
+bench_command = "cargo nextest run --test documents_convergence_bake bake_restart_recovery --no-capture"
+artifact = "docs/_internal/status/TD_DOC_CONV_2_BAKE_RESULTS_2026_07_06.adoc"
+hardware = "WSL2 Linux 5.15, 32 cores, 78 GB RAM, local NVMe tempdir, debug profile"
+date = "2026-07-06"
+version = "v0.2"
+notes = "500 docs ingested UNFLUSHED (recovery rests purely on vector-WAL replay; canonical path drops legacy document_wal); pre-restart query 500, post-restart query 500, id spot-check 10/10, recovery window ~1.68-1.79 s. Extends #709 single-doc restart to a populated collection. TD-DOC-CONV-2 criterion 5 satisfied at this scale (100k-scale projection-cost test remains follow-up)."
+
+# ---------------------------------------------------------------------------
+# ADR-055 P-Trace — document I/O baseline (pre-shred). The number the
+# hybrid-shredding + pushdown phases (P-Shred/P-DFSource/P-Pushdown) must beat.
+# ---------------------------------------------------------------------------
+
+[[claims]]
+id = "doc_conv2_ptrace_preshred_baseline"
+claim = "A filtered document read fetches the WHOLE PAX segment (no pruning/ranged reads) — 329,111 B for both a 1-record point-get and a 500-record scan; the pre-shred baseline"
+metric = "bytes_read"
+status = "measured"
+asserted_in = ["docs/_internal/status/DOC_PTRACE_PRESHRED_BASELINE_2026_07_07.adoc"]
+bench_source = "src/services/record_store.rs"
+bench_command = "cargo nextest run --features io-trace --lib doc_iotrace_baseline_preshred --no-capture"
+artifact = "docs/_internal/status/DOC_PTRACE_PRESHRED_BASELINE_2026_07_07.adoc"
+hardware = "WSL2 Linux 5.15, 32 cores, 78 GB RAM, in-process memory:// object-store bridge, debug profile"
+date = "2026-07-07"
+version = "v0.2"
+notes = "P-Trace (ADR-055 first phase; trace before you tune). 500-doc corpus, one PAX segment: point_get.bytes_read = filtered_scan.bytes_read = 329,111 B (get_ops=1, range_gets=0), write.bytes_written=329,111 (put_ops=1). A document read fetches the ENTIRE segment whether it wants 1 or 500 records — no block/zone-map pruning, no ranged reads. Wired the write-side put_pax hook (record_bytes_written at the object-store PUT in record_store.rs; shared with vectors); reads already record fetch_pax+bytes_read. range_gets is io-trace-feature-gated but legitimately 0 (whole-segment fetch path). Target for P-Pushdown: a filtered query reads strictly < 329,111 B with range_gets>0, results identical."

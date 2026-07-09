@@ -21,6 +21,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 use tracing::{debug, error, info, trace, warn};
@@ -152,7 +153,13 @@ impl TcpMultiplexer {
 
         let config = Arc::new(self.config);
         let mut shutdown_rx = self.shutdown_rx;
-        let mut connection_count = 0usize;
+        // Count of *live* connections. Each accepted connection increments this
+        // and holds a `ConnectionGuard` that decrements it when the connection
+        // task finishes, so `max_connections` bounds concurrent connections
+        // rather than lifetime accepts (previously a plain counter only
+        // incremented, wedging the listener after `max_connections` lifetime
+        // connections — an availability bug).
+        let connection_count = Arc::new(AtomicUsize::new(0));
 
         loop {
             tokio::select! {
@@ -166,19 +173,25 @@ impl TcpMultiplexer {
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok((stream, peer_addr)) => {
-                            if connection_count >= config.max_connections {
+                            let current = connection_count.load(Ordering::Relaxed);
+                            if current >= config.max_connections {
                                 warn!(
-                                    current = connection_count,
+                                    current,
                                     max = config.max_connections,
                                     "Max connections reached"
                                 );
                                 continue;
                             }
 
-                            connection_count += 1;
+                            // Reserve a slot; the guard releases it when the
+                            // connection task completes (RAII), keeping the count
+                            // equal to the number of live connections.
+                            connection_count.fetch_add(1, Ordering::Relaxed);
+                            let guard = ConnectionGuard(Arc::clone(&connection_count));
                             let cfg = Arc::clone(&config);
 
                             tokio::spawn(async move {
+                                let _guard = guard;
                                 if let Err(e) = handle_connection(stream, peer_addr, cfg).await {
                                     debug!(error = %e, peer = %peer_addr, "Connection error");
                                 }
@@ -205,6 +218,18 @@ impl TcpMultiplexer {
 impl Default for TcpMultiplexer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// RAII guard for the multiplexer's live-connection count. Increment happens at
+/// accept time; this guard decrements when the connection task drops, so the
+/// count tracks concurrent connections and the `max_connections` cap can never
+/// be permanently exhausted by connections that have already closed.
+struct ConnectionGuard(Arc<AtomicUsize>);
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -400,5 +425,20 @@ mod tests {
         let config = TcpMultiplexConfig::default();
         assert_eq!(config.max_connections, 10000);
         assert_eq!(config.fallback_protocol, TcpProtocol::Http1);
+    }
+
+    #[test]
+    fn connection_guard_releases_slot_on_drop() {
+        // The live-connection count returns to zero once guards drop, so the
+        // listener never wedges after `max_connections` lifetime accepts.
+        let count = Arc::new(AtomicUsize::new(0));
+        {
+            count.fetch_add(1, Ordering::Relaxed);
+            let _g1 = ConnectionGuard(Arc::clone(&count));
+            count.fetch_add(1, Ordering::Relaxed);
+            let _g2 = ConnectionGuard(Arc::clone(&count));
+            assert_eq!(count.load(Ordering::Relaxed), 2);
+        }
+        assert_eq!(count.load(Ordering::Relaxed), 0);
     }
 }

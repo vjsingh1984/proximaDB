@@ -13,8 +13,10 @@
 //! - storage regime: `local-tempdir` (file:// object store on local disk).
 //!   Object-store regimes are a separate ledger section when they land.
 //! - datagen: `synthetic-tpc-shaped` — deterministic, seeded, TPC-schema
-//!   row-ratio-scaled with key skew and referential integrity. It is NOT
-//!   audited dbgen/dsdgen output; no TPC-official claim may cite this ledger.
+//!   row-ratio-scaled with key skew, referential integrity, and fact tables
+//!   CLUSTERED by their date column (uniform data defeats zone-map pruning —
+//!   see TPC_PERF_GATE_EVIDENCE_2026_07_04). It is NOT audited dbgen/dsdgen
+//!   output; no TPC-official claim may cite this ledger.
 //! - temperature: `first` vs `repeat` against a warm process (true cold-cache
 //!   runs need a server restart per query — a future slice).
 //! - scale: `TPC_PERF_SCALE` (default 0.001 ≈ 9k TPC-H rows; SF1 ≡ 1.0 —
@@ -31,6 +33,7 @@
 //! integration tests are self-contained by convention; keep them in sync.
 
 use std::net::TcpListener;
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -399,48 +402,60 @@ fn gen_tpch(scale: f64) -> Vec<String> {
             .collect(),
         200,
     ));
-    let mut lineitems: Vec<String> = Vec::new();
+    // Fact tables are CLUSTERED by their date column before insertion.
+    // Uniform per-row dates give every row group whole-domain min/max, so
+    // zone-map pruning provably cannot skip (measured 0% in
+    // docs/_internal/status/TPC_PERF_GATE_EVIDENCE_2026_07_04.adoc). Real TPC
+    // data is time-ordered; sorting restores that property so row groups
+    // carry tight bounds. The `DATE 'YYYY-MM-DD'` literal format sorts
+    // lexicographically.
+    let mut lineitems: Vec<(String, String)> = Vec::new();
+    let mut orders: Vec<(String, String)> = (1..=n_ord)
+        .map(|o| {
+            let lines = 1 + rng.below(7);
+            for l in 1..=lines {
+                let ship = rng.date();
+                let row = format!(
+                    "({o}, {}, {}, {l}, {}, {}, 0.0{}, 0.0{}, '{}', '{}', {ship}, {}, {}, '{}', '{}', 'lc')",
+                    rng.skewed_key(n_part),
+                    rng.skewed_key(n_supp),
+                    1 + rng.below(50),
+                    rng.money(10_000),
+                    rng.below(11),
+                    rng.below(9),
+                    rng.pick(&["N", "R", "A"]),
+                    rng.pick(&["O", "F"]),
+                    rng.date(),
+                    rng.date(),
+                    rng.pick(&instructs),
+                    rng.pick(&shipmodes),
+                );
+                lineitems.push((ship, row));
+            }
+            let odate = rng.date();
+            let row = format!(
+                "({o}, {}, '{}', {}, {odate}, '{}', 'Clerk#{}', 0, 'oc')",
+                rng.skewed_key(n_cust),
+                rng.pick(&["O", "F", "P"]),
+                rng.money(100_000),
+                rng.pick(&priorities),
+                1 + rng.below(100)
+            );
+            (odate, row)
+        })
+        .collect();
+    orders.sort_by(|a, b| a.0.cmp(&b.0));
+    lineitems.sort_by(|a, b| a.0.cmp(&b.0));
     out.extend(chunked_inserts(
         "orders",
         "o_orderkey, o_custkey, o_orderstatus, o_totalprice, o_orderdate, o_orderpriority, o_clerk, o_shippriority, o_comment",
-        (1..=n_ord)
-            .map(|o| {
-                let lines = 1 + rng.below(7);
-                for l in 1..=lines {
-                    let ship = rng.date();
-                    lineitems.push(format!(
-                        "({o}, {}, {}, {l}, {}, {}, 0.0{}, 0.0{}, '{}', '{}', {ship}, {}, {}, '{}', '{}', 'lc')",
-                        rng.skewed_key(n_part),
-                        rng.skewed_key(n_supp),
-                        1 + rng.below(50),
-                        rng.money(10_000),
-                        rng.below(11),
-                        rng.below(9),
-                        rng.pick(&["N", "R", "A"]),
-                        rng.pick(&["O", "F"]),
-                        rng.date(),
-                        rng.date(),
-                        rng.pick(&instructs),
-                        rng.pick(&shipmodes),
-                    ));
-                }
-                format!(
-                    "({o}, {}, '{}', {}, {}, '{}', 'Clerk#{}', 0, 'oc')",
-                    rng.skewed_key(n_cust),
-                    rng.pick(&["O", "F", "P"]),
-                    rng.money(100_000),
-                    rng.date(),
-                    rng.pick(&priorities),
-                    1 + rng.below(100)
-                )
-            })
-            .collect(),
+        orders.into_iter().map(|(_, row)| row).collect(),
         200,
     ));
     out.extend(chunked_inserts(
         "lineitem",
         "l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment",
-        lineitems,
+        lineitems.into_iter().map(|(_, row)| row).collect(),
         200,
     ));
     out
@@ -471,7 +486,11 @@ const TPCDS_SCHEMA: &[(&str, &str)] = &[
     ),
     (
         "store_sales",
-        "CREATE TABLE store_sales (ss_sold_date_sk INT, ss_item_sk INT, ss_store_sk INT, ss_customer_sk INT, ss_addr_sk INT, ss_ticket_number INT, ss_quantity INT, ss_sales_price DOUBLE PRECISION, ss_ext_sales_price DOUBLE PRECISION, ss_ext_discount_amt DOUBLE PRECISION, ss_net_profit DOUBLE PRECISION)",
+        // TD-OLAP-6: star-schema fact tables key on an INT date surrogate, so
+        // the first-DATE-column heuristic finds nothing — declare the cluster
+        // key explicitly so sort-on-materialize gives row groups tight
+        // ss_sold_date_sk windows (the runtime join filter's prune target).
+        "CREATE TABLE store_sales (ss_sold_date_sk INT, ss_item_sk INT, ss_store_sk INT, ss_customer_sk INT, ss_addr_sk INT, ss_ticket_number INT, ss_quantity INT, ss_sales_price DOUBLE PRECISION, ss_ext_sales_price DOUBLE PRECISION, ss_ext_discount_amt DOUBLE PRECISION, ss_net_profit DOUBLE PRECISION) WITH (cluster_key = 'ss_sold_date_sk')",
     ),
 ];
 
@@ -574,26 +593,30 @@ fn gen_tpcds(scale: f64) -> Vec<String> {
             .collect(),
         200,
     ));
+    // Clustered by ss_sold_date_sk — see the gen_tpch clustering note.
+    let mut sales: Vec<(u64, String)> = (1..=n_sales)
+        .map(|t| {
+            let qty = 1 + rng.below(10);
+            let price = 1 + rng.below(100);
+            let date_sk = first_sk + rng.below(n_dates);
+            let row = format!(
+                "({date_sk}, {}, {}, {}, {}, {t}, {qty}, {price}.00, {}.00, {}.00, {}.00)",
+                rng.skewed_key(n_item),
+                1 + rng.below(n_store),
+                rng.skewed_key(n_cust),
+                1 + rng.below(n_cust),
+                qty * price,
+                rng.below(10),
+                rng.below(30)
+            );
+            (date_sk, row)
+        })
+        .collect();
+    sales.sort_by_key(|(sk, _)| *sk);
     out.extend(chunked_inserts(
         "store_sales",
         "ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_customer_sk, ss_addr_sk, ss_ticket_number, ss_quantity, ss_sales_price, ss_ext_sales_price, ss_ext_discount_amt, ss_net_profit",
-        (1..=n_sales)
-            .map(|t| {
-                let qty = 1 + rng.below(10);
-                let price = 1 + rng.below(100);
-                format!(
-                    "({}, {}, {}, {}, {}, {t}, {qty}, {price}.00, {}.00, {}.00, {}.00)",
-                    first_sk + rng.below(n_dates),
-                    rng.skewed_key(n_item),
-                    1 + rng.below(n_store),
-                    rng.skewed_key(n_cust),
-                    1 + rng.below(n_cust),
-                    qty * price,
-                    rng.below(10),
-                    rng.below(30)
-                )
-            })
-            .collect(),
+        sales.into_iter().map(|(_, row)| row).collect(),
         200,
     ));
     out
@@ -751,6 +774,118 @@ fn push_record(
     out.push(rec);
 }
 
+/// DuckDB external baseline (TD-OLAP-4 "external baselines"). When `DUCKDB_BIN`
+/// is set, load the SAME synthetic-tpc data (the `schema` CREATE TABLEs + the
+/// `inserts` — both DuckDB-compatible standard SQL) into a persistent temp
+/// DuckDB file, then time each query through the DuckDB CLI. Records
+/// `route:"duckdb"` with no IoTrace (out-of-process — the wall_ms comparison is
+/// the signal). **No-op when `DUCKDB_BIN` is unset** (the default — the advisory
+/// ledger stays ProximaDB-self). Mirrors `tests/clickbench_ledger_e2e.rs`. No
+/// new dependency (uses `std::process` + the operator-provided binary); the
+/// result cache (#708) is default-OFF so ProximaDB's latency is already fair.
+fn run_duckdb_baseline(
+    benchmark: &str,
+    schema: &[(&str, &str)],
+    inserts: &[String],
+    queries: &[(&'static str, String)],
+    out: &mut Vec<LedgerRecord>,
+) {
+    let Ok(duckdb) = std::env::var("DUCKDB_BIN") else {
+        return; // no binary ⇒ skip (default)
+    };
+    eprintln!("[{benchmark}] · DuckDB baseline (DUCKDB_BIN={duckdb})");
+
+    // Loader SQL: schema.1 is the full `CREATE TABLE` DDL; inserts are standard
+    // `INSERT INTO … VALUES`. DuckDB accepts both.
+    let mut loader = String::new();
+    for (_, ddl) in schema {
+        loader.push_str(ddl);
+        loader.push_str(";\n");
+    }
+    for ins in inserts {
+        loader.push_str(ins);
+        loader.push_str(";\n");
+    }
+
+    // Load once into a persistent temp DuckDB file (per-query spawns read it,
+    // so the data isn't reloaded per query).
+    let Ok(tmp) = tempfile::tempdir() else {
+        return;
+    };
+    let db_path = tmp.path().join(format!("{benchmark}.duckdb"));
+
+    // Write loader SQL to a file (more reliable than stdin pipe — the pipe can
+    // close before DuckDB finishes reading, silently truncating the load).
+    let loader_path = tmp.path().join("loader.sql");
+    if std::fs::write(&loader_path, &loader).is_err() {
+        eprintln!("[{benchmark}] · DuckDB loader write failed");
+        return;
+    }
+
+    // Load: `duckdb db.duckdb < loader.sql` (stdin redirected from the file).
+    let loader_file = match std::fs::File::open(&loader_path) {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+    let load_output = Command::new(&duckdb)
+        .arg(&db_path)
+        .stdin(Stdio::from(loader_file))
+        .output();
+    if let Ok(o) = &load_output {
+        if !o.status.success() {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            eprintln!(
+                "[{benchmark}] · DuckDB load FAILED: {}",
+                stderr.lines().next().unwrap_or("?")
+            );
+            return; // don't run queries against a failed load
+        }
+    }
+
+    // Verify: confirm data actually loaded (COUNT on the first table).
+    let first_table = schema[0].0;
+    let verify = Command::new(&duckdb)
+        .arg("-csv")
+        .arg(&db_path)
+        .arg("-c")
+        .arg(format!("SELECT count(*) FROM {first_table}"))
+        .output();
+    let row_count = verify
+        .as_ref()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .find(|l| l.trim().chars().all(|c| c.is_ascii_digit()))
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_else(|| "??".to_string());
+    eprintln!("[{benchmark}] · DuckDB loaded: {row_count} rows in {first_table}");
+
+    // Per query: time the CLI round-trip. Rows aren't parsed (DuckDB CLI output
+    // shape varies); the comparison signal is wall_ms, recorded honestly with
+    // ok/error per the methodology.
+    for (id, sql) in queries {
+        let t0 = Instant::now();
+        let res = Command::new(&duckdb)
+            .arg(&db_path)
+            .arg("-c")
+            .arg(sql)
+            .output();
+        let wall_ms = t0.elapsed().as_millis();
+        let result = match res {
+            Ok(o) if o.status.success() => Ok((0, wall_ms, IoTraceSnapshot::default())),
+            Ok(o) => Err((
+                wall_ms,
+                String::from_utf8_lossy(&o.stderr).trim().to_string(),
+            )),
+            Err(e) => Err((wall_ms, format!("duckdb spawn: {e}"))),
+        };
+        push_record(out, benchmark, id, "duckdb", "first", result);
+    }
+}
+
 async fn seed(client: &Client, schema: &[(&str, &str)], inserts: Vec<String>) {
     for (name, ddl) in schema {
         let _ = client
@@ -829,12 +964,29 @@ async fn tpc_perf_ledger() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.001);
+    // Iteration filters (diagnostic / gate-comparison runs): restrict to one
+    // benchmark and/or a comma-separated query-id list. Unset ⇒ the full
+    // advisory ledger. Used by the TD-OLAP-3 baseline-vs-gate re-measure.
+    let benchmark_filter = std::env::var("TPC_PERF_BENCHMARK").ok();
+    let query_filter: Option<Vec<String>> = std::env::var("TPC_PERF_QUERIES")
+        .ok()
+        .map(|s| s.split(',').map(|q| q.trim().to_string()).collect());
+    let filtered = benchmark_filter.is_some() || query_filter.is_some();
+    let keep_queries = |queries: Vec<(&'static str, String)>| -> Vec<(&'static str, String)> {
+        match &query_filter {
+            Some(ids) => queries
+                .into_iter()
+                .filter(|(id, _)| ids.iter().any(|q| q == id))
+                .collect(),
+            None => queries,
+        }
+    };
     eprintln!("=== tpc-perf-ledger harness (TPC_PERF_SCALE={scale}) ===");
 
     let mut records = Vec::new();
 
     // Fresh server per benchmark: TPC-H and TPC-DS both define `customer`.
-    {
+    if benchmark_filter.as_deref().is_none_or(|b| b == "tpch") {
         let server = PgServer::start().await.expect("server start (tpch)");
         let client = connect(&server).await;
         run_benchmark(
@@ -842,13 +994,20 @@ async fn tpc_perf_ledger() {
             "tpch",
             TPCH_SCHEMA,
             gen_tpch(scale),
-            tpch_queries(),
+            keep_queries(tpch_queries()),
             &mut records,
         )
         .await;
         server.shutdown().await;
+        run_duckdb_baseline(
+            "tpch",
+            TPCH_SCHEMA,
+            &gen_tpch(scale),
+            &keep_queries(tpch_queries()),
+            &mut records,
+        );
     }
-    {
+    if benchmark_filter.as_deref().is_none_or(|b| b == "tpcds") {
         let server = PgServer::start().await.expect("server start (tpcds)");
         let client = connect(&server).await;
         run_benchmark(
@@ -856,16 +1015,23 @@ async fn tpc_perf_ledger() {
             "tpcds",
             TPCDS_SCHEMA,
             gen_tpcds(scale),
-            tpcds_queries(),
+            keep_queries(tpcds_queries()),
             &mut records,
         )
         .await;
         server.shutdown().await;
+        run_duckdb_baseline(
+            "tpcds",
+            TPCDS_SCHEMA,
+            &gen_tpcds(scale),
+            &keep_queries(tpcds_queries()),
+            &mut records,
+        );
     }
 
     // Console summary: per benchmark × route, pass count + medians.
     for benchmark in ["tpch", "tpcds"] {
-        for route in ["native", "datafusion"] {
+        for route in ["native", "datafusion", "duckdb"] {
             let mut rows: Vec<&LedgerRecord> = records
                 .iter()
                 .filter(|r| {
@@ -890,7 +1056,7 @@ async fn tpc_perf_ledger() {
             git_sha: std::env::var("GITHUB_SHA").ok(),
             scale,
             storage_regime: "local-tempdir",
-            datagen: "synthetic-tpc-shaped (seeded, deterministic, non-audited)",
+            datagen: "synthetic-tpc-shaped (seeded, deterministic, date-clustered facts, non-audited)",
             temperature_semantics: "first vs repeat against a warm process (not cold page cache)",
             routes: [
                 "native (Volcano, pre-MATERIALIZE)",
@@ -913,10 +1079,123 @@ async fn tpc_perf_ledger() {
     eprintln!("ledger written: {out_path}");
 
     // Advisory skeleton: assert only harness integrity, never perf numbers.
-    let n_queries = 22 + 16;
-    assert_eq!(
-        ledger.records.len(),
-        n_queries * 2 /* routes */ * 2, /* temperatures */
-        "one record per query x route x temperature"
-    );
+    // Skipped for filtered diagnostic runs — the fixed count is only meaningful
+    // for the full ledger.
+    if !filtered {
+        let n_queries = 22 + 16;
+        assert_eq!(
+            ledger.records.len(),
+            n_queries * 2 /* routes */ * 2, /* temperatures */
+            "one record per query x route x temperature"
+        );
+    }
+}
+
+/// TD-OLAP-6 regression: MATERIALIZE must publish CLUSTERED row groups.
+/// With sort-on-materialize (heuristic key = first DATE column) and a small
+/// row-group cap, each row group's date bounds must be tight and the group
+/// windows monotone — the property zone-map / runtime-filter pruning needs.
+/// (Origin: the v2 evidence diagnostic that root-caused the order-scrambling
+/// snapshot scan — every group spanned min=8766..max=9066 before the sort.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn materialize_publishes_clustered_row_groups() {
+    use parquet::file::reader::{FileReader, SerializedFileReader};
+
+    // Force multiple row groups at this small scale (writer default 65,536).
+    // Safe under nextest's process-per-test isolation.
+    unsafe { std::env::set_var("PROXIMADB_MATERIALIZE_ROW_GROUP_ROWS", "4096") };
+
+    let server = PgServer::start().await.expect("server start");
+    let client = connect(&server).await;
+
+    let _ = client.simple_query("DROP TABLE IF EXISTS diag").await;
+    client
+        .simple_query("CREATE TABLE diag (d DATE, x INT)")
+        .await
+        .expect("create");
+    // 20k rows, strictly date-ordered: 2000 rows per month, Jan..Oct 1994.
+    let rows: Vec<String> = (0..20_000)
+        .map(|i| {
+            let month = 1 + i / 2_000;
+            let day = 1 + (i % 2_000) % 28;
+            format!("(DATE '1994-{month:02}-{day:02}', {i})")
+        })
+        .collect();
+    for sql in chunked_inserts("diag", "d, x", rows, 200) {
+        client.simple_query(&sql).await.expect("insert");
+    }
+    client
+        .simple_query("ALTER TABLE diag MATERIALIZE")
+        .await
+        .expect("materialize");
+
+    // Inspect every published parquet footer: per-row-group bounds for column
+    // `d` (Date32 → Int32 days) must form tight, monotonically increasing,
+    // near-disjoint windows — NOT the whole-domain span the unsorted snapshot
+    // produced before sort-on-materialize.
+    let mut found = 0;
+    for entry in walk(server._tmp.path()) {
+        if entry.extension().and_then(|e| e.to_str()) != Some("parquet") {
+            continue;
+        }
+        let file = std::fs::File::open(&entry).expect("open parquet");
+        let reader = SerializedFileReader::new(file).expect("footer");
+        let meta = reader.metadata();
+        assert!(
+            meta.num_row_groups() >= 4,
+            "expected multiple row groups (cap 4096 over ~20k rows), got {}",
+            meta.num_row_groups()
+        );
+        let mut windows: Vec<(i32, i32)> = Vec::new();
+        for i in 0..meta.num_row_groups() {
+            let rg = meta.row_group(i);
+            for col in rg.columns() {
+                if col.column_path().string() == "d"
+                    && let Some(parquet::file::statistics::Statistics::Int32(s)) = col.statistics()
+                {
+                    let (min, max) = (
+                        *s.min_opt().expect("min stat"),
+                        *s.max_opt().expect("max stat"),
+                    );
+                    eprintln!("  rg{i} d=[{min}, {max}] rows={}", rg.num_rows());
+                    windows.push((min, max));
+                }
+            }
+        }
+        assert_eq!(windows.len(), meta.num_row_groups(), "d stats per group");
+        // Monotone windows (adjacent groups may share the boundary day); the
+        // whole-domain-in-every-group failure mode must not recur.
+        for pair in windows.windows(2) {
+            assert!(
+                pair[0].1 <= pair[1].0,
+                "row-group windows must be sorted/disjoint: {pair:?}"
+            );
+        }
+        let full_domain = (windows.first().unwrap().0, windows.last().unwrap().1);
+        assert!(
+            windows.iter().filter(|w| **w == full_domain).count() <= 1,
+            "clustering collapsed: multiple groups span the full domain {windows:?}"
+        );
+        found += 1;
+    }
+    assert!(found > 0, "no parquet files found under the server tempdir");
+    server.shutdown().await;
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        if let Ok(entries) = std::fs::read_dir(&d) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    out
 }

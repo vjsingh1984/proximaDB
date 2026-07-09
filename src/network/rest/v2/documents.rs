@@ -193,6 +193,13 @@ async fn ingest_documents_inner(
     // Build ProximaRecords. Reserved column names (text, metadata, etc.) get
     // hoisted into props so the codec-shared embed_text_only_records dispatch
     // can read them out the same way the Arrow Flight path does.
+    //
+    // ADR-009 convergence: when the canonical-vector document route is enabled for this
+    // collection, stamp the same `document` label + `_document_collection` prop that the
+    // DocumentService (gRPC) surface writes, so a REST-v2-ingested doc rebuilds cleanly on a
+    // gRPC read (cross-surface visibility). Gate OFF ⇒ the REST v2 record shape is unchanged.
+    let stamp_document_facade =
+        crate::storage::document::service::doc_canonical_vector_enabled(&collection);
     let mut records: Vec<ProximaRecord> = Vec::with_capacity(request.records.len());
     for doc in request.records {
         let now_ns = chrono::Utc::now()
@@ -221,7 +228,7 @@ async fn ingest_documents_inner(
             _ => vec![],
         };
 
-        records.push(ProximaRecord {
+        let mut record = ProximaRecord {
             oid: doc.id.clone(),
             local_id: Some(doc.id),
             tenant_id: tenant_id.clone(),
@@ -231,7 +238,17 @@ async fn ingest_documents_inner(
             props,
             embeddings,
             ..ProximaRecord::default()
-        });
+        };
+        if stamp_document_facade {
+            record
+                .labels
+                .insert(proximadb_document::DOCUMENT_RECORD_LABEL);
+            record.props.insert(
+                proximadb_document::DOCUMENT_COLLECTION_PROP.to_string(),
+                ProximaTreeNode::Value(ProximaValue::String(collection.clone())),
+            );
+        }
+        records.push(record);
     }
 
     // Phase 2H: async mode + queue available → enqueue to embed-ingest

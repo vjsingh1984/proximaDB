@@ -507,6 +507,9 @@ pub struct PaxSegmentWriter {
     f32_tier: bool,
     /// Tier-2 rerank quant (default Sq8) — re-applied to every block writer.
     rerank_quant: VectorQuant,
+    /// P-Shred (ADR-055): `(prop_key, user_col_id)` to shred into typed user-columns —
+    /// re-applied to every block writer so all blocks in the segment shred uniformly.
+    shred_spec: Vec<(String, i32)>,
 
     current_writer: PaxBlockWriter,
     index: SegmentIndex,
@@ -553,6 +556,7 @@ impl PaxSegmentWriter {
             quant: VectorQuant::Auto,
             f32_tier: false,
             rerank_quant: VectorQuant::Sq8,
+            shred_spec: Vec::new(),
             current_writer: writer,
             index: SegmentIndex { blocks: Vec::new() },
             block_stats: Vec::new(),
@@ -566,16 +570,7 @@ impl PaxSegmentWriter {
     /// block writer so the strategy applies from the first record. `Auto` = env default.
     pub fn with_quant(mut self, quant: VectorQuant) -> Self {
         self.quant = quant;
-        self.current_writer = PaxBlockWriter::new(
-            self.mode,
-            self.compression,
-            &self.collection_id,
-            self.schema_fingerprint,
-            self.embedding_count,
-        )
-        .with_quant(quant)
-        .with_f32_tier(self.f32_tier)
-        .with_rerank_quant(self.rerank_quant);
+        self.current_writer = self.fresh_block_writer();
         self
     }
 
@@ -585,16 +580,7 @@ impl PaxSegmentWriter {
     /// Default OFF; the flush path enables it from the `pax_f32_tier` tag / env.
     pub fn with_f32_tier(mut self, enabled: bool) -> Self {
         self.f32_tier = enabled;
-        self.current_writer = PaxBlockWriter::new(
-            self.mode,
-            self.compression,
-            &self.collection_id,
-            self.schema_fingerprint,
-            self.embedding_count,
-        )
-        .with_quant(self.quant)
-        .with_f32_tier(enabled)
-        .with_rerank_quant(self.rerank_quant);
+        self.current_writer = self.fresh_block_writer();
         self
     }
 
@@ -603,7 +589,25 @@ impl PaxSegmentWriter {
     /// `RawF32` for exact. Only used when tier 1 is RaBitQ.
     pub fn with_rerank_quant(mut self, quant: VectorQuant) -> Self {
         self.rerank_quant = quant;
-        self.current_writer = PaxBlockWriter::new(
+        self.current_writer = self.fresh_block_writer();
+        self
+    }
+
+    /// P-Shred (ADR-055): shred the given props keys `(prop_key, user_col_id)` into
+    /// typed user-columns for every block in this segment. Builder form mirroring
+    /// [`with_quant`]; empty ⇒ no shredding (byte-for-byte today's output).
+    pub fn with_shred_spec(mut self, spec: Vec<(String, i32)>) -> Self {
+        self.shred_spec = spec;
+        self.current_writer = self.fresh_block_writer();
+        self
+    }
+
+    /// Build a fresh (empty) block writer carrying ALL of this segment's accumulated
+    /// settings. Single source of truth so every builder AND every mid-segment block
+    /// rotation re-applies the same config (quant, f32 tier, rerank quant, shred spec)
+    /// — no per-builder drift.
+    fn fresh_block_writer(&self) -> PaxBlockWriter {
+        PaxBlockWriter::new(
             self.mode,
             self.compression,
             &self.collection_id,
@@ -612,8 +616,8 @@ impl PaxSegmentWriter {
         )
         .with_quant(self.quant)
         .with_f32_tier(self.f32_tier)
-        .with_rerank_quant(quant);
-        self
+        .with_rerank_quant(self.rerank_quant)
+        .with_shred_spec(self.shred_spec.clone())
     }
 
     /// Append a record to the current block.
@@ -669,17 +673,9 @@ impl PaxSegmentWriter {
         self.file_buf.extend_from_slice(&block_bytes);
         self.block_stats.push(stats);
 
-        // Reset writer for the next block (preserving the segment's quant + f32-tier + rerank strategy).
-        self.current_writer = PaxBlockWriter::new(
-            self.mode,
-            self.compression,
-            &self.collection_id,
-            self.schema_fingerprint,
-            self.embedding_count,
-        )
-        .with_quant(self.quant)
-        .with_f32_tier(self.f32_tier)
-        .with_rerank_quant(self.rerank_quant);
+        // Reset writer for the next block (preserving the segment's quant + f32-tier +
+        // rerank + shred-spec strategy — see `fresh_block_writer`).
+        self.current_writer = self.fresh_block_writer();
         Ok(())
     }
 

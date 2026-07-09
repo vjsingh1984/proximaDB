@@ -1330,6 +1330,12 @@ type NotFound = ErrorResponse
 // bug reports.
 type Unauthorized = ErrorResponse
 
+// GetCapabilitiesParams defines parameters for GetCapabilities.
+type GetCapabilitiesParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // ListCollectionsParams defines parameters for ListCollections.
 type ListCollectionsParams struct {
 	// Limit Maximum number of collections to return (default: 100)
@@ -1340,6 +1346,75 @@ type ListCollectionsParams struct {
 
 	// IncludeStats Whether to include statistics
 	IncludeStats *bool `form:"include_stats,omitempty" json:"include_stats,omitempty"`
+
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// CreateCollectionParams defines parameters for CreateCollection.
+type CreateCollectionParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// DeleteCollectionParams defines parameters for DeleteCollection.
+type DeleteCollectionParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetCollectionParams defines parameters for GetCollection.
+type GetCollectionParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// IngestDocumentsParams defines parameters for IngestDocuments.
+type IngestDocumentsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// UpsertEntityV2Params defines parameters for UpsertEntityV2.
+type UpsertEntityV2Params struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// SearchEntitiesV2Params defines parameters for SearchEntitiesV2.
+type SearchEntitiesV2Params struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// DeleteEntityV2Params defines parameters for DeleteEntityV2.
+type DeleteEntityV2Params struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetEntityV2Params defines parameters for GetEntityV2.
+type GetEntityV2Params struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// InsertRecordsParams defines parameters for InsertRecords.
+type InsertRecordsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ScanRecordsParams defines parameters for ScanRecords.
+type ScanRecordsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// DeleteRecordParams defines parameters for DeleteRecord.
+type DeleteRecordParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
 // GetRecordParams defines parameters for GetRecord.
@@ -1349,16 +1424,151 @@ type GetRecordParams struct {
 
 	// IncludeText Whether to include TEXT fields in the response
 	IncludeText *bool `form:"include_text,omitempty" json:"include_text,omitempty"`
+
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetCollectionSchemaParams defines parameters for GetCollectionSchema.
+type GetCollectionSchemaParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// UpdateCollectionSchemaParams defines parameters for UpdateCollectionSchema.
+type UpdateCollectionSchemaParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// SearchRecordsParams defines parameters for SearchRecords.
+type SearchRecordsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ListDocumentCollectionsParams defines parameters for ListDocumentCollections.
+type ListDocumentCollectionsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
 // CreateDocumentCollectionJSONBody defines parameters for CreateDocumentCollection.
 type CreateDocumentCollectionJSONBody map[string]interface{}
 
+// CreateDocumentCollectionParams defines parameters for CreateDocumentCollection.
+type CreateDocumentCollectionParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// QueryDocumentsParams defines parameters for QueryDocuments.
+type QueryDocumentsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // InsertDocumentJSONBody defines parameters for InsertDocument.
 type InsertDocumentJSONBody map[string]interface{}
 
+// InsertDocumentParams defines parameters for InsertDocument.
+type InsertDocumentParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ListGraphsParams defines parameters for ListGraphs.
+type ListGraphsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// CreateGraphParams defines parameters for CreateGraph.
+type CreateGraphParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// DeleteGraphParams defines parameters for DeleteGraph.
+type DeleteGraphParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetGraphParams defines parameters for GetGraph.
+type GetGraphParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// CreateEdgeParams defines parameters for CreateEdge.
+type CreateEdgeParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// BatchCreateEdgesParams defines parameters for BatchCreateEdges.
+type BatchCreateEdgesParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// FusionSearchV2Params defines parameters for FusionSearchV2.
+type FusionSearchV2Params struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ImpactAnalysisV2Params defines parameters for ImpactAnalysisV2.
+type ImpactAnalysisV2Params struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// CreateNodeParams defines parameters for CreateNode.
+type CreateNodeParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// BatchCreateNodesParams defines parameters for BatchCreateNodes.
+type BatchCreateNodesParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// DeleteNodeParams defines parameters for DeleteNode.
+type DeleteNodeParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetNodeParams defines parameters for GetNode.
+type GetNodeParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetGraphStatsParams defines parameters for GetGraphStats.
+type GetGraphStatsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// TraverseGraphParams defines parameters for TraverseGraph.
+type TraverseGraphParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // HybridIndexJSONBody defines parameters for HybridIndex.
 type HybridIndexJSONBody map[string]interface{}
+
+// HybridIndexParams defines parameters for HybridIndex.
+type HybridIndexParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
 
 // HybridSearchJSONBody defines parameters for HybridSearch.
 type HybridSearchJSONBody struct {
@@ -1370,11 +1580,59 @@ type HybridSearchJSONBody struct {
 	AdditionalProperties map[string]interface{} `json:"-"`
 }
 
+// HybridSearchParams defines parameters for HybridSearch.
+type HybridSearchParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // IngestLogJSONBody defines parameters for IngestLog.
 type IngestLogJSONBody map[string]interface{}
 
+// IngestLogParams defines parameters for IngestLog.
+type IngestLogParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // QueryLogsJSONBody defines parameters for QueryLogs.
 type QueryLogsJSONBody map[string]interface{}
+
+// QueryLogsParams defines parameters for QueryLogs.
+type QueryLogsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ExecuteQueryParams defines parameters for ExecuteQuery.
+type ExecuteQueryParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ExplainQueryParams defines parameters for ExplainQuery.
+type ExplainQueryParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetHealthParams defines parameters for GetHealth.
+type GetHealthParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetLivenessParams defines parameters for GetLiveness.
+type GetLivenessParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetReadinessParams defines parameters for GetReadiness.
+type GetReadinessParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
 
 // CreateCollectionJSONRequestBody defines body for CreateCollection for application/json ContentType.
 type CreateCollectionJSONRequestBody = CreateCollectionV2Request
@@ -3001,188 +3259,188 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 	// GetCapabilities request
-	GetCapabilities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetCapabilities(ctx context.Context, params *GetCapabilitiesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListCollections request
 	ListCollections(ctx context.Context, params *ListCollectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateCollectionWithBody request with any body
-	CreateCollectionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateCollectionWithBody(ctx context.Context, params *CreateCollectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	CreateCollection(ctx context.Context, body CreateCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateCollection(ctx context.Context, params *CreateCollectionParams, body CreateCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteCollection request
-	DeleteCollection(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteCollection(ctx context.Context, collectionId string, params *DeleteCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCollection request
-	GetCollection(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetCollection(ctx context.Context, collectionId string, params *GetCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IngestDocumentsWithBody request with any body
-	IngestDocumentsWithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	IngestDocumentsWithBody(ctx context.Context, collectionId string, params *IngestDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	IngestDocuments(ctx context.Context, collectionId string, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	IngestDocuments(ctx context.Context, collectionId string, params *IngestDocumentsParams, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpsertEntityV2WithBody request with any body
-	UpsertEntityV2WithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpsertEntityV2WithBody(ctx context.Context, collectionId string, params *UpsertEntityV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	UpsertEntityV2(ctx context.Context, collectionId string, body UpsertEntityV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpsertEntityV2(ctx context.Context, collectionId string, params *UpsertEntityV2Params, body UpsertEntityV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SearchEntitiesV2WithBody request with any body
-	SearchEntitiesV2WithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	SearchEntitiesV2WithBody(ctx context.Context, collectionId string, params *SearchEntitiesV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	SearchEntitiesV2(ctx context.Context, collectionId string, body SearchEntitiesV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	SearchEntitiesV2(ctx context.Context, collectionId string, params *SearchEntitiesV2Params, body SearchEntitiesV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteEntityV2 request
-	DeleteEntityV2(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteEntityV2(ctx context.Context, collectionId string, entityId string, params *DeleteEntityV2Params, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetEntityV2 request
-	GetEntityV2(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetEntityV2(ctx context.Context, collectionId string, entityId string, params *GetEntityV2Params, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InsertRecordsWithBody request with any body
-	InsertRecordsWithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	InsertRecordsWithBody(ctx context.Context, collectionId string, params *InsertRecordsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	InsertRecords(ctx context.Context, collectionId string, body InsertRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	InsertRecords(ctx context.Context, collectionId string, params *InsertRecordsParams, body InsertRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ScanRecordsWithBody request with any body
-	ScanRecordsWithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ScanRecordsWithBody(ctx context.Context, collectionId string, params *ScanRecordsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	ScanRecords(ctx context.Context, collectionId string, body ScanRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ScanRecords(ctx context.Context, collectionId string, params *ScanRecordsParams, body ScanRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteRecord request
-	DeleteRecord(ctx context.Context, collectionId string, recordId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteRecord(ctx context.Context, collectionId string, recordId string, params *DeleteRecordParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetRecord request
 	GetRecord(ctx context.Context, collectionId string, recordId string, params *GetRecordParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCollectionSchema request
-	GetCollectionSchema(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetCollectionSchema(ctx context.Context, collectionId string, params *GetCollectionSchemaParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateCollectionSchemaWithBody request with any body
-	UpdateCollectionSchemaWithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateCollectionSchemaWithBody(ctx context.Context, collectionId string, params *UpdateCollectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	UpdateCollectionSchema(ctx context.Context, collectionId string, body UpdateCollectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateCollectionSchema(ctx context.Context, collectionId string, params *UpdateCollectionSchemaParams, body UpdateCollectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SearchRecordsWithBody request with any body
-	SearchRecordsWithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	SearchRecordsWithBody(ctx context.Context, collectionId string, params *SearchRecordsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	SearchRecords(ctx context.Context, collectionId string, body SearchRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	SearchRecords(ctx context.Context, collectionId string, params *SearchRecordsParams, body SearchRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListDocumentCollections request
-	ListDocumentCollections(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListDocumentCollections(ctx context.Context, params *ListDocumentCollectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateDocumentCollectionWithBody request with any body
-	CreateDocumentCollectionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateDocumentCollectionWithBody(ctx context.Context, params *CreateDocumentCollectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	CreateDocumentCollection(ctx context.Context, body CreateDocumentCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateDocumentCollection(ctx context.Context, params *CreateDocumentCollectionParams, body CreateDocumentCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// QueryDocuments request
-	QueryDocuments(ctx context.Context, collection string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	QueryDocuments(ctx context.Context, collection string, params *QueryDocumentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InsertDocumentWithBody request with any body
-	InsertDocumentWithBody(ctx context.Context, collection string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	InsertDocumentWithBody(ctx context.Context, collection string, params *InsertDocumentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	InsertDocument(ctx context.Context, collection string, body InsertDocumentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	InsertDocument(ctx context.Context, collection string, params *InsertDocumentParams, body InsertDocumentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListGraphs request
-	ListGraphs(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListGraphs(ctx context.Context, params *ListGraphsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateGraphWithBody request with any body
-	CreateGraphWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateGraphWithBody(ctx context.Context, params *CreateGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	CreateGraph(ctx context.Context, body CreateGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateGraph(ctx context.Context, params *CreateGraphParams, body CreateGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteGraph request
-	DeleteGraph(ctx context.Context, graphId GraphId, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteGraph(ctx context.Context, graphId GraphId, params *DeleteGraphParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetGraph request
-	GetGraph(ctx context.Context, graphId GraphId, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetGraph(ctx context.Context, graphId GraphId, params *GetGraphParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateEdgeWithBody request with any body
-	CreateEdgeWithBody(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateEdgeWithBody(ctx context.Context, graphId GraphId, params *CreateEdgeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	CreateEdge(ctx context.Context, graphId GraphId, body CreateEdgeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateEdge(ctx context.Context, graphId GraphId, params *CreateEdgeParams, body CreateEdgeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// BatchCreateEdgesWithBody request with any body
-	BatchCreateEdgesWithBody(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	BatchCreateEdgesWithBody(ctx context.Context, graphId GraphId, params *BatchCreateEdgesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	BatchCreateEdges(ctx context.Context, graphId GraphId, body BatchCreateEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	BatchCreateEdges(ctx context.Context, graphId GraphId, params *BatchCreateEdgesParams, body BatchCreateEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// FusionSearchV2WithBody request with any body
-	FusionSearchV2WithBody(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	FusionSearchV2WithBody(ctx context.Context, graphId string, params *FusionSearchV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	FusionSearchV2(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	FusionSearchV2(ctx context.Context, graphId string, params *FusionSearchV2Params, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ImpactAnalysisV2WithBody request with any body
-	ImpactAnalysisV2WithBody(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ImpactAnalysisV2WithBody(ctx context.Context, graphId string, params *ImpactAnalysisV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	ImpactAnalysisV2(ctx context.Context, graphId string, body ImpactAnalysisV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ImpactAnalysisV2(ctx context.Context, graphId string, params *ImpactAnalysisV2Params, body ImpactAnalysisV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateNodeWithBody request with any body
-	CreateNodeWithBody(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateNodeWithBody(ctx context.Context, graphId GraphId, params *CreateNodeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	CreateNode(ctx context.Context, graphId GraphId, body CreateNodeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateNode(ctx context.Context, graphId GraphId, params *CreateNodeParams, body CreateNodeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// BatchCreateNodesWithBody request with any body
-	BatchCreateNodesWithBody(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	BatchCreateNodesWithBody(ctx context.Context, graphId GraphId, params *BatchCreateNodesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	BatchCreateNodes(ctx context.Context, graphId GraphId, body BatchCreateNodesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	BatchCreateNodes(ctx context.Context, graphId GraphId, params *BatchCreateNodesParams, body BatchCreateNodesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteNode request
-	DeleteNode(ctx context.Context, graphId GraphId, nodeId NodeId, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteNode(ctx context.Context, graphId GraphId, nodeId NodeId, params *DeleteNodeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetNode request
-	GetNode(ctx context.Context, graphId GraphId, nodeId NodeId, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetNode(ctx context.Context, graphId GraphId, nodeId NodeId, params *GetNodeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetGraphStats request
-	GetGraphStats(ctx context.Context, graphId GraphId, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetGraphStats(ctx context.Context, graphId GraphId, params *GetGraphStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// TraverseGraphWithBody request with any body
-	TraverseGraphWithBody(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	TraverseGraphWithBody(ctx context.Context, graphId GraphId, params *TraverseGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	TraverseGraph(ctx context.Context, graphId GraphId, body TraverseGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	TraverseGraph(ctx context.Context, graphId GraphId, params *TraverseGraphParams, body TraverseGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// HybridIndexWithBody request with any body
-	HybridIndexWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	HybridIndexWithBody(ctx context.Context, params *HybridIndexParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	HybridIndex(ctx context.Context, body HybridIndexJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	HybridIndex(ctx context.Context, params *HybridIndexParams, body HybridIndexJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// HybridSearchWithBody request with any body
-	HybridSearchWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	HybridSearchWithBody(ctx context.Context, params *HybridSearchParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	HybridSearch(ctx context.Context, body HybridSearchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	HybridSearch(ctx context.Context, params *HybridSearchParams, body HybridSearchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IngestLogWithBody request with any body
-	IngestLogWithBody(ctx context.Context, namespace string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	IngestLogWithBody(ctx context.Context, namespace string, params *IngestLogParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	IngestLog(ctx context.Context, namespace string, body IngestLogJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	IngestLog(ctx context.Context, namespace string, params *IngestLogParams, body IngestLogJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// QueryLogsWithBody request with any body
-	QueryLogsWithBody(ctx context.Context, namespace string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	QueryLogsWithBody(ctx context.Context, namespace string, params *QueryLogsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	QueryLogs(ctx context.Context, namespace string, body QueryLogsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	QueryLogs(ctx context.Context, namespace string, params *QueryLogsParams, body QueryLogsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExecuteQueryWithBody request with any body
-	ExecuteQueryWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ExecuteQueryWithBody(ctx context.Context, params *ExecuteQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	ExecuteQuery(ctx context.Context, body ExecuteQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ExecuteQuery(ctx context.Context, params *ExecuteQueryParams, body ExecuteQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExplainQueryWithBody request with any body
-	ExplainQueryWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ExplainQueryWithBody(ctx context.Context, params *ExplainQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	ExplainQuery(ctx context.Context, body ExplainQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ExplainQuery(ctx context.Context, params *ExplainQueryParams, body ExplainQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetHealth request
-	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetHealth(ctx context.Context, params *GetHealthParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetLiveness request
-	GetLiveness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetLiveness(ctx context.Context, params *GetLivenessParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReadiness request
-	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetReadiness(ctx context.Context, params *GetReadinessParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-func (c *Client) GetCapabilities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetCapabilitiesRequest(c.Server)
+func (c *Client) GetCapabilities(ctx context.Context, params *GetCapabilitiesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCapabilitiesRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3205,8 +3463,8 @@ func (c *Client) ListCollections(ctx context.Context, params *ListCollectionsPar
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateCollectionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateCollectionRequestWithBody(c.Server, contentType, body)
+func (c *Client) CreateCollectionWithBody(ctx context.Context, params *CreateCollectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCollectionRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3217,8 +3475,8 @@ func (c *Client) CreateCollectionWithBody(ctx context.Context, contentType strin
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateCollection(ctx context.Context, body CreateCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateCollectionRequest(c.Server, body)
+func (c *Client) CreateCollection(ctx context.Context, params *CreateCollectionParams, body CreateCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCollectionRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3229,8 +3487,8 @@ func (c *Client) CreateCollection(ctx context.Context, body CreateCollectionJSON
 	return c.Client.Do(req)
 }
 
-func (c *Client) DeleteCollection(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteCollectionRequest(c.Server, collectionId)
+func (c *Client) DeleteCollection(ctx context.Context, collectionId string, params *DeleteCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteCollectionRequest(c.Server, collectionId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3241,8 +3499,8 @@ func (c *Client) DeleteCollection(ctx context.Context, collectionId string, reqE
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetCollection(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetCollectionRequest(c.Server, collectionId)
+func (c *Client) GetCollection(ctx context.Context, collectionId string, params *GetCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCollectionRequest(c.Server, collectionId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3253,8 +3511,8 @@ func (c *Client) GetCollection(ctx context.Context, collectionId string, reqEdit
 	return c.Client.Do(req)
 }
 
-func (c *Client) IngestDocumentsWithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIngestDocumentsRequestWithBody(c.Server, collectionId, contentType, body)
+func (c *Client) IngestDocumentsWithBody(ctx context.Context, collectionId string, params *IngestDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestDocumentsRequestWithBody(c.Server, collectionId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3265,8 +3523,8 @@ func (c *Client) IngestDocumentsWithBody(ctx context.Context, collectionId strin
 	return c.Client.Do(req)
 }
 
-func (c *Client) IngestDocuments(ctx context.Context, collectionId string, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIngestDocumentsRequest(c.Server, collectionId, body)
+func (c *Client) IngestDocuments(ctx context.Context, collectionId string, params *IngestDocumentsParams, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestDocumentsRequest(c.Server, collectionId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3277,8 +3535,8 @@ func (c *Client) IngestDocuments(ctx context.Context, collectionId string, body 
 	return c.Client.Do(req)
 }
 
-func (c *Client) UpsertEntityV2WithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpsertEntityV2RequestWithBody(c.Server, collectionId, contentType, body)
+func (c *Client) UpsertEntityV2WithBody(ctx context.Context, collectionId string, params *UpsertEntityV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpsertEntityV2RequestWithBody(c.Server, collectionId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3289,8 +3547,8 @@ func (c *Client) UpsertEntityV2WithBody(ctx context.Context, collectionId string
 	return c.Client.Do(req)
 }
 
-func (c *Client) UpsertEntityV2(ctx context.Context, collectionId string, body UpsertEntityV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpsertEntityV2Request(c.Server, collectionId, body)
+func (c *Client) UpsertEntityV2(ctx context.Context, collectionId string, params *UpsertEntityV2Params, body UpsertEntityV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpsertEntityV2Request(c.Server, collectionId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3301,8 +3559,8 @@ func (c *Client) UpsertEntityV2(ctx context.Context, collectionId string, body U
 	return c.Client.Do(req)
 }
 
-func (c *Client) SearchEntitiesV2WithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSearchEntitiesV2RequestWithBody(c.Server, collectionId, contentType, body)
+func (c *Client) SearchEntitiesV2WithBody(ctx context.Context, collectionId string, params *SearchEntitiesV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchEntitiesV2RequestWithBody(c.Server, collectionId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3313,8 +3571,8 @@ func (c *Client) SearchEntitiesV2WithBody(ctx context.Context, collectionId stri
 	return c.Client.Do(req)
 }
 
-func (c *Client) SearchEntitiesV2(ctx context.Context, collectionId string, body SearchEntitiesV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSearchEntitiesV2Request(c.Server, collectionId, body)
+func (c *Client) SearchEntitiesV2(ctx context.Context, collectionId string, params *SearchEntitiesV2Params, body SearchEntitiesV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchEntitiesV2Request(c.Server, collectionId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3325,8 +3583,8 @@ func (c *Client) SearchEntitiesV2(ctx context.Context, collectionId string, body
 	return c.Client.Do(req)
 }
 
-func (c *Client) DeleteEntityV2(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteEntityV2Request(c.Server, collectionId, entityId)
+func (c *Client) DeleteEntityV2(ctx context.Context, collectionId string, entityId string, params *DeleteEntityV2Params, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteEntityV2Request(c.Server, collectionId, entityId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3337,8 +3595,8 @@ func (c *Client) DeleteEntityV2(ctx context.Context, collectionId string, entity
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetEntityV2(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetEntityV2Request(c.Server, collectionId, entityId)
+func (c *Client) GetEntityV2(ctx context.Context, collectionId string, entityId string, params *GetEntityV2Params, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetEntityV2Request(c.Server, collectionId, entityId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3349,8 +3607,8 @@ func (c *Client) GetEntityV2(ctx context.Context, collectionId string, entityId 
 	return c.Client.Do(req)
 }
 
-func (c *Client) InsertRecordsWithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewInsertRecordsRequestWithBody(c.Server, collectionId, contentType, body)
+func (c *Client) InsertRecordsWithBody(ctx context.Context, collectionId string, params *InsertRecordsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInsertRecordsRequestWithBody(c.Server, collectionId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3361,8 +3619,8 @@ func (c *Client) InsertRecordsWithBody(ctx context.Context, collectionId string,
 	return c.Client.Do(req)
 }
 
-func (c *Client) InsertRecords(ctx context.Context, collectionId string, body InsertRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewInsertRecordsRequest(c.Server, collectionId, body)
+func (c *Client) InsertRecords(ctx context.Context, collectionId string, params *InsertRecordsParams, body InsertRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInsertRecordsRequest(c.Server, collectionId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3373,8 +3631,8 @@ func (c *Client) InsertRecords(ctx context.Context, collectionId string, body In
 	return c.Client.Do(req)
 }
 
-func (c *Client) ScanRecordsWithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewScanRecordsRequestWithBody(c.Server, collectionId, contentType, body)
+func (c *Client) ScanRecordsWithBody(ctx context.Context, collectionId string, params *ScanRecordsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewScanRecordsRequestWithBody(c.Server, collectionId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3385,8 +3643,8 @@ func (c *Client) ScanRecordsWithBody(ctx context.Context, collectionId string, c
 	return c.Client.Do(req)
 }
 
-func (c *Client) ScanRecords(ctx context.Context, collectionId string, body ScanRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewScanRecordsRequest(c.Server, collectionId, body)
+func (c *Client) ScanRecords(ctx context.Context, collectionId string, params *ScanRecordsParams, body ScanRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewScanRecordsRequest(c.Server, collectionId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3397,8 +3655,8 @@ func (c *Client) ScanRecords(ctx context.Context, collectionId string, body Scan
 	return c.Client.Do(req)
 }
 
-func (c *Client) DeleteRecord(ctx context.Context, collectionId string, recordId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteRecordRequest(c.Server, collectionId, recordId)
+func (c *Client) DeleteRecord(ctx context.Context, collectionId string, recordId string, params *DeleteRecordParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteRecordRequest(c.Server, collectionId, recordId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3421,8 +3679,8 @@ func (c *Client) GetRecord(ctx context.Context, collectionId string, recordId st
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetCollectionSchema(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetCollectionSchemaRequest(c.Server, collectionId)
+func (c *Client) GetCollectionSchema(ctx context.Context, collectionId string, params *GetCollectionSchemaParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCollectionSchemaRequest(c.Server, collectionId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3433,8 +3691,8 @@ func (c *Client) GetCollectionSchema(ctx context.Context, collectionId string, r
 	return c.Client.Do(req)
 }
 
-func (c *Client) UpdateCollectionSchemaWithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateCollectionSchemaRequestWithBody(c.Server, collectionId, contentType, body)
+func (c *Client) UpdateCollectionSchemaWithBody(ctx context.Context, collectionId string, params *UpdateCollectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateCollectionSchemaRequestWithBody(c.Server, collectionId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3445,8 +3703,8 @@ func (c *Client) UpdateCollectionSchemaWithBody(ctx context.Context, collectionI
 	return c.Client.Do(req)
 }
 
-func (c *Client) UpdateCollectionSchema(ctx context.Context, collectionId string, body UpdateCollectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateCollectionSchemaRequest(c.Server, collectionId, body)
+func (c *Client) UpdateCollectionSchema(ctx context.Context, collectionId string, params *UpdateCollectionSchemaParams, body UpdateCollectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateCollectionSchemaRequest(c.Server, collectionId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3457,8 +3715,8 @@ func (c *Client) UpdateCollectionSchema(ctx context.Context, collectionId string
 	return c.Client.Do(req)
 }
 
-func (c *Client) SearchRecordsWithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSearchRecordsRequestWithBody(c.Server, collectionId, contentType, body)
+func (c *Client) SearchRecordsWithBody(ctx context.Context, collectionId string, params *SearchRecordsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchRecordsRequestWithBody(c.Server, collectionId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3469,8 +3727,8 @@ func (c *Client) SearchRecordsWithBody(ctx context.Context, collectionId string,
 	return c.Client.Do(req)
 }
 
-func (c *Client) SearchRecords(ctx context.Context, collectionId string, body SearchRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSearchRecordsRequest(c.Server, collectionId, body)
+func (c *Client) SearchRecords(ctx context.Context, collectionId string, params *SearchRecordsParams, body SearchRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchRecordsRequest(c.Server, collectionId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3481,8 +3739,8 @@ func (c *Client) SearchRecords(ctx context.Context, collectionId string, body Se
 	return c.Client.Do(req)
 }
 
-func (c *Client) ListDocumentCollections(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListDocumentCollectionsRequest(c.Server)
+func (c *Client) ListDocumentCollections(ctx context.Context, params *ListDocumentCollectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListDocumentCollectionsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3493,8 +3751,8 @@ func (c *Client) ListDocumentCollections(ctx context.Context, reqEditors ...Requ
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateDocumentCollectionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateDocumentCollectionRequestWithBody(c.Server, contentType, body)
+func (c *Client) CreateDocumentCollectionWithBody(ctx context.Context, params *CreateDocumentCollectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDocumentCollectionRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3505,8 +3763,8 @@ func (c *Client) CreateDocumentCollectionWithBody(ctx context.Context, contentTy
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateDocumentCollection(ctx context.Context, body CreateDocumentCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateDocumentCollectionRequest(c.Server, body)
+func (c *Client) CreateDocumentCollection(ctx context.Context, params *CreateDocumentCollectionParams, body CreateDocumentCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDocumentCollectionRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3517,8 +3775,8 @@ func (c *Client) CreateDocumentCollection(ctx context.Context, body CreateDocume
 	return c.Client.Do(req)
 }
 
-func (c *Client) QueryDocuments(ctx context.Context, collection string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewQueryDocumentsRequest(c.Server, collection)
+func (c *Client) QueryDocuments(ctx context.Context, collection string, params *QueryDocumentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQueryDocumentsRequest(c.Server, collection, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3529,8 +3787,8 @@ func (c *Client) QueryDocuments(ctx context.Context, collection string, reqEdito
 	return c.Client.Do(req)
 }
 
-func (c *Client) InsertDocumentWithBody(ctx context.Context, collection string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewInsertDocumentRequestWithBody(c.Server, collection, contentType, body)
+func (c *Client) InsertDocumentWithBody(ctx context.Context, collection string, params *InsertDocumentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInsertDocumentRequestWithBody(c.Server, collection, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3541,8 +3799,8 @@ func (c *Client) InsertDocumentWithBody(ctx context.Context, collection string, 
 	return c.Client.Do(req)
 }
 
-func (c *Client) InsertDocument(ctx context.Context, collection string, body InsertDocumentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewInsertDocumentRequest(c.Server, collection, body)
+func (c *Client) InsertDocument(ctx context.Context, collection string, params *InsertDocumentParams, body InsertDocumentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInsertDocumentRequest(c.Server, collection, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3553,8 +3811,8 @@ func (c *Client) InsertDocument(ctx context.Context, collection string, body Ins
 	return c.Client.Do(req)
 }
 
-func (c *Client) ListGraphs(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListGraphsRequest(c.Server)
+func (c *Client) ListGraphs(ctx context.Context, params *ListGraphsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListGraphsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3565,8 +3823,8 @@ func (c *Client) ListGraphs(ctx context.Context, reqEditors ...RequestEditorFn) 
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateGraphWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateGraphRequestWithBody(c.Server, contentType, body)
+func (c *Client) CreateGraphWithBody(ctx context.Context, params *CreateGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateGraphRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3577,8 +3835,8 @@ func (c *Client) CreateGraphWithBody(ctx context.Context, contentType string, bo
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateGraph(ctx context.Context, body CreateGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateGraphRequest(c.Server, body)
+func (c *Client) CreateGraph(ctx context.Context, params *CreateGraphParams, body CreateGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateGraphRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3589,8 +3847,8 @@ func (c *Client) CreateGraph(ctx context.Context, body CreateGraphJSONRequestBod
 	return c.Client.Do(req)
 }
 
-func (c *Client) DeleteGraph(ctx context.Context, graphId GraphId, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteGraphRequest(c.Server, graphId)
+func (c *Client) DeleteGraph(ctx context.Context, graphId GraphId, params *DeleteGraphParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteGraphRequest(c.Server, graphId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3601,8 +3859,8 @@ func (c *Client) DeleteGraph(ctx context.Context, graphId GraphId, reqEditors ..
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetGraph(ctx context.Context, graphId GraphId, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetGraphRequest(c.Server, graphId)
+func (c *Client) GetGraph(ctx context.Context, graphId GraphId, params *GetGraphParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetGraphRequest(c.Server, graphId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3613,8 +3871,8 @@ func (c *Client) GetGraph(ctx context.Context, graphId GraphId, reqEditors ...Re
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateEdgeWithBody(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateEdgeRequestWithBody(c.Server, graphId, contentType, body)
+func (c *Client) CreateEdgeWithBody(ctx context.Context, graphId GraphId, params *CreateEdgeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateEdgeRequestWithBody(c.Server, graphId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3625,8 +3883,8 @@ func (c *Client) CreateEdgeWithBody(ctx context.Context, graphId GraphId, conten
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateEdge(ctx context.Context, graphId GraphId, body CreateEdgeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateEdgeRequest(c.Server, graphId, body)
+func (c *Client) CreateEdge(ctx context.Context, graphId GraphId, params *CreateEdgeParams, body CreateEdgeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateEdgeRequest(c.Server, graphId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3637,8 +3895,8 @@ func (c *Client) CreateEdge(ctx context.Context, graphId GraphId, body CreateEdg
 	return c.Client.Do(req)
 }
 
-func (c *Client) BatchCreateEdgesWithBody(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewBatchCreateEdgesRequestWithBody(c.Server, graphId, contentType, body)
+func (c *Client) BatchCreateEdgesWithBody(ctx context.Context, graphId GraphId, params *BatchCreateEdgesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBatchCreateEdgesRequestWithBody(c.Server, graphId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3649,8 +3907,8 @@ func (c *Client) BatchCreateEdgesWithBody(ctx context.Context, graphId GraphId, 
 	return c.Client.Do(req)
 }
 
-func (c *Client) BatchCreateEdges(ctx context.Context, graphId GraphId, body BatchCreateEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewBatchCreateEdgesRequest(c.Server, graphId, body)
+func (c *Client) BatchCreateEdges(ctx context.Context, graphId GraphId, params *BatchCreateEdgesParams, body BatchCreateEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBatchCreateEdgesRequest(c.Server, graphId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3661,8 +3919,8 @@ func (c *Client) BatchCreateEdges(ctx context.Context, graphId GraphId, body Bat
 	return c.Client.Do(req)
 }
 
-func (c *Client) FusionSearchV2WithBody(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewFusionSearchV2RequestWithBody(c.Server, graphId, contentType, body)
+func (c *Client) FusionSearchV2WithBody(ctx context.Context, graphId string, params *FusionSearchV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewFusionSearchV2RequestWithBody(c.Server, graphId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3673,8 +3931,8 @@ func (c *Client) FusionSearchV2WithBody(ctx context.Context, graphId string, con
 	return c.Client.Do(req)
 }
 
-func (c *Client) FusionSearchV2(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewFusionSearchV2Request(c.Server, graphId, body)
+func (c *Client) FusionSearchV2(ctx context.Context, graphId string, params *FusionSearchV2Params, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewFusionSearchV2Request(c.Server, graphId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3685,8 +3943,8 @@ func (c *Client) FusionSearchV2(ctx context.Context, graphId string, body Fusion
 	return c.Client.Do(req)
 }
 
-func (c *Client) ImpactAnalysisV2WithBody(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewImpactAnalysisV2RequestWithBody(c.Server, graphId, contentType, body)
+func (c *Client) ImpactAnalysisV2WithBody(ctx context.Context, graphId string, params *ImpactAnalysisV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewImpactAnalysisV2RequestWithBody(c.Server, graphId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3697,8 +3955,8 @@ func (c *Client) ImpactAnalysisV2WithBody(ctx context.Context, graphId string, c
 	return c.Client.Do(req)
 }
 
-func (c *Client) ImpactAnalysisV2(ctx context.Context, graphId string, body ImpactAnalysisV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewImpactAnalysisV2Request(c.Server, graphId, body)
+func (c *Client) ImpactAnalysisV2(ctx context.Context, graphId string, params *ImpactAnalysisV2Params, body ImpactAnalysisV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewImpactAnalysisV2Request(c.Server, graphId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3709,8 +3967,8 @@ func (c *Client) ImpactAnalysisV2(ctx context.Context, graphId string, body Impa
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateNodeWithBody(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateNodeRequestWithBody(c.Server, graphId, contentType, body)
+func (c *Client) CreateNodeWithBody(ctx context.Context, graphId GraphId, params *CreateNodeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateNodeRequestWithBody(c.Server, graphId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3721,8 +3979,8 @@ func (c *Client) CreateNodeWithBody(ctx context.Context, graphId GraphId, conten
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateNode(ctx context.Context, graphId GraphId, body CreateNodeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateNodeRequest(c.Server, graphId, body)
+func (c *Client) CreateNode(ctx context.Context, graphId GraphId, params *CreateNodeParams, body CreateNodeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateNodeRequest(c.Server, graphId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3733,8 +3991,8 @@ func (c *Client) CreateNode(ctx context.Context, graphId GraphId, body CreateNod
 	return c.Client.Do(req)
 }
 
-func (c *Client) BatchCreateNodesWithBody(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewBatchCreateNodesRequestWithBody(c.Server, graphId, contentType, body)
+func (c *Client) BatchCreateNodesWithBody(ctx context.Context, graphId GraphId, params *BatchCreateNodesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBatchCreateNodesRequestWithBody(c.Server, graphId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3745,8 +4003,8 @@ func (c *Client) BatchCreateNodesWithBody(ctx context.Context, graphId GraphId, 
 	return c.Client.Do(req)
 }
 
-func (c *Client) BatchCreateNodes(ctx context.Context, graphId GraphId, body BatchCreateNodesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewBatchCreateNodesRequest(c.Server, graphId, body)
+func (c *Client) BatchCreateNodes(ctx context.Context, graphId GraphId, params *BatchCreateNodesParams, body BatchCreateNodesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBatchCreateNodesRequest(c.Server, graphId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3757,8 +4015,8 @@ func (c *Client) BatchCreateNodes(ctx context.Context, graphId GraphId, body Bat
 	return c.Client.Do(req)
 }
 
-func (c *Client) DeleteNode(ctx context.Context, graphId GraphId, nodeId NodeId, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteNodeRequest(c.Server, graphId, nodeId)
+func (c *Client) DeleteNode(ctx context.Context, graphId GraphId, nodeId NodeId, params *DeleteNodeParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteNodeRequest(c.Server, graphId, nodeId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3769,8 +4027,8 @@ func (c *Client) DeleteNode(ctx context.Context, graphId GraphId, nodeId NodeId,
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetNode(ctx context.Context, graphId GraphId, nodeId NodeId, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetNodeRequest(c.Server, graphId, nodeId)
+func (c *Client) GetNode(ctx context.Context, graphId GraphId, nodeId NodeId, params *GetNodeParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetNodeRequest(c.Server, graphId, nodeId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3781,8 +4039,8 @@ func (c *Client) GetNode(ctx context.Context, graphId GraphId, nodeId NodeId, re
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetGraphStats(ctx context.Context, graphId GraphId, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetGraphStatsRequest(c.Server, graphId)
+func (c *Client) GetGraphStats(ctx context.Context, graphId GraphId, params *GetGraphStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetGraphStatsRequest(c.Server, graphId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3793,8 +4051,8 @@ func (c *Client) GetGraphStats(ctx context.Context, graphId GraphId, reqEditors 
 	return c.Client.Do(req)
 }
 
-func (c *Client) TraverseGraphWithBody(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewTraverseGraphRequestWithBody(c.Server, graphId, contentType, body)
+func (c *Client) TraverseGraphWithBody(ctx context.Context, graphId GraphId, params *TraverseGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTraverseGraphRequestWithBody(c.Server, graphId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3805,8 +4063,8 @@ func (c *Client) TraverseGraphWithBody(ctx context.Context, graphId GraphId, con
 	return c.Client.Do(req)
 }
 
-func (c *Client) TraverseGraph(ctx context.Context, graphId GraphId, body TraverseGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewTraverseGraphRequest(c.Server, graphId, body)
+func (c *Client) TraverseGraph(ctx context.Context, graphId GraphId, params *TraverseGraphParams, body TraverseGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTraverseGraphRequest(c.Server, graphId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3817,8 +4075,8 @@ func (c *Client) TraverseGraph(ctx context.Context, graphId GraphId, body Traver
 	return c.Client.Do(req)
 }
 
-func (c *Client) HybridIndexWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewHybridIndexRequestWithBody(c.Server, contentType, body)
+func (c *Client) HybridIndexWithBody(ctx context.Context, params *HybridIndexParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHybridIndexRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3829,8 +4087,8 @@ func (c *Client) HybridIndexWithBody(ctx context.Context, contentType string, bo
 	return c.Client.Do(req)
 }
 
-func (c *Client) HybridIndex(ctx context.Context, body HybridIndexJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewHybridIndexRequest(c.Server, body)
+func (c *Client) HybridIndex(ctx context.Context, params *HybridIndexParams, body HybridIndexJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHybridIndexRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3841,8 +4099,8 @@ func (c *Client) HybridIndex(ctx context.Context, body HybridIndexJSONRequestBod
 	return c.Client.Do(req)
 }
 
-func (c *Client) HybridSearchWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewHybridSearchRequestWithBody(c.Server, contentType, body)
+func (c *Client) HybridSearchWithBody(ctx context.Context, params *HybridSearchParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHybridSearchRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3853,8 +4111,8 @@ func (c *Client) HybridSearchWithBody(ctx context.Context, contentType string, b
 	return c.Client.Do(req)
 }
 
-func (c *Client) HybridSearch(ctx context.Context, body HybridSearchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewHybridSearchRequest(c.Server, body)
+func (c *Client) HybridSearch(ctx context.Context, params *HybridSearchParams, body HybridSearchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHybridSearchRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3865,8 +4123,8 @@ func (c *Client) HybridSearch(ctx context.Context, body HybridSearchJSONRequestB
 	return c.Client.Do(req)
 }
 
-func (c *Client) IngestLogWithBody(ctx context.Context, namespace string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIngestLogRequestWithBody(c.Server, namespace, contentType, body)
+func (c *Client) IngestLogWithBody(ctx context.Context, namespace string, params *IngestLogParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestLogRequestWithBody(c.Server, namespace, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3877,8 +4135,8 @@ func (c *Client) IngestLogWithBody(ctx context.Context, namespace string, conten
 	return c.Client.Do(req)
 }
 
-func (c *Client) IngestLog(ctx context.Context, namespace string, body IngestLogJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIngestLogRequest(c.Server, namespace, body)
+func (c *Client) IngestLog(ctx context.Context, namespace string, params *IngestLogParams, body IngestLogJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestLogRequest(c.Server, namespace, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3889,8 +4147,8 @@ func (c *Client) IngestLog(ctx context.Context, namespace string, body IngestLog
 	return c.Client.Do(req)
 }
 
-func (c *Client) QueryLogsWithBody(ctx context.Context, namespace string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewQueryLogsRequestWithBody(c.Server, namespace, contentType, body)
+func (c *Client) QueryLogsWithBody(ctx context.Context, namespace string, params *QueryLogsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQueryLogsRequestWithBody(c.Server, namespace, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3901,8 +4159,8 @@ func (c *Client) QueryLogsWithBody(ctx context.Context, namespace string, conten
 	return c.Client.Do(req)
 }
 
-func (c *Client) QueryLogs(ctx context.Context, namespace string, body QueryLogsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewQueryLogsRequest(c.Server, namespace, body)
+func (c *Client) QueryLogs(ctx context.Context, namespace string, params *QueryLogsParams, body QueryLogsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQueryLogsRequest(c.Server, namespace, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3913,8 +4171,8 @@ func (c *Client) QueryLogs(ctx context.Context, namespace string, body QueryLogs
 	return c.Client.Do(req)
 }
 
-func (c *Client) ExecuteQueryWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExecuteQueryRequestWithBody(c.Server, contentType, body)
+func (c *Client) ExecuteQueryWithBody(ctx context.Context, params *ExecuteQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecuteQueryRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3925,8 +4183,8 @@ func (c *Client) ExecuteQueryWithBody(ctx context.Context, contentType string, b
 	return c.Client.Do(req)
 }
 
-func (c *Client) ExecuteQuery(ctx context.Context, body ExecuteQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExecuteQueryRequest(c.Server, body)
+func (c *Client) ExecuteQuery(ctx context.Context, params *ExecuteQueryParams, body ExecuteQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecuteQueryRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3937,8 +4195,8 @@ func (c *Client) ExecuteQuery(ctx context.Context, body ExecuteQueryJSONRequestB
 	return c.Client.Do(req)
 }
 
-func (c *Client) ExplainQueryWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExplainQueryRequestWithBody(c.Server, contentType, body)
+func (c *Client) ExplainQueryWithBody(ctx context.Context, params *ExplainQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExplainQueryRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3949,8 +4207,8 @@ func (c *Client) ExplainQueryWithBody(ctx context.Context, contentType string, b
 	return c.Client.Do(req)
 }
 
-func (c *Client) ExplainQuery(ctx context.Context, body ExplainQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExplainQueryRequest(c.Server, body)
+func (c *Client) ExplainQuery(ctx context.Context, params *ExplainQueryParams, body ExplainQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExplainQueryRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3961,8 +4219,8 @@ func (c *Client) ExplainQuery(ctx context.Context, body ExplainQueryJSONRequestB
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetHealthRequest(c.Server)
+func (c *Client) GetHealth(ctx context.Context, params *GetHealthParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetHealthRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3973,8 +4231,8 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetLiveness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetLivenessRequest(c.Server)
+func (c *Client) GetLiveness(ctx context.Context, params *GetLivenessParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetLivenessRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3985,8 +4243,8 @@ func (c *Client) GetLiveness(ctx context.Context, reqEditors ...RequestEditorFn)
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetReadinessRequest(c.Server)
+func (c *Client) GetReadiness(ctx context.Context, params *GetReadinessParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReadinessRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3998,7 +4256,7 @@ func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn
 }
 
 // NewGetCapabilitiesRequest generates requests for GetCapabilities
-func NewGetCapabilitiesRequest(server string) (*http.Request, error) {
+func NewGetCapabilitiesRequest(server string, params *GetCapabilitiesParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -4019,6 +4277,21 @@ func NewGetCapabilitiesRequest(server string) (*http.Request, error) {
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
 	}
 
 	return req, nil
@@ -4102,22 +4375,37 @@ func NewListCollectionsRequest(server string, params *ListCollectionsParams) (*h
 		return nil, err
 	}
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewCreateCollectionRequest calls the generic CreateCollection builder with application/json body
-func NewCreateCollectionRequest(server string, body CreateCollectionJSONRequestBody) (*http.Request, error) {
+func NewCreateCollectionRequest(server string, params *CreateCollectionParams, body CreateCollectionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateCollectionRequestWithBody(server, "application/json", bodyReader)
+	return NewCreateCollectionRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewCreateCollectionRequestWithBody generates requests for CreateCollection with any type of body
-func NewCreateCollectionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewCreateCollectionRequestWithBody(server string, params *CreateCollectionParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -4142,11 +4430,26 @@ func NewCreateCollectionRequestWithBody(server string, contentType string, body 
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewDeleteCollectionRequest generates requests for DeleteCollection
-func NewDeleteCollectionRequest(server string, collectionId string) (*http.Request, error) {
+func NewDeleteCollectionRequest(server string, collectionId string, params *DeleteCollectionParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4176,11 +4479,26 @@ func NewDeleteCollectionRequest(server string, collectionId string) (*http.Reque
 		return nil, err
 	}
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewGetCollectionRequest generates requests for GetCollection
-func NewGetCollectionRequest(server string, collectionId string) (*http.Request, error) {
+func NewGetCollectionRequest(server string, collectionId string, params *GetCollectionParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4210,22 +4528,37 @@ func NewGetCollectionRequest(server string, collectionId string) (*http.Request,
 		return nil, err
 	}
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewIngestDocumentsRequest calls the generic IngestDocuments builder with application/json body
-func NewIngestDocumentsRequest(server string, collectionId string, body IngestDocumentsJSONRequestBody) (*http.Request, error) {
+func NewIngestDocumentsRequest(server string, collectionId string, params *IngestDocumentsParams, body IngestDocumentsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewIngestDocumentsRequestWithBody(server, collectionId, "application/json", bodyReader)
+	return NewIngestDocumentsRequestWithBody(server, collectionId, params, "application/json", bodyReader)
 }
 
 // NewIngestDocumentsRequestWithBody generates requests for IngestDocuments with any type of body
-func NewIngestDocumentsRequestWithBody(server string, collectionId string, contentType string, body io.Reader) (*http.Request, error) {
+func NewIngestDocumentsRequestWithBody(server string, collectionId string, params *IngestDocumentsParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4257,22 +4590,37 @@ func NewIngestDocumentsRequestWithBody(server string, collectionId string, conte
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewUpsertEntityV2Request calls the generic UpsertEntityV2 builder with application/json body
-func NewUpsertEntityV2Request(server string, collectionId string, body UpsertEntityV2JSONRequestBody) (*http.Request, error) {
+func NewUpsertEntityV2Request(server string, collectionId string, params *UpsertEntityV2Params, body UpsertEntityV2JSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewUpsertEntityV2RequestWithBody(server, collectionId, "application/json", bodyReader)
+	return NewUpsertEntityV2RequestWithBody(server, collectionId, params, "application/json", bodyReader)
 }
 
 // NewUpsertEntityV2RequestWithBody generates requests for UpsertEntityV2 with any type of body
-func NewUpsertEntityV2RequestWithBody(server string, collectionId string, contentType string, body io.Reader) (*http.Request, error) {
+func NewUpsertEntityV2RequestWithBody(server string, collectionId string, params *UpsertEntityV2Params, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4304,22 +4652,37 @@ func NewUpsertEntityV2RequestWithBody(server string, collectionId string, conten
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewSearchEntitiesV2Request calls the generic SearchEntitiesV2 builder with application/json body
-func NewSearchEntitiesV2Request(server string, collectionId string, body SearchEntitiesV2JSONRequestBody) (*http.Request, error) {
+func NewSearchEntitiesV2Request(server string, collectionId string, params *SearchEntitiesV2Params, body SearchEntitiesV2JSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewSearchEntitiesV2RequestWithBody(server, collectionId, "application/json", bodyReader)
+	return NewSearchEntitiesV2RequestWithBody(server, collectionId, params, "application/json", bodyReader)
 }
 
 // NewSearchEntitiesV2RequestWithBody generates requests for SearchEntitiesV2 with any type of body
-func NewSearchEntitiesV2RequestWithBody(server string, collectionId string, contentType string, body io.Reader) (*http.Request, error) {
+func NewSearchEntitiesV2RequestWithBody(server string, collectionId string, params *SearchEntitiesV2Params, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4351,11 +4714,26 @@ func NewSearchEntitiesV2RequestWithBody(server string, collectionId string, cont
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewDeleteEntityV2Request generates requests for DeleteEntityV2
-func NewDeleteEntityV2Request(server string, collectionId string, entityId string) (*http.Request, error) {
+func NewDeleteEntityV2Request(server string, collectionId string, entityId string, params *DeleteEntityV2Params) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4392,11 +4770,26 @@ func NewDeleteEntityV2Request(server string, collectionId string, entityId strin
 		return nil, err
 	}
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewGetEntityV2Request generates requests for GetEntityV2
-func NewGetEntityV2Request(server string, collectionId string, entityId string) (*http.Request, error) {
+func NewGetEntityV2Request(server string, collectionId string, entityId string, params *GetEntityV2Params) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4433,22 +4826,37 @@ func NewGetEntityV2Request(server string, collectionId string, entityId string) 
 		return nil, err
 	}
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewInsertRecordsRequest calls the generic InsertRecords builder with application/json body
-func NewInsertRecordsRequest(server string, collectionId string, body InsertRecordsJSONRequestBody) (*http.Request, error) {
+func NewInsertRecordsRequest(server string, collectionId string, params *InsertRecordsParams, body InsertRecordsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewInsertRecordsRequestWithBody(server, collectionId, "application/json", bodyReader)
+	return NewInsertRecordsRequestWithBody(server, collectionId, params, "application/json", bodyReader)
 }
 
 // NewInsertRecordsRequestWithBody generates requests for InsertRecords with any type of body
-func NewInsertRecordsRequestWithBody(server string, collectionId string, contentType string, body io.Reader) (*http.Request, error) {
+func NewInsertRecordsRequestWithBody(server string, collectionId string, params *InsertRecordsParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4480,22 +4888,37 @@ func NewInsertRecordsRequestWithBody(server string, collectionId string, content
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewScanRecordsRequest calls the generic ScanRecords builder with application/json body
-func NewScanRecordsRequest(server string, collectionId string, body ScanRecordsJSONRequestBody) (*http.Request, error) {
+func NewScanRecordsRequest(server string, collectionId string, params *ScanRecordsParams, body ScanRecordsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewScanRecordsRequestWithBody(server, collectionId, "application/json", bodyReader)
+	return NewScanRecordsRequestWithBody(server, collectionId, params, "application/json", bodyReader)
 }
 
 // NewScanRecordsRequestWithBody generates requests for ScanRecords with any type of body
-func NewScanRecordsRequestWithBody(server string, collectionId string, contentType string, body io.Reader) (*http.Request, error) {
+func NewScanRecordsRequestWithBody(server string, collectionId string, params *ScanRecordsParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4527,11 +4950,26 @@ func NewScanRecordsRequestWithBody(server string, collectionId string, contentTy
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewDeleteRecordRequest generates requests for DeleteRecord
-func NewDeleteRecordRequest(server string, collectionId string, recordId string) (*http.Request, error) {
+func NewDeleteRecordRequest(server string, collectionId string, recordId string, params *DeleteRecordParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4566,6 +5004,21 @@ func NewDeleteRecordRequest(server string, collectionId string, recordId string)
 	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
 	}
 
 	return req, nil
@@ -4647,11 +5100,26 @@ func NewGetRecordRequest(server string, collectionId string, recordId string, pa
 		return nil, err
 	}
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewGetCollectionSchemaRequest generates requests for GetCollectionSchema
-func NewGetCollectionSchemaRequest(server string, collectionId string) (*http.Request, error) {
+func NewGetCollectionSchemaRequest(server string, collectionId string, params *GetCollectionSchemaParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4681,22 +5149,37 @@ func NewGetCollectionSchemaRequest(server string, collectionId string) (*http.Re
 		return nil, err
 	}
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewUpdateCollectionSchemaRequest calls the generic UpdateCollectionSchema builder with application/json body
-func NewUpdateCollectionSchemaRequest(server string, collectionId string, body UpdateCollectionSchemaJSONRequestBody) (*http.Request, error) {
+func NewUpdateCollectionSchemaRequest(server string, collectionId string, params *UpdateCollectionSchemaParams, body UpdateCollectionSchemaJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewUpdateCollectionSchemaRequestWithBody(server, collectionId, "application/json", bodyReader)
+	return NewUpdateCollectionSchemaRequestWithBody(server, collectionId, params, "application/json", bodyReader)
 }
 
 // NewUpdateCollectionSchemaRequestWithBody generates requests for UpdateCollectionSchema with any type of body
-func NewUpdateCollectionSchemaRequestWithBody(server string, collectionId string, contentType string, body io.Reader) (*http.Request, error) {
+func NewUpdateCollectionSchemaRequestWithBody(server string, collectionId string, params *UpdateCollectionSchemaParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4728,22 +5211,37 @@ func NewUpdateCollectionSchemaRequestWithBody(server string, collectionId string
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewSearchRecordsRequest calls the generic SearchRecords builder with application/json body
-func NewSearchRecordsRequest(server string, collectionId string, body SearchRecordsJSONRequestBody) (*http.Request, error) {
+func NewSearchRecordsRequest(server string, collectionId string, params *SearchRecordsParams, body SearchRecordsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewSearchRecordsRequestWithBody(server, collectionId, "application/json", bodyReader)
+	return NewSearchRecordsRequestWithBody(server, collectionId, params, "application/json", bodyReader)
 }
 
 // NewSearchRecordsRequestWithBody generates requests for SearchRecords with any type of body
-func NewSearchRecordsRequestWithBody(server string, collectionId string, contentType string, body io.Reader) (*http.Request, error) {
+func NewSearchRecordsRequestWithBody(server string, collectionId string, params *SearchRecordsParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4775,11 +5273,26 @@ func NewSearchRecordsRequestWithBody(server string, collectionId string, content
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewListDocumentCollectionsRequest generates requests for ListDocumentCollections
-func NewListDocumentCollectionsRequest(server string) (*http.Request, error) {
+func NewListDocumentCollectionsRequest(server string, params *ListDocumentCollectionsParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -4800,24 +5313,39 @@ func NewListDocumentCollectionsRequest(server string) (*http.Request, error) {
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
 	}
 
 	return req, nil
 }
 
 // NewCreateDocumentCollectionRequest calls the generic CreateDocumentCollection builder with application/json body
-func NewCreateDocumentCollectionRequest(server string, body CreateDocumentCollectionJSONRequestBody) (*http.Request, error) {
+func NewCreateDocumentCollectionRequest(server string, params *CreateDocumentCollectionParams, body CreateDocumentCollectionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateDocumentCollectionRequestWithBody(server, "application/json", bodyReader)
+	return NewCreateDocumentCollectionRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewCreateDocumentCollectionRequestWithBody generates requests for CreateDocumentCollection with any type of body
-func NewCreateDocumentCollectionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewCreateDocumentCollectionRequestWithBody(server string, params *CreateDocumentCollectionParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -4842,11 +5370,26 @@ func NewCreateDocumentCollectionRequestWithBody(server string, contentType strin
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewQueryDocumentsRequest generates requests for QueryDocuments
-func NewQueryDocumentsRequest(server string, collection string) (*http.Request, error) {
+func NewQueryDocumentsRequest(server string, collection string, params *QueryDocumentsParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4874,24 +5417,39 @@ func NewQueryDocumentsRequest(server string, collection string) (*http.Request, 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
 	}
 
 	return req, nil
 }
 
 // NewInsertDocumentRequest calls the generic InsertDocument builder with application/json body
-func NewInsertDocumentRequest(server string, collection string, body InsertDocumentJSONRequestBody) (*http.Request, error) {
+func NewInsertDocumentRequest(server string, collection string, params *InsertDocumentParams, body InsertDocumentJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewInsertDocumentRequestWithBody(server, collection, "application/json", bodyReader)
+	return NewInsertDocumentRequestWithBody(server, collection, params, "application/json", bodyReader)
 }
 
 // NewInsertDocumentRequestWithBody generates requests for InsertDocument with any type of body
-func NewInsertDocumentRequestWithBody(server string, collection string, contentType string, body io.Reader) (*http.Request, error) {
+func NewInsertDocumentRequestWithBody(server string, collection string, params *InsertDocumentParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4923,11 +5481,26 @@ func NewInsertDocumentRequestWithBody(server string, collection string, contentT
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewListGraphsRequest generates requests for ListGraphs
-func NewListGraphsRequest(server string) (*http.Request, error) {
+func NewListGraphsRequest(server string, params *ListGraphsParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -4950,22 +5523,37 @@ func NewListGraphsRequest(server string) (*http.Request, error) {
 		return nil, err
 	}
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewCreateGraphRequest calls the generic CreateGraph builder with application/json body
-func NewCreateGraphRequest(server string, body CreateGraphJSONRequestBody) (*http.Request, error) {
+func NewCreateGraphRequest(server string, params *CreateGraphParams, body CreateGraphJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateGraphRequestWithBody(server, "application/json", bodyReader)
+	return NewCreateGraphRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewCreateGraphRequestWithBody generates requests for CreateGraph with any type of body
-func NewCreateGraphRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewCreateGraphRequestWithBody(server string, params *CreateGraphParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -4990,11 +5578,26 @@ func NewCreateGraphRequestWithBody(server string, contentType string, body io.Re
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewDeleteGraphRequest generates requests for DeleteGraph
-func NewDeleteGraphRequest(server string, graphId GraphId) (*http.Request, error) {
+func NewDeleteGraphRequest(server string, graphId GraphId, params *DeleteGraphParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5024,11 +5627,26 @@ func NewDeleteGraphRequest(server string, graphId GraphId) (*http.Request, error
 		return nil, err
 	}
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewGetGraphRequest generates requests for GetGraph
-func NewGetGraphRequest(server string, graphId GraphId) (*http.Request, error) {
+func NewGetGraphRequest(server string, graphId GraphId, params *GetGraphParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5058,22 +5676,37 @@ func NewGetGraphRequest(server string, graphId GraphId) (*http.Request, error) {
 		return nil, err
 	}
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewCreateEdgeRequest calls the generic CreateEdge builder with application/json body
-func NewCreateEdgeRequest(server string, graphId GraphId, body CreateEdgeJSONRequestBody) (*http.Request, error) {
+func NewCreateEdgeRequest(server string, graphId GraphId, params *CreateEdgeParams, body CreateEdgeJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateEdgeRequestWithBody(server, graphId, "application/json", bodyReader)
+	return NewCreateEdgeRequestWithBody(server, graphId, params, "application/json", bodyReader)
 }
 
 // NewCreateEdgeRequestWithBody generates requests for CreateEdge with any type of body
-func NewCreateEdgeRequestWithBody(server string, graphId GraphId, contentType string, body io.Reader) (*http.Request, error) {
+func NewCreateEdgeRequestWithBody(server string, graphId GraphId, params *CreateEdgeParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5105,22 +5738,37 @@ func NewCreateEdgeRequestWithBody(server string, graphId GraphId, contentType st
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewBatchCreateEdgesRequest calls the generic BatchCreateEdges builder with application/json body
-func NewBatchCreateEdgesRequest(server string, graphId GraphId, body BatchCreateEdgesJSONRequestBody) (*http.Request, error) {
+func NewBatchCreateEdgesRequest(server string, graphId GraphId, params *BatchCreateEdgesParams, body BatchCreateEdgesJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewBatchCreateEdgesRequestWithBody(server, graphId, "application/json", bodyReader)
+	return NewBatchCreateEdgesRequestWithBody(server, graphId, params, "application/json", bodyReader)
 }
 
 // NewBatchCreateEdgesRequestWithBody generates requests for BatchCreateEdges with any type of body
-func NewBatchCreateEdgesRequestWithBody(server string, graphId GraphId, contentType string, body io.Reader) (*http.Request, error) {
+func NewBatchCreateEdgesRequestWithBody(server string, graphId GraphId, params *BatchCreateEdgesParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5152,22 +5800,37 @@ func NewBatchCreateEdgesRequestWithBody(server string, graphId GraphId, contentT
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewFusionSearchV2Request calls the generic FusionSearchV2 builder with application/json body
-func NewFusionSearchV2Request(server string, graphId string, body FusionSearchV2JSONRequestBody) (*http.Request, error) {
+func NewFusionSearchV2Request(server string, graphId string, params *FusionSearchV2Params, body FusionSearchV2JSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewFusionSearchV2RequestWithBody(server, graphId, "application/json", bodyReader)
+	return NewFusionSearchV2RequestWithBody(server, graphId, params, "application/json", bodyReader)
 }
 
 // NewFusionSearchV2RequestWithBody generates requests for FusionSearchV2 with any type of body
-func NewFusionSearchV2RequestWithBody(server string, graphId string, contentType string, body io.Reader) (*http.Request, error) {
+func NewFusionSearchV2RequestWithBody(server string, graphId string, params *FusionSearchV2Params, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5199,22 +5862,37 @@ func NewFusionSearchV2RequestWithBody(server string, graphId string, contentType
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewImpactAnalysisV2Request calls the generic ImpactAnalysisV2 builder with application/json body
-func NewImpactAnalysisV2Request(server string, graphId string, body ImpactAnalysisV2JSONRequestBody) (*http.Request, error) {
+func NewImpactAnalysisV2Request(server string, graphId string, params *ImpactAnalysisV2Params, body ImpactAnalysisV2JSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewImpactAnalysisV2RequestWithBody(server, graphId, "application/json", bodyReader)
+	return NewImpactAnalysisV2RequestWithBody(server, graphId, params, "application/json", bodyReader)
 }
 
 // NewImpactAnalysisV2RequestWithBody generates requests for ImpactAnalysisV2 with any type of body
-func NewImpactAnalysisV2RequestWithBody(server string, graphId string, contentType string, body io.Reader) (*http.Request, error) {
+func NewImpactAnalysisV2RequestWithBody(server string, graphId string, params *ImpactAnalysisV2Params, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5246,22 +5924,37 @@ func NewImpactAnalysisV2RequestWithBody(server string, graphId string, contentTy
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewCreateNodeRequest calls the generic CreateNode builder with application/json body
-func NewCreateNodeRequest(server string, graphId GraphId, body CreateNodeJSONRequestBody) (*http.Request, error) {
+func NewCreateNodeRequest(server string, graphId GraphId, params *CreateNodeParams, body CreateNodeJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateNodeRequestWithBody(server, graphId, "application/json", bodyReader)
+	return NewCreateNodeRequestWithBody(server, graphId, params, "application/json", bodyReader)
 }
 
 // NewCreateNodeRequestWithBody generates requests for CreateNode with any type of body
-func NewCreateNodeRequestWithBody(server string, graphId GraphId, contentType string, body io.Reader) (*http.Request, error) {
+func NewCreateNodeRequestWithBody(server string, graphId GraphId, params *CreateNodeParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5293,22 +5986,37 @@ func NewCreateNodeRequestWithBody(server string, graphId GraphId, contentType st
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewBatchCreateNodesRequest calls the generic BatchCreateNodes builder with application/json body
-func NewBatchCreateNodesRequest(server string, graphId GraphId, body BatchCreateNodesJSONRequestBody) (*http.Request, error) {
+func NewBatchCreateNodesRequest(server string, graphId GraphId, params *BatchCreateNodesParams, body BatchCreateNodesJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewBatchCreateNodesRequestWithBody(server, graphId, "application/json", bodyReader)
+	return NewBatchCreateNodesRequestWithBody(server, graphId, params, "application/json", bodyReader)
 }
 
 // NewBatchCreateNodesRequestWithBody generates requests for BatchCreateNodes with any type of body
-func NewBatchCreateNodesRequestWithBody(server string, graphId GraphId, contentType string, body io.Reader) (*http.Request, error) {
+func NewBatchCreateNodesRequestWithBody(server string, graphId GraphId, params *BatchCreateNodesParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5340,11 +6048,26 @@ func NewBatchCreateNodesRequestWithBody(server string, graphId GraphId, contentT
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewDeleteNodeRequest generates requests for DeleteNode
-func NewDeleteNodeRequest(server string, graphId GraphId, nodeId NodeId) (*http.Request, error) {
+func NewDeleteNodeRequest(server string, graphId GraphId, nodeId NodeId, params *DeleteNodeParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5381,11 +6104,26 @@ func NewDeleteNodeRequest(server string, graphId GraphId, nodeId NodeId) (*http.
 		return nil, err
 	}
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewGetNodeRequest generates requests for GetNode
-func NewGetNodeRequest(server string, graphId GraphId, nodeId NodeId) (*http.Request, error) {
+func NewGetNodeRequest(server string, graphId GraphId, nodeId NodeId, params *GetNodeParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5422,11 +6160,26 @@ func NewGetNodeRequest(server string, graphId GraphId, nodeId NodeId) (*http.Req
 		return nil, err
 	}
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewGetGraphStatsRequest generates requests for GetGraphStats
-func NewGetGraphStatsRequest(server string, graphId GraphId) (*http.Request, error) {
+func NewGetGraphStatsRequest(server string, graphId GraphId, params *GetGraphStatsParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5456,22 +6209,37 @@ func NewGetGraphStatsRequest(server string, graphId GraphId) (*http.Request, err
 		return nil, err
 	}
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewTraverseGraphRequest calls the generic TraverseGraph builder with application/json body
-func NewTraverseGraphRequest(server string, graphId GraphId, body TraverseGraphJSONRequestBody) (*http.Request, error) {
+func NewTraverseGraphRequest(server string, graphId GraphId, params *TraverseGraphParams, body TraverseGraphJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewTraverseGraphRequestWithBody(server, graphId, "application/json", bodyReader)
+	return NewTraverseGraphRequestWithBody(server, graphId, params, "application/json", bodyReader)
 }
 
 // NewTraverseGraphRequestWithBody generates requests for TraverseGraph with any type of body
-func NewTraverseGraphRequestWithBody(server string, graphId GraphId, contentType string, body io.Reader) (*http.Request, error) {
+func NewTraverseGraphRequestWithBody(server string, graphId GraphId, params *TraverseGraphParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5503,22 +6271,37 @@ func NewTraverseGraphRequestWithBody(server string, graphId GraphId, contentType
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewHybridIndexRequest calls the generic HybridIndex builder with application/json body
-func NewHybridIndexRequest(server string, body HybridIndexJSONRequestBody) (*http.Request, error) {
+func NewHybridIndexRequest(server string, params *HybridIndexParams, body HybridIndexJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewHybridIndexRequestWithBody(server, "application/json", bodyReader)
+	return NewHybridIndexRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewHybridIndexRequestWithBody generates requests for HybridIndex with any type of body
-func NewHybridIndexRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewHybridIndexRequestWithBody(server string, params *HybridIndexParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -5543,22 +6326,37 @@ func NewHybridIndexRequestWithBody(server string, contentType string, body io.Re
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewHybridSearchRequest calls the generic HybridSearch builder with application/json body
-func NewHybridSearchRequest(server string, body HybridSearchJSONRequestBody) (*http.Request, error) {
+func NewHybridSearchRequest(server string, params *HybridSearchParams, body HybridSearchJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewHybridSearchRequestWithBody(server, "application/json", bodyReader)
+	return NewHybridSearchRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewHybridSearchRequestWithBody generates requests for HybridSearch with any type of body
-func NewHybridSearchRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewHybridSearchRequestWithBody(server string, params *HybridSearchParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -5583,22 +6381,37 @@ func NewHybridSearchRequestWithBody(server string, contentType string, body io.R
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewIngestLogRequest calls the generic IngestLog builder with application/json body
-func NewIngestLogRequest(server string, namespace string, body IngestLogJSONRequestBody) (*http.Request, error) {
+func NewIngestLogRequest(server string, namespace string, params *IngestLogParams, body IngestLogJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewIngestLogRequestWithBody(server, namespace, "application/json", bodyReader)
+	return NewIngestLogRequestWithBody(server, namespace, params, "application/json", bodyReader)
 }
 
 // NewIngestLogRequestWithBody generates requests for IngestLog with any type of body
-func NewIngestLogRequestWithBody(server string, namespace string, contentType string, body io.Reader) (*http.Request, error) {
+func NewIngestLogRequestWithBody(server string, namespace string, params *IngestLogParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5630,22 +6443,37 @@ func NewIngestLogRequestWithBody(server string, namespace string, contentType st
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewQueryLogsRequest calls the generic QueryLogs builder with application/json body
-func NewQueryLogsRequest(server string, namespace string, body QueryLogsJSONRequestBody) (*http.Request, error) {
+func NewQueryLogsRequest(server string, namespace string, params *QueryLogsParams, body QueryLogsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewQueryLogsRequestWithBody(server, namespace, "application/json", bodyReader)
+	return NewQueryLogsRequestWithBody(server, namespace, params, "application/json", bodyReader)
 }
 
 // NewQueryLogsRequestWithBody generates requests for QueryLogs with any type of body
-func NewQueryLogsRequestWithBody(server string, namespace string, contentType string, body io.Reader) (*http.Request, error) {
+func NewQueryLogsRequestWithBody(server string, namespace string, params *QueryLogsParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5677,22 +6505,37 @@ func NewQueryLogsRequestWithBody(server string, namespace string, contentType st
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewExecuteQueryRequest calls the generic ExecuteQuery builder with application/json body
-func NewExecuteQueryRequest(server string, body ExecuteQueryJSONRequestBody) (*http.Request, error) {
+func NewExecuteQueryRequest(server string, params *ExecuteQueryParams, body ExecuteQueryJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewExecuteQueryRequestWithBody(server, "application/json", bodyReader)
+	return NewExecuteQueryRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewExecuteQueryRequestWithBody generates requests for ExecuteQuery with any type of body
-func NewExecuteQueryRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewExecuteQueryRequestWithBody(server string, params *ExecuteQueryParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -5717,22 +6560,37 @@ func NewExecuteQueryRequestWithBody(server string, contentType string, body io.R
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewExplainQueryRequest calls the generic ExplainQuery builder with application/json body
-func NewExplainQueryRequest(server string, body ExplainQueryJSONRequestBody) (*http.Request, error) {
+func NewExplainQueryRequest(server string, params *ExplainQueryParams, body ExplainQueryJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewExplainQueryRequestWithBody(server, "application/json", bodyReader)
+	return NewExplainQueryRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewExplainQueryRequestWithBody generates requests for ExplainQuery with any type of body
-func NewExplainQueryRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewExplainQueryRequestWithBody(server string, params *ExplainQueryParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -5757,11 +6615,26 @@ func NewExplainQueryRequestWithBody(server string, contentType string, body io.R
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewGetHealthRequest generates requests for GetHealth
-func NewGetHealthRequest(server string) (*http.Request, error) {
+func NewGetHealthRequest(server string, params *GetHealthParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -5784,11 +6657,26 @@ func NewGetHealthRequest(server string) (*http.Request, error) {
 		return nil, err
 	}
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewGetLivenessRequest generates requests for GetLiveness
-func NewGetLivenessRequest(server string) (*http.Request, error) {
+func NewGetLivenessRequest(server string, params *GetLivenessParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -5811,11 +6699,26 @@ func NewGetLivenessRequest(server string) (*http.Request, error) {
 		return nil, err
 	}
 
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewGetReadinessRequest generates requests for GetReadiness
-func NewGetReadinessRequest(server string) (*http.Request, error) {
+func NewGetReadinessRequest(server string, params *GetReadinessParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -5836,6 +6739,21 @@ func NewGetReadinessRequest(server string) (*http.Request, error) {
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Tenant-ID", runtime.ParamLocationHeader, *params.XTenantID)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
 	}
 
 	return req, nil
@@ -5885,184 +6803,184 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 	// GetCapabilitiesWithResponse request
-	GetCapabilitiesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCapabilitiesHTTPResp, error)
+	GetCapabilitiesWithResponse(ctx context.Context, params *GetCapabilitiesParams, reqEditors ...RequestEditorFn) (*GetCapabilitiesHTTPResp, error)
 
 	// ListCollectionsWithResponse request
 	ListCollectionsWithResponse(ctx context.Context, params *ListCollectionsParams, reqEditors ...RequestEditorFn) (*ListCollectionsHTTPResp, error)
 
 	// CreateCollectionWithBodyWithResponse request with any body
-	CreateCollectionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCollectionHTTPResp, error)
+	CreateCollectionWithBodyWithResponse(ctx context.Context, params *CreateCollectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCollectionHTTPResp, error)
 
-	CreateCollectionWithResponse(ctx context.Context, body CreateCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCollectionHTTPResp, error)
+	CreateCollectionWithResponse(ctx context.Context, params *CreateCollectionParams, body CreateCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCollectionHTTPResp, error)
 
 	// DeleteCollectionWithResponse request
-	DeleteCollectionWithResponse(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*DeleteCollectionHTTPResp, error)
+	DeleteCollectionWithResponse(ctx context.Context, collectionId string, params *DeleteCollectionParams, reqEditors ...RequestEditorFn) (*DeleteCollectionHTTPResp, error)
 
 	// GetCollectionWithResponse request
-	GetCollectionWithResponse(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*GetCollectionHTTPResp, error)
+	GetCollectionWithResponse(ctx context.Context, collectionId string, params *GetCollectionParams, reqEditors ...RequestEditorFn) (*GetCollectionHTTPResp, error)
 
 	// IngestDocumentsWithBodyWithResponse request with any body
-	IngestDocumentsWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error)
+	IngestDocumentsWithBodyWithResponse(ctx context.Context, collectionId string, params *IngestDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error)
 
-	IngestDocumentsWithResponse(ctx context.Context, collectionId string, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error)
+	IngestDocumentsWithResponse(ctx context.Context, collectionId string, params *IngestDocumentsParams, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error)
 
 	// UpsertEntityV2WithBodyWithResponse request with any body
-	UpsertEntityV2WithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpsertEntityV2HTTPResp, error)
+	UpsertEntityV2WithBodyWithResponse(ctx context.Context, collectionId string, params *UpsertEntityV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpsertEntityV2HTTPResp, error)
 
-	UpsertEntityV2WithResponse(ctx context.Context, collectionId string, body UpsertEntityV2JSONRequestBody, reqEditors ...RequestEditorFn) (*UpsertEntityV2HTTPResp, error)
+	UpsertEntityV2WithResponse(ctx context.Context, collectionId string, params *UpsertEntityV2Params, body UpsertEntityV2JSONRequestBody, reqEditors ...RequestEditorFn) (*UpsertEntityV2HTTPResp, error)
 
 	// SearchEntitiesV2WithBodyWithResponse request with any body
-	SearchEntitiesV2WithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchEntitiesV2HTTPResp, error)
+	SearchEntitiesV2WithBodyWithResponse(ctx context.Context, collectionId string, params *SearchEntitiesV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchEntitiesV2HTTPResp, error)
 
-	SearchEntitiesV2WithResponse(ctx context.Context, collectionId string, body SearchEntitiesV2JSONRequestBody, reqEditors ...RequestEditorFn) (*SearchEntitiesV2HTTPResp, error)
+	SearchEntitiesV2WithResponse(ctx context.Context, collectionId string, params *SearchEntitiesV2Params, body SearchEntitiesV2JSONRequestBody, reqEditors ...RequestEditorFn) (*SearchEntitiesV2HTTPResp, error)
 
 	// DeleteEntityV2WithResponse request
-	DeleteEntityV2WithResponse(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*DeleteEntityV2HTTPResp, error)
+	DeleteEntityV2WithResponse(ctx context.Context, collectionId string, entityId string, params *DeleteEntityV2Params, reqEditors ...RequestEditorFn) (*DeleteEntityV2HTTPResp, error)
 
 	// GetEntityV2WithResponse request
-	GetEntityV2WithResponse(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*GetEntityV2HTTPResp, error)
+	GetEntityV2WithResponse(ctx context.Context, collectionId string, entityId string, params *GetEntityV2Params, reqEditors ...RequestEditorFn) (*GetEntityV2HTTPResp, error)
 
 	// InsertRecordsWithBodyWithResponse request with any body
-	InsertRecordsWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InsertRecordsHTTPResp, error)
+	InsertRecordsWithBodyWithResponse(ctx context.Context, collectionId string, params *InsertRecordsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InsertRecordsHTTPResp, error)
 
-	InsertRecordsWithResponse(ctx context.Context, collectionId string, body InsertRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*InsertRecordsHTTPResp, error)
+	InsertRecordsWithResponse(ctx context.Context, collectionId string, params *InsertRecordsParams, body InsertRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*InsertRecordsHTTPResp, error)
 
 	// ScanRecordsWithBodyWithResponse request with any body
-	ScanRecordsWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ScanRecordsHTTPResp, error)
+	ScanRecordsWithBodyWithResponse(ctx context.Context, collectionId string, params *ScanRecordsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ScanRecordsHTTPResp, error)
 
-	ScanRecordsWithResponse(ctx context.Context, collectionId string, body ScanRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*ScanRecordsHTTPResp, error)
+	ScanRecordsWithResponse(ctx context.Context, collectionId string, params *ScanRecordsParams, body ScanRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*ScanRecordsHTTPResp, error)
 
 	// DeleteRecordWithResponse request
-	DeleteRecordWithResponse(ctx context.Context, collectionId string, recordId string, reqEditors ...RequestEditorFn) (*DeleteRecordHTTPResp, error)
+	DeleteRecordWithResponse(ctx context.Context, collectionId string, recordId string, params *DeleteRecordParams, reqEditors ...RequestEditorFn) (*DeleteRecordHTTPResp, error)
 
 	// GetRecordWithResponse request
 	GetRecordWithResponse(ctx context.Context, collectionId string, recordId string, params *GetRecordParams, reqEditors ...RequestEditorFn) (*GetRecordHTTPResp, error)
 
 	// GetCollectionSchemaWithResponse request
-	GetCollectionSchemaWithResponse(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*GetCollectionSchemaHTTPResp, error)
+	GetCollectionSchemaWithResponse(ctx context.Context, collectionId string, params *GetCollectionSchemaParams, reqEditors ...RequestEditorFn) (*GetCollectionSchemaHTTPResp, error)
 
 	// UpdateCollectionSchemaWithBodyWithResponse request with any body
-	UpdateCollectionSchemaWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCollectionSchemaHTTPResp, error)
+	UpdateCollectionSchemaWithBodyWithResponse(ctx context.Context, collectionId string, params *UpdateCollectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCollectionSchemaHTTPResp, error)
 
-	UpdateCollectionSchemaWithResponse(ctx context.Context, collectionId string, body UpdateCollectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCollectionSchemaHTTPResp, error)
+	UpdateCollectionSchemaWithResponse(ctx context.Context, collectionId string, params *UpdateCollectionSchemaParams, body UpdateCollectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCollectionSchemaHTTPResp, error)
 
 	// SearchRecordsWithBodyWithResponse request with any body
-	SearchRecordsWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchRecordsHTTPResp, error)
+	SearchRecordsWithBodyWithResponse(ctx context.Context, collectionId string, params *SearchRecordsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchRecordsHTTPResp, error)
 
-	SearchRecordsWithResponse(ctx context.Context, collectionId string, body SearchRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchRecordsHTTPResp, error)
+	SearchRecordsWithResponse(ctx context.Context, collectionId string, params *SearchRecordsParams, body SearchRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchRecordsHTTPResp, error)
 
 	// ListDocumentCollectionsWithResponse request
-	ListDocumentCollectionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListDocumentCollectionsHTTPResp, error)
+	ListDocumentCollectionsWithResponse(ctx context.Context, params *ListDocumentCollectionsParams, reqEditors ...RequestEditorFn) (*ListDocumentCollectionsHTTPResp, error)
 
 	// CreateDocumentCollectionWithBodyWithResponse request with any body
-	CreateDocumentCollectionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDocumentCollectionHTTPResp, error)
+	CreateDocumentCollectionWithBodyWithResponse(ctx context.Context, params *CreateDocumentCollectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDocumentCollectionHTTPResp, error)
 
-	CreateDocumentCollectionWithResponse(ctx context.Context, body CreateDocumentCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDocumentCollectionHTTPResp, error)
+	CreateDocumentCollectionWithResponse(ctx context.Context, params *CreateDocumentCollectionParams, body CreateDocumentCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDocumentCollectionHTTPResp, error)
 
 	// QueryDocumentsWithResponse request
-	QueryDocumentsWithResponse(ctx context.Context, collection string, reqEditors ...RequestEditorFn) (*QueryDocumentsHTTPResp, error)
+	QueryDocumentsWithResponse(ctx context.Context, collection string, params *QueryDocumentsParams, reqEditors ...RequestEditorFn) (*QueryDocumentsHTTPResp, error)
 
 	// InsertDocumentWithBodyWithResponse request with any body
-	InsertDocumentWithBodyWithResponse(ctx context.Context, collection string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InsertDocumentHTTPResp, error)
+	InsertDocumentWithBodyWithResponse(ctx context.Context, collection string, params *InsertDocumentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InsertDocumentHTTPResp, error)
 
-	InsertDocumentWithResponse(ctx context.Context, collection string, body InsertDocumentJSONRequestBody, reqEditors ...RequestEditorFn) (*InsertDocumentHTTPResp, error)
+	InsertDocumentWithResponse(ctx context.Context, collection string, params *InsertDocumentParams, body InsertDocumentJSONRequestBody, reqEditors ...RequestEditorFn) (*InsertDocumentHTTPResp, error)
 
 	// ListGraphsWithResponse request
-	ListGraphsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListGraphsHTTPResp, error)
+	ListGraphsWithResponse(ctx context.Context, params *ListGraphsParams, reqEditors ...RequestEditorFn) (*ListGraphsHTTPResp, error)
 
 	// CreateGraphWithBodyWithResponse request with any body
-	CreateGraphWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateGraphHTTPResp, error)
+	CreateGraphWithBodyWithResponse(ctx context.Context, params *CreateGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateGraphHTTPResp, error)
 
-	CreateGraphWithResponse(ctx context.Context, body CreateGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateGraphHTTPResp, error)
+	CreateGraphWithResponse(ctx context.Context, params *CreateGraphParams, body CreateGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateGraphHTTPResp, error)
 
 	// DeleteGraphWithResponse request
-	DeleteGraphWithResponse(ctx context.Context, graphId GraphId, reqEditors ...RequestEditorFn) (*DeleteGraphHTTPResp, error)
+	DeleteGraphWithResponse(ctx context.Context, graphId GraphId, params *DeleteGraphParams, reqEditors ...RequestEditorFn) (*DeleteGraphHTTPResp, error)
 
 	// GetGraphWithResponse request
-	GetGraphWithResponse(ctx context.Context, graphId GraphId, reqEditors ...RequestEditorFn) (*GetGraphHTTPResp, error)
+	GetGraphWithResponse(ctx context.Context, graphId GraphId, params *GetGraphParams, reqEditors ...RequestEditorFn) (*GetGraphHTTPResp, error)
 
 	// CreateEdgeWithBodyWithResponse request with any body
-	CreateEdgeWithBodyWithResponse(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEdgeHTTPResp, error)
+	CreateEdgeWithBodyWithResponse(ctx context.Context, graphId GraphId, params *CreateEdgeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEdgeHTTPResp, error)
 
-	CreateEdgeWithResponse(ctx context.Context, graphId GraphId, body CreateEdgeJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEdgeHTTPResp, error)
+	CreateEdgeWithResponse(ctx context.Context, graphId GraphId, params *CreateEdgeParams, body CreateEdgeJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEdgeHTTPResp, error)
 
 	// BatchCreateEdgesWithBodyWithResponse request with any body
-	BatchCreateEdgesWithBodyWithResponse(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BatchCreateEdgesHTTPResp, error)
+	BatchCreateEdgesWithBodyWithResponse(ctx context.Context, graphId GraphId, params *BatchCreateEdgesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BatchCreateEdgesHTTPResp, error)
 
-	BatchCreateEdgesWithResponse(ctx context.Context, graphId GraphId, body BatchCreateEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*BatchCreateEdgesHTTPResp, error)
+	BatchCreateEdgesWithResponse(ctx context.Context, graphId GraphId, params *BatchCreateEdgesParams, body BatchCreateEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*BatchCreateEdgesHTTPResp, error)
 
 	// FusionSearchV2WithBodyWithResponse request with any body
-	FusionSearchV2WithBodyWithResponse(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error)
+	FusionSearchV2WithBodyWithResponse(ctx context.Context, graphId string, params *FusionSearchV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error)
 
-	FusionSearchV2WithResponse(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error)
+	FusionSearchV2WithResponse(ctx context.Context, graphId string, params *FusionSearchV2Params, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error)
 
 	// ImpactAnalysisV2WithBodyWithResponse request with any body
-	ImpactAnalysisV2WithBodyWithResponse(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImpactAnalysisV2HTTPResp, error)
+	ImpactAnalysisV2WithBodyWithResponse(ctx context.Context, graphId string, params *ImpactAnalysisV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImpactAnalysisV2HTTPResp, error)
 
-	ImpactAnalysisV2WithResponse(ctx context.Context, graphId string, body ImpactAnalysisV2JSONRequestBody, reqEditors ...RequestEditorFn) (*ImpactAnalysisV2HTTPResp, error)
+	ImpactAnalysisV2WithResponse(ctx context.Context, graphId string, params *ImpactAnalysisV2Params, body ImpactAnalysisV2JSONRequestBody, reqEditors ...RequestEditorFn) (*ImpactAnalysisV2HTTPResp, error)
 
 	// CreateNodeWithBodyWithResponse request with any body
-	CreateNodeWithBodyWithResponse(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNodeHTTPResp, error)
+	CreateNodeWithBodyWithResponse(ctx context.Context, graphId GraphId, params *CreateNodeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNodeHTTPResp, error)
 
-	CreateNodeWithResponse(ctx context.Context, graphId GraphId, body CreateNodeJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateNodeHTTPResp, error)
+	CreateNodeWithResponse(ctx context.Context, graphId GraphId, params *CreateNodeParams, body CreateNodeJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateNodeHTTPResp, error)
 
 	// BatchCreateNodesWithBodyWithResponse request with any body
-	BatchCreateNodesWithBodyWithResponse(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BatchCreateNodesHTTPResp, error)
+	BatchCreateNodesWithBodyWithResponse(ctx context.Context, graphId GraphId, params *BatchCreateNodesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BatchCreateNodesHTTPResp, error)
 
-	BatchCreateNodesWithResponse(ctx context.Context, graphId GraphId, body BatchCreateNodesJSONRequestBody, reqEditors ...RequestEditorFn) (*BatchCreateNodesHTTPResp, error)
+	BatchCreateNodesWithResponse(ctx context.Context, graphId GraphId, params *BatchCreateNodesParams, body BatchCreateNodesJSONRequestBody, reqEditors ...RequestEditorFn) (*BatchCreateNodesHTTPResp, error)
 
 	// DeleteNodeWithResponse request
-	DeleteNodeWithResponse(ctx context.Context, graphId GraphId, nodeId NodeId, reqEditors ...RequestEditorFn) (*DeleteNodeHTTPResp, error)
+	DeleteNodeWithResponse(ctx context.Context, graphId GraphId, nodeId NodeId, params *DeleteNodeParams, reqEditors ...RequestEditorFn) (*DeleteNodeHTTPResp, error)
 
 	// GetNodeWithResponse request
-	GetNodeWithResponse(ctx context.Context, graphId GraphId, nodeId NodeId, reqEditors ...RequestEditorFn) (*GetNodeHTTPResp, error)
+	GetNodeWithResponse(ctx context.Context, graphId GraphId, nodeId NodeId, params *GetNodeParams, reqEditors ...RequestEditorFn) (*GetNodeHTTPResp, error)
 
 	// GetGraphStatsWithResponse request
-	GetGraphStatsWithResponse(ctx context.Context, graphId GraphId, reqEditors ...RequestEditorFn) (*GetGraphStatsHTTPResp, error)
+	GetGraphStatsWithResponse(ctx context.Context, graphId GraphId, params *GetGraphStatsParams, reqEditors ...RequestEditorFn) (*GetGraphStatsHTTPResp, error)
 
 	// TraverseGraphWithBodyWithResponse request with any body
-	TraverseGraphWithBodyWithResponse(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TraverseGraphHTTPResp, error)
+	TraverseGraphWithBodyWithResponse(ctx context.Context, graphId GraphId, params *TraverseGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TraverseGraphHTTPResp, error)
 
-	TraverseGraphWithResponse(ctx context.Context, graphId GraphId, body TraverseGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*TraverseGraphHTTPResp, error)
+	TraverseGraphWithResponse(ctx context.Context, graphId GraphId, params *TraverseGraphParams, body TraverseGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*TraverseGraphHTTPResp, error)
 
 	// HybridIndexWithBodyWithResponse request with any body
-	HybridIndexWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HybridIndexHTTPResp, error)
+	HybridIndexWithBodyWithResponse(ctx context.Context, params *HybridIndexParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HybridIndexHTTPResp, error)
 
-	HybridIndexWithResponse(ctx context.Context, body HybridIndexJSONRequestBody, reqEditors ...RequestEditorFn) (*HybridIndexHTTPResp, error)
+	HybridIndexWithResponse(ctx context.Context, params *HybridIndexParams, body HybridIndexJSONRequestBody, reqEditors ...RequestEditorFn) (*HybridIndexHTTPResp, error)
 
 	// HybridSearchWithBodyWithResponse request with any body
-	HybridSearchWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HybridSearchHTTPResp, error)
+	HybridSearchWithBodyWithResponse(ctx context.Context, params *HybridSearchParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HybridSearchHTTPResp, error)
 
-	HybridSearchWithResponse(ctx context.Context, body HybridSearchJSONRequestBody, reqEditors ...RequestEditorFn) (*HybridSearchHTTPResp, error)
+	HybridSearchWithResponse(ctx context.Context, params *HybridSearchParams, body HybridSearchJSONRequestBody, reqEditors ...RequestEditorFn) (*HybridSearchHTTPResp, error)
 
 	// IngestLogWithBodyWithResponse request with any body
-	IngestLogWithBodyWithResponse(ctx context.Context, namespace string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestLogHTTPResp, error)
+	IngestLogWithBodyWithResponse(ctx context.Context, namespace string, params *IngestLogParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestLogHTTPResp, error)
 
-	IngestLogWithResponse(ctx context.Context, namespace string, body IngestLogJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestLogHTTPResp, error)
+	IngestLogWithResponse(ctx context.Context, namespace string, params *IngestLogParams, body IngestLogJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestLogHTTPResp, error)
 
 	// QueryLogsWithBodyWithResponse request with any body
-	QueryLogsWithBodyWithResponse(ctx context.Context, namespace string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QueryLogsHTTPResp, error)
+	QueryLogsWithBodyWithResponse(ctx context.Context, namespace string, params *QueryLogsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QueryLogsHTTPResp, error)
 
-	QueryLogsWithResponse(ctx context.Context, namespace string, body QueryLogsJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryLogsHTTPResp, error)
+	QueryLogsWithResponse(ctx context.Context, namespace string, params *QueryLogsParams, body QueryLogsJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryLogsHTTPResp, error)
 
 	// ExecuteQueryWithBodyWithResponse request with any body
-	ExecuteQueryWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteQueryHTTPResp, error)
+	ExecuteQueryWithBodyWithResponse(ctx context.Context, params *ExecuteQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteQueryHTTPResp, error)
 
-	ExecuteQueryWithResponse(ctx context.Context, body ExecuteQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteQueryHTTPResp, error)
+	ExecuteQueryWithResponse(ctx context.Context, params *ExecuteQueryParams, body ExecuteQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteQueryHTTPResp, error)
 
 	// ExplainQueryWithBodyWithResponse request with any body
-	ExplainQueryWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExplainQueryHTTPResp, error)
+	ExplainQueryWithBodyWithResponse(ctx context.Context, params *ExplainQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExplainQueryHTTPResp, error)
 
-	ExplainQueryWithResponse(ctx context.Context, body ExplainQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExplainQueryHTTPResp, error)
+	ExplainQueryWithResponse(ctx context.Context, params *ExplainQueryParams, body ExplainQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExplainQueryHTTPResp, error)
 
 	// GetHealthWithResponse request
-	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthHTTPResp, error)
+	GetHealthWithResponse(ctx context.Context, params *GetHealthParams, reqEditors ...RequestEditorFn) (*GetHealthHTTPResp, error)
 
 	// GetLivenessWithResponse request
-	GetLivenessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetLivenessHTTPResp, error)
+	GetLivenessWithResponse(ctx context.Context, params *GetLivenessParams, reqEditors ...RequestEditorFn) (*GetLivenessHTTPResp, error)
 
 	// GetReadinessWithResponse request
-	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessHTTPResp, error)
+	GetReadinessWithResponse(ctx context.Context, params *GetReadinessParams, reqEditors ...RequestEditorFn) (*GetReadinessHTTPResp, error)
 }
 
 type GetCapabilitiesHTTPResp struct {
@@ -7076,8 +7994,8 @@ func (r GetReadinessHTTPResp) StatusCode() int {
 }
 
 // GetCapabilitiesWithResponse request returning *GetCapabilitiesHTTPResp
-func (c *ClientWithResponses) GetCapabilitiesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCapabilitiesHTTPResp, error) {
-	rsp, err := c.GetCapabilities(ctx, reqEditors...)
+func (c *ClientWithResponses) GetCapabilitiesWithResponse(ctx context.Context, params *GetCapabilitiesParams, reqEditors ...RequestEditorFn) (*GetCapabilitiesHTTPResp, error) {
+	rsp, err := c.GetCapabilities(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7094,16 +8012,16 @@ func (c *ClientWithResponses) ListCollectionsWithResponse(ctx context.Context, p
 }
 
 // CreateCollectionWithBodyWithResponse request with arbitrary body returning *CreateCollectionHTTPResp
-func (c *ClientWithResponses) CreateCollectionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCollectionHTTPResp, error) {
-	rsp, err := c.CreateCollectionWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) CreateCollectionWithBodyWithResponse(ctx context.Context, params *CreateCollectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCollectionHTTPResp, error) {
+	rsp, err := c.CreateCollectionWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseCreateCollectionHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) CreateCollectionWithResponse(ctx context.Context, body CreateCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCollectionHTTPResp, error) {
-	rsp, err := c.CreateCollection(ctx, body, reqEditors...)
+func (c *ClientWithResponses) CreateCollectionWithResponse(ctx context.Context, params *CreateCollectionParams, body CreateCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCollectionHTTPResp, error) {
+	rsp, err := c.CreateCollection(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7111,8 +8029,8 @@ func (c *ClientWithResponses) CreateCollectionWithResponse(ctx context.Context, 
 }
 
 // DeleteCollectionWithResponse request returning *DeleteCollectionHTTPResp
-func (c *ClientWithResponses) DeleteCollectionWithResponse(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*DeleteCollectionHTTPResp, error) {
-	rsp, err := c.DeleteCollection(ctx, collectionId, reqEditors...)
+func (c *ClientWithResponses) DeleteCollectionWithResponse(ctx context.Context, collectionId string, params *DeleteCollectionParams, reqEditors ...RequestEditorFn) (*DeleteCollectionHTTPResp, error) {
+	rsp, err := c.DeleteCollection(ctx, collectionId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7120,8 +8038,8 @@ func (c *ClientWithResponses) DeleteCollectionWithResponse(ctx context.Context, 
 }
 
 // GetCollectionWithResponse request returning *GetCollectionHTTPResp
-func (c *ClientWithResponses) GetCollectionWithResponse(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*GetCollectionHTTPResp, error) {
-	rsp, err := c.GetCollection(ctx, collectionId, reqEditors...)
+func (c *ClientWithResponses) GetCollectionWithResponse(ctx context.Context, collectionId string, params *GetCollectionParams, reqEditors ...RequestEditorFn) (*GetCollectionHTTPResp, error) {
+	rsp, err := c.GetCollection(ctx, collectionId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7129,16 +8047,16 @@ func (c *ClientWithResponses) GetCollectionWithResponse(ctx context.Context, col
 }
 
 // IngestDocumentsWithBodyWithResponse request with arbitrary body returning *IngestDocumentsHTTPResp
-func (c *ClientWithResponses) IngestDocumentsWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error) {
-	rsp, err := c.IngestDocumentsWithBody(ctx, collectionId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) IngestDocumentsWithBodyWithResponse(ctx context.Context, collectionId string, params *IngestDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error) {
+	rsp, err := c.IngestDocumentsWithBody(ctx, collectionId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseIngestDocumentsHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) IngestDocumentsWithResponse(ctx context.Context, collectionId string, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error) {
-	rsp, err := c.IngestDocuments(ctx, collectionId, body, reqEditors...)
+func (c *ClientWithResponses) IngestDocumentsWithResponse(ctx context.Context, collectionId string, params *IngestDocumentsParams, body IngestDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestDocumentsHTTPResp, error) {
+	rsp, err := c.IngestDocuments(ctx, collectionId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7146,16 +8064,16 @@ func (c *ClientWithResponses) IngestDocumentsWithResponse(ctx context.Context, c
 }
 
 // UpsertEntityV2WithBodyWithResponse request with arbitrary body returning *UpsertEntityV2HTTPResp
-func (c *ClientWithResponses) UpsertEntityV2WithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpsertEntityV2HTTPResp, error) {
-	rsp, err := c.UpsertEntityV2WithBody(ctx, collectionId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) UpsertEntityV2WithBodyWithResponse(ctx context.Context, collectionId string, params *UpsertEntityV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpsertEntityV2HTTPResp, error) {
+	rsp, err := c.UpsertEntityV2WithBody(ctx, collectionId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseUpsertEntityV2HTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) UpsertEntityV2WithResponse(ctx context.Context, collectionId string, body UpsertEntityV2JSONRequestBody, reqEditors ...RequestEditorFn) (*UpsertEntityV2HTTPResp, error) {
-	rsp, err := c.UpsertEntityV2(ctx, collectionId, body, reqEditors...)
+func (c *ClientWithResponses) UpsertEntityV2WithResponse(ctx context.Context, collectionId string, params *UpsertEntityV2Params, body UpsertEntityV2JSONRequestBody, reqEditors ...RequestEditorFn) (*UpsertEntityV2HTTPResp, error) {
+	rsp, err := c.UpsertEntityV2(ctx, collectionId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7163,16 +8081,16 @@ func (c *ClientWithResponses) UpsertEntityV2WithResponse(ctx context.Context, co
 }
 
 // SearchEntitiesV2WithBodyWithResponse request with arbitrary body returning *SearchEntitiesV2HTTPResp
-func (c *ClientWithResponses) SearchEntitiesV2WithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchEntitiesV2HTTPResp, error) {
-	rsp, err := c.SearchEntitiesV2WithBody(ctx, collectionId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) SearchEntitiesV2WithBodyWithResponse(ctx context.Context, collectionId string, params *SearchEntitiesV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchEntitiesV2HTTPResp, error) {
+	rsp, err := c.SearchEntitiesV2WithBody(ctx, collectionId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseSearchEntitiesV2HTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) SearchEntitiesV2WithResponse(ctx context.Context, collectionId string, body SearchEntitiesV2JSONRequestBody, reqEditors ...RequestEditorFn) (*SearchEntitiesV2HTTPResp, error) {
-	rsp, err := c.SearchEntitiesV2(ctx, collectionId, body, reqEditors...)
+func (c *ClientWithResponses) SearchEntitiesV2WithResponse(ctx context.Context, collectionId string, params *SearchEntitiesV2Params, body SearchEntitiesV2JSONRequestBody, reqEditors ...RequestEditorFn) (*SearchEntitiesV2HTTPResp, error) {
+	rsp, err := c.SearchEntitiesV2(ctx, collectionId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7180,8 +8098,8 @@ func (c *ClientWithResponses) SearchEntitiesV2WithResponse(ctx context.Context, 
 }
 
 // DeleteEntityV2WithResponse request returning *DeleteEntityV2HTTPResp
-func (c *ClientWithResponses) DeleteEntityV2WithResponse(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*DeleteEntityV2HTTPResp, error) {
-	rsp, err := c.DeleteEntityV2(ctx, collectionId, entityId, reqEditors...)
+func (c *ClientWithResponses) DeleteEntityV2WithResponse(ctx context.Context, collectionId string, entityId string, params *DeleteEntityV2Params, reqEditors ...RequestEditorFn) (*DeleteEntityV2HTTPResp, error) {
+	rsp, err := c.DeleteEntityV2(ctx, collectionId, entityId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7189,8 +8107,8 @@ func (c *ClientWithResponses) DeleteEntityV2WithResponse(ctx context.Context, co
 }
 
 // GetEntityV2WithResponse request returning *GetEntityV2HTTPResp
-func (c *ClientWithResponses) GetEntityV2WithResponse(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*GetEntityV2HTTPResp, error) {
-	rsp, err := c.GetEntityV2(ctx, collectionId, entityId, reqEditors...)
+func (c *ClientWithResponses) GetEntityV2WithResponse(ctx context.Context, collectionId string, entityId string, params *GetEntityV2Params, reqEditors ...RequestEditorFn) (*GetEntityV2HTTPResp, error) {
+	rsp, err := c.GetEntityV2(ctx, collectionId, entityId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7198,16 +8116,16 @@ func (c *ClientWithResponses) GetEntityV2WithResponse(ctx context.Context, colle
 }
 
 // InsertRecordsWithBodyWithResponse request with arbitrary body returning *InsertRecordsHTTPResp
-func (c *ClientWithResponses) InsertRecordsWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InsertRecordsHTTPResp, error) {
-	rsp, err := c.InsertRecordsWithBody(ctx, collectionId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) InsertRecordsWithBodyWithResponse(ctx context.Context, collectionId string, params *InsertRecordsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InsertRecordsHTTPResp, error) {
+	rsp, err := c.InsertRecordsWithBody(ctx, collectionId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseInsertRecordsHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) InsertRecordsWithResponse(ctx context.Context, collectionId string, body InsertRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*InsertRecordsHTTPResp, error) {
-	rsp, err := c.InsertRecords(ctx, collectionId, body, reqEditors...)
+func (c *ClientWithResponses) InsertRecordsWithResponse(ctx context.Context, collectionId string, params *InsertRecordsParams, body InsertRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*InsertRecordsHTTPResp, error) {
+	rsp, err := c.InsertRecords(ctx, collectionId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7215,16 +8133,16 @@ func (c *ClientWithResponses) InsertRecordsWithResponse(ctx context.Context, col
 }
 
 // ScanRecordsWithBodyWithResponse request with arbitrary body returning *ScanRecordsHTTPResp
-func (c *ClientWithResponses) ScanRecordsWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ScanRecordsHTTPResp, error) {
-	rsp, err := c.ScanRecordsWithBody(ctx, collectionId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) ScanRecordsWithBodyWithResponse(ctx context.Context, collectionId string, params *ScanRecordsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ScanRecordsHTTPResp, error) {
+	rsp, err := c.ScanRecordsWithBody(ctx, collectionId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseScanRecordsHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) ScanRecordsWithResponse(ctx context.Context, collectionId string, body ScanRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*ScanRecordsHTTPResp, error) {
-	rsp, err := c.ScanRecords(ctx, collectionId, body, reqEditors...)
+func (c *ClientWithResponses) ScanRecordsWithResponse(ctx context.Context, collectionId string, params *ScanRecordsParams, body ScanRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*ScanRecordsHTTPResp, error) {
+	rsp, err := c.ScanRecords(ctx, collectionId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7232,8 +8150,8 @@ func (c *ClientWithResponses) ScanRecordsWithResponse(ctx context.Context, colle
 }
 
 // DeleteRecordWithResponse request returning *DeleteRecordHTTPResp
-func (c *ClientWithResponses) DeleteRecordWithResponse(ctx context.Context, collectionId string, recordId string, reqEditors ...RequestEditorFn) (*DeleteRecordHTTPResp, error) {
-	rsp, err := c.DeleteRecord(ctx, collectionId, recordId, reqEditors...)
+func (c *ClientWithResponses) DeleteRecordWithResponse(ctx context.Context, collectionId string, recordId string, params *DeleteRecordParams, reqEditors ...RequestEditorFn) (*DeleteRecordHTTPResp, error) {
+	rsp, err := c.DeleteRecord(ctx, collectionId, recordId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7250,8 +8168,8 @@ func (c *ClientWithResponses) GetRecordWithResponse(ctx context.Context, collect
 }
 
 // GetCollectionSchemaWithResponse request returning *GetCollectionSchemaHTTPResp
-func (c *ClientWithResponses) GetCollectionSchemaWithResponse(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*GetCollectionSchemaHTTPResp, error) {
-	rsp, err := c.GetCollectionSchema(ctx, collectionId, reqEditors...)
+func (c *ClientWithResponses) GetCollectionSchemaWithResponse(ctx context.Context, collectionId string, params *GetCollectionSchemaParams, reqEditors ...RequestEditorFn) (*GetCollectionSchemaHTTPResp, error) {
+	rsp, err := c.GetCollectionSchema(ctx, collectionId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7259,16 +8177,16 @@ func (c *ClientWithResponses) GetCollectionSchemaWithResponse(ctx context.Contex
 }
 
 // UpdateCollectionSchemaWithBodyWithResponse request with arbitrary body returning *UpdateCollectionSchemaHTTPResp
-func (c *ClientWithResponses) UpdateCollectionSchemaWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCollectionSchemaHTTPResp, error) {
-	rsp, err := c.UpdateCollectionSchemaWithBody(ctx, collectionId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) UpdateCollectionSchemaWithBodyWithResponse(ctx context.Context, collectionId string, params *UpdateCollectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCollectionSchemaHTTPResp, error) {
+	rsp, err := c.UpdateCollectionSchemaWithBody(ctx, collectionId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseUpdateCollectionSchemaHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) UpdateCollectionSchemaWithResponse(ctx context.Context, collectionId string, body UpdateCollectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCollectionSchemaHTTPResp, error) {
-	rsp, err := c.UpdateCollectionSchema(ctx, collectionId, body, reqEditors...)
+func (c *ClientWithResponses) UpdateCollectionSchemaWithResponse(ctx context.Context, collectionId string, params *UpdateCollectionSchemaParams, body UpdateCollectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCollectionSchemaHTTPResp, error) {
+	rsp, err := c.UpdateCollectionSchema(ctx, collectionId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7276,16 +8194,16 @@ func (c *ClientWithResponses) UpdateCollectionSchemaWithResponse(ctx context.Con
 }
 
 // SearchRecordsWithBodyWithResponse request with arbitrary body returning *SearchRecordsHTTPResp
-func (c *ClientWithResponses) SearchRecordsWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchRecordsHTTPResp, error) {
-	rsp, err := c.SearchRecordsWithBody(ctx, collectionId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) SearchRecordsWithBodyWithResponse(ctx context.Context, collectionId string, params *SearchRecordsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchRecordsHTTPResp, error) {
+	rsp, err := c.SearchRecordsWithBody(ctx, collectionId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseSearchRecordsHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) SearchRecordsWithResponse(ctx context.Context, collectionId string, body SearchRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchRecordsHTTPResp, error) {
-	rsp, err := c.SearchRecords(ctx, collectionId, body, reqEditors...)
+func (c *ClientWithResponses) SearchRecordsWithResponse(ctx context.Context, collectionId string, params *SearchRecordsParams, body SearchRecordsJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchRecordsHTTPResp, error) {
+	rsp, err := c.SearchRecords(ctx, collectionId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7293,8 +8211,8 @@ func (c *ClientWithResponses) SearchRecordsWithResponse(ctx context.Context, col
 }
 
 // ListDocumentCollectionsWithResponse request returning *ListDocumentCollectionsHTTPResp
-func (c *ClientWithResponses) ListDocumentCollectionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListDocumentCollectionsHTTPResp, error) {
-	rsp, err := c.ListDocumentCollections(ctx, reqEditors...)
+func (c *ClientWithResponses) ListDocumentCollectionsWithResponse(ctx context.Context, params *ListDocumentCollectionsParams, reqEditors ...RequestEditorFn) (*ListDocumentCollectionsHTTPResp, error) {
+	rsp, err := c.ListDocumentCollections(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7302,16 +8220,16 @@ func (c *ClientWithResponses) ListDocumentCollectionsWithResponse(ctx context.Co
 }
 
 // CreateDocumentCollectionWithBodyWithResponse request with arbitrary body returning *CreateDocumentCollectionHTTPResp
-func (c *ClientWithResponses) CreateDocumentCollectionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDocumentCollectionHTTPResp, error) {
-	rsp, err := c.CreateDocumentCollectionWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) CreateDocumentCollectionWithBodyWithResponse(ctx context.Context, params *CreateDocumentCollectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDocumentCollectionHTTPResp, error) {
+	rsp, err := c.CreateDocumentCollectionWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseCreateDocumentCollectionHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) CreateDocumentCollectionWithResponse(ctx context.Context, body CreateDocumentCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDocumentCollectionHTTPResp, error) {
-	rsp, err := c.CreateDocumentCollection(ctx, body, reqEditors...)
+func (c *ClientWithResponses) CreateDocumentCollectionWithResponse(ctx context.Context, params *CreateDocumentCollectionParams, body CreateDocumentCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDocumentCollectionHTTPResp, error) {
+	rsp, err := c.CreateDocumentCollection(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7319,8 +8237,8 @@ func (c *ClientWithResponses) CreateDocumentCollectionWithResponse(ctx context.C
 }
 
 // QueryDocumentsWithResponse request returning *QueryDocumentsHTTPResp
-func (c *ClientWithResponses) QueryDocumentsWithResponse(ctx context.Context, collection string, reqEditors ...RequestEditorFn) (*QueryDocumentsHTTPResp, error) {
-	rsp, err := c.QueryDocuments(ctx, collection, reqEditors...)
+func (c *ClientWithResponses) QueryDocumentsWithResponse(ctx context.Context, collection string, params *QueryDocumentsParams, reqEditors ...RequestEditorFn) (*QueryDocumentsHTTPResp, error) {
+	rsp, err := c.QueryDocuments(ctx, collection, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7328,16 +8246,16 @@ func (c *ClientWithResponses) QueryDocumentsWithResponse(ctx context.Context, co
 }
 
 // InsertDocumentWithBodyWithResponse request with arbitrary body returning *InsertDocumentHTTPResp
-func (c *ClientWithResponses) InsertDocumentWithBodyWithResponse(ctx context.Context, collection string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InsertDocumentHTTPResp, error) {
-	rsp, err := c.InsertDocumentWithBody(ctx, collection, contentType, body, reqEditors...)
+func (c *ClientWithResponses) InsertDocumentWithBodyWithResponse(ctx context.Context, collection string, params *InsertDocumentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InsertDocumentHTTPResp, error) {
+	rsp, err := c.InsertDocumentWithBody(ctx, collection, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseInsertDocumentHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) InsertDocumentWithResponse(ctx context.Context, collection string, body InsertDocumentJSONRequestBody, reqEditors ...RequestEditorFn) (*InsertDocumentHTTPResp, error) {
-	rsp, err := c.InsertDocument(ctx, collection, body, reqEditors...)
+func (c *ClientWithResponses) InsertDocumentWithResponse(ctx context.Context, collection string, params *InsertDocumentParams, body InsertDocumentJSONRequestBody, reqEditors ...RequestEditorFn) (*InsertDocumentHTTPResp, error) {
+	rsp, err := c.InsertDocument(ctx, collection, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7345,8 +8263,8 @@ func (c *ClientWithResponses) InsertDocumentWithResponse(ctx context.Context, co
 }
 
 // ListGraphsWithResponse request returning *ListGraphsHTTPResp
-func (c *ClientWithResponses) ListGraphsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListGraphsHTTPResp, error) {
-	rsp, err := c.ListGraphs(ctx, reqEditors...)
+func (c *ClientWithResponses) ListGraphsWithResponse(ctx context.Context, params *ListGraphsParams, reqEditors ...RequestEditorFn) (*ListGraphsHTTPResp, error) {
+	rsp, err := c.ListGraphs(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7354,16 +8272,16 @@ func (c *ClientWithResponses) ListGraphsWithResponse(ctx context.Context, reqEdi
 }
 
 // CreateGraphWithBodyWithResponse request with arbitrary body returning *CreateGraphHTTPResp
-func (c *ClientWithResponses) CreateGraphWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateGraphHTTPResp, error) {
-	rsp, err := c.CreateGraphWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) CreateGraphWithBodyWithResponse(ctx context.Context, params *CreateGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateGraphHTTPResp, error) {
+	rsp, err := c.CreateGraphWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseCreateGraphHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) CreateGraphWithResponse(ctx context.Context, body CreateGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateGraphHTTPResp, error) {
-	rsp, err := c.CreateGraph(ctx, body, reqEditors...)
+func (c *ClientWithResponses) CreateGraphWithResponse(ctx context.Context, params *CreateGraphParams, body CreateGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateGraphHTTPResp, error) {
+	rsp, err := c.CreateGraph(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7371,8 +8289,8 @@ func (c *ClientWithResponses) CreateGraphWithResponse(ctx context.Context, body 
 }
 
 // DeleteGraphWithResponse request returning *DeleteGraphHTTPResp
-func (c *ClientWithResponses) DeleteGraphWithResponse(ctx context.Context, graphId GraphId, reqEditors ...RequestEditorFn) (*DeleteGraphHTTPResp, error) {
-	rsp, err := c.DeleteGraph(ctx, graphId, reqEditors...)
+func (c *ClientWithResponses) DeleteGraphWithResponse(ctx context.Context, graphId GraphId, params *DeleteGraphParams, reqEditors ...RequestEditorFn) (*DeleteGraphHTTPResp, error) {
+	rsp, err := c.DeleteGraph(ctx, graphId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7380,8 +8298,8 @@ func (c *ClientWithResponses) DeleteGraphWithResponse(ctx context.Context, graph
 }
 
 // GetGraphWithResponse request returning *GetGraphHTTPResp
-func (c *ClientWithResponses) GetGraphWithResponse(ctx context.Context, graphId GraphId, reqEditors ...RequestEditorFn) (*GetGraphHTTPResp, error) {
-	rsp, err := c.GetGraph(ctx, graphId, reqEditors...)
+func (c *ClientWithResponses) GetGraphWithResponse(ctx context.Context, graphId GraphId, params *GetGraphParams, reqEditors ...RequestEditorFn) (*GetGraphHTTPResp, error) {
+	rsp, err := c.GetGraph(ctx, graphId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7389,16 +8307,16 @@ func (c *ClientWithResponses) GetGraphWithResponse(ctx context.Context, graphId 
 }
 
 // CreateEdgeWithBodyWithResponse request with arbitrary body returning *CreateEdgeHTTPResp
-func (c *ClientWithResponses) CreateEdgeWithBodyWithResponse(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEdgeHTTPResp, error) {
-	rsp, err := c.CreateEdgeWithBody(ctx, graphId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) CreateEdgeWithBodyWithResponse(ctx context.Context, graphId GraphId, params *CreateEdgeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEdgeHTTPResp, error) {
+	rsp, err := c.CreateEdgeWithBody(ctx, graphId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseCreateEdgeHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) CreateEdgeWithResponse(ctx context.Context, graphId GraphId, body CreateEdgeJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEdgeHTTPResp, error) {
-	rsp, err := c.CreateEdge(ctx, graphId, body, reqEditors...)
+func (c *ClientWithResponses) CreateEdgeWithResponse(ctx context.Context, graphId GraphId, params *CreateEdgeParams, body CreateEdgeJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEdgeHTTPResp, error) {
+	rsp, err := c.CreateEdge(ctx, graphId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7406,16 +8324,16 @@ func (c *ClientWithResponses) CreateEdgeWithResponse(ctx context.Context, graphI
 }
 
 // BatchCreateEdgesWithBodyWithResponse request with arbitrary body returning *BatchCreateEdgesHTTPResp
-func (c *ClientWithResponses) BatchCreateEdgesWithBodyWithResponse(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BatchCreateEdgesHTTPResp, error) {
-	rsp, err := c.BatchCreateEdgesWithBody(ctx, graphId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) BatchCreateEdgesWithBodyWithResponse(ctx context.Context, graphId GraphId, params *BatchCreateEdgesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BatchCreateEdgesHTTPResp, error) {
+	rsp, err := c.BatchCreateEdgesWithBody(ctx, graphId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseBatchCreateEdgesHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) BatchCreateEdgesWithResponse(ctx context.Context, graphId GraphId, body BatchCreateEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*BatchCreateEdgesHTTPResp, error) {
-	rsp, err := c.BatchCreateEdges(ctx, graphId, body, reqEditors...)
+func (c *ClientWithResponses) BatchCreateEdgesWithResponse(ctx context.Context, graphId GraphId, params *BatchCreateEdgesParams, body BatchCreateEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*BatchCreateEdgesHTTPResp, error) {
+	rsp, err := c.BatchCreateEdges(ctx, graphId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7423,16 +8341,16 @@ func (c *ClientWithResponses) BatchCreateEdgesWithResponse(ctx context.Context, 
 }
 
 // FusionSearchV2WithBodyWithResponse request with arbitrary body returning *FusionSearchV2HTTPResp
-func (c *ClientWithResponses) FusionSearchV2WithBodyWithResponse(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error) {
-	rsp, err := c.FusionSearchV2WithBody(ctx, graphId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) FusionSearchV2WithBodyWithResponse(ctx context.Context, graphId string, params *FusionSearchV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error) {
+	rsp, err := c.FusionSearchV2WithBody(ctx, graphId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseFusionSearchV2HTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) FusionSearchV2WithResponse(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error) {
-	rsp, err := c.FusionSearchV2(ctx, graphId, body, reqEditors...)
+func (c *ClientWithResponses) FusionSearchV2WithResponse(ctx context.Context, graphId string, params *FusionSearchV2Params, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error) {
+	rsp, err := c.FusionSearchV2(ctx, graphId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7440,16 +8358,16 @@ func (c *ClientWithResponses) FusionSearchV2WithResponse(ctx context.Context, gr
 }
 
 // ImpactAnalysisV2WithBodyWithResponse request with arbitrary body returning *ImpactAnalysisV2HTTPResp
-func (c *ClientWithResponses) ImpactAnalysisV2WithBodyWithResponse(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImpactAnalysisV2HTTPResp, error) {
-	rsp, err := c.ImpactAnalysisV2WithBody(ctx, graphId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) ImpactAnalysisV2WithBodyWithResponse(ctx context.Context, graphId string, params *ImpactAnalysisV2Params, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImpactAnalysisV2HTTPResp, error) {
+	rsp, err := c.ImpactAnalysisV2WithBody(ctx, graphId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseImpactAnalysisV2HTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) ImpactAnalysisV2WithResponse(ctx context.Context, graphId string, body ImpactAnalysisV2JSONRequestBody, reqEditors ...RequestEditorFn) (*ImpactAnalysisV2HTTPResp, error) {
-	rsp, err := c.ImpactAnalysisV2(ctx, graphId, body, reqEditors...)
+func (c *ClientWithResponses) ImpactAnalysisV2WithResponse(ctx context.Context, graphId string, params *ImpactAnalysisV2Params, body ImpactAnalysisV2JSONRequestBody, reqEditors ...RequestEditorFn) (*ImpactAnalysisV2HTTPResp, error) {
+	rsp, err := c.ImpactAnalysisV2(ctx, graphId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7457,16 +8375,16 @@ func (c *ClientWithResponses) ImpactAnalysisV2WithResponse(ctx context.Context, 
 }
 
 // CreateNodeWithBodyWithResponse request with arbitrary body returning *CreateNodeHTTPResp
-func (c *ClientWithResponses) CreateNodeWithBodyWithResponse(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNodeHTTPResp, error) {
-	rsp, err := c.CreateNodeWithBody(ctx, graphId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) CreateNodeWithBodyWithResponse(ctx context.Context, graphId GraphId, params *CreateNodeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNodeHTTPResp, error) {
+	rsp, err := c.CreateNodeWithBody(ctx, graphId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseCreateNodeHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) CreateNodeWithResponse(ctx context.Context, graphId GraphId, body CreateNodeJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateNodeHTTPResp, error) {
-	rsp, err := c.CreateNode(ctx, graphId, body, reqEditors...)
+func (c *ClientWithResponses) CreateNodeWithResponse(ctx context.Context, graphId GraphId, params *CreateNodeParams, body CreateNodeJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateNodeHTTPResp, error) {
+	rsp, err := c.CreateNode(ctx, graphId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7474,16 +8392,16 @@ func (c *ClientWithResponses) CreateNodeWithResponse(ctx context.Context, graphI
 }
 
 // BatchCreateNodesWithBodyWithResponse request with arbitrary body returning *BatchCreateNodesHTTPResp
-func (c *ClientWithResponses) BatchCreateNodesWithBodyWithResponse(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BatchCreateNodesHTTPResp, error) {
-	rsp, err := c.BatchCreateNodesWithBody(ctx, graphId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) BatchCreateNodesWithBodyWithResponse(ctx context.Context, graphId GraphId, params *BatchCreateNodesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BatchCreateNodesHTTPResp, error) {
+	rsp, err := c.BatchCreateNodesWithBody(ctx, graphId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseBatchCreateNodesHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) BatchCreateNodesWithResponse(ctx context.Context, graphId GraphId, body BatchCreateNodesJSONRequestBody, reqEditors ...RequestEditorFn) (*BatchCreateNodesHTTPResp, error) {
-	rsp, err := c.BatchCreateNodes(ctx, graphId, body, reqEditors...)
+func (c *ClientWithResponses) BatchCreateNodesWithResponse(ctx context.Context, graphId GraphId, params *BatchCreateNodesParams, body BatchCreateNodesJSONRequestBody, reqEditors ...RequestEditorFn) (*BatchCreateNodesHTTPResp, error) {
+	rsp, err := c.BatchCreateNodes(ctx, graphId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7491,8 +8409,8 @@ func (c *ClientWithResponses) BatchCreateNodesWithResponse(ctx context.Context, 
 }
 
 // DeleteNodeWithResponse request returning *DeleteNodeHTTPResp
-func (c *ClientWithResponses) DeleteNodeWithResponse(ctx context.Context, graphId GraphId, nodeId NodeId, reqEditors ...RequestEditorFn) (*DeleteNodeHTTPResp, error) {
-	rsp, err := c.DeleteNode(ctx, graphId, nodeId, reqEditors...)
+func (c *ClientWithResponses) DeleteNodeWithResponse(ctx context.Context, graphId GraphId, nodeId NodeId, params *DeleteNodeParams, reqEditors ...RequestEditorFn) (*DeleteNodeHTTPResp, error) {
+	rsp, err := c.DeleteNode(ctx, graphId, nodeId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7500,8 +8418,8 @@ func (c *ClientWithResponses) DeleteNodeWithResponse(ctx context.Context, graphI
 }
 
 // GetNodeWithResponse request returning *GetNodeHTTPResp
-func (c *ClientWithResponses) GetNodeWithResponse(ctx context.Context, graphId GraphId, nodeId NodeId, reqEditors ...RequestEditorFn) (*GetNodeHTTPResp, error) {
-	rsp, err := c.GetNode(ctx, graphId, nodeId, reqEditors...)
+func (c *ClientWithResponses) GetNodeWithResponse(ctx context.Context, graphId GraphId, nodeId NodeId, params *GetNodeParams, reqEditors ...RequestEditorFn) (*GetNodeHTTPResp, error) {
+	rsp, err := c.GetNode(ctx, graphId, nodeId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7509,8 +8427,8 @@ func (c *ClientWithResponses) GetNodeWithResponse(ctx context.Context, graphId G
 }
 
 // GetGraphStatsWithResponse request returning *GetGraphStatsHTTPResp
-func (c *ClientWithResponses) GetGraphStatsWithResponse(ctx context.Context, graphId GraphId, reqEditors ...RequestEditorFn) (*GetGraphStatsHTTPResp, error) {
-	rsp, err := c.GetGraphStats(ctx, graphId, reqEditors...)
+func (c *ClientWithResponses) GetGraphStatsWithResponse(ctx context.Context, graphId GraphId, params *GetGraphStatsParams, reqEditors ...RequestEditorFn) (*GetGraphStatsHTTPResp, error) {
+	rsp, err := c.GetGraphStats(ctx, graphId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7518,16 +8436,16 @@ func (c *ClientWithResponses) GetGraphStatsWithResponse(ctx context.Context, gra
 }
 
 // TraverseGraphWithBodyWithResponse request with arbitrary body returning *TraverseGraphHTTPResp
-func (c *ClientWithResponses) TraverseGraphWithBodyWithResponse(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TraverseGraphHTTPResp, error) {
-	rsp, err := c.TraverseGraphWithBody(ctx, graphId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) TraverseGraphWithBodyWithResponse(ctx context.Context, graphId GraphId, params *TraverseGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TraverseGraphHTTPResp, error) {
+	rsp, err := c.TraverseGraphWithBody(ctx, graphId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseTraverseGraphHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) TraverseGraphWithResponse(ctx context.Context, graphId GraphId, body TraverseGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*TraverseGraphHTTPResp, error) {
-	rsp, err := c.TraverseGraph(ctx, graphId, body, reqEditors...)
+func (c *ClientWithResponses) TraverseGraphWithResponse(ctx context.Context, graphId GraphId, params *TraverseGraphParams, body TraverseGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*TraverseGraphHTTPResp, error) {
+	rsp, err := c.TraverseGraph(ctx, graphId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7535,16 +8453,16 @@ func (c *ClientWithResponses) TraverseGraphWithResponse(ctx context.Context, gra
 }
 
 // HybridIndexWithBodyWithResponse request with arbitrary body returning *HybridIndexHTTPResp
-func (c *ClientWithResponses) HybridIndexWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HybridIndexHTTPResp, error) {
-	rsp, err := c.HybridIndexWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) HybridIndexWithBodyWithResponse(ctx context.Context, params *HybridIndexParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HybridIndexHTTPResp, error) {
+	rsp, err := c.HybridIndexWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseHybridIndexHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) HybridIndexWithResponse(ctx context.Context, body HybridIndexJSONRequestBody, reqEditors ...RequestEditorFn) (*HybridIndexHTTPResp, error) {
-	rsp, err := c.HybridIndex(ctx, body, reqEditors...)
+func (c *ClientWithResponses) HybridIndexWithResponse(ctx context.Context, params *HybridIndexParams, body HybridIndexJSONRequestBody, reqEditors ...RequestEditorFn) (*HybridIndexHTTPResp, error) {
+	rsp, err := c.HybridIndex(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7552,16 +8470,16 @@ func (c *ClientWithResponses) HybridIndexWithResponse(ctx context.Context, body 
 }
 
 // HybridSearchWithBodyWithResponse request with arbitrary body returning *HybridSearchHTTPResp
-func (c *ClientWithResponses) HybridSearchWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HybridSearchHTTPResp, error) {
-	rsp, err := c.HybridSearchWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) HybridSearchWithBodyWithResponse(ctx context.Context, params *HybridSearchParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HybridSearchHTTPResp, error) {
+	rsp, err := c.HybridSearchWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseHybridSearchHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) HybridSearchWithResponse(ctx context.Context, body HybridSearchJSONRequestBody, reqEditors ...RequestEditorFn) (*HybridSearchHTTPResp, error) {
-	rsp, err := c.HybridSearch(ctx, body, reqEditors...)
+func (c *ClientWithResponses) HybridSearchWithResponse(ctx context.Context, params *HybridSearchParams, body HybridSearchJSONRequestBody, reqEditors ...RequestEditorFn) (*HybridSearchHTTPResp, error) {
+	rsp, err := c.HybridSearch(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7569,16 +8487,16 @@ func (c *ClientWithResponses) HybridSearchWithResponse(ctx context.Context, body
 }
 
 // IngestLogWithBodyWithResponse request with arbitrary body returning *IngestLogHTTPResp
-func (c *ClientWithResponses) IngestLogWithBodyWithResponse(ctx context.Context, namespace string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestLogHTTPResp, error) {
-	rsp, err := c.IngestLogWithBody(ctx, namespace, contentType, body, reqEditors...)
+func (c *ClientWithResponses) IngestLogWithBodyWithResponse(ctx context.Context, namespace string, params *IngestLogParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestLogHTTPResp, error) {
+	rsp, err := c.IngestLogWithBody(ctx, namespace, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseIngestLogHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) IngestLogWithResponse(ctx context.Context, namespace string, body IngestLogJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestLogHTTPResp, error) {
-	rsp, err := c.IngestLog(ctx, namespace, body, reqEditors...)
+func (c *ClientWithResponses) IngestLogWithResponse(ctx context.Context, namespace string, params *IngestLogParams, body IngestLogJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestLogHTTPResp, error) {
+	rsp, err := c.IngestLog(ctx, namespace, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7586,16 +8504,16 @@ func (c *ClientWithResponses) IngestLogWithResponse(ctx context.Context, namespa
 }
 
 // QueryLogsWithBodyWithResponse request with arbitrary body returning *QueryLogsHTTPResp
-func (c *ClientWithResponses) QueryLogsWithBodyWithResponse(ctx context.Context, namespace string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QueryLogsHTTPResp, error) {
-	rsp, err := c.QueryLogsWithBody(ctx, namespace, contentType, body, reqEditors...)
+func (c *ClientWithResponses) QueryLogsWithBodyWithResponse(ctx context.Context, namespace string, params *QueryLogsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QueryLogsHTTPResp, error) {
+	rsp, err := c.QueryLogsWithBody(ctx, namespace, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseQueryLogsHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) QueryLogsWithResponse(ctx context.Context, namespace string, body QueryLogsJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryLogsHTTPResp, error) {
-	rsp, err := c.QueryLogs(ctx, namespace, body, reqEditors...)
+func (c *ClientWithResponses) QueryLogsWithResponse(ctx context.Context, namespace string, params *QueryLogsParams, body QueryLogsJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryLogsHTTPResp, error) {
+	rsp, err := c.QueryLogs(ctx, namespace, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7603,16 +8521,16 @@ func (c *ClientWithResponses) QueryLogsWithResponse(ctx context.Context, namespa
 }
 
 // ExecuteQueryWithBodyWithResponse request with arbitrary body returning *ExecuteQueryHTTPResp
-func (c *ClientWithResponses) ExecuteQueryWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteQueryHTTPResp, error) {
-	rsp, err := c.ExecuteQueryWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) ExecuteQueryWithBodyWithResponse(ctx context.Context, params *ExecuteQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteQueryHTTPResp, error) {
+	rsp, err := c.ExecuteQueryWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseExecuteQueryHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) ExecuteQueryWithResponse(ctx context.Context, body ExecuteQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteQueryHTTPResp, error) {
-	rsp, err := c.ExecuteQuery(ctx, body, reqEditors...)
+func (c *ClientWithResponses) ExecuteQueryWithResponse(ctx context.Context, params *ExecuteQueryParams, body ExecuteQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteQueryHTTPResp, error) {
+	rsp, err := c.ExecuteQuery(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7620,16 +8538,16 @@ func (c *ClientWithResponses) ExecuteQueryWithResponse(ctx context.Context, body
 }
 
 // ExplainQueryWithBodyWithResponse request with arbitrary body returning *ExplainQueryHTTPResp
-func (c *ClientWithResponses) ExplainQueryWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExplainQueryHTTPResp, error) {
-	rsp, err := c.ExplainQueryWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) ExplainQueryWithBodyWithResponse(ctx context.Context, params *ExplainQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExplainQueryHTTPResp, error) {
+	rsp, err := c.ExplainQueryWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseExplainQueryHTTPResp(rsp)
 }
 
-func (c *ClientWithResponses) ExplainQueryWithResponse(ctx context.Context, body ExplainQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExplainQueryHTTPResp, error) {
-	rsp, err := c.ExplainQuery(ctx, body, reqEditors...)
+func (c *ClientWithResponses) ExplainQueryWithResponse(ctx context.Context, params *ExplainQueryParams, body ExplainQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExplainQueryHTTPResp, error) {
+	rsp, err := c.ExplainQuery(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7637,8 +8555,8 @@ func (c *ClientWithResponses) ExplainQueryWithResponse(ctx context.Context, body
 }
 
 // GetHealthWithResponse request returning *GetHealthHTTPResp
-func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthHTTPResp, error) {
-	rsp, err := c.GetHealth(ctx, reqEditors...)
+func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, params *GetHealthParams, reqEditors ...RequestEditorFn) (*GetHealthHTTPResp, error) {
+	rsp, err := c.GetHealth(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7646,8 +8564,8 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 }
 
 // GetLivenessWithResponse request returning *GetLivenessHTTPResp
-func (c *ClientWithResponses) GetLivenessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetLivenessHTTPResp, error) {
-	rsp, err := c.GetLiveness(ctx, reqEditors...)
+func (c *ClientWithResponses) GetLivenessWithResponse(ctx context.Context, params *GetLivenessParams, reqEditors ...RequestEditorFn) (*GetLivenessHTTPResp, error) {
+	rsp, err := c.GetLiveness(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7655,8 +8573,8 @@ func (c *ClientWithResponses) GetLivenessWithResponse(ctx context.Context, reqEd
 }
 
 // GetReadinessWithResponse request returning *GetReadinessHTTPResp
-func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessHTTPResp, error) {
-	rsp, err := c.GetReadiness(ctx, reqEditors...)
+func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, params *GetReadinessParams, reqEditors ...RequestEditorFn) (*GetReadinessHTTPResp, error) {
+	rsp, err := c.GetReadiness(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

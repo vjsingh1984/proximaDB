@@ -59,6 +59,7 @@
 //! to a `tracing-appender` JSON file sink.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -70,7 +71,15 @@ pub const TARGET: &str = "proximadb::io_trace";
 tokio::task_local! {
     /// Active per-query I/O trace for the current task. Bound by [`scope`] /
     /// [`instrument`].
-    static IO_TRACE: IoTrace;
+    ///
+    /// Held behind an `Arc` so a handle can be cloned out via
+    /// [`current_handle`] and captured by components (e.g. `TracingObjectStore`,
+    /// `ProximaScanExec`) whose I/O later runs on DataFusion-**spawned** tokio
+    /// tasks — a `task_local!` does not cross `tokio::spawn`, so those tasks
+    /// must record through a captured handle rather than this task-local
+    /// (TD-OLAP-3). All counters are atomic, so concurrent spawned readers
+    /// aggregate into the one shared trace correctly.
+    static IO_TRACE: Arc<IoTrace>;
 }
 
 /// Classification of an object-store operation by its cost shape. The universe
@@ -127,6 +136,12 @@ pub struct IoTrace {
     /// the ~8-16 MiB S3 optimum, or fragmented into per-request-fee-dominated
     /// small GETs?
     range_gets: AtomicU64,
+    /// Split-pruning outcome (TD-OLAP-3): candidate row-group splits
+    /// considered by scans, and how many were skipped BEFORE fetch.
+    /// `splits_pruned / splits_total` is the runtime-filter skip ratio the
+    /// promotion gate consumes.
+    splits_total: AtomicU64,
+    splits_pruned: AtomicU64,
     /// Bytes written to object storage (ingest/flush — KIU).
     bytes_written: AtomicU64,
     /// Footer/metadata cache outcomes (Dimension 3 — the highest-ROI cache).
@@ -148,6 +163,28 @@ pub struct IoTrace {
     /// in a small map so a single query that touches multiple engines (e.g. a
     /// Volcano point lookup plus a DataFusion aggregate) attributes each.
     compute_ms: Mutex<BTreeMap<String, u64>>,
+    /// pgwire relational-pipeline SETUP wall milliseconds (TD-OLAP-4): per-query
+    /// pre-execution cost in `try_run_select` BEFORE the engine runs — table-name
+    /// collection + xCatalog schema pre-resolution + route classification. Paid
+    /// only on the DataFusion (path-2) route, not the native early-return path.
+    setup_ms: AtomicU64,
+    /// SessionContext build wall milliseconds (TD-OLAP-4): per-query cost of
+    /// creating a fresh DataFusion `SessionContext` and re-registering all
+    /// UDFs/UDAFs — paid before table open, reusable across queries.
+    session_ms: AtomicU64,
+    /// Table-OPEN wall milliseconds (TD-OLAP-4): the per-query fixed cost of
+    /// discovering + opening the parquet base (LIST + HEAD-per-file + footer
+    /// read) BEFORE execution. Distinct from `compute_ms` (execution) — a
+    /// footer-only query does ~0 compute yet pays this floor. Drops to ~0 on a
+    /// warm table-open cache hit, so it is the direct signal for that lever.
+    open_ms: AtomicU64,
+    /// Query lowering + logical/physical planning wall milliseconds (TD-OLAP-4),
+    /// the other half of the per-query floor separate from execution.
+    plan_ms: AtomicU64,
+    /// Table-OPEN cache outcomes (TD-OLAP-4): a hit skips the LIST+HEAD+footer
+    /// discovery and reuses cached schema/splits/file-sizes.
+    table_open_hits: AtomicU64,
+    table_open_misses: AtomicU64,
     /// The route this query was served on, as `(shape_class, backend_label)`
     /// strings (co-design C4). Stamped by the `ComputeScheduler` so the flush can
     /// feed the trace-driven cost model the cost of *this kind of query on that
@@ -195,6 +232,14 @@ impl IoTrace {
         self.range_gets.fetch_add(gets, Ordering::Relaxed);
     }
 
+    /// Record a split-pruning outcome (TD-OLAP-3): `total` candidate
+    /// row-group splits considered by a scan, of which `pruned` were skipped
+    /// before fetch.
+    pub fn record_splits(&self, total: u64, pruned: u64) {
+        self.splits_total.fetch_add(total, Ordering::Relaxed);
+        self.splits_pruned.fetch_add(pruned, Ordering::Relaxed);
+    }
+
     /// Add to bytes written to object storage.
     pub fn record_bytes_written(&self, bytes: u64) {
         self.bytes_written.fetch_add(bytes, Ordering::Relaxed);
@@ -226,6 +271,38 @@ impl IoTrace {
     pub fn record_compute_ms(&self, engine: &str, ms: u64) {
         let mut g = self.compute_ms.lock().unwrap_or_else(|p| p.into_inner());
         *g.entry(engine.to_string()).or_insert(0) += ms;
+    }
+
+    /// Add to the pgwire relational-pipeline setup wall milliseconds.
+    pub fn record_setup_ms(&self, ms: u64) {
+        self.setup_ms.fetch_add(ms, Ordering::Relaxed);
+    }
+
+    /// Add to the SessionContext build wall milliseconds.
+    pub fn record_session_ms(&self, ms: u64) {
+        self.session_ms.fetch_add(ms, Ordering::Relaxed);
+    }
+
+    /// Add to the table-OPEN wall milliseconds (discovery + footer open before
+    /// execution). Additive so multiple registered tables accumulate.
+    pub fn record_open_ms(&self, ms: u64) {
+        self.open_ms.fetch_add(ms, Ordering::Relaxed);
+    }
+
+    /// Add to the lowering + planning wall milliseconds.
+    pub fn record_plan_ms(&self, ms: u64) {
+        self.plan_ms.fetch_add(ms, Ordering::Relaxed);
+    }
+
+    /// Record a table-OPEN cache outcome: `true` = hit (discovery reused, no
+    /// LIST/HEAD/footer I/O), `false` = miss (cold open).
+    pub fn record_table_open(&self, hit: bool) {
+        let counter = if hit {
+            &self.table_open_hits
+        } else {
+            &self.table_open_misses
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record an embedding API call (KEU — Kilo-Embedding-Units metering).
@@ -263,6 +340,8 @@ impl IoTrace {
             delete_ops: self.delete_ops.load(Ordering::Relaxed),
             bytes_read: self.bytes_read.load(Ordering::Relaxed),
             range_gets: self.range_gets.load(Ordering::Relaxed),
+            splits_total: self.splits_total.load(Ordering::Relaxed),
+            splits_pruned: self.splits_pruned.load(Ordering::Relaxed),
             bytes_written: self.bytes_written.load(Ordering::Relaxed),
             footer_hits: self.footer_hits.load(Ordering::Relaxed),
             footer_misses: self.footer_misses.load(Ordering::Relaxed),
@@ -275,6 +354,12 @@ impl IoTrace {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .clone(),
+            setup_ms: self.setup_ms.load(Ordering::Relaxed),
+            session_ms: self.session_ms.load(Ordering::Relaxed),
+            open_ms: self.open_ms.load(Ordering::Relaxed),
+            plan_ms: self.plan_ms.load(Ordering::Relaxed),
+            table_open_hits: self.table_open_hits.load(Ordering::Relaxed),
+            table_open_misses: self.table_open_misses.load(Ordering::Relaxed),
         }
     }
 }
@@ -293,6 +378,12 @@ pub struct IoTraceSnapshot {
     pub delete_ops: u64,
     pub bytes_read: u64,
     pub range_gets: u64,
+    /// Candidate row-group splits considered by scans (TD-OLAP-3).
+    #[serde(default)]
+    pub splits_total: u64,
+    /// Splits skipped before fetch — with `splits_total`, the skip ratio.
+    #[serde(default)]
+    pub splits_pruned: u64,
     pub bytes_written: u64,
     pub footer_hits: u64,
     pub footer_misses: u64,
@@ -301,6 +392,25 @@ pub struct IoTraceSnapshot {
     pub embedding_input_tokens: u64,
     pub embedding_output_tokens: u64,
     pub compute_ms: BTreeMap<String, u64>,
+    /// pgwire relational-pipeline setup wall ms — pre-execution xCatalog schema
+    /// resolution + route classification, DataFusion route only (TD-OLAP-4).
+    #[serde(default)]
+    pub setup_ms: u64,
+    /// SessionContext build wall ms — per-query context+UDF setup (TD-OLAP-4).
+    #[serde(default)]
+    pub session_ms: u64,
+    /// Table-OPEN wall ms — the per-query discovery+footer floor (TD-OLAP-4).
+    #[serde(default)]
+    pub open_ms: u64,
+    /// Lowering + planning wall ms — the other half of the floor (TD-OLAP-4).
+    #[serde(default)]
+    pub plan_ms: u64,
+    /// Table-OPEN cache hits (discovery reused, no LIST/HEAD/footer I/O).
+    #[serde(default)]
+    pub table_open_hits: u64,
+    /// Table-OPEN cache misses (cold open).
+    #[serde(default)]
+    pub table_open_misses: u64,
 }
 
 impl IoTraceSnapshot {
@@ -434,6 +544,14 @@ pub fn record_range_gets(gets: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_range_gets(gets));
 }
 
+/// Record a scan's split-pruning outcome for the active query (TD-OLAP-3).
+/// Core counter (always-on, like `record_range_gets`): the runtime-filter
+/// promotion gate reads `splits_pruned / splits_total` from the billing
+/// snapshot. Silently no-ops outside an active scope.
+pub fn record_splits(total: u64, pruned: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_splits(total, pruned));
+}
+
 /// Add to bytes written to object storage for the active query.
 pub fn record_bytes_written(bytes: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_bytes_written(bytes));
@@ -470,6 +588,31 @@ pub fn record_compute_ms(engine: &str, ms: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_compute_ms(engine, ms));
 }
 
+/// Add table-OPEN wall ms (discovery + footer open) to the active query trace.
+pub fn record_open_ms(ms: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_open_ms(ms));
+}
+
+/// Add pgwire relational-pipeline setup wall ms to the active query trace.
+pub fn record_setup_ms(ms: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_setup_ms(ms));
+}
+
+/// Add SessionContext build wall ms to the active query trace.
+pub fn record_session_ms(ms: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_session_ms(ms));
+}
+
+/// Add lowering + planning wall ms to the active query trace.
+pub fn record_plan_ms(ms: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_plan_ms(ms));
+}
+
+/// Record a table-OPEN cache outcome on the active query trace.
+pub fn record_table_open(hit: bool) {
+    let _ = IO_TRACE.try_with(|t| t.record_table_open(hit));
+}
+
 /// Stamp the route (`shape_class`, `backend_label`) onto the active query trace.
 /// Silently no-ops outside an active scope. Neutral strings — io_trace never
 /// depends on a query-layer type.
@@ -500,6 +643,17 @@ pub fn record_embedding(input_tokens: u64, output_tokens: u64) {
 /// Snapshot the active query trace, if any.
 pub fn snapshot() -> Option<IoTraceSnapshot> {
     IO_TRACE.try_with(|t| t.snapshot()).ok()
+}
+
+/// Clone out an `Arc` handle to the active query trace, if any.
+///
+/// Components whose I/O later runs on DataFusion-spawned tokio tasks (where the
+/// `IO_TRACE` task-local is absent) capture this handle **while still in the
+/// query scope** — table open / physical planning — and record through it, so
+/// their reads attribute to the correct per-query trace (TD-OLAP-3). Returns
+/// `None` outside any [`scope`]/[`instrument`].
+pub fn current_handle() -> Option<Arc<IoTrace>> {
+    IO_TRACE.try_with(|t| t.clone()).ok()
 }
 
 /// Observer invoked at trace flush with `(snapshot, shape_class, backend_label)`
@@ -588,7 +742,7 @@ fn notify_billing_observer(snap: &IoTraceSnapshot, tenant_id: Option<&str>) {
 /// [`instrument`]; use when the caller wants to read the snapshot itself before
 /// the scope ends.
 pub async fn scope<F: std::future::Future>(future: F) -> F::Output {
-    IO_TRACE.scope(IoTrace::new(), future).await
+    IO_TRACE.scope(Arc::new(IoTrace::new()), future).await
 }
 
 /// Wrap a query future in a fresh trace, run it, then emit the captured
@@ -605,7 +759,7 @@ where
 {
     let route = route.into();
     IO_TRACE
-        .scope(IoTrace::new(), async move {
+        .scope(Arc::new(IoTrace::new()), async move {
             let out = future.await;
             // Still inside the scope: read and emit before the binding drops.
             if let Ok((snap, stamped_route)) = IO_TRACE.try_with(|t| (t.snapshot(), t.route())) {

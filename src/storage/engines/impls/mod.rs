@@ -25,11 +25,11 @@
 //! - **SWIFT**: `crate::storage::engines::swift` (Phase 1: Moved from impls/swift/)
 //! - **RAPTOR**: `crate::storage::engines::raptor` (Phase 1: Moved from impls/raptor/)
 //! - **CEDAR**: `crate::storage::engines::cedar` (Phase 2: Moved from impls/cedar/)
-//! - **CHRONO**: `crate::storage::engines::chrono` (Phase 2: Moved from impls/chrono/)
 //! - **EventLog**: `crate::storage::engines::eventlog` (Phase 2: Moved from impls/eventlog/)
 //! - **SEQUOIA**: `crate::storage::engines::sequoia` (Phase 2: Moved from impls/sequoia/)
-//! - **TITAN**: `crate::storage::engines::titan` (Phase 2: Moved from impls/titan/)
 //! - **TST**: `crate::storage::engines::tst` (Phase 2: Moved from impls/tst/)
+//!
+//! CHRONO and TITAN were removed as unused stubs — see TD-ENGINE-1.
 
 // All engines moved to engines/ level in Phase 1 & Phase 2 consolidation
 // Test infrastructure has been inlined into individual engine modules
