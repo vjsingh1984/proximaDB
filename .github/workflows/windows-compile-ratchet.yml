@@ -1,0 +1,60 @@
+# Windows (MSVC) compile-only ratchet — TD-EMBED-1.
+#
+# proximadb_embedded currently ships Linux + macOS wheels; Windows is blocked
+# only by the Rust engine not yet compiling for x86_64-pc-windows-msvc. This is
+# a COMPILE-ONLY ratchet (no wheel, no C-deps yet): each rung is a crate that
+# now compiles on Windows and MUST stay green. As blockers are fixed the gating
+# scope expands one rung at a time (ratchet only goes up). A separate,
+# non-gating "measure tail" step surfaces the NEXT blocker so the effort is
+# evidence-driven, not speculative.
+#
+# Path-gated + dispatch-only so it costs a Windows runner only when
+# Windows-relevant code changes.
+name: Windows Compile Ratchet
+
+on:
+  pull_request:
+    paths:
+      - 'crates/storage/**'
+      - 'src/storage/**'
+      - 'src/embedded/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/windows-compile-ratchet.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-ratchet-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  ratchet:
+    name: cargo check (x86_64-pc-windows-msvc)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+
+      # ---- GATING RUNGS (must stay green; expand as blockers are fixed) --------
+      # Rung 1: proximadb-storage-common compiles on Windows (the memmap2::Advice
+      # madvise gating landed in this PR). Add the next crate here once it's green.
+      - name: Rung 1 — proximadb-storage-common
+        run: cargo check -p proximadb-storage-common
+
+      # ---- MEASURE THE TAIL (non-gating; reveals the next blocker) -------------
+      # The root `proximadb` lib (default features, no `python`) is the engine the
+      # embedded wheel builds minus the PyO3/C-deps. Checking it here surfaces the
+      # next batch of Windows errors without blocking the ratchet. When this goes
+      # green, promote it to a gating rung above; the C-dep (aws-lc-sys/OpenSSL)
+      # story for the actual wheel is a later phase.
+      - name: Measure tail — root proximadb lib (informational)
+        continue-on-error: true
+        run: cargo check -p proximadb --lib
