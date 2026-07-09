@@ -1,8 +1,6 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 
-#![allow(dead_code)]
-
 //! # Native hash-join operators (ADR-054 Phase 3, TD-OLAP-11)
 //!
 //! The native radix/bloom/spill hash join — the #1 performance lever (closes the
