@@ -948,12 +948,35 @@ impl ModularBlockReader {
         let mut distance_results: Vec<proximadb_distance_kernel::engine::SimilarityResult> =
             Vec::new();
 
-        // Scan all blocks and compute distances
-        for (block_idx, _index_entry) in index_entries.iter().enumerate() {
-            let data_block = reader_clone
-                .read_data_block_async(block_idx as u64, ReadMode::Direct)
-                .await?;
+        // Source all data blocks via a coalesced read (TD-RDSTRAT-1 slice 2) — byte-identical to
+        // the per-block path (both parse [4-byte len][ProximaDataBlock::deserialize]); only the GET
+        // count drops (the per-block path is 2 GETs/block: prefix + data). Kill-switch
+        // PROXIMADB_DISABLE_SST_SCAN_COALESCE falls back to per-block.
+        let data_blocks: Vec<ProximaDataBlock> =
+            if std::env::var_os("PROXIMADB_DISABLE_SST_SCAN_COALESCE").is_none() {
+                let all_indices: Vec<usize> = (0..index_entries.len()).collect();
+                let plan = reader_clone.plan_selected_block_ranges(
+                    &index_entries,
+                    &all_indices,
+                    &ObjectRangeCoalescePolicy::default(),
+                )?;
+                let mut loaded = reader_clone.read_blocks_by_range_plan(&plan).await?;
+                // Match the original ascending block order (block_id == block index).
+                loaded.sort_by_key(|(block_id, _)| *block_id);
+                loaded.into_iter().map(|(_, block)| block).collect()
+            } else {
+                let mut out = Vec::with_capacity(index_entries.len());
+                for block_idx in 0..index_entries.len() {
+                    out.push(
+                        reader_clone
+                            .read_data_block_async(block_idx as u64, ReadMode::Direct)
+                            .await?,
+                    );
+                }
+                out
+            };
 
+        for data_block in data_blocks {
             // Preserve the original counter semantics: every record (including
             // those with empty vectors) is counted as "scanned".
             total_records_scanned += data_block.records.len();
