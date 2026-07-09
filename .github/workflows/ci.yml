@@ -92,6 +92,7 @@ jobs:
       gpu_paths: ${{ steps.filter.outputs.gpu_paths }}
       network_changes: ${{ steps.filter.outputs.network_changes }}
       pgwire_accuracy_changes: ${{ steps.filter.outputs.pgwire_accuracy_changes }}
+      object_store_cloud_changes: ${{ steps.filter.outputs.object_store_cloud_changes }}
       # SDK change detection
       go_sdk: ${{ steps.filter.outputs.go_sdk }}
       nodejs_sdk: ${{ steps.filter.outputs.nodejs_sdk }}
@@ -196,6 +197,16 @@ jobs:
               - 'tests/*storage*'
               - 'tests/*sst*'
               - 'tests/*wal*'
+            # Cloud object-store Cool-tier validation (TD-168). The tier-mapping code
+            # lives in the object-store crate + the cold-payload store; the orchestration
+            # is scripts/run_cloud_emulator_tests.sh. Re-run the (cheap) emulator tier
+            # tests when any of those change — catches a real-cloud-API tier regression
+            # on the introducing PR instead of at develop→qa.
+            object_store_cloud_changes:
+              - 'crates/storage/proximadb-object-store/**'
+              - 'src/graph/cold_payload_store.rs'
+              - 'scripts/run_cloud_emulator_tests.sh'
+              - '.github/workflows/ci.yml'
             graph_changes:
               - 'src/graph/**'
               - 'tests/*graph*'
@@ -1295,6 +1306,37 @@ jobs:
             cargo test ${{ matrix.args }} -- --test-threads=${{ matrix.threads }}
           fi
 
+  # TD-168 develop early-detection: run the CHEAP object-store Cool-tier tests
+  # (scripts/run_cloud_emulator_tests.sh --fast — compiles only the small
+  # object-store crate, ~3-5m; no main-crate compile / no OOM risk) whenever the
+  # tier-mapping code changes. This is the regression coverage for the cloud-tier
+  # path: the same put_with_tier_* validation that runs at develop→qa now also runs
+  # on the introducing feat→develop PR. Path-gated (skipped otherwise) and in
+  # ci-success.needs so it gates when it runs (skipped ⇒ pass). Requires Docker
+  # (Azurite/MinIO/fake-gcs), preinstalled on ubuntu-latest.
+  object-store-emulator-tests:
+    name: Object-store Cool tier (emulators)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [changes]
+    if: |
+      !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
+      needs.changes.outputs.object_store_cloud_changes == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-cloud-emulator-fast"
+      - name: Run object-store tier tests against emulators (--fast)
+        # docker + aws/az CLIs are preinstalled on ubuntu-latest runners.
+        run: bash scripts/run_cloud_emulator_tests.sh --fast
+
   # Targeted integration tests based on changed components
   rust-integration-test-storage:
     name: Rust Integration Tests (storage)
@@ -1896,6 +1938,7 @@ jobs:
       - rust-integration-test-pgwire-accuracy
       - rust-integration-test-graph
       - rust-integration-test-cluster
+      - object-store-emulator-tests
       - rust-coverage
       - python-lint
       - python-test
