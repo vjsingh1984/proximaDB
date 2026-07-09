@@ -97,7 +97,7 @@ clippy:
 
 hygiene-check:
 	@echo "🧹 Running tracked artifact hygiene check..."
-	@bad_files=$$(git ls-files | rg '(^|/)\\.victor($|/)|\\.bak[0-9]*$|\\.disabled$'); \
+	@bad_files=$$(git ls-files | rg '(^|/)\.victor($$|/)|\.bak[0-9]*$$|\.disabled$$'); \
 	if [ -n "$$bad_files" ]; then \
 		echo "❌ Forbidden tracked artifacts detected:"; \
 		echo "$$bad_files"; \
