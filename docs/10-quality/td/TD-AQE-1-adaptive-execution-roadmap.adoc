@@ -23,7 +23,7 @@ ADR-056 commits ProximaDB to the **predicate-pushdown school** as the lead adapt
 [cols="1,3,2,1",options="header"]
 |===
 | Slice | What | Deps / Gate | Status
-| **AQE-S1** | **Promote bloom semi-join runtime filter to default-ON** (TD-OLAP-3 completion; flip `PROXIMADB_DF_BLOOM_SEMIJOIN` default in `object_store_parquet_reader.rs`). Correctness-neutral (bloom has no false negatives; FilterExec re-checks). | Deps: none. Gate: **qa-gate `bytes_read` ratchet** (a regression = don't merge). Measured prior: 30–57% bytes on star joins. | 🔄 (MVP-1, agent)
+| **AQE-S1** | **Promote bloom semi-join runtime filter to default-ON** (TD-OLAP-3 completion; flip `PROXIMADB_DF_BLOOM_SEMIJOIN` default in `object_store_parquet_reader.rs`). Correctness-neutral (bloom has no false negatives; FilterExec re-checks). | Deps: none. Gate: **qa-gate `bytes_read` ratchet** (a regression = don't merge). Measured prior: ≈30–57% bytes on star joins (per-query 29.9–56.7%; `TPC_PERF_GATE_EVIDENCE_V6_2026_07_06.adoc`). | 🔄 (MVP-1, agent)
 | **AQE-S2** | **Observability substrate**: surface `splits_pruned` + observed build cardinality into `CostQuantities` (`route_cost_model.rs`) + `IoTrace`. Composes with the existing debounced learn-loop; no new mechanism. | Deps: none. Gate: io-trace emission lands. | ⬜
 | **AQE-S3** | **DuckDB-v1.1 build-min/max → probe scan** (2 scalars observed at the build pipeline-breaker, free) pushed through TD-OLAP-3's seam. Complements bloom (block-outside-range vs key-absent-in-range). | Deps: TD-OLAP-3 seam. Gate: `bytes_read` on TPC-DS star joins. | ⬜
 | **AQE-S4** | **Exploit `wait_complete()` rendezvous for build/probe swap + SMJ→BHJ** — the barrier already exists (`proxima_scan_exec.rs`); this is Spark-AQE-(b) for free. | Deps: **S2** (needs observed cardinality). Gate: join perf parity-or-better. | ⬜
@@ -47,7 +47,7 @@ ADR-056 commits ProximaDB to the **predicate-pushdown school** as the lead adapt
 | Slice | What | Deps / Gate | Status
 | **AQE-S9** | **`HashJoinBuild`/`HashJoinProbe` (TD-OLAP-11, #779) as an explicit materialization boundary** — not an in-memory handoff; the OnceLock is the stage boundary. Amends ADR-054 §5. Preserves the future re-plan option (Tier 3) without paying now. | Deps: TD-OLAP-11 (#779). Gate: design review. | 🔄 (in #779 design)
 | **AQE-S10** | **Cache-composition fix** — adaptive plans are data-dependent → plan cache becomes plan-shape-aware OR bypass for adaptive plans (model: `query_result_cache.rs:freshness_eligible` Strong-bypass). Invariant 16b/16c interaction. | Deps: **S4** (when plans become adaptive). Gate: no stale-plan reads. | ⬜
-| **AQE-S11** | **Runtime-filter wait-time configurable dial** (Impala `RUNTIME_FILTER_WAIT_TIME_MS`, default ~1–2s, time-zero rule, graceful late-arrival). Replaces the hardcoded 10s; emit the dial's value into IoTrace so the router learns per-workload. | Deps: none. Gate: env knob + TPC-DS ledger holds. | ⬜
+| **AQE-S11** | **Runtime-filter wait-time configurable dial** (Impala `RUNTIME_FILTER_WAIT_TIME_MS` — effective default 1000 ms / 1 s; query-option literal default `0` = inherit the impalad startup flag; time-zero rule, graceful late-arrival). Replaces the hardcoded 10s; emit the dial's value into IoTrace so the router learns per-workload. | Deps: none. Gate: env knob + TPC-DS ledger holds. | ⬜
 |===
 
 === Tier 3 — deferred (gated on substrate we don't have)
