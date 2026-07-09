@@ -1,20 +1,13 @@
 //! # gRPC API Handlers
 //!
 //! Protocol Buffers API handlers via Tonic framework.
+//!
+//! TD-V1SUNSET-1: the legacy v1 service set (`grpc::v1`) and its
+//! `GrpcServiceFactory`/`GrpcServiceBuilder` were removed once the v1 gRPC
+//! surface had been default-off through its sunset window. The canonical v2
+//! services live in `grpc::v2`.
 
-pub mod builder;
-pub mod v1;
 pub mod v2;
-
-// Re-export v1 services
-pub use v1::{
-    CollectionServiceImpl, DocumentServiceImpl, EntityServiceImpl, GraphServiceImpl,
-    HybridSearchServiceImpl, ObservabilityServiceImpl, QueryServiceImpl, SecurityServiceImpl,
-    StreamingServiceImpl, VectorServiceImpl,
-};
-
-// Re-export builder types
-pub use builder::{GrpcServiceBuilder, GrpcServiceConfig, GrpcServiceFactory, GrpcServices};
 
 /// gRPC API request context
 #[derive(Debug, Clone)]
