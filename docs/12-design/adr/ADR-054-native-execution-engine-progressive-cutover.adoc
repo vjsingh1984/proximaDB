@@ -97,7 +97,7 @@ ADR-052 *retired* (not deferred) the `NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.ad
 
 **This ADR-054 does not relitigate that trade-off in the abstract.** It refines ADR-052 along two axes the original decision did not have to address, both now backed by measured evidence:
 
-. **Axis A — the binding constraint has shifted.** ClickBench Phase A (2026-07-06) measured that with accurate I/O metering the gap to DuckDB is no longer bytes-read-dominated; it is **compute + pgwire**, with a ~2.2× release median gap and specific compute pathologies (the q07 UInt16 MIN/MAX outlier). For a class of queries (heavy joins, multimodal co-execution), DataFusion's kernels *are* the binding constraint, and that is precisely the case ADR-052 said it would accept ("DataFusion's per-op microbenchmark ceiling vs Velox ... the ledger makes the trade explicit rather than hidden").
+. **Axis A — the binding constraint has shifted.** ClickBench Phase A (2026-07-06) measured that with accurate I/O metering the gap to DuckDB is no longer bytes-read-dominated; it is **compute + pgwire** — a ~2.2× median gap (post I/O-attribution fix; the raw pre-cache release run was ≈8.8×, dominated by a fixed open+plan/registration floor) plus specific compute pathologies (the q07 UInt16 MIN/MAX outlier). For a class of queries (heavy joins per the SF=0.01 join micro-ledger §1.3.4, multimodal co-execution), DataFusion's kernels *are* the binding constraint, and that is precisely the case ADR-052 said it would accept ("DataFusion's per-op microbenchmark ceiling vs Velox ... the ledger makes the trade explicit rather than hidden").
 . **Axis B — the multimodal wedge is structurally unserveable by a borrowed engine.** ADR-052's own thesis is that ProximaDB's defensible niche is *vector + OLAP + lakehouse co-design on one PAX substrate*. A fused `ANN+filter+aggregate` operator, a graph-traversal operator, and a document-JSON columnar projection cannot be expressed inside DataFusion without re-exporting the CDC/replica Frankenstein stack that ADR-052 cites (arXiv 2506.23071 — vector+SQL silently discards >30% of correct results on JOINs). The wedge *requires* an operator plane we own.
 
 So the refined posture is: **DataFusion stays the interim OLAP engine; the operator contracts are defined now; native operators are substituted progressively and only where the ledger proves they move a cost term DataFusion cannot.** This is a strict refinement of ADR-052 — it preserves scan-avoidance-first, measured-not-asserted, no-codegen-now, single-node-first, and the frozen ADR-039 seam. It reopens only the "do not own operators" prohibition, and only behind contracts.
@@ -111,15 +111,16 @@ The numbers below are all that is actually measured in the repo as of 2026-07-08
 [cols="2,3,3",options="header"]
 |===
 | Metric | Value | Interpretation
-| ProximaDB median wall (release, 35/43 ok) | 230 ms (debug 250 ms) | Release did NOT collapse the gap → not purely a CPU-bound seam
-| DuckDB median wall (release, 35/43 ok) | 26 ms | ~2.2× median gap on identical lowercase Parquet
-| Real `bytes_read` total (43 q, after I/O-attribution fix) | 382 MB | I/O is small; the gap is NOT bytes-read
+| ProximaDB median wall — pre-cache release (35/43 ok) | 230 ms (debug 250 ms) | Release did NOT collapse it (raw ≈8.8× vs DuckDB) → the median lever is a fixed ~45 ms OPEN+PLAN/registration floor (`prepare_dataframe` re-opens the object per query), NOT a CPU-kernel seam
+| ProximaDB median wall — post I/O-attribution + registration fix | ~60–69 ms | **~2.2× median** vs DuckDB (the decisive post-fix number — see the decisive-finding quote below)
+| DuckDB median wall (release, 35/43 ok) | 26 ms | Identical lowercase Parquet baseline
+| Real `bytes_read` total (43 q, after I/O-attribution fix) | 382 MB | I/O is small; the median gap is NOT bytes-read
 | `COUNT(*)` `bytes_read` (after exact-stats elision) | 0.5 MB (footer-only) | Projection pushdown + metadata-agg elision work
-| q07 UInt16 MIN/MAX | reads 5 MB, takes ~10 s | **Pure compute pathology** — the residual kernel gap, NOT I/O
+| q07 UInt16 MIN/MAX | reads 5 MB, takes ~10 s | **Pure compute pathology** — an isolated residual kernel gap, NOT I/O
 | Per-query `head` over-count (fixed) | whole-object-size | Was a metering bug inflating `bytes_read`/billing
 |===
 
-**Decisive finding:** *"With accurate metering ... the remaining wall gap vs DuckDB (~2.2× median) is now clearly compute + pgwire, not I/O — dominated by the q07 UInt16 MIN/MAX 10 s outlier (reads only 5 MB; pure compute)."*
+**Decisive finding:** *"With accurate metering ... the remaining wall gap vs DuckDB (~2.2× median) is now clearly compute + pgwire, not I/O — dominated by the q07 UInt16 MIN/MAX 10 s outlier (reads only 5 MB; pure compute)."* The split this ADR relies on: the ClickBench *median* gap is mostly the fixed OPEN+PLAN/registration floor (a caching fix, not an operator-engine fix), while the *operator-compute* case for native execution rests on the isolated kernel pathologies (q07) and the TPC-H SF=0.01 join micro-ledger (§1.3.4, Q3 22× / Q14 13×). Native operators target the latter, not the registration floor.
 
 ==== 1.3.2 DataFusion's published ceiling — `ADR-052:198-201`, EDBT 2026 (Zhao & Fang, SFU)
 
@@ -564,21 +565,21 @@ This ADR applies the `CO_DESIGN_HANDOFF.md` method explicitly:
 . **Promotion threshold — parity, or strict-better?** Recommendation: parity-or-better in-memory, strict-better in the spill regime (the gap-closing claim).
 . **Should the multimodal operators (Section 6) be in this ADR or a follow-on?** Recommendation: in this ADR as the *rationale*, but their TDs (TD-OLAP-13) are Phase 5 — the contracts must be right first.
 
-== 13. Relationship to ADR-052 (the precise refinement)
+== 13. Relationship to ADR-052 (the precise change)
 
-This ADR-054 makes exactly one change to ADR-052's decision set, and it is a *refinement*, not a reversal:
+This ADR-054 makes exactly one substantive change to ADR-052's decision set: it **reverses invariant 2's prohibition on owning operators** — progressively, behind contracts and ledger gates — while leaving invariants 3, 4, 5 intact and refining invariant 1 only insofar as the native engine gains an internal vectorized path:
 
 [cols="3,3,3",options="header"]
 |===
 | ADR-052 invariant | ADR-054 status | Change
 | 1. OLAP execution = DataFusion; native Volcano is OLTP-only | **Refined:** DataFusion is the Parquet-backed OLAP engine; `ComputeBackend::Native` gains an internal vectorized path for native-storage OLAP shapes. | Native vectorized path added inside the native engine; DataFusion route unchanged
-| 2. NativeOlap = PAX-native SCAN, not an operator engine | **Refined:** the scan stays the wedge; an *operator plane* is added behind contracts, substituted progressively where the ledger proves DataFusion is binding. | Operator plane added; scan role unchanged
+| 2. NativeOlap = PAX-native SCAN, not an operator engine | **Reversed (gated):** the _"not an operator engine"_ prohibition is reopened — an *operator plane* is added behind contracts, default-off, substituted progressively and promoted only where the ledger proves DataFusion is binding. The scan stays the wedge. | Prohibition reversed behind contracts + ledger gates; scan role unchanged
 | 3. Scan-avoidance first | **Unchanged** | —
 | 4. Measured, not asserted | **Unchanged** (strengthened — every native op is ledger-gated) | —
 | 5. Non-goals (no codegen, no Ballista, 3-mode) | **Unchanged** | —
 |===
 
-The refinement is justified by evidence ADR-052 did not have at acceptance (ClickBench Phase A, 2026-07-06): the residual gap is compute-bound, not bytes-bound, which means the operator plane is now the binding constraint for a class of queries — exactly the condition under which ADR-052's "do NOT reimplement operators" prohibition should be revisited.
+The invariant-2 reversal is justified by evidence ADR-052 did not have at acceptance (ClickBench Phase A, 2026-07-06, and the TPC-H SF=0.01 join micro-ledger §1.3.4): for a class of compute-bound queries (heavy joins, the q07 kernel pathology, multimodal co-execution) the operator plane — not bytes-scanned — is the binding constraint, exactly the condition under which ADR-052's "do NOT reimplement operators" prohibition is reopened. The reversal authorizes *building behind contracts*, not shipping: every native operator stays default-off until the SF1/SF10 ledger gate clears (§5.3, §8).
 
 == Sources
 
