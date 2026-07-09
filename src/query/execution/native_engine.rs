@@ -75,6 +75,10 @@ pub async fn try_vectorized(
             return Ok(None);
         }
     };
+    // TD-OLAP-4 Slice 0 (engine dimension): time + label the native-vectorized
+    // engine DISTINCTLY from the Volcano and DataFusion, so the io-trace carries
+    // a per-engine compute sample the route cost model can compare on.
+    let started = std::time::Instant::now();
     let batches = match super::native_ops::execute_pipeline(&lowered).await {
         Ok(b) => b,
         Err(reason) => {
@@ -86,6 +90,11 @@ pub async fn try_vectorized(
             return Ok(None);
         }
     };
+    crate::observability::io_trace::record_compute_ms(
+        "native-vectorized",
+        started.elapsed().as_millis() as u64,
+    );
+    crate::observability::io_trace::record_route("vectorized", "NativeVectorized");
     let schema = lowered.pipeline.output_schema.as_ref();
     Ok(Some(record_batches_to_pipeline_result(schema, &batches)))
 }

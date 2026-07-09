@@ -396,6 +396,7 @@ impl IoTrace {
             plan_ms: self.plan_ms.load(Ordering::Relaxed),
             table_open_hits: self.table_open_hits.load(Ordering::Relaxed),
             table_open_misses: self.table_open_misses.load(Ordering::Relaxed),
+            route: self.route(),
         }
     }
 }
@@ -436,7 +437,15 @@ pub struct IoTraceSnapshot {
     pub embedding_calls: u64,
     pub embedding_input_tokens: u64,
     pub embedding_output_tokens: u64,
+    /// Compute wall ms attributed **per engine** — the engine dimension of the
+    /// geometry-dependent dispatch (TD-OLAP-4). Keys distinguish `datafusion`,
+    /// `native`/`native-vectorized`, and `volcano`, so the route cost model can
+    /// learn which engine wins per query shape.
     pub compute_ms: BTreeMap<String, u64>,
+    /// The route this query was served on, `(shape_class, backend_label)` — the
+    /// top dispatch dimension (which engine). `None` if no route was stamped.
+    #[serde(default)]
+    pub route: Option<(String, String)>,
     /// pgwire relational-pipeline setup wall ms — pre-execution xCatalog schema
     /// resolution + route classification, DataFusion route only (TD-OLAP-4).
     #[serde(default)]
