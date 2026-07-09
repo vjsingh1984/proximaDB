@@ -285,6 +285,9 @@ struct QueryRecord {
     /// resolution + route classification (TD-OLAP-4).
     #[serde(skip_serializing_if = "Option::is_none")]
     setup_ms: Option<u64>,
+    /// pgwire result-emit wall ms — row encode + socket write (TD-OLAP-4).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    emit_ms: Option<u64>,
     /// SessionContext build wall ms — per-query context+UDF setup (TD-OLAP-4).
     #[serde(skip_serializing_if = "Option::is_none")]
     session_ms: Option<u64>,
@@ -374,6 +377,7 @@ async fn clickbench_ledger() {
             bytes_read,
             range_gets,
             setup_ms,
+            emit_ms,
             session_ms,
             compute_ms,
             open_ms,
@@ -385,6 +389,7 @@ async fn clickbench_ledger() {
                     Some(s.bytes_read),
                     Some(s.range_gets),
                     Some(s.setup_ms),
+                    Some(s.emit_ms),
                     Some(s.session_ms),
                     Some(s.total_compute_ms()),
                     Some(s.open_ms),
@@ -392,7 +397,7 @@ async fn clickbench_ledger() {
                     Some(s.table_open_hits),
                 )
             })
-            .unwrap_or((None, None, None, None, None, None, None, None));
+            .unwrap_or((None, None, None, None, None, None, None, None, None));
         match res {
             Ok(msgs) => {
                 let rows = msgs
@@ -408,6 +413,7 @@ async fn clickbench_ledger() {
                     bytes_read,
                     range_gets,
                     setup_ms,
+                    emit_ms,
                     session_ms,
                     compute_ms,
                     open_ms,
@@ -425,6 +431,7 @@ async fn clickbench_ledger() {
                 bytes_read,
                 range_gets,
                 setup_ms,
+                emit_ms,
                 session_ms,
                 compute_ms,
                 open_ms,
@@ -460,6 +467,7 @@ async fn clickbench_ledger() {
                 bytes_read: None,
                 range_gets: None,
                 setup_ms: None,
+                emit_ms: None,
                 session_ms: None,
                 compute_ms: None,
                 open_ms: None,

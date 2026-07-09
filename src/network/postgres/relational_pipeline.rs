@@ -315,6 +315,13 @@ pub async fn try_run_select(
         None
     };
 
+    // TD-OLAP-4 result-path probe: time ALL of `try_run_select` before execution
+    // — including the path-1 engine-catalog `lower_sql` attempt below, which a
+    // DataFusion-routed query pays and fails before reaching the path-2 setup.
+    // The earlier per-query floor decomposition attributed ~0 ms to the path-2
+    // setup alone; starting the clock here tests whether the ~46 ms remainder is
+    // the (previously untimed) path-1 lowering attempt.
+    let setup_start = std::time::Instant::now();
     // 1) Existing in-memory-engine path (preserves the demo table and any
     //    engine-resident tables). Only engages when the SQL lowers against the
     //    engine's own catalog; a catalog miss falls through to the real-data
@@ -350,10 +357,6 @@ pub async fn try_run_select(
     // `CatalogLookup`/`ReaderFactory` traits can't await). Rows are fetched
     // lazily per scan in `DmlTableReader::open`, with the executor's
     // projection/predicate/limit pushed into storage.
-    // TD-OLAP-4: time this pre-execution setup (schema pre-resolution + route
-    // classification) — measurement showed this path-2 setup, not open/session/
-    // plan/compute, is the per-query wall floor the native early-return path skips.
-    let setup_start = std::time::Instant::now();
     let mut names = Vec::new();
     collect_table_names(query, &mut names);
     let mut tables: HashMap<String, PreparedTable> = HashMap::new();
