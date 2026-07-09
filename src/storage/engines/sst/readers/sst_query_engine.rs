@@ -47,6 +47,9 @@ use super::block_filter::{BlockFilter, IntelligentBlockFilter};
 use crate::core::bloom::BloomFilterConfig;
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::search::SearchParams;
+use crate::storage::engines::core::coalesce_strategy::{
+    CoalesceStrategy, choose_read_strategy, is_cloud_path, read_strategy_chooser_enabled,
+};
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::engines::core::formats::proximablocks::sst_io_layer::{
     SharedSstFormatReader, SstMmapStrategy, SstRegion,
@@ -948,23 +951,61 @@ impl ModularBlockReader {
         let mut distance_results: Vec<proximadb_distance_kernel::engine::SimilarityResult> =
             Vec::new();
 
-        // Source all data blocks via a coalesced read (TD-RDSTRAT-1 slice 2) — byte-identical to
-        // the per-block path (both parse [4-byte len][ProximaDataBlock::deserialize]); only the GET
-        // count drops (the per-block path is 2 GETs/block: prefix + data). Kill-switch
-        // PROXIMADB_DISABLE_SST_SCAN_COALESCE falls back to per-block.
-        let data_blocks: Vec<ProximaDataBlock> =
-            if std::env::var_os("PROXIMADB_DISABLE_SST_SCAN_COALESCE").is_none() {
-                let all_indices: Vec<usize> = (0..index_entries.len()).collect();
-                let plan = reader_clone.plan_selected_block_ranges(
-                    &index_entries,
-                    &all_indices,
-                    &ObjectRangeCoalescePolicy::default(),
-                )?;
-                let mut loaded = reader_clone.read_blocks_by_range_plan(&plan).await?;
+        // Source all data blocks. Precedence: kill-switch (PROXIMADB_DISABLE_SST_SCAN_COALESCE) →
+        // per-block; cost-driven chooser (PROXIMADB_READ_STRATEGY_CHOOSER) → choose_read_strategy;
+        // default → always-coalesce (slice 2). All paths produce byte-identical ProximaDataBlocks
+        // (both parse [4-byte len][ProximaDataBlock::deserialize]). (TD-RDSTRAT-1 slice 3b wiring.)
+        let kill = std::env::var_os("PROXIMADB_DISABLE_SST_SCAN_COALESCE").is_some();
+        let plan = if !kill {
+            let all_indices: Vec<usize> = (0..index_entries.len()).collect();
+            Some(reader_clone.plan_selected_block_ranges(
+                &index_entries,
+                &all_indices,
+                &ObjectRangeCoalescePolicy::default(),
+            )?)
+        } else {
+            None
+        };
+        let strategy = if kill {
+            CoalesceStrategy::PerBlock
+        } else if read_strategy_chooser_enabled() {
+            match &plan {
+                Some(p) => {
+                    let total_bytes = index_entries.iter().map(|e| u64::from(e.size)).sum::<u64>();
+                    let is_cloud = is_cloud_path(&reader_clone.file_path);
+                    let strat = choose_read_strategy(
+                        is_cloud,
+                        index_entries.len() as u64,
+                        total_bytes,
+                        p.estimated_get_requests as u64,
+                        p.estimated_bytes,
+                    );
+                    tracing::debug!(
+                        target: "rdstrat",
+                        strategy = ?strat,
+                        is_cloud,
+                        n_blocks = index_entries.len(),
+                        coalesced_gets = p.estimated_get_requests,
+                        coalesced_bytes = p.estimated_bytes,
+                        total_bytes,
+                        "TD-RDSTRAT-1 SST scan read-strategy choice (observe)"
+                    );
+                    strat
+                }
+                // Unreachable: kill=false ⇒ plan is Some.
+                None => CoalesceStrategy::Coalesced,
+            }
+        } else {
+            CoalesceStrategy::Coalesced
+        };
+        let data_blocks: Vec<ProximaDataBlock> = match (&strategy, &plan) {
+            (CoalesceStrategy::Coalesced, Some(p)) => {
+                let mut loaded = reader_clone.read_blocks_by_range_plan(p).await?;
                 // Match the original ascending block order (block_id == block index).
                 loaded.sort_by_key(|(block_id, _)| *block_id);
                 loaded.into_iter().map(|(_, block)| block).collect()
-            } else {
+            }
+            (CoalesceStrategy::PerBlock, _) => {
                 let mut out = Vec::with_capacity(index_entries.len());
                 for block_idx in 0..index_entries.len() {
                     out.push(
@@ -974,7 +1015,14 @@ impl ModularBlockReader {
                     );
                 }
                 out
-            };
+            }
+            // Unreachable: Coalesced requires !kill ⇒ plan is Some.
+            (CoalesceStrategy::Coalesced, None) => {
+                return Err(anyhow::anyhow!(
+                    "coalesced strategy selected without a range plan"
+                ));
+            }
+        };
 
         for data_block in data_blocks {
             // Preserve the original counter semantics: every record (including
