@@ -59,6 +59,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Result;
 use tracing::info;
 
+use crate::storage::engines::core::coalesce_strategy::{
+    CoalesceStrategy, choose_read_strategy, read_strategy_chooser_enabled,
+};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::smart_io::range_coalescer::DefaultRangeCoalescer;
@@ -933,19 +936,54 @@ impl SharedSstFormatReader {
                 .map(|(b, _)| ByteRange::new(b.offset, b.offset + b.size))
                 .collect();
 
-            // Resolve each block's bytes: coalesced read (default) or per-block read (kill-switch).
-            // Both produce byte-identical bytes; only the GET count differs.
-            let block_bytes: Vec<Vec<u8>> = if pax_range_coalescing_enabled() {
-                self.read_blocks_coalesced(file_path, &ranges).await?
+            // Resolve each block's bytes. Precedence: kill-switch (PROXIMADB_DISABLE_PAX_RANGE_COALESCE)
+            // → per-block; cost-driven chooser (PROXIMADB_READ_STRATEGY_CHOOSER) → choose_read_strategy;
+            // default → always-coalesce. All paths produce byte-identical bytes; only the GET count
+            // differs. (TD-RDSTRAT-1 slice 3b wiring.)
+            let strategy = if !pax_range_coalescing_enabled() {
+                CoalesceStrategy::PerBlock
+            } else if read_strategy_chooser_enabled() {
+                let (coalesced_ranges, _) = DefaultRangeCoalescer::default()
+                    .coalesce_with_mapping(ranges.clone(), PAX_RANGE_COALESCE_THRESHOLD);
+                let coalesced_gets = coalesced_ranges.len() as u64;
+                let coalesced_bytes = coalesced_ranges.iter().map(|r| r.len()).sum::<u64>();
+                let total_bytes = blocks.iter().map(|(b, _)| b.size).sum::<u64>();
+                let is_cloud = self.is_cloud_file(file_path);
+                let strat = choose_read_strategy(
+                    is_cloud,
+                    blocks.len() as u64,
+                    total_bytes,
+                    coalesced_gets,
+                    coalesced_bytes,
+                );
+                tracing::debug!(
+                    target: "rdstrat",
+                    strategy = ?strat,
+                    is_cloud,
+                    n_blocks = blocks.len(),
+                    coalesced_gets,
+                    coalesced_bytes,
+                    total_bytes,
+                    "TD-RDSTRAT-1 PAX batch read-strategy choice (observe)"
+                );
+                strat
             } else {
-                let mut out = Vec::with_capacity(blocks.len());
-                for (b, _) in &blocks {
-                    out.push(
-                        self.read_data_block_smart(file_path, collection_id, b)
-                            .await?,
-                    );
+                CoalesceStrategy::Coalesced
+            };
+            let block_bytes: Vec<Vec<u8>> = match strategy {
+                CoalesceStrategy::Coalesced => {
+                    self.read_blocks_coalesced(file_path, &ranges).await?
                 }
-                out
+                CoalesceStrategy::PerBlock => {
+                    let mut out = Vec::with_capacity(blocks.len());
+                    for (b, _) in &blocks {
+                        out.push(
+                            self.read_data_block_smart(file_path, collection_id, b)
+                                .await?,
+                        );
+                    }
+                    out
+                }
             };
 
             // Process each block's keys against its (byte-identical) bytes.
