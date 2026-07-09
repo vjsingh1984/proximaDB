@@ -61,6 +61,10 @@ use tracing::info;
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::smart_io::range_coalescer::DefaultRangeCoalescer;
+use crate::storage::persistence::filesystem::smart_io::traits::{
+    ByteRange, RangeMapping, RangeOptimizerWithMapping,
+};
 use proximadb_kernel::error::{ProximaDBError, StorageError};
 use proximadb_records::ProximaRecord;
 
@@ -817,6 +821,47 @@ impl SharedSstFormatReader {
         Ok(data)
     }
 
+    /// Read the per-block `ranges` as fewer coalesced `read_range` GETs (TD-151), slicing each
+    /// block's bytes back out of the coalesced buffers. Byte-identical to per-block reads — only
+    /// the GET count drops. Returns one buffer per input range, in input order.
+    async fn read_blocks_coalesced(
+        &self,
+        file_path: &str,
+        ranges: &[ByteRange],
+    ) -> Result<Vec<Vec<u8>>, ProximaDBError> {
+        if ranges.is_empty() {
+            return Ok(vec![]);
+        }
+        let coalescer = DefaultRangeCoalescer::default();
+        let (coalesced_ranges, mappings) =
+            coalescer.coalesce_with_mapping(ranges.to_vec(), PAX_RANGE_COALESCE_THRESHOLD);
+
+        let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
+            ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(format!(
+                "Failed to get filesystem: {e}"
+            ))))
+        })?;
+
+        // One read_range per coalesced range (far fewer GETs than per-block).
+        let mut coalesced_bufs = Vec::with_capacity(coalesced_ranges.len());
+        for cr in &coalesced_ranges {
+            let buf = fs
+                .read_range(file_path, cr.start, cr.len())
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(format!(
+                        "Failed to read coalesced block range: {e}"
+                    ))))
+                })?;
+            self.stats
+                .bytes_downloaded
+                .fetch_add(buf.len() as u64, Ordering::Relaxed);
+            coalesced_bufs.push(buf);
+        }
+
+        Ok(slice_coalesced_ranges(&coalesced_bufs, &mappings))
+    }
+
     /// Batch read optimization with smart filtering
     pub async fn batch_read_with_filtering(
         &self,
@@ -874,17 +919,41 @@ impl SharedSstFormatReader {
             .bytes_saved
             .fetch_add(additional_saved as u64, Ordering::Relaxed);
 
-        // Step 3: Read only necessary blocks in parallel
+        // Step 3: Read the necessary blocks, coalescing adjacent ranges into fewer GETs (TD-151).
         let mut results = vec![None; keys.len()];
+        if !blocks_to_read.is_empty() {
+            // Collect unique blocks (offset → (BlockInfo, keys)), ordered by offset for determinism.
+            let mut blocks: Vec<(BlockInfo, Vec<(usize, &Vec<u8>)>)> =
+                blocks_to_read.into_values().collect();
+            blocks.sort_by_key(|(b, _)| b.offset);
 
-        for (_, (block_info, keys_in_block)) in blocks_to_read {
-            let block_data = self
-                .read_data_block_smart(file_path, collection_id, &block_info)
-                .await?;
+            // Build per-block byte ranges in the same order.
+            let ranges: Vec<ByteRange> = blocks
+                .iter()
+                .map(|(b, _)| ByteRange::new(b.offset, b.offset + b.size))
+                .collect();
 
-            for (idx, key) in keys_in_block {
-                if let Some(value) = self.find_in_block(&block_data, key)? {
-                    results[idx] = Some(value);
+            // Resolve each block's bytes: coalesced read (default) or per-block read (kill-switch).
+            // Both produce byte-identical bytes; only the GET count differs.
+            let block_bytes: Vec<Vec<u8>> = if pax_range_coalescing_enabled() {
+                self.read_blocks_coalesced(file_path, &ranges).await?
+            } else {
+                let mut out = Vec::with_capacity(blocks.len());
+                for (b, _) in &blocks {
+                    out.push(
+                        self.read_data_block_smart(file_path, collection_id, b)
+                            .await?,
+                    );
+                }
+                out
+            };
+
+            // Process each block's keys against its (byte-identical) bytes.
+            for ((_, keys_in_block), data) in blocks.into_iter().zip(block_bytes) {
+                for (idx, key) in keys_in_block {
+                    if let Some(value) = self.find_in_block(&data, key)? {
+                        results[idx] = Some(value);
+                    }
                 }
             }
         }
@@ -1055,6 +1124,79 @@ impl Default for ReaderStats {
             bytes_downloaded: AtomicU64::new(0),
             bytes_saved: AtomicU64::new(0),
             cache_invalidations: AtomicU64::new(0),
+        }
+    }
+}
+
+/// TD-151: max gap (bytes) to merge across when coalescing PAX per-block ranged reads into fewer
+/// cloud GETs (256 KiB — the `SmartIoConfig::for_cloud` optimum; bounds over-fetch).
+const PAX_RANGE_COALESCE_THRESHOLD: u64 = 256 * 1024;
+
+/// TD-151 kill-switch: set `PROXIMADB_DISABLE_PAX_RANGE_COALESCE` to fall back to per-block reads.
+/// The coalesced path is byte-identical, so this is default-ON — an escape hatch only.
+fn pax_range_coalescing_enabled() -> bool {
+    std::env::var_os("PROXIMADB_DISABLE_PAX_RANGE_COALESCE").is_none()
+}
+
+/// Slice each original range's bytes out of the coalesced buffers per the mapping (TD-151).
+/// Extracted to a free fn so the slice offsets are unit-testable without a filesystem.
+fn slice_coalesced_ranges(coalesced_bufs: &[Vec<u8>], mappings: &[RangeMapping]) -> Vec<Vec<u8>> {
+    mappings
+        .iter()
+        .map(|m| {
+            let buf = &coalesced_bufs[m.coalesced_index];
+            let start = m.offset_in_coalesced as usize;
+            let end = start + m.length as usize;
+            buf[start..end].to_vec()
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod td151_tests {
+    use super::*;
+    use crate::storage::persistence::filesystem::smart_io::range_coalescer::DefaultRangeCoalescer;
+    use crate::storage::persistence::filesystem::smart_io::traits::{
+        ByteRange, RangeOptimizerWithMapping,
+    };
+
+    /// The coalesced read must recover each requested block range byte-identically — the core
+    /// TD-151 correctness property (same bytes, fewer GETs).
+    #[test]
+    fn coalesce_and_slice_recovers_original_ranges() {
+        // Synthetic "file": byte[i] = (i % 256).
+        let file: Vec<u8> = (0u32..4096).map(|i| (i % 256) as u8).collect();
+        // Requested block ranges: two close together (gap < 256 KiB → coalesce) and one far away.
+        let ranges = vec![
+            ByteRange::new(100, 200),
+            ByteRange::new(210, 300),
+            ByteRange::new(2000, 2100),
+        ];
+        let (coalesced, mappings) =
+            DefaultRangeCoalescer::default().coalesce_with_mapping(ranges.clone(), 256 * 1024);
+        // Some coalescing must have happened (fewer coalesced ranges than originals).
+        assert!(
+            coalesced.len() < ranges.len(),
+            "expected adjacent ranges to coalesce: {} vs {}",
+            coalesced.len(),
+            ranges.len()
+        );
+        // Simulate reading the coalesced ranges from the file, then slice back to the originals.
+        let coalesced_bufs: Vec<Vec<u8>> = coalesced
+            .iter()
+            .map(|cr| file[cr.start as usize..cr.end as usize].to_vec())
+            .collect();
+        let recovered = slice_coalesced_ranges(&coalesced_bufs, &mappings);
+        // Each recovered range must equal the originally-requested file bytes.
+        for (orig, rec) in ranges.iter().zip(recovered.iter()) {
+            let expected = &file[orig.start as usize..orig.end as usize];
+            assert_eq!(
+                rec.as_slice(),
+                expected,
+                "range start={} end={} not recovered byte-identically",
+                orig.start,
+                orig.end
+            );
         }
     }
 }
