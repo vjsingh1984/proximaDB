@@ -154,7 +154,7 @@ fn record_batch_to_rows(batch: &arrow_array::RecordBatch) -> Vec<RelationalRow> 
     rows
 }
 
-fn arrow_cell_to_proxima(array: &dyn arrow_array::Array, row: usize) -> ProximaValue {
+pub(crate) fn arrow_cell_to_proxima(array: &dyn arrow_array::Array, row: usize) -> ProximaValue {
     use arrow::datatypes::DataType as D;
     use proximadb_data_model::{ProximaValue, TimeUnit};
 

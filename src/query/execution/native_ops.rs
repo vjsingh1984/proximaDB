@@ -30,12 +30,13 @@ use arrow::array::{
 };
 use arrow::compute::kernels::cmp;
 use arrow::compute::{and_kleene, filter_record_batch, is_not_null, is_null, not, or_kleene};
-use arrow::datatypes::{DataType, SchemaRef};
+use arrow::datatypes::{DataType, Field, SchemaRef};
 use async_trait::async_trait;
 use futures::stream::StreamExt;
 use proximadb_data_model::{ProximaType, ProximaValue};
 use proximadb_execution_contracts::{BatchStream, ExecutionError, ExecutionOperator, Pipeline};
 use proximadb_functions::builtins;
+use proximadb_relational_algebra::{AggregateExpr, NamedExpr};
 use proximadb_relational_planner::PhysicalPlan;
 use proximadb_relational_types::{BinaryOp, Expr, RelationalSchema, UnaryOp};
 
@@ -326,6 +327,339 @@ impl ExecutionOperator for FilterProjectOperator {
 }
 
 // =========================================================================
+// HashAggregateOperator — blocking GROUP BY + COUNT/SUM/AVG/MIN/MAX (Phase 2.1)
+// =========================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AggKind {
+    Count,
+    Sum,
+    Avg,
+    Min,
+    Max,
+}
+
+/// One aggregate to compute. `arg` is the input column ordinal; `None` = `COUNT(*)`.
+#[derive(Debug, Clone)]
+struct AggSpec {
+    arg: Option<usize>,
+    kind: AggKind,
+}
+
+/// A blocking hash-aggregate operator (ADR-054 Phase 2.1). Consumes its entire
+/// input, builds a `group_by → accumulators` hash table, then emits one row per
+/// group. MVP scope: `COUNT(*)/COUNT(col)/SUM/AVG/MIN/MAX`, non-distinct,
+/// column-argument only, no `HAVING` (the planner's `having` declines → Volcano).
+///
+/// Competitiveness vs the Volcano: the Volcano calls `Expr::eval` *per cell*;
+/// this operator pre-extracts each column once and reads cells via a direct
+/// typed downcast (`arrow_cell_to_proxima`), avoiding the per-cell expression
+/// evaluation + function-registry lookup.
+#[derive(Debug)]
+pub(crate) struct HashAggregateOperator {
+    group_by: Vec<usize>,
+    aggregates: Vec<AggSpec>,
+    output_schema: SchemaRef,
+}
+
+impl HashAggregateOperator {
+    fn new(group_by: Vec<usize>, aggregates: Vec<AggSpec>, output_schema: SchemaRef) -> Self {
+        Self {
+            group_by,
+            aggregates,
+            output_schema,
+        }
+    }
+}
+
+#[async_trait]
+impl ExecutionOperator for HashAggregateOperator {
+    fn output_schema(&self) -> SchemaRef {
+        self.output_schema.clone()
+    }
+
+    fn is_blocking(&self) -> bool {
+        true
+    }
+
+    async fn execute(&self, input: BatchStream) -> Result<BatchStream, ExecutionError> {
+        // Collect the entire input (blocking).
+        let group_by = self.group_by.clone();
+        let aggregates = self.aggregates.clone();
+        let output_schema = self.output_schema.clone();
+
+        let collected: Vec<RecordBatch> = input
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<_, _>>()?;
+
+        // group key → (group_by values, per-agg accumulators)
+        let mut groups: std::collections::HashMap<GroupKey, (Vec<ProximaValue>, Vec<Accumulator>)> =
+            std::collections::HashMap::new();
+
+        for batch in &collected {
+            let nrows = batch.num_rows();
+            for r in 0..nrows {
+                // Build the group key from the group_by columns.
+                let key_vals: Vec<ProximaValue> = group_by
+                    .iter()
+                    .map(|&c| cell_value(batch.column(c).as_ref(), r))
+                    .collect::<Result<_, _>>()?;
+                let key = GroupKey::from_values(&key_vals);
+                let entry = groups.entry(key).or_insert_with(|| {
+                    (
+                        key_vals.clone(),
+                        aggregates
+                            .iter()
+                            .map(|s| Accumulator::new(s.kind, s.arg.is_some()))
+                            .collect(),
+                    )
+                });
+                // Accumulate each aggregate's argument.
+                for (spec, acc) in aggregates.iter().zip(entry.1.iter_mut()) {
+                    let v = match spec.arg {
+                        Some(c) => cell_value(batch.column(c).as_ref(), r)?,
+                        None => ProximaValue::Boolean(true), // COUNT(*): a non-null sentinel
+                    };
+                    acc.accumulate(spec.kind, v)?;
+                }
+            }
+        }
+
+        // Emit one row per group: [group_by values..., finalized aggregates...].
+        let ngroups = groups.len();
+        let ncols = group_by.len() + aggregates.len();
+        let mut columns: Vec<Vec<ProximaValue>> =
+            (0..ncols).map(|_| Vec::with_capacity(ngroups)).collect();
+        // Stable order: sort group keys by their first component's raw ordering when
+        // possible, else by insertion (HashMap order is nondeterministic). For
+        // determinism in tests, sort by the group_by value ordering.
+        let mut rows: Vec<(Vec<ProximaValue>, Vec<Accumulator>)> = groups.into_values().collect();
+        rows.sort_by(|a, b| {
+            for (x, y) in a.0.iter().zip(b.0.iter()) {
+                let ord = compare_values(x, y);
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
+        for (gb_vals, accs) in rows {
+            for (i, v) in gb_vals.into_iter().enumerate() {
+                columns[i].push(v);
+            }
+            for (j, acc) in accs.iter().enumerate() {
+                columns[group_by.len() + j].push(acc.finalize());
+            }
+        }
+
+        // Build each output column as a typed Arrow array.
+        let arrays: Vec<ArrayRef> = (0..columns.len())
+            .map(|c| build_column_array(&columns[c], output_schema.field(c).data_type()))
+            .collect::<Result<_, _>>()?;
+        let batch = RecordBatch::try_new(output_schema, arrays)
+            .map_err(|e| ExecutionError::Execution(format!("aggregate output: {e}")))?;
+        Ok(Box::pin(futures::stream::once(async move { Ok(batch) })))
+    }
+}
+
+/// Per-group, per-aggregate accumulator. Mirrors the Volcano `Accumulator`'s NULL
+/// semantics (COUNT(*) counts rows; COUNT(col)/SUM/AVG/MIN/MAX ignore NULLs;
+/// SUM of all-NULL → NULL; AVG of none → NULL).
+enum Accumulator {
+    Count { skip_null: bool, n: i64 },
+    Sum { running: Option<f64> },
+    Avg { sum: f64, n: i64 },
+    Min { current: Option<ProximaValue> },
+    Max { current: Option<ProximaValue> },
+}
+
+impl Accumulator {
+    /// `count_skip_null`: for `COUNT(col)` (skip nulls in that column); false for
+    /// `COUNT(*)` (count every row).
+    fn new(kind: AggKind, count_skip_null: bool) -> Self {
+        match kind {
+            AggKind::Count => Accumulator::Count {
+                skip_null: count_skip_null,
+                n: 0,
+            },
+            AggKind::Sum => Accumulator::Sum { running: None },
+            AggKind::Avg => Accumulator::Avg { sum: 0.0, n: 0 },
+            AggKind::Min => Accumulator::Min { current: None },
+            AggKind::Max => Accumulator::Max { current: None },
+        }
+    }
+
+    fn accumulate(&mut self, kind: AggKind, v: ProximaValue) -> Result<(), ExecutionError> {
+        match (&mut *self, kind) {
+            (Accumulator::Count { skip_null, n }, AggKind::Count) => {
+                if *skip_null && matches!(v, ProximaValue::Null) {
+                    return Ok(());
+                }
+                *n += 1;
+                Ok(())
+            }
+            (Accumulator::Sum { running }, AggKind::Sum) => {
+                if matches!(v, ProximaValue::Null) {
+                    return Ok(());
+                }
+                let f = numeric_to_f64(&v)?;
+                *running = Some(running.unwrap_or(0.0) + f);
+                Ok(())
+            }
+            (Accumulator::Avg { sum, n }, AggKind::Avg) => {
+                if matches!(v, ProximaValue::Null) {
+                    return Ok(());
+                }
+                *sum += numeric_to_f64(&v)?;
+                *n += 1;
+                Ok(())
+            }
+            (Accumulator::Min { current }, AggKind::Min) => {
+                if matches!(v, ProximaValue::Null) {
+                    return Ok(());
+                }
+                match current {
+                    None => *current = Some(v),
+                    Some(c) => {
+                        if compare_values(&v, c) == std::cmp::Ordering::Less {
+                            *current = Some(v);
+                        }
+                    }
+                }
+                Ok(())
+            }
+            (Accumulator::Max { current }, AggKind::Max) => {
+                if matches!(v, ProximaValue::Null) {
+                    return Ok(());
+                }
+                match current {
+                    None => *current = Some(v),
+                    Some(c) => {
+                        if compare_values(&v, c) == std::cmp::Ordering::Greater {
+                            *current = Some(v);
+                        }
+                    }
+                }
+                Ok(())
+            }
+            _ => Err(ExecutionError::Execution(
+                "accumulator/aggregate kind mismatch".into(),
+            )),
+        }
+    }
+
+    fn finalize(&self) -> ProximaValue {
+        match self {
+            Accumulator::Count { n, .. } => ProximaValue::Int64(*n),
+            Accumulator::Sum { running } => match running {
+                Some(f) => ProximaValue::Float64(*f),
+                None => ProximaValue::Null,
+            },
+            Accumulator::Avg { sum, n } => {
+                if *n == 0 {
+                    ProximaValue::Null
+                } else {
+                    ProximaValue::Float64(sum / (*n as f64))
+                }
+            }
+            Accumulator::Min { current } | Accumulator::Max { current } => {
+                current.clone().unwrap_or(ProximaValue::Null)
+            }
+        }
+    }
+}
+
+// --- hashable group key (ProximaValue is PartialEq only; f64 needs bit-encoding) ---
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum KeyComponent {
+    Null,
+    Bool(bool),
+    Int(i64),
+    UInt(u64),
+    Float(u64), // f64::to_bits — NB: distinguishes -0.0/+0.0 (acceptable for grouping)
+    Str(String),
+    Bytes(Vec<u8>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct GroupKey(Vec<KeyComponent>);
+
+impl GroupKey {
+    fn from_values(values: &[ProximaValue]) -> Self {
+        Self(values.iter().map(proxima_to_key).collect())
+    }
+}
+
+fn proxima_to_key(v: &ProximaValue) -> KeyComponent {
+    match v {
+        ProximaValue::Null => KeyComponent::Null,
+        ProximaValue::Boolean(b) => KeyComponent::Bool(*b),
+        ProximaValue::Int8(x) => KeyComponent::Int(*x as i64),
+        ProximaValue::Int16(x) => KeyComponent::Int(*x as i64),
+        ProximaValue::Int32(x) => KeyComponent::Int(*x as i64),
+        ProximaValue::Int64(x) => KeyComponent::Int(*x),
+        ProximaValue::UInt8(x) => KeyComponent::UInt(*x as u64),
+        ProximaValue::UInt16(x) => KeyComponent::UInt(*x as u64),
+        ProximaValue::UInt32(x) => KeyComponent::UInt(*x as u64),
+        ProximaValue::UInt64(x) => KeyComponent::UInt(*x),
+        ProximaValue::Float32(x) => KeyComponent::Float((*x as f64).to_bits()),
+        ProximaValue::Float64(x) => KeyComponent::Float(x.to_bits()),
+        ProximaValue::String(s) => KeyComponent::Str(s.clone()),
+        ProximaValue::Binary(b) => KeyComponent::Bytes(b.clone()),
+        other => KeyComponent::Str(format!("{other:?}")), // fallback: stringify (Date/Timestamp/etc.)
+    }
+}
+
+/// Extract one cell as a `ProximaValue` (reuses the Phase-1 conversion so the
+/// native engine has one Arrow→ProximaValue path).
+fn cell_value(array: &dyn arrow::array::Array, row: usize) -> Result<ProximaValue, ExecutionError> {
+    Ok(super::native_engine::arrow_cell_to_proxima(array, row))
+}
+
+/// Numeric coercion to f64 for SUM/AVG.
+fn numeric_to_f64(v: &ProximaValue) -> Result<f64, ExecutionError> {
+    match v {
+        ProximaValue::Int8(x) => Ok(*x as f64),
+        ProximaValue::Int16(x) => Ok(*x as f64),
+        ProximaValue::Int32(x) => Ok(*x as f64),
+        ProximaValue::Int64(x) => Ok(*x as f64),
+        ProximaValue::UInt8(x) => Ok(*x as f64),
+        ProximaValue::UInt16(x) => Ok(*x as f64),
+        ProximaValue::UInt32(x) => Ok(*x as f64),
+        ProximaValue::UInt64(x) => Ok(*x as f64),
+        ProximaValue::Float32(x) => Ok(*x as f64),
+        ProximaValue::Float64(x) => Ok(*x),
+        other => Err(ExecutionError::Execution(format!(
+            "non-numeric value in SUM/AVG: {other:?}"
+        ))),
+    }
+}
+
+/// Total ordering over `ProximaValue` for MIN/MAX + deterministic group output.
+fn compare_values(a: &ProximaValue, b: &ProximaValue) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    // NULLs sort first (and are equal to each other).
+    let an = matches!(a, ProximaValue::Null);
+    let bn = matches!(b, ProximaValue::Null);
+    match (an, bn) {
+        (true, true) => return Ordering::Equal,
+        (true, false) => return Ordering::Less,
+        (false, true) => return Ordering::Greater,
+        (false, false) => {}
+    }
+    let af = numeric_to_f64(a).ok();
+    let bf = numeric_to_f64(b).ok();
+    if let (Some(x), Some(y)) = (af, bf) {
+        return x.partial_cmp(&y).unwrap_or(Ordering::Equal);
+    }
+    // Fall back to Debug-string ordering for non-numeric (strings, etc.).
+    format!("{a:?}").cmp(&format!("{b:?}"))
+}
+
+// =========================================================================
 // PhysicalPlan → Pipeline lowering
 // =========================================================================
 
@@ -343,39 +677,85 @@ pub(crate) struct LimitSpec {
     pub limit: Option<u64>,
 }
 
+/// One operator to build in the lowered chain. Held as a spec (not yet built) so
+/// `walk` can fuse a contiguous Filter+Project into one `FilterProjectOperator`
+/// (ADR-054 §4.3) before materializing.
+enum OpSpec {
+    FilterProject {
+        predicate: Option<PhysExpr>,
+        projection: Option<Vec<usize>>,
+    },
+    /// Blocking hash aggregate. `output_schema` is precomputed (group_by cols +
+    /// agg result cols) so the operator and any post-aggregate projection agree.
+    HashAggregate {
+        group_by: Vec<usize>,
+        aggregates: Vec<AggSpec>,
+        output_schema: SchemaRef,
+    },
+}
+
 /// The pieces `walk` accumulates while descending a supported plan subtree.
+/// `ops` is bottom-up: the source feeds the first, the last emits the output.
 struct Walked {
     source: MemoryScanSource,
-    predicate: Option<PhysExpr>,
-    projection: Option<Vec<usize>>,
+    ops: Vec<OpSpec>,
+    /// Output schema of the last op (or the source if `ops` is empty).
+    cur_schema: SchemaRef,
     limit: Option<LimitSpec>,
 }
 
 /// Lower a `PhysicalPlan` to a [`LoweredPipeline`]. Returns `Err(NotImplemented)`
-/// for any unsupported shape (Scan, Join, Aggregate, Sort, Distinct, SetOp,
-/// Union, AssertMaxOneRow, nested Project/Limit, non-column projection output).
-/// `try_vectorized` maps the `Err` to a Volcano fallback.
+/// for any unsupported shape (Scan, Join, Sort, Distinct, SetOp, Union,
+/// AssertMaxOneRow, nested Limit, non-column projection/aggregate-arg, distinct
+/// aggregates, STRING_AGG/Custom aggregates, HAVING). `try_vectorized` maps the
+/// `Err` to a Volcano fallback.
 pub(crate) fn lower_physical(plan: &PhysicalPlan) -> Result<LoweredPipeline, ExecutionError> {
     let Walked {
-        source,
-        predicate,
-        projection,
-        limit,
+        source, ops, limit, ..
     } = walk(plan)?;
 
-    // Output schema: projected columns if a projection is present, else source.
-    let output_schema: SchemaRef = match &projection {
-        Some(indices) => {
-            let src = source.output_schema();
-            let fields: Vec<_> = indices.iter().map(|i| src.field(*i).clone()).collect();
-            Arc::new(arrow::datatypes::Schema::new(fields))
+    let mut operators: Vec<Box<dyn ExecutionOperator>> = Vec::with_capacity(ops.len() + 1);
+    operators.push(Box::new(source));
+    let mut cur_schema = operators[0].output_schema();
+    for spec in ops {
+        match spec {
+            OpSpec::FilterProject {
+                predicate,
+                projection,
+            } => {
+                let out: SchemaRef = match &projection {
+                    Some(idx) => Arc::new(arrow::datatypes::Schema::new(
+                        idx.iter()
+                            .map(|i| cur_schema.field(*i).clone())
+                            .collect::<Vec<_>>(),
+                    )),
+                    None => cur_schema.clone(),
+                };
+                operators.push(Box::new(FilterProjectOperator::new(
+                    predicate,
+                    projection,
+                    out.clone(),
+                )));
+                cur_schema = out;
+            }
+            OpSpec::HashAggregate {
+                group_by,
+                aggregates,
+                output_schema,
+            } => {
+                operators.push(Box::new(HashAggregateOperator::new(
+                    group_by,
+                    aggregates,
+                    output_schema.clone(),
+                )));
+                cur_schema = output_schema;
+            }
         }
-        None => source.output_schema(),
-    };
-
-    let fp = FilterProjectOperator::new(predicate, projection, output_schema.clone());
-    let pipeline = Pipeline::new(vec![Box::new(source), Box::new(fp)]);
-    Ok(LoweredPipeline { pipeline, limit })
+    }
+    Ok(LoweredPipeline {
+        pipeline: Pipeline::new(operators),
+        limit,
+    })
 }
 
 fn walk(plan: &PhysicalPlan) -> Result<Walked, ExecutionError> {
@@ -386,44 +766,100 @@ fn walk(plan: &PhysicalPlan) -> Result<Walked, ExecutionError> {
         } => {
             let arrow_schema = relational_schema_to_arrow(output_schema);
             let batch = values_to_record_batch(rows, arrow_schema.clone())?;
-            let source = MemoryScanSource::new(vec![batch], arrow_schema);
+            let source = MemoryScanSource::new(vec![batch], arrow_schema.clone());
             Ok(Walked {
                 source,
-                predicate: None,
-                projection: None,
+                ops: Vec::new(),
+                cur_schema: arrow_schema,
                 limit: None,
             })
         }
         PhysicalPlan::Filter { input, predicate } => {
             let mut w = walk(input)?;
             let p = PhysExpr::lower(predicate)?;
-            w.predicate = Some(match w.predicate.take() {
-                Some(existing) => PhysExpr::And(Box::new(existing), Box::new(p)),
-                None => p,
-            });
-            Ok(w)
+            // Fuse into a trailing FilterProject (AND-merge the predicate), else push.
+            let fuse = matches!(w.ops.last(), Some(OpSpec::FilterProject { .. }));
+            if fuse {
+                if let Some(OpSpec::FilterProject {
+                    predicate: pred, ..
+                }) = w.ops.last_mut()
+                {
+                    *pred = Some(match pred.take() {
+                        Some(existing) => PhysExpr::And(Box::new(existing), Box::new(p)),
+                        None => p,
+                    });
+                }
+            } else {
+                w.ops.push(OpSpec::FilterProject {
+                    predicate: Some(p),
+                    projection: None,
+                });
+            }
+            Ok(w) // a filter preserves the column set → cur_schema unchanged
         }
         PhysicalPlan::Project { input, outputs } => {
             let mut w = walk(input)?;
-            if w.projection.is_some() {
+            let indices = lower_column_indices(outputs)?;
+            // Output schema of this projection (computed before `indices` is moved
+            // into the op below).
+            let projected = Arc::new(arrow::datatypes::Schema::new(
+                indices
+                    .iter()
+                    .map(|i| w.cur_schema.field(*i).clone())
+                    .collect::<Vec<_>>(),
+            ));
+            // Fuse into a trailing pure FilterProject (predicate set, no projection
+            // yet) — i.e. a Filter directly below this Project. Else push a new
+            // FilterProject (e.g. a post-aggregate projection).
+            let fuse = matches!(
+                w.ops.last(),
+                Some(OpSpec::FilterProject {
+                    projection: None,
+                    ..
+                })
+            );
+            if fuse {
+                if let Some(OpSpec::FilterProject { projection, .. }) = w.ops.last_mut() {
+                    *projection = Some(indices);
+                }
+            } else {
+                w.ops.push(OpSpec::FilterProject {
+                    predicate: None,
+                    projection: Some(indices),
+                });
+            }
+            w.cur_schema = projected;
+            Ok(w)
+        }
+        PhysicalPlan::Aggregate {
+            input,
+            group_by,
+            aggregates,
+            having,
+            ..
+        } => {
+            if having.is_some() {
                 return Err(ExecutionError::NotImplemented(
-                    "nested Project not supported in native vectorized path".into(),
+                    "HAVING not supported in native HashAggregate".into(),
                 ));
             }
-            // Project output indices are relative to the (post-filter) input.
-            // Phase 2 supports column-reference outputs only.
-            let mut indices = Vec::with_capacity(outputs.len());
-            for ne in outputs {
-                match &ne.expr {
-                    Expr::Column(col) => indices.push(col.ordinal),
-                    other => {
-                        return Err(ExecutionError::NotImplemented(format!(
-                            "project output must be a column reference in Phase 2, got {other:?}"
-                        )));
-                    }
-                }
+            let mut w = walk(input)?;
+            let gb: Vec<usize> = group_by
+                .iter()
+                .map(|ne| lower_col(&ne.expr))
+                .collect::<Result<_, _>>()?;
+            let mut specs = Vec::with_capacity(aggregates.len());
+            for na in aggregates {
+                specs.push(lower_aggregate(&na.agg)?);
             }
-            w.projection = Some(indices);
+            let names: Vec<String> = aggregates.iter().map(|na| na.name.clone()).collect();
+            let out_schema = agg_output_schema(&w.cur_schema, &gb, &specs, &names)?;
+            w.ops.push(OpSpec::HashAggregate {
+                group_by: gb,
+                aggregates: specs,
+                output_schema: out_schema.clone(),
+            });
+            w.cur_schema = out_schema;
             Ok(w)
         }
         PhysicalPlan::Limit {
@@ -447,6 +883,97 @@ fn walk(plan: &PhysicalPlan) -> Result<Walked, ExecutionError> {
             "native vectorized path does not support PhysicalPlan::{other:?}"
         ))),
     }
+}
+
+/// Lower `Project` outputs to column ordinals (column references only).
+fn lower_column_indices(outputs: &[NamedExpr]) -> Result<Vec<usize>, ExecutionError> {
+    outputs.iter().map(|ne| lower_col(&ne.expr)).collect()
+}
+
+/// Resolve a single `Expr` to a column ordinal (column references only).
+fn lower_col(expr: &Expr) -> Result<usize, ExecutionError> {
+    match expr {
+        Expr::Column(col) => Ok(col.ordinal),
+        other => Err(ExecutionError::NotImplemented(format!(
+            "column reference required here, got {other:?}"
+        ))),
+    }
+}
+
+/// Lower an `AggregateExpr` to an [`AggSpec`]. Declines distinct aggregates and
+/// STRING_AGG/Custom (→ Volcano fallback).
+fn lower_aggregate(agg: &AggregateExpr) -> Result<AggSpec, ExecutionError> {
+    match agg {
+        AggregateExpr::Count { arg, distinct } => {
+            if *distinct {
+                return Err(ExecutionError::NotImplemented(
+                    "COUNT(DISTINCT) not supported in native HashAggregate".into(),
+                ));
+            }
+            Ok(AggSpec {
+                arg: arg.as_ref().map(lower_col).transpose()?,
+                kind: AggKind::Count,
+            })
+        }
+        AggregateExpr::Sum { arg, distinct } => {
+            if *distinct {
+                return Err(ExecutionError::NotImplemented(
+                    "SUM(DISTINCT) not supported in native HashAggregate".into(),
+                ));
+            }
+            Ok(AggSpec {
+                arg: Some(lower_col(arg)?),
+                kind: AggKind::Sum,
+            })
+        }
+        AggregateExpr::Avg { arg, distinct } => {
+            if *distinct {
+                return Err(ExecutionError::NotImplemented(
+                    "AVG(DISTINCT) not supported in native HashAggregate".into(),
+                ));
+            }
+            Ok(AggSpec {
+                arg: Some(lower_col(arg)?),
+                kind: AggKind::Avg,
+            })
+        }
+        AggregateExpr::Min { arg } => Ok(AggSpec {
+            arg: Some(lower_col(arg)?),
+            kind: AggKind::Min,
+        }),
+        AggregateExpr::Max { arg } => Ok(AggSpec {
+            arg: Some(lower_col(arg)?),
+            kind: AggKind::Max,
+        }),
+        other => Err(ExecutionError::NotImplemented(format!(
+            "aggregate {other:?} not supported in native HashAggregate"
+        ))),
+    }
+}
+
+/// Output schema of a hash aggregate: [group_by columns, aggregate result columns].
+/// COUNT→Int64, SUM/AVG→Float64, MIN/MAX→argument column type.
+fn agg_output_schema(
+    input: &SchemaRef,
+    group_by: &[usize],
+    aggregates: &[AggSpec],
+    names: &[String],
+) -> Result<SchemaRef, ExecutionError> {
+    let mut fields: Vec<Field> = group_by.iter().map(|&c| input.field(c).clone()).collect();
+    for (spec, name) in aggregates.iter().zip(names.iter()) {
+        let dt = match spec.kind {
+            AggKind::Count => DataType::Int64,
+            AggKind::Sum | AggKind::Avg => DataType::Float64,
+            AggKind::Min | AggKind::Max => {
+                let arg = spec.arg.ok_or_else(|| {
+                    ExecutionError::NotImplemented("MIN/MAX requires a column argument".into())
+                })?;
+                input.field(arg).data_type().clone()
+            }
+        };
+        fields.push(Field::new(name, dt, true));
+    }
+    Ok(Arc::new(arrow::datatypes::Schema::new(fields)))
 }
 
 /// Drain a [`LoweredPipeline`] to materialized `RecordBatch`es, applying the
@@ -794,5 +1321,147 @@ mod tests {
         let mask = pred.eval_bool(&batch).unwrap();
         let got: Vec<bool> = mask.iter().map(|o| o.unwrap_or(false)).collect();
         assert_eq!(got, vec![false, true, false]);
+    }
+
+    // --- Phase 2.1 HashAggregateOperator tests ---
+
+    async fn run_pipeline(ops: Vec<Box<dyn ExecutionOperator>>) -> Vec<RecordBatch> {
+        let lowered = LoweredPipeline {
+            pipeline: Pipeline::new(ops),
+            limit: None,
+        };
+        execute_pipeline(&lowered).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn hash_aggregate_count_star_no_group() {
+        // COUNT(*) over [1,2,3,4,5] → 5 (no GROUP BY → single group).
+        let schema = int64_schema("x");
+        let batch = int64_batch(&[1, 2, 3, 4, 5]);
+        let source = MemoryScanSource::new(vec![batch], schema);
+        let out_schema = Arc::new(Schema::new(vec![Field::new(
+            "count",
+            DataType::Int64,
+            true,
+        )]));
+        let agg = HashAggregateOperator::new(
+            vec![],
+            vec![AggSpec {
+                arg: None,
+                kind: AggKind::Count,
+            }],
+            out_schema,
+        );
+        let batches = run_pipeline(vec![Box::new(source), Box::new(agg)]).await;
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_rows(), 1);
+        let count = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_eq!(count.value(0), 5);
+    }
+
+    #[tokio::test]
+    async fn hash_aggregate_sum_avg_no_group() {
+        // SUM=15.0, AVG=3.0 over [1,2,3,4,5].
+        let schema = int64_schema("x");
+        let batch = int64_batch(&[1, 2, 3, 4, 5]);
+        let source = MemoryScanSource::new(vec![batch], schema);
+        let out_schema = Arc::new(Schema::new(vec![
+            Field::new("sum", DataType::Float64, true),
+            Field::new("avg", DataType::Float64, true),
+        ]));
+        let agg = HashAggregateOperator::new(
+            vec![],
+            vec![
+                AggSpec {
+                    arg: Some(0),
+                    kind: AggKind::Sum,
+                },
+                AggSpec {
+                    arg: Some(0),
+                    kind: AggKind::Avg,
+                },
+            ],
+            out_schema,
+        );
+        let batches = run_pipeline(vec![Box::new(source), Box::new(agg)]).await;
+        assert_eq!(batches[0].num_rows(), 1);
+        let sum = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::Float64Array>()
+            .unwrap();
+        let avg = batches[0]
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow::array::Float64Array>()
+            .unwrap();
+        assert!((sum.value(0) - 15.0).abs() < f64::EPSILON);
+        assert!((avg.value(0) - 3.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn hash_aggregate_group_by_min_max() {
+        // g=[a,a,b], x=[10,30,5] → group a: min10/max30; group b: min5/max5.
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("g", DataType::Utf8, false),
+            Field::new("x", DataType::Int64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(arrow::array::StringArray::from(vec!["a", "a", "b"])),
+                Arc::new(Int64Array::from(vec![10, 30, 5])),
+            ],
+        )
+        .unwrap();
+        let source = MemoryScanSource::new(vec![batch], schema);
+        let out_schema = Arc::new(Schema::new(vec![
+            Field::new("g", DataType::Utf8, true),
+            Field::new("min_x", DataType::Int64, true),
+            Field::new("max_x", DataType::Int64, true),
+        ]));
+        let agg = HashAggregateOperator::new(
+            vec![0],
+            vec![
+                AggSpec {
+                    arg: Some(1),
+                    kind: AggKind::Min,
+                },
+                AggSpec {
+                    arg: Some(1),
+                    kind: AggKind::Max,
+                },
+            ],
+            out_schema,
+        );
+        let batches = run_pipeline(vec![Box::new(source), Box::new(agg)]).await;
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_rows(), 2); // groups a, b
+        let g = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::StringArray>()
+            .unwrap();
+        let minx = batches[0]
+            .column(1)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let maxx = batches[0]
+            .column(2)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        // Sorted output: group a first, then b.
+        assert_eq!(g.value(0), "a");
+        assert_eq!(minx.value(0), 10);
+        assert_eq!(maxx.value(0), 30);
+        assert_eq!(g.value(1), "b");
+        assert_eq!(minx.value(1), 5);
+        assert_eq!(maxx.value(1), 5);
     }
 }
