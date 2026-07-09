@@ -93,6 +93,7 @@ members = [
     "crates/query/proximadb-graph-subset",
     "crates/query/proximadb-multimodel-query",
     "crates/query/proximadb-multimodel-plan",
+    "crates/query/proximadb-execution-contracts",
     "crates/query/proximadb-relational-algebra",
     "crates/query/proximadb-relational-reader",
     "crates/query/proximadb-relational-planner",
@@ -178,6 +179,7 @@ proximadb-index-traits = { path = "crates/foundation/proximadb-index-traits" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
 proximadb-functions = { path = "crates/foundation/proximadb-functions" }
+proximadb-execution-contracts = { path = "crates/query/proximadb-execution-contracts" }
 proximadb-relational-algebra = { path = "crates/query/proximadb-relational-algebra" }
 proximadb-relational-reader = { path = "crates/query/proximadb-relational-reader" }
 proximadb-relational-planner = { path = "crates/query/proximadb-relational-planner" }
@@ -248,7 +250,7 @@ xz2 = "0.1"
 zstd = "0.13"
 
 # Language bindings
-pyo3 = { version = "0.28", features = ["extension-module", "abi3-py38"] }
+pyo3 = { version = "0.28", features = ["extension-module", "abi3-py310"] }  # abi3 floor = CPython 3.10 (our minimum supported Python); one wheel (cp310-abi3) installs on 3.10+
 numpy = { version = "0.28" }
 
 # TurboQuant numerics (ADR-021, gated by `experimental-turboquant`).
@@ -298,6 +300,7 @@ proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
 proximadb-functions = { path = "crates/foundation/proximadb-functions" }
+proximadb-execution-contracts = { path = "crates/query/proximadb-execution-contracts" }
 proximadb-relational-algebra = { path = "crates/query/proximadb-relational-algebra" }
 proximadb-relational-reader = { path = "crates/query/proximadb-relational-reader" }
 proximadb-relational-planner = { path = "crates/query/proximadb-relational-planner" }
@@ -588,6 +591,11 @@ tracing-subscriber = "0.3"
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }
 proptest = "1.0"
+# In-process gather of the default prometheus registry where the per-tenant
+# consumption counters live (tests/documents_convergence_bake.rs measures the
+# metering delta at the registry, not just the /metrics/prometheus endpoint —
+# same pin as the root [dependencies] entry).
+prometheus = "0.14"
 # tempdir = "0.3"  # REMOVED: Deprecated since 2018, has TOCTOU vulnerability (RUSTSEC-2023-0018). Use tempfile instead.
 env_logger = "0.10"
 walkdir = "2"
@@ -985,12 +993,6 @@ path = "benches/bench_14_graph_operations.rs"
 name = "bench_graph_adjacency_vs_csr"
 harness = false
 path = "benches/bench_graph_adjacency_vs_csr.rs"
-
-# 7. GRAPH ENGINES COMPARISON (17)
-[[bench]]
-name = "bench_17_graph_engines"
-harness = false
-path = "benches/bench_17_graph_engines.rs"
 
 # 8. GRAPH ENGINE REPORTER (CSV)
 [[bench]]

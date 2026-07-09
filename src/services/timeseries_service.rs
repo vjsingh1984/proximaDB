@@ -76,49 +76,96 @@ pub struct TsPoint {
     pub tags: HashMap<String, String>,
 }
 
-/// Wraps a single `TimeSeriesEngine` (multiplexed by `collection_id`) plus a resident
-/// registry of the declared collection configs.
+/// Multiplexes a `TimeSeriesEngine` PER TENANT — each rooted at `<base_path>/<tenant>` — so
+/// tenants are isolated STRUCTURALLY by physical storage path, not by folding the tenant into the
+/// collection name. Collection configs are registered per `(tenant, name)`. Logical collection
+/// names stay tenant-clean; the tenant is the structural key dimension, applied once here.
 pub struct TimeSeriesService {
-    /// `insert_record` takes `&mut self`, so the engine is guarded for interior
-    /// mutability (writes exclusive, `query_time_range` reads shared).
-    engine: RwLock<TimeSeriesEngine>,
-    collections: RwLock<HashMap<String, TsCollectionConfig>>,
+    /// Root under which each tenant's engine hangs (`<base_path>/<tenant>`).
+    base_path: PathBuf,
+    /// One engine per tenant, created lazily. Each `insert_record` needs `&mut engine`, so every
+    /// tenant's engine is independently locked (writes exclusive, queries shared) — and no
+    /// tenant's partitions/WAL/segments ever share a path with another's.
+    engines: RwLock<HashMap<String, Arc<RwLock<TimeSeriesEngine>>>>,
+    /// Declared collection configs, keyed by `(tenant, collection_name)`.
+    collections: RwLock<HashMap<(String, String), TsCollectionConfig>>,
 }
 
 impl TimeSeriesService {
-    /// Build the service with the engine rooted at `base_path` (e.g. `<data_dir>/timeseries`).
+    /// Build the service rooted at `base_path` (e.g. `<data_dir>/timeseries`); per-tenant engines
+    /// hang off `<base_path>/<tenant>`.
     pub fn new(base_path: PathBuf) -> Result<Self> {
-        let config = TimeSeriesConfig {
-            base_path,
-            ..Default::default()
-        };
-        let engine = TimeSeriesEngine::with_config(config)
-            .map_err(|e| anyhow!("failed to init TimeSeriesEngine: {e}"))?;
         Ok(Self {
-            engine: RwLock::new(engine),
+            base_path,
+            engines: RwLock::new(HashMap::new()),
             collections: RwLock::new(HashMap::new()),
         })
     }
 
-    pub async fn create_collection(&self, config: TsCollectionConfig) -> Result<()> {
+    /// Get — or lazily create — the engine for `tenant`, rooted at `<base_path>/<tenant>`. The
+    /// tenant is validated as a path segment (foundation `validate_request_tenant`) so it can
+    /// never traverse or shadow a control-plane system subtree.
+    async fn engine_for(&self, tenant: &str) -> Result<Arc<RwLock<TimeSeriesEngine>>> {
+        proximadb_tenant::validate_request_tenant(tenant)
+            .map_err(|e| anyhow!("invalid tenant '{tenant}': {e}"))?;
+        if let Some(engine) = self.engines.read().await.get(tenant) {
+            return Ok(engine.clone());
+        }
+        let mut engines = self.engines.write().await;
+        // Re-check under the write lock — another task may have created it meanwhile.
+        if let Some(engine) = engines.get(tenant) {
+            return Ok(engine.clone());
+        }
+        let config = TimeSeriesConfig {
+            base_path: self.base_path.join(tenant),
+            ..Default::default()
+        };
+        let engine = TimeSeriesEngine::with_config(config)
+            .map_err(|e| anyhow!("failed to init TimeSeriesEngine for tenant '{tenant}': {e}"))?;
+        let handle = Arc::new(RwLock::new(engine));
+        engines.insert(tenant.to_string(), handle.clone());
+        Ok(handle)
+    }
+
+    pub async fn create_collection(&self, tenant: &str, config: TsCollectionConfig) -> Result<()> {
+        proximadb_tenant::validate_request_tenant(tenant)
+            .map_err(|e| anyhow!("invalid tenant '{tenant}': {e}"))?;
         self.collections
             .write()
             .await
-            .insert(config.name.clone(), config);
+            .insert((tenant.to_string(), config.name.clone()), config);
         Ok(())
     }
 
-    pub async fn list_collections(&self) -> Vec<TsCollectionConfig> {
-        self.collections.read().await.values().cloned().collect()
+    /// List a SINGLE tenant's collections (structural scope — never all tenants').
+    pub async fn list_collections(&self, tenant: &str) -> Vec<TsCollectionConfig> {
+        self.collections
+            .read()
+            .await
+            .iter()
+            .filter(|((t, _), _)| t == tenant)
+            .map(|(_, cfg)| cfg.clone())
+            .collect()
     }
 
-    pub async fn delete_collection(&self, name: &str) -> bool {
-        self.collections.write().await.remove(name).is_some()
+    pub async fn delete_collection(&self, tenant: &str, name: &str) -> bool {
+        self.collections
+            .write()
+            .await
+            .remove(&(tenant.to_string(), name.to_string()))
+            .is_some()
     }
 
-    /// Ingest points → TST-native `insert_record` (values in metadata, timestamp partitioned).
-    pub async fn ingest(&self, collection: &str, points: Vec<TsPoint>) -> Result<usize> {
-        let mut engine = self.engine.write().await;
+    /// Ingest points → TST-native `insert_record` (values in metadata, timestamp partitioned),
+    /// into the TENANT's engine.
+    pub async fn ingest(
+        &self,
+        tenant: &str,
+        collection: &str,
+        points: Vec<TsPoint>,
+    ) -> Result<usize> {
+        let engine_handle = self.engine_for(tenant).await?;
+        let mut engine = engine_handle.write().await;
         let mut inserted = 0usize;
         for point in points {
             let ts = Utc
@@ -160,9 +207,10 @@ impl TimeSeriesService {
         Ok(inserted)
     }
 
-    /// Query a time range → raw points (TST-native `query_time_range`).
+    /// Query a time range → raw points (TST-native `query_time_range`) from the TENANT's engine.
     pub async fn query(
         &self,
+        tenant: &str,
         collection: &str,
         start_ms: i64,
         end_ms: i64,
@@ -176,8 +224,8 @@ impl TimeSeriesService {
             .timestamp_millis_opt(end_ms)
             .single()
             .ok_or_else(|| anyhow!("invalid end_time"))?;
-        let records = self
-            .engine
+        let engine_handle = self.engine_for(tenant).await?;
+        let records = engine_handle
             .read()
             .await
             .query_time_range(collection, start, end, limit)
@@ -190,13 +238,16 @@ impl TimeSeriesService {
     /// (avg | sum | min | max | count | stddev | first | last) to each value column.
     pub async fn aggregate(
         &self,
+        tenant: &str,
         collection: &str,
         start_ms: i64,
         end_ms: i64,
         aggregation: &str,
         bucket_ms: i64,
     ) -> Result<Vec<serde_json::Value>> {
-        let points = self.query(collection, start_ms, end_ms, None).await?;
+        let points = self
+            .query(tenant, collection, start_ms, end_ms, None)
+            .await?;
         let bucket = bucket_ms.max(1);
         let mut buckets: BTreeMap<i64, HashMap<String, Vec<f64>>> = BTreeMap::new();
         for point in points {
@@ -266,5 +317,115 @@ fn apply_aggregation(aggregation: &str, vals: &[f64]) -> f64 {
         }
         // "avg" / "mean" and anything else → mean
         _ => vals.iter().sum::<f64>() / n,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn point(ts: i64, metric: &str, v: f64) -> TsPoint {
+        TsPoint {
+            timestamp: ts,
+            values: HashMap::from([(metric.to_string(), v)]),
+            tags: HashMap::new(),
+        }
+    }
+
+    fn config(name: &str) -> TsCollectionConfig {
+        TsCollectionConfig {
+            name: name.to_string(),
+            timestamp_column: "timestamp".to_string(),
+            value_columns: vec![],
+            tag_columns: vec![],
+            retention_ms: None,
+        }
+    }
+
+    /// The canonical isolation rubric: two tenants write the SAME tenant-clean logical
+    /// collection name, and neither can read the other's data — isolation is structural
+    /// (a per-tenant engine rooted at a separate path), NOT a `{tenant}::name` fold.
+    #[tokio::test]
+    async fn tenants_are_isolated_under_the_same_logical_collection_name() {
+        let tmp = TempDir::new().expect("tempdir");
+        let svc = TimeSeriesService::new(tmp.path().to_path_buf()).expect("service");
+
+        // Both tenants use the identical, tenant-CLEAN collection name "sensor".
+        svc.ingest("acme", "sensor", vec![point(1_000, "v", 1.0)])
+            .await
+            .expect("acme ingest");
+        svc.ingest("globex", "sensor", vec![point(1_000, "v", 99.0)])
+            .await
+            .expect("globex ingest");
+
+        let acme = svc
+            .query("acme", "sensor", 0, 10_000, None)
+            .await
+            .expect("acme query");
+        let globex = svc
+            .query("globex", "sensor", 0, 10_000, None)
+            .await
+            .expect("globex query");
+
+        // Each tenant sees ONLY its own value — no cross-tenant bleed despite the shared name.
+        assert_eq!(acme.len(), 1, "acme sees only its own point");
+        assert_eq!(acme[0].values.get("v"), Some(&1.0));
+        assert_eq!(globex.len(), 1, "globex sees only its own point");
+        assert_eq!(globex[0].values.get("v"), Some(&99.0));
+
+        // A tenant that never wrote "sensor" reads nothing (no shared global engine).
+        let stranger = svc
+            .query("stranger", "sensor", 0, 10_000, None)
+            .await
+            .expect("stranger query");
+        assert!(stranger.is_empty(), "unrelated tenant sees no data");
+    }
+
+    /// `list_collections` is tenant-scoped — the former cross-tenant leak is gone.
+    #[tokio::test]
+    async fn list_collections_returns_only_the_requesting_tenants_collections() {
+        let tmp = TempDir::new().expect("tempdir");
+        let svc = TimeSeriesService::new(tmp.path().to_path_buf()).expect("service");
+
+        svc.create_collection("acme", config("sensor"))
+            .await
+            .expect("acme create");
+        svc.create_collection("globex", config("sensor"))
+            .await
+            .expect("globex create");
+        svc.create_collection("globex", config("weather"))
+            .await
+            .expect("globex create 2");
+
+        let acme = svc.list_collections("acme").await;
+        assert_eq!(acme.len(), 1, "acme has exactly one collection");
+        assert_eq!(acme[0].name, "sensor");
+
+        let globex = svc.list_collections("globex").await;
+        assert_eq!(globex.len(), 2, "globex has two, none of acme's");
+    }
+
+    /// The tenant is validated as a structural path segment — traversal / reserved
+    /// prefixes are fail-closed before an engine is ever created.
+    #[tokio::test]
+    async fn invalid_tenants_are_rejected_fail_closed() {
+        let tmp = TempDir::new().expect("tempdir");
+        let svc = TimeSeriesService::new(tmp.path().to_path_buf()).expect("service");
+
+        assert!(
+            svc.ingest("../evil", "sensor", vec![]).await.is_err(),
+            "path traversal rejected"
+        );
+        assert!(
+            svc.ingest("_system", "sensor", vec![]).await.is_err(),
+            "reserved-prefix tenant rejected"
+        );
+        assert!(
+            svc.create_collection("bad/tenant", config("sensor"))
+                .await
+                .is_err(),
+            "separator in tenant rejected"
+        );
     }
 }

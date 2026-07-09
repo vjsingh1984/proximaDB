@@ -43,9 +43,6 @@ pub use encryption::{
     KeyInfo, KeyStore, KeyStoreConfig, KeyStoreError,
 };
 
-#[allow(deprecated)]
-#[deprecated(note = "Use TypeValidationResult instead.")]
-pub use validation::ValidationResult;
 pub use validation::{
     BinaryValidator, CollectionNameValidator, DecimalValidator, FieldValidationConfig,
     JsonValidator, MetadataValidationConfig, MetadataValidator, TimestampValidator,

@@ -384,6 +384,11 @@ impl RLPlannerIntegration {
         planner.load_policy(path).await
     }
 
+    /// Total reward updates observed (passthrough for the checkpoint dirty-flag).
+    pub async fn total_updates(&self) -> u64 {
+        self.planner.read().await.total_updates().await
+    }
+
     /// Check if RL planning is enabled
     pub fn is_enabled(&self) -> bool {
         self.config.enabled

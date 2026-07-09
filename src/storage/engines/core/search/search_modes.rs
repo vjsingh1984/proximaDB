@@ -1076,13 +1076,6 @@ pub struct CandidateRecord {
     pub search_context: Option<SearchStageContext>,
 }
 
-/// Type alias for backward compatibility - DEPRECATED: Use SearchStageContext
-#[deprecated(
-    since = "0.1.4",
-    note = "Use SearchStageContext to avoid confusion with query context"
-)]
-pub type SearchContext = SearchStageContext;
-
 /// Search stage context information - tracks which stage found a candidate
 /// This is NOT the overall search request context (that's UnifiedQueryContext)
 #[derive(Debug, Clone)]

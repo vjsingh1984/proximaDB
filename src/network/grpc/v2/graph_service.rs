@@ -18,11 +18,12 @@
 //!   `UnifiedHandlers::graph_operations_service` the v1 adapter uses — no new
 //!   business logic. v2 messages are mapped to the internal (v1 proto) domain
 //!   types at the handler boundary only; see the `conv` helpers below.
-//! - **Structural tenant isolation.** Each handler derives the effective backing
-//!   graph namespace from the request tenant (`x-tenant-id` / auth context) via
-//!   [`grpc_auth::tenant_id`]. Isolation is a namespace on the storage key, never
-//!   a per-query predicate. The backing `GraphOperationsService` does not yet
-//!   accept a `TenantContext`; deeper plumbing is tracked as a follow-up TD.
+//! - **Structural tenant isolation.** Each handler resolves the request tenant
+//!   (`x-tenant-id` / auth context) via [`grpc_auth::resolved_tenant_id`], then routes
+//!   through [`GraphOperationsService::for_tenant`], which composes the structural scope
+//!   (`{tenant}/{graph_id}`) exactly ONCE at the boundary and delegates to the raw ops.
+//!   Handlers pass tenant-CLEAN `graph_id`s and never bake the tenant into a user-visible
+//!   name — isolation is a namespace on the storage key, never a per-query predicate.
 //!
 //! ## Deferred RPCs
 //!
@@ -77,19 +78,6 @@ impl ProximaGraphServiceImpl {
     /// Convert to a tonic server.
     pub fn into_server(self) -> ProximaGraphServiceServer<Self> {
         ProximaGraphServiceServer::new(self)
-    }
-
-    /// Derive the effective backing graph namespace from the request tenant.
-    ///
-    /// Isolation is structural: the tenant is folded into the storage key (the
-    /// `GraphOperationsService` registry/path key), never applied as a per-query
-    /// predicate. Embedded / unauthenticated calls (no tenant) fall back to the
-    /// raw `graph_id` for backward compatibility.
-    fn effective_graph_id<T>(request: &Request<T>, graph_id: &str) -> String {
-        match grpc_auth::tenant_id(request) {
-            Some(tenant) if !tenant.is_empty() => format!("{tenant}::{graph_id}"),
-            _ => graph_id.to_string(),
-        }
     }
 }
 
@@ -364,7 +352,8 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::CreateGraphNodeRequest>,
     ) -> Result<Response<pv2::GraphNodeResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC CreateNode graph={graph_id}");
         let node = req
@@ -372,6 +361,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("node is required"))?;
         match self
             .graph
+            .for_tenant(&tenant)
             .create_node(&graph_id, conv::node_to_v1(node))
             .await
         {
@@ -389,10 +379,16 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GetGraphNodeRequest>,
     ) -> Result<Response<pv2::GraphNodeResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC GetNode graph={graph_id} node={}", req.node_id);
-        match self.graph.get_node(&graph_id, &req.node_id).await {
+        match self
+            .graph
+            .for_tenant(&tenant)
+            .get_node(&graph_id, &req.node_id)
+            .await
+        {
             Ok(found) => Ok(Response::new(pv2::GraphNodeResponse {
                 node: found.map(|n| conv::node_to_v2((*n).clone())),
             })),
@@ -404,7 +400,8 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::UpdateGraphNodeRequest>,
     ) -> Result<Response<pv2::GraphNodeResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC UpdateNode graph={graph_id}");
         let node = req
@@ -412,6 +409,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("node is required"))?;
         match self
             .graph
+            .for_tenant(&tenant)
             .update_node(&graph_id, conv::node_to_v1(node))
             .await
         {
@@ -426,10 +424,16 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::DeleteGraphNodeRequest>,
     ) -> Result<Response<pv2::DeleteGraphNodeResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC DeleteNode graph={graph_id} node={}", req.node_id);
-        match self.graph.delete_node(&graph_id, &req.node_id).await {
+        match self
+            .graph
+            .for_tenant(&tenant)
+            .delete_node(&graph_id, &req.node_id)
+            .await
+        {
             Ok(removed) => Ok(Response::new(pv2::DeleteGraphNodeResponse {
                 deleted: removed.is_some(),
                 node: removed.map(|n| conv::node_to_v2((*n).clone())),
@@ -442,7 +446,8 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::CreateGraphEdgeRequest>,
     ) -> Result<Response<pv2::GraphEdgeResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC CreateEdge graph={graph_id}");
         let edge = req
@@ -450,6 +455,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("edge is required"))?;
         match self
             .graph
+            .for_tenant(&tenant)
             .create_edge(&graph_id, conv::edge_to_v1(edge))
             .await
         {
@@ -464,10 +470,16 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GetGraphEdgeRequest>,
     ) -> Result<Response<pv2::GraphEdgeResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC GetEdge graph={graph_id} edge={}", req.edge_id);
-        match self.graph.get_edge(&graph_id, &req.edge_id).await {
+        match self
+            .graph
+            .for_tenant(&tenant)
+            .get_edge(&graph_id, &req.edge_id)
+            .await
+        {
             Ok(found) => Ok(Response::new(pv2::GraphEdgeResponse {
                 edge: found.map(|e| conv::edge_to_v2((*e).clone())),
             })),
@@ -479,7 +491,8 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::UpdateGraphEdgeRequest>,
     ) -> Result<Response<pv2::GraphEdgeResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC UpdateEdge graph={graph_id}");
         let edge = req
@@ -487,6 +500,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("edge is required"))?;
         match self
             .graph
+            .for_tenant(&tenant)
             .update_edge(&graph_id, conv::edge_to_v1(edge))
             .await
         {
@@ -501,10 +515,16 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::DeleteGraphEdgeRequest>,
     ) -> Result<Response<pv2::DeleteGraphEdgeResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC DeleteEdge graph={graph_id} edge={}", req.edge_id);
-        match self.graph.delete_edge(&graph_id, &req.edge_id).await {
+        match self
+            .graph
+            .for_tenant(&tenant)
+            .delete_edge(&graph_id, &req.edge_id)
+            .await
+        {
             Ok(removed) => Ok(Response::new(pv2::DeleteGraphEdgeResponse {
                 deleted: removed.is_some(),
                 edge: removed.map(|e| conv::edge_to_v2((*e).clone())),
@@ -517,7 +537,8 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::QueryGraphNodesRequest>,
     ) -> Result<Response<pv2::QueryGraphNodesResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!(
             "v2 gRPC QueryNodes graph={graph_id} labels={:?}",
@@ -532,7 +553,12 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             offset,
             continuation_token: None,
         };
-        match self.graph.query_nodes(&graph_id, query).await {
+        match self
+            .graph
+            .for_tenant(&tenant)
+            .query_nodes(&graph_id, query)
+            .await
+        {
             Ok(nodes) => {
                 let nodes: Vec<pv2::GraphNode> = nodes
                     .into_iter()
@@ -552,7 +578,8 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::QueryGraphEdgesRequest>,
     ) -> Result<Response<pv2::QueryGraphEdgesResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC QueryEdges graph={graph_id}");
         let offset = resolve_offset(req.offset, &req.continuation_token);
@@ -566,7 +593,12 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             offset,
             continuation_token: None,
         };
-        match self.graph.query_edges(&graph_id, query).await {
+        match self
+            .graph
+            .for_tenant(&tenant)
+            .query_edges(&graph_id, query)
+            .await
+        {
             Ok(edges) => {
                 let edges: Vec<pv2::GraphEdge> = edges
                     .into_iter()
@@ -586,10 +618,16 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GetGraphNeighborsRequest>,
     ) -> Result<Response<pv2::GetGraphNeighborsResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!("v2 gRPC GetNeighbors graph={graph_id} node={}", req.node_id);
-        match self.graph.get_neighbors(&graph_id, &req.node_id).await {
+        match self
+            .graph
+            .for_tenant(&tenant)
+            .get_neighbors(&graph_id, &req.node_id)
+            .await
+        {
             Ok(nodes) => Ok(Response::new(pv2::GetGraphNeighborsResponse {
                 nodes: nodes
                     .into_iter()
@@ -604,7 +642,8 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::TraverseGraphRequest>,
     ) -> Result<Response<pv2::TraverseGraphResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         let start = Instant::now();
         debug!(
@@ -612,7 +651,12 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             req.start_node_id
         );
         let internal = conv::traversal_request_to_v1(graph_id.clone(), req);
-        match self.graph.traverse(&graph_id, internal).await {
+        match self
+            .graph
+            .for_tenant(&tenant)
+            .traverse(&graph_id, internal)
+            .await
+        {
             Ok(resp) => {
                 let mut stats = resp.stats.map(conv::traversal_stats_to_v2);
                 if let Some(stats) = stats.as_mut()
@@ -635,7 +679,8 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GraphShortestPathRequest>,
     ) -> Result<Response<pv2::GraphShortestPathResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!(
             "v2 gRPC ShortestPath graph={graph_id} {} -> {}",
@@ -651,10 +696,15 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             Ok(pv1::ShortestPathAlgorithm::Astar) => pv1::ShortestPathAlgorithm::Astar,
             _ => pv1::ShortestPathAlgorithm::Dijkstra,
         };
+        // Compose the structural scope once (`{tenant}/{graph_id}`) and call the raw method
+        // directly — `shortest_path` is deliberately not a `TenantGraphOps` forwarder (its
+        // legacy-v1-proto algorithm type would add a net-new legacy-proto reference, TD-123).
+        let scoped_graph_id = crate::graph::scoped_graph_id(&tenant, &graph_id)
+            .map_err(|e| Status::invalid_argument(format!("invalid tenant: {e}")))?;
         match self
             .graph
             .shortest_path(
-                &graph_id,
+                &scoped_graph_id,
                 &req.start_node_id,
                 &req.target_node_id,
                 req.max_depth,
@@ -684,9 +734,10 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GetGraphStatsRequest>,
     ) -> Result<Response<pv2::GraphStats>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         debug!("v2 gRPC GetGraphStats graph={graph_id}");
-        match self.graph.get_stats(&graph_id).await {
+        match self.graph.for_tenant(&tenant).get_stats(&graph_id).await {
             Ok(stats) => Ok(Response::new(conv::stats_to_v2(stats))),
             Err(e) => Err(graph_status("get graph statistics", e)),
         }
@@ -704,7 +755,8 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::TraverseGraphRequest>,
     ) -> Result<Response<Self::StreamTraverseStream>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         let start = Instant::now();
         debug!(
@@ -714,6 +766,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         let internal = conv::traversal_request_to_v1(graph_id.clone(), req);
         let resp = self
             .graph
+            .for_tenant(&tenant)
             .traverse(&graph_id, internal)
             .await
             .map_err(|e| graph_status("traverse graph", e))?;
@@ -746,9 +799,15 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GraphConnectedComponentsRequest>,
     ) -> Result<Response<pv2::GraphConnectedComponentsResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         debug!("v2 gRPC GetConnectedComponents graph={graph_id}");
-        match self.graph.connected_components(&graph_id).await {
+        match self
+            .graph
+            .for_tenant(&tenant)
+            .connected_components(&graph_id)
+            .await
+        {
             Ok(comps) => Ok(Response::new(pv2::GraphConnectedComponentsResponse {
                 components: comps
                     .into_iter()
@@ -763,9 +822,10 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GraphHasCycleRequest>,
     ) -> Result<Response<pv2::GraphHasCycleResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         debug!("v2 gRPC HasCycle graph={graph_id}");
-        match self.graph.has_cycle(&graph_id).await {
+        match self.graph.for_tenant(&tenant).has_cycle(&graph_id).await {
             Ok(has_cycle) => Ok(Response::new(pv2::GraphHasCycleResponse { has_cycle })),
             Err(e) => Err(graph_status("check for cycles", e)),
         }
@@ -777,7 +837,8 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GraphUniqueConstraintRequest>,
     ) -> Result<Response<pv2::GraphUniqueConstraintResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!(
             "v2 gRPC AddUniqueConstraint graph={graph_id} label={} property={}",
@@ -787,6 +848,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         // adapter) rather than as a gRPC error, so clients can branch on it.
         match self
             .graph
+            .for_tenant(&tenant)
             .add_unique_constraint(&graph_id, &req.label, &req.property)
             .await
         {
@@ -805,7 +867,8 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::GraphUniqueConstraintRequest>,
     ) -> Result<Response<pv2::GraphUniqueConstraintResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!(
             "v2 gRPC RemoveUniqueConstraint graph={graph_id} label={} property={}",
@@ -813,6 +876,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         );
         match self
             .graph
+            .for_tenant(&tenant)
             .remove_unique_constraint(&graph_id, &req.label, &req.property)
             .await
         {
@@ -833,14 +897,20 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::BatchCreateGraphNodesRequest>,
     ) -> Result<Response<pv2::BatchCreateGraphNodesResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!(
             "v2 gRPC BatchCreateNodes graph={graph_id} count={}",
             req.nodes.len()
         );
         let nodes = req.nodes.into_iter().map(conv::node_to_v1).collect();
-        match self.graph.batch_create_nodes(&graph_id, nodes).await {
+        match self
+            .graph
+            .for_tenant(&tenant)
+            .batch_create_nodes(&graph_id, nodes)
+            .await
+        {
             Ok(created) => {
                 let nodes: Vec<pv2::GraphNode> = created
                     .into_iter()
@@ -861,14 +931,20 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::BatchCreateGraphEdgesRequest>,
     ) -> Result<Response<pv2::BatchCreateGraphEdgesResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!(
             "v2 gRPC BatchCreateEdges graph={graph_id} count={}",
             req.edges.len()
         );
         let edges = req.edges.into_iter().map(conv::edge_to_v1).collect();
-        match self.graph.batch_create_edges(&graph_id, edges).await {
+        match self
+            .graph
+            .for_tenant(&tenant)
+            .batch_create_edges(&graph_id, edges)
+            .await
+        {
             Ok(created) => {
                 let edges: Vec<pv2::GraphEdge> = created
                     .into_iter()
@@ -897,7 +973,8 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         &self,
         request: Request<pv2::ExecuteGraphQueryRequest>,
     ) -> Result<Response<pv2::ExecuteGraphQueryResponse>, Status> {
-        let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
+        let tenant = grpc_auth::resolved_tenant_id(&request);
+        let graph_id = request.get_ref().graph_id.clone();
         let req = request.into_inner();
         debug!(
             "v2 gRPC ExecuteQuery graph={graph_id} language={}",
@@ -919,13 +996,18 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             )
         })?;
 
+        // Scope the graph name so the read hits the SAME structural key the write path
+        // composes (`{tenant}/{graph_id}`) — the adapter resolves the engine by this name.
         let graph_name = if graph_id.is_empty() {
             None
         } else {
-            Some(graph_id.as_str())
+            Some(
+                crate::graph::scoped_graph_id(&tenant, &graph_id)
+                    .map_err(|e| Status::invalid_argument(format!("invalid tenant: {e}")))?,
+            )
         };
 
-        match adapter.graph_query(&req.query, graph_name).await {
+        match adapter.graph_query(&req.query, graph_name.as_deref()).await {
             Ok(result) => {
                 // The graph-subset engine returns node-shaped items as JSON
                 // values; surface each as a single `data` string column. Richer
@@ -1350,13 +1432,16 @@ mod tests {
     /// under tenant A is invisible to tenant B.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn tenant_namespacing_isolates_graphs() -> anyhow::Result<()> {
-        // Provision both tenant-namespaced backing graphs on one service.
+        // Provision each tenant's backing graph under its STRUCTURAL scope
+        // (`{tenant}/shared`) — the exact key `for_tenant` composes at the handler, so the
+        // logical graph_id the caller sends stays a tenant-clean `shared`.
         let graph = Arc::new(GraphOperationsService::new());
-        for ns in ["tenantA::shared", "tenantB::shared"] {
+        for tenant in ["tenantA", "tenantB"] {
+            let gid = crate::graph::scoped_graph_id(tenant, "shared")?;
             graph
                 .create_graph_collection(pv1::CreateGraphRequest {
-                    graph_id: ns.to_string(),
-                    name: Some(ns.to_string()),
+                    graph_id: gid.clone(),
+                    name: Some(gid),
                     description: None,
                     schema: None,
                     storage_config: None,
@@ -1405,6 +1490,104 @@ mod tests {
             .metadata_mut()
             .insert("x-tenant-id", "tenantB".parse()?);
         assert!(svc.get_node(get_b).await?.into_inner().node.is_none());
+        Ok(())
+    }
+
+    /// Service-level structural isolation via the `for_tenant` scoped handle (no network):
+    /// two tenants share the SAME clean logical `graph_id`, yet neither reads the other's
+    /// node — the handle composes `{tenant}/{graph_id}` once and the composition carries no
+    /// `::` fold in any user-visible name.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn for_tenant_isolates_the_same_logical_graph_id() -> anyhow::Result<()> {
+        // The composition point is path-style and fold-free.
+        let scoped = crate::graph::scoped_graph_id("tenantA", "shared")?;
+        assert_eq!(scoped, "tenantA/shared");
+        assert!(!scoped.contains("::"), "scope must not fold with `::`");
+
+        let graph = GraphOperationsService::new();
+        // Provision each tenant's backing graph under its structural scope.
+        for tenant in ["tenantA", "tenantB"] {
+            let gid = crate::graph::scoped_graph_id(tenant, "shared")?;
+            graph
+                .create_graph_collection(pv1::CreateGraphRequest {
+                    graph_id: gid.clone(),
+                    name: Some(gid),
+                    description: None,
+                    schema: None,
+                    storage_config: None,
+                    engine_config: None,
+                    access_control: None,
+                })
+                .await?;
+        }
+        let node = crate::graph::Node {
+            id: "secret".to_string(),
+            labels: vec!["Doc".to_string()],
+            ..Default::default()
+        };
+        // Write "secret" into tenant A's clean "shared" graph.
+        graph
+            .for_tenant("tenantA")
+            .create_node("shared", node)
+            .await?;
+
+        // Tenant A reads it back through the same clean logical name.
+        assert!(
+            graph
+                .for_tenant("tenantA")
+                .get_node("shared", &"secret".to_string())
+                .await?
+                .is_some(),
+            "owner reads its own node"
+        );
+        // Tenant B, same clean "shared", cannot see it.
+        assert!(
+            graph
+                .for_tenant("tenantB")
+                .get_node("shared", &"secret".to_string())
+                .await?
+                .is_none(),
+            "cross-tenant read is denied structurally"
+        );
+        Ok(())
+    }
+
+    /// End-to-end functional isolation with NO explicit provisioning (TD-GRAPH-TENANT-1): a named
+    /// tenant's first scoped write auto-provisions its `{tenant}/{graph_id}` collection, so
+    /// create→use works without an out-of-band bare create — and a second tenant using the SAME
+    /// clean logical id is isolated (it auto-provisions its own empty scoped graph). This is the
+    /// flow that was broken before the lazy-provision fix (create scoped nowhere ⇒ "collection
+    /// does not exist").
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn named_tenant_graph_auto_provisions_on_first_write_and_isolates() -> anyhow::Result<()>
+    {
+        // Fresh service — NO `create_graph_collection`; the first scoped write must provision.
+        let graph = GraphOperationsService::new();
+        let node = crate::graph::Node {
+            id: "secret".to_string(),
+            labels: vec!["Doc".to_string()],
+            ..Default::default()
+        };
+        graph.for_tenant("acme").create_node("shared", node).await?;
+
+        // acme reads its own node back through the same clean logical id.
+        assert!(
+            graph
+                .for_tenant("acme")
+                .get_node("shared", &"secret".to_string())
+                .await?
+                .is_some(),
+            "owner reads its own node after auto-provision"
+        );
+        // globex, same clean "shared", sees nothing (its own auto-provisioned empty scoped graph).
+        assert!(
+            graph
+                .for_tenant("globex")
+                .get_node("shared", &"secret".to_string())
+                .await?
+                .is_none(),
+            "cross-tenant read is isolated"
+        );
         Ok(())
     }
 }

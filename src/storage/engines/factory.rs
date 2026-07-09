@@ -215,7 +215,9 @@ impl StorageEngineFactory {
             }
             ProtoStorageEngine::Tst => Self::create_tst(),
             ProtoStorageEngine::Cedar => Self::create_cedar(),
-            ProtoStorageEngine::Chrono => Self::create_chrono(),
+            ProtoStorageEngine::Chrono => anyhow::bail!(
+                "CHRONO engine has been removed. Use SST, VIPER, HELIX, or NOVA instead."
+            ),
             ProtoStorageEngine::Titan => {
                 // TITAN is primarily a GraphEngine; for UnifiedStorageFormat, use SST as backing
                 warn!("TITAN is a graph engine; using SST for vector storage operations");
@@ -275,7 +277,9 @@ impl StorageEngineFactory {
             }
             ProtoStorageEngine::Tst => Self::create_tst_async().await,
             ProtoStorageEngine::Cedar => Self::create_cedar_async().await,
-            ProtoStorageEngine::Chrono => Self::create_chrono_async().await,
+            ProtoStorageEngine::Chrono => anyhow::bail!(
+                "CHRONO engine has been removed. Use SST, VIPER, HELIX, or NOVA instead."
+            ),
             ProtoStorageEngine::Titan => {
                 warn!("TITAN is a graph engine; using SST for vector storage operations");
                 Self::create_sst_async().await
@@ -373,10 +377,9 @@ impl StorageEngineFactory {
                 info!("Creating CEDAR (Document) engine");
                 Self::create_cedar()
             }
-            StorageEngineStrategy::Chrono => {
-                info!("Creating CHRONO (Observability) engine");
-                Self::create_chrono()
-            }
+            StorageEngineStrategy::Chrono => anyhow::bail!(
+                "CHRONO engine has been removed. Use SST, VIPER, HELIX, or NOVA instead."
+            ),
         }
     }
 
@@ -413,25 +416,6 @@ impl StorageEngineFactory {
     /// Async version for CEDAR
     pub async fn create_cedar_async() -> Result<Arc<dyn UnifiedStorageFormat>> {
         Self::create_cedar()
-    }
-
-    /// Create CHRONO observability storage engine
-    ///
-    /// LSM-based engine optimized for:
-    /// - Metrics with Gorilla timestamp/value encoding
-    /// - Logs with label indexing and text search
-    /// - Traces with span assembly
-    /// - Time-window compaction with downsampling
-    pub fn create_chrono() -> Result<Arc<dyn UnifiedStorageFormat>> {
-        info!("Creating CHRONO (Observability) storage engine");
-        Ok(Arc::new(
-            crate::storage::engines::chrono::ChronoEngine::new()?,
-        ))
-    }
-
-    /// Async version for CHRONO
-    pub async fn create_chrono_async() -> Result<Arc<dyn UnifiedStorageFormat>> {
-        Self::create_chrono()
     }
 
     /// Create VIPER engine with default configuration
@@ -1045,14 +1029,6 @@ mod tests {
             .await
             .expect("Failed to create CEDAR engine");
         assert_eq!(engine.format_name(), "cedar");
-    }
-
-    #[tokio::test]
-    async fn test_create_chrono_engine() {
-        let engine = StorageEngineFactory::create_chrono_async()
-            .await
-            .expect("Failed to create CHRONO engine");
-        assert_eq!(engine.format_name(), "chrono");
     }
 
     #[tokio::test]

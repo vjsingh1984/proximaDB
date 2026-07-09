@@ -828,6 +828,14 @@ fn lower_table_factor(
     catalog: &dyn CatalogLookup,
 ) -> Result<(LogicalNode, Scope), FrontendError> {
     match tf {
+        // A table-valued function `FROM name(args)` (a cross-modal source such as
+        // vector_search / timeseries_range / graph_traverse) is not a catalog table.
+        // Decline it cleanly so the pgwire path falls back to DataFusion's SQL planner
+        // (where the UDTF is registered) instead of mis-lowering it as a bare scan with
+        // its args dropped.
+        TableFactor::Table { args: Some(_), .. } => {
+            Err(FrontendError::Unsupported("table-valued function".into()))
+        }
         TableFactor::Table { name, alias, .. } => {
             let table_name = name.to_string();
             let schema = catalog

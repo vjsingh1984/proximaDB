@@ -18,7 +18,9 @@ pub mod observability_port;
 pub mod port;
 pub mod proto_defaults;
 pub mod record_ops_port;
+pub mod record_route_port;
 pub mod resources;
+pub mod rich_record;
 pub mod security_port;
 pub mod service_ports;
 pub mod streaming_port;
@@ -41,7 +43,9 @@ pub use port::{
     CollectionSchemaUpdate, CollectionTextStorage,
 };
 pub use record_ops_port::RecordOpsPort;
+pub use record_route_port::RecordRoutePort;
 pub use resources::{MemoryBudget, ResourceManager};
+pub use rich_record::{RichRecordBatchRequest, RichRecordDeleteBatchRequest, RichRecordGetRequest};
 pub use security_port::{PortAuthCredential, PortUserContext, SecurityPort};
 pub use service_ports::{CollectionPort, QueryAdapterPort, VectorOpsPort};
 pub use streaming_port::StreamingPort;

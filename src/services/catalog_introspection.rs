@@ -101,6 +101,22 @@ impl CatalogIntrospectionService {
             && !normalized.contains("pg_attribute")
             && !normalized.contains("pg_namespace")
         {
+            // A rich psql-style probe (`SELECT ... AS "Name" ... FROM pg_class`)
+            // selects many columns; the narrow `sqlalchemy_table_names` builder
+            // returns one and would trip libpq's "column number out of range".
+            // Route multi-column queries to the shape-aware builder; keep the
+            // 1-column builder for genuine ORM probes that select `relname` only.
+            if let Some(aliases) =
+                crate::query::sql_frontend::parse_select_aliases(sql).filter(|a| a.len() > 1)
+            {
+                let relname = extract_string_filter(sql, "relname")
+                    .or_else(|| extract_string_filter(sql, "c.relname"))
+                    .or(table_filter.clone());
+                return Ok(Some(
+                    self.psql_shaped_table_list(&aliases, relname.as_deref())
+                        .await?,
+                ));
+            }
             return Ok(Some(self.sqlalchemy_table_names(None).await?));
         }
         if normalized.contains(" from xcatalog.columns")
@@ -135,6 +151,18 @@ impl CatalogIntrospectionService {
                 .or_else(|| extract_string_filter(sql, "ct.relname"))
                 .or_else(|| extract_string_filter(sql, "pg_class.relname"))
                 .or(table_filter);
+            // psql's `\d` column probe aliases columns (`AS "Column"`, `AS "Type"`,
+            // ...); the fixed-shape `sqlalchemy_columns` builder returns different
+            // names and psql fails to resolve them. Route multi-column queries to
+            // the shape-aware column builder; keep the ORM builder otherwise.
+            if let Some(aliases) =
+                crate::query::sql_frontend::parse_select_aliases(sql).filter(|a| a.len() > 1)
+            {
+                return Ok(Some(
+                    self.psql_shaped_columns(&aliases, relname_filter.as_deref())
+                        .await?,
+                ));
+            }
             return Ok(Some(
                 self.sqlalchemy_columns(relname_filter.as_deref()).await?,
             ));
@@ -152,6 +180,18 @@ impl CatalogIntrospectionService {
             let relname_filter = extract_string_filter(sql, "c.relname")
                 .or_else(|| extract_string_filter(sql, "pg_class.relname"))
                 .or(table_filter);
+            // psql `\dt` reaches this branch; route rich multi-column probes to
+            // the shape-aware builder so the returned columns match the SELECT
+            // list. The 1-column `sqlalchemy_table_names` path stays for ORM
+            // probes that select only `relname`.
+            if let Some(aliases) =
+                crate::query::sql_frontend::parse_select_aliases(sql).filter(|a| a.len() > 1)
+            {
+                return Ok(Some(
+                    self.psql_shaped_table_list(&aliases, relname_filter.as_deref())
+                        .await?,
+                ));
+            }
             return Ok(Some(
                 self.sqlalchemy_table_names(relname_filter.as_deref())
                     .await?,
@@ -1028,9 +1068,115 @@ impl CatalogIntrospectionService {
         })
     }
 
+    /// Shape-aware `\dt`/relation-list builder: return exactly the columns the
+    /// client's SELECT list named (the parsed aliases), one row per deduped
+    /// table, populating the aliases we recognize and leaving the rest empty.
+    /// This is what makes psql `\dt` show correct data instead of receiving a
+    /// 1-column shape (from the narrow `sqlalchemy_table_names` builder) that
+    /// triggers libpq's "column number N is out of range" and a client crash.
+    /// All cells are text-encoded (psql/ORMs treat pg_catalog probe columns as
+    /// text), so all `column_types` are `text`.
+    async fn psql_shaped_table_list(
+        &self,
+        aliases: &[String],
+        table_filter: Option<&str>,
+    ) -> Result<CatalogIntrospectionResult> {
+        let mut rows = Vec::new();
+        for (catalog_name, table_id, schema) in self.cataloged_tables().await? {
+            if !matches_filter(&table_id.name, table_filter) {
+                continue;
+            }
+            let row = aliases
+                .iter()
+                .map(|label| {
+                    let stripped = label.trim_matches('"');
+                    match stripped.to_ascii_lowercase().as_str() {
+                        "schema" | "nspname" | "table_schema" | "namespace" => {
+                            namespace_name(&table_id)
+                        }
+                        "name" | "relname" | "table_name" | "relation" => table_id.name.clone(),
+                        "owner" => "postgres".to_string(),
+                        "type" => "ordinary table".to_string(),
+                        "relkind" => "r".to_string(),
+                        "relowner" => "10".to_string(),
+                        "relnamespace" => namespace_oid(&namespace_name(&table_id)).to_string(),
+                        "relnatts" | "natts" => schema.columns.len().to_string(),
+                        "oid" | "relid" => table_oid(&catalog_name, &table_id).to_string(),
+                        "relhasindex" => bool_str(!schema.indexes.is_empty()).to_string(),
+                        "relpersistence" => "p".to_string(),
+                        "relrowsecurity" | "relforcerowsecurity" => "f".to_string(),
+                        _ => String::new(),
+                    }
+                })
+                .collect();
+            rows.push(row);
+        }
+        rows.sort();
+        Ok(CatalogIntrospectionResult {
+            columns: aliases.to_vec(),
+            column_types: aliases.iter().map(|_| "text".to_string()).collect(),
+            rows,
+        })
+    }
+
+    /// Shape-aware `\d` (column) builder: return exactly the columns the
+    /// client's SELECT list named, one row per column of matching tables. Maps
+    /// the common pg_attribute aliases (`Column`/`Type`/`Default`/`Nullable`/
+    /// ...) to catalog values and leaves unrecognized aliases empty.
+    async fn psql_shaped_columns(
+        &self,
+        aliases: &[String],
+        table_filter: Option<&str>,
+    ) -> Result<CatalogIntrospectionResult> {
+        let mut rows = Vec::new();
+        for (_catalog_name, table_id, schema) in self.cataloged_tables().await? {
+            if !matches_filter(&table_id.name, table_filter) {
+                continue;
+            }
+            for (idx, column) in schema.columns.iter().enumerate() {
+                let row = aliases
+                    .iter()
+                    .map(|label| {
+                        let stripped = label.trim_matches('"');
+                        match stripped.to_ascii_lowercase().as_str() {
+                            "column" | "attname" | "field" | "column_name" => column.name.clone(),
+                            "type" | "format_type" | "data_type" | "udt_name" => {
+                                postgres_format_type(&column.data_type, &column.properties)
+                                    .to_string()
+                            }
+                            "default" | "column_default" | "default_value" => {
+                                column.default_value.clone().unwrap_or_default()
+                            }
+                            "atthasdef" => bool_str(column.default_value.is_some()).to_string(),
+                            "nullable" | "is_nullable" => {
+                                if column.nullable {
+                                    "YES".to_string()
+                                } else {
+                                    "NO".to_string()
+                                }
+                            }
+                            "not_null" | "notnull" | "attnotnull" => (!column.nullable).to_string(),
+                            "ordinal" | "attnum" | "ordinal_position" | "attposition" => {
+                                (idx as i32 + 1).to_string()
+                            }
+                            "comment" => column.comment.clone().unwrap_or_default(),
+                            _ => String::new(),
+                        }
+                    })
+                    .collect();
+                rows.push(row);
+            }
+        }
+        rows.sort();
+        Ok(CatalogIntrospectionResult {
+            columns: aliases.to_vec(),
+            column_types: aliases.iter().map(|_| "text".to_string()).collect(),
+            rows,
+        })
+    }
+
     async fn cataloged_tables(&self) -> Result<Vec<(String, TableIdentifier, CatalogTableSchema)>> {
         let mut tables = Vec::new();
-
         for catalog_name in self.catalog_manager.list_catalogs().await {
             let catalog = self.catalog_manager.get_catalog(&catalog_name).await?;
             for namespace in catalog.list_namespaces(None).await? {
@@ -1040,6 +1186,22 @@ impl CatalogIntrospectionService {
                 }
             }
         }
+
+        // Dedup dual-registered tables. A table created via SQL surfaces both
+        // as an internal `proximadb.<ns>` collection namespace and as the
+        // SQL-standard `<ns>` schema (observed: `b` listed twice as
+        // `proximadb.default.b` and `public.b`). Collapse by normalized identity
+        // (see `table_identity_key`), preferring the SQL-standard form (no
+        // `proximadb.` prefix) so the surviving row displays the standard schema
+        // name. Same-name tables in different user namespaces stay distinct.
+        tables.sort_by_key(|(_, table_id, _)| {
+            table_id
+                .namespace
+                .first()
+                .is_some_and(|first| first.eq_ignore_ascii_case("proximadb"))
+        });
+        let mut seen = std::collections::BTreeSet::new();
+        tables.retain(|(_, table_id, _)| seen.insert(table_identity_key(table_id)));
 
         Ok(tables)
     }
@@ -1119,6 +1281,45 @@ fn namespace_name(table_id: &TableIdentifier) -> String {
         "public".to_string()
     } else {
         namespace
+    }
+}
+
+/// Fully-qualified logical identity for a catalog table, used to dedup
+/// `cataloged_tables()` across the catalog × namespace cross-product. Uses the
+/// normalized [`identity_namespace`] (NOT the raw display namespace) so the
+/// same logical table — which surfaces both as an internal `proximadb.<ns>`
+/// collection namespace and as the SQL-standard `<ns>` schema (e.g.
+/// `proximadb.default` and `public`) — collapses to one identity. Two same-name
+/// tables in DIFFERENT user namespaces (`analytics.events` vs `audit.events`)
+/// remain distinct.
+fn table_identity_key(table_id: &TableIdentifier) -> String {
+    format!("{}|{}", identity_namespace(table_id), table_id.name)
+}
+
+/// Normalized namespace used for dedup identity. Strips a leading `proximadb`
+/// segment — the collection/relational duality surfaces one namespace both as
+/// `proximadb.<ns>` and as `<ns>` — and maps `default`/empty → `public`, so
+/// `proximadb.default` and `public` (and bare `default`) all identify the same
+/// logical namespace.
+fn identity_namespace(table_id: &TableIdentifier) -> String {
+    let levels = &table_id.namespace;
+    let levels = if levels
+        .first()
+        .is_some_and(|first| first.eq_ignore_ascii_case("proximadb"))
+    {
+        &levels[1..]
+    } else {
+        levels
+    };
+    let joined = levels
+        .iter()
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join(".");
+    if joined.is_empty() || joined == "default" {
+        "public".to_string()
+    } else {
+        joined
     }
 }
 
@@ -1334,6 +1535,44 @@ mod tests {
     use super::*;
     use crate::query::sql_frontend::SqlFrontendParser;
     use crate::services::{DdlService, DdlStatement};
+
+    /// The dedup key must collapse the SAME logical table surfacing under two
+    /// namespace forms — the internal `proximadb.<ns>` collection namespace and
+    /// the SQL-standard `<ns>` schema (the user's `b` listed twice by `\dt` as
+    /// `proximadb.default.b` and `public.b`) — while keeping same-name tables in
+    /// DIFFERENT user namespaces distinct.
+    #[test]
+    fn table_identity_key_collapses_duplicates_keeps_cross_namespace() {
+        // The observed duality: `proximadb.default.b` and `public.b` are the
+        // same logical table and must collapse.
+        let via_proximadb_ns =
+            TableIdentifier::new(vec!["proximadb".to_string(), "default".to_string()], "b");
+        let via_public = TableIdentifier::new(vec!["public".to_string()], "b");
+        assert_eq!(
+            table_identity_key(&via_proximadb_ns),
+            table_identity_key(&via_public)
+        );
+
+        // default/empty roots also normalize to "public".
+        let via_default = TableIdentifier::new(vec!["default".to_string()], "b");
+        let via_empty_root = TableIdentifier::new(Vec::new(), "b");
+        assert_eq!(
+            table_identity_key(&via_default),
+            table_identity_key(&via_empty_root)
+        );
+        assert_eq!(
+            table_identity_key(&via_default),
+            table_identity_key(&via_public)
+        );
+
+        // Same name, different user namespaces → distinct (must NOT collapse).
+        let events_analytics = TableIdentifier::new(vec!["analytics".to_string()], "events");
+        let events_audit = TableIdentifier::new(vec!["audit".to_string()], "events");
+        assert_ne!(
+            table_identity_key(&events_analytics),
+            table_identity_key(&events_audit)
+        );
+    }
 
     #[tokio::test]
     async fn test_catalog_introspection_projects_agentic_mixed_schema() {

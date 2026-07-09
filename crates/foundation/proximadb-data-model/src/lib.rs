@@ -66,13 +66,6 @@ impl std::fmt::Display for DataModel {
     }
 }
 
-/// Legacy alias for [`DataModel`]. Use `DataModel` in new code.
-#[deprecated(
-    since = "0.2.0",
-    note = "Renamed to DataModel per Overhaul Spec Section 3.3"
-)]
-pub type StoreType = DataModel;
-
 // ---------------------------------------------------------------------------
 // Typed Semantic Memory (Memanto — TD-055)
 // ---------------------------------------------------------------------------

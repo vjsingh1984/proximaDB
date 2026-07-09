@@ -68,7 +68,9 @@ impl KnowledgeGraphFactory {
         domain_config: DomainConfig,
         rbac_policy: Arc<TenantRBACPolicy>,
     ) -> Result<Arc<DomainKnowledgeGraph>> {
-        let domain_id = format!("{}::{}", tenant_id, domain_name);
+        // Path-style structural scope (`{tenant}/{domain}`), consistent with the graph
+        // engine's `scoped_graph_id`; never a `::`-folded user-visible name.
+        let domain_id = format!("{}/{}", tenant_id, domain_name);
 
         let domain_graph = DomainKnowledgeGraph::new(
             domain_id,

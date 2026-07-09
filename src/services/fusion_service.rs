@@ -93,6 +93,20 @@ fn fusion_calibration_disabled() -> bool {
     std::env::var_os(DISABLE_CALIBRATION_ENV).is_some()
 }
 
+/// TD-XMODAL-9: default-off per-source candidate cap for the live fusion path. When set to N, each
+/// modality's candidate pool is bounded to its top-N by raw score before fusing, so a wide fan-out
+/// (large vector leg + high-degree graph expansion) cannot buffer the full source union in RAM before
+/// the output trim. Unset ⇒ unbounded (today's behavior). Mirrors the `PROXIMADB_*` env convention.
+/// The fail-loud `PoolCapMode::Error` is set programmatically via `FusionPolicy` by callers that want
+/// to reject over-cap results rather than accept a silently trimmed set.
+const POOL_CAP_ENV: &str = "PROXIMADB_FUSION_POOL_CAP";
+
+fn fusion_pool_cap_from_env() -> Option<usize> {
+    std::env::var(POOL_CAP_ENV)
+        .ok()
+        .and_then(|v| v.parse().ok())
+}
+
 /// RBAC predicate over a resolved backing record (TD-134). `None` ⇒ the record is not in the canonical
 /// store (or the store is unwired), so within-tenant row RBAC cannot bite ⇒ **allow** (the tenant
 /// boundary stays structural). The predicate is pure so the gate is unit-testable without engines.
@@ -143,6 +157,9 @@ pub(crate) fn raw_union(
         sources_skipped: 0,
         candidates_in,
         items_out: items.len(),
+        // raw_union is the kill-switch fallback; it does not enforce `pool_cap` (the calibrated
+        // `Fuser` path does). Leave the fail-loud flag unset here.
+        pool_cap_exceeded: None,
     };
     (items, stats)
 }
@@ -427,6 +444,12 @@ pub struct GraphFusionParams {
     pub oid_key: FusionOidKey,
     /// Optional document-modality contribution (TD-138). `None` ⇒ vector+graph only (the default).
     pub document: Option<DocumentFusionSpec>,
+    /// The request tenant — the STRUCTURAL isolation boundary (distinct from `principal`, which is
+    /// within-tenant RBAC). Threads into BOTH legs: the vector leg reads under the tenant's
+    /// `TenantContext` (catalog-resolve + record-stamp), and the graph leg scopes `graph_id` to
+    /// `{tenant}/{graph_id}` (via `scoped_graph_id`) so reads + canonical oids match the graph write
+    /// path. `None`/default tenant ⇒ bare graph_id + unscoped vector read (TD-ENTITY-TENANT-1).
+    pub tenant: Option<String>,
 }
 
 /// Orchestrates the graph instance of the fusion seam over the live vector + graph engines.
@@ -477,6 +500,19 @@ impl FusionService {
 
         let started = Instant::now();
 
+        // Structural tenant scope, composed ONCE and shared by both legs (TD-ENTITY-TENANT-1):
+        // - the graph leg keys reads + canonical oids by `scoped_gid` (`{tenant}/{graph_id}`, bare
+        //   for the default tenant) so it matches the graph write path (`for_tenant`);
+        // - the vector leg reads under the tenant's `TenantContext` (catalog-resolve + record-stamp),
+        //   keeping the collection name clean.
+        let tenant_str = proximadb_tenant::resolve_request_tenant(params.tenant.as_deref());
+        let scoped_gid = crate::graph::scoped_graph_id(&tenant_str, &params.graph_id)?;
+        let tenant_ctx = params
+            .tenant
+            .as_deref()
+            .filter(|t| !t.is_empty())
+            .map(crate::storage::tenant::context::TenantContext::for_tenant_id);
+
         // 1. Vector ANN seed with T1.2 retry logic (max 2 retries, exponential backoff).
         let vector = self.vector.clone();
         let collection = params.vector_collection.clone();
@@ -485,7 +521,16 @@ impl FusionService {
 
         let mut hits = retry_vector_search(
             &collection,
-            || vector.unified_search_native(&collection, query_vector.clone(), limit, None, None),
+            || {
+                vector.unified_search_native_with_tenant_context(
+                    &collection,
+                    query_vector.clone(),
+                    limit,
+                    None,
+                    None,
+                    tenant_ctx.as_ref(),
+                )
+            },
             2,
         )
         .await
@@ -516,14 +561,14 @@ impl FusionService {
         // 2. Graph expand from the top seeds (bounded). A seed that is not a node in this graph simply
         //    contributes nothing (its traverse errors are skipped) rather than failing the query.
         // T1.2: Graceful degradation — individual seed failures are logged but don't abort fusion.
-        let seeds = seed_node_ids(&params.graph_id, &hits, params.max_seeds, params.oid_key);
+        let seeds = seed_node_ids(&scoped_gid, &hits, params.max_seeds, params.oid_key);
         let mut nodes: Vec<Node> = Vec::new();
         let mut edges: Vec<Edge> = Vec::new();
         let mut failed_seeds = 0;
 
         for seed in &seeds {
             let request = crate::graph::model::TraversalRequest {
-                graph_id: params.graph_id.clone(),
+                graph_id: scoped_gid.clone(),
                 start_node_id: seed.clone(),
                 max_depth: params.max_depth,
                 edge_types: params.edge_types.clone(),
@@ -534,7 +579,7 @@ impl FusionService {
                 timeout_ms: None,
                 max_frontier: None,
             };
-            match self.graph.traverse(&params.graph_id, request).await {
+            match self.graph.traverse(&scoped_gid, request).await {
                 Ok(response) => {
                     nodes.extend(response.nodes);
                     edges.extend(response.edges);
@@ -564,7 +609,7 @@ impl FusionService {
         //     inaccessible node (never leak a link to a hidden node). Node `oid` = canonical
         //     `graph/{graph_id}/node/{node_id}`, resolved via the graph service's canonical store.
         if let Some(principal) = params.principal.as_deref() {
-            let gid = &params.graph_id;
+            let gid = &scoped_gid;
             let mut kept_nodes = Vec::with_capacity(nodes.len());
             for n in nodes.drain(..) {
                 let oid = GraphNodeKey::new(gid, n.id.clone()).canonical_oid();
@@ -593,13 +638,13 @@ impl FusionService {
         let mut sources = vec![vector_source];
         if matches!(params.grain, GraphGrain::Nodes | GraphGrain::Both) {
             sources.push(normalize_source_keys(
-                traversal_nodes_to_source(&params.graph_id, &nodes, params.graph_weight),
+                traversal_nodes_to_source(&scoped_gid, &nodes, params.graph_weight),
                 params.oid_key,
             ));
         }
         if matches!(params.grain, GraphGrain::Edges | GraphGrain::Both) {
             sources.push(normalize_source_keys(
-                traversal_edges_to_source(&params.graph_id, &edges, params.graph_weight),
+                traversal_edges_to_source(&scoped_gid, &edges, params.graph_weight),
                 params.oid_key,
             ));
         }
@@ -655,7 +700,14 @@ impl FusionService {
             );
             raw_union(sources, params.limit)
         } else {
-            Fuser::new(params.policy).fuse(sources, params.limit)
+            // TD-XMODAL-9: overlay the default-off pool cap from config unless the caller already set
+            // one. Bounds each source's candidate pool so a wide fan-out can't buffer the full source
+            // union in RAM before the output trim (fail-loud mode is the caller's via `FusionPolicy`).
+            let mut policy = params.policy;
+            if policy.pool_cap.is_none() {
+                policy.pool_cap = fusion_pool_cap_from_env();
+            }
+            Fuser::new(policy).fuse(sources, params.limit)
         };
 
         // T1.1: Record fusion metrics for observability.
@@ -718,6 +770,35 @@ fn truncate_source_to_budget(source: &mut SourceCandidates, budget: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TD-ENTITY-TENANT-1: both fusion legs derive their tenant scope from `params.tenant`.
+    /// The graph leg keys reads + canonical oids by `scoped_graph_id` (named →
+    /// `{tenant}/{graph_id}`, so it matches the graph write path; default/None → bare, matching
+    /// bare-created graphs). The vector leg builds a `TenantContext` whose `tenant_id` isolates
+    /// (catalog-resolve + record-stamp). This asserts the composition both legs use (the full
+    /// fusion path needs the live vector+graph services, exercised by the network e2e suites).
+    #[test]
+    fn fusion_tenant_scopes_both_legs() {
+        // Graph leg: the scope key fusion composes must equal the graph write path's `for_tenant`.
+        let named = proximadb_tenant::resolve_request_tenant(Some("acme"));
+        assert_eq!(
+            crate::graph::scoped_graph_id(&named, "kg").unwrap(),
+            "acme/kg",
+            "named tenant → scoped graph key"
+        );
+        let defaulted = proximadb_tenant::resolve_request_tenant(None);
+        assert_eq!(
+            crate::graph::scoped_graph_id(&defaulted, "kg").unwrap(),
+            "kg",
+            "default tenant → bare graph key (matches bare-created graphs)"
+        );
+        // Vector leg: the tenant stamp that isolates the vector read/write.
+        let tctx = crate::storage::tenant::context::TenantContext::for_tenant_id("acme");
+        assert_eq!(
+            tctx.tenant_id, "acme",
+            "vector leg isolates by TenantContext.tenant_id"
+        );
+    }
 
     fn hit(id: &str, score: f32) -> OptimizedSearchRecord {
         OptimizedSearchRecord {

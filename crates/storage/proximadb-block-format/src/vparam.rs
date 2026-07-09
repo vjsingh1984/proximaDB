@@ -33,8 +33,14 @@ use proximadb_codec::Sq8Params;
 pub const QUANT_RAW_F32: u8 = 0;
 /// Vector stripe is SQ8-quantized (1 byte/value).
 pub const QUANT_SQ8: u8 = 1;
-/// Reserved for a future binary RaBitQ scheme (not yet implemented).
-pub const QUANT_RABITQ_RESERVED: u8 = 2;
+/// Vector stripe is RaBitQ binary-quantized: per-row sign bits + corrective
+/// scalars live in the stripe, with the centroid and rotation seed in the
+/// [`RaBitQColumn`] trailer. The writer emits this id under the
+/// `PROXIMADB_VECTOR_RABITQ` gate (default-OFF until recall-baked); readers key
+/// off it to run the RaBitQ candidate/rerank cascade. (Formerly mislabeled
+/// `QUANT_RABITQ_RESERVED` "not yet implemented" while the writer already
+/// emitted it — the id and its on-wire meaning are unchanged; value stays 2.)
+pub const QUANT_RABITQ: u8 = 2;
 /// Vector stripe is stored as FP16 (2 bytes/value, near-lossless).
 pub const QUANT_FP16: u8 = 3;
 
@@ -254,7 +260,7 @@ mod tests {
             entries: vec![VectorParamEntry {
                 column_id: 20,
                 dim: 4,
-                quant_kind: QUANT_RABITQ_RESERVED,
+                quant_kind: QUANT_RABITQ,
                 params: Sq8Params {
                     scale: 0.0,
                     offset: 0.0,

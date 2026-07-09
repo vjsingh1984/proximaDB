@@ -64,18 +64,12 @@ pub(crate) fn validate_records_for_insert(
         None
     };
 
-    let current_time_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as i64)
-        .unwrap_or(0);
-
     for (i, record) in records.iter().enumerate() {
         let dim = record
             .embeddings
             .first()
             .map(|e| e.values.len())
             .unwrap_or(0);
-        let is_tombstone = dim == 0 && record.valid_to_ns.is_some_and(|v| v <= current_time_ns);
 
         for (embedding_idx, embedding) in record.embeddings.iter().enumerate() {
             if let Some((dimension_idx, value)) =
@@ -91,7 +85,13 @@ pub(crate) fn validate_records_for_insert(
             }
         }
 
-        if !is_tombstone && expected_dimension > 0 && dim != expected_dimension as usize {
+        // `dim == 0` ⇒ a vectorless record: a tombstone (delete) OR a metadata-only record
+        // (e.g. an ADR-009 document facade record with no embedding). The engine stores these,
+        // excludes them from the vector index and ANN search (they carry no vector to score),
+        // and still serves them by id/scan — so they are valid in any collection. Only a
+        // *non-zero* dimension that mismatches the collection is a real error (a likely
+        // forgot-to-match-dims bug), which is still rejected.
+        if dim != 0 && expected_dimension > 0 && dim != expected_dimension as usize {
             return Err(anyhow::anyhow!(
                 "Record at index {} has dimension {} but collection '{}' expects dimension {}",
                 i,
@@ -164,4 +164,61 @@ pub(crate) fn validate_query_vector_for_search(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proximadb_records::EmbeddingCell;
+
+    fn dim8_config() -> CollectionConfig {
+        CollectionConfig {
+            dimension: 8,
+            ..Default::default()
+        }
+    }
+
+    fn record_no_vector(oid: &str) -> ProximaRecord {
+        ProximaRecord {
+            oid: oid.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn record_with_dim(oid: &str, dim: usize) -> ProximaRecord {
+        ProximaRecord {
+            oid: oid.to_string(),
+            embeddings: vec![EmbeddingCell {
+                dim: dim as u32,
+                values: EmbeddingValues::Fp32(vec![0.1; dim]),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn metadata_only_record_passes_in_a_dimensioned_collection() {
+        // ADR-009: a vectorless (dim-0) record — e.g. a metadata-only document facade record —
+        // is accepted in a dimensioned collection; it simply doesn't participate in the ANN
+        // index/search. Only a *non-zero* dimension mismatch is an error.
+        let out = validate_records_for_insert("c", &dim8_config(), &[record_no_vector("m1")]);
+        assert!(out.is_ok(), "metadata-only record should pass: {out:?}");
+    }
+
+    #[test]
+    fn matching_dimension_record_passes() {
+        let out = validate_records_for_insert("c", &dim8_config(), &[record_with_dim("v1", 8)]);
+        assert!(out.is_ok(), "dim-8 record in a dim-8 collection: {out:?}");
+    }
+
+    #[test]
+    fn wrong_nonzero_dimension_is_still_rejected() {
+        // Regression guard: relaxing dim-0 must NOT relax a genuine (non-zero) dimension bug.
+        let out = validate_records_for_insert("c", &dim8_config(), &[record_with_dim("v1", 2)]);
+        assert!(
+            out.is_err(),
+            "a dim-2 record in a dim-8 collection must be rejected"
+        );
+    }
 }

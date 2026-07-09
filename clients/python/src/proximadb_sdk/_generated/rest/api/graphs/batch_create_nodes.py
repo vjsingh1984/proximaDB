@@ -13,15 +13,18 @@ from ...client import AuthenticatedClient, Client
 from ...models.batch_create_nodes_request import BatchCreateNodesRequest
 from ...models.batch_nodes_response import BatchNodesResponse
 from ...models.error_response import ErrorResponse
-from ...types import UNSET, Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     graph_id: str,
     *,
     body: BatchCreateNodesRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_tenant_id, Unset):
+        headers["X-Tenant-ID"] = x_tenant_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -76,6 +79,7 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: BatchCreateNodesRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[BatchNodesResponse, ErrorResponse]]:
     """Create multiple nodes in a single call.
 
@@ -84,6 +88,7 @@ def sync_detailed(
 
     Args:
         graph_id (str):
+        x_tenant_id (Union[Unset, str]):
         body (BatchCreateNodesRequest): Body for `POST /api/v2/graphs/{id}/nodes/batch`.
 
     Raises:
@@ -97,6 +102,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         graph_id=graph_id,
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -111,6 +117,7 @@ def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     body: BatchCreateNodesRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[BatchNodesResponse, ErrorResponse]]:
     """Create multiple nodes in a single call.
 
@@ -119,6 +126,7 @@ def sync(
 
     Args:
         graph_id (str):
+        x_tenant_id (Union[Unset, str]):
         body (BatchCreateNodesRequest): Body for `POST /api/v2/graphs/{id}/nodes/batch`.
 
     Raises:
@@ -133,6 +141,7 @@ def sync(
         graph_id=graph_id,
         client=client,
         body=body,
+        x_tenant_id=x_tenant_id,
     ).parsed
 
 
@@ -141,6 +150,7 @@ async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: BatchCreateNodesRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[BatchNodesResponse, ErrorResponse]]:
     """Create multiple nodes in a single call.
 
@@ -149,6 +159,7 @@ async def asyncio_detailed(
 
     Args:
         graph_id (str):
+        x_tenant_id (Union[Unset, str]):
         body (BatchCreateNodesRequest): Body for `POST /api/v2/graphs/{id}/nodes/batch`.
 
     Raises:
@@ -162,6 +173,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         graph_id=graph_id,
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -174,6 +186,7 @@ async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     body: BatchCreateNodesRequest,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[BatchNodesResponse, ErrorResponse]]:
     """Create multiple nodes in a single call.
 
@@ -182,6 +195,7 @@ async def asyncio(
 
     Args:
         graph_id (str):
+        x_tenant_id (Union[Unset, str]):
         body (BatchCreateNodesRequest): Body for `POST /api/v2/graphs/{id}/nodes/batch`.
 
     Raises:
@@ -197,5 +211,6 @@ async def asyncio(
             graph_id=graph_id,
             client=client,
             body=body,
+            x_tenant_id=x_tenant_id,
         )
     ).parsed

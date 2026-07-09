@@ -26,8 +26,7 @@ use tower_http::compression::CompressionLayer;
 use tower_http::decompression::DecompressionLayer;
 use tower_http::trace::TraceLayer;
 
-use super::v1::handlers::{AppState, create_router};
-use crate::api_handlers::UnifiedHandlers;
+use super::v1::handlers::{AppState, RestCoreServices, create_router};
 use crate::monitoring::MetricsCollector;
 use crate::network::middleware::backpressure::{
     BackpressureConfig, create_concurrency_limit_layer,
@@ -261,7 +260,7 @@ impl RestServer {
     /// - Compression: Optional based on parameter
     pub fn new(
         bind_addr: SocketAddr,
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -269,7 +268,7 @@ impl RestServer {
     ) -> Self {
         Self::with_security(
             bind_addr,
-            request_handlers,
+            core,
             max_request_size_mb,
             compression,
             metrics_collector,
@@ -284,7 +283,7 @@ impl RestServer {
     /// **WARNING**: Only use for local development and testing!
     pub fn new_development(
         bind_addr: SocketAddr,
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -293,7 +292,7 @@ impl RestServer {
         tracing::warn!("🚨 Starting REST server in DEVELOPMENT mode - security is relaxed!");
         Self::with_security(
             bind_addr,
-            request_handlers,
+            core,
             max_request_size_mb,
             compression,
             metrics_collector,
@@ -306,7 +305,7 @@ impl RestServer {
     /// Create new REST server with custom security configuration.
     pub fn with_security(
         bind_addr: SocketAddr,
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -314,10 +313,11 @@ impl RestServer {
         security_config: RestServerSecurityConfig,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
-        let graph_execution_service = request_handlers.graph_execution_service.clone();
+        let graph_execution_service: Arc<dyn GraphExecutionService> =
+            core.graph_operations_service.clone();
         Self::with_security_and_config(
             bind_addr,
-            request_handlers,
+            core,
             graph_execution_service,
             max_request_size_mb,
             compression,
@@ -333,7 +333,7 @@ impl RestServer {
     /// Create new REST server with custom security configuration and data directory from config.
     pub fn with_security_and_config(
         bind_addr: SocketAddr,
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         graph_execution_service: Arc<dyn GraphExecutionService>,
         max_request_size_mb: Option<u64>,
         compression: bool,
@@ -346,7 +346,7 @@ impl RestServer {
     ) -> Self {
         Self::with_security_and_config_and_ports(
             bind_addr,
-            request_handlers,
+            core,
             graph_execution_service,
             max_request_size_mb,
             compression,
@@ -373,7 +373,7 @@ impl RestServer {
     /// routes through `producer.send`; otherwise it falls back to inline embed.
     pub fn with_security_and_config_and_ports(
         bind_addr: SocketAddr,
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         graph_execution_service: Arc<dyn GraphExecutionService>,
         max_request_size_mb: Option<u64>,
         compression: bool,
@@ -415,7 +415,7 @@ impl RestServer {
         }
 
         let mut base_state = AppState::new(
-            request_handlers,
+            core,
             graph_execution_service,
             security_coordinator.clone(),
             data_dir,
@@ -487,6 +487,16 @@ impl RestServer {
         let state_for_v2 = state.clone();
         let mut base_router = create_router(state.clone());
 
+        // ADR-049 M0-c: gate the deprecated /api/v1/* surface behind
+        // PROXIMADB_REST_V1_COMPAT (on by default). When off, /api/v1/* is
+        // answered with 410 Gone + RFC 8594 deprecation headers; /api/v2/* is
+        // never affected. This starts the v1 sunset clock without a flag-day.
+        let rest_v1_compat = crate::network::middleware::v1_sunset::rest_v1_compat_enabled();
+        base_router = base_router.layer(middleware::from_fn_with_state(
+            rest_v1_compat,
+            crate::network::middleware::v1_sunset::v1_sunset_middleware,
+        ));
+
         // Nest metrics router if available
         if let Some(metrics) = metrics_router {
             base_router = base_router.nest("/metrics", metrics);
@@ -521,7 +531,12 @@ impl RestServer {
         // Create concurrency limit layer for backpressure (if enabled)
         let concurrency_layer = create_concurrency_limit_layer(&security_config.backpressure);
 
-        // Authentication layer (unified): prefer SecurityCoordinator if available
+        // Authentication layer (unified): prefer SecurityCoordinator if available.
+        // Auth ENABLED with NO coordinator is a security misconfiguration: rather
+        // than serving every request unauthenticated (failing open), we fail
+        // CLOSED — the deny layer applied after the router is built rejects the
+        // data plane with 503. (Computed before the coordinator is moved below.)
+        let auth_misconfigured = security_config.auth.enabled && security_coordinator.is_none();
         let auth_layer = if security_config.auth.enabled {
             if let Some(coordinator) = security_coordinator {
                 Some(middleware::from_fn_with_state(
@@ -529,8 +544,10 @@ impl RestServer {
                     crate::network::auth::middleware::auth_middleware_unified,
                 ))
             } else {
-                tracing::warn!(
-                    "Security enabled but no coordinator available; auth layer disabled"
+                tracing::error!(
+                    "REST auth is enabled but no SecurityCoordinator is configured — \
+                     failing CLOSED: data-plane (/api/*) requests are rejected with 503. \
+                     Wire a SecurityCoordinator or set auth.enabled=false."
                 );
                 None
             }
@@ -641,6 +658,13 @@ impl RestServer {
         if let Some(auth) = auth_layer {
             router = router.layer(auth);
         }
+        // Fail closed on an auth misconfiguration (enabled but no coordinator):
+        // deny the data plane with 503 rather than serving it unauthenticated.
+        if auth_misconfigured {
+            router = router.layer(middleware::from_fn(
+                crate::network::middleware::auth_failclosed::auth_misconfigured_deny_data_plane,
+            ));
+        }
 
         // Build TLS config if specified
         let tls_config = security_config.tls.as_ref().map(|tls| {
@@ -680,7 +704,7 @@ impl RestServer {
     /// graph, and observability routes. When `None`, the legacy root-crate
     /// handlers are used.
     pub fn build_router_for_unified(
-        request_handlers: Arc<UnifiedHandlers>,
+        core: RestCoreServices,
         graph_execution_service: Arc<dyn GraphExecutionService>,
         metrics_collector: Option<Arc<MetricsCollector>>,
         security_coordinator: Option<Arc<SecurityCoordinator>>,
@@ -703,7 +727,7 @@ impl RestServer {
         admin_ui_enabled: bool,
     ) -> Router {
         let mut base_state = AppState::new(
-            request_handlers,
+            core,
             graph_execution_service,
             security_coordinator.clone(),
             data_dir,
@@ -788,6 +812,16 @@ impl RestServer {
         // Build base router with all endpoints
         let state_for_v2 = state.clone();
         let mut base_router = create_router(state.clone());
+
+        // ADR-049 M0-c: gate the deprecated /api/v1/* surface behind
+        // PROXIMADB_REST_V1_COMPAT (on by default). When off, /api/v1/* is
+        // answered with 410 Gone + RFC 8594 deprecation headers; /api/v2/* is
+        // never affected. This starts the v1 sunset clock without a flag-day.
+        let rest_v1_compat = crate::network::middleware::v1_sunset::rest_v1_compat_enabled();
+        base_router = base_router.layer(middleware::from_fn_with_state(
+            rest_v1_compat,
+            crate::network::middleware::v1_sunset::v1_sunset_middleware,
+        ));
 
         // Nest metrics router if available
         if let Some(metrics) = metrics_router {
@@ -1061,8 +1095,7 @@ impl RestServer {
     }
 }
 
-/// Dashboard handler - serves a comprehensive professional dashboard
-/// Router fallback for unmatched paths. Returns the canonical error envelope
+/// 404 fallback handler for unmatched paths. Returns the canonical error envelope
 /// and, for paths under the removed `/api/v1/*` surfaces, a migration hint
 /// pointing at the v2 replacement.
 async fn not_found_fallback(uri: axum::http::Uri) -> axum::response::Response {

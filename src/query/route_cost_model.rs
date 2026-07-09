@@ -70,6 +70,144 @@ pub fn install_route_cost_observer() {
     GLOBAL_ROUTE_COST_MODEL.set_override_enabled(on);
 }
 
+// ── Persistence: let the measured cost history survive restarts ─────────────
+//
+// The trace-driven model learns per (shape-class, backend) from measured I/O.
+// In-memory only, it re-learns cold on every boot — so the co-design signal
+// ("route from measured quantities") is thrown away at each restart, and any
+// future live-override slice would face a cold-start mislearning window.
+// Persisting the EWMA cells fixes both: warm advisories across restarts, and a
+// warm model when override is eventually enabled. Behavior is unchanged while
+// the override stays OFF (default). Mirrors the RL-planner policy persistence
+// (`{data_dir}/rl_policy.json`).
+
+/// On-disk snapshot version. Only the EWMA cells are persisted; the frozen
+/// consult table is re-derived on load. Bumping this invalidates older files
+/// (they load nothing and the model re-learns), so a format change is never
+/// mis-read.
+const COST_MODEL_PERSIST_VERSION: u32 = 1;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PersistedCostModel {
+    version: u32,
+    cells: Vec<PersistedCell>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PersistedCell {
+    shape_class: String,
+    backend: String,
+    cell: Cell,
+}
+
+/// Path of the persisted global cost model under a server data dir.
+pub fn cost_model_persist_path(data_dir: &std::path::Path) -> std::path::PathBuf {
+    data_dir.join("route_cost_cells.json")
+}
+
+/// Warm the global cost model from `{data_dir}/route_cost_cells.json` at startup
+/// if present. Best-effort: a missing / unreadable / older-version file loads
+/// nothing and the model re-learns. Routing is unchanged either way (the model
+/// stays observe-only until `PROXIMADB_ROUTE_COST_OVERRIDE`).
+pub fn load_persisted_cost_model(data_dir: &std::path::Path) {
+    let path = cost_model_persist_path(data_dir);
+    let loaded = GLOBAL_ROUTE_COST_MODEL.load_from(&path);
+    if loaded > 0 {
+        tracing::info!(
+            "route cost model: warmed {loaded} learned cell(s) from {}",
+            path.display()
+        );
+    }
+}
+
+/// Persist the global cost model to `{data_dir}/route_cost_cells.json` at
+/// shutdown (best-effort; a write failure is logged, not fatal).
+pub fn persist_cost_model(data_dir: &std::path::Path) {
+    let path = cost_model_persist_path(data_dir);
+    match GLOBAL_ROUTE_COST_MODEL.persist_to(&path) {
+        Ok(n) if n > 0 => tracing::info!(
+            "route cost model: persisted {n} learned cell(s) to {}",
+            path.display()
+        ),
+        Ok(_) => {} // nothing learned yet — nothing to persist
+        Err(e) => tracing::warn!(
+            "route cost model: failed to persist to {}: {e}",
+            path.display()
+        ),
+    }
+}
+
+impl RouteCostModel {
+    /// Persist the learned cells to `path` via an atomic temp+rename. Returns
+    /// the number of cells written (only cells with ≥1 sample are persisted).
+    fn persist_to(&self, path: &std::path::Path) -> std::io::Result<usize> {
+        let snapshot = {
+            let cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
+            PersistedCostModel {
+                version: COST_MODEL_PERSIST_VERSION,
+                cells: cells
+                    .iter()
+                    .filter(|(_, c)| c.samples > 0)
+                    .map(|((class, backend), cell)| PersistedCell {
+                        shape_class: class.clone(),
+                        backend: backend.clone(),
+                        cell: *cell,
+                    })
+                    .collect(),
+            }
+        };
+        let n = snapshot.cells.len();
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let bytes = serde_json::to_vec_pretty(&snapshot).map_err(std::io::Error::other)?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, &bytes)?;
+        std::fs::rename(&tmp, path)?;
+        Ok(n)
+    }
+
+    /// Replace the learned cells with those persisted at `path`, then warm the
+    /// frozen consult table. Returns the number of cells loaded; 0 on a missing,
+    /// unreadable, or version-mismatched file (the model re-learns from scratch).
+    fn load_from(&self, path: &std::path::Path) -> usize {
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(_) => return 0, // no persisted model yet
+        };
+        let snapshot: PersistedCostModel = match serde_json::from_slice(&bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(
+                    "route cost model: ignoring unreadable persisted file {}: {e}",
+                    path.display()
+                );
+                return 0;
+            }
+        };
+        if snapshot.version != COST_MODEL_PERSIST_VERSION {
+            tracing::warn!(
+                "route cost model: ignoring persisted file {} (version {}, expected {})",
+                path.display(),
+                snapshot.version,
+                COST_MODEL_PERSIST_VERSION
+            );
+            return 0;
+        }
+        let n = snapshot.cells.len();
+        {
+            let mut cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
+            for pc in snapshot.cells {
+                cells.insert((pc.shape_class, pc.backend), pc.cell);
+            }
+        }
+        // Re-derive the frozen consult table from the loaded cells so advisories
+        // (and a future enabled override) see the warm history immediately.
+        self.recompute_locked();
+        n
+    }
+}
+
 // ── Per-Parquet-location shape stats (route-time classification) ────────────
 
 /// One Parquet table's physical shape, warmed for free wherever the table is
@@ -308,7 +446,7 @@ impl CostQuantities {
 }
 
 /// One (shape-class, backend) cell: EWMA means of the cost-bearing quantities.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 struct Cell {
     range_gets: f64,
     bytes_read: f64,
@@ -680,6 +818,19 @@ impl RouteCostModel {
         }
     }
 
+    /// The `(shape-class, backend-label)` keys that have learned history. Eval/
+    /// introspection support: lets a test discover which shape-classes a workload
+    /// exercised so it can warm a challenger backend and force the override to
+    /// flip a route (see the TD-ROUTE-1 pgwire override eval).
+    pub fn learned_cell_keys(&self) -> Vec<(String, String)> {
+        let cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
+        cells
+            .iter()
+            .filter(|(_, c)| c.samples > 0)
+            .map(|(k, _)| k.clone())
+            .collect()
+    }
+
     /// Current learned estimate for one (shape-class, backend), if any history.
     pub fn estimate(&self, shape_class: &str, backend: &ComputeBackend) -> Option<RouteCost> {
         let key = (shape_class.to_string(), backend_label(backend));
@@ -951,6 +1102,53 @@ impl RouteCostModel {
 mod tests {
     use super::*;
 
+    #[test]
+    fn persist_load_round_trip_warms_a_fresh_model() {
+        let m = RouteCostModel::new();
+        // Learn two cells from measured snapshots (typed observe so the backend
+        // labels match what `estimate` derives).
+        m.observe(
+            "olap/parquet/large",
+            &ComputeBackend::DataFusionLocal,
+            &snap(12, 4_000_000, 8),
+        );
+        m.observe(
+            "olap/parquet/large",
+            &ComputeBackend::Native,
+            &snap(40, 4_000_000, 30),
+        );
+
+        let dir = std::env::temp_dir().join(format!("pdb_cost_persist_{}", std::process::id()));
+        let path = cost_model_persist_path(&dir);
+        assert_eq!(m.persist_to(&path).expect("persist"), 2);
+
+        // A fresh model has no history until it loads the persisted cells.
+        let fresh = RouteCostModel::new();
+        assert!(
+            fresh
+                .estimate("olap/parquet/large", &ComputeBackend::DataFusionLocal)
+                .is_none()
+        );
+        assert_eq!(fresh.load_from(&path), 2);
+        let est = fresh
+            .estimate("olap/parquet/large", &ComputeBackend::DataFusionLocal)
+            .expect("warmed estimate");
+        assert_eq!(est.range_gets, 12.0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_missing_file_is_a_noop() {
+        let m = RouteCostModel::new();
+        assert_eq!(
+            m.load_from(std::path::Path::new(
+                "/nonexistent/pdb/route_cost_cells.json"
+            )),
+            0
+        );
+    }
+
     fn snap(range_gets: u64, bytes_read: u64, compute_ms: u64) -> IoTraceSnapshot {
         let mut s = IoTraceSnapshot {
             range_gets,
@@ -993,6 +1191,7 @@ mod tests {
             parquet_backed: true,
             cardinality: CardinalityClass::Large,
             partition_fanout: PartitionFanout::Many,
+            pax_backed: false,
         });
         assert_eq!(class, "olap/parquet/card=l/part=m");
         // A partially-known shape only appends the known suffix.
@@ -1613,12 +1812,14 @@ mod tests {
             parquet_backed: true,
             cardinality: CardinalityClass::Large,
             partition_fanout: PartitionFanout::Many,
+            pax_backed: false,
         });
         let small = shape_class(&QueryShape {
             engages_relational: true,
             parquet_backed: true,
             cardinality: CardinalityClass::Small,
             partition_fanout: PartitionFanout::Single,
+            pax_backed: false,
         });
         assert_ne!(big, coarse);
         assert_ne!(small, coarse);
@@ -1645,6 +1846,7 @@ mod tests {
             parquet_backed: true,
             cardinality: CardinalityClass::Large,
             partition_fanout: PartitionFanout::Many,
+            pax_backed: false,
         };
         let class = shape_class(&big);
         // Observe Native as confidently cheaper than DataFusion for THIS fine

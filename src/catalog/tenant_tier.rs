@@ -50,7 +50,7 @@ use tracing::{debug, warn};
 // The numeric defaults (scan_budget_gb, ef_search_cap, freshness_sla_seconds,
 // prom_label) load from the chosen layer at first access. The `Tier` enum
 // variants themselves stay compile-time exhaustive — Rust enums cannot be
-// built from runtime data. The startup assertion `validate_pricing_matches_enum`
+// built from runtime data. The startup assertion `validate_tier_config_matches_enum`
 // panics if the chosen layer's tier set diverges from the enum variants,
 // surfacing the drift at process start rather than at first soft-cap
 // rejection. Validation is alias-aware: overlay JSONs may use any tier id
@@ -63,21 +63,21 @@ const RUNTIME_TIER_CONFIG_ENV: &str = "PROXIMADB_TIER_CONFIG_PATH";
 const DEFAULT_RUNTIME_TIER_CONFIG_PATH: &str = "/config/tier-config.json";
 const LEGACY_RUNTIME_TIER_CONFIG_PATH: &str = "/config/pricing.json";
 
-static PRICING: OnceLock<PricingConfig> = OnceLock::new();
+static TIER_CONFIG: OnceLock<TierConfig> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
-struct PricingConfig {
+struct TierConfig {
     schema_version: u32,
     #[allow(dead_code)]
     default_tier: String,
-    tiers: Vec<PricingTier>,
+    tiers: Vec<TierSpec>,
 }
 
 #[derive(Debug, Deserialize)]
-struct PricingTier {
+struct TierSpec {
     id: String,
     prom_label: String,
-    soft_caps: PricingSoftCaps,
+    soft_caps: TierSoftCaps,
     /// C5 governance tier-entitlement multiplier (Dimension 5). Authored by the
     /// control plane (anvaiops `tiers.json` → `/config/tier-config.json`); absent
     /// in the OSS baseline overlay → `None` → neutral `1.0`. Other overlay fields
@@ -87,7 +87,7 @@ struct PricingTier {
 }
 
 #[derive(Debug, Deserialize)]
-struct PricingSoftCaps {
+struct TierSoftCaps {
     scan_budget_gb: f64,
     ef_search_cap: u32,
     freshness_sla_seconds: u32,
@@ -151,8 +151,8 @@ fn resolve_tier_config_source() -> TierConfigSource {
 /// because the function's whole point IS to crash early with a clear
 /// operator-facing message rather than degrade silently.
 #[allow(clippy::panic)]
-fn parse_and_validate(source: &TierConfigSource) -> PricingConfig {
-    let parsed: PricingConfig = serde_json::from_str(&source.content).unwrap_or_else(|e| {
+fn parse_and_validate(source: &TierConfigSource) -> TierConfig {
+    let parsed: TierConfig = serde_json::from_str(&source.content).unwrap_or_else(|e| {
         panic!(
             "tier config from {} is malformed — proximaDB cannot start: {e}",
             source.label
@@ -163,12 +163,12 @@ fn parse_and_validate(source: &TierConfigSource) -> PricingConfig {
         "tier config from {} has unsupported schema_version {}",
         source.label, parsed.schema_version
     );
-    validate_pricing_matches_enum(&parsed, &source.label);
+    validate_tier_config_matches_enum(&parsed, &source.label);
     parsed
 }
 
-fn pricing() -> &'static PricingConfig {
-    PRICING.get_or_init(|| {
+fn tier_config() -> &'static TierConfig {
+    TIER_CONFIG.get_or_init(|| {
         let source = resolve_tier_config_source();
         let parsed = parse_and_validate(&source);
         tracing::info!(
@@ -183,9 +183,9 @@ fn pricing() -> &'static PricingConfig {
 // Startup-only invariant check on the loaded tier config. A malformed
 // config means the operator overlay JSON is broken — failing fast at
 // boot is the right answer; downstream code assumes every Tier variant
-// has pricing wired up.
+// has a tier-config row wired up.
 #[allow(clippy::panic)]
-fn validate_pricing_matches_enum(p: &PricingConfig, source_label: &str) {
+fn validate_tier_config_matches_enum(p: &TierConfig, source_label: &str) {
     use std::collections::HashSet;
     // Phase B-4: validation is now alias-aware. Each JSON tier id is parsed
     // through serde (which honors the serde aliases on the Tier enum), and
@@ -218,7 +218,7 @@ fn validate_pricing_matches_enum(p: &PricingConfig, source_label: &str) {
     }
 }
 
-fn pricing_row(tier: Tier) -> &'static PricingTier {
+fn tier_row(tier: Tier) -> &'static TierSpec {
     // Phase B-4: alias-aware lookup. The JSON id may be the canonical id
     // (`tier.id()`) OR any of the serde aliases — both must locate the row.
     // The panic on miss is intentional: the loaded tier config is
@@ -226,7 +226,7 @@ fn pricing_row(tier: Tier) -> &'static PricingTier {
     // (`parse_and_validate`), so a missing tier here is a startup-time
     // invariant violation that should crash, not be silently masked.
     #[allow(clippy::panic)]
-    pricing()
+    tier_config()
         .tiers
         .iter()
         .find(|t| {
@@ -302,7 +302,7 @@ impl Tier {
     }
 
     /// All declared tier variants in increasing-capacity order. Kept in
-    /// sync with the embedded JSON via `validate_pricing_matches_enum()`
+    /// sync with the embedded JSON via `validate_tier_config_matches_enum()`
     /// at startup.
     pub const fn all() -> &'static [Tier] {
         &[
@@ -321,17 +321,17 @@ impl Tier {
     /// avoided because the engine sources its values from the same overlay
     /// the operator publishes.
     pub fn default_scan_budget_gb(self) -> f64 {
-        pricing_row(self).soft_caps.scan_budget_gb
+        tier_row(self).soft_caps.scan_budget_gb
     }
 
     /// Default beam-width / ef_search ceiling — hard ceiling at the router.
     pub fn default_ef_search_cap(self) -> u32 {
-        pricing_row(self).soft_caps.ef_search_cap
+        tier_row(self).soft_caps.ef_search_cap
     }
 
     /// Default freshness SLA for async ingest, in seconds.
     pub fn default_freshness_sla_seconds(self) -> u32 {
-        pricing_row(self).soft_caps.freshness_sla_seconds
+        tier_row(self).soft_caps.freshness_sla_seconds
     }
 
     /// Parse a tier *claim* string (e.g. the `X-Tenant-Tier` header the control
@@ -353,7 +353,7 @@ impl Tier {
     /// fail-safe — a non-positive multiplier could invert the reported cost). The
     /// $ values are control-plane policy; OSS only reads the configured scalar.
     pub fn cost_multiplier(self) -> f64 {
-        match pricing_row(self).cost_multiplier {
+        match tier_row(self).cost_multiplier {
             Some(m) if m.is_finite() && m > 0.0 => m,
             _ => 1.0,
         }
@@ -364,7 +364,7 @@ impl Tier {
     /// add a tier via the runtime overlay (see `config/TIER_CONFIG.md`) widen the
     /// metric label set automatically without a recompile.
     pub fn prometheus_label(self) -> &'static str {
-        pricing_row(self).prom_label.as_str()
+        tier_row(self).prom_label.as_str()
     }
 
     /// Object economy routing configuration for this tier.
@@ -742,10 +742,10 @@ pub fn set_tenant_tier_resolver(resolver: Option<Box<TenantTierFn>>) {
         .unwrap_or_else(|p| p.into_inner()) = resolver;
 }
 
-/// The configured default tier (`pricing().default_tier`, alias-aware), or
+/// The configured default tier (`tier_config().default_tier`, alias-aware), or
 /// [`Tier::default`] if it somehow fails to parse.
 pub fn default_tier() -> Tier {
-    let raw = serde_json::Value::String(pricing().default_tier.clone());
+    let raw = serde_json::Value::String(tier_config().default_tier.clone());
     serde_json::from_value::<Tier>(raw).unwrap_or_default()
 }
 
@@ -851,13 +851,13 @@ mod tests {
     }
 
     #[test]
-    fn pricing_config_loads_without_panic_and_matches_enum() {
-        // First access of `pricing()` deserializes the embedded JSON, asserts
-        // schema_version == 1, and runs `validate_pricing_matches_enum`. If
+    fn tier_config_loads_without_panic_and_matches_enum() {
+        // First access of `tier_config()` deserializes the embedded JSON, asserts
+        // schema_version == 1, and runs `validate_tier_config_matches_enum`. If
         // any of those checks fail we panic here — surfaces a malformed or
         // drifted `config/tier-config.json` at test time rather than first
         // production request.
-        let cfg = pricing();
+        let cfg = tier_config();
         assert_eq!(cfg.schema_version, 1);
         let json_ids: std::collections::HashSet<&str> =
             cfg.tiers.iter().map(|t| t.id.as_str()).collect();
@@ -867,11 +867,11 @@ mod tests {
     }
 
     #[test]
-    fn every_tier_id_round_trips_through_pricing_lookup() {
+    fn every_tier_id_round_trips_through_tier_lookup() {
         for tier in Tier::all() {
             // Every variant must find a matching row, and the loaded numbers
             // must be positive / non-zero — guards against an incomplete
-            // pricing.json that compiles but stalls the router with NaN.
+            // tier-config.json that compiles but stalls the router with NaN.
             assert!(tier.default_scan_budget_gb() > 0.0, "{:?}", tier);
             assert!(tier.default_ef_search_cap() > 0, "{:?}", tier);
             assert!(tier.default_freshness_sla_seconds() > 0, "{:?}", tier);

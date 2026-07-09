@@ -13,14 +13,17 @@ from ...client import AuthenticatedClient, Client
 from ...models.create_collection_v2_request import CreateCollectionV2Request
 from ...models.create_collection_v2_response import CreateCollectionV2Response
 from ...models.error_response import ErrorResponse
-from ...types import UNSET, Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
     body: CreateCollectionV2Request,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_tenant_id, Unset):
+        headers["X-Tenant-ID"] = x_tenant_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -68,6 +71,7 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateCollectionV2Request,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[CreateCollectionV2Response, ErrorResponse]]:
     """Create a collection with optional schema.
 
@@ -88,6 +92,7 @@ def sync_detailed(
     - `500 Internal Server Error`: Creation failed
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (CreateCollectionV2Request): Request to create a collection with schema support
 
             ## Example JSON
@@ -120,6 +125,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -133,6 +139,7 @@ def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateCollectionV2Request,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[CreateCollectionV2Response, ErrorResponse]]:
     """Create a collection with optional schema.
 
@@ -153,6 +160,7 @@ def sync(
     - `500 Internal Server Error`: Creation failed
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (CreateCollectionV2Request): Request to create a collection with schema support
 
             ## Example JSON
@@ -186,6 +194,7 @@ def sync(
     return sync_detailed(
         client=client,
         body=body,
+        x_tenant_id=x_tenant_id,
     ).parsed
 
 
@@ -193,6 +202,7 @@ async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateCollectionV2Request,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[CreateCollectionV2Response, ErrorResponse]]:
     """Create a collection with optional schema.
 
@@ -213,6 +223,7 @@ async def asyncio_detailed(
     - `500 Internal Server Error`: Creation failed
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (CreateCollectionV2Request): Request to create a collection with schema support
 
             ## Example JSON
@@ -245,6 +256,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -256,6 +268,7 @@ async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateCollectionV2Request,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[CreateCollectionV2Response, ErrorResponse]]:
     """Create a collection with optional schema.
 
@@ -276,6 +289,7 @@ async def asyncio(
     - `500 Internal Server Error`: Creation failed
 
     Args:
+        x_tenant_id (Union[Unset, str]):
         body (CreateCollectionV2Request): Request to create a collection with schema support
 
             ## Example JSON
@@ -310,5 +324,6 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             body=body,
+            x_tenant_id=x_tenant_id,
         )
     ).parsed

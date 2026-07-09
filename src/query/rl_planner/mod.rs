@@ -264,6 +264,13 @@ impl RLPlanner {
         let bandit = self.bandit.read().await;
         bandit.save_to_file(path).await
     }
+
+    /// Total number of reward updates observed since the planner was created.
+    /// Used by the checkpoint task to skip no-op rewrites when no learning has
+    /// occurred between ticks.
+    pub async fn total_updates(&self) -> u64 {
+        self.bandit.read().await.total_updates()
+    }
 }
 
 impl Default for RLPlanner {

@@ -21,9 +21,38 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
+
 use crate::query::cache::batch_group::BatchGroupCache;
 use crate::query::cache::plan_cache::PlanCache;
+use crate::query::cache::query_result_cache::{CacheableResult, QueryResultCache};
 use crate::storage::cache::specialized::query_cache::QueryCache;
+
+/// Trait-object seam so [`CacheInvalidationCoordinator`] can fan invalidation
+/// out to a structurally tenant-keyed [`QueryResultCache<T>`] without itself
+/// being generic over the cached result type `T`.
+///
+/// The pgwire OLAP result cache (`QueryResultCache<ExecutionPipelineResult>`)
+/// is attached via [`CacheInvalidationCoordinator::with_result_cache`]; writes
+/// and DDL then call [`CacheInvalidationCoordinator::invalidate_collection`],
+/// which drops every entry registered under `(tenant, collection)` — never
+/// touching another tenant's entries (mandate #16b).
+#[async_trait]
+pub trait TenantResultCacheInvalidation: Send + Sync {
+    /// Drop every cached entry registered under `(tenant, collection)`.
+    /// Returns the number of entries invalidated.
+    async fn invalidate_tenant(&self, tenant: &str, collection: &str) -> u64;
+}
+
+#[async_trait]
+impl<T> TenantResultCacheInvalidation for QueryResultCache<T>
+where
+    T: Clone + CacheableResult + Send + Sync + 'static,
+{
+    async fn invalidate_tenant(&self, tenant: &str, collection: &str) -> u64 {
+        QueryResultCache::invalidate_tenant_collection(self, tenant, collection) as u64
+    }
+}
 
 /// Per-call result — how many entries each cache dropped. Useful in
 /// observability dashboards and in tests that need to assert fan-out.
@@ -32,6 +61,9 @@ pub struct InvalidationSummary {
     pub plan_cache_entries: u64,
     pub batch_groups_closed: u64,
     pub query_cache_entries: u64,
+    /// Entries dropped from the structurally tenant-keyed OLAP result cache
+    /// (the [`TenantResultCacheInvalidation`] arm).
+    pub result_cache_entries: u64,
     /// Corpus version after the bump that fired during this call —
     /// `None` only if the registry wasn't reachable. The observability
     /// dashboard reports this so an SRE can correlate "the version
@@ -41,7 +73,10 @@ pub struct InvalidationSummary {
 
 impl InvalidationSummary {
     pub fn total(&self) -> u64 {
-        self.plan_cache_entries + self.batch_groups_closed + self.query_cache_entries
+        self.plan_cache_entries
+            + self.batch_groups_closed
+            + self.query_cache_entries
+            + self.result_cache_entries
     }
 }
 
@@ -52,6 +87,10 @@ pub struct CacheInvalidationCoordinator {
     plan_cache: Option<Arc<PlanCache>>,
     batch_group: Option<Arc<BatchGroupCache>>,
     query_cache: Option<Arc<QueryCache>>,
+    /// Structurally tenant-keyed result cache (e.g. the pgwire OLAP result
+    /// cache), held as a trait object so the coordinator stays
+    /// non-generic over the cached value type.
+    result_cache: Option<Arc<dyn TenantResultCacheInvalidation>>,
 }
 
 impl CacheInvalidationCoordinator {
@@ -63,6 +102,7 @@ impl CacheInvalidationCoordinator {
             plan_cache: None,
             batch_group: None,
             query_cache: None,
+            result_cache: None,
         }
     }
 
@@ -81,6 +121,17 @@ impl CacheInvalidationCoordinator {
     /// Attach the query-results cache.
     pub fn with_query_cache(mut self, cache: Arc<QueryCache>) -> Self {
         self.query_cache = Some(cache);
+        self
+    }
+
+    /// Attach the structurally tenant-keyed OLAP result cache. Writes/DDL
+    /// routed through [`Self::invalidate_collection`] will then drop every
+    /// entry registered under `(tenant, collection)` for this cache too.
+    pub fn with_result_cache<T>(mut self, cache: Arc<QueryResultCache<T>>) -> Self
+    where
+        T: Clone + CacheableResult + Send + Sync + 'static,
+    {
+        self.result_cache = Some(cache);
         self
     }
 
@@ -108,6 +159,10 @@ impl CacheInvalidationCoordinator {
 
         if let Some(cache) = &self.query_cache {
             summary.query_cache_entries = cache.invalidate_collection(collection).await as u64;
+        }
+
+        if let Some(cache) = &self.result_cache {
+            summary.result_cache_entries = cache.invalidate_tenant(tenant_id, collection).await;
         }
 
         if let Some(cache) = &self.batch_group {
@@ -296,9 +351,116 @@ mod tests {
             plan_cache_entries: 3,
             batch_groups_closed: 5,
             query_cache_entries: 2,
+            result_cache_entries: 2,
             corpus_version_after: None,
         };
-        assert_eq!(s.total(), 10);
+        assert_eq!(s.total(), 12);
+    }
+
+    #[tokio::test]
+    async fn result_cache_invalidation_is_tenant_scoped() {
+        // Attach a structurally tenant-keyed result cache and confirm the
+        // coordinator fan-out drops only the (tenant, collection) entries.
+        use crate::core::search::VectorFreshnessMode;
+        use crate::query::cache::query_result_cache::{
+            CacheableResult, QueryKey, QueryResultCache, StructuralKey,
+        };
+
+        #[derive(Clone)]
+        struct DummyCacheable;
+        impl CacheableResult for DummyCacheable {
+            fn estimated_size_bytes(&self) -> usize {
+                1
+            }
+        }
+
+        let cache = Arc::new(QueryResultCache::<DummyCacheable>::with_defaults());
+        let key_a = StructuralKey::new("tenant-a", "public", QueryKey::from_sql("SELECT 1"));
+        let key_b = StructuralKey::new("tenant-b", "public", QueryKey::from_sql("SELECT 1"));
+        cache
+            .insert_fresh(
+                key_a.clone(),
+                DummyCacheable,
+                vec!["orders".to_string()],
+                Some(1),
+            )
+            .expect("insert a");
+        cache
+            .insert_fresh(
+                key_b.clone(),
+                DummyCacheable,
+                vec!["orders".to_string()],
+                Some(1),
+            )
+            .expect("insert b");
+
+        let coord = CacheInvalidationCoordinator::empty().with_result_cache(cache.clone());
+        let s = coord.invalidate_collection("tenant-a", "orders", &[]).await;
+        // Only tenant-a's entry counted + dropped; tenant-b survives.
+        assert_eq!(s.result_cache_entries, 1);
+        assert!(
+            cache
+                .get_fresh(&key_a, &VectorFreshnessMode::StaleOk, 0)
+                .is_none()
+        );
+        assert!(
+            cache
+                .get_fresh(&key_b, &VectorFreshnessMode::StaleOk, 0)
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn write_side_table_name_normalizes_to_read_side_dep() {
+        // Pin the read↔write normalization match-up: the read path registers a
+        // cached entry's dependency under `normalize_table_key(raw)` (the
+        // `snapshot.tables` keys); the write path
+        // (`invalidate_olap_result_cache_for`) must apply the SAME
+        // `normalize_table_key` to the raw parsed table name or invalidation
+        // silently never fires for any quoted/qualified/mixed-case table.
+        use crate::core::search::VectorFreshnessMode;
+        use crate::query::cache::query_result_cache::{
+            CacheableResult, QueryKey, QueryResultCache, StructuralKey,
+        };
+        use crate::query::execution::normalize_table_key;
+
+        #[derive(Clone)]
+        struct DummyCacheable;
+        impl CacheableResult for DummyCacheable {
+            fn estimated_size_bytes(&self) -> usize {
+                1
+            }
+        }
+
+        // Sanity: the normalizer lowercases + de-qualifies (the contract the
+        // match-up depends on).
+        assert_eq!(normalize_table_key(r#""public"."Orders""#), "orders");
+
+        let cache = Arc::new(QueryResultCache::<DummyCacheable>::with_defaults());
+        // Read side registers the dependency under the NORMALIZED name.
+        let key = StructuralKey::new("t", "public", QueryKey::from_sql("SELECT * FROM Orders"));
+        cache
+            .insert_fresh(
+                key.clone(),
+                DummyCacheable,
+                vec![normalize_table_key("Orders")],
+                Some(1),
+            )
+            .expect("insert");
+
+        let coord = CacheInvalidationCoordinator::empty().with_result_cache(cache.clone());
+        // Write side passes the RAW parsed name; the production helper
+        // normalizes before reaching the coordinator. Simulate that here.
+        let raw_write_name = r#""public"."Orders""#;
+        let s = coord
+            .invalidate_collection("t", &normalize_table_key(raw_write_name), &[])
+            .await;
+        assert_eq!(s.result_cache_entries, 1, "raw write name must evict");
+        assert!(
+            cache
+                .get_fresh(&key, &VectorFreshnessMode::StaleOk, 0)
+                .is_none()
+        );
     }
 
     // Bind one cache key digest to a stable u64 so the coordinator tests

@@ -48,6 +48,7 @@ use object_store::path::Path;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
 use parquet::arrow::ProjectionMask;
 use parquet::arrow::async_reader::ParquetObjectReader;
+use parquet::file::properties::WriterProperties;
 use proximadb_kernel::error::StorageError;
 use proximadb_object_store::ProximaObjectStore;
 use proximadb_records::ProximaRecord;
@@ -55,6 +56,29 @@ use proximadb_storage_common::object_store_bridge::{CommitOutcome, ObjectStoreBr
 use proximadb_storage_common::proxima_arrow::infer_proxima_schema;
 use proximadb_storage_common::proxima_parquet::proxima_records_to_parquet_bytes;
 use proximadb_storage_common::proxima_schema::ProximaSchema;
+
+/// Parquet writer configuration for the warehouse publication tier
+/// (MATERIALIZE snapshots + Iceberg interop files).
+///
+/// The load-bearing setting is the row-group cap: the Arrow default is
+/// 1,048,576 rows, which packs every table below ~1M rows into a SINGLE row
+/// group — one split, whole-domain min/max, and zone-map/runtime-filter
+/// pruning provably cannot skip anything (measured 0% in
+/// `docs/_internal/status/TPC_PERF_GATE_EVIDENCE_2026_07_04.adoc`). The
+/// default of 65,536 rows approximates the co-design blueprint's 8–16 MiB
+/// scan/aggregate geometry for typical fact rows; override per deployment
+/// with `PROXIMADB_MATERIALIZE_ROW_GROUP_ROWS`. Row-group count is reader
+/// geometry, not a format change — mixed-read-safe by construction.
+fn warehouse_writer_properties() -> WriterProperties {
+    let rows = std::env::var("PROXIMADB_MATERIALIZE_ROW_GROUP_ROWS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(65_536);
+    WriterProperties::builder()
+        .set_max_row_group_row_count(Some(rows))
+        .build()
+}
 
 /// Spec-shaped Iceberg v2 manifest / manifest-list (Avro) + TableMetadata (JSON) content.
 pub mod iceberg;
@@ -313,7 +337,8 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
         schema: &ProximaSchema,
         _tenant_id: Option<&str>,
     ) -> Result<(), StorageError> {
-        let bytes = proxima_records_to_parquet_bytes(records, schema, None)?;
+        let bytes =
+            proxima_records_to_parquet_bytes(records, schema, Some(warehouse_writer_properties()))?;
         self.store.put(path, Bytes::from(bytes)).await
     }
 

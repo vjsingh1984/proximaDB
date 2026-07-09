@@ -131,7 +131,7 @@ pub struct MultiServer {
     pub shared_services: SharedServices,
     security_coordinator: Option<Arc<SecurityCoordinator>>,
     rest_auth_enabled: bool,
-    rest_multi_tenant_required: bool,
+    tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
     server_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     /// LLM engine for semantic operations
     llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
@@ -157,7 +157,7 @@ impl MultiServer {
     > {
         crate::network::grpc::v2::ProximaRecordServiceImpl::new(
             services.api_handlers.clone(),
-            services.request_handlers.record_ops(),
+            services.record_ops.clone(),
         )
         .with_segment_registry(services.segment_registry.clone())
         .with_primary_pod_gate(
@@ -176,7 +176,7 @@ impl MultiServer {
         crate::network::grpc::v2::ProximaGraphServiceImpl,
     > {
         crate::network::grpc::v2::ProximaGraphServiceImpl::new(
-            services.request_handlers.graph_operations_service.clone(),
+            services.graph_service.clone(),
             Some(services.query_adapter.clone()),
         )
         .into_server()
@@ -203,7 +203,7 @@ impl MultiServer {
     > {
         crate::network::grpc::v2::ProximaFusionServiceImpl::new(
             services.vector_operations_service.clone(),
-            services.request_handlers.graph_operations_service.clone(),
+            services.graph_service.clone(),
             // TD-138: share the live full-text index map so the document modality is
             // powered over gRPC (parity with REST #508).
             services.fulltext_indexes.clone(),
@@ -221,7 +221,7 @@ impl MultiServer {
         crate::network::grpc::v2::ProximaEntityServiceImpl,
     > {
         crate::network::grpc::v2::ProximaEntityServiceImpl::new(
-            services.request_handlers.graph_operations_service.clone(),
+            services.graph_service.clone(),
             services.vector_operations_service.clone(),
             services.document_service.clone(),
         )
@@ -235,7 +235,7 @@ impl MultiServer {
         shared_services: SharedServices,
         security_coordinator: Option<Arc<SecurityCoordinator>>,
         rest_auth_enabled: bool,
-        rest_multi_tenant_required: bool,
+        tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
         Self::new_with_queue_client(
@@ -243,7 +243,7 @@ impl MultiServer {
             shared_services,
             security_coordinator,
             rest_auth_enabled,
-            rest_multi_tenant_required,
+            tenant_deployment_mode,
             llm_engine,
             None,
         )
@@ -257,7 +257,7 @@ impl MultiServer {
         shared_services: SharedServices,
         security_coordinator: Option<Arc<SecurityCoordinator>>,
         rest_auth_enabled: bool,
-        rest_multi_tenant_required: bool,
+        tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
         queue_client: Option<Arc<proximadb_queue::QueueClient>>,
     ) -> Self {
@@ -276,7 +276,7 @@ impl MultiServer {
             shared_services,
             security_coordinator,
             rest_auth_enabled,
-            rest_multi_tenant_required,
+            tenant_deployment_mode,
             server_handles: Arc::new(Mutex::new(Vec::new())),
             llm_engine,
             queue_client,
@@ -529,25 +529,11 @@ impl MultiServer {
 
             // ── Create backend services (doc + observability need data-dir paths) ──
 
-            let doc_base_path = self.config.data_dir.join("documents");
-            let doc_path_str = doc_base_path.to_string_lossy().to_string();
-            let doc_storage_service = {
-                let engine = services.vector_operations_service.unified_engine();
-                match crate::storage::document::DocumentService::new_with_wal(engine, &doc_path_str)
-                    .await
-                {
-                    Ok(svc) => Arc::new(svc),
-                    Err(e) => {
-                        warn!(
-                            "Failed to create DocumentService with WAL: {}. Using non-durable storage.",
-                            e
-                        );
-                        Arc::new(crate::storage::document::DocumentService::new(
-                            services.vector_operations_service.unified_engine(),
-                        ))
-                    }
-                }
-            };
+            // ADR-009 document convergence: reuse the ONE shared, route-wired DocumentService
+            // instead of building a second WAL-backed instance here — a separate instance would
+            // re-open the store-split (its own document_wal + no canonical route). The shared
+            // instance carries the default-OFF canonical-vector route wired in SharedServices.
+            let doc_storage_service = services.document_service.clone();
 
             let obs_base_path = self.config.data_dir.join("observability");
             let obs_path_str = obs_base_path.to_string_lossy().to_string();
@@ -595,7 +581,8 @@ impl MultiServer {
 
             let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
                 Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    services.request_handlers.clone(),
+                    services.graph_service.clone(),
+                    services.api_handlers.clone(),
                     services.query_adapter(),
                 ));
             // ADR-015 step 2: bare DocumentService impls DocumentPort directly;
@@ -748,7 +735,10 @@ impl MultiServer {
 
             let arrow_bind_target = self.config.arrow_bind_target();
             let arrow_target_log = format!("{arrow_bind_target:?}");
-            let request_handlers = services.request_handlers.clone();
+            let arrow_record_ops = services.record_ops.clone();
+            let arrow_vector_ops = services.vector_operations_service.clone();
+            let arrow_collection = services.collection_service.clone();
+            let arrow_graph = services.graph_service.clone();
             let catalog_manager = services.catalog_manager.clone();
             let security_coordinator = if self.rest_auth_enabled {
                 self.security_coordinator.clone()
@@ -761,11 +751,18 @@ impl MultiServer {
             // three see identical routing decisions.
             let primary_pod_registry = services.primary_pod_registry.clone();
             let self_pod_id = services.self_pod_id.clone();
+            let api_handlers = services.api_handlers.clone();
 
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
 
-                let flight_service = ProximaFlightService::from_unified_handlers(request_handlers);
+                let flight_service = ProximaFlightService::from_services(
+                    api_handlers,
+                    arrow_record_ops,
+                    arrow_vector_ops,
+                    arrow_collection,
+                    arrow_graph,
+                );
                 match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
@@ -802,12 +799,15 @@ impl MultiServer {
                 .as_ref()
                 .map(|p| format!("unix:{}", p.display()))
                 .unwrap_or_else(|| rest_bind_addr.to_string());
-            let request_handlers = services.request_handlers.clone();
+            let rest_core =
+                crate::network::rest::v1::handlers::RestCoreServices::from_shared_services(
+                    &services,
+                );
             let catalog_manager = services.catalog_manager.clone();
             let metrics_collector = services.metrics_collector.clone();
             let security_coordinator = self.security_coordinator.clone();
             let rest_auth_enabled = self.rest_auth_enabled;
-            let rest_multi_tenant_required = self.rest_multi_tenant_required;
+            let tenant_deployment_mode = self.tenant_deployment_mode.clone();
             let data_dir = self.config.data_dir.clone();
             let query_adapter = Some(services.query_adapter());
             let graph_execution_service = services.graph_execution_service.clone();
@@ -834,18 +834,25 @@ impl MultiServer {
 
                 let max_request_size_mb = api_config.map(|c| c.max_request_size_mb);
                 let auth_enabled = security_coordinator.is_some() && rest_auth_enabled;
-                let mut rest_security = if auth_enabled && rest_multi_tenant_required {
+                let mut rest_security = if matches!(
+                    &tenant_deployment_mode,
+                    proximadb_tenant::TenantDeploymentMode::MultiTenant
+                ) {
                     RestServerSecurityConfig::multi_tenant()
                 } else {
                     RestServerSecurityConfig::default()
                 };
+                rest_security.tenant =
+                    crate::network::middleware::tenant::TenantExtractorConfig::from_deployment_mode(
+                        tenant_deployment_mode,
+                    );
                 rest_security.auth.enabled = auth_enabled;
 
                 // Pass port objects so document/graph/observability routes use
                 // the port-backed handlers from proximadb-api.
                 match RestServer::with_security_and_config_and_ports(
                     rest_bind_addr,
-                    request_handlers,
+                    rest_core,
                     graph_execution_service,
                     max_request_size_mb,
                     enable_compression,
@@ -990,29 +997,10 @@ impl MultiServer {
         // use Arc clones so there is a single WAL-backed instance per service.
         let shared_services_ref = self.shared_services.clone();
 
-        let doc_base_path = self.config.data_dir.join("documents");
-        let doc_path_str = doc_base_path.to_string_lossy().to_string();
-        let doc_storage_service: Arc<crate::storage::document::DocumentService> = {
-            let engine = shared_services_ref
-                .vector_operations_service
-                .unified_engine();
-            match crate::storage::document::DocumentService::new_with_wal(engine, &doc_path_str)
-                .await
-            {
-                Ok(svc) => Arc::new(svc),
-                Err(e) => {
-                    warn!(
-                        "Failed to create DocumentService with WAL: {}. Using non-durable storage.",
-                        e
-                    );
-                    Arc::new(crate::storage::document::DocumentService::new(
-                        shared_services_ref
-                            .vector_operations_service
-                            .unified_engine(),
-                    ))
-                }
-            }
-        };
+        // ADR-009 document convergence: reuse the ONE shared, route-wired DocumentService
+        // rather than a second WAL-backed instance (which would re-open the store-split).
+        let doc_storage_service: Arc<crate::storage::document::DocumentService> =
+            shared_services_ref.document_service.clone();
 
         let obs_base_path = self.config.data_dir.join("observability");
         let obs_path_str = obs_base_path.to_string_lossy().to_string();
@@ -1045,7 +1033,8 @@ impl MultiServer {
             let services = self.shared_services.clone();
             let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
                 Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    services.request_handlers.clone(),
+                    services.graph_service.clone(),
+                    services.api_handlers.clone(),
                     services.query_adapter(),
                 ));
             // ADR-015 step 2 (DocumentPort).
@@ -1064,7 +1053,10 @@ impl MultiServer {
         // 1. Start REST server on internal port (HTTP/1.1) using axum with port-backed handlers
         {
             let services = self.shared_services.clone();
-            let request_handlers = services.request_handlers.clone();
+            let rest_core =
+                crate::network::rest::v1::handlers::RestCoreServices::from_shared_services(
+                    &services,
+                );
             let graph_execution_service = services.graph_execution_service.clone();
             let metrics_collector = services.metrics_collector.clone();
             // Mirror the Arrow IPC gate above: pass the coordinator only when
@@ -1082,7 +1074,7 @@ impl MultiServer {
             let llm_engine = self.llm_engine.clone();
 
             let router = crate::network::rest::server::RestServer::build_router_for_unified(
-                request_handlers,
+                rest_core,
                 graph_execution_service,
                 metrics_collector,
                 security_coordinator,
@@ -1129,7 +1121,8 @@ impl MultiServer {
             // ── Build core gRPC services via factory ──────────────────────────
             let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
                 Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    services.request_handlers.clone(),
+                    services.graph_service.clone(),
+                    services.api_handlers.clone(),
                     services.query_adapter(),
                 ));
             // ADR-015 step 2 (DocumentPort).
@@ -1173,8 +1166,12 @@ impl MultiServer {
 
             // Arrow Flight service (HTTP/2-based, shares internal gRPC server)
             let flight_service =
-                crate::network::arrow_ipc::service::ProximaFlightService::from_unified_handlers(
-                    services.request_handlers.clone(),
+                crate::network::arrow_ipc::service::ProximaFlightService::from_services(
+                    services.api_handlers.clone(),
+                    services.record_ops.clone(),
+                    services.vector_operations_service.clone(),
+                    services.collection_service.clone(),
+                    services.graph_service.clone(),
                 )
                 .with_security_coordinator(if self.rest_auth_enabled {
                     self.security_coordinator.clone()
@@ -1548,7 +1545,8 @@ impl MultiServer {
             // ── Build standard services via factory ───────────────────────────
             let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
                 Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    services.request_handlers.clone(),
+                    services.graph_service.clone(),
+                    services.api_handlers.clone(),
                     services.query_adapter(),
                 ));
             let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
@@ -1684,7 +1682,10 @@ impl MultiServer {
             // `tokio::spawn` below — mirrors the single-node start path's
             // `arrow_target_log` (the value has no `Display` impl).
             let arrow_target_log = format!("{arrow_bind_target:?}");
-            let request_handlers = services.request_handlers.clone();
+            let arrow_record_ops = services.record_ops.clone();
+            let arrow_vector_ops = services.vector_operations_service.clone();
+            let arrow_collection = services.collection_service.clone();
+            let arrow_graph = services.graph_service.clone();
             let catalog_manager = services.catalog_manager.clone();
             let security_coordinator = if self.rest_auth_enabled {
                 self.security_coordinator.clone()
@@ -1697,11 +1698,18 @@ impl MultiServer {
             // three see identical routing decisions.
             let primary_pod_registry = services.primary_pod_registry.clone();
             let self_pod_id = services.self_pod_id.clone();
+            let api_handlers = services.api_handlers.clone();
 
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
 
-                let flight_service = ProximaFlightService::from_unified_handlers(request_handlers);
+                let flight_service = ProximaFlightService::from_services(
+                    api_handlers,
+                    arrow_record_ops,
+                    arrow_vector_ops,
+                    arrow_collection,
+                    arrow_graph,
+                );
                 match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
@@ -1728,11 +1736,14 @@ impl MultiServer {
             info!("Starting REST Server on port 5678");
 
             let rest_bind_addr = self.config.http_bind_address();
-            let request_handlers = services.request_handlers.clone();
+            let rest_core =
+                crate::network::rest::v1::handlers::RestCoreServices::from_shared_services(
+                    &services,
+                );
             let metrics_collector = services.metrics_collector.clone();
             let security_coordinator = self.security_coordinator.clone();
             let rest_auth_enabled = self.rest_auth_enabled;
-            let rest_multi_tenant_required = self.rest_multi_tenant_required;
+            let tenant_deployment_mode = self.tenant_deployment_mode.clone();
             let data_dir = self.config.data_dir.clone();
             let query_adapter = Some(services.query_adapter());
             let graph_execution_service = services.graph_execution_service.clone();
@@ -1754,11 +1765,18 @@ impl MultiServer {
 
                 let max_request_size_mb = api_config.map(|c| c.max_request_size_mb);
                 let auth_enabled = security_coordinator.is_some() && rest_auth_enabled;
-                let mut rest_security = if auth_enabled && rest_multi_tenant_required {
+                let mut rest_security = if matches!(
+                    &tenant_deployment_mode,
+                    proximadb_tenant::TenantDeploymentMode::MultiTenant
+                ) {
                     RestServerSecurityConfig::multi_tenant()
                 } else {
                     RestServerSecurityConfig::default()
                 };
+                rest_security.tenant =
+                    crate::network::middleware::tenant::TenantExtractorConfig::from_deployment_mode(
+                        tenant_deployment_mode,
+                    );
                 rest_security.auth.enabled = auth_enabled;
 
                 let rest_ports = RestServerPorts {
@@ -1770,7 +1788,7 @@ impl MultiServer {
 
                 match RestServer::with_security_and_config_and_ports(
                     rest_bind_addr,
-                    request_handlers,
+                    rest_core,
                     graph_execution_service,
                     max_request_size_mb,
                     false, // compression disabled

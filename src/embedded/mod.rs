@@ -3796,6 +3796,8 @@ impl EmbeddedProximaDB {
             let params = GraphFusionParams {
                 route_policy: None,
                 graph_id: graph_id.to_string(),
+                // Embedded stays single-tenant by default (unscoped, byte-identical legacy behavior).
+                tenant: None,
                 vector_collection: vector_collection.to_string(),
                 query_vector,
                 max_depth,
@@ -4360,19 +4362,25 @@ impl EmbeddedProximaDB {
         }
 
         self.runtime.block_on(async {
-            let proto_params = parameters.map(|values| {
-                values
-                    .into_iter()
-                    .map(|value| Self::json_to_sql_value(&value))
-                    .collect()
-            });
+            let proto_params: Option<Vec<crate::proto::proximadb_v1::SqlValue>> =
+                parameters.map(|values| {
+                    values
+                        .into_iter()
+                        .map(|value| Self::json_to_sql_value(&value))
+                        .collect()
+                });
 
             let response = self
                 .shared_services
-                .request_handlers
+                .api_handlers
                 .execute_sql_v1(
                     query.to_string(),
-                    proto_params,
+                    proto_params.as_ref().map(|values| {
+                        values
+                            .iter()
+                            .map(proximadb_records::conversions::sql_value_to_proxima)
+                            .collect()
+                    }),
                     collection.map(str::to_string),
                     None, // embedded single-process: no per-request tenant
                 )

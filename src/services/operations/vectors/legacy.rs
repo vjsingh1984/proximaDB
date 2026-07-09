@@ -84,28 +84,48 @@ use crate::services::operations::{BatchOperationResult, BulkWriteRouter, Operati
 use crate::storage::cache::specialized::query_cache::{QueryCache, QueryKey};
 use crate::storage::engines::sst::SstEngine;
 
-/// Canonical rich record batch request for internal callers.
-#[derive(Debug, Clone)]
-pub struct RichRecordBatchRequest {
-    pub collection_id: String,
-    pub records: Vec<ProximaRecord>,
+const FILTER_FAIL_LOUD_ENV: &str = "PROXIMADB_FILTER_FAIL_LOUD";
+
+fn filter_fail_loud_enabled() -> bool {
+    std::env::var_os(FILTER_FAIL_LOUD_ENV).is_some()
 }
 
-/// Canonical rich record delete request for v2 and internal callers.
-#[derive(Debug, Clone)]
-pub struct RichRecordDeleteBatchRequest {
-    pub collection_id: String,
-    pub record_ids: Vec<String>,
+fn evaluate_v2_filter_for_record(
+    filter: &FilterExpression,
+    record: &ProximaRecord,
+) -> Result<bool> {
+    evaluate_v2_filter_for_record_with_mode(filter, record, filter_fail_loud_enabled())
 }
 
-/// Canonical rich record get request for v2 and internal callers.
-#[derive(Debug, Clone)]
-pub struct RichRecordGetRequest {
-    pub collection_id: String,
-    pub record_id: String,
-    pub include_vector: bool,
-    pub include_props: bool,
+fn evaluate_v2_filter_for_record_with_mode(
+    filter: &FilterExpression,
+    record: &ProximaRecord,
+    fail_loud: bool,
+) -> Result<bool> {
+    if fail_loud {
+        crate::core::search::sql_value_filter::evaluate_filter_proxima_strict(filter, &record.props)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "metadata filter evaluation failed for record '{}': {e}",
+                    if record.oid.is_empty() {
+                        record.local_id.as_deref().unwrap_or("<unknown>")
+                    } else {
+                        record.oid.as_str()
+                    }
+                )
+            })
+    } else {
+        Ok(crate::core::search::sql_value_filter::evaluate_filter_proxima(filter, &record.props))
+    }
 }
+
+// TD-104 Phase 0: these types now live in `proximadb-runtime` (so the
+// `RecordOpsPort` contract is self-contained). Re-exported here so existing
+// `crate::services::operations::vectors::legacy::RichRecord*` callers are
+// unaffected (mirrors the S3a `BatchOperationResult` relocation pattern).
+pub use proximadb_runtime::rich_record::{
+    RichRecordBatchRequest, RichRecordDeleteBatchRequest, RichRecordGetRequest,
+};
 
 /// Canonical rich search request for v2 and internal callers.
 #[derive(Debug, Clone)]
@@ -704,6 +724,30 @@ impl VectorOperationsService {
                 .filter(|r| r.is_visible_at(now_ns))
                 .map(vector_record_to_rich_result)
         })
+    }
+
+    /// Point-get a single FULL record by id, tenant-scoped (TD-DOC-CONV-1).
+    ///
+    /// Unlike [`Self::get_record_with_tenant_context`] (which returns the search-shaped,
+    /// label-less `RichSearchResult`), this returns the whole [`ProximaRecord`] — `labels` +
+    /// `variation_id` intact — so the document facade can be rebuilt from an O(log n) bloom +
+    /// B+ tree point lookup instead of a bounded collection scan. Dead (tombstone / TTL-expired)
+    /// and cross-tenant records are filtered, matching the get/scan surfaces.
+    pub async fn get_full_record_with_tenant_context(
+        &self,
+        collection_id: &str,
+        record_id: &str,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<Option<ProximaRecord>> {
+        self.validate_tenant_collection_access(collection_id, tenant_context)
+            .await?;
+        let record = self.vector(collection_id, record_id, false, true).await?;
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        Ok(record.filter(|r| {
+            r.is_visible_at(now_ns)
+                && tenant_context
+                    .is_none_or(|ctx| r.tenant_id.is_empty() || r.tenant_id == ctx.tenant_id)
+        }))
     }
 
     /// Scan current visible canonical records from the VectorOps-backed WAL/memtable path.
@@ -2421,6 +2465,41 @@ impl VectorOperationsService {
         Ok((v1_results, explain))
     }
 
+    /// Tenant-aware wrapper over [`unified_search_native`]: validates the tenant's access to the
+    /// collection and resolves it to the tenant's canonical id (mirroring `VectorOpsPort::search`),
+    /// then delegates the actual search. Isolation is clean-name + `TenantContext`
+    /// (catalog-resolve and record-stamp), never a name fold. `None` tenant (or empty tenant_id) ⇒
+    /// plain delegation.
+    /// Lets the fusion vector leg read only the tenant's vectors (TD-ENTITY-TENANT-1) without
+    /// touching the existing `unified_search_native` call sites.
+    pub async fn unified_search_native_with_tenant_context(
+        &self,
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        k: usize,
+        filter: Option<FilterExpression>,
+        config: Option<UnifiedSearchConfig>,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        let resolved = match tenant_context {
+            Some(tc) if !tc.tenant_id.is_empty() => {
+                self.validate_tenant_collection_access(collection_id, tenant_context)
+                    .await?;
+                match self
+                    .collection_port
+                    .get_collection(collection_id, Some(&tc.tenant_id))
+                    .await?
+                {
+                    Some(collection) => collection.id,
+                    None => collection_id.to_string(),
+                }
+            }
+            _ => collection_id.to_string(),
+        };
+        self.unified_search_native(&resolved, query_vector, k, filter, config)
+            .await
+    }
+
     /// Native variant: returns optimized native records for internal callers.
     /// Callers at API boundaries should use v1 adapters.
     pub async fn unified_search_native(
@@ -3937,48 +4016,27 @@ impl VectorOperationsService {
             return Ok(Some(result));
         }
 
-        // WAL miss → scan SST files via bloom-filter-accelerated point lookup
+        // WAL miss → point-lookup in SST files. Read the FULL record straight from the SST
+        // reader (bloom-filter reject + B+ tree O(log n) block lookup), rather than the
+        // search-shaped `OptimizedSearchRecord`, so `labels` + `variation_id` are preserved.
+        // Document-facade projections (`proxima_record_to_legacy_document`) require the
+        // `document` label, which the search shape drops (TD-DOC-CONV-1).
         let file_paths = self
             .storage_engine
             .list_collection_files(collection_id)
             .await
             .unwrap_or_default();
 
-        if !file_paths.is_empty() {
-            let search_ops = crate::storage::engines::sst::search::SearchOperations::new(
-                self.storage_engine.clone(),
-            );
-            if let Ok(Some(hit)) = search_ops.point_lookup(&file_paths, vector_id).await {
-                let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-                let vector_values = hit.vector.as_deref().cloned().unwrap_or_default();
-                let dim = vector_values.len() as u32;
-                let mut props = proximadb_records::ProximaTree::new();
-                if include_metadata {
-                    for (k, v) in hit.metadata {
-                        props.insert(k, proximadb_records::ProximaTreeNode::Value(v));
-                    }
+        let reader = self.storage_engine.sstable_reader();
+        for file_path in &file_paths {
+            if let Ok(Some(mut record)) = reader.vector(file_path, vector_id).await {
+                if !include_vector {
+                    record.embeddings.clear();
                 }
-                let embeddings = if include_vector && !vector_values.is_empty() {
-                    vec![proximadb_records::EmbeddingCell {
-                        model_id: "default".to_string(),
-                        modality: "vector".to_string(),
-                        values: proximadb_records::EmbeddingValues::Fp32(vector_values),
-                        dim,
-                        ..Default::default()
-                    }]
-                } else {
-                    vec![]
-                };
-                return Ok(Some(ProximaRecord {
-                    oid: hit.id,
-                    record_version: hit.version.map(|v| v as u64).unwrap_or(1),
-                    created_at_ns: hit.timestamp.unwrap_or(now_ns),
-                    updated_at_ns: hit.updated_at.unwrap_or(now_ns),
-                    valid_to_ns: hit.expires_at,
-                    props,
-                    embeddings,
-                    ..Default::default()
-                }));
+                if !include_metadata {
+                    record.props.clear();
+                }
+                return Ok(Some(record));
             }
         }
 
@@ -4340,6 +4398,34 @@ mod tenant_tests {
             .expect("matching tenant_id should succeed");
 
         assert_eq!(records[0].tenant_id, "tenant_a");
+    }
+
+    #[test]
+    fn filter_fail_loud_gate_preserves_default_and_errors_when_enabled() {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
+
+        let filter = FilterExpression::Comparison {
+            field: "missing".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!("books"),
+        };
+        let record = ProximaRecord {
+            oid: "rec-1".to_string(),
+            ..Default::default()
+        };
+
+        assert!(
+            !evaluate_v2_filter_for_record_with_mode(&filter, &record, false)
+                .expect("legacy evaluator returns bool")
+        );
+
+        let err = evaluate_v2_filter_for_record_with_mode(&filter, &record, true).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("metadata filter evaluation failed")
+        );
+        assert!(err.to_string().contains("missing"));
     }
 
     #[test]
@@ -5533,9 +5619,25 @@ impl VectorQueryService for VectorOperationsService {
 impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
     async fn search(
         &self,
-        request: crate::proto::proximadb_v1::VectorSearchRequest,
-        _tenant_id: Option<&str>,
+        mut request: crate::proto::proximadb_v1::VectorSearchRequest,
+        tenant_id: Option<&str>,
     ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        // TD-XMODAL-8: the cross-modal `vector_search` UDTF reaches this port carrying the pgwire
+        // connection tenant. Resolve the collection UNDER that tenant — the same tenant-scoped
+        // name→canonical-id resolution the REST record path does via
+        // `RecordOpsService::resolve_collection_id_internal` (`collection_port.get_collection`,
+        // TD-XMODAL-6). Without it a tenant-scoped collection name resolves against the unscoped
+        // registry, misses, and the search returns 0 rows even though the data exists. The
+        // resolved id is idempotent for `search_v1`'s own resolution, so tenant-less callers
+        // (`None`) are unaffected.
+        if let Some(tid) = tenant_id.filter(|t| !t.is_empty())
+            && let Ok(Some(collection)) = self
+                .collection_port
+                .get_collection(&request.collection_id, Some(tid))
+                .await
+        {
+            request.collection_id = collection.id;
+        }
         self.search_v1(request).await
     }
 
@@ -5606,21 +5708,31 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
 
         let matching = records
             .into_iter()
-            .filter(|record| {
-                crate::core::search::sql_value_filter::evaluate_filter_proxima(&expr, &record.props)
-            })
+            .filter_map(
+                |record| match evaluate_v2_filter_for_record(&expr, &record) {
+                    Ok(true) => Some(Ok(record)),
+                    Ok(false) => None,
+                    Err(e) => Some(Err(e)),
+                },
+            )
             .map(|record| {
+                let record = record?;
                 // Mirror the v2 scan serializer's id selection (oid, then the
                 // caller-supplied local id) so the ids line up with the BM25
                 // document ids and the vector leg's result ids.
-                if record.oid.is_empty() {
+                let id = if record.oid.is_empty() {
                     record.local_id.unwrap_or_default()
                 } else {
                     record.oid
-                }
+                };
+                Ok(id)
             })
-            .filter(|id| !id.is_empty())
-            .collect();
+            .filter_map(|id| match id {
+                Ok(id) if !id.is_empty() => Some(Ok(id)),
+                Ok(_) => None,
+                Err(e) => Some(Err(e)),
+            })
+            .collect::<Result<_>>()?;
 
         Ok(matching)
     }

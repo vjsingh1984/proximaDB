@@ -22,12 +22,12 @@
 //!
 //! ## Convergence
 //!
-//! The ROOT `UnifiedHandlers` no longer carries this logic inline — it holds an
-//! `Arc<RecordOpsService>` and its inherent `handle_record_*_for_tenant` methods plus
-//! its `RecordOpsPort` impl are thin delegations to this service (Convergence Gate: no
-//! duplicated logic). This lets the Flight service depend on the canonical
-//! [`proximadb_runtime::RecordOpsPort`] backed directly by the runtime
-//! `RecordOpsService` rather than reaching through the ROOT handler.
+//! This is the record write path's single home. TD-104 S3-f deleted the legacy
+//! root `UnifiedHandlers` that previously wrapped this service — its record
+//! logic had already been delegated here, so the convergence is complete with no
+//! duplicated logic. The Arrow Flight ingest path (`do_put`) and the REST/gRPC
+//! v2 record-batch path depend on the canonical
+//! [`proximadb_runtime::RecordOpsPort`] backed directly by this service.
 //!
 //! ## Authority / parity
 //!
@@ -44,13 +44,13 @@
 //! - `NOT_FOUND` / `RECORD_INSERT_FAILED` error shapes.
 
 use anyhow::{Result, anyhow};
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tracing::debug;
 
-use crate::api_handlers::request_handlers::{CollectionIdCache, enforce_wal_lane_for_record_batch};
 use crate::core::search::FilterExpression;
 use crate::services::DmlService;
-use crate::services::WriteOperationKind;
 use crate::services::collection::manager::CollectionService;
 use crate::services::operations::BatchOperationResult;
 use crate::services::operations::vectors::{
@@ -59,7 +59,161 @@ use crate::services::operations::vectors::{
 };
 use crate::services::record_store::ChangeRow;
 use crate::services::scan_cursor::ScanCursor;
+use crate::services::{
+    WriteDurabilityRequirement, WriteIntent, WriteLaneRouter, WriteOperationKind,
+};
 use proximadb_records::ProximaRecord;
+
+// ── Relocated from the deleted root `request_handlers.rs` (TD-104 S3-f) ──────
+// `CollectionIdCache` and `enforce_wal_lane_for_record_batch` were the only
+// items in that module this service still depended on; both are record-write-
+// path helpers, so they now live here next to their sole consumer.
+
+const COLLECTION_ID_CACHE_TTL_SECS: u64 = 300;
+const COLLECTION_ID_CACHE_MAX_SIZE: usize = 1000;
+
+/// Cache entry for collection ID resolution
+#[derive(Clone)]
+struct CollectionIdCacheEntry {
+    collection_id: String,
+    cached_at: Instant,
+}
+
+/// Thread-safe TTL-based cache for collection ID resolution
+///
+/// Reduces latency from ~5ms/request (metadata backend lookup) to ~0.1ms (cache hit).
+/// Uses a simple HashMap with RwLock for concurrent access.
+pub struct CollectionIdCache {
+    cache: std::sync::RwLock<HashMap<String, CollectionIdCacheEntry>>,
+    ttl: Duration,
+    max_size: usize,
+}
+
+impl CollectionIdCache {
+    /// Create a new cache with default TTL and max size
+    pub fn new() -> Self {
+        Self {
+            cache: std::sync::RwLock::new(HashMap::new()),
+            ttl: Duration::from_secs(COLLECTION_ID_CACHE_TTL_SECS),
+            max_size: COLLECTION_ID_CACHE_MAX_SIZE,
+        }
+    }
+
+    /// Create a new cache with custom TTL
+    pub fn with_ttl(ttl: Duration) -> Self {
+        Self {
+            cache: std::sync::RwLock::new(HashMap::new()),
+            ttl,
+            max_size: COLLECTION_ID_CACHE_MAX_SIZE,
+        }
+    }
+
+    /// Get a cached collection ID if it exists and is not expired
+    pub fn get(&self, identifier: &str) -> Option<String> {
+        let cache = self.cache.read().ok()?;
+        if let Some(entry) = cache.get(identifier)
+            && entry.cached_at.elapsed() < self.ttl
+        {
+            debug!(
+                "Collection ID cache hit: '{}' -> '{}'",
+                identifier, entry.collection_id
+            );
+            return Some(entry.collection_id.clone());
+        }
+        None
+    }
+
+    /// Insert a collection ID into the cache
+    pub fn insert(&self, identifier: String, collection_id: String) {
+        if let Ok(mut cache) = self.cache.write() {
+            // Evict expired entries if cache is too large
+            if cache.len() >= self.max_size {
+                self.evict_expired(&mut cache);
+            }
+
+            // If still too large after eviction, remove oldest entries
+            if cache.len() >= self.max_size {
+                // Simple eviction: clear half the cache
+                let keys_to_remove: Vec<_> = cache
+                    .iter()
+                    .take(cache.len() / 2)
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                for key in keys_to_remove {
+                    cache.remove(&key);
+                }
+            }
+
+            cache.insert(
+                identifier,
+                CollectionIdCacheEntry {
+                    collection_id,
+                    cached_at: Instant::now(),
+                },
+            );
+        }
+    }
+
+    /// Invalidate a specific cache entry (call on collection delete/update)
+    pub fn invalidate(&self, identifier: &str) {
+        if let Ok(mut cache) = self.cache.write() {
+            cache.remove(identifier);
+            // Also remove any entries that might have the collection_id as the identifier
+            // (since resolve_collection_id accepts both name and id)
+            let keys_to_remove: Vec<_> = cache
+                .iter()
+                .filter(|(_, entry)| entry.collection_id == identifier)
+                .map(|(k, _)| k.clone())
+                .collect();
+            for key in keys_to_remove {
+                cache.remove(&key);
+            }
+        }
+    }
+
+    /// Evict expired entries from the cache
+    fn evict_expired(&self, cache: &mut HashMap<String, CollectionIdCacheEntry>) {
+        let keys_to_remove: Vec<_> = cache
+            .iter()
+            .filter(|(_, entry)| entry.cached_at.elapsed() >= self.ttl)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in keys_to_remove {
+            cache.remove(&key);
+        }
+    }
+
+    /// Clear the entire cache
+    pub fn clear(&self) {
+        if let Ok(mut cache) = self.cache.write() {
+            cache.clear();
+        }
+    }
+}
+
+impl Default for CollectionIdCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Enforce the WAL-lane gate for a record-batch write: reject fast when the
+/// write-intent router denies a WAL-required write (returns `WAL_LANE_REJECTED`
+/// upstream). Relocated verbatim from the deleted root `request_handlers.rs`.
+pub(crate) fn enforce_wal_lane_for_record_batch(
+    collection_id: &str,
+    operation_kind: WriteOperationKind,
+    row_count: u64,
+    context: &str,
+) -> Result<(), String> {
+    let intent = WriteIntent::new(collection_id, operation_kind)
+        .with_durability(WriteDurabilityRequirement::WalRequired)
+        .with_row_count_hint(row_count);
+    let decision = WriteLaneRouter::new().route(&intent);
+    decision
+        .require_wal_lane(context)
+        .map_err(|e| e.to_string())
+}
 
 /// Canonical record-batch orchestration service.
 ///
@@ -75,9 +229,6 @@ pub struct RecordOpsService {
     /// DML service for schema validation + row-count stats. Settable
     /// post-construction (thread-safe), mirroring ROOT's prior behaviour.
     dml_service: std::sync::RwLock<Option<Arc<DmlService>>>,
-    /// DDL service for relational CREATE/ALTER/DROP submitted over the gRPC
-    /// `ExecuteQuery` RPC (TD-135). Settable post-construction (thread-safe).
-    ddl_service: std::sync::RwLock<Option<Arc<crate::services::DdlService>>>,
     /// Set-once canonical-precision resolver — wired at server bootstrap so the
     /// record path coerces embeddings to each collection's canonical precision
     /// before WAL append (TD-080/TD-082).
@@ -104,7 +255,6 @@ impl RecordOpsService {
             vector_operations_service,
             collection_id_cache: CollectionIdCache::new(),
             dml_service: std::sync::RwLock::new(None),
-            ddl_service: std::sync::RwLock::new(None),
             precision_resolver: std::sync::OnceLock::new(),
             lease_manager: std::sync::RwLock::new(None),
         }
@@ -175,18 +325,6 @@ impl RecordOpsService {
                 Err(anyhow!("lease-on-write acquire failed: {}", e))
             }
         }
-    }
-
-    /// Wire a `DdlService` so gRPC `ExecuteQuery` can run relational DDL (TD-135).
-    /// Callable post-initialization; thread-safe.
-    pub fn set_ddl_service(&self, svc: Arc<crate::services::DdlService>) {
-        if let Ok(mut guard) = self.ddl_service.write() {
-            *guard = Some(svc);
-        }
-    }
-
-    pub(crate) fn get_ddl_service(&self) -> Option<Arc<crate::services::DdlService>> {
-        self.ddl_service.read().ok().and_then(|guard| guard.clone())
     }
 
     /// Post-construction setter for the canonical-precision resolver.
@@ -547,13 +685,13 @@ impl RecordOpsService {
     }
 
     // ---- record READ path (TD-104 REST phase 2) -------------------------------
-    // Moved verbatim from ROOT `UnifiedHandlers` so the REST layer reaches these
-    // via `state.record_ops` instead of `state.request_handlers`. ROOT keeps thin
-    // delegating inherent wrappers for its gRPC callers (see request_handlers.rs).
-    // Behaviour-identical: the `self.<svc>` references resolve to the same Arcs
-    // ROOT held (collection_service / vector_operations_service / dml_service),
-    // and `resolve_collection_id_internal` is this service's own (ROOT already
-    // delegates the cache here — one logical owner).
+    // Historically moved verbatim from the legacy root `UnifiedHandlers` so the
+    // REST layer reaches these via `state.record_ops`. With the root handler now
+    // deleted (TD-104 S3-f), this service IS the record path. Behaviour-identical:
+    // the `self.<svc>` references resolve to the same Arcs
+    // (collection_service / vector_operations_service / dml_service), and
+    // `resolve_collection_id_internal` is this service's own (single logical owner
+    // of the collection-id cache).
 
     /// Canonical rich-record search handler used by v2 REST/gRPC/internal callers.
     pub async fn handle_record_search_for_tenant(
@@ -602,6 +740,29 @@ impl RecordOpsService {
 
         self.vector_operations_service
             .get_record_with_tenant_context(request, tenant_context.as_ref())
+            .await
+    }
+
+    /// Point-get a single FULL record by id, tenant-scoped (TD-DOC-CONV-1). Resolves the tenant
+    /// and collection, then returns the whole `ProximaRecord` (labels + props) via the O(log n)
+    /// bloom-filter and B+ tree point lookup — the document facade needs the `document` label that
+    /// the search-shaped get drops. `None` when the collection or record is absent.
+    pub async fn handle_record_get_full_for_tenant(
+        &self,
+        collection_id: &str,
+        record_id: &str,
+        tenant_id: Option<&str>,
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        let resolved = match self
+            .resolve_collection_id_internal(collection_id, tenant_context.as_ref())
+            .await?
+        {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+        self.vector_operations_service
+            .get_full_record_with_tenant_context(&resolved, record_id, tenant_context.as_ref())
             .await
     }
 
@@ -707,5 +868,130 @@ impl proximadb_runtime::RecordOpsPort for RecordOpsService {
             tenant_id,
         )
         .await
+    }
+}
+
+// ADR-009 convergence: the document facade's canonical branch routes here so a
+// document written via gRPC/DocumentService lands in the same tenant-scoped record
+// store REST v2 already uses — closing the store-split. Writes upsert (a re-inserted
+// document id updates in place); reads use the paginated scan, which returns full
+// `ProximaRecord`s (labels + props) needed to rebuild the document facade.
+#[async_trait::async_trait]
+impl proximadb_runtime::RecordRoutePort for RecordOpsService {
+    async fn insert_records(
+        &self,
+        collection_id: &str,
+        records: Vec<proximadb_records::ProximaRecord>,
+        tenant: Option<&str>,
+    ) -> Result<usize> {
+        let result = self
+            .handle_record_batch_for_tenant(
+                RichRecordBatchRequest {
+                    collection_id: collection_id.to_string(),
+                    records,
+                },
+                tenant,
+            )
+            .await?;
+        if result.success {
+            Ok(result.vector_ids.len())
+        } else {
+            Err(anyhow!(
+                "record route insert failed: {}",
+                result.errors.join("; ")
+            ))
+        }
+    }
+
+    async fn get_record(
+        &self,
+        collection_id: &str,
+        record_id: &str,
+        tenant: Option<&str>,
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
+        self.handle_record_get_full_for_tenant(collection_id, record_id, tenant)
+            .await
+    }
+
+    async fn scan_records(
+        &self,
+        collection_id: &str,
+        limit: usize,
+        tenant: Option<&str>,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+        let (records, _next_cursor) = self
+            .handle_record_scan_paginated_for_tenant(
+                collection_id,
+                None,
+                limit,
+                false,
+                true,
+                tenant,
+                None,
+                now_ns,
+            )
+            .await?;
+        Ok(records)
+    }
+
+    async fn collection_exists(&self, collection_id: &str, tenant: Option<&str>) -> bool {
+        // Resolve through the SAME catalog path the write path uses (so the answer matches
+        // whether an insert would resolve), tenant-scoped. Any error ⇒ false (fail toward
+        // the safe legacy path) so the default-ON document gate never hard-fails a write to
+        // a non-canonical collection.
+        let tenant_context = match self.collection_service.load_tenant_context(tenant) {
+            Ok(tc) => tc,
+            Err(_) => return false,
+        };
+        matches!(
+            self.resolve_collection_id_internal(collection_id, tenant_context.as_ref())
+                .await,
+            Ok(Some(_))
+        )
+    }
+
+    async fn ensure_collection(
+        &self,
+        collection_id: &str,
+        dimension: u32,
+        tenant: Option<&str>,
+    ) -> Result<()> {
+        // Idempotent create-if-not-exists so a document collection becomes a resolvable canonical
+        // collection (P-Provision, ADR-055). Delegates to the CollectionService helper (which owns
+        // the v1 `CollectionConfig` construction) — this keeps `record_ops_service` v1-proto-free
+        // (TD-123 ratchet). `dimension == 0` ⇒ a vectorless (pure-document) collection.
+        let tenant_context = self.collection_service.load_tenant_context(tenant)?;
+        self.collection_service
+            .get_or_create_by_name(collection_id, dimension, tenant_context.as_ref())
+            .await
+    }
+
+    async fn delete_records(
+        &self,
+        collection_id: &str,
+        record_ids: Vec<String>,
+        tenant: Option<&str>,
+    ) -> Result<usize> {
+        let result = self
+            .handle_record_delete_batch_for_tenant(
+                RichRecordDeleteBatchRequest {
+                    collection_id: collection_id.to_string(),
+                    record_ids,
+                },
+                tenant,
+            )
+            .await?;
+        if result.success {
+            Ok(result.vector_ids.len())
+        } else {
+            Err(anyhow!(
+                "record route delete failed: {}",
+                result.errors.join("; ")
+            ))
+        }
     }
 }

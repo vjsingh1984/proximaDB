@@ -16,12 +16,26 @@ use std::sync::{
 };
 
 /// Result of a successful query execution.
-#[derive(Debug)]
+///
+/// `Clone` is required so the pgwire OLAP result cache
+/// (`QueryResultCache<ExecutionPipelineResult>`) can retain + serve a copy of
+/// a result without re-executing the query.
+#[derive(Debug, Clone)]
 pub struct ExecutionPipelineResult {
     /// Ordered result schema.
     pub schema: RelationalSchema,
     /// Fully materialized rows.
     pub rows: Vec<RelationalRow>,
+}
+
+impl crate::query::cache::query_result_cache::CacheableResult for ExecutionPipelineResult {
+    fn estimated_size_bytes(&self) -> usize {
+        // Same heuristic the cache historically used for ExecutionResult:
+        // ~100 bytes per field per row + per-field schema overhead.
+        let row_count = self.rows.len();
+        let field_count = self.schema.columns.len();
+        row_count * field_count * 100 + field_count * 64 + 256
+    }
 }
 
 impl ExecutionPipelineResult {
@@ -160,6 +174,8 @@ pub struct QueryExecutionContext {
     pub parquet_tables: Vec<(String, String)>,
     /// Optional vector operations service for cross-modal search.
     pub vector_ops: Option<Arc<dyn proximadb_runtime::VectorOpsPort>>,
+    /// Optional graph read service for the cross-modal `graph_traverse` table function.
+    pub graph_ops: Option<Arc<dyn proximadb_graph_query::service::GraphQueryReadService>>,
     /// Optional request tenant for engines that need tenant-scoped I/O, metrics,
     /// or billing attribution.
     pub tenant_id: Option<String>,
@@ -269,6 +285,14 @@ impl NativeVolcanoEngine {
     ) -> Result<ExecutionPipelineResult, ExecutionError> {
         controls.check_cancelled()?;
         let physical = cap_plan(physical, &controls);
+        // ADR-054 Phase 2 (TD-OLAP-10): try the native vectorized path before
+        // the Volcano. Runs after `cap_plan` so a request-scoped row cap (added
+        // as a trailing `Limit`) is honored by the vectorized lowering too.
+        // Default-off; any decline or failure falls back to the Volcano inside
+        // `try_vectorized` (the experimental path never fails a query).
+        if let Some(result) = super::native_engine::try_vectorized(&physical).await? {
+            return finalize_row_limit(result, &controls);
+        }
         let mut exec = build_executor(physical, factory, &VolcanoExecutionContext::default())
             .map_err(|e| ExecutionError::Execution(format!("build_executor: {e}")))?;
         controls.check_cancelled()?;

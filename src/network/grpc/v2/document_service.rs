@@ -63,16 +63,22 @@ impl ProximaDocumentServiceImpl {
         ProximaDocumentServiceServer::new(self)
     }
 
-    /// Derive the effective backing collection namespace from the request tenant.
+    /// Resolve the request tenant and compose the `(clean, scoped)` collection pair.
     ///
-    /// Isolation is structural: the tenant is folded into the storage key, never
-    /// applied as a per-query predicate. Embedded / unauthenticated calls (no
-    /// tenant) fall back to the raw `collection_id`.
-    fn effective_collection_id<T>(request: &Request<T>, collection_id: &str) -> String {
-        match grpc_auth::tenant_id(request) {
-            Some(tenant) if !tenant.is_empty() => format!("{tenant}::{collection_id}"),
-            _ => collection_id.to_string(),
-        }
+    /// Isolation is structural: `scoped` is the storage key `{tenant}/{collection}` (default
+    /// tenant ⇒ bare, matching bare-created collections) used for every `DocumentService` call
+    /// AND for the record's `collection_id` (they key the same canonical OID). `clean` is the
+    /// tenant-clean name the caller sent, echoed back in responses so the `{tenant}/` prefix never
+    /// leaks. Fail-closed on an invalid tenant. Replaces the former `{tenant}::` name fold.
+    fn scoped_collection<T>(
+        request: &Request<T>,
+        collection_id: &str,
+    ) -> Result<(String, String), Status> {
+        let tenant = grpc_auth::resolved_tenant_id(request);
+        let scoped =
+            crate::storage::document::service::scoped_document_collection(&tenant, collection_id)
+                .map_err(|e| Status::invalid_argument(format!("invalid tenant: {e}")))?;
+        Ok((collection_id.to_string(), scoped))
     }
 }
 
@@ -128,6 +134,15 @@ mod conv {
             document_type: record.document_type.clone(),
             updated_at_ms: record.updated_at_ns / 1_000_000,
         }
+    }
+
+    /// Like [`record_to_v2`], but echoes the tenant-CLEAN `collection_id` the caller sent instead
+    /// of the record's stored (tenant-scoped `{tenant}/{collection}`) key — so the structural
+    /// scope prefix never leaks back to the client.
+    pub fn record_to_v2_clean(record: &DocumentRecord, clean_collection: &str) -> pv2::Document {
+        let mut doc = record_to_v2(record);
+        doc.collection_id = clean_collection.to_string();
+        doc
     }
 
     /// v2 sort fields -> v1 proto `SortField`. Value-free (path + order only), so
@@ -263,7 +278,8 @@ impl ProximaDocumentService for ProximaDocumentServiceImpl {
         &self,
         request: Request<pv2::CreateDocumentRequest>,
     ) -> Result<Response<pv2::DocumentResponse>, Status> {
-        let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
+        let (clean, collection) =
+            Self::scoped_collection(&request, &request.get_ref().collection_id)?;
         let req = request.into_inner();
         debug!("v2 gRPC CreateDocument collection={collection}");
 
@@ -273,6 +289,8 @@ impl ProximaDocumentService for ProximaDocumentServiceImpl {
         } else {
             req.id
         };
+        // `record.collection_id` = the SCOPED key (same as the storage-key param): together they
+        // key the canonical OID, so recovery/read agree.
         let record = DocumentRecord::from_tree(
             id,
             props,
@@ -287,7 +305,7 @@ impl ProximaDocumentService for ProximaDocumentServiceImpl {
             .await
         {
             Ok(stored) => Ok(Response::new(pv2::DocumentResponse {
-                document: Some(conv::record_to_v2(&stored)),
+                document: Some(conv::record_to_v2_clean(&stored, &clean)),
             })),
             Err(e) => {
                 error!("v2 gRPC CreateDocument failed: {e}");
@@ -300,7 +318,8 @@ impl ProximaDocumentService for ProximaDocumentServiceImpl {
         &self,
         request: Request<pv2::GetDocumentRequest>,
     ) -> Result<Response<pv2::DocumentResponse>, Status> {
-        let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
+        let (clean, collection) =
+            Self::scoped_collection(&request, &request.get_ref().collection_id)?;
         let req = request.into_inner();
         debug!("v2 gRPC GetDocument collection={collection} id={}", req.id);
 
@@ -310,7 +329,7 @@ impl ProximaDocumentService for ProximaDocumentServiceImpl {
             .await
         {
             Ok(Some(record)) => Ok(Response::new(pv2::DocumentResponse {
-                document: Some(conv::record_to_v2(&record)),
+                document: Some(conv::record_to_v2_clean(&record, &clean)),
             })),
             Ok(None) => Err(Status::not_found(format!(
                 "document '{}' not found in collection '{collection}'",
@@ -327,7 +346,8 @@ impl ProximaDocumentService for ProximaDocumentServiceImpl {
         &self,
         request: Request<pv2::DeleteDocumentRequest>,
     ) -> Result<Response<pv2::DeleteDocumentResponse>, Status> {
-        let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
+        let (_clean, collection) =
+            Self::scoped_collection(&request, &request.get_ref().collection_id)?;
         let req = request.into_inner();
         debug!(
             "v2 gRPC DeleteDocument collection={collection} id={}",
@@ -347,7 +367,8 @@ impl ProximaDocumentService for ProximaDocumentServiceImpl {
         &self,
         request: Request<pv2::UpdateDocumentRequest>,
     ) -> Result<Response<pv2::DocumentResponse>, Status> {
-        let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
+        let (clean, collection) =
+            Self::scoped_collection(&request, &request.get_ref().collection_id)?;
         let req = request.into_inner();
         debug!(
             "v2 gRPC UpdateDocument collection={collection} id={} updates={}",
@@ -362,7 +383,7 @@ impl ProximaDocumentService for ProximaDocumentServiceImpl {
             .await
         {
             Ok(updated) => Ok(Response::new(pv2::DocumentResponse {
-                document: Some(conv::record_to_v2(&updated)),
+                document: Some(conv::record_to_v2_clean(&updated, &clean)),
             })),
             Err(e) => {
                 error!("v2 gRPC UpdateDocument failed: {e}");
@@ -375,7 +396,8 @@ impl ProximaDocumentService for ProximaDocumentServiceImpl {
         &self,
         request: Request<pv2::QueryDocumentsRequest>,
     ) -> Result<Response<pv2::QueryDocumentsResponse>, Status> {
-        let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
+        let (clean, collection) =
+            Self::scoped_collection(&request, &request.get_ref().collection_id)?;
         let req = request.into_inner();
         debug!(
             "v2 gRPC QueryDocuments collection={collection} limit={} offset={}",
@@ -396,7 +418,11 @@ impl ProximaDocumentService for ProximaDocumentServiceImpl {
 
         match self.documents.query_documents(&collection, params).await {
             Ok(result) => Ok(Response::new(pv2::QueryDocumentsResponse {
-                documents: result.documents.iter().map(conv::record_to_v2).collect(),
+                documents: result
+                    .documents
+                    .iter()
+                    .map(|r| conv::record_to_v2_clean(r, &clean))
+                    .collect(),
                 total_count: result.total_count,
                 query_time_ms: result.query_time_ms,
             })),
@@ -411,7 +437,8 @@ impl ProximaDocumentService for ProximaDocumentServiceImpl {
         &self,
         request: Request<pv2::AggregateDocumentsRequest>,
     ) -> Result<Response<pv2::AggregateDocumentsResponse>, Status> {
-        let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
+        let (_clean, collection) =
+            Self::scoped_collection(&request, &request.get_ref().collection_id)?;
         let req = request.into_inner();
         debug!(
             "v2 gRPC AggregateDocuments collection={} pipeline_len={}",

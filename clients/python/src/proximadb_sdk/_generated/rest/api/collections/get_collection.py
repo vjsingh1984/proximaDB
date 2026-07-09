@@ -12,12 +12,17 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.collection_v2_response import CollectionV2Response
 from ...models.error_response import ErrorResponse
-from ...types import UNSET, Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     collection_id: str,
+    *,
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_tenant_id, Unset):
+        headers["X-Tenant-ID"] = x_tenant_id
 
     _kwargs: dict[str, Any] = {
         "method": "get",
@@ -26,6 +31,7 @@ def _get_kwargs(
         ),
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -61,6 +67,7 @@ def sync_detailed(
     collection_id: str,
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[CollectionV2Response, ErrorResponse]]:
     """Get collection details.
 
@@ -81,6 +88,7 @@ def sync_detailed(
 
     Args:
         collection_id (str):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -92,6 +100,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         collection_id=collection_id,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -105,6 +114,7 @@ def sync(
     collection_id: str,
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[CollectionV2Response, ErrorResponse]]:
     """Get collection details.
 
@@ -125,6 +135,7 @@ def sync(
 
     Args:
         collection_id (str):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,6 +148,7 @@ def sync(
     return sync_detailed(
         collection_id=collection_id,
         client=client,
+        x_tenant_id=x_tenant_id,
     ).parsed
 
 
@@ -144,6 +156,7 @@ async def asyncio_detailed(
     collection_id: str,
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Response[Union[CollectionV2Response, ErrorResponse]]:
     """Get collection details.
 
@@ -164,6 +177,7 @@ async def asyncio_detailed(
 
     Args:
         collection_id (str):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -175,6 +189,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         collection_id=collection_id,
+        x_tenant_id=x_tenant_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -186,6 +201,7 @@ async def asyncio(
     collection_id: str,
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: Union[Unset, str] = UNSET,
 ) -> Optional[Union[CollectionV2Response, ErrorResponse]]:
     """Get collection details.
 
@@ -206,6 +222,7 @@ async def asyncio(
 
     Args:
         collection_id (str):
+        x_tenant_id (Union[Unset, str]):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -219,5 +236,6 @@ async def asyncio(
         await asyncio_detailed(
             collection_id=collection_id,
             client=client,
+            x_tenant_id=x_tenant_id,
         )
     ).parsed

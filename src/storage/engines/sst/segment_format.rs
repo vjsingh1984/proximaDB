@@ -238,7 +238,7 @@ pub fn pax_inputs_have_f32_tier(input_files: &[std::path::PathBuf]) -> bool {
 /// filesystem trait (object-store-safe) and calls this. Mirrors
 /// [`pax_inputs_have_f32_tier`]'s `PaxSegmentScanner` block-0 metadata read.
 pub fn pax_segment_is_coarse_rabitq_without_f32_tier(bytes: &[u8]) -> bool {
-    use proximadb_block_format::vparam::QUANT_RABITQ_RESERVED;
+    use proximadb_block_format::vparam::QUANT_RABITQ;
     if SegmentFormat::detect(bytes) != SegmentFormat::Pax {
         return false;
     }
@@ -256,7 +256,7 @@ pub fn pax_segment_is_coarse_rabitq_without_f32_tier(bytes: &[u8]) -> bool {
     let Some(embed) = vparams.get(col_id::EMBED_BASE) else {
         return false;
     };
-    embed.quant_kind == QUANT_RABITQ_RESERVED && vparams.get(col_id::F32_TIER_BASE).is_none()
+    embed.quant_kind == QUANT_RABITQ && vparams.get(col_id::F32_TIER_BASE).is_none()
 }
 
 /// Detect the tier-2 rerank quant strategy of the source `.pax` segments, so

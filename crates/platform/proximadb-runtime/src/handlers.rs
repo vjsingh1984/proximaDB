@@ -9,9 +9,10 @@
 //!
 //! ## Migration status
 //!
-//! The real implementation still lives in `src/api_handlers/request_handlers.rs`
-//! in the root crate, which implements `ApiHandlersPort` via delegation.  This
-//! stub will replace it once the concrete services are extracted to this crate.
+//! This is the **sole production** `ApiHandlersPort` implementation. The legacy
+//! root-crate twin (`src/api_handlers/request_handlers.rs`) was retired in
+//! TD-104 S3-f — every REST/gRPC/Arrow/pgwire/embedded surface now routes
+//! through this handler, which delegates to injected service ports.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -134,12 +135,11 @@ pub struct HybridRuntimeConfig;
 /// `handle_vector_search_v1_*`, `execute_sql_v1`, …) that this impl bridges to
 /// the ports; those retire with the TD-123 v1→v2 message migration.
 ///
-/// The legacy twin (`api_handlers::UnifiedHandlers` in the root crate) also
-/// impls `ApiHandlersPort`, additionally owns the write/graph/doc/DDL
-/// orchestration services, and is the dev/test default `AppState.api_handlers`
-/// (TD-104); prod overrides that default with THIS handler via
-/// `with_api_handlers` (`rest/server.rs`, `multi_server.rs`). The legacy handler
-/// retires once its orchestration is extracted into runtime ports.
+/// The legacy root-crate twin (`api_handlers::UnifiedHandlers`) was retired in
+/// TD-104 S3-f: its orchestration was extracted onto runtime ports / concrete
+/// services, and every network surface (REST/gRPC/Arrow/pgwire/embedded) now
+/// routes through THIS handler. There is no longer a root-crate `ApiHandlersPort`
+/// impl — this is the sole production handler.
 ///
 /// Composition root that wires service ports into the API surface.
 ///
@@ -433,11 +433,9 @@ fn supports_range_filter(value: &ProximaType) -> bool {
 }
 
 // ── ApiHandlersPort implementation ───────────────────────────────────────────
-// CANONICAL impl. New schema/port methods belong here (runtime-native shape).
-// The legacy twin lives in `src/api_handlers/request_handlers.rs`
-// (`impl ApiHandlersPort for UnifiedHandlers` on the root-crate struct) and
-// bridges to v1 CollectionRequest/CollectionOperation — edit that one only to
-// keep the bridge compiling; do not extend it for new functionality.
+// CANONICAL impl — and the sole production one. New schema/port methods belong
+// here (runtime-native shape). (The legacy root-crate twin that used to bridge
+// to v1 CollectionRequest/CollectionOperation was deleted in TD-104 S3-f.)
 
 #[async_trait]
 impl ApiHandlersPort for UnifiedHandlers {
@@ -626,7 +624,7 @@ impl ApiHandlersPort for UnifiedHandlers {
         query: String,
         _parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
-        _tenant_id: Option<&str>,
+        tenant_id: Option<&str>,
     ) -> Result<ExecuteQueryResponse> {
         let adapter = self
             .query_adapter
@@ -634,7 +632,7 @@ impl ApiHandlersPort for UnifiedHandlers {
             .ok_or_else(|| anyhow!("SQL execution requires QueryAdapterPort (not wired)"))?;
 
         let start = Instant::now();
-        let json_result = adapter.execute_sql(query, collection).await?;
+        let json_result = adapter.execute_sql(query, collection, tenant_id).await?;
 
         let records = json_result
             .get("records")
@@ -686,7 +684,12 @@ impl ApiHandlersPort for UnifiedHandlers {
             })
             .collect();
 
-        let rows_returned = rows.len() as u64;
+        // TD-135: a write's affected count is carried in `rows_affected`; reads
+        // carry no such key and report the record count, unchanged.
+        let rows_returned = json_result
+            .get("rows_affected")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(rows.len() as u64);
         let rows_scanned = json_result
             .get("total_count")
             .and_then(|v| v.as_u64())
@@ -889,6 +892,7 @@ mod tests {
             &self,
             _query: String,
             _collection: Option<String>,
+            _tenant_id: Option<&str>,
         ) -> Result<serde_json::Value> {
             Ok(json!({
                 "columns": ["id", "score", "flag", "none", "obj"],
@@ -1155,6 +1159,7 @@ mod tests {
                 &self,
                 _query: String,
                 _collection: Option<String>,
+                _tenant_id: Option<&str>,
             ) -> Result<serde_json::Value> {
                 Ok(json!(["text", 7, false, null, {"shape": "object"}]))
             }

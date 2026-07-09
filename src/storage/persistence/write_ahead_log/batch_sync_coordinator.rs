@@ -280,12 +280,13 @@ impl BatchSyncCoordinator {
         // Perform sync based on durability level
         match &self.durability_level {
             DurabilityLevel::SyncData => {
-                // For now, we use sync_file which does fsync
-                // Deferred: Implement fdatasync for metadata-only sync
-                filesystem.sync_file(file_path).await?;
+                // Data-only durability: fdatasync on local disks (flush contents
+                // without the extra inode-metadata barrier); remote backends fall
+                // back to a full sync via the `sync_data` trait default.
+                filesystem.sync_data(file_path).await?;
             }
             DurabilityLevel::SyncFull => {
-                // Full fsync
+                // Full fsync (data + metadata).
                 filesystem.sync_file(file_path).await?;
             }
             _ => {

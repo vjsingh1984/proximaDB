@@ -536,9 +536,10 @@ impl DdlService {
 
     /// Execute a DDL statement within a tenant scope (TD-064). The tenant
     /// scopes table-targeting DDL (CREATE/DROP/ALTER TABLE, CREATE/DROP INDEX)
-    /// onto the same tenant-prefixed catalog namespace the DML path resolves, so
-    /// a tenant's CREATE-then-INSERT address one schema row. `None` ⇒
-    /// single-tenant, identical to the legacy path.
+    /// and explicit namespace creation onto the same tenant-prefixed catalog
+    /// namespace the DML path resolves, so a tenant's CREATE-then-INSERT
+    /// address one schema row. `None` ⇒ single-tenant, identical to the legacy
+    /// path.
     pub async fn execute_scoped(
         &self,
         statement: DdlStatement,
@@ -579,6 +580,12 @@ impl DdlService {
                     )
                 })?;
                 let location = materializer.materialize(&name, tenant).await?;
+                // TD-OLAP-4: a re-MATERIALIZE republishes the base at this
+                // location, so any cached table-OPEN discovery (schema/splits/
+                // sizes) for it is now stale — drop it so reads re-discover.
+                crate::datafusion::engine_adapters::table_open_cache::invalidate_location(
+                    &location,
+                );
                 Ok(DdlResult::success(format!(
                     "Materialized table '{name}' to '{location}'"
                 )))
@@ -613,14 +620,17 @@ impl DdlService {
                 if_not_exists,
                 properties,
             } => {
-                self.create_namespace(&namespace, if_not_exists, properties)
+                self.create_namespace(&namespace, if_not_exists, properties, tenant)
                     .await
             }
             DdlStatement::DropNamespace {
                 namespace,
                 if_exists,
                 cascade,
-            } => self.drop_namespace(&namespace, if_exists, cascade).await,
+            } => {
+                self.drop_namespace(&namespace, if_exists, cascade, tenant)
+                    .await
+            }
             DdlStatement::CreateCollection {
                 collection_name,
                 dimension,
@@ -1060,18 +1070,40 @@ impl DdlService {
     // Namespace Operations
     // ========================
 
+    fn tenant_scoped_namespace(namespace: &[String], tenant: Option<&str>) -> Result<Vec<String>> {
+        let Some(tenant) = tenant.filter(|tenant| !tenant.is_empty()) else {
+            return Ok(namespace.to_vec());
+        };
+        if tenant.starts_with('_') {
+            anyhow::bail!(
+                "tenant '{tenant}' is invalid: tenant identifiers must not begin with '_' \
+                 (reserved for system/control-plane catalog subtrees)"
+            );
+        }
+        if namespace.first().is_some_and(|segment| segment == tenant) {
+            return Ok(namespace.to_vec());
+        }
+
+        let mut scoped = Vec::with_capacity(namespace.len() + 1);
+        scoped.push(tenant.to_string());
+        scoped.extend(namespace.iter().cloned());
+        Ok(scoped)
+    }
+
     /// Create a new namespace (schema grouping) in the default catalog.
     async fn create_namespace(
         &self,
         namespace: &[String],
         if_not_exists: bool,
         properties: HashMap<String, String>,
+        tenant: Option<&str>,
     ) -> Result<DdlResult> {
         let catalog = self.catalog_manager.default_catalog().await?;
+        let namespace = Self::tenant_scoped_namespace(namespace, tenant)?;
         let ns_name = namespace.join(".");
 
         // Check if namespace exists
-        if catalog.namespace_exists(namespace).await? {
+        if catalog.namespace_exists(&namespace).await? {
             if if_not_exists {
                 return Ok(DdlResult::already_exists("Namespace", &ns_name));
             } else {
@@ -1079,8 +1111,20 @@ impl DdlService {
             }
         }
 
-        // Create the namespace
-        catalog.create_namespace(namespace, properties).await?;
+        // Create the namespace. In a tenant-scoped request, persist the owning
+        // tenant so downstream DrPathBuilder users can fail closed on
+        // cross-tenant materialize/read paths instead of treating the namespace
+        // as legacy/unowned.
+        match tenant {
+            Some(tenant) if !tenant.is_empty() => {
+                catalog
+                    .create_namespace_for_tenant(&namespace, properties, Some(tenant))
+                    .await?;
+            }
+            _ => {
+                catalog.create_namespace(&namespace, properties).await?;
+            }
+        }
 
         info!(namespace = %ns_name, "Created namespace");
         Ok(DdlResult::success(format!(
@@ -1095,12 +1139,14 @@ impl DdlService {
         namespace: &[String],
         if_exists: bool,
         cascade: bool,
+        tenant: Option<&str>,
     ) -> Result<DdlResult> {
         let catalog = self.catalog_manager.default_catalog().await?;
+        let namespace = Self::tenant_scoped_namespace(namespace, tenant)?;
         let ns_name = namespace.join(".");
 
         // Check if namespace exists
-        if !catalog.namespace_exists(namespace).await? {
+        if !catalog.namespace_exists(&namespace).await? {
             if if_exists {
                 return Ok(DdlResult::not_found("Namespace", &ns_name));
             } else {
@@ -1109,7 +1155,7 @@ impl DdlService {
         }
 
         // Drop the namespace
-        catalog.drop_namespace(namespace, cascade).await?;
+        catalog.drop_namespace(&namespace, cascade).await?;
 
         info!(namespace = %ns_name, cascade = cascade, "Dropped namespace");
         Ok(DdlResult::success(format!(
@@ -1958,6 +2004,29 @@ fn add_open_table_layouts(schema: &mut CatalogTableSchema) -> Result<()> {
         .and_then(|value| parse_authority_mode(value))
         .unwrap_or(CatalogAuthorityMode::ProjectionPublication);
 
+    // Path Isolation (CRITICAL mandate): a table that reads an operator/tenant
+    // supplied external `location` reaches outside `DrPathBuilder`'s
+    // `data/{tenant}/{namespace}/…` tree. Gate it fail-closed behind an operator
+    // allowlist of URI-prefix roots (`PROXIMADB_EXTERNAL_TABLE_ROOTS`) so a
+    // tenant cannot point a table at an arbitrary path. The publication
+    // authorities below synthesize an internal `proximadb://…` location and are
+    // exempt; only the externally-located authorities are validated.
+    let reads_external_location = matches!(
+        ownership,
+        CatalogAuthorityMode::ExternalAuthoritative
+            | CatalogAuthorityMode::ImportedSnapshot
+            | CatalogAuthorityMode::FederatedRead
+    );
+    if reads_external_location && !external_location_allowed(&location) {
+        return Err(anyhow!(
+            "external table '{}': location '{}' is not within an allowlisted root — \
+             set PROXIMADB_EXTERNAL_TABLE_ROOTS to a comma-separated list of permitted \
+             URI-prefix roots to opt in (Path Isolation, fail-closed default)",
+            schema.name,
+            location
+        ));
+    }
+
     let mut layout = match ownership {
         CatalogAuthorityMode::ExternalAuthoritative => {
             if location.is_empty() {
@@ -2022,6 +2091,36 @@ fn add_open_table_layouts(schema: &mut CatalogTableSchema) -> Result<()> {
 
     schema.storage_layouts.push(layout);
     Ok(())
+}
+
+/// Fail-closed allowlist for external-table `location`s (Path Isolation mandate).
+///
+/// A location is permitted only when the operator has set
+/// `PROXIMADB_EXTERNAL_TABLE_ROOTS` to a comma-separated list of URI-prefix roots
+/// and the location falls under one of them. Empty/unset allowlist ⇒ every
+/// external location is rejected (the feature is off by default). Locations
+/// containing `..` are always rejected (no traversal-escape). Matching is on a
+/// path boundary — a root `file:///data/ext` matches `file:///data/ext/a.parquet`
+/// but NOT `file:///data/ext-evil/…`.
+fn external_location_allowed(location: &str) -> bool {
+    let loc = location.trim();
+    if loc.is_empty() || loc.contains("..") {
+        return false;
+    }
+    let Ok(roots) = std::env::var("PROXIMADB_EXTERNAL_TABLE_ROOTS") else {
+        return false;
+    };
+    roots
+        .split(',')
+        .map(str::trim)
+        .filter(|root| !root.is_empty())
+        .any(|root| {
+            // Normalize the root's trailing slash so `file:///x/` and `file:///x`
+            // both denote the same directory: a location is allowed when it IS
+            // the root or sits strictly beneath it (path boundary).
+            let root_norm = root.trim_end_matches('/');
+            loc == root_norm || loc.starts_with(&format!("{root_norm}/"))
+        })
 }
 
 fn parse_physical_format(value: &str) -> Option<CatalogPhysicalFormat> {
@@ -2098,6 +2197,44 @@ mod tests {
         let result = DdlResult::success("Operation completed");
         assert!(result.success);
         assert_eq!(result.affected_count, 1);
+    }
+
+    // External-location allowlist (Path Isolation, fail-closed). Serialized by
+    // the shared env var; nextest's process-per-test isolation keeps these from
+    // racing other tests.
+    #[test]
+    fn external_location_allowlist_is_fail_closed_and_boundary_aware() {
+        // Unset ⇒ everything rejected (feature off by default).
+        unsafe { std::env::remove_var("PROXIMADB_EXTERNAL_TABLE_ROOTS") };
+        assert!(!external_location_allowed("file:///data/ext/a.parquet"));
+
+        unsafe {
+            std::env::set_var(
+                "PROXIMADB_EXTERNAL_TABLE_ROOTS",
+                "file:///data/ext/, s3://bucket/warehouse/",
+            )
+        };
+        // Within an allowlisted root.
+        assert!(external_location_allowed("file:///data/ext/a.parquet"));
+        assert!(external_location_allowed(
+            "s3://bucket/warehouse/hits/part-0.parquet"
+        ));
+        // Exact-root match is allowed.
+        assert!(external_location_allowed("file:///data/ext"));
+        // Path-boundary escape must NOT match a prefix of a sibling dir.
+        assert!(!external_location_allowed(
+            "file:///data/ext-evil/secret.parquet"
+        ));
+        // Outside any root.
+        assert!(!external_location_allowed("file:///etc/passwd"));
+        // Traversal is always rejected, even under an allowlisted root.
+        assert!(!external_location_allowed(
+            "file:///data/ext/../../etc/passwd"
+        ));
+        // Empty is rejected.
+        assert!(!external_location_allowed("  "));
+
+        unsafe { std::env::remove_var("PROXIMADB_EXTERNAL_TABLE_ROOTS") };
     }
 
     #[test]
@@ -2274,6 +2411,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scoped_create_namespace_records_owning_tenant() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute_scoped(
+            DdlStatement::CreateNamespace {
+                namespace: vec!["analytics".to_string()],
+                if_not_exists: false,
+                properties: HashMap::new(),
+            },
+            Some("acmecorp"),
+        )
+        .await
+        .expect("tenant-scoped create namespace");
+
+        let catalog = manager.default_catalog().await.expect("default catalog");
+        let ns = catalog
+            .get_namespace(&["acmecorp".to_string(), "analytics".to_string()])
+            .await
+            .expect("get tenant-scoped namespace");
+
+        assert_eq!(ns.tenant_id.as_deref(), Some("acmecorp"));
+        assert!(ns.namespace_id.is_some());
+        assert!(ns.is_dr_addressable(), "namespace must be DR-addressable");
+    }
+
+    #[tokio::test]
+    async fn scoped_drop_namespace_uses_tenant_prefixed_namespace() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute_scoped(
+            DdlStatement::CreateNamespace {
+                namespace: vec!["analytics".to_string()],
+                if_not_exists: false,
+                properties: HashMap::new(),
+            },
+            Some("acmecorp"),
+        )
+        .await
+        .expect("tenant-scoped create namespace");
+
+        ddl.execute_scoped(
+            DdlStatement::DropNamespace {
+                namespace: vec!["analytics".to_string()],
+                if_exists: false,
+                cascade: false,
+            },
+            Some("acmecorp"),
+        )
+        .await
+        .expect("tenant-scoped drop namespace");
+
+        let catalog = manager.default_catalog().await.expect("default catalog");
+        assert!(
+            !catalog
+                .namespace_exists(&["acmecorp".to_string(), "analytics".to_string()])
+                .await
+                .expect("namespace_exists"),
+            "tenant-scoped DROP NAMESPACE must remove the tenant-prefixed namespace"
+        );
+    }
+
+    #[tokio::test]
     async fn test_pgwire_table_options_shape_oltp_olap_htap_and_open_table_layouts() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let manager = Arc::new(CatalogManager::new());
@@ -2445,8 +2656,15 @@ mod tests {
 
     async fn create_with_precision_property(value: &str) -> proximadb_records::EmbeddingScalarType {
         let manager = Arc::new(CatalogManager::new());
+        // Unique tempdir per test (SOLID test-hygiene mandate 17c): the four
+        // precision-variant tests run as THREADS under plain `cargo test`, and
+        // a shared /tmp catalog path made whoever created it second panic —
+        // a schedule-sensitive flake. Leak the dir: the catalog outlives this fn.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let url = format!("file://{}", tmp.path().display());
+        std::mem::forget(tmp);
         manager
-            .create_native_catalog("default", "file:///tmp/proximadb-ddl-precision-test")
+            .create_native_catalog("default", &url)
             .await
             .expect("create catalog");
         let service = DdlService::new(manager.clone());
@@ -2572,11 +2790,12 @@ mod tests {
         // No WITH option set → legacy fp32 (no behavior change for
         // existing CREATE TABLE statements).
         let manager = Arc::new(CatalogManager::new());
+        // Unique tempdir (mandate 17c) — see create_with_precision_property.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let url = format!("file://{}", tmp.path().display());
+        std::mem::forget(tmp);
         manager
-            .create_native_catalog(
-                "default",
-                "file:///tmp/proximadb-ddl-precision-test-default",
-            )
+            .create_native_catalog("default", &url)
             .await
             .expect("create catalog");
         let service = DdlService::new(manager.clone());
