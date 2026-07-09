@@ -755,6 +755,214 @@ impl TableFunctionImpl for GraphTraverseTableFunction {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Document slice (ADR-055 P-DFSource) — `documents(collection)` as a joinable SQL relation over
+// the converged document store. Phase 1 is correctness-first: it exposes `(id, props)` (props as a
+// lossless JSON string) via the same MemTable-delegation the other cross-modal sources use, so a
+// single SQL plan can join documents against relational / vector / timeseries / graph data. The
+// PAX-native pruning payoff (shredded-column pushdown) is a later phase (P-Pushdown); this ADDS a
+// SQL surface and does NOT reroute the existing REST/gRPC `query_documents` API.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The Arrow schema a `documents(collection)` source exposes: `(id, props)` where `props` is the
+/// document body serialized to a JSON string (lossless; shredding into typed columns is P-Pushdown).
+pub fn documents_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Utf8, false),
+        Field::new("props", DataType::Utf8, true),
+    ]))
+}
+
+/// Convert `(id, props_json)` document rows into a [`RecordBatch`].
+pub fn document_rows_to_batch(rows: &[(String, String)]) -> Result<RecordBatch, ArrowError> {
+    let ids: Vec<&str> = rows.iter().map(|(id, _)| id.as_str()).collect();
+    let props: Vec<&str> = rows.iter().map(|(_, p)| p.as_str()).collect();
+    RecordBatch::try_new(
+        documents_schema(),
+        vec![
+            Arc::new(StringArray::from(ids)),
+            Arc::new(StringArray::from(props)),
+        ],
+    )
+}
+
+/// Port yielding a collection's documents as `(id, props_json)` rows — the document analogue of
+/// [`TimeseriesScanPort`]. Kept as a trait so the table source is unit-testable with a fixed set of
+/// documents, independent of the process document service.
+#[async_trait]
+pub trait DocumentScanPort: Send + Sync {
+    /// Read `tenant`'s `collection` as `(id, props_json)` rows. The tenant scopes the read
+    /// structurally; `collection` is tenant-clean. Dead/TTL-expired documents are already filtered
+    /// by the underlying `query_documents`.
+    async fn scan(&self, tenant: &str, collection: &str) -> anyhow::Result<Vec<(String, String)>>;
+}
+
+/// Production adapter: the process [`DocumentService`] as a [`DocumentScanPort`].
+struct DocumentServiceScan(Arc<crate::storage::document::DocumentService>);
+
+#[async_trait]
+impl DocumentScanPort for DocumentServiceScan {
+    async fn scan(&self, tenant: &str, collection: &str) -> anyhow::Result<Vec<(String, String)>> {
+        // Scope the collection key the way the REST/middleware path does: a named tenant reads
+        // `{tenant}/{collection}`; the canonical `DEFAULT_TENANT` uses the bare key.
+        let scoped = if tenant == proximadb_tenant::DEFAULT_TENANT {
+            collection.to_string()
+        } else {
+            format!("{tenant}/{collection}")
+        };
+        let result = self
+            .0
+            .query_documents(
+                &scoped,
+                crate::storage::document::DocumentQueryParams::default(),
+            )
+            .await?;
+        Ok(result
+            .documents
+            .into_iter()
+            .map(|doc| {
+                let json = serde_json::Value::Object(
+                    crate::core::search::sql_value_filter::proxima_tree_to_json_map(&doc.props)
+                        .into_iter()
+                        .collect(),
+                );
+                (doc.id, serde_json::to_string(&json).unwrap_or_default())
+            })
+            .collect())
+    }
+}
+
+/// A DataFusion [`TableProvider`] whose `scan` reads a collection's documents through a
+/// [`DocumentScanPort`] and exposes `(id, props)` rows — so a single SQL plan can join documents
+/// against relational / vector / timeseries / graph data.
+pub struct DocumentTableProvider {
+    scan: Arc<dyn DocumentScanPort>,
+    tenant: String,
+    collection: String,
+}
+
+impl DocumentTableProvider {
+    /// Build a provider for one collection read, scoped to `tenant`.
+    pub fn new(
+        scan: Arc<dyn DocumentScanPort>,
+        tenant: impl Into<String>,
+        collection: impl Into<String>,
+    ) -> Self {
+        Self {
+            scan,
+            tenant: tenant.into(),
+            collection: collection.into(),
+        }
+    }
+}
+
+impl std::fmt::Debug for DocumentTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DocumentTableProvider")
+            .field("tenant", &self.tenant)
+            .field("collection", &self.collection)
+            .finish_non_exhaustive()
+    }
+}
+
+#[async_trait]
+impl TableProvider for DocumentTableProvider {
+    fn schema(&self) -> SchemaRef {
+        documents_schema()
+    }
+
+    fn table_type(&self) -> TableType {
+        TableType::Base
+    }
+
+    async fn scan(
+        &self,
+        state: &dyn Session,
+        projection: Option<&Vec<usize>>,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> DFResult<Arc<dyn ExecutionPlan>> {
+        let rows = self
+            .scan
+            .scan(&self.tenant, &self.collection)
+            .await
+            .map_err(|e| DataFusionError::Execution(format!("documents scan: {e}")))?;
+        let batch = document_rows_to_batch(&rows).map_err(DataFusionError::from)?;
+        // Delegate to a `MemTable` so projection/filter/limit are honored uniformly.
+        let mem = MemTable::try_new(documents_schema(), vec![vec![batch]])?;
+        mem.scan(state, projection, filters, limit).await
+    }
+}
+
+/// DataFusion table-valued function `documents(collection)` returning a [`DocumentTableProvider`] —
+/// makes the document⋈relational/vector/timeseries/graph join expressible directly in SQL (and so
+/// reachable from the pgwire DataFusion path):
+/// `SELECT d.id FROM documents('orders') d JOIN vector_search('orders', $q, 10) v ON d.id = v.id`.
+/// Register once per `SessionContext`:
+/// `ctx.register_udtf("documents", Arc::new(DocumentsTableFunction::new(port)))`.
+pub struct DocumentsTableFunction {
+    scan: Arc<dyn DocumentScanPort>,
+    /// The connection tenant, passed structurally to the scan port (which scopes the collection
+    /// key) — NOT folded into the collection name. `None` ⇒ the canonical `DEFAULT_TENANT`.
+    tenant: Option<String>,
+}
+
+impl DocumentsTableFunction {
+    /// Capture the scan port the function will read (no tenant scope).
+    pub fn new(scan: Arc<dyn DocumentScanPort>) -> Self {
+        Self { scan, tenant: None }
+    }
+
+    /// Capture the scan port AND the connection tenant, so the read scopes the collection key the
+    /// same way the REST write path does (TD-XMODAL-6).
+    pub fn with_tenant(scan: Arc<dyn DocumentScanPort>, tenant: Option<String>) -> Self {
+        Self { scan, tenant }
+    }
+
+    /// Build the function backed by the process document service, scoped to the connection tenant —
+    /// the pgwire OLAP route wiring that makes `documents` read REST/gRPC-written data.
+    pub fn from_service_with_tenant(
+        service: Arc<crate::storage::document::DocumentService>,
+        tenant: Option<String>,
+    ) -> Self {
+        Self {
+            scan: Arc::new(DocumentServiceScan(service)),
+            tenant,
+        }
+    }
+}
+
+impl std::fmt::Debug for DocumentsTableFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DocumentsTableFunction")
+            .finish_non_exhaustive()
+    }
+}
+
+impl TableFunctionImpl for DocumentsTableFunction {
+    fn call(&self, args: &[Expr]) -> DFResult<Arc<dyn TableProvider>> {
+        let collection = arg_string(args, 0).ok_or_else(|| {
+            DataFusionError::Plan(
+                "documents(collection): arg 1 must be a collection-name string".into(),
+            )
+        })?;
+        if collection.trim().is_empty() {
+            return Err(DataFusionError::Plan(
+                "documents: collection must not be empty".into(),
+            ));
+        }
+        // Structural tenant scoping: pass the connection tenant (defaulting to the one canonical
+        // DEFAULT_TENANT) + the tenant-CLEAN collection name to the scan port, which scopes the key
+        // the same way the REST ingest wrote it. No name-folding at the SQL layer.
+        let tenant = proximadb_tenant::resolve_request_tenant(self.tenant.as_deref());
+        Ok(Arc::new(DocumentTableProvider::new(
+            self.scan.clone(),
+            tenant,
+            collection,
+        )))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1157,6 +1365,129 @@ mod tests {
             .unwrap()
             .value(0);
         assert_eq!(peak, 9_000.0);
+    }
+
+    // ─── Document slice (ADR-055 P-DFSource) ────────────────────────────────
+
+    /// Fixed `DocumentScanPort` returning canned `(id, props_json)` rows — stands in for the
+    /// process document service so the `documents(...)` table source is unit-testable.
+    struct FixedDocScan {
+        rows: Vec<(String, String)>,
+    }
+
+    #[async_trait]
+    impl DocumentScanPort for FixedDocScan {
+        async fn scan(
+            &self,
+            _tenant: &str,
+            _collection: &str,
+        ) -> anyhow::Result<Vec<(String, String)>> {
+            Ok(self.rows.clone())
+        }
+    }
+
+    fn doc_rows() -> Vec<(String, String)> {
+        vec![
+            ("d1".to_string(), r#"{"status":"open","n":1}"#.to_string()),
+            ("d2".to_string(), r#"{"status":"closed","n":2}"#.to_string()),
+            ("d3".to_string(), r#"{"status":"open","n":3}"#.to_string()),
+        ]
+    }
+
+    fn ids_of(batches: &[RecordBatch]) -> Vec<String> {
+        let mut out = Vec::new();
+        for b in batches {
+            if let Some(col) = b.column(0).as_any().downcast_ref::<StringArray>() {
+                for i in 0..b.num_rows() {
+                    out.push(col.value(i).to_string());
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn document_batch_has_id_props_schema() {
+        let batch = document_rows_to_batch(&doc_rows()).unwrap();
+        assert_eq!(batch.num_rows(), 3);
+        assert_eq!(batch.schema().field(0).name(), "id");
+        assert_eq!(batch.schema().field(1).name(), "props");
+    }
+
+    /// Parity: `SELECT id FROM documents('coll')` returns EXACTLY the ids the scan port yields
+    /// (i.e. what `query_documents` would return for the same set), and a `WHERE id = ...`
+    /// predicate is honored by the MemTable delegation.
+    #[tokio::test]
+    async fn documents_udtf_select_id_matches_scan() {
+        let port: Arc<dyn DocumentScanPort> = Arc::new(FixedDocScan { rows: doc_rows() });
+        let ctx = SessionContext::new();
+        ctx.register_udtf("documents", Arc::new(DocumentsTableFunction::new(port)));
+
+        // All ids, in order — must equal the scan port's ids exactly.
+        let all = ctx
+            .sql("SELECT id FROM documents('coll') ORDER BY id")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_eq!(ids_of(&all), vec!["d1", "d2", "d3"]);
+
+        // Predicate pushed through the MemTable delegation.
+        let one = ctx
+            .sql("SELECT id FROM documents('coll') WHERE id = 'd2'")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_eq!(ids_of(&one), vec!["d2"]);
+    }
+
+    /// The document slice's moat proof: `documents(...)` joins a relational table in ONE SQL plan.
+    #[tokio::test]
+    async fn documents_udtf_joins_relational_in_sql() {
+        let port: Arc<dyn DocumentScanPort> = Arc::new(FixedDocScan { rows: doc_rows() });
+        let ctx = SessionContext::new();
+        ctx.register_udtf("documents", Arc::new(DocumentsTableFunction::new(port)));
+
+        let dim_schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("label", DataType::Utf8, false),
+        ]));
+        let dim = RecordBatch::try_new(
+            dim_schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["d1", "d3"])),
+                Arc::new(StringArray::from(vec!["A", "B"])),
+            ],
+        )
+        .unwrap();
+        ctx.register_table(
+            "dim",
+            Arc::new(MemTable::try_new(dim_schema, vec![vec![dim]]).unwrap()),
+        )
+        .unwrap();
+
+        let batches = ctx
+            .sql("SELECT d.id FROM documents('coll') d JOIN dim ON d.id = dim.id ORDER BY d.id")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_eq!(ids_of(&batches), vec!["d1", "d3"]);
+    }
+
+    #[tokio::test]
+    async fn documents_udtf_rejects_empty_collection() {
+        let port: Arc<dyn DocumentScanPort> = Arc::new(FixedDocScan { rows: vec![] });
+        let ctx = SessionContext::new();
+        ctx.register_udtf("documents", Arc::new(DocumentsTableFunction::new(port)));
+        assert!(
+            ctx.sql("SELECT id FROM documents('')").await.is_err(),
+            "empty collection name must be rejected"
+        );
     }
 
     #[tokio::test]
