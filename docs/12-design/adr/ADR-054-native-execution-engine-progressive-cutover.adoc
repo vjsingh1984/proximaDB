@@ -4,9 +4,9 @@
 
 [cols="1,3"]
 |===
-|Status|Proposed (under multi-agent review)
-|Date|2026-07-08 (proposed)
-|Deciders|Vijaykumar Singh (pending)
+|Status|**Accepted** (ratified 2026-07-09; proposed 2026-07-08 after multi-agent review v1→v3)
+|Date|2026-07-08 (proposed) · 2026-07-09 (ratified)
+|Deciders|Vijaykumar Singh (ratified 2026-07-09 — the §12 open questions are resolved with their stated recommendations; see Revision Notes v4)
 |Relates to|ADR-039 (`ExecutionEngine` / `LogicalNode` seam), ADR-052 (vectorized-over-Arrow via DataFusion; PAX-native scan as the wedge), ADR-050 (cost-based routing + stats-fed planning), ADR-033 (vertical inside, standard outside), ADR-025 (deletion vectors), ADR-011 (bloom/ANN pre-filter), `CO_DESIGN_HANDOFF.md`, `DATAFUSION_BALLISTA_DISTRIBUTED_EXECUTION_2026_06_05.adoc`, `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`
 |Refines|ADR-052 — does NOT overturn its invariants 3 (scan-avoidance first), 4 (measured not asserted), 5 (non-goals: no codegen now). **Explicitly REVERSES invariant 2** ("Do NOT reimplement HashAgg/HashJoin/Sort natively" at ADR-052:117) — justified by the evidence: Q3 594ms (99% compute_ms, 85-100× gap to DuckDB). DataFusion stays as the *interim* Parquet-backed OLAP engine; native vectorized execution is an internal, flag-gated path inside the existing `ComputeBackend::Native` engine (ADR-039-respecting), progressively serving native-storage OLAP shapes as it matures.
 |Tracked under|Phase 0 contracts = #755 (crate `proximadb-execution-contracts`, no separate TD). link:../../10-quality/td/TD-OLAP-10-native-filterproject-pipeline.adoc[TD-OLAP-10] (native vectorized FilterProject + pipeline executor), link:../../10-quality/td/TD-OLAP-11-native-radix-bloom-spill-hash-join.adoc[TD-OLAP-11] (native radix-partitioned, spilling, bloom-pre-filtered hash join), link:../../10-quality/td/TD-OLAP-12-native-morsel-scheduler.adoc[TD-OLAP-12] (native morsel scheduler), link:../../10-quality/td/TD-OLAP-13-fused-multimodal-operators.adoc[TD-OLAP-13] (fused ANN+filter+aggregate operator). Composes with existing TD-OLAP-1..8; TD-OLAP-9 remains separate DPP work (`iceberg-partition-spec-unblocks-dpp`), not the contracts crate.
@@ -77,6 +77,29 @@ a| **FIXED**: The contracts crate is tracked as the #755 artifact directly (no T
 | §8 Phase 2 row said "benchmark vs DataFusion kernels on ClickBench (target: close the q07 UInt16 pathology)". Post-consolidation the vectorized path is internal to `ComputeBackend::Native`, so its comparison baseline is the **Volcano** (the Native path), not DataFusionLocal (which is the Parquet-backed OLAP route). The ClickBench q07 target also presupposes a real scan source Phase 2 deliberately defers.
 a| **FIXED**: §8 Phase 2 row now reads "native vectorized `FilterProject` + pipeline executor behind contracts; benchmark vs the Volcano on in-memory data; `HashAgg` split to Phase 2.1." Gate unchanged (≥ parity on in-memory; conformance unchanged). The scan source + ClickBench comparison move to Phase 2.5, the join to TD-OLAP-11.
 |===
+
+== Revision Notes (v4 — ratified 2026-07-09)
+
+The decider ratified ADR-054 as **Accepted**. Ratification carries these decisions
+(the §12 open questions, resolved with their stated recommendations):
+
+[cols="1,3",options="header"]
+|===
+| §12 question | Ratified decision
+| 1. `ExecutionOperator` granularity — one join operator or three? | **One `HashJoinOperator`** that internally owns build→probe (keeps `Pipeline` a single chain; the two-phase break is internal). Per TD-OLAP-11 §"Pipeline composition."
+| 2. Native vectorized in the existing engine vs a sibling crate? | **One `ComputeBackend::Native`** with an internal hook (`native_vectorized_enabled()` / `try_vectorized`); contracts in `proximadb-execution-contracts` (already landed #755). No peer `ComputeBackend` variant.
+| 3. Morsel size 2048 vs tunable? | **Const default 2048** (`MORSEL_SIZE`) with a per-operator runtime override.
+| 4. Native ↔ DataFusion interop below the seam? | **No.** Any fragment-level hybrid needs a separate ADR (§7.4).
+| 5. Promotion threshold — parity or strict-better? | **Parity-or-better in-memory; strict-better in the spill regime** (the gap-closing claim). Encoded in every TD's ledger gate.
+| 6. Multimodal operators in this ADR or a follow-on? | **Rationale here (§6); TDs are Phase 5 (TD-OLAP-13).** Contracts must be right first.
+|===
+
+Ratification does **not** promote any native operator to default-on: it accepts the
+*plan + contracts + reversal of ADR-052 invariant 2's operator prohibition*. Every
+operator still ships default-off and is promoted only through the TD-OLAP-4 ledger
+gate (§5.3, §8). The tracked implementation TDs carry the concrete designs:
+TD-OLAP-10 (Phase 2, landed), TD-OLAP-11 (Phase 3 join, design filed), TD-OLAP-12
+(Phase 4 scheduler), TD-OLAP-13 (Phase 5 multimodal).
 
 == 1. Context + the evidence substrate
 

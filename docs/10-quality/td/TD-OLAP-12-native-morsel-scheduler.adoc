@@ -5,43 +5,143 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open — scoped, not yet designed in detail. Sequenced after TD-OLAP-10 (Phase 2, landed) and TD-OLAP-11 (Phase 3, join — design filed).** This TD is filed to resolve the dangling reference from link:../../12-design/adr/ADR-054-native-execution-engine-progressive-cutover.adoc[ADR-054] §8 Phase 4; the detailed design lands when the Phase-3 join is in the ledger (the scheduler generalizes the join's local build+probe pipelines to all operators, ADR-054 §4.2/§7.2). No implementation exists yet; the MVP operators (Phase 2/3) run single-threaded-per-batch until this lands.
-| Priority | **P3 — strategic, non-gating.** Parallelism is the multiplier *after* the operator set + join prove parity single-threaded; it does not itself close the measured Q3/Q14 gap (that is TD-OLAP-11). Do not build ahead of ledger evidence that a parallel scheduler moves a cost term (ADR-052 mandate #11).
-| Severity | Medium — throughput/scale lever (NUMA + cache locality across cores), not a correctness or point-latency lever. The single-node ceiling ADR-054 §7.1 targets (99.97% of queries fit one node) is reached with per-core parallelism, so this is the last single-node performance phase before the multimodal wedge (TD-OLAP-13).
-| Component | *new* `crates/query/proximadb-execution-contracts/src/scheduler.rs` (`MorselScheduler` trait — already sketched in ADR-054 §3.2); *new* `src/query/execution/morsel_scheduler.rs` (impl); extends `native_engine.rs::execute_pipeline` (morsel dispatch); NUMA pinning via the `core_affinity` crate on dedicated worker threads — **NOT** Tokio's default work-stealing pool (ADR-054 §9(b)).
+| Status | **Open — design filed for review (2026-07-09). Implementation sequenced after TD-OLAP-11 (Phase 3 join) is in the ledger.** The contract seam already exists: `MorselScheduler::schedule(&Pipeline, BatchStream) -> BatchStream` is declared in `crates/query/proximadb-execution-contracts/src/lib.rs` (Phase 0, #755) with the doc-comment "Phase 0: trait defined; Phase 4: implemented." This TD fills that impl. No scheduler impl exists yet; Phase-2/3 operators run single-threaded (`Pipeline::execute` chains operators over one `BatchStream`).
+| Priority | **P3 — strategic throughput multiplier, non-gating.** Parallelism is the multiplier *after* the operator set + join prove parity single-threaded; it does not itself close the measured Q3/Q14 compute gap (that is TD-OLAP-11). Do not build ahead of ledger evidence that a parallel scheduler moves a cost term (ADR-052 mandate #11).
+| Severity | Medium — throughput/scale lever (per-core parallelism + NUMA/cache locality), not a correctness or point-latency lever. The single-node ceiling ADR-054 §7.1 targets (99.97% of queries fit one node) is reached with per-core parallelism, so this is the last single-node performance phase before the multimodal wedge (TD-OLAP-13).
+| Component | Impl of `MorselScheduler` (contract at `crates/query/proximadb-execution-contracts/src/lib.rs:124`); *new* `src/query/execution/morsel_scheduler.rs`; wired into `native_engine.rs` (`try_vectorized_stream`) behind `native_morsel_scheduler_enabled()` (`PROXIMADB_NATIVE_MORSEL`, default OFF); NUMA pinning via the `core_affinity` crate on dedicated worker threads — **NOT** Tokio's default work-stealing pool (ADR-054 §9(b)).
 | Governs | link:../../12-design/adr/ADR-054-native-execution-engine-progressive-cutover.adoc[ADR-054] §8 Phase 4 row, §3.2 (`MorselScheduler` contract), §4.2 (morsel-driven parallelism), §9(b) (NUMA blind spot).
-| Relates to | TD-OLAP-10 (Phase 2 — the operators the scheduler drives), TD-OLAP-11 (Phase 3 — the join ships a *local* join-scoped scheduler this phase generalizes), TD-OLAP-4 (the ledger that gates promotion), ADR-052 invariant 4 (measured, not asserted) + invariant 5 (single-node first). Native *distributed* execution is explicitly out of scope (ADR-054 §7.2 — its own future ADR).
+| Relates to | TD-OLAP-10 (Phase 2 — the `ExecutionOperator`/`Pipeline` the scheduler drives), TD-OLAP-11 (Phase 3 — the join ships a *local* build+probe scheduler this phase generalizes; the concurrent-build risk is shared), TD-OLAP-4 (the ledger that gates promotion), ADR-052 invariant 4 (measured, not asserted) + invariant 5 (single-node first). Native *distributed* execution is explicitly out of scope (ADR-054 §7.2 — its own future ADR).
 |===
 
-== Scope (what Phase 4 delivers)
+== The seam this fills (already landed)
 
-A single-node, NUMA-aware, work-stealing morsel scheduler (Leis/Boncz/Kemper/Neumann,
-SIGMOD 2014) that drives the Phase-2/3 native operators across cores:
+Phase 0 (#755) shipped the contract; this TD is the impl:
 
-. **`MorselScheduler` contract** (ADR-054 §3.2) — dispatch a `Pipeline` as morsel-sized
-  units of work over a fixed worker pool; the operators are already morsel-shaped
-  (`ExecutionOperator` consumes/produces Arrow `RecordBatch`), so this is additive.
-. **Morsel size** — const default **2048** (DuckDB/Velox `STANDARD_VECTOR_SIZE`), with a
-  per-operator override hook (ADR-054 §12 Q3 recommendation). Tunable, not hard-coded.
-. **NUMA affinity** — dedicated OS worker threads pinned via `core_affinity`, morsels
-  routed to the socket that owns the input pages; explicitly not Tokio's default pool
-  (which is unaware of NUMA and would defeat the locality this phase exists to buy).
-. **Generalize the join scheduler** — Phase 3 (TD-OLAP-11) ships a *local* join-scoped
-  scheduler for the build+probe pipelines; this phase promotes it to all pipelines.
+[source,rust]
+----
+// crates/query/proximadb-execution-contracts/src/lib.rs — EXISTS today
+pub const MORSEL_SIZE: usize = 2048;                       // DuckDB STANDARD_VECTOR_SIZE
+pub type BatchStream = BoxStream<'static, Result<RecordBatch, ExecutionError>>;
+pub trait ExecutionOperator: Send + Sync + Debug {          // async stream→stream
+    async fn execute(&self, input: BatchStream) -> Result<BatchStream, ExecutionError>;
+    fn output_schema(&self) -> SchemaRef;
+}
+pub struct Pipeline { pub operators: Vec<Box<dyn ExecutionOperator>>, .. }
+#[async_trait] pub trait MorselScheduler: Send + Sync {     // <- Phase 4 impl target
+    async fn schedule(&self, pipeline: &Pipeline, input: BatchStream)
+        -> Result<BatchStream, ExecutionError>;
+}
+----
+
+Today `Pipeline::execute` chains operators over a *single* `BatchStream` (serial). The
+scheduler replaces that with **N parallel morsel lanes** and a fan-in merge, preserving the
+exact `BatchStream` in/out signature — so it is a drop-in behind the `native_engine.rs` hook,
+non-breaking.
+
+== Architecture (morsel-driven, Leis SIGMOD 2014)
+
+**Unit of work = a morsel** (`MORSEL_SIZE` rows). The scheduler splits the leaf input into
+morsels and runs the pipeline segment on each in parallel, with a bounded worker pool.
+
+=== Pipeline breaks (the barrier structure)
+A `Pipeline` is a chain, but blocking operators (hash-join **build**, sort, blocking
+aggregate) are **pipeline breaks**. The scheduler segments the pipeline at breaks:
+
+....
+[scan]→[filter]→[project]  ═╗ (break: hash build drains all morsels)
+                            ╠═► [build barrier] ═► [probe]→[project]→[limit]
+        parallel morsels    ║        parallel morsels
+....
+
+* **Within a segment:** morsels flow through the streaming operators (filter/project/probe)
+  on independent worker lanes — no cross-morsel state, embarrassingly parallel.
+* **At a break:** all morsels of the upstream segment must complete before the blocking
+  operator emits (build the whole hash table / sort the whole input). The scheduler awaits
+  the segment's join set, then starts the downstream segment.
+
+=== Concurrent state at breaks (the shared risk with TD-OLAP-11)
+The hash-join build is the one shared-mutable structure. Two admissible designs (Leis §4):
+
+. **Partition-local + barrier merge (MVP):** each lane builds a local hash table over its
+  morsels; a barrier merges them (or keeps them partitioned for a partitioned probe). No
+  concurrent writers — simplest, correctness-first.
+. **Concurrent CAS insert (Phase 4.1):** one shared lock-free table, HyPer-style 48-bit
+  pointer + 16-bit tag CAS insert. Higher throughput, more risk.
+
+MVP takes (1); (2) is a measured follow-up. This TD does **not** re-open TD-OLAP-11's join
+correctness — it schedules the operators the join TD defines.
+
+== The async/NUMA design decision (the load-bearing part)
+
+The operator contract is **async stream-based** (Tokio `BoxStream`), by the ADR-054 BLOCKER-1
+fix. NUMA pinning (ADR-054 §9(b)) wants **dedicated, core-pinned OS threads**, which is in
+tension with Tokio's NUMA-oblivious work-stealing pool. Resolve in two gated stages:
+
+* **Phase 4.0 — parallelism without pinning (MVP).** Spawn one Tokio task per morsel lane on a
+  **bounded** runtime (`num_cpus - 2`, matching the repo's build-jobs discipline). This buys
+  the multi-core speedup with zero new threading primitives and composes with the existing
+  async operators unchanged. Honest limit: no NUMA locality; cross-socket morsel routing is
+  left to the OS scheduler.
+* **Phase 4.1 — NUMA-pinned worker pool (gated, `PROXIMADB_NATIVE_MORSEL_NUMA`).** A dedicated
+  worker pool of OS threads pinned via `core_affinity`, each thread owning a Tokio
+  `LocalSet`/current-thread runtime; morsels are routed to the socket that owns their input
+  pages (first-touch). This is the only place a custom runtime is introduced, and only behind
+  a flag — because NUMA wins are workload- and hardware-dependent and must be *measured*
+  (ADR-052 mandate #11), not assumed. `core_affinity` degrades to a no-op where pinning is
+  unsupported (e.g. some macOS/WSL configs) → falls back to 4.0 behavior, correctness-neutral.
+
+Morsel size stays `MORSEL_SIZE = 2048` (const default) with a per-operator runtime override
+hook (ADR-054 §12 Q3, ratified).
+
+== Wire gate + fallback
+
+`try_vectorized_stream` uses the scheduler only when `native_morsel_scheduler_enabled()`
+(`PROXIMADB_NATIVE_MORSEL`, default OFF — distinct from `PROXIMADB_NATIVE_VECTORIZED` and
+`PROXIMADB_NATIVE_JOIN`). When off, `Pipeline::execute` runs serially (today's behavior). Any
+unsupported shape (e.g. an operator that opts out of parallel scheduling) falls back to serial
+execution — the scheduler is additive, never a correctness dependency.
+
+== Gate (ADR-052 mandate #4 — measured, not asserted)
+
+Promotion requires the **TD-OLAP-4 ledger** showing:
+
+[cols="3,3", options="header"]
+|===
+| Regime | Target
+| Parity floor (1 core) | scheduler at 1 worker == serial `Pipeline::execute` (no overhead regression)
+| Scaling | near-linear speedup to physical cores on ClickBench + TPC-H SF1 (record scaling efficiency, not just wall)
+| NUMA (4.1) | `_NUMA=on` ≥ `_NUMA=off` on a multi-socket box; report the delta (may be ~0 on single-socket — record honestly)
+| End-to-end | ClickBench + TPC-H/TPC-DS SF1 at **parity-or-better** vs single-threaded native AND vs DataFusion, same object store, in CI
+| Conformance | TPC-H (22) / TPC-DS (16) ratchets unchanged
+|===
+
+== Risks + mitigations
+
+* **Per-morsel Tokio task overhead** erasing the parallel win on small inputs. Mitigation:
+  size-gate — schedule in parallel only above a morsel-count threshold; below it, run serial.
+* **False sharing / cache-line contention** at the build barrier. Mitigation: partition-local
+  build (MVP), cache-line-padded merge structures.
+* **NUMA pinning portability** (`core_affinity` no-op on some targets). Mitigation: gated,
+  default-off, falls back to 4.0; never a correctness dependency.
+* **Interaction with the join's `OnceLock` handoff** (TD-OLAP-11). Mitigation: the scheduler
+  treats the build segment as a barrier; the `OnceLock` publish happens at the barrier, read by
+  the probe segment — the existing handoff is unchanged, just parallelized within each segment.
+* **Determinism for tests** (parallel merge reorders rows). Mitigation: the merge preserves no
+  order guarantee anyway (SQL is unordered without ORDER BY); order-sensitive tests already go
+  through a Sort operator, which is a break.
 
 == Non-goals
 
-* **No distributed execution.** The scheduler is single-node; a morsel/hash-partition
-  exchange for MPP is a separate future ADR (ADR-054 §7.2). Ballista remains the
-  DataFusion-only distributed path (ADR-054 §7.3).
+* **No distributed execution.** Single-node scheduler only; a morsel/hash-partition exchange
+  for MPP is a separate future ADR (ADR-054 §7.2). Ballista stays the DataFusion-only
+  distributed path (ADR-054 §7.3).
 * **No codegen** (ADR-052 non-goal, inherited).
-* **No promotion without the ledger.** Gate = end-to-end ClickBench + TPC-H/TPC-DS at
-  parity-or-better vs the single-threaded native path *and* vs DataFusion, on the same
-  object store, in CI (ADR-054 §8 Phase-4 gate). Ships behind a flag, default-off,
-  demoted on regression.
+* **No promotion without the ledger** (default-off, demoted on regression).
 
 == Primary-source citations
 
 * Morsel-driven parallelism: Leis/Boncz/Kemper/Neumann, SIGMOD 2014
   (https://db.in.tum.de/~leis/papers/morsels.pdf).
-* Vector size / morsel granularity: DuckDB, Velox (`STANDARD_VECTOR_SIZE = 2048`).
+* Vector size / morsel granularity: DuckDB (`STANDARD_VECTOR_SIZE = 2048`), Velox
+  (`kVectorSize = 1024`).
+* Thread pinning: the `core_affinity` crate (https://docs.rs/core_affinity).
