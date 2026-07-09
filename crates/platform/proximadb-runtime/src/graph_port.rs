@@ -96,7 +96,7 @@ pub trait GraphPort: Send + Sync {
 
     // ── Hybrid query (cross-modal) ────────────────────────────────────────
 
-    /// DEPRECATED (TD-143): v1 hybrid query — dormant (behind `enable_grpc_v1_compat`),
+    /// DEPRECATED (TD-143): v1 hybrid query — dormant (v1 gRPC surface removed, TD-V1SUNSET-1),
     /// not tenant-scoped, owns its own ranking. Use v2 FusionSearch instead.
     #[deprecated(note = "v1 ExecuteHybridQuery is deprecated; use v2 FusionSearch. See TD-143.")]
     async fn execute_hybrid_query(

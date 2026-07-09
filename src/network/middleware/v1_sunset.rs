@@ -20,8 +20,8 @@
 //! surface (ADR-049, closes TD-121). This middleware is the *enabling slice* for
 //! that retirement on the REST edge: when the `PROXIMADB_REST_V1_COMPAT` flag is
 //! off, requests to the deprecated `/api/v1/*` surface are answered with
-//! `410 Gone` + RFC 8594 deprecation headers instead of being served — mirroring
-//! the gRPC v1 compat gate (`PROXIMADB_GRPC_V1_COMPAT`).
+//! `410 Gone` + RFC 8594 deprecation headers instead of being served (the gRPC
+//! v1 compat gate was removed in TD-V1SUNSET-1 step 4).
 //!
 //! The flag is **on by default**, so behavior is unchanged until an operator
 //! explicitly disables v1 (starting the sunset clock without a flag-day). The
