@@ -667,7 +667,13 @@ fn compare_values(a: &ProximaValue, b: &ProximaValue) -> std::cmp::Ordering {
 /// (captured from a `PhysicalPlan::Limit` node and applied at collect).
 #[derive(Debug)]
 pub(crate) struct LoweredPipeline {
+    /// The main (probe) pipeline.
     pub pipeline: Pipeline,
+    /// An optional BUILD pipeline that must run + drain first (its blocking
+    /// build operator publishes the hash table via a shared `OnceLock` consumed
+    /// by a probe operator in `pipeline`). Set only by the `PhysicalPlan::Join`
+    /// lowering (Phase 3, TD-OLAP-11).
+    pub build_pipeline: Option<Pipeline>,
     pub limit: Option<LimitSpec>,
 }
 
@@ -754,6 +760,7 @@ pub(crate) fn lower_physical(plan: &PhysicalPlan) -> Result<LoweredPipeline, Exe
     }
     Ok(LoweredPipeline {
         pipeline: Pipeline::new(operators),
+        build_pipeline: None,
         limit,
     })
 }
@@ -981,6 +988,15 @@ fn agg_output_schema(
 pub(crate) async fn execute_pipeline(
     lowered: &LoweredPipeline,
 ) -> Result<Vec<RecordBatch>, ExecutionError> {
+    // If there is a BUILD pipeline (a hash join), run + drain it first. Its
+    // blocking build operator publishes the hash table via a shared `OnceLock`
+    // as a side-effect of being drained; its own (sentinel) output is discarded.
+    if let Some(build) = &lowered.build_pipeline {
+        let empty: BatchStream = Box::pin(futures::stream::empty());
+        let mut build_stream = build.execute(empty).await?;
+        while build_stream.next().await.transpose()?.is_some() {}
+    }
+
     let empty: BatchStream = Box::pin(futures::stream::empty());
     let mut stream = lowered.pipeline.execute(empty).await?;
 
@@ -1328,6 +1344,7 @@ mod tests {
     async fn run_pipeline(ops: Vec<Box<dyn ExecutionOperator>>) -> Vec<RecordBatch> {
         let lowered = LoweredPipeline {
             pipeline: Pipeline::new(ops),
+            build_pipeline: None,
             limit: None,
         };
         execute_pipeline(&lowered).await.unwrap()
@@ -1463,5 +1480,207 @@ mod tests {
         assert_eq!(g.value(1), "b");
         assert_eq!(minx.value(1), 5);
         assert_eq!(maxx.value(1), 5);
+    }
+
+    // --- Phase 3 hash-join operator tests (TD-OLAP-11) ---
+
+    use crate::query::execution::native_join_ops::{
+        HashJoinBuildOperator, HashJoinProbeOperator, JoinColumn,
+    };
+    use arrow::array::StringArray;
+    use proximadb_relational_algebra::JoinKind;
+    use std::sync::{Arc, OnceLock};
+
+    fn two_col_batch(
+        k: &[i64],
+        v: &[&str],
+        k_name: &str,
+        v_name: &str,
+    ) -> (RecordBatch, SchemaRef) {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(k_name, DataType::Int64, false),
+            Field::new(v_name, DataType::Utf8, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int64Array::from(k.to_vec())),
+                Arc::new(StringArray::from(v.to_vec())),
+            ],
+        )
+        .unwrap();
+        (batch, schema)
+    }
+
+    /// Wire build + probe sources with the join operators sharing a `table_slot`,
+    /// then run via `execute_pipeline` (which drains build first).
+    async fn run_join(
+        build_batch: RecordBatch,
+        build_schema: SchemaRef,
+        probe_batch: RecordBatch,
+        probe_schema: SchemaRef,
+        output_columns: Vec<JoinColumn>,
+        kind: JoinKind,
+        output_schema: SchemaRef,
+    ) -> Vec<RecordBatch> {
+        let build_source = MemoryScanSource::new(vec![build_batch], build_schema.clone());
+        let probe_source = MemoryScanSource::new(vec![probe_batch], probe_schema.clone());
+        let table_slot = Arc::new(OnceLock::new());
+        let build_op = HashJoinBuildOperator {
+            build_keys: vec![0],
+            build_schema,
+            table_slot: table_slot.clone(),
+            bloom_enabled: false,
+        };
+        let probe_op = HashJoinProbeOperator {
+            table_slot,
+            probe_keys: vec![0],
+            output_columns,
+            kind,
+            output_schema,
+        };
+        let lowered = LoweredPipeline {
+            pipeline: Pipeline::new(vec![Box::new(probe_source), Box::new(probe_op)]),
+            build_pipeline: Some(Pipeline::new(vec![
+                Box::new(build_source),
+                Box::new(build_op),
+            ])),
+            limit: None,
+        };
+        execute_pipeline(&lowered).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn hash_join_inner_equi() {
+        // build (right): k=[2,3,4] v=[x,y,z]; probe (left): k=[1,2,3] v=[a,b,c].
+        // Inner on k → (2,b,x),(3,c,y). (1 unmatched left, 4 unmatched build.)
+        let (build_batch, build_schema) = two_col_batch(&[2, 3, 4], &["x", "y", "z"], "kr", "vr");
+        let (probe_batch, probe_schema) = two_col_batch(&[1, 2, 3], &["a", "b", "c"], "kl", "vl");
+        let out_schema = Arc::new(Schema::new(vec![
+            Field::new("kl", DataType::Int64, true),
+            Field::new("vl", DataType::Utf8, true),
+            Field::new("vr", DataType::Utf8, true),
+        ]));
+        let batches = run_join(
+            build_batch,
+            build_schema,
+            probe_batch,
+            probe_schema,
+            vec![
+                JoinColumn::Probe(0),
+                JoinColumn::Probe(1),
+                JoinColumn::Build(1),
+            ],
+            JoinKind::Inner,
+            out_schema,
+        )
+        .await;
+        assert_eq!(batches.len(), 1);
+        let out = &batches[0];
+        assert_eq!(out.num_rows(), 2);
+        let kl = out.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
+        let vr = out
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        // probe order: (k=2,vl=b,vr=x), (k=3,vl=c,vr=y)
+        assert_eq!((kl.value(0), vr.value(0)), (2, "x"));
+        assert_eq!((kl.value(1), vr.value(1)), (3, "y"));
+    }
+
+    #[tokio::test]
+    async fn hash_join_left_unmatched() {
+        // Left join: probe k=[1,2] v=[a,b]; build k=[2] v=[x]. k=1 unmatched → NULL vr.
+        let (build_batch, build_schema) = two_col_batch(&[2], &["x"], "kr", "vr");
+        let (probe_batch, probe_schema) = two_col_batch(&[1, 2], &["a", "b"], "kl", "vl");
+        let out_schema = Arc::new(Schema::new(vec![
+            Field::new("kl", DataType::Int64, true),
+            Field::new("vl", DataType::Utf8, true),
+            Field::new("vr", DataType::Utf8, true),
+        ]));
+        let batches = run_join(
+            build_batch,
+            build_schema,
+            probe_batch,
+            probe_schema,
+            vec![
+                JoinColumn::Probe(0),
+                JoinColumn::Probe(1),
+                JoinColumn::Build(1),
+            ],
+            JoinKind::Left,
+            out_schema,
+        )
+        .await;
+        let out = &batches[0];
+        assert_eq!(out.num_rows(), 2); // matched (2,b,x) + unmatched (1,a,NULL)
+        let kl = out.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
+        let vr = out
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        for r in 0..out.num_rows() {
+            match kl.value(r) {
+                2 => assert!(!vr.is_null(r) && vr.value(r) == "x", "matched row"),
+                1 => assert!(vr.is_null(r), "unmatched probe row → NULL build col"),
+                other => panic!("unexpected k={other}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn hash_join_semi_anti() {
+        // probe k=[1,2,3]; build k=[2,4]. Semi → [2]; Anti → [1,3].
+        let (build_batch, build_schema) = two_col_batch(&[2, 4], &["x", "z"], "kr", "vr");
+        let (probe_batch, probe_schema) = two_col_batch(&[1, 2, 3], &["a", "b", "c"], "kl", "vl");
+
+        let out_schema = Arc::new(Schema::new(vec![
+            Field::new("kl", DataType::Int64, true),
+            Field::new("vl", DataType::Utf8, true),
+        ]));
+
+        // Semi
+        let semi = run_join(
+            build_batch.clone(),
+            build_schema.clone(),
+            probe_batch.clone(),
+            probe_schema.clone(),
+            vec![JoinColumn::Probe(0), JoinColumn::Probe(1)],
+            JoinKind::Semi,
+            out_schema.clone(),
+        )
+        .await;
+        let semi_k: Vec<i64> = semi[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap()
+            .iter()
+            .map(|o| o.unwrap())
+            .collect();
+        assert_eq!(semi_k, vec![2]);
+
+        // Anti
+        let anti = run_join(
+            build_batch,
+            build_schema,
+            probe_batch,
+            probe_schema,
+            vec![JoinColumn::Probe(0), JoinColumn::Probe(1)],
+            JoinKind::Anti,
+            out_schema,
+        )
+        .await;
+        let anti_k: Vec<i64> = anti[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap()
+            .iter()
+            .map(|o| o.unwrap())
+            .collect();
+        assert_eq!(anti_k, vec![1, 3]);
     }
 }
