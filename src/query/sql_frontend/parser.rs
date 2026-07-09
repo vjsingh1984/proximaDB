@@ -2669,13 +2669,24 @@ mod tests {
         for sql in [
             "ALTER TABLE inv MATERIALIZE",
             "alter table \"inv\" materialize;",
+            "ALTER TABLE \"Tenant One\".\"Event Store\" MATERIALIZE",
+            "ALTER TABLE \"tenant.with.dot\".\"events.with.dot\" MATERIALIZE",
         ] {
             let statement = parser
                 .parse_ddl(sql)
                 .expect("expected ddl parse to succeed")
                 .expect("expected materialize ddl");
             match statement {
-                DdlStatement::MaterializeTable { name } => assert_eq!(name, "inv"),
+                DdlStatement::MaterializeTable { name } => {
+                    let expected = if sql.contains("Tenant One") {
+                        "Tenant One.Event Store"
+                    } else if sql.contains("tenant.with.dot") {
+                        "tenant.with.dot.events.with.dot"
+                    } else {
+                        "inv"
+                    };
+                    assert_eq!(name, expected, "table mismatch for `{sql}`");
+                }
                 other => panic!("expected MaterializeTable, got {:?}", other),
             }
         }
@@ -2796,30 +2807,46 @@ mod tests {
     fn parse_ddl_promote_props_key_basic_types() {
         let parser = SqlFrontendParser::new();
 
-        let cases: &[(&str, &str, &str)] = &[
+        let cases: &[(&str, &str, &str, &str)] = &[
             (
                 "ALTER TABLE events PROMOTE PROPS KEY user_id TYPE BIGINT",
+                "events",
                 "user_id",
                 "BigInt",
             ),
             (
                 "ALTER TABLE events PROMOTE PROPS KEY label TYPE TEXT;",
+                "events",
                 "label",
                 "Text",
             ),
             (
                 "ALTER TABLE logs PROMOTE PROPS KEY score TYPE FLOAT",
+                "logs",
                 "score",
                 "Float",
             ),
             (
                 "ALTER TABLE docs PROMOTE PROPS KEY meta TYPE JSONB",
+                "docs",
                 "meta",
+                "Jsonb",
+            ),
+            (
+                "ALTER TABLE \"Tenant One\".\"Event Store\" PROMOTE PROPS KEY payload TYPE JSONB",
+                "Tenant One.Event Store",
+                "payload",
+                "Jsonb",
+            ),
+            (
+                "ALTER TABLE \"tenant.with.dot\".\"events.with.dot\" PROMOTE PROPS KEY payload TYPE JSONB",
+                "tenant.with.dot.events.with.dot",
+                "payload",
                 "Jsonb",
             ),
         ];
 
-        for (sql, expected_key, expected_type_fragment) in cases {
+        for (sql, expected_table, expected_key, expected_type_fragment) in cases {
             let result = parser
                 .parse_ddl(sql)
                 .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"));
@@ -2827,9 +2854,10 @@ mod tests {
             let stmt = result.expect("expected DdlStatement");
             match stmt {
                 crate::services::ddl::DdlStatement::AlterTable {
-                    table_name: _,
+                    table_name,
                     changes,
                 } => {
+                    assert_eq!(table_name, *expected_table, "table mismatch for `{sql}`");
                     assert_eq!(changes.len(), 1, "expected exactly one change");
                     match &changes[0] {
                         crate::services::ddl::AlterTableChange::PromotePropsKey {
@@ -3002,7 +3030,7 @@ impl SqlFrontendParser {
         }
 
         // Expected exactly: ALTER TABLE <name> MATERIALIZE
-        let tokens: Vec<&str> = normalised.split_whitespace().collect();
+        let tokens = split_sql_words_respecting_quotes(normalised, "ALTER TABLE MATERIALIZE")?;
         if tokens.len() != 4 {
             return Ok(None);
         }
@@ -3014,7 +3042,7 @@ impl SqlFrontendParser {
             return Ok(None);
         }
 
-        let name = tokens[2].trim_matches('"').to_string();
+        let name = unquote_object_name(&tokens[2]);
         if name.is_empty() {
             return Ok(None);
         }
@@ -3033,10 +3061,10 @@ impl SqlFrontendParser {
             return Ok(None);
         }
 
-        // Tokenise by whitespace for a simple hand-rolled parse.
         // Expected token sequence (case-insensitive):
         //   ALTER TABLE <name> PROMOTE PROPS KEY <key> TYPE <type…>
-        let tokens: Vec<&str> = normalised.split_whitespace().collect();
+        let tokens =
+            split_sql_words_respecting_quotes(normalised, "ALTER TABLE PROMOTE PROPS KEY")?;
 
         // Need at least 9 tokens: ALTER TABLE name PROMOTE PROPS KEY key TYPE type
         if tokens.len() < 9 {
@@ -3055,8 +3083,8 @@ impl SqlFrontendParser {
             return Ok(None);
         }
 
-        let table_name = unquote_object_name(tokens[2]);
-        let key = tokens[6].to_string();
+        let table_name = unquote_object_name(&tokens[2]);
+        let key = unquote_identifier_text(&tokens[6]);
         // Remaining tokens after TYPE form the type string (e.g. "VARCHAR(255)").
         let type_str = tokens[8..].join(" ");
 
@@ -3719,11 +3747,15 @@ fn sql_option_value_to_string(value: &SqlExpr) -> String {
 }
 
 pub fn unquote_object_name(value: &str) -> String {
-    value
-        .split('.')
-        .map(unquote_identifier_text)
-        .collect::<Vec<_>>()
-        .join(".")
+    parse_qualified_identifier_parts(value, "qualified identifier")
+        .map(|parts| parts.join("."))
+        .unwrap_or_else(|_| {
+            value
+                .split('.')
+                .map(unquote_identifier_text)
+                .collect::<Vec<_>>()
+                .join(".")
+        })
 }
 
 pub fn unquote_identifier_text(value: &str) -> String {
