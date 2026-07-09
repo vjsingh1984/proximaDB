@@ -1557,6 +1557,9 @@ impl PostgresProtocol {
         &mut self,
         result: ExecutionPipelineResult,
     ) -> anyhow::Result<()> {
+        // TD-OLAP-4 result-path probe: time the row encode + socket write, the
+        // last unmeasured span of the per-query wall floor.
+        let emit_start = std::time::Instant::now();
         // RowDescription.
         let fields: Vec<crate::network::postgres::types::FieldDescription> = result
             .schema
@@ -1578,7 +1581,9 @@ impl PostgresProtocol {
             self.send_data_row_nullable(&cells).await?;
         }
         // CommandComplete.
-        self.send_command_complete(&format!("SELECT {n}")).await
+        let done = self.send_command_complete(&format!("SELECT {n}")).await;
+        crate::observability::io_trace::record_emit_ms(emit_start.elapsed().as_millis() as u64);
+        done
     }
 
     /// Try to materialize a SELECT through the relational execution seam.

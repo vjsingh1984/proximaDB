@@ -228,6 +228,18 @@ impl PostgresServer {
             match listener.accept().await {
                 Ok((stream, addr)) => {
                     info!("New PostgreSQL connection from {}", addr);
+                    // Disable Nagle's algorithm on the pgwire socket (as libpq's
+                    // server does): a SELECT response is written as several small
+                    // segments (RowDescription, DataRow(s), CommandComplete), and
+                    // with Nagle on, the second segment waits for the first to be
+                    // ACKed while the client delays its ACK — a ~40 ms delayed-ACK
+                    // stall PER QUERY, even on loopback. Measured as the dominant
+                    // per-query wall floor (TD-OLAP-4 floor decomposition: setup/
+                    // open/plan/compute/emit all ~0, ~46 ms unattributed). Best-
+                    // effort: a failure here only forfeits the latency win.
+                    if let Err(e) = stream.set_nodelay(true) {
+                        warn!("pgwire: failed to set TCP_NODELAY on {}: {}", addr, e);
+                    }
                     let session_manager = self.session_manager.clone();
                     let collection_port = self.collection_port.clone();
                     let vector_ops = self.vector_ops.clone();
