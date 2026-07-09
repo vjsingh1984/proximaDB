@@ -21,6 +21,7 @@
 //! (`proximadb_execution_contracts::ExecutionError`); `native_engine` converts
 //! to the engine error at the `try_vectorized` seam.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow::array::{
@@ -700,10 +701,24 @@ enum OpSpec {
     },
 }
 
+/// Scan context for the native engine: pre-discovered PAX segments per table +
+/// the filesystem to read them. Threaded through `lower_physical`/`walk` so the
+/// `PhysicalPlan::Scan` arm can construct a `PaxScanOperator`. `None` when only
+/// Values-backed queries are served (the default — Scan returns Err → Volcano).
+pub struct ScanCtx {
+    pub filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+    pub tables: HashMap<String, ScanTableInfo>,
+}
+
+pub struct ScanTableInfo {
+    pub splits: Vec<crate::storage::formats::FileSplit>,
+    pub name_to_col_id: HashMap<String, i32>,
+}
+
 /// The pieces `walk` accumulates while descending a supported plan subtree.
 /// `ops` is bottom-up: the source feeds the first, the last emits the output.
 struct Walked {
-    source: MemoryScanSource,
+    source: Box<dyn ExecutionOperator>,
     ops: Vec<OpSpec>,
     /// Output schema of the last op (or the source if `ops` is empty).
     cur_schema: SchemaRef,
@@ -715,12 +730,15 @@ struct Walked {
 /// AssertMaxOneRow, nested Limit, non-column projection/aggregate-arg, distinct
 /// aggregates, STRING_AGG/Custom aggregates, HAVING). `try_vectorized` maps the
 /// `Err` to a Volcano fallback.
-pub(crate) fn lower_physical(plan: &PhysicalPlan) -> Result<LoweredPipeline, ExecutionError> {
+pub(crate) fn lower_physical(
+    plan: &PhysicalPlan,
+    scan_ctx: Option<&ScanCtx>,
+) -> Result<LoweredPipeline, ExecutionError> {
     // Join is handled specially — it produces two pipelines (build + probe).
     if matches!(plan, PhysicalPlan::Join { .. }) {
-        return lower_join(plan);
+        return lower_join(plan, scan_ctx);
     }
-    let walked = walk(plan)?;
+    let walked = walk(plan, scan_ctx)?;
     let (operators, limit) = walked_to_operators(walked);
     Ok(LoweredPipeline {
         pipeline: Pipeline::new(operators),
@@ -736,7 +754,7 @@ fn walked_to_operators(walked: Walked) -> (Vec<Box<dyn ExecutionOperator>>, Opti
         source, ops, limit, ..
     } = walked;
     let mut operators: Vec<Box<dyn ExecutionOperator>> = Vec::with_capacity(ops.len() + 1);
-    operators.push(Box::new(source));
+    operators.push(source);
     let mut cur_schema = operators[0].output_schema();
     for spec in ops {
         match spec {
@@ -778,7 +796,10 @@ fn walked_to_operators(walked: Walked) -> (Vec<Box<dyn ExecutionOperator>>, Opti
 
 /// Lower a `PhysicalPlan::Join` into a two-pipeline `LoweredPipeline` (build +
 /// probe) using the #779 `HashJoinBuildOperator`/`HashJoinProbeOperator`.
-fn lower_join(plan: &PhysicalPlan) -> Result<LoweredPipeline, ExecutionError> {
+fn lower_join(
+    plan: &PhysicalPlan,
+    scan_ctx: Option<&ScanCtx>,
+) -> Result<LoweredPipeline, ExecutionError> {
     use crate::query::execution::native_engine::native_join_enabled;
     use crate::query::execution::native_join_ops::{
         HashJoinBuildOperator, HashJoinProbeOperator, JoinColumn,
@@ -822,8 +843,8 @@ fn lower_join(plan: &PhysicalPlan) -> Result<LoweredPipeline, ExecutionError> {
     }
 
     // Walk both subtrees.
-    let left_walked = walk(left)?;
-    let right_walked = walk(right)?;
+    let left_walked = walk(left, scan_ctx)?;
+    let right_walked = walk(right, scan_ctx)?;
     let left_schema = left_walked.cur_schema.clone();
     let right_schema = right_walked.cur_schema.clone();
     let (left_ops, _) = walked_to_operators(left_walked);
@@ -940,7 +961,7 @@ fn extract_equi_keys(expr: &Expr, left_width: usize) -> Option<Vec<(usize, usize
     }
 }
 
-fn walk(plan: &PhysicalPlan) -> Result<Walked, ExecutionError> {
+fn walk(plan: &PhysicalPlan, scan_ctx: Option<&ScanCtx>) -> Result<Walked, ExecutionError> {
     match plan {
         PhysicalPlan::Values {
             rows,
@@ -948,7 +969,38 @@ fn walk(plan: &PhysicalPlan) -> Result<Walked, ExecutionError> {
         } => {
             let arrow_schema = relational_schema_to_arrow(output_schema);
             let batch = values_to_record_batch(rows, arrow_schema.clone())?;
-            let source = MemoryScanSource::new(vec![batch], arrow_schema.clone());
+            let source = Box::new(MemoryScanSource::new(vec![batch], arrow_schema.clone()));
+            Ok(Walked {
+                source,
+                ops: Vec::new(),
+                cur_schema: arrow_schema,
+                limit: None,
+            })
+        }
+        PhysicalPlan::Scan {
+            table,
+            output_schema,
+            ..
+        } => {
+            use crate::query::execution::native_scan::PaxScanOperator;
+            let ctx = scan_ctx.ok_or_else(|| {
+                ExecutionError::NotImplemented(
+                    "native scan requires a ScanCtx (no storage context threaded)".into(),
+                )
+            })?;
+            let info = ctx.tables.get(&table.name).ok_or_else(|| {
+                ExecutionError::NotImplemented(format!(
+                    "no PAX segments discovered for table {:?}",
+                    table.name
+                ))
+            })?;
+            let arrow_schema = relational_schema_to_arrow(output_schema);
+            let source = Box::new(PaxScanOperator::new(
+                info.splits.clone(),
+                ctx.filesystem_factory.clone(),
+                info.name_to_col_id.clone(),
+                arrow_schema.clone(),
+            ));
             Ok(Walked {
                 source,
                 ops: Vec::new(),
@@ -957,7 +1009,7 @@ fn walk(plan: &PhysicalPlan) -> Result<Walked, ExecutionError> {
             })
         }
         PhysicalPlan::Filter { input, predicate } => {
-            let mut w = walk(input)?;
+            let mut w = walk(input, scan_ctx)?;
             let p = PhysExpr::lower(predicate)?;
             // Fuse into a trailing FilterProject (AND-merge the predicate), else push.
             let fuse = matches!(w.ops.last(), Some(OpSpec::FilterProject { .. }));
@@ -980,7 +1032,7 @@ fn walk(plan: &PhysicalPlan) -> Result<Walked, ExecutionError> {
             Ok(w) // a filter preserves the column set → cur_schema unchanged
         }
         PhysicalPlan::Project { input, outputs } => {
-            let mut w = walk(input)?;
+            let mut w = walk(input, scan_ctx)?;
             let indices = lower_column_indices(outputs)?;
             // Output schema of this projection (computed before `indices` is moved
             // into the op below).
@@ -1025,7 +1077,7 @@ fn walk(plan: &PhysicalPlan) -> Result<Walked, ExecutionError> {
                     "HAVING not supported in native HashAggregate".into(),
                 ));
             }
-            let mut w = walk(input)?;
+            let mut w = walk(input, scan_ctx)?;
             let gb: Vec<usize> = group_by
                 .iter()
                 .map(|ne| lower_col(&ne.expr))
@@ -1049,7 +1101,7 @@ fn walk(plan: &PhysicalPlan) -> Result<Walked, ExecutionError> {
             limit,
             offset,
         } => {
-            let mut w = walk(input)?;
+            let mut w = walk(input, scan_ctx)?;
             if w.limit.is_some() {
                 return Err(ExecutionError::NotImplemented(
                     "nested Limit not supported in native vectorized path".into(),
@@ -1937,7 +1989,7 @@ mod tests {
         };
 
         // Lower + execute.
-        let lowered = lower_physical(&plan).expect("lower_physical for Join");
+        let lowered = lower_physical(&plan, None).expect("lower_physical for Join");
         let batches = execute_pipeline(&lowered)
             .await
             .expect("execute_pipeline for Join");
@@ -1962,6 +2014,91 @@ mod tests {
         assert!(
             pairs.contains(&(2, 2)) && pairs.contains(&(3, 3)),
             "expected matched pairs (2,2) + (3,3), got {pairs:?}"
+        );
+    }
+
+    // --- PAX Scan through lower_physical (Phase 2.5 wiring) ---
+
+    #[tokio::test]
+    async fn scan_reads_real_pax_through_lower_physical() {
+        use crate::storage::engines::sst::segment_format::write_pax_segment;
+        use crate::storage::formats::FileSplit;
+        use crate::storage::persistence::filesystem::FilesystemFactory;
+        use proximadb_block_format::{VectorQuant, col_id};
+        use proximadb_records::ProximaRecord;
+
+        fn record(oid: &str, tenant: &str, ts: i64) -> ProximaRecord {
+            ProximaRecord {
+                oid: oid.into(),
+                tenant_id: tenant.into(),
+                created_at_ns: ts,
+                updated_at_ns: ts,
+                ..Default::default()
+            }
+        }
+
+        // Write a REAL .pax segment with 2 records (created_at = 1000, 3000).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("seg.pax");
+        let records = vec![record("r1", "t", 1000), record("r2", "t", 3000)];
+        write_pax_segment(&path, &records, "col", 0, VectorQuant::Auto, None)
+            .expect("write_pax_segment");
+
+        // Build the ScanCtx: FilesystemFactory + pre-discovered splits + column mapping.
+        let fs = Arc::new(
+            FilesystemFactory::create_default()
+                .await
+                .expect("FilesystemFactory"),
+        );
+        let split = FileSplit::new_block(path.to_str().unwrap().to_string(), 0, 0, 0, 0);
+        let scan_ctx = ScanCtx {
+            filesystem_factory: fs,
+            tables: HashMap::from([(
+                "test_table".to_string(),
+                ScanTableInfo {
+                    splits: vec![split],
+                    name_to_col_id: HashMap::from([("created_at".to_string(), col_id::CREATED_AT)]),
+                },
+            )]),
+        };
+
+        // Construct PhysicalPlan::Scan pointing at the table.
+        let schema = RelationalSchema::new(vec![proximadb_relational_types::ColumnInfo::new(
+            "created_at",
+            ProximaType::Int64,
+            true,
+        )]);
+        let plan = PhysicalPlan::Scan {
+            table: proximadb_relational_algebra::TableId::new("test_table"),
+            output_schema: schema,
+            projection: None,
+            predicate: None,
+            limit: None,
+            access: proximadb_relational_planner::ScanAccess::FullScan,
+        };
+
+        // Lower + execute through the native engine.
+        let lowered = lower_physical(&plan, Some(&scan_ctx)).expect("lower_physical for Scan");
+        let batches = execute_pipeline(&lowered)
+            .await
+            .expect("execute_pipeline for Scan");
+
+        // Assert: 2 rows with created_at = 1000, 3000.
+        assert!(
+            !batches.is_empty(),
+            "expected at least one batch from the scan"
+        );
+        let total: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total, 2, "expected 2 rows from the PAX segment");
+        let arr = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("Int64Array for created_at");
+        let vals: Vec<i64> = arr.iter().map(|o| o.unwrap()).collect();
+        assert!(
+            vals.contains(&1000) && vals.contains(&3000),
+            "expected [1000, 3000], got {vals:?}"
         );
     }
 }

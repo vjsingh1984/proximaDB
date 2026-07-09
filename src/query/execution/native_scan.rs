@@ -1,8 +1,6 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 
-#![allow(dead_code)]
-
 //! # Native PAX scan operator (ADR-054 Phase 2.5, TD-OLAP-14)
 //!
 //! The real-storage scan source for the native vectorized engine. Mirrors the

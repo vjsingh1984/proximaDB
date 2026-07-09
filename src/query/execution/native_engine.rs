@@ -59,12 +59,13 @@ pub fn native_join_enabled() -> bool {
 /// is policed by the shadow-comparison harness (TD-OLAP-10 §"Shadow comparison").
 pub async fn try_vectorized(
     physical: &PhysicalPlan,
+    scan_ctx: Option<&super::native_ops::ScanCtx>,
 ) -> Result<Option<ExecutionPipelineResult>, ExecutionError> {
     if !native_vectorized_enabled() {
         return Ok(None);
     }
     // Any decline (unsupported shape) or failure (execution error) → Volcano.
-    let lowered = match super::native_ops::lower_physical(physical) {
+    let lowered = match super::native_ops::lower_physical(physical, scan_ctx) {
         Ok(l) => l,
         Err(reason) => {
             tracing::debug!(
