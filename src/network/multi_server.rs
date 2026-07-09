@@ -104,25 +104,6 @@ pub use proximadb_runtime::bootstrap_config::{
 // All existing call sites using `crate::network::multi_server::SharedServices` continue to work.
 pub use crate::network::shared_services::{ServiceProfile, SharedServices};
 
-/// Apply 64 MB message limits and optional gzip compression to a tonic service.
-///
-/// Defines a local `compress` binding that must be in scope at each use site.
-macro_rules! apply_limits {
-    ($svc:expr, $compress:expr) => {{
-        use tonic::codec::CompressionEncoding;
-        const MSG_64MB: usize = 64 * 1024 * 1024;
-        let s = $svc
-            .max_decoding_message_size(MSG_64MB)
-            .max_encoding_message_size(MSG_64MB);
-        if $compress {
-            s.accept_compressed(CompressionEncoding::Gzip)
-                .send_compressed(CompressionEncoding::Gzip)
-        } else {
-            s
-        }
-    }};
-}
-
 /// Multi-server manager that coordinates HTTP and gRPC servers with thin handlers
 /// Responsibilities: ports, TLS, server lifecycle, protocol orchestration
 pub struct MultiServer {
@@ -592,16 +573,6 @@ impl MultiServer {
                 crate::network::grpc::ObservabilityServiceImpl::new(obs_service),
             );
 
-            let streaming_port: Arc<dyn proximadb_runtime::StreamingPort> =
-                Arc::new(crate::network::grpc::StreamingServiceImpl::new());
-            let security_port: Arc<dyn proximadb_runtime::SecurityPort> =
-                Arc::new(crate::network::grpc::SecurityServiceImpl::with_default_config());
-            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
-                Arc::new(crate::network::hybrid_search::RestHybridPortImpl::new(
-                    self.shared_services.vector_ops_port.clone(),
-                    self.shared_services.fulltext_indexes.clone(),
-                ));
-
             // Clone ports for REST server before they are consumed by the gRPC factory
             rest_ports_opt = Some(crate::network::rest::server::RestServerPorts {
                 doc_port: Some(doc_port.clone()),
@@ -610,42 +581,9 @@ impl MultiServer {
                 api_handlers: self.shared_services.api_handlers.clone(),
             });
 
-            // ── Build all gRPC services through the port-based factory ─────────
-
-            // TD-104 S2: gRPC's API service consumes only the ApiHandlersPort
-            // trait (collection/vector/hybrid/sql); route it through the runtime
-            // port-based handler instead of the root inherent one. Document/graph/
-            // observability RPCs already use their own ports.
-            let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
-                services.api_handlers.clone();
-            let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();
-            let grpc_svcs = proximadb_api::grpc::builder::GrpcServiceFactory::new(api_port)
-                .with_graph(graph_port)
-                .with_document(doc_port)
-                .with_observability(obs_port)
-                .with_streaming(streaming_port)
-                .with_security(security_port)
-                .with_hybrid(hybrid_port)
-                .with_config(grpc_cfg)
-                .create_all_services_sync();
-
-            debug!("✅ All gRPC services created via GrpcServiceFactory");
-
-            // Apply 64 MB message limits and optional gzip compression per service.
-            // Transport-level concerns (message size limits, gzip) applied here
-            // at the composition root; the factory is protocol-agnostic.
-            let compress = self.config.grpc_config.compression;
-
-            let vector_service = apply_limits!(grpc_svcs.vector, compress);
-            let sql_service = apply_limits!(grpc_svcs.sql, compress);
-            let col_service = grpc_svcs.collection;
-            let graph_service = grpc_svcs.graph;
-            let hybrid_search_service = grpc_svcs.hybrid_search;
-            let security_service = grpc_svcs.security;
-            let document_service = grpc_svcs.document;
-            let entity_service = grpc_svcs.entity;
-            let observability_service = grpc_svcs.observability;
-            let streaming_service = grpc_svcs.streaming;
+            // gRPC v1 compatibility services were removed in TD-V1SUNSET-1 (the
+            // v1 surface had been default-off through its sunset window). Only the
+            // canonical v2 services are registered below.
 
             // Standard grpc.health.v1.Health service for k8s/LB probes.
             let (health_reporter, standard_health_server) = tonic_health::server::health_reporter();
@@ -664,26 +602,6 @@ impl MultiServer {
                 .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(Self::canonical_entity_grpc_service(&services))
                 .add_service(standard_health_server);
-
-            // Deprecated gRPC v1 compatibility adapters are gated behind
-            // `enable_grpc_v1_compat` (env `PROXIMADB_GRPC_V1_COMPAT`, default off).
-            // Post-sunset these service impls are removed entirely.
-            if self.config.grpc_config.enable_grpc_v1_compat {
-                warn!(
-                    "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
-                );
-                server = server
-                    .add_service(vector_service)
-                    .add_service(sql_service)
-                    .add_service(col_service)
-                    .add_service(graph_service)
-                    .add_service(hybrid_search_service)
-                    .add_service(security_service)
-                    .add_service(document_service)
-                    .add_service(entity_service)
-                    .add_service(observability_service)
-                    .add_service(streaming_service);
-            }
 
             // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {
@@ -1116,53 +1034,6 @@ impl MultiServer {
         // 2. Start gRPC server on internal port (HTTP/2)
         if self.config.grpc_config.enable_grpc {
             let services = self.shared_services.clone();
-            let compress = self.config.grpc_config.compression;
-
-            // ── Build core gRPC services via factory ──────────────────────────
-            let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
-                Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    services.graph_service.clone(),
-                    services.api_handlers.clone(),
-                    services.query_adapter(),
-                ));
-            // ADR-015 step 2 (DocumentPort).
-            let grpc_doc_port: Arc<dyn proximadb_runtime::DocumentPort> =
-                doc_storage_service.clone();
-            let grpc_obs_port: Arc<dyn proximadb_runtime::ObservabilityPort> = Arc::new(
-                crate::network::grpc::ObservabilityServiceImpl::new(obs_service.clone()),
-            );
-            let grpc_streaming_port: Arc<dyn proximadb_runtime::StreamingPort> =
-                Arc::new(crate::network::grpc::StreamingServiceImpl::new());
-            let grpc_security_port: Arc<dyn proximadb_runtime::SecurityPort> =
-                Arc::new(crate::network::grpc::SecurityServiceImpl::with_default_config());
-            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
-                Arc::new(crate::network::hybrid_search::RestHybridPortImpl::new(
-                    self.shared_services.vector_ops_port.clone(),
-                    self.shared_services.fulltext_indexes.clone(),
-                ));
-            // TD-104 S2: gRPC's API service consumes only the ApiHandlersPort
-            // trait (collection/vector/hybrid/sql); route it through the runtime
-            // port-based handler instead of the root inherent one. Document/graph/
-            // observability RPCs already use their own ports.
-            let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
-                services.api_handlers.clone();
-            let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();
-            let grpc_svcs = proximadb_api::grpc::builder::GrpcServiceFactory::new(api_port)
-                .with_graph(graph_port)
-                .with_document(grpc_doc_port)
-                .with_observability(grpc_obs_port)
-                .with_streaming(grpc_streaming_port)
-                .with_security(grpc_security_port)
-                .with_hybrid(hybrid_port)
-                .with_config(grpc_cfg)
-                .create_all_services_sync();
-
-            let vector_service = apply_limits!(grpc_svcs.vector, compress);
-            let sql_service = apply_limits!(grpc_svcs.sql, compress);
-            let col_service = grpc_svcs.collection;
-            let graph_service = grpc_svcs.graph;
-            let hybrid_search_service = grpc_svcs.hybrid_search;
-            let security_service = grpc_svcs.security;
 
             // Arrow Flight service (HTTP/2-based, shares internal gRPC server)
             let flight_service =
@@ -1213,21 +1084,6 @@ impl MultiServer {
                 .add_service(Self::canonical_entity_grpc_service(&services))
                 .add_service(flight_server)
                 .add_service(standard_health_server);
-
-            // Deprecated gRPC v1 compatibility adapters are gated behind
-            // `enable_grpc_v1_compat` (env `PROXIMADB_GRPC_V1_COMPAT`, default off).
-            if self.config.grpc_config.enable_grpc_v1_compat {
-                warn!(
-                    "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
-                );
-                server = server
-                    .add_service(vector_service)
-                    .add_service(sql_service)
-                    .add_service(col_service)
-                    .add_service(graph_service)
-                    .add_service(hybrid_search_service)
-                    .add_service(security_service);
-            }
 
             // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {
@@ -1542,40 +1398,6 @@ impl MultiServer {
                     None
                 }));
 
-            // ── Build standard services via factory ───────────────────────────
-            let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
-                Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
-                    services.graph_service.clone(),
-                    services.api_handlers.clone(),
-                    services.query_adapter(),
-                ));
-            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
-                Arc::new(crate::network::hybrid_search::RestHybridPortImpl::new(
-                    self.shared_services.vector_ops_port.clone(),
-                    self.shared_services.fulltext_indexes.clone(),
-                ));
-            // TD-104 S2: gRPC's API service consumes only the ApiHandlersPort
-            // trait (collection/vector/hybrid/sql); route it through the runtime
-            // port-based handler instead of the root inherent one. Document/graph/
-            // observability RPCs already use their own ports.
-            let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
-                services.api_handlers.clone();
-            let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();
-            let grpc_svcs = proximadb_api::grpc::builder::GrpcServiceFactory::new(api_port)
-                .with_graph(graph_port)
-                .with_hybrid(hybrid_port)
-                .with_config(grpc_cfg)
-                .create_all_services_sync();
-
-            let compress = self.config.grpc_config.compression;
-
-            let vector_service = apply_limits!(grpc_svcs.vector, compress);
-            let sql_service = apply_limits!(grpc_svcs.sql, compress);
-            let col_service = grpc_svcs.collection;
-            let graph_service = grpc_svcs.graph;
-            let hybrid_search_service = grpc_svcs.hybrid_search;
-            let security_service = grpc_svcs.security;
-
             // Standard grpc.health.v1.Health service for k8s/LB probes.
             let (mut std_health_reporter, standard_health_server) =
                 tonic_health::server::health_reporter();
@@ -1595,21 +1417,6 @@ impl MultiServer {
                 .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(Self::canonical_entity_grpc_service(&services))
                 .add_service(standard_health_server);
-
-            // Deprecated gRPC v1 compatibility adapters are gated behind
-            // `enable_grpc_v1_compat` (env `PROXIMADB_GRPC_V1_COMPAT`, default off).
-            if self.config.grpc_config.enable_grpc_v1_compat {
-                warn!(
-                    "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
-                );
-                server = server
-                    .add_service(vector_service)
-                    .add_service(sql_service)
-                    .add_service(col_service)
-                    .add_service(graph_service)
-                    .add_service(hybrid_search_service)
-                    .add_service(security_service);
-            }
 
             // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {
