@@ -129,6 +129,7 @@ impl ArrowFlightServer {
                     .serve(addr)
                     .await?;
             }
+            #[cfg(unix)]
             BindTarget::Uds(path) => {
                 let listener = crate::network::uds::bind_unix_listener(&path).map_err(|e| {
                     anyhow::anyhow!("Arrow Flight UDS bind failed at {}: {}", path.display(), e)
@@ -138,6 +139,13 @@ impl ArrowFlightServer {
                     .add_service(flight_server)
                     .serve_with_incoming(incoming)
                     .await?;
+            }
+            #[cfg(not(unix))]
+            BindTarget::Uds(path) => {
+                anyhow::bail!(
+                    "Arrow Flight UDS (unix:{}) is not supported on this platform; use TCP",
+                    path.display()
+                );
             }
         }
 
