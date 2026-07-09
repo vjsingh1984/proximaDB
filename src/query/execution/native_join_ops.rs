@@ -59,7 +59,7 @@ fn canonical_key_bytes(
 }
 
 /// Typed downcast that errors (never panics) — the repo's panic-policy forbids
-/// `.unwrap()` on `downcast_ref`. (A macro, not a generic fn, to avoid the
+/// the unwrap-on-downcast idiom. (A macro, not a generic fn, to avoid the
 /// downcast `'static` lifetime-bound friction.)
 macro_rules! dcast {
     ($array:expr, $t:ty) => {
