@@ -64,3 +64,29 @@ planning, session, or compute — it is the **transport**. It applies to EVERY p
 query (OLAP and OLTP), on loopback and over the network. The co-design lesson: the
 dominant cost term was a round-trip stall the whole instrumentation stack had to be
 built to see. Evidence: `ledger_nodelay.json` (after) vs `ledger_emitprobe.json` (before).
+
+== Scale check — 10M (0.1) rows: the win is scale-dependent (banked 2026-07-09)
+
+Re-ran at 10M rows (10× replicate of the 1M set — same schema/distribution; note
+`COUNT(DISTINCT)` sees 10× rows but the same distinct set, so it understates true-10M
+cardinality while still scaling the scan/hash *compute* 10×).
+
+[cols="2,1,1",options="header"]
+|===
+| metric | ProximaDB | DuckDB
+| median wall (35q) | 81 ms | 40 ms
+| total wall (35q)  | 5,078 ms | 2,221 ms
+| ProximaDB ≤ DuckDB | 15 / 35 | —
+|===
+
+**At 10M, DuckDB wins (ProximaDB 2.0× median).** The NODELAY fix still holds (`emit_ms`
+= 0 — transport floor gone, a scale-independent ~40 ms/query win). But the 1M win was
+partly the fixed per-query floor dominating; at scale, **compute dominates and DataFusion's
+kernels trail DuckDB's** on the wide-`Utf8`/DISTINCT tail: q23 1,510 ms vs 62 ms (24×),
+q21/q22 ~9×, and even plain aggregates 2–3×.
+
+Conclusion: TCP_NODELAY is a real, universal latency win, but a "beats DuckDB" claim only
+holds at toy scale (1M). At realistic scale the gap is **DataFusion kernel compute** —
+precisely the territory ADR-054's native operators target. The honest headline is
+"one-line transport fix + native compute engine", pending Phase 2.5 (real native scan).
+Ledgers: `ledger_final.json` (1M), `ledger_10m.json` (10M).
