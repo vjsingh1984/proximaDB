@@ -93,14 +93,16 @@ an error — never silently truncate, per TD-XMODAL-9); thresholds are **ratchet
 | Same candidate ids + same reranked order as whole-segment on every gate query. Non-negotiable.
 
 | **Flip gate — bytes-moved reduction** (S3)
-| ≥ 40% on the S1b **physical** trace. **S1a pure-plan bracket (2026-07-09): best 83.7% / worst 40.7%** (best 40,626 / worst 148,146 / whole 249,735 bytes; 16-block, 1k×128-d, SQ8-only, no f32 tier; `pax_striped_plan`).
-| The headroom is **config-dependent, NOT a clean "holds"** (adversarial review 2026-07-09): the best case
-  assumes clustered candidates; the worst case (scattered → whole rerank stripe) is ~41% *with* an optimistic
-  CREATED_AT rank proxy — the real RaBitQ codes column is ≈3× larger, pushing the SQ8-only worst case **below
-  the gate**. The robust win comes from (a) segments carrying a heavy **exact-f32 tier** the rerank skips, and
-  (b) segment size ≫ RaBitQ pool. Therefore the flip go/no-go is the **S1b physical io_trace** on representative
-  segments (f32-tier vs SQ8-only), never this pure-plan estimate (ADR-052 observe→ingest→act). S1a's value is
-  the verified composition + the bracket, not a flip signal.
+| ≥ 40%. **MEASURED (2026-07-09) on the live cascade's own per-query trace with the REAL RaBitQ candidate set: 72.1% (N=8k) / 73.4% (N=20k)**, default **SQ8, f32-tier OFF**, cold-object-store cost (whole-segment 5.18 MB vs logical striped 1.38 MB / query @N=20k; `rdstrat_striped_headroom_measure`).
+| The **measured** number supersedes the S1a *pure-plan* bracket (best 83.7% / worst 40.7%) — the pure plan's
+  worst case assumed scattered candidates coalescing to the whole rerank stripe, but the real RaBitQ-ranked
+  pool is **bounded** (≈7 surviving blocks/query @N=20k), so the striped rerank bytes stay ≪ the whole segment
+  EVEN SQ8-only. Method: the cascade reads each segment whole (`search/mod.rs:271`, mmap-amortized on hot local
+  FS — so the cold-GET baseline is the `.pax` segment size, not `io_trace.bytes_read`) while projecting the
+  selective read into the distinct `io_trace.logical_striped_bytes` counter (fixing the TD-RDSTRAT-2
+  double-count). Headroom = `1 − logical_striped / Σ.pax-sizes`. **Holds ≫ gate on the default config** ⇒ S1b
+  greenlit (2026-07-09). f32-tier segments would raise it further (skip the tier). The default-on flip still
+  runs the S3 recall + parity gates.
 
 | **No-GET-amplification** (S3)
 | `range_gets(striped) ≤ range_gets(whole)·K`, K=8 (coalesced)

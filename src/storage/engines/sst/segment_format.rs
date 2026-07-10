@@ -408,8 +408,14 @@ pub fn rabitq_search_segment(
         };
         any_rabitq = true;
 
-        // Trace the cascade's logical reads for this kept block: the RaBitQ codes
-        // stripe (stage 1) + the SQ8 bytes decoded for the candidate pool (stage 2).
+        // Project the cascade's LOGICAL striped read for this kept block: the RaBitQ
+        // codes stripe (stage 1) + the SQ8 bytes for the candidate pool (stage 2) —
+        // what a selective striped read WOULD move for the *real* candidate set. This
+        // is recorded into the distinct `logical_striped_*` counters (NOT the physical
+        // `bytes_read`/`range_gets`, which reflect the whole-segment `fs.read`), so the
+        // striped-vs-whole headroom is measurable per query on real candidate scatter
+        // (ADR-057 / TD-RDSTRAT-3). Projection-only; moves no bytes. Fixes the
+        // TD-RDSTRAT-2 double-count (it previously inflated the physical byte total).
         let dim = block
             .vector_params()
             .get(col_id::EMBED_BASE)
@@ -421,8 +427,7 @@ pub fn rabitq_search_segment(
             .find(|m| m.column_id == col_id::EMBED_BASE)
             .map(|m| m.stripe_len as u64)
             .unwrap_or(0);
-        io_trace::record_bytes_read(codes_len + cand.len() as u64 * dim);
-        io_trace::record_range_gets(1);
+        io_trace::record_logical_striped(codes_len + cand.len() as u64 * dim, 1);
 
         // Stage 2 rerank over ONLY the candidate rows. Prefer the EXACT-f32 tier
         // when present (P3 Phase D: recall ≈ 1.0), else the co-located SQ8 rerank
