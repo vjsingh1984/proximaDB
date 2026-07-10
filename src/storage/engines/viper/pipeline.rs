@@ -1080,7 +1080,7 @@ impl VectorRecordProcessor {
         &self,
         records: &[VectorRecord],
         quantization_level: proximadb_quantization_model::UnifiedQuantizationLevel,
-    ) -> Result<Vec<crate::compute::quantization::quantization_engine::QuantizedVector>> {
+    ) -> Result<Vec<proximadb_quantization_model::QuantizedVector>> {
         if records.is_empty() {
             return Ok(vec![]);
         }
@@ -1114,12 +1114,11 @@ impl VectorRecordProcessor {
                 );
 
                 // Convert StorageQuantizedData to QuantizedVector
-                let quantized_vectors: Vec<
-                    crate::compute::quantization::quantization_engine::QuantizedVector,
-                > = storage_quantized_data
-                    .into_iter()
-                    .filter_map(|data| data.primary)
-                    .collect();
+                let quantized_vectors: Vec<proximadb_quantization_model::QuantizedVector> =
+                    storage_quantized_data
+                        .into_iter()
+                        .filter_map(|data| data.primary)
+                        .collect();
 
                 // Log quantization success
                 debug!(
@@ -1146,7 +1145,7 @@ impl VectorRecordProcessor {
         records: &[VectorRecord],
     ) -> Result<(
         RecordBatch,
-        Option<Vec<crate::compute::quantization::quantization_engine::QuantizedVector>>,
+        Option<Vec<proximadb_quantization_model::QuantizedVector>>,
     )> {
         if records.is_empty() {
             return Err(anyhow::anyhow!("Cannot process empty record set"));
@@ -2064,9 +2063,7 @@ impl ParquetFlusher {
     pub async fn flush_batch_with_quantization(
         &self,
         batch: RecordBatch,
-        quantized_vectors: Option<
-            Vec<crate::compute::quantization::quantization_engine::QuantizedVector>,
-        >,
+        quantized_vectors: Option<Vec<proximadb_quantization_model::QuantizedVector>>,
         output_path: &str,
     ) -> Result<ViperPipelineFlushResult> {
         // Augment batch with quantized vector columns if available
@@ -2179,7 +2176,7 @@ impl ParquetFlusher {
     fn augment_batch_with_quantized_vectors(
         &self,
         batch: RecordBatch,
-        quantized_vectors: &[crate::compute::quantization::quantization_engine::QuantizedVector],
+        quantized_vectors: &[proximadb_quantization_model::QuantizedVector],
     ) -> Result<RecordBatch> {
         // Quantization types now from unified compute module
         use arrow_array::{BinaryArray, UInt8Array};
@@ -2201,7 +2198,7 @@ impl ParquetFlusher {
         // Group quantized vectors by quantization level for efficient column storage
         let mut quantization_groups: std::collections::HashMap<
             proximadb_quantization_model::UnifiedQuantizationLevel,
-            Vec<&crate::compute::quantization::quantization_engine::QuantizedVector>,
+            Vec<&proximadb_quantization_model::QuantizedVector>,
         > = std::collections::HashMap::new();
 
         for qvec in quantized_vectors {

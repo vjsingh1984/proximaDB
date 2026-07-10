@@ -30,12 +30,12 @@ use tracing::{debug, trace};
 use crate::compute::quantization::quantization_engine::{
     QuantizedVector, UnifiedQuantizationEngine,
 };
-use crate::compute::quantization::storage_engine::StorageQuantizedData;
 use crate::core::search::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::{QuantizationLevel, QuantizationType, StorageQueryContext};
 use proximadb_distance_kernel::DistanceMetric;
 use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
+use proximadb_quantization_model::StorageQuantizedData;
 
 /// Progressive search executor that can be used by any storage engine
 pub struct ProgressiveSearchExecutor {

@@ -1229,7 +1229,7 @@ impl InterCentroidMatrix {
         }
 
         // Create quantized vector wrapper for unified engine processing
-        use crate::compute::quantization::quantization_engine::QuantizationMetadata;
+        use proximadb_quantization_model::QuantizationMetadata;
         let _quantized_vector = QuantizedVector {
             data: quantized_values
                 .iter()
