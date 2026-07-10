@@ -1,13 +1,19 @@
-//! # REST API v1 Handlers
+//! # Canonical REST API handlers (port-backed `/api/v2` surface)
 //!
-//! Version 1 REST endpoints for ProximaDB.
+//! The canonical, port-backed REST router builders + handlers that serve
+//! `/api/v2/*` — graph, document, observability, multimodal/unified query, and
+//! hybrid search. Each router is constructed with a platform port
+//! (`GraphPort`, `DocumentPort`, …) and wired into the live router at
+//! `src/network/rest/v1/handlers.rs` (`create_*_router`).
 //!
-//! These endpoints are compatibility adapters. New clients should use canonical
-//! record/table surfaces instead of targeting v1 vector-shaped payloads.
+//! Historically this module was named `rest::v1` (it reuses v1 proto *request*
+//! types internally), which led to it being mistaken for the deprecated
+//! `/api/v1` surface — it is **not**; it is the live canonical surface. Renamed
+//! to `rest::canonical` to make that unambiguous (TD-V1SUNSET-1 follow-up).
 //!
-//! The deprecation-header machinery these adapters emit is centralized in
-//! `crate::rest::deprecation` (TD-V1SUNSET-1 step 2) and re-exported below so
-//! the per-adapter `super::with_v1_compatibility_headers` call sites resolve.
+//! The deprecation-header machinery (for residual `/api/v1`-shaped traffic) is
+//! centralized in `crate::rest::deprecation` (TD-V1SUNSET-1 step 2) and
+//! re-exported below.
 
 pub mod analytics;
 pub mod catalog;
@@ -18,9 +24,9 @@ pub mod hybrid;
 pub mod multimodal_query;
 pub mod observability;
 
-// Deprecation-header utilities live outside this deprecated dir; re-exported
-// here so the adapters' `super::with_v1_compatibility_headers` sites compile.
-// See `crate::rest::deprecation` (TD-V1SUNSET-1 step 2).
+// Deprecation-header utilities live in `crate::rest::deprecation` (a sibling
+// module) and are re-exported here so the adapters' `super::with_v1_compatibility_headers`
+// call sites resolve. See TD-V1SUNSET-1 step 2.
 pub use crate::rest::deprecation::{
     REST_V1_DEPRECATION_MESSAGE, REST_V1_REPLACEMENT_SURFACE,
     add_compatibility_deprecation_headers, add_rest_v1_deprecation_headers,
