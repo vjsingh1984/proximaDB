@@ -727,7 +727,7 @@ impl MultiServer {
                 .map(|p| format!("unix:{}", p.display()))
                 .unwrap_or_else(|| rest_bind_addr.to_string());
             let rest_core =
-                crate::network::rest::v1::handlers::RestCoreServices::from_shared_services(
+                crate::network::rest::canonical::handlers::RestCoreServices::from_shared_services(
                     &services,
                 );
             let catalog_manager = services.catalog_manager.clone();
@@ -981,7 +981,7 @@ impl MultiServer {
         {
             let services = self.shared_services.clone();
             let rest_core =
-                crate::network::rest::v1::handlers::RestCoreServices::from_shared_services(
+                crate::network::rest::canonical::handlers::RestCoreServices::from_shared_services(
                     &services,
                 );
             let graph_execution_service = services.graph_execution_service.clone();
@@ -1553,7 +1553,7 @@ impl MultiServer {
 
             let rest_bind_addr = self.config.http_bind_address();
             let rest_core =
-                crate::network::rest::v1::handlers::RestCoreServices::from_shared_services(
+                crate::network::rest::canonical::handlers::RestCoreServices::from_shared_services(
                     &services,
                 );
             let metrics_collector = services.metrics_collector.clone();
@@ -1567,7 +1567,7 @@ impl MultiServer {
             // TD-104 item 2(a): wire the runtime port-based handler into the
             // cluster REST boot so collection/vector dispatch reaches
             // `api_handlers` instead of falling back to the concrete root handler
-            // at rest/v1/handlers.rs:1337. `services.api_handlers` is the same
+            // at rest/canonical/handlers.rs:1337. `services.api_handlers` is the same
             // runtime handler the unified-port path uses (shared_services.rs).
             // Only `api_handlers` is wired here (doc/graph/obs route ports stay
             // `None`, preserving the current cluster route surface) — a

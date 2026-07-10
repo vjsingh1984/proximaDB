@@ -10,7 +10,7 @@
 //! matches the pattern used by `rank::rank_search_dispatch`.
 
 use crate::errors::{ApiError, ApiResult};
-use crate::network::rest::v1::handlers::AppState;
+use crate::network::rest::canonical::handlers::AppState;
 use serde::{Deserialize, Serialize};
 
 /// Body of `POST /api/v1/rank/profiles`. The `spec` field carries the raw
@@ -114,7 +114,7 @@ pub async fn remove_rank_profile_dispatch(
 
 pub async fn install_rank_profile_inner(
     store: &dyn crate::services::RankProfileStore,
-    services: &crate::network::rest::v1::rank::RankServices,
+    services: &crate::network::rest::canonical::rank::RankServices,
     req: InstallRankProfileRequest,
 ) -> ApiResult<RankProfileDto> {
     use proximadb_rank_profile::{CompiledRankProfile, dsl::parse_single};
@@ -179,7 +179,7 @@ pub async fn get_rank_profile_inner(
 
 pub async fn remove_rank_profile_inner(
     store: &dyn crate::services::RankProfileStore,
-    services: Option<&crate::network::rest::v1::rank::RankServices>,
+    services: Option<&crate::network::rest::canonical::rank::RankServices>,
     name: String,
     if_exists: bool,
 ) -> ApiResult<()> {
@@ -210,15 +210,15 @@ mod tests {
 
     fn rank_pipeline() -> (
         Arc<dyn crate::services::RankProfileStore>,
-        Arc<crate::network::rest::v1::rank::RankServices>,
+        Arc<crate::network::rest::canonical::rank::RankServices>,
     ) {
-        use crate::network::rest::v1::rank::{MockRangeCandidateProvider, RankServices};
+        use crate::network::rest::canonical::rank::{MockRangeCandidateProvider, RankServices};
 
         let appender: Arc<dyn TableWalAppender> = Arc::new(MemoryTableWalAppender::new());
         let store: Arc<dyn crate::services::RankProfileStore> =
             Arc::new(CanonicalWalRankProfileStore::new(appender));
 
-        let candidates: Arc<dyn crate::network::rest::v1::rank::CandidateProvider> =
+        let candidates: Arc<dyn crate::network::rest::canonical::rank::CandidateProvider> =
             Arc::new(MockRangeCandidateProvider { count: 5 });
         let services = Arc::new(RankServices::new(candidates));
         (store, services)

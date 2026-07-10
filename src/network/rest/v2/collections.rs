@@ -45,7 +45,7 @@ use crate::errors::{ApiError, ApiResult};
 // (P3) similarly require the trait in scope.
 use crate::index::axis::management::AnnIndexAdvisor;
 use crate::network::middleware::tenant::TenantContext;
-use crate::network::rest::v1::handlers::AppState;
+use crate::network::rest::canonical::handlers::AppState;
 use crate::proto::proximadb_v1::{CollectionConfig, CollectionOperation, CollectionRequest};
 
 fn collection_storage_engine_label(storage_engine: Option<i32>) -> &'static str {
@@ -2577,7 +2577,7 @@ pub async fn get_collection_route_health_v2(
 
 /// Operator-permission gate shared by the AXIS mutation endpoints
 /// (`/recall-tune`, `/recluster`). Mirrors
-/// `crate::network::rest::v1::primary_pod::authorize_operator`: a
+/// `crate::network::rest::canonical::primary_pod::authorize_operator`: a
 /// caller must present a [`UnifiedUserContext`] with either
 /// `SystemAdmin` or `ConfigureSystem` in their effective
 /// permissions. Failure surfaces as `ApiError::Unauthorized` (401)

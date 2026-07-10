@@ -18,10 +18,10 @@ use uuid::Uuid;
 
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
+use crate::network::rest::canonical::analytics::{self, AnalyticsApiState};
+use crate::network::rest::canonical::aql::{self, AqlApiState};
+use crate::network::rest::canonical::nl::{self, NlApiState};
 use crate::network::rest::health;
-use crate::network::rest::v1::analytics::{self, AnalyticsApiState};
-use crate::network::rest::v1::aql::{self, AqlApiState};
-use crate::network::rest::v1::nl::{self, NlApiState};
 use crate::proto::proximadb_v1;
 use crate::query::QueryFacadeAdapter;
 use crate::query::aql::executor::AqlExecutor;
@@ -150,9 +150,9 @@ pub struct AppState {
     /// primary-pod registry. Set from `SharedServices.primary_pod_registry`
     /// so the REST operator endpoints and the future gateway write
     /// router share the same `Arc`. The REST handlers in
-    /// `crate::network::rest::v1::primary_pod` gate every read/write
+    /// `crate::network::rest::canonical::primary_pod` gate every read/write
     /// behind an operator-permission check — see
-    /// [`crate::network::rest::v1::primary_pod::authorize_operator`].
+    /// [`crate::network::rest::canonical::primary_pod::authorize_operator`].
     pub primary_pod_registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
 
     /// Slice 4 of tenant-pod-affinity: this pod's identity, used by
@@ -199,9 +199,9 @@ pub struct AppState {
     /// Optional ranking framework services (R-7c). When `Some`, the
     /// `/api/v2/rank/search` route routes through the multi-phase
     /// pipeline; when `None`, the route returns 503. See
-    /// `src/network/rest/v1/rank.rs` and
+    /// `src/network/rest/canonical/rank.rs` and
     /// `roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md`.
-    pub rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+    pub rank_services: Option<Arc<crate::network::rest::canonical::rank::RankServices>>,
 
     /// Optional durable rank-profile catalog (R-7c.3 production wiring).
     /// When `Some`, the `/api/v2/rank/profiles` REST routes can install,
@@ -396,7 +396,7 @@ impl AppState {
     /// pre-R-7c.1 deployments = `MockRangeCandidateProvider`).
     pub fn with_rank_services(
         mut self,
-        services: Arc<crate::network::rest::v1::rank::RankServices>,
+        services: Arc<crate::network::rest::canonical::rank::RankServices>,
     ) -> Self {
         self.rank_services = Some(services);
         self
@@ -1211,7 +1211,7 @@ struct VectorSearchInput {
 /// Naming note: this type used to be called `HybridSearchRequest` and
 /// collided with `crate::proto::v1::HybridSearchRequest` (proto wire form
 /// for vector+graph hybrid) AND with
-/// `src/network/rest/v1/hybrid.rs::ExperimentalHybridSearchRequest`.
+/// `src/network/rest/canonical/hybrid.rs::ExperimentalHybridSearchRequest`.
 /// Renamed to `LegacyHybridSearchRequest` to mark it as deprecated; the
 /// struct can be deleted once the deserialization tests are moved to the
 /// active proximadb-api hybrid handlers.
@@ -1347,7 +1347,7 @@ pub fn create_router(state: AppState) -> axum::Router {
 
     // Initialize SKS in-memory store (v1) using the same storage engine as vector operations
     let entities_router = {
-        use crate::network::rest::v1::entities::{self, EntityApiState};
+        use crate::network::rest::canonical::entities::{self, EntityApiState};
         use crate::storage::entity_store::{
             CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore,
         };
@@ -1401,8 +1401,8 @@ pub fn create_router(state: AppState) -> axum::Router {
         //   500 — pipeline failure (model load, expression compile, …)
         .route(
             "/api/v2/rank/search",
-            post(|State(state): State<AppState>, Json(req): Json<crate::network::rest::v1::rank::RankSearchRequest>| async move {
-                crate::network::rest::v1::rank::rank_search_dispatch(state, req)
+            post(|State(state): State<AppState>, Json(req): Json<crate::network::rest::canonical::rank::RankSearchRequest>| async move {
+                crate::network::rest::canonical::rank::rank_search_dispatch(state, req)
                     .await
                     .map(Json)
             }),
@@ -1413,24 +1413,24 @@ pub fn create_router(state: AppState) -> axum::Router {
         // src/storage/collection_pinning.rs for the control/data plane split.
         .route(
             "/api/v2/collections/{collection_id}/pin",
-            axum::routing::patch(crate::network::rest::v1::pinning::patch_pin)
-                .get(crate::network::rest::v1::pinning::get_pin),
+            axum::routing::patch(crate::network::rest::canonical::pinning::patch_pin)
+                .get(crate::network::rest::canonical::pinning::get_pin),
         )
         .route(
             "/api/v2/collections/pinning",
-            get(crate::network::rest::v1::pinning::list_pins),
+            get(crate::network::rest::canonical::pinning::list_pins),
         )
         // Phase 7.2.4: per-collection cache-affinity inspect/invalidate.
         // Operators read or drop the affinity hint for routing
         // re-evaluation. See src/cluster/cache_affinity.rs.
         .route(
             "/api/v2/collections/{collection_id}/affinity",
-            get(crate::network::rest::v1::affinity::get_affinity)
-                .delete(crate::network::rest::v1::affinity::delete_affinity),
+            get(crate::network::rest::canonical::affinity::get_affinity)
+                .delete(crate::network::rest::canonical::affinity::delete_affinity),
         )
         .route(
             "/api/v2/collections/affinity",
-            get(crate::network::rest::v1::affinity::list_affinity),
+            get(crate::network::rest::canonical::affinity::list_affinity),
         )
         // Slice 3 of tenant-pod-affinity: per-(tenant, collection)
         // primary-pod operator API. Auth-gated inside each handler
@@ -1442,13 +1442,13 @@ pub fn create_router(state: AppState) -> axum::Router {
         // permission.
         .route(
             "/api/v2/primary-pod/{tenant_id}/{collection_id}",
-            get(crate::network::rest::v1::primary_pod::get_primary_pod)
-                .put(crate::network::rest::v1::primary_pod::put_primary_pod)
-                .delete(crate::network::rest::v1::primary_pod::delete_primary_pod),
+            get(crate::network::rest::canonical::primary_pod::get_primary_pod)
+                .put(crate::network::rest::canonical::primary_pod::put_primary_pod)
+                .delete(crate::network::rest::canonical::primary_pod::delete_primary_pod),
         )
         .route(
             "/api/v2/primary-pod",
-            get(crate::network::rest::v1::primary_pod::list_primary_pods),
+            get(crate::network::rest::canonical::primary_pod::list_primary_pods),
         )
         // Health check endpoints
         .route("/health", get(comprehensive_health_check))
@@ -1550,7 +1550,7 @@ pub fn create_router(state: AppState) -> axum::Router {
     #[cfg(feature = "enterprise-catalogs")]
     {
         let catalog_router = {
-            use crate::network::rest::v1::catalog::{self, CatalogApiState};
+            use crate::network::rest::canonical::catalog::{self, CatalogApiState};
 
             let catalog_state = CatalogApiState::new(state.catalog_manager.clone());
             catalog::configure_routes().with_state(catalog_state)
@@ -1562,7 +1562,7 @@ pub fn create_router(state: AppState) -> axum::Router {
     // Iceberg REST Catalog server — always on, no feature gate needed.
     // External engines (Spark, Trino, DuckDB, PyIceberg) connect via /iceberg/v1.
     {
-        use crate::network::rest::v1::iceberg_rest_catalog::{
+        use crate::network::rest::canonical::iceberg_rest_catalog::{
             IcebergRestState, create_iceberg_rest_router,
         };
         let mut iceberg_state = IcebergRestState::with_defaults(state.catalog_manager.clone())
@@ -1596,7 +1596,7 @@ pub fn create_router(state: AppState) -> axum::Router {
     // results that misled customers into thinking the endpoint computed real
     // BM25+vector fusion. The production hybrid endpoint at `/api/v1/hybrid/search`
     // (port-backed via `RestHybridPortImpl`) is the supported path; gRPC parity
-    // landed in commit 6a73ead7f. The module at `src/network/rest/v1/hybrid.rs`
+    // landed in commit 6a73ead7f. The module at `src/network/rest/canonical/hybrid.rs`
     // remains in-tree for reference but is no longer mounted.
 
     // Read-only collection analytics (Entanglement Index, etc.) — TD-043 sub-2
@@ -1649,7 +1649,7 @@ pub fn create_router(state: AppState) -> axum::Router {
             let mem_vector_port: Arc<dyn proximadb_runtime::VectorOpsPort> =
                 state.vector_operations_service.clone();
             let lexical = Arc::new(
-                crate::network::rest::v1::rank_backend::ProductionHybridBackend::new(
+                crate::network::rest::canonical::rank_backend::ProductionHybridBackend::new(
                     mem_vector_port,
                     mem_indexes,
                 ),
@@ -1674,7 +1674,7 @@ pub fn create_router(state: AppState) -> axum::Router {
     // (extraction + consolidation need it). Reuses VectorOperationsService +
     // the in-process EmbeddingService — no new storage path (ADR-022).
     {
-        use crate::network::rest::v1::memory::{self, MemoryApiState};
+        use crate::network::rest::canonical::memory::{self, MemoryApiState};
         use crate::services::agent_memory::{
             EmbeddingServiceEmbedder, EventLogConsolidationAuditSink, LlmConsolidationAgent,
             LlmExtractionAgent, MemoryWriteEngine, VectorMemoryStore,

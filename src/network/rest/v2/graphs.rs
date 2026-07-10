@@ -15,8 +15,8 @@ use crate::core::search::cross_modal_fusion::{FusionPolicy, FusionStats};
 use crate::core::search::fusion_route::RoutePolicy;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
+use crate::network::rest::canonical::handlers::AppState;
 use crate::network::rest::openapi::ErrorResponse;
-use crate::network::rest::v1::handlers::AppState;
 use crate::security::rbac_service::UnifiedUserContext;
 use crate::services::fusion_service::{
     DocumentFusionSpec, FusionOidKey, GraphFusionParams, GraphGrain,

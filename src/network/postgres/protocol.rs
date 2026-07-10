@@ -562,7 +562,7 @@ impl PostgresProtocol {
     /// anyway, so a catalog-less handler stays catalog-less.
     pub fn with_rank_pipeline(
         mut self,
-        services: Arc<crate::network::rest::v1::rank::RankServices>,
+        services: Arc<crate::network::rest::canonical::rank::RankServices>,
         store: Arc<dyn crate::services::RankProfileStore>,
         function_store: Arc<dyn crate::services::FunctionStore>,
     ) -> Self {

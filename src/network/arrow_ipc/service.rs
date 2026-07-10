@@ -142,7 +142,7 @@ pub struct ProximaFlightService {
     /// drives the multi-phase ranking pipeline through this singleton.
     /// Absent means the action returns `Unimplemented` (deployments that
     /// didn't opt into the ranking framework don't pay for it).
-    rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+    rank_services: Option<Arc<crate::network::rest::canonical::rank::RankServices>>,
     /// Slice 6.2: primary-pod write router. Same shape as the gRPC v2
     /// service's `primary_pod_gate` — when present, `do_put` consults
     /// the registry before any storage work and rejects misrouted
@@ -309,7 +309,7 @@ impl ProximaFlightService {
     /// of truth across all three protocols.
     pub fn with_rank_services(
         mut self,
-        rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+        rank_services: Option<Arc<crate::network::rest::canonical::rank::RankServices>>,
     ) -> Self {
         self.rank_services = rank_services;
         self

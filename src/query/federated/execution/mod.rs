@@ -243,7 +243,7 @@ pub struct FederatedExecutor {
     /// dispatches second-phase rescoring via the registered profile +
     /// scorer; when `None`, RERANK degrades to first-phase retrieval
     /// only (the R-7c.4c.1 stub path).
-    rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+    rank_services: Option<Arc<crate::network::rest::canonical::rank::RankServices>>,
     /// Execution configuration
     config: ExecutionConfig,
 }
@@ -322,7 +322,7 @@ impl FederatedExecutor {
     /// (the R-7c.4c.1 stub path).
     pub fn with_rank_services(
         mut self,
-        rank_services: Arc<crate::network::rest::v1::rank::RankServices>,
+        rank_services: Arc<crate::network::rest::canonical::rank::RankServices>,
     ) -> Self {
         self.rank_services = Some(rank_services);
         self
@@ -849,7 +849,7 @@ impl FederatedExecutor {
     #[allow(clippy::too_many_arguments)]
     async fn execute_rerank_full_pipeline(
         &self,
-        rank_services: &crate::network::rest::v1::rank::RankServices,
+        rank_services: &crate::network::rest::canonical::rank::RankServices,
         collection: &str,
         query_text: &str,
         query_vector_source: &VectorSource,
@@ -858,7 +858,7 @@ impl FederatedExecutor {
         schema: Arc<Schema>,
     ) -> Result<FederatedExecutionResult> {
         let query_vector = self.resolve_query_vector(query_vector_source)?;
-        let req = crate::network::rest::v1::rank::RankSearchRequest {
+        let req = crate::network::rest::canonical::rank::RankSearchRequest {
             collection: collection.to_string(),
             query_vector,
             query_text: if query_text.is_empty() {
@@ -879,7 +879,7 @@ impl FederatedExecutor {
             .get(profile_name)
             .map(|entry| entry.value().clone());
 
-        let response = crate::network::rest::v1::rank::handle_rank_search(
+        let response = crate::network::rest::canonical::rank::handle_rank_search(
             req,
             rank_services.profile_registry.as_ref(),
             rank_services.candidate_provider.as_ref(),
@@ -901,7 +901,7 @@ impl FederatedExecutor {
     /// first-phase-only stub path emits `"first"` or `"first_only"`
     /// (see `execute_rerank_search`).
     fn rerank_hits_to_batch(
-        hits: &[crate::network::rest::v1::rank::ScoredHitDto],
+        hits: &[crate::network::rest::canonical::rank::ScoredHitDto],
         schema: Arc<Schema>,
     ) -> Result<FederatedExecutionResult> {
         if hits.is_empty() {

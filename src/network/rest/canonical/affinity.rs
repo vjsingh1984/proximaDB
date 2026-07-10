@@ -36,7 +36,7 @@ use axum::{
 use serde::Serialize;
 
 use crate::cluster::cache_affinity::AffinityEntry;
-use crate::network::rest::v1::handlers::AppState;
+use crate::network::rest::canonical::handlers::AppState;
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]

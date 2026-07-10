@@ -26,7 +26,7 @@ use tower_http::compression::CompressionLayer;
 use tower_http::decompression::DecompressionLayer;
 use tower_http::trace::TraceLayer;
 
-use super::v1::handlers::{AppState, RestCoreServices, create_router};
+use super::canonical::handlers::{AppState, RestCoreServices, create_router};
 use crate::monitoring::MetricsCollector;
 use crate::network::middleware::backpressure::{
     BackpressureConfig, create_concurrency_limit_layer,
@@ -386,7 +386,7 @@ impl RestServer {
         ports: Option<RestServerPorts>,
         catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
         queue_client: Option<Arc<proximadb_queue::QueueClient>>,
-        fulltext_indexes: Option<crate::network::rest::v1::handlers::FullTextIndexMap>,
+        fulltext_indexes: Option<crate::network::rest::canonical::handlers::FullTextIndexMap>,
         discovery_service: Option<Arc<crate::services::discovery::DiscoveryService>>,
         external_collection_service: Option<
             Arc<crate::services::external_collection::ExternalCollectionService>,
@@ -716,9 +716,9 @@ impl RestServer {
         segment_registry: Option<Arc<crate::catalog::SegmentRegistry>>,
         catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
         queue_client: Option<Arc<proximadb_queue::QueueClient>>,
-        fulltext_indexes: Option<crate::network::rest::v1::handlers::FullTextIndexMap>,
+        fulltext_indexes: Option<crate::network::rest::canonical::handlers::FullTextIndexMap>,
         recall_probe_gate: Option<Arc<crate::catalog::RecallProbeGate>>,
-        rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+        rank_services: Option<Arc<crate::network::rest::canonical::rank::RankServices>>,
         rank_profile_store: Option<Arc<dyn crate::services::RankProfileStore>>,
         discovery_service: Option<Arc<crate::services::discovery::DiscoveryService>>,
         external_collection_service: Option<

@@ -536,7 +536,7 @@ fn run_phases_blocking(
 
 /// Bundles every singleton the rank pipeline needs at request time. One
 /// instance per process, constructed at server startup and injected into
-/// [`crate::network::rest::v1::handlers::AppState`] via
+/// [`crate::network::rest::canonical::handlers::AppState`] via
 /// [`AppState::with_rank_services`].
 pub struct RankServices {
     pub profile_registry: Arc<ProfileRegistry>,
@@ -816,7 +816,7 @@ impl CandidateProvider for HybridCoordinatorAdapter {
 
 /// Plain-Rust route dispatcher (no axum extractors).
 ///
-/// Reads `rank_services` off [`crate::network::rest::v1::handlers::AppState`]
+/// Reads `rank_services` off [`crate::network::rest::canonical::handlers::AppState`]
 /// and routes through [`handle_rank_search`]. Maps `RankError` to
 /// `ApiError`. The thin axum wrapper lives in `handlers.rs` next to
 /// the router registration — this avoids cross-module trait-resolution
@@ -824,7 +824,7 @@ impl CandidateProvider for HybridCoordinatorAdapter {
 /// transitively pulls 0.8) and a cross-module handler ends up
 /// satisfying only 0.8's `Handler` blanket.
 pub async fn rank_search_dispatch(
-    app_state: crate::network::rest::v1::handlers::AppState,
+    app_state: crate::network::rest::canonical::handlers::AppState,
     req: RankSearchRequest,
 ) -> ApiResult<RankSearchResponse> {
     let services = app_state.rank_services.as_ref().ok_or_else(|| {

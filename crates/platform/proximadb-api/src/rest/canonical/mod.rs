@@ -4,7 +4,7 @@
 //! `/api/v2/*` — graph, document, observability, multimodal/unified query, and
 //! hybrid search. Each router is constructed with a platform port
 //! (`GraphPort`, `DocumentPort`, …) and wired into the live router at
-//! `src/network/rest/v1/handlers.rs` (`create_*_router`).
+//! `src/network/rest/canonical/handlers.rs` (`create_*_router`).
 //!
 //! Historically this module was named `rest::v1` (it reuses v1 proto *request*
 //! types internally), which led to it being mistaken for the deprecated

@@ -169,7 +169,7 @@ async fn rest_create_fp16_collection_round_trips_canonical_precision() {
 
     // Create the collection with fp16 canonical precision via REST.
     // The handler expects a CollectionRequest envelope per
-    // crates/platform/proximadb-api/src/rest/v1/catalog.rs:
+    // crates/platform/proximadb-api/src/rest/canonical/catalog.rs:
     //   { "operation": 1 (CollectionCreate),
     //     "collection_id": "...",
     //     "collection_config": { CollectionConfig fields... } }

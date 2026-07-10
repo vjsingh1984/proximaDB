@@ -60,7 +60,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::cluster::primary_pod_registry::{AssignmentReason, PrimaryPod};
-use crate::network::rest::v1::handlers::AppState;
+use crate::network::rest::canonical::handlers::AppState;
 use crate::security::rbac_service::{UnifiedPermission, UnifiedUserContext};
 use proximadb_catalog::{CatalogPrimaryPod, TableIdentifier};
 
@@ -106,7 +106,7 @@ impl MirrorFailure {
 
 /// Convention: (tenant_id, collection_id) maps to TableIdentifier
 /// `[tenant_id] :: collection_id`. Matches the multi-tenant catalog
-/// layout used elsewhere in v1 (cf. `src/network/rest/v1/catalog.rs`)
+/// layout used elsewhere in v1 (cf. `src/network/rest/canonical/catalog.rs`)
 /// where namespace = tenant scope and table name = collection.
 fn table_id_for(tenant_id: &str, collection_id: &str) -> TableIdentifier {
     TableIdentifier::new(vec![tenant_id.to_string()], collection_id)

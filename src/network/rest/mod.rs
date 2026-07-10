@@ -19,6 +19,9 @@
 //! Provides HTTP/JSON endpoints that delegate to the unified service layer
 
 pub use crate::api_handlers;
+/// Canonical REST API handlers — the live `/api/v2` surface (collections,
+/// vectors, graph, entities, rank, document, observability, multimodal, hybrid).
+pub mod canonical;
 /// Health and readiness check endpoints
 pub mod health;
 /// OpenAPI spec-from-code aggregation + generator (TD-126 Phase 1).
@@ -29,8 +32,6 @@ pub mod progressive_search_handler;
 pub mod proto_json;
 /// REST HTTP server setup and route configuration
 pub mod server;
-/// V1 REST API handlers (collections, vectors, graph, entities)
-pub mod v1;
 /// V2 REST API handlers (ProximaRecord, typed fields, schema)
 pub mod v2;
 /// WebSocket support for real-time streaming
@@ -38,5 +39,5 @@ pub mod websocket;
 
 pub use api_handlers::*;
 pub use server::*;
-// Re-export handlers from v1
-pub use v1::handlers;
+// Re-export handlers from canonical
+pub use canonical::handlers;

@@ -198,7 +198,7 @@ impl FederatedQueryContext {
     /// the first-phase-only stub for any rank profile.
     pub fn with_rank_services(
         mut self,
-        rank_services: Arc<crate::network::rest::v1::rank::RankServices>,
+        rank_services: Arc<crate::network::rest::canonical::rank::RankServices>,
     ) -> Self {
         self.executor = self.executor.with_rank_services(rank_services);
         self

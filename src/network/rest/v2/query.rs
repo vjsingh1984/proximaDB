@@ -12,7 +12,7 @@ use tracing::{debug, error};
 use utoipa::ToSchema;
 
 use crate::errors::{ApiError, ApiResult};
-use crate::network::rest::v1::handlers::AppState;
+use crate::network::rest::canonical::handlers::AppState;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "lowercase")]

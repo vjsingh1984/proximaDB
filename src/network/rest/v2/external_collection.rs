@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::errors::{ApiError, ApiResult};
-use crate::network::rest::v1::handlers::AppState;
+use crate::network::rest::canonical::handlers::AppState;
 use crate::network::rest::v2::records::{RestProximaValue, proxima_value_to_rest_value};
 use crate::services::external_collection::{
     ExternalCollection, ExternalCollectionService, ExternalCollectionSpec, ExternalFormat,

@@ -1,13 +1,14 @@
 //! REST v1 deprecation-header utilities.
 //!
-//! Centralized home for the deprecation headers ProximaDB emits on compatibility
-//! (`/api/v1`) traffic, owned *outside* the deprecated `rest::v1` adapter
-//! directory. This relocation is TD-V1SUNSET-1 step 2 — the prerequisite for
-//! hard-deleting that directory: the live root-crate handler
-//! (`src/network/rest/v1/handlers.rs`) imports `add_rest_v1_deprecation_headers`
-//! from here, so deleting `rest::v1` no longer breaks it. The v1 adapters
-//! re-export `with_v1_compatibility_headers` from here for their per-request
-//! header layer.
+//! Centralized home for the deprecation headers ProximaDB emits on residual
+//! compatibility (`/api/v1`) traffic — owned outside the canonical REST modules
+//! so it is reachable from both layers: the api-crate port-backed routers
+//! (`proximadb_api::rest::canonical`) re-export `with_v1_compatibility_headers`
+//! for their per-request header layer, and the live root-crate handler
+//! (`src/network/rest/canonical/handlers.rs`) layers `add_rest_v1_deprecation_headers`
+//! onto the canonical router (TD-V1SUNSET-1 step 2). These canonical modules are
+//! the LIVE `/api/v2` surface, not the deprecated `/api/v1` surface — the
+//! headers here only mark any residual `/api/v1`-shaped traffic.
 
 use axum::{
     Router,

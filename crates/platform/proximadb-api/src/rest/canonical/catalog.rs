@@ -5,7 +5,7 @@
 //! root-crate concrete service types.
 //!
 //! External catalog management (Iceberg, Delta Lake, AWS Glue) is tracked via the
-//! `CatalogHandler` stub but the implementation remains in `src/network/rest/v1/catalog.rs`
+//! `CatalogHandler` stub but the implementation remains in `src/network/rest/canonical/catalog.rs`
 //! until a `CatalogPort` trait is defined in `proximadb-runtime`.
 
 use axum::{
