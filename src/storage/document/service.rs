@@ -363,6 +363,15 @@ impl DocumentService {
         let _ = self.record_route.set(record_route);
     }
 
+    /// The canonical record route port, if registered (ungated) — the DataFusion
+    /// `documents()` UDTF uses it to resolve PAX scan inputs for predicate pushdown
+    /// (TD-DOC-PUSHDOWN-1). Unlike [`Self::canonical_route`], this is not gated on the
+    /// per-collection canonical-vector flag: pushdown-eligibility is decided by whether
+    /// `pax_scan_inputs` resolves, and the caller falls back to the in-memory scan.
+    pub fn record_route_port(&self) -> Option<Arc<dyn proximadb_runtime::RecordRoutePort>> {
+        self.record_route.get().cloned()
+    }
+
     /// Select the canonical-vector route for `collection`, else `None` ⇒ legacy path. The single
     /// decision point for the store-split cutover — every write/read branches on this. Three
     /// conditions, all required (mixed-safe under the DEFAULT-ON gate, TD-DOC-CONV-2):
