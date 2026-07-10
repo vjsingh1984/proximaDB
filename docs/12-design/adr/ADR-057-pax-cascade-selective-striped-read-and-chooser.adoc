@@ -9,7 +9,7 @@
 | Date | 2026-07-09
 | Relates to | link:ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (scan-avoidance / bytes-scanned is the dominant cloud cost term — the spine), link:ADR-050-statistics-fed-datafusion-route-selection.adoc[ADR-050] (the cost router the chooser plugs into), link:ADR-034-objectstore-access-path-codesign.adoc[ADR-034] (object-store access-path co-design + the io_trace GET-count measurement mandate), link:ADR-055-document-canonical-format-declaration-and-legacy-retirement.adoc[ADR-055] (the SAME whole-segment-read problem for the *document* PAX profile — trace-first + reuse-the-split-reader precedent).
 | Supersedes framing of | link:../../10-quality/td/TD-RDSTRAT-1-read-strategy-chooser.adoc[TD-RDSTRAT-1] — the cost-driven chooser is correct, but its wiring targeted the retired ProximaBlocks `.sst` reader; this ADR re-homes it onto the live PAX cascade.
-| Tracked under | link:../../10-quality/td/TD-RDSTRAT-2-chooser-serves-retired-reader.adoc[TD-RDSTRAT-2] (the finding that motivates this) + a new TD-RDSTRAT-3 (the milestone/slice plan derived from this ADR).
+| Tracked under | link:../../10-quality/td/TD-RDSTRAT-2-chooser-serves-retired-reader.adoc[TD-RDSTRAT-2] (the finding that motivates this) + link:../../10-quality/td/TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (the atomic slice plan + caps/thresholds; blocked on this ADR's sign-off).
 | Research basis | In-code substrate verified against `origin/develop` 2026-07-09 (§3), via an `io_trace` backtrace probe on the live search read path — not doc-reading.
 |===
 
@@ -126,7 +126,9 @@ corrected).
 * **P3 — Flip + cleanup:** flip default-on once the io_trace ratchet + recall gate pass on the cold-tier
   trace; make the `segment_format.rs:424` accounting physical; retire the dead `.sst` sites.
 
-Slices tracked under **TD-RDSTRAT-3**.
+Slices, caps, and thresholds tracked under
+link:../../10-quality/td/TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3]
+(blocked on this ADR's decider sign-off; S0 baseline trace may start beforehand).
 
 == 7. Alternatives considered
 
