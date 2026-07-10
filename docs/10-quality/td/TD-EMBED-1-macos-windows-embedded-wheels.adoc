@@ -6,7 +6,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **macOS: DONE** (aarch64 wheels shipping, PR #716) · **Windows: engine + `python` feature + C-deps all COMPILE on MSVC** (ratchet rungs 1-3 green: `memmap2::Advice` #800, Unix-domain sockets #808, python/C-dep tail #813 — no C-dep wall). Windows `x86_64` wheel row now added to `build-embedded-wheels`; final validation = a `maturin` dry-run exercising the extension-module link.
+| Status | **DONE — wheels build on all three platforms.** macOS aarch64 (#716), Linux x86_64+aarch64 (shipped), **Windows x86_64 (#819)**. The Windows effort was 4 ratchet rungs — `memmap2::Advice` #800, Unix-domain sockets #808, python/C-dep tail #813, wheel row #819 — NOT the "multi-week port" originally feared. Validated by a `maturin` dry-run: `proximadb_embedded-0.2.2-cp310-abi3-win_amd64.whl` built (full engine + vendored-OpenSSL-from-source + extension-module link). No C-dep wall.
 | Severity | Low — Linux x86_64 + aarch64 wheels ship today and cover the overwhelming majority of embedded/edge/air-gapped/server deployments. macOS/Windows are additive reach, not a correctness or release blocker.
 | Component | Packaging/CI — `.github/workflows/release-python.yml` (`build-embedded-wheels`), root maturin package (`proximadb_embedded`); Windows work spans `crates/storage/proximadb-storage-common` + `src/storage`
 | Relates to | Vendored-OpenSSL manylinux fix (PR #701 / #707); `TD-IMG-1` (the other shipped-release follow-up)
@@ -104,6 +104,9 @@ byte-for-byte, so no flag-day and no risk to the currently-shipping wheels.
 * **macOS:** `workflow_dispatch` (`dry_run=true`) produces `*.whl` tagged `macosx_*_arm64`;
   `import proximadb_embedded` succeeds on the macos-14 runner. On the next `python-v*` tag the
   wheel publishes to PyPI alongside the Linux wheels.
-* **Windows:** the compile-only ratchet gates the compiling crates and its "measure tail" step
-  reports the next blocker; the wheel row is added last (after the engine compiles + C-deps).
-  Until then, no Windows matrix entry — it would only fail-fast the release.
+* **Windows: COMPLETE.** The `maturin` dry-run built `proximadb_embedded-0.2.2-cp310-abi3-win_amd64.whl`
+  on `windows-2022` (release engine build + `openssl-src` VC-WIN64A + `.pyd` link). The
+  `windows-2022`/`x86_64` row is live in `build-embedded-wheels`; `publish-embedded-pypi`'s
+  `*embedded-wheels*` glob ships it on the next `python-v*` tag. The `windows-compile-ratchet`
+  workflow stays as the fast, path-gated regression guard (rungs 1-2 gating: storage-common +
+  root lib on MSVC).
