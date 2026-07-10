@@ -21,6 +21,7 @@ use crate::query::execution::engine::{
 use proximadb_data_model::ProximaValue;
 use proximadb_relational_planner::PhysicalPlan;
 use proximadb_relational_types::{ColumnInfo, RelationalRow, RelationalSchema};
+use std::sync::Arc;
 
 /// Gate: is the native vectorized execution path opted in? Default OFF — the
 /// Volcano (row-at-a-time) serves all native-path queries until the vectorized
@@ -190,6 +191,167 @@ pub async fn try_vectorized_stream(
     _physical: &PhysicalPlan,
 ) -> Result<Option<ExecutionStreamResult>, ExecutionError> {
     Ok(None)
+}
+
+// ---------------------------------------------------------------------------
+// Production ScanCtx construction (Phase 2.5 production wire)
+// ---------------------------------------------------------------------------
+
+/// Process-global lazy-init FilesystemFactory for the native engine's PAX scan.
+/// Initialized on first use with the default config (local file). Acceptable for
+/// MVP — the native engine is default-OFF; when opt-in, the factory initializes
+/// once. Production hardening: thread the real config from `database.rs`.
+static NATIVE_FS: std::sync::OnceLock<
+    Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+> = std::sync::OnceLock::new();
+
+/// Get the process-global FilesystemFactory (lazy-init). Returns `None` on init
+/// failure — the caller falls back to the Volcano (never fails a query).
+async fn native_filesystem()
+-> Option<&'static Arc<crate::storage::persistence::filesystem::FilesystemFactory>> {
+    if let Some(fs) = NATIVE_FS.get() {
+        return Some(fs);
+    }
+    let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    match crate::storage::persistence::filesystem::FilesystemFactory::create(config).await {
+        Ok(factory) => {
+            let arc = Arc::new(factory);
+            let _ = NATIVE_FS.set(arc);
+            NATIVE_FS.get()
+        }
+        Err(e) => {
+            tracing::warn!(target: "proximadb::native_vectorized", error = %e, "native FS init failed");
+            None
+        }
+    }
+}
+
+/// Discover `.pax` segment files under `base_path` and return one `FileSplit` per
+/// file. Inlined (not imported from `src/datafusion/`) to avoid feature-gate
+/// coupling — the native engine compiles without `datafusion-integration`.
+async fn discover_native_pax_segments(
+    base_path: &str,
+    fs: &crate::storage::persistence::filesystem::FilesystemFactory,
+) -> Vec<crate::storage::formats::FileSplit> {
+    use crate::storage::persistence::filesystem::FilesystemError;
+    let entries = match fs.list(base_path).await {
+        Ok(e) => e,
+        Err(FilesystemError::NotFound(_)) => return Vec::new(),
+        Err(FilesystemError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Vec::new();
+        }
+        Err(e) => {
+            tracing::debug!(target: "proximadb::native_vectorized", base_path, error = %e, "PAX discovery failed");
+            return Vec::new();
+        }
+    };
+    entries
+        .iter()
+        .filter(|e| e.name.ends_with(".pax"))
+        .map(|e| {
+            crate::storage::formats::FileSplit::new_block(
+                format!("{base_path}/{}", e.name),
+                0,
+                0,
+                e.metadata.size,
+                0,
+            )
+        })
+        .collect()
+}
+
+/// Recursively collect all `PhysicalPlan::Scan` table names from a plan tree.
+fn collect_scan_tables(
+    plan: &PhysicalPlan,
+) -> Vec<(String, &proximadb_relational_types::RelationalSchema)> {
+    fn collect<'a>(
+        plan: &'a PhysicalPlan,
+        out: &mut Vec<(String, &'a proximadb_relational_types::RelationalSchema)>,
+    ) {
+        match plan {
+            PhysicalPlan::Scan {
+                table,
+                output_schema,
+                ..
+            } => {
+                out.push((table.name.clone(), output_schema));
+            }
+            PhysicalPlan::Filter { input, .. } | PhysicalPlan::Project { input, .. } => {
+                collect(input, out);
+            }
+            PhysicalPlan::Join { left, right, .. } => {
+                collect(left, out);
+                collect(right, out);
+            }
+            PhysicalPlan::Limit { input, .. } => collect(input, out),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    collect(plan, &mut out);
+    out
+}
+
+/// Build a `ScanCtx` for the native engine from a PhysicalPlan + the lazy global
+/// FilesystemFactory. Scans the plan for `Scan` nodes, resolves each table to a
+/// PAX base_path, discovers segments, and constructs the per-table column mapping.
+/// Returns `None` on ANY error → Volcano fallback (never fails a query).
+pub(crate) async fn build_scan_ctx(physical: &PhysicalPlan) -> Option<super::native_ops::ScanCtx> {
+    use super::native_ops::{ScanCtx, ScanTableInfo};
+    use std::collections::HashMap;
+
+    // Only build a ScanCtx if the plan actually has Scan nodes.
+    let scan_tables = collect_scan_tables(physical);
+    if scan_tables.is_empty() {
+        return None; // Values-only plan → no ScanCtx needed
+    }
+
+    let fs = native_filesystem().await?;
+
+    // Resolve the data_dir from env (matches the server default).
+    let data_dir = std::env::var("PROXIMADB_DATA_DIR").unwrap_or_else(|_| "./data".to_string());
+
+    let mut tables = HashMap::new();
+    for (table_name, output_schema) in &scan_tables {
+        // MVP base_path: {data_dir}/collections/{table_name}
+        let base_path = format!("{data_dir}/collections/{table_name}");
+        let splits = discover_native_pax_segments(&base_path, fs).await;
+        if splits.is_empty() {
+            tracing::debug!(
+                target: "proximadb::native_vectorized",
+                table_name, base_path,
+                "no PAX segments found; table will decline to Volcano"
+            );
+            // No PAX data → skip this table (the Scan arm will Err → Volcano).
+            continue;
+        }
+        // MVP column mapping: ordinal-based (column ordinal → ordinal as i32).
+        // The PAX format stores core columns at fixed col_id constants; for user
+        // columns, the ordinal is the column_id. This works for the core fields
+        // (created_at, etc.) which are at fixed positions.
+        let name_to_col_id: HashMap<String, i32> = output_schema
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.name.clone(), i as i32))
+            .collect();
+        tables.insert(
+            table_name.clone(),
+            ScanTableInfo {
+                splits,
+                name_to_col_id,
+            },
+        );
+    }
+
+    if tables.is_empty() {
+        None // No PAX data for any table → Volcano
+    } else {
+        Some(ScanCtx {
+            filesystem_factory: Arc::clone(fs),
+            tables,
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
