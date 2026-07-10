@@ -5,7 +5,8 @@
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | **Proposed** (filed 2026-07-09; trace-first — see §6; awaiting decider sign-off)
+| Status | **Accepted** (filed 2026-07-09; **decider sign-off 2026-07-09**; trace-first — see §6)
+| Decider | Vijaykumar Singh (2026-07-09)
 | Date | 2026-07-09
 | Relates to | link:ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (scan-avoidance / bytes-scanned is the dominant cloud cost term — the spine), link:ADR-050-statistics-fed-datafusion-route-selection.adoc[ADR-050] (the cost router the chooser plugs into), link:ADR-034-objectstore-access-path-codesign.adoc[ADR-034] (object-store access-path co-design + the io_trace GET-count measurement mandate), link:ADR-055-document-canonical-format-declaration-and-legacy-retirement.adoc[ADR-055] (the SAME whole-segment-read problem for the *document* PAX profile — trace-first + reuse-the-split-reader precedent).
 | Supersedes framing of | link:../../10-quality/td/TD-RDSTRAT-1-read-strategy-chooser.adoc[TD-RDSTRAT-1] — the cost-driven chooser is correct, but its wiring targeted the retired ProximaBlocks `.sst` reader; this ADR re-homes it onto the live PAX cascade.

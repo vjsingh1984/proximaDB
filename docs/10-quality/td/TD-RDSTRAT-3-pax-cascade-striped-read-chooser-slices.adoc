@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Blocked on ADR-057 decider sign-off** — do NOT start implementation (S1+) until link:../../12-design/adr/ADR-057-pax-cascade-selective-striped-read-and-chooser.adoc[ADR-057] is **Accepted**. S0 (baseline trace, no product code) may proceed to quantify headroom.
+| Status | **Open — unblocked** (link:../../12-design/adr/ADR-057-pax-cascade-selective-striped-read-and-chooser.adoc[ADR-057] **Accepted 2026-07-09**). Executing: **S0 (baseline trace)** first to quantify headroom + finalise the S3 flip threshold, then S1→S3.
 | Severity | Medium-High (perf + cloud cost — realises the stranded TD-RDSTRAT-1 chooser investment on the live path)
 | Component | PAX RaBitQ cascade: `search/mod.rs` (`try_pax_cascade`), `segment_format.rs` (`rabitq_search_segment`); the ranged reader `proximadb-block-format::ranged`; the chooser core `coalesce_strategy.rs`.
 | Governs / derives from | link:../../12-design/adr/ADR-057-pax-cascade-selective-striped-read-and-chooser.adoc[ADR-057] (the decision) ; link:TD-RDSTRAT-2-chooser-serves-retired-reader.adoc[TD-RDSTRAT-2] (the finding) ; link:TD-RDSTRAT-1-read-strategy-chooser.adoc[TD-RDSTRAT-1] (the chooser core, re-homed here).
