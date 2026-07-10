@@ -51,6 +51,11 @@ use proximadb_relational_types::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Plan geometry — a cheap, pre-execution geometric summary of a [`PhysicalPlan`]
+/// (TD-EXEC-2 Slice 1). Observe-only: it makes no decision and changes no behavior.
+pub mod plan_geometry;
+pub use plan_geometry::{OpKind, PlanGeometry, measure_geometry};
+
 // =========================================================================
 // Errors
 // =========================================================================
