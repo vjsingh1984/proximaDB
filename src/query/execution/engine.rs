@@ -290,7 +290,13 @@ impl NativeVolcanoEngine {
         // as a trailing `Limit`) is honored by the vectorized lowering too.
         // Default-off; any decline or failure falls back to the Volcano inside
         // `try_vectorized` (the experimental path never fails a query).
-        if let Some(result) = super::native_engine::try_vectorized(&physical, None).await? {
+        // Production ScanCtx wire (ADR-054 Phase 2.5): build the scan context
+        // from the plan + the lazy-global FilesystemFactory so real PAX-backed
+        // queries route through the native engine. On ANY failure → None → Volcano.
+        let scan_ctx = super::native_engine::build_scan_ctx(&physical).await;
+        if let Some(result) =
+            super::native_engine::try_vectorized(&physical, scan_ctx.as_ref()).await?
+        {
             // Shadow mode (ADR-054 §7 Phase 0.5, TD-OLAP-11 §Gate): run the
             // Volcano reference too, compare result multisets, and on divergence
             // auto-demote the shape + fail safe to the reference. Default-off.
