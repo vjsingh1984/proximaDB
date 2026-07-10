@@ -7,11 +7,16 @@
 | Field | Value
 | Status | **Open — design filed 2026-07-10.** First-principles generalization of TD-EXEC-1 (which named the flat 8 MB stack a "blunt band-aid" and asked for measured, shape-sized allocation). Extends the ADR-050/#840 route cost model, not a new engine.
 | Priority | **P1** — the router and the stack allocator both decide resources today by *rule-of-thumb* (a 2-bit `match` for engine, a flat 8 MB for stack). Both are the same missing capability: predict a query's resource footprint from its plan *geometry*, calibrated by measurement. Closes TD-EXEC-1 Phase 1 and makes the ADR-050 cost model live.
-| Severity | Medium-high — the stack band-aid is a latent SIGABRT under mixed OLTP/OLAP load (over-provisions OLTP 15×, under-provisions the rare deep plan); the heuristic router leaves the measured cost model dark (`PROXIMADB_ROUTE_COST_OVERRIDE` OFF).
+| Severity | **High for the stack half** (revised) — the band-aid is *test-only*: #843/#846 raised the 8 MB stack in the three TPC test harnesses, but the **production server runs on the tokio default 2 MB** (`apps/proximadb-server/src/main.rs:121` = bare `#[tokio::main]`; the only 8 MB is `EmbeddedProximaDB::new`, `src/embedded/mod.rs:828`, the PyO3 path). The dominant consumer is the **planner recursion, which runs *before any engine*** — so the native `MAX_WALK_DEPTH=32` guard does not protect it. A deep OLAP query (Q2/Q7 already at SF ≥ 0.01) SIGABRTs the production pgwire *process* → this is a **P1 availability bug**, not a sizing inefficiency. Medium for the routing half (leaves the measured cost model dark, `PROXIMADB_ROUTE_COST_OVERRIDE` OFF). *This severity split is why the stack **safety** primitive (§1) is decoupled from — and lands ahead of — the estimate/calibration/routing.*
 | Component | *new* `PlanGeometry` + `measure_geometry` in `crates/query/proximadb-relational-planner/src/lib.rs`; *new* stack estimator (`crates/query/proximadb-relational-planner` or a leaf crate); extends `IoTrace`/`IoTraceSnapshot` (`src/observability/io_trace.rs`), the ledger `LedgerRecord` (`tests/tpc_perf_ledger_e2e.rs`), `QueryShape`/`shape_class` (`src/query/compute_scheduler.rs`, `src/query/route_cost_model.rs`), and the pgwire worker spawn (`src/network/postgres/mod.rs:249`).
 | Governs | link:TD-EXEC-1-iterative-planner-stack-sizing.adoc[TD-EXEC-1] (this is its first-principles design + Phase 1 realization); composes with link:../../12-design/adr/ADR-050-statistics-fed-datafusion-route-selection.adoc[ADR-050] (proposed cost-based routing — this is its geometry half), ADR-056 (adaptive execution; shape-driven resources — TD-EXEC-1 §Governs frames stack size as one such resource), link:TD-OLAP-4-tpcds-performance-evidence-ledger.adoc[TD-OLAP-4] (#840 operation dimension = the seed cost model + the calibration data surface), link:../../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (co-design invariant 4: measured, not asserted; §5 meter every dimension), ADR-054 (the native engine whose `walk`/`lower_join` recursion adds to the planner's).
 | Relates to | link:TD-OLAP-2-statistics-fed-cbo-cardinality.adoc[TD-OLAP-2] (cardinality substrate exists in `src/core/statistics/`, not wired to the planner — the Phase-2 refinement input).
 |===
+
+[NOTE]
+====
+**Refined by the active OLAP/native session (2026-07-10)**, as the filing PR requested ("filed so the active OLAP/native session can critique + refine the model before any code"). Net changes vs the original draft: (1) the stack law now **separates safety from the estimate** — `stacker::maybe_grow` makes correctness *by construction*, independent of calibration, and the geometry estimate is demoted to an efficiency-only optimization (§1); (2) a new **Slice 0** lands that safety first (it, not the estimate, closes the production SIGABRT) and **retires `MAX_WALK_DEPTH=32`**; (3) severity raised — the 8 MB fix is **test-harness-only; the production server is on 2 MB** and the overflow is in the engine-independent *planner* recursion; (4) cold routing cells **seeded from the measured TD-OLAP-15 posture**; (5) `measure_geometry` must be **iterative**; (6) the stack ratchet **split** into a by-construction safety gate and a distributional optimization gate.
+====
 
 == Thesis: a query plan is a geometric object; its geometry determines its resource footprint
 
@@ -42,20 +47,28 @@ Each feature maps first-principles to a dominant cost term. The vector is **data
 
 == The resource laws (each geometry-derived, each measurement-calibrated)
 
-=== 1. Stack (replaces the flat 8 MB — closes TD-EXEC-1 Phase 1)
+=== 1. Stack — *safety by construction*, then *estimate as optimization* (replaces the flat 8 MB AND `MAX_WALK_DEPTH`)
 
-TD-EXEC-1 established the root cause: the *planner's* 30 recursive `Box::new(lower_to_physical(child))` calls, plus the native `walk`/`lower_join` re-walk, consume the call stack proportional to plan depth. First-principles model:
+TD-EXEC-1 established the root cause: three call-stack recursions that all mirror the plan tree at the same depth — the *planner's* `lower_to_physical` (12 recursive sites, `relational-planner/src/lib.rs:737`), the *executor's* `build_executor` (12 sites, `proximadb-relational-executor/src/lib.rs:239`), and the native `walk`/`lower_join` re-walk. All three consume stack ∝ plan depth.
+
+**The critical design correction (refined): separate the two problems the original draft coupled.**
+
+*Correctness* (no overflow, ever) and *right-sizing* (don't waste stack, pick the pool) are different problems and must not share a mechanism. The original draft made correctness *depend on the estimate* ("sizes the pool above the measured requirement"). That is fragile on two counts: (a) `frame_bytes[op_kind]` is a **~100× unknown today** — TD-EXEC-1 says 100–200 KB/frame, the code probe suggests ~1 KB — so no estimate is yet trustworthy; and (b) a pool "sized above the *measured* requirement + margin" still SIGABRTs on any plan *deeper than the calibration distribution* (deeply nested CTEs, generated SQL, adversarial input). A distributional guarantee is not a correctness guarantee.
+
+**a. Safety — correct by construction, independent of any estimate.** Wrap the three recursion entries in `stacker::maybe_grow(red_zone, grow_size, ‖)` — the same primitive rustc/Servo/`syn` use for unbounded recursion. At each frame it reads `remaining_stack()` (a TLS read + pointer compare, ~ns) and, only when below the red zone, continues the descent on a freshly-allocated segment. Correctness then holds for **any** depth on **any** worker stack — the 2 MB production pgwire runtime included — with **zero dependence on the calibrated estimate**. This alone closes the P1 production SIGABRT, *without* waiting for calibration or the iterative planner, and it **retires two heuristics at once**: the flat 8 MB (workers stay at the default and grow on demand) and `MAX_WALK_DEPTH=32` (#843) — which today makes native *decline valid deep plans* to DataFusion for a stack reason `maybe_grow` eliminates. Gate: a synthetic pathologically-deep plan (e.g. 10 000 nested nodes) must complete on a 512 KB stack — a *by-construction* test, not a distributional one.
+
+**b. Estimate — a pure optimization on top of (a).** With safety guaranteed, the geometry estimate stops being a correctness dependency and becomes an *efficiency* lever only:
 
 ....
 stack_bytes(plan) ≈ C_planner · max_depth
                   + Σ_{op ∈ deepest root→leaf path} frame_bytes[op_kind]
 ....
 
-* `C_planner` and `frame_bytes[op_kind]` are **measured**, not guessed — calibrated from per-query stack high-water marks (a `stacker::remaining_stack()` probe at the executor recursion points and the planner entry, recorded to the ledger). O(1) to evaluate from `max_depth` + the deepest-path op-kinds.
-* **Applied** as a tiered worker pool selected by the estimate — OLTP (≤512 KB shallow plans), OLAP (deep join+subquery plans) — sized to the *measured* requirement per class, not a flat maximum. The pgwire spawn site (`network/postgres/mod.rs:249`) picks the pool from the estimate.
-* TD-EXEC-1 Phase 2 (iterative planner, heap work-list) **zeroes the `C_planner · max_depth` term** at the source; the estimator then reflects only the executor's residual recursion. The estimator and the iterative planner are complementary: the estimator right-sizes today and *measures the win* the iterative planner delivers.
+`C_planner` and `frame_bytes[op_kind]` are **measured** (calibrated from per-query `stacker::remaining_stack()` high-water marks, recorded to the ledger), O(1) to evaluate from `max_depth` + deepest-path op-kinds. The estimate is used to (i) pre-size the worker/segment so the *common* deep plan avoids the mid-descent growth allocation, and optionally (ii) route to a tiered pool — OLTP (≤512 KB shallow) vs OLAP (deep join+subquery). Because these are optimizations, a *wrong* estimate costs a growth allocation or a suboptimal pool — never a crash.
 
-The OLTP-vs-OLAP stack signature is a step function today (everything pays 8 MB); the geometry model makes it continuous and per-query — OLTP runs on a small stack (higher concurrency), deep OLAP plans get exactly what they need (no SIGABRT), and total stack memory (`Σ workers × pool_stack`) drops below the flat `num_cpus × 8 MB`.
+* TD-EXEC-1 Phase 2 (iterative planner, heap work-list) **zeroes the `C_planner · max_depth` term** at the source; the estimator then reflects only the executor's residual recursion. `maybe_grow` makes the iterative planner a *performance* optimization (fewer segment allocations, better cache locality), no longer a correctness prerequisite — the estimator measures its win.
+
+The OLTP-vs-OLAP stack signature is a step function today (everything pays 8 MB *if* it got the fix at all); (a) makes it continuous and correct everywhere, and (b) makes it *efficient* — OLTP runs on a small stack (higher concurrency), deep OLAP grows only when it actually descends, and total stack memory drops below the flat `num_cpus × 8 MB`.
 
 === 2. Engine routing (replaces the 2-bit `match` — makes the ADR-050/#840 cost model live)
 
@@ -67,6 +80,8 @@ The measurement + calibration loop **already exists** and is the mechanism — i
 
 The geometry vector *is* the feature vector; the coefficients are the existing EWMA cells; going live is flipping `PROXIMADB_ROUTE_COST_OVERRIDE` from lab gate to calibrated default, per shape⊕geometry class, behind the shadow-compare + ratchet in ADR-050/§Gates.
 
+**Seed the cold cells from the TD-OLAP-15 measured posture (refined).** #848 (TD-OLAP-15, merged) is the calibration datum this slice needs: **zero native-vectorized samples** across all 38 TPC-H/TPC-DS queries (join/agg-heavy — not native's surface) but native **beating DataFusion 1.8×** on scan-heavy ClickBench. So a cold `shape⊕geometry` cell should not start at a coin-flip: seed it with that measured win/lose prior keyed on `operation_class` — scan-heavy `MetadataElidable`/`ScalarAggregate` (shallow geometry) lean native, `Grouped`/`StringHeavy`/join-bearing (deep geometry, high `blocking_count`) lean DataFusion — so cold-start routing already matches the evidence. The in-flight **"favor native by operation"** route (native-over-parquet PRIMARY for unfiltered elidable/scalar-agg) is exactly this rule applied to the shapes TD-OLAP-15 proves native wins — it is the concrete *first instance* of Slice 3, scoped to the confirmed-win shapes, landing ahead of the general geometry-tier go-live.
+
 === 3. Parallelism (geometry decides *when* to engage the morsel scheduler)
 
 `max_fanout` + per-source cardinality decide the morsel-lane count for the TD-OLAP-12 scheduler (#838). Geometry gates it: a shallow, narrow plan runs serially (scheduler overhead is pure loss); a wide, high-cardinality scan fans across cores. Same vector, third consumer.
@@ -75,7 +90,7 @@ The geometry vector *is* the feature vector; the coefficients are the existing E
 
 Nothing here is asserted; every coefficient is fit from the TD-OLAP-4 ledger:
 
-1. **Observe.** Extend `IoTrace`/`IoTraceSnapshot` (`io_trace.rs:157,288-304`) with `plan_depth`, `node_count`, `op_histogram`, `plan_ms`, `stack_bytes_estimate`, `stack_bytes_high_water`; record at the plan→execute seam (`relational_pipeline.rs:444-445`). Flatten into `LedgerRecord` (`tpc_perf_ledger_e2e.rs:667-679`).
+1. **Observe.** Extend `IoTrace`/`IoTraceSnapshot` (`io_trace.rs:157,288-304`) with `plan_depth`, `node_count`, `op_histogram`, `plan_ms`, `stack_bytes_estimate`, `stack_bytes_high_water`; record at the plan→execute seam (`relational_pipeline.rs:444-445`). Flatten into `LedgerRecord` (`tpc_perf_ledger_e2e.rs:667-679`). **`measure_geometry` and the depth/high-water traversal MUST be iterative** (explicit worklist, not recursion) — a recursive geometry pass would re-introduce the very stack overflow it is measuring on the deep plan it is called for.
 2. **Ingest.** Run TPC-H (22) + TPC-DS (18) + ClickBench (43) with the instrumentation; the ledger now carries `{geometry vector, measured stack_hwm, measured compute_ms/engine, bytes}` per query × route × temperature.
 3. **Act.** Fit `frame_bytes[op_kind]`/`C_planner` (stack) and confirm the EWMA cells (engine) per shape⊕geometry class. The router/allocator load the fitted values; the **predicted-vs-actual error becomes a gated ratchet** (calibration accuracy) — a regression in prediction fails CI, exactly like the conformance ratchets.
 
@@ -95,29 +110,33 @@ The differentiator is not "we use measurement" — the trace loop exists — it 
 
 == Phasing (landable slices; earliest is non-colliding)
 
-* **Slice 1 — measure (observe-only; closes TD-EXEC-1 Phase 1).** `PlanGeometry` + `measure_geometry` (new, planner); record geometry + `stack_bytes_high_water` (via `stacker`) + `plan_ms` into `IoTrace`/ledger; fit + report `{shape_class, max_depth, node_count, stack_kb}`. **Non-colliding** — a new geometry module + additive `io_trace`/ledger fields + one traversal at the plan seam; it does *not* touch the actively-churned `route_select`/`native_ops` routing files. No enforcement, no behavior change.
-* **Slice 2 — stack enforcement.** Tiered worker pools sized by the calibrated estimate at the pgwire spawn; ship default-safe (unset ⇒ current 8 MB). Lands with/after TD-EXEC-1 Phase 2 (iterative planner) so the estimator measures its win.
-* **Slice 3 — geometry routing go-live.** Add the geometry tier to `QueryShape`/`shape_class`; flip the cost-model override on per shape⊕geometry class, behind ADR-050's shadow-compare + the calibration ratchet. **Sequence after** the in-flight "favor native by operation" routing flip (it churns `relational_pipeline.rs`/`compute_scheduler.rs`) to avoid the conflict this TD's author already hit on #840.
+* **Slice 0 — stack SAFETY (new; do first; P1).** `stacker::maybe_grow` at the three recursion entries (`lower_to_physical`, `build_executor`, native `walk`/`lower_join`); add `stacker` as a workspace dependency; delete `MAX_WALK_DEPTH=32`; drop the flat-8 MB dependence (workers stay at the runtime default and grow on demand). Correct by construction, independent of any calibration or the iterative planner — this is what actually closes the production 2 MB SIGABRT. **Own single-purpose PR** (touches the planner + executor crates, distinct from routing). Gate: a synthetic 10 000-deep plan completes on a 512 KB stack. *(Realizes the §1.a safety half; supersedes the original "Slice 2 = pool sized by estimate" as the correctness mechanism.)*
+* **Slice 1 — measure (observe-only; closes TD-EXEC-1 Phase 1).** `PlanGeometry` + iterative `measure_geometry` (new, planner); record geometry + `stack_bytes_high_water` (via `stacker`) + `plan_ms` into `IoTrace`/ledger; fit + report `{shape_class, max_depth, node_count, stack_kb}` — resolving the ~100× `frame_bytes` unknown. **Non-colliding** — a new geometry module + additive `io_trace`/ledger fields + one traversal at the plan seam; it does *not* touch the actively-churned `route_select`/`native_ops` routing files. No enforcement, no behavior change.
+* **Slice 2 — stack OPTIMIZATION (was "enforcement").** With safety already guaranteed by Slice 0, use the calibrated estimate to pre-size the worker/segment (avoid the common-case growth allocation) and optionally pick a tiered pool at the pgwire spawn. A wrong estimate costs an allocation, never a crash. Lands with/after TD-EXEC-1 Phase 2 (iterative planner) so the estimator measures its win.
+* **Slice 3 — geometry routing go-live.** Add the geometry tier to `QueryShape`/`shape_class`; flip the cost-model override on per shape⊕geometry class, behind ADR-050's shadow-compare + the calibration ratchet, cold cells **seeded from the TD-OLAP-15 posture** (§2). **Sequence after** the in-flight "favor native by operation" routing flip (its concrete first instance; it churns `relational_pipeline.rs`/`compute_scheduler.rs`) to avoid the conflict this TD's author already hit on #840.
 
 == Gates (ADR-052 invariant 4 — measured, not asserted)
 
-* **Stack calibration:** predicted vs measured high-water error ≤ tolerance over the TPC-H/TPC-DS/ClickBench ledger; a regression fails CI (new ratchet).
+Two *distinct* stack gates (the safety/optimization split, refined) — do not conflate them:
+
+* **Stack safety (correctness, by construction):** with `maybe_grow` in place, a synthetic pathologically-deep plan (≥ 10 000 nested nodes) completes on a 512 KB stack without SIGABRT. This holds *independent of the estimate* — it is the gate that guarantees the deep-plan crash TD-EXEC-1 found (Q2/Q7) cannot recur, and it does not wait on calibration.
+* **Stack optimization (efficiency, distributional):** predicted vs measured high-water error ≤ tolerance over the TPC-H/TPC-DS/ClickBench ledger, and the growth-allocation rate ≤ tolerance; a regression fails CI (new ratchet). A miss here degrades efficiency, never correctness.
 * **Routing accuracy:** the geometry-refined cost model's chosen backend is ≥ the heuristic's on wall + the dominant cost term, per shape⊕geometry class, on the same object store — never worse (shadow-compare, auto-demote on divergence, per ADR-050 D3/D4).
 * **Conformance unchanged:** TPC-H 22/22 + TPC-DS 18/18 (native ON) stay green — this is resource *sizing/routing*, not semantics.
-* **No SIGABRT:** the deep-plan crash TD-EXEC-1 found (Q2/Q7) cannot recur — the estimator sizes the pool above the measured requirement, and Slice 1's high-water instrumentation proves the headroom.
 
 == Non-goals / risks
 
 * **Not a cost-based optimizer.** This sizes/routes from *plan geometry + measured execution cost*, not from cardinality-driven plan *reshaping* (join reorder, that is TD-OLAP-2 / ADR-050 D2, statistics-fed). Cardinality enters only as a Phase-2 refinement of the geometry vector, reusing the existing `src/core/statistics/` substrate.
-* **Risk: geometry ≠ stack when frames vary wildly.** Mitigated by calibrating `frame_bytes` per op-kind on the *deepest path* (the binding term) and sizing the pool with a measured safety margin, not the mean.
-* **Risk: EWMA cold cells.** A shape⊕geometry class with no samples falls back to the heuristic (conservative → the mature path), never to an unmeasured native guess — identical to today's exploration-gated warmup.
-* **Risk: `stacker` overhead.** The high-water probe is Slice-1 instrumentation (measurement runs), not a hot-path product dependency; production sizing reads the fitted coefficient, not a live probe.
+* **Risk: geometry ≠ stack when frames vary wildly.** *No longer a correctness risk* under the safety/optimization split — a mis-estimate costs a `maybe_grow` segment allocation, never an overflow. It remains an *efficiency* risk, mitigated by calibrating `frame_bytes` per op-kind on the *deepest path* (the binding term) and sizing with a measured safety margin, not the mean.
+* **Risk: EWMA cold cells.** A shape⊕geometry class with no samples falls back to the heuristic seeded from the TD-OLAP-15 posture (§2) — the mature/conservative path — never to an unmeasured native guess; identical to today's exploration-gated warmup.
+* **`stacker` is a product dependency, not just instrumentation (corrected).** Under §1.a, `remaining_stack()`/`maybe_grow` run on the hot path at each wrapped recursion entry — that is intended and negligible (a TLS read + pointer compare, ~ns; exactly rustc's per-node usage). Two roles: the *live probe* provides safety on the hot path (Slice 0), and the *fitted coefficient* provides pool/segment-sizing optimization (Slice 2). The earlier framing ("probe is measurement-only, not a hot-path dependency") applied only to the abandoned estimate-as-correctness design.
 
 == Primary-source grounding (verified at develop 9551aab1e)
 
 * Heuristic router: `src/query/compute_scheduler.rs:323-349` (`route_select_inner`), signals collected-but-unused `:129-183`.
 * Existing measured loop: `src/query/route_cost_model.rs:216-239` (`shape_class`), `:654-681` (`observe`); `src/query/compute_scheduler.rs:368-494` (`route_select_advised`, override gated OFF).
-* Flat stack: `src/embedded/mod.rs:844-848` (8 MB), `src/network/postgres/mod.rs:249` (bare pgwire spawn, default stack).
-* Planner recursion + reusable traversal: `crates/query/proximadb-relational-planner/src/lib.rs:148-220` (tree), `:737-860` (`lower_to_physical`), `:363`/`:383` (`plan_label`/`plan_arity`).
+* Flat stack (test-only band-aid; production exposed): `src/embedded/mod.rs:828,844-848` (8 MB — PyO3 `EmbeddedProximaDB` only), `apps/proximadb-server/src/main.rs:121` (production server = bare `#[tokio::main]`, tokio default ~2 MB), `src/network/postgres/mod.rs:249` (bare pgwire spawn on that runtime). #843/#846 raised 8 MB only in `tests/tpch_pgwire_e2e.rs` / `tpcds_pgwire_e2e.rs` / `tpc_perf_ledger_e2e.rs`.
+* The three depth-∝ recursions (all `maybe_grow` targets): `crates/query/proximadb-relational-planner/src/lib.rs:737-860` (`lower_to_physical`, 12 sites), `proximadb-relational-executor/src/lib.rs:239` (`build_executor`, 12 sites), `src/query/execution/native_ops.rs` (`walk`/`lower_join`, guarded by the to-be-retired `MAX_WALK_DEPTH=32`).
+* Planner tree + reusable traversal: `crates/query/proximadb-relational-planner/src/lib.rs:148-220` (tree), `:363`/`:383` (`plan_label`/`plan_arity`).
 * Data surface: `src/observability/io_trace.rs:157,288-304` (`IoTrace`/`IoTraceSnapshot`), `tests/tpc_perf_ledger_e2e.rs:667-679` (`LedgerRecord`), plan→execute seam `src/network/postgres/relational_pipeline.rs:444-445`.
 * Cardinality substrate (deferred input): `src/core/statistics/`, planner "rule-driven, no I/O" `crates/query/proximadb-relational-planner/src/lib.rs:33-38`.
