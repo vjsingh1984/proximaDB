@@ -952,14 +952,17 @@ mod tests {
             // `io-trace` feature (ADR-027 two-class trace) — so the range_gets
             // assertion only runs when the feature is enabled.
             let snap = crate::observability::io_trace::snapshot().unwrap();
+            // The cascade meters its selective-read PROJECTION on the distinct
+            // `logical_striped_*` counters (ADR-057 / TD-RDSTRAT-3), not the physical
+            // `bytes_read`/`range_gets` (which reflect the whole-segment `fs.read` —
+            // absent here since this unit test passes in-memory bytes).
             assert!(
-                snap.bytes_read > 0,
-                "io_trace must record bytes_read for the PAX cold scan"
+                snap.logical_striped_bytes > 0,
+                "io_trace must record logical_striped_bytes for the PAX cold scan"
             );
-            #[cfg(feature = "io-trace")]
             assert!(
-                snap.range_gets >= 1,
-                "io_trace must record at least one range-get for the PAX cold scan"
+                snap.logical_striped_gets >= 1,
+                "io_trace must record at least one logical striped GET for the PAX cold scan"
             );
         }));
 
@@ -1218,7 +1221,7 @@ mod tests {
                 .unwrap()
                 .expect("PAX+RaBitQ segment");
             let snap = crate::observability::io_trace::snapshot().unwrap();
-            (hits, snap.bytes_read, snap.range_gets)
+            (hits, snap.logical_striped_bytes, snap.logical_striped_gets)
         }));
 
         // Pruned: created_at filter skips the early blocks before the vector pass.
@@ -1231,27 +1234,24 @@ mod tests {
                 .unwrap()
                 .expect("PAX+RaBitQ segment");
             let snap = crate::observability::io_trace::snapshot().unwrap();
-            (hits, snap.bytes_read, snap.range_gets)
+            (hits, snap.logical_striped_bytes, snap.logical_striped_gets)
         }));
 
-        // (1) The round-trip win: pruning reads strictly fewer bytes.
-        // `range_gets` is gated behind `io-trace` (ADR-027) — when OFF it's
-        // always 0, so only assert the bytes reduction (always-on counter).
-        // The range_gets reduction is asserted only when io-trace is enabled.
+        // (1) The round-trip win: pruning projects strictly fewer striped bytes.
+        // The cascade's logical striped-read counters (`logical_striped_bytes` /
+        // `_gets`, ADR-057 / TD-RDSTRAT-3) are always-on, so both are asserted.
         assert!(
             pruned.1 < baseline.1,
-            "metadata prune must reduce bytes: pruned ({}) vs baseline ({})",
+            "metadata prune must reduce logical striped bytes: pruned ({}) vs baseline ({})",
             pruned.1,
             baseline.1,
         );
-        #[cfg(feature = "io-trace")]
         assert!(
             pruned.2 < baseline.2,
-            "metadata prune must reduce range_gets: pruned ({}) vs baseline ({})",
+            "metadata prune must reduce logical striped GETs: pruned ({}) vs baseline ({})",
             pruned.2,
             baseline.2,
         );
-        #[cfg(feature = "io-trace")]
         assert!(
             pruned.2 >= 1,
             "at least the surviving block must be scanned"
