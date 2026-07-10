@@ -443,6 +443,7 @@ pub async fn try_run_select(
             pax_backed: false,
             partition_fanout,
             cardinality,
+            operation_class: query_operation_class(query),
         },
         // C4: observe-mode advisory from the trace-driven cost model — augments
         // the reason for telemetry/EXPLAIN, never changes the backend.
@@ -2191,6 +2192,79 @@ fn query_engages_relational_engine(query: &SqlQuery) -> bool {
 /// shape GUARANTEES a tiny result, else `Unknown` (never over-claims). Pure AST
 /// walk — zero route-time I/O (co-design P5: I/O round-trips, not CPU, dominate;
 /// the route path must not probe storage).
+/// TD-OLAP-4 operation dimension: classify the SELECT's OLAP operation from the AST
+/// (syntax-only, zero route-time I/O). Feeds the cost-model shape-class so per-engine
+/// samples accumulate per operation — the geometry the shadow ledger showed engines
+/// win/lose on. Priority: grouped > string-heavy > metadata-elidable > scalar-agg.
+fn query_operation_class(query: &SqlQuery) -> crate::query::compute_scheduler::OperationClass {
+    use crate::query::compute_scheduler::OperationClass;
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return OperationClass::Other;
+    };
+    let has_group_by = match &select.group_by {
+        GroupByExpr::All(_) => true,
+        GroupByExpr::Expressions(exprs, _) => !exprs.is_empty(),
+    };
+    if has_group_by {
+        return OperationClass::Grouped;
+    }
+    // A LIKE/regex predicate → native can't push it down → DataFusion class.
+    if select.selection.as_ref().is_some_and(expr_is_string_heavy) {
+        return OperationClass::StringHeavy;
+    }
+    let has_agg = select.projection.iter().any(select_item_has_aggregate);
+    if has_agg && select.having.is_none() {
+        // Unfiltered + every projection a COUNT/MIN/MAX → footer-elidable.
+        if select.selection.is_none()
+            && select
+                .projection
+                .iter()
+                .all(select_item_is_elidable_aggregate)
+        {
+            return OperationClass::MetadataElidable;
+        }
+        return OperationClass::ScalarAggregate;
+    }
+    OperationClass::Other
+}
+
+/// Does the predicate use a string-matching construct (`LIKE`/`ILIKE`/`SIMILAR TO`
+/// or a `regexp_*` function)? Recursive over boolean structure.
+fn expr_is_string_heavy(expr: &SqlExpr) -> bool {
+    match expr {
+        SqlExpr::Like { .. } | SqlExpr::ILike { .. } | SqlExpr::SimilarTo { .. } => true,
+        SqlExpr::Function(f) => {
+            let n = f.name.to_string().to_ascii_lowercase();
+            matches!(
+                n.rsplit('.').next().unwrap_or(&n),
+                "regexp_replace" | "regexp_match" | "regexp_matches" | "regexp_like"
+            )
+        }
+        SqlExpr::BinaryOp { left, right, .. } => {
+            expr_is_string_heavy(left) || expr_is_string_heavy(right)
+        }
+        SqlExpr::UnaryOp { expr, .. } | SqlExpr::Nested(expr) | SqlExpr::Cast { expr, .. } => {
+            expr_is_string_heavy(expr)
+        }
+        _ => false,
+    }
+}
+
+/// Is this projection item a `COUNT`/`MIN`/`MAX` aggregate (footer-elidable, unlike
+/// `SUM`/`AVG` which need column data)?
+fn select_item_is_elidable_aggregate(item: &SelectItem) -> bool {
+    let expr = match item {
+        SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } => e,
+        _ => return false,
+    };
+    if let SqlExpr::Function(f) = expr {
+        let n = f.name.to_string().to_ascii_lowercase();
+        matches!(n.rsplit('.').next().unwrap_or(&n), "count" | "min" | "max")
+    } else {
+        false
+    }
+}
+
 fn query_cardinality_hint(query: &SqlQuery) -> crate::query::compute_scheduler::CardinalityClass {
     use crate::query::compute_scheduler::CardinalityClass;
     // sqlparser 0.59 carries LIMIT on the Query as a `LimitClause` enum (standard
@@ -2499,6 +2573,47 @@ mod tests {
             [Statement::Query(query)] => query_engages_relational_engine(query),
             _ => panic!("expected a single SELECT statement"),
         }
+    }
+
+    #[test]
+    fn operation_class_classifies_olap_shapes() {
+        use crate::query::compute_scheduler::OperationClass;
+        let op = |sql: &str| {
+            let s = Parser::parse_sql(&GenericDialect {}, sql).expect("parse");
+            match s.as_slice() {
+                [Statement::Query(q)] => query_operation_class(q),
+                _ => panic!("one SELECT"),
+            }
+        };
+        // Unfiltered COUNT(*) / MIN / MAX → footer-elidable (native wins).
+        assert_eq!(
+            op("SELECT COUNT(*) FROM hits"),
+            OperationClass::MetadataElidable
+        );
+        assert_eq!(
+            op("SELECT MIN(eventdate), MAX(eventdate) FROM hits"),
+            OperationClass::MetadataElidable
+        );
+        // SUM/AVG need column data → scalar aggregate.
+        assert_eq!(
+            op("SELECT SUM(advengineid), AVG(resolutionwidth) FROM hits"),
+            OperationClass::ScalarAggregate
+        );
+        // A plain (non-string) filter is still a scalar aggregate.
+        assert_eq!(
+            op("SELECT COUNT(*) FROM hits WHERE advengineid <> 0"),
+            OperationClass::ScalarAggregate
+        );
+        // LIKE predicate → string-heavy (routes to DataFusion).
+        assert_eq!(
+            op("SELECT COUNT(*) FROM hits WHERE url LIKE '%google%'"),
+            OperationClass::StringHeavy
+        );
+        // GROUP BY → grouped.
+        assert_eq!(
+            op("SELECT regionid, COUNT(*) FROM hits GROUP BY regionid"),
+            OperationClass::Grouped
+        );
     }
 
     #[cfg(feature = "datafusion-integration")]

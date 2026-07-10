@@ -140,6 +140,7 @@ fn simulate(rounds: u64) -> (Vec<(String, Regret)>, f64, f64) {
             cardinality: CardinalityClass::Large,
             partition_fanout: PartitionFanout::Many,
             pax_backed: false,
+            operation_class: Default::default(),
         },
         static_backend: ComputeBackend::DataFusionLocal,
         arms: vec![
