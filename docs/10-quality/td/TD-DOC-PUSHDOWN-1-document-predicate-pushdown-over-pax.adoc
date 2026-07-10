@@ -4,12 +4,17 @@
 
 [cols="1,3"]
 |===
-|Status|Open — **blocked-on / coordinated-with the OLAP PAX scan source** (TD-OLAP-14 / TD-OLAP-1).
-Design filed here so the ADR-055 rollout has an honest terminal state: the write-side (P-Shred),
-universal provisioning (P-Provision), the `documents(collection)` DataFusion SQL surface (P-DFSource),
-the io_trace evidence gate (P-Trace), and legacy retirement (P-Retire) all landed; **predicate/
-projection pushdown is the one remaining phase, and it is a single coupled piece with the OLAP
-reader — it does not land as independent document code.**
+|Status|Open — **Layer 1 (reader ranged read) LANDED; Layer 2 + adapter remain.** Owning the
+reader (rather than waiting on the OLAP workstream) is underway. **Layer 1** — `PaxSplitReader` now
+fetches a segment via ranged reads (locate the index from a tail suffix → prune whole blocks against
+the index **zone summary** → `read_ranges` only survivors → decode to Arrow), default-OFF
+(`PROXIMADB_DF_PAX_RANGED`), mixed-read-safe (falls back to the whole-file read for any segment
+without a v2 zone index). Verified against the gate shape: a selective predicate reads
+`bytes_read < whole segment` with `range_gets > 0` and returns rows identical to the whole-file path.
+**Layer 2** (shredded user-column ranged pruning) + the **documents adapter** remain — see
+"Remaining". The write-side (P-Shred), universal provisioning (P-Provision), the
+`documents(collection)` DataFusion SQL surface (P-DFSource), the io_trace evidence gate (P-Trace),
+and legacy retirement (P-Retire) all landed previously.
 |Priority|MEDIUM (the co-design payoff phase — turns the declared shredded format into a *measured*
 `bytes_read` reduction; but the byte win is gated on reader-level ranged/pruned PAX reads owned by
 the OLAP workstream, not on document code).
@@ -80,9 +85,35 @@ avoid a competing ranged-read implementation colliding with the OLAP scan source
 byte win belongs in TD-OLAP-14; document pushdown consumes it.
 ====
 
-== Design (when the OLAP scan source lands)
+== Layered plan (what landed, what remains)
 
-Consume, don't rebuild. The remaining *document-side* work is a thin adapter over the OLAP reader:
+Verifying the prerequisites surfaced that `PaxSplitReader` (#736) still did **one whole-file read** —
+its own comment: *"ranged reads are a follow-up. This is the only I/O path"* (`pax_adapter.rs:111`) —
+and that `RangedSegmentReader` (a footer-first ranged reader with full block pruning) already exists
+but is disconnected (built on `ObjectStoreBridge`/`FilterExpression`/`ProximaRecord`, not the
+DataFusion `FilesystemFactory`/`PhysicalExpr`/Arrow path). So "own the reader" splits cleanly:
+
+* **Layer 1 — reader ranged read + index-zone pruning (LANDED).** `PaxSplitReader::load_ranged`:
+  `metadata` for size → tail-suffix GET → `SegmentIndex::locate_in_suffix` (grow-and-retry) → prune
+  whole blocks against each `BlockIndexEntry.zone` **summary** using the SAME `BlockZoneSource` prune
+  logic as the decode path (`block_may_contain` generalized over `&dyn BlockZoneSource`) →
+  `read_ranges` only survivors → `PaxBlockReader::open` each → decode to Arrow. Default-OFF
+  (`PROXIMADB_DF_PAX_RANGED`), mixed-read-safe fallback to whole-file. io_trace records
+  `fetch_pax_ranged` + `bytes_read` + `range_gets`. This is **general** — every DataFusion PAX scan
+  with a temporal/canonical predicate now prunes blocks off the wire, not just documents.
+* **Layer 2 — shredded user-column ranged pruning (REMAINING).** The v2 index `BlockZoneSummary`
+  carries **canonical-column** bounds only (`created_at`/`updated_at`/`valid_from`/`valid_to`/
+  `edge_weight`); shredded `props__<key>` user columns hit the `_ => {}` arm of `from_column_metas`,
+  so a *document-field* predicate cannot prune from the index alone. Pruning on shredded columns
+  without a full block GET needs **per-block footer ranged reads** — exactly what `RangedSegmentReader`
+  (`BlockLayout` + `metadata_ranges`) already does. Wire `PaxSplitReader` to consume that (adapt
+  `FilesystemFactory`→`ObjectStoreBridge`), or hoist user-column bounds into the index summary
+  (versioned format change). This is what closes the *document-field* `bytes_read` gate.
+* **Adapter — `documents()` → `PaxTableProvider` (REMAINING).** The thin document-side wiring below.
+
+== Design (documents adapter — rides on the ranged reader)
+
+Consume, don't rebuild. The remaining *document-side* work is a thin adapter over the ranged reader:
 
 . **Runtime-safe scan inputs on the record port.** `RecordRoutePort::pax_scan_inputs(collection,
   tenant) -> Option<PaxScanInputs>` returning the `DrPathBuilder` base path + column descriptors
