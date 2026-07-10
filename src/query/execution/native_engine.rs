@@ -77,6 +77,26 @@ pub fn native_shadow_enabled() -> bool {
     })
 }
 
+/// Gate: route the operation classes native measurably wins to the native
+/// vectorized engine as the PRIMARY backend over external parquet (returning its
+/// result), with DataFusion as the correctness floor. Default OFF (TD-OLAP-4
+/// "favor native by operation"). Distinct from [`native_shadow_enabled`] (which
+/// runs native ALONGSIDE DataFusion and discards the result): when this is on, a
+/// footer-elidable / scalar-aggregate unfiltered parquet SELECT is served by
+/// native and DataFusion is only consulted when native declines the shape.
+/// Correctness is preserved because native's result MUST equal DataFusion's for
+/// the routed shapes (guarded by the eligibility gates in `try_native_over_parquet`
+/// and the native-vs-DataFusion ratchet tests); any decline falls through to
+/// DataFusion.
+pub fn native_route_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("PROXIMADB_NATIVE_ROUTE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
+
 /// Try the native vectorized execution path for an already-planned query.
 /// Called from `NativeVolcanoEngine::execute_physical` (the single native
 /// chokepoint, above the Volcano) when [`native_vectorized_enabled`] is set.
