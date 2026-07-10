@@ -266,6 +266,19 @@ fn build_session_context(
         );
     }
 
+    // F7: the cross-modal moat, document slice — `documents(collection)` as a joinable `(id, props)`
+    // table over the converged document store (ADR-055 P-DFSource), backed by the process document
+    // service (registered only when it is initialised). Lets documents ⋈ vector ⋈ timeseries ⋈
+    // graph ⋈ relational execute in one data-local DataFusion plan instead of client-side glue.
+    if let Some(doc) = crate::services::document_service::document_service() {
+        ctx.register_udtf(
+            "documents",
+            std::sync::Arc::new(
+                cross_modal::DocumentsTableFunction::from_service_with_tenant(doc, tenant.clone()),
+            ),
+        );
+    }
+
     Ok(ctx)
 }
 

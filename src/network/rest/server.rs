@@ -487,10 +487,11 @@ impl RestServer {
         let state_for_v2 = state.clone();
         let mut base_router = create_router(state.clone());
 
-        // ADR-049 M0-c: gate the deprecated /api/v1/* surface behind
-        // PROXIMADB_REST_V1_COMPAT (on by default). When off, /api/v1/* is
-        // answered with 410 Gone + RFC 8594 deprecation headers; /api/v2/* is
-        // never affected. This starts the v1 sunset clock without a flag-day.
+        // ADR-049 M0-c / TD-V1SUNSET-1 step 1: the deprecated /api/v1/*
+        // surface is gated behind PROXIMADB_REST_V1_COMPAT (now OFF by default).
+        // /api/v1/* is answered with 410 Gone + RFC 8594 deprecation headers;
+        // /api/v2/* is never affected. Set PROXIMADB_REST_V1_COMPAT=1 to
+        // temporarily re-enable v1 during migration.
         let rest_v1_compat = crate::network::middleware::v1_sunset::rest_v1_compat_enabled();
         base_router = base_router.layer(middleware::from_fn_with_state(
             rest_v1_compat,
@@ -813,10 +814,11 @@ impl RestServer {
         let state_for_v2 = state.clone();
         let mut base_router = create_router(state.clone());
 
-        // ADR-049 M0-c: gate the deprecated /api/v1/* surface behind
-        // PROXIMADB_REST_V1_COMPAT (on by default). When off, /api/v1/* is
-        // answered with 410 Gone + RFC 8594 deprecation headers; /api/v2/* is
-        // never affected. This starts the v1 sunset clock without a flag-day.
+        // ADR-049 M0-c / TD-V1SUNSET-1 step 1: the deprecated /api/v1/*
+        // surface is gated behind PROXIMADB_REST_V1_COMPAT (now OFF by default).
+        // /api/v1/* is answered with 410 Gone + RFC 8594 deprecation headers;
+        // /api/v2/* is never affected. Set PROXIMADB_REST_V1_COMPAT=1 to
+        // temporarily re-enable v1 during migration.
         let rest_v1_compat = crate::network::middleware::v1_sunset::rest_v1_compat_enabled();
         base_router = base_router.layer(middleware::from_fn_with_state(
             rest_v1_compat,

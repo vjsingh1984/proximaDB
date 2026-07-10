@@ -61,6 +61,7 @@ pub fn native_join_enabled() -> bool {
 /// shape after a divergence — demoted shapes decline here.
 pub async fn try_vectorized(
     physical: &PhysicalPlan,
+    scan_ctx: Option<&super::native_ops::ScanCtx>,
 ) -> Result<Option<ExecutionPipelineResult>, ExecutionError> {
     if !native_vectorized_enabled() {
         return Ok(None);
@@ -71,7 +72,7 @@ pub async fn try_vectorized(
         return Ok(None);
     }
     // Any decline (unsupported shape) or failure (execution error) → Volcano.
-    let lowered = match super::native_ops::lower_physical(physical) {
+    let lowered = match super::native_ops::lower_physical(physical, scan_ctx) {
         Ok(l) => l,
         Err(reason) => {
             tracing::debug!(
@@ -82,6 +83,10 @@ pub async fn try_vectorized(
             return Ok(None);
         }
     };
+    // TD-OLAP-4 Slice 0 (engine dimension): time + label the native-vectorized
+    // engine DISTINCTLY from the Volcano and DataFusion, so the io-trace carries
+    // a per-engine compute sample the route cost model can compare on.
+    let started = std::time::Instant::now();
     let batches = match super::native_ops::execute_pipeline(&lowered).await {
         Ok(b) => b,
         Err(reason) => {
@@ -93,6 +98,11 @@ pub async fn try_vectorized(
             return Ok(None);
         }
     };
+    crate::observability::io_trace::record_compute_ms(
+        "native-vectorized",
+        started.elapsed().as_millis() as u64,
+    );
+    crate::observability::io_trace::record_route("vectorized", "NativeVectorized");
     let schema = lowered.pipeline.output_schema.as_ref();
     Ok(Some(record_batches_to_pipeline_result(schema, &batches)))
 }

@@ -475,7 +475,7 @@ impl HelixEngine {
         operation_context: &str,
         collection_size: Option<usize>,
     ) -> bool {
-        crate::compute::quantization::selection::QuantizationSelector::should_use_persistent_quantization_simple(
+        crate::storage::compute_bridge::selection::QuantizationSelector::should_use_persistent_quantization_simple(
             operation_context,
             collection_size,
         )
@@ -492,7 +492,7 @@ impl HelixEngine {
         if self.should_use_persistent_quantization(operation_context, collection_size) {
             // Use global quantization cache for persistent operations
             if let Some(global_cache) =
-                crate::compute::quantization::global_cache::GlobalQuantizationCache::instance()
+                crate::storage::compute_bridge::global_cache::GlobalQuantizationCache::instance()
             {
                 Some(
                     global_cache

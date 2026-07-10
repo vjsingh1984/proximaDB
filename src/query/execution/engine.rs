@@ -290,7 +290,7 @@ impl NativeVolcanoEngine {
         // as a trailing `Limit`) is honored by the vectorized lowering too.
         // Default-off; any decline or failure falls back to the Volcano inside
         // `try_vectorized` (the experimental path never fails a query).
-        if let Some(result) = super::native_engine::try_vectorized(&physical).await? {
+        if let Some(result) = super::native_engine::try_vectorized(&physical, None).await? {
             // Shadow mode (ADR-054 §7 Phase 0.5, TD-OLAP-11 §Gate): run the
             // Volcano reference too, compare result multisets, and on divergence
             // auto-demote the shape + fail safe to the reference. Default-off.

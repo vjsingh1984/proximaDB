@@ -294,6 +294,16 @@ struct QueryRecord {
     /// Execution (compute) wall ms attributed by the engine (TD-OLAP-4).
     #[serde(skip_serializing_if = "Option::is_none")]
     compute_ms: Option<u64>,
+    /// Engine/route this query was served on — `(shape_class, backend_label)`, the
+    /// engine dimension of the geometry-dependent dispatch (TD-OLAP-4 Slice 0).
+    /// For external-parquet ClickBench this is `DataFusionLocal` (native cannot
+    /// serve external parquet yet), making the current engine coverage explicit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    route: Option<String>,
+    /// Full per-engine compute breakdown (`{engine: ms}`) — distinguishes
+    /// `datafusion` / `native-vectorized` / `volcano` for the cost-model tensor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compute_by_engine: Option<std::collections::BTreeMap<String, u64>>,
     /// Table-OPEN floor (discovery + footer) wall ms — TD-OLAP-4. Drops to ~0 on a
     /// warm table-open cache hit; the direct signal for the cache lever.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -383,6 +393,8 @@ async fn clickbench_ledger() {
             open_ms,
             plan_ms,
             table_open_hits,
+            route,
+            compute_by_engine,
         ) = snap
             .map(|s| {
                 (
@@ -395,9 +407,13 @@ async fn clickbench_ledger() {
                     Some(s.open_ms),
                     Some(s.plan_ms),
                     Some(s.table_open_hits),
+                    s.route.as_ref().map(|(_, backend)| backend.clone()),
+                    Some(s.compute_ms.clone()),
                 )
             })
-            .unwrap_or((None, None, None, None, None, None, None, None, None));
+            .unwrap_or((
+                None, None, None, None, None, None, None, None, None, None, None,
+            ));
         match res {
             Ok(msgs) => {
                 let rows = msgs
@@ -419,6 +435,8 @@ async fn clickbench_ledger() {
                     open_ms,
                     plan_ms,
                     table_open_hits,
+                    route,
+                    compute_by_engine,
                     error: None,
                 });
             }
@@ -437,6 +455,8 @@ async fn clickbench_ledger() {
                 open_ms,
                 plan_ms,
                 table_open_hits,
+                route,
+                compute_by_engine,
                 error: Some(
                     e.as_db_error()
                         .map(|d| d.message().to_string())
@@ -473,6 +493,8 @@ async fn clickbench_ledger() {
                 open_ms: None,
                 plan_ms: None,
                 table_open_hits: None,
+                route: None,
+                compute_by_engine: None,
                 error: (!ok).then(|| {
                     out.as_ref()
                         .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())

@@ -6,7 +6,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **macOS: DONE** (aarch64 wheels shipping, PR #716) · **Windows: pure-Rust engine now COMPILES on MSVC** (root lib green, gating rung 2) after two small `#[cfg(unix)]` gates — `memmap2::Advice` (#800) + Unix-domain sockets (#808); next frontier = `--features python` C-deps (NASM/OpenSSL) toward the wheel
+| Status | **macOS: DONE** (aarch64 wheels shipping, PR #716) · **Windows: engine + `python` feature + C-deps all COMPILE on MSVC** (ratchet rungs 1-3 green: `memmap2::Advice` #800, Unix-domain sockets #808, python/C-dep tail #813 — no C-dep wall). Windows `x86_64` wheel row now added to `build-embedded-wheels`; final validation = a `maturin` dry-run exercising the extension-module link.
 | Severity | Low — Linux x86_64 + aarch64 wheels ship today and cover the overwhelming majority of embedded/edge/air-gapped/server deployments. macOS/Windows are additive reach, not a correctness or release blocker.
 | Component | Packaging/CI — `.github/workflows/release-python.yml` (`build-embedded-wheels`), root maturin package (`proximadb_embedded`); Windows work spans `crates/storage/proximadb-storage-common` + `src/storage`
 | Relates to | Vendored-OpenSSL manylinux fix (PR #701 / #707); `TD-IMG-1` (the other shipped-release follow-up)

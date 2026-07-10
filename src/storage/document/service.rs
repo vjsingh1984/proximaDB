@@ -296,20 +296,36 @@ impl DocumentService {
         Ok(service)
     }
 
-    /// Create a new document service with WAL support
+    /// Create a new document service with WAL support.
+    #[deprecated(
+        since = "0.2.3",
+        note = "legacy document_wal path is fallback-only after the ADR-055 default-ON cutover; use with_canonical_record_store_and_wal. Retirement: TD-DOC-RETIRE-1."
+    )]
     pub async fn new_with_wal(
         storage_engine: Arc<dyn UnifiedStorageFormat>,
         wal_base_path: &str,
     ) -> Result<Self> {
+        // TD-DOC-RETIRE-1 P2 rewires this to the canonical constructor; the deprecated
+        // delegate is intentional until then (the runtime warn fires in the leaf below).
+        #[allow(deprecated)]
         Self::new_with_wal_and_metrics(storage_engine, wal_base_path, None).await
     }
 
-    /// Create a new document service with WAL support and optional metrics
+    /// Create a new document service with WAL support and optional metrics.
+    #[deprecated(
+        since = "0.2.3",
+        note = "legacy document_wal path is fallback-only after the ADR-055 default-ON cutover; use with_canonical_record_store_and_wal. Retirement: TD-DOC-RETIRE-1."
+    )]
     pub async fn new_with_wal_and_metrics(
         storage_engine: Arc<dyn UnifiedStorageFormat>,
         wal_base_path: &str,
         metrics_collector: Option<Arc<DocumentMetricsCollector>>,
     ) -> Result<Self> {
+        tracing::warn!(
+            "DocumentService::new_with_wal[_and_metrics] is deprecated: the legacy document_wal \
+             path is fallback-only after the ADR-055 default-ON cutover. Migrate to \
+             with_canonical_record_store_and_wal (retirement tracked by TD-DOC-RETIRE-1)."
+        );
         let wal_path = format!("{}/document_wal", wal_base_path);
         let wal_writer = UnifiedWALWriter::new(wal_path.clone())
             .await

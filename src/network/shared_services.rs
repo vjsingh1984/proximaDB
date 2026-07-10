@@ -1692,6 +1692,9 @@ impl SharedServices {
         // Create DocumentService (moved up for UnifiedHandlers)
         debug!("🔧 SharedServices::new - Creating DocumentService for document queries...");
         let document_base_path = storage_config.metadata_url.replace("file://", "");
+        // TD-DOC-RETIRE-1 P2 rewires this to the canonical constructor
+        // (with_canonical_record_store_and_wal); the deprecated call is intentional until then.
+        #[allow(deprecated)]
         let document_service = match DocumentService::new_with_wal(
             sst_engine_for_documents,
             &document_base_path,
@@ -1811,6 +1814,11 @@ impl SharedServices {
         debug!(
             "✅ SharedServices::new - DocumentService wired to canonical record route (ADR-009, gate default-OFF)"
         );
+
+        // ADR-055 P-DFSource: publish the document service as a process singleton so the DataFusion
+        // `documents(collection)` table function (registered per SessionContext) can read it. Mirrors
+        // the timeseries_service wiring; idempotent (first wins).
+        crate::services::document_service::set_document_service(document_service.clone());
 
         // ==================================================================================
         // Create UnifiedQueryFacade - single entry point for all query types
