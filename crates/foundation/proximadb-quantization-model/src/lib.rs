@@ -4,7 +4,11 @@
 //! crate to foundation so both storage and the modality depend on it (clears the divergent-
 //! types trap + the storage up-edges). Re-exported by proximadb-vector/src/quantization/internal_types.rs.
 
-use proximadb_quantization_types::{
+// Re-export the contract traits/types the cluster depends on so they flow through
+// the re-export chain (a `use proximadb_quantization_model::*` — including the
+// `pub use` in proximadb-vector/internal_types.rs — brings QuantizationMethod etc.
+// into scope, which call sites need to resolve trait methods like .quantization_type()).
+pub use proximadb_quantization_types::{
     DurableQuantState, QuantizationLifecycle, QuantizationMethod, QuantizationType,
 };
 use serde::{Deserialize, Serialize};
