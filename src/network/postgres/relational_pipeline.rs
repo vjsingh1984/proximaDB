@@ -365,6 +365,12 @@ pub async fn try_run_select(
     // (nor advertised) when the build can't honor it.
     #[cfg(feature = "datafusion-integration")]
     let mut parquet_loc_by_key: HashMap<String, String> = HashMap::new();
+    // ADR-058 D5 / §9.A: per-table footer-stats trust, parallel to
+    // `parquet_loc_by_key`. Drives whether the native route may answer
+    // COUNT/MIN/MAX from the parquet FOOTER (Trusted) or must value-scan
+    // (Untrusted — external/federated writer's footer is not trusted).
+    #[cfg(feature = "datafusion-integration")]
+    let mut parquet_trust_by_key: HashMap<String, StatsTrust> = HashMap::new();
     // ADR-025: per-table OLAP read-merge params (snapshot_lsn + PK column) for the
     // opted-in parquet-backed tables; empty ⇒ all reads stay on the bare Parquet path.
     #[cfg(feature = "datafusion-integration")]
@@ -382,6 +388,7 @@ pub async fn try_run_select(
                 #[cfg(feature = "datafusion-integration")]
                 if let Some(location) = catalog_table_is_parquet_backed(&catalog_schema) {
                     parquet_loc_by_key.insert(key.clone(), location);
+                    parquet_trust_by_key.insert(key.clone(), parquet_stats_trust(&catalog_schema));
                     if let Some(params) = olap_delta_table_params(&catalog_schema) {
                         olap_delta_tables.insert(key.clone(), params);
                     }
@@ -518,8 +525,13 @@ pub async fn try_run_select(
             crate::observability::io_trace::record_setup_ms(
                 setup_start.elapsed().as_millis() as u64
             );
-            if let Some(result) =
-                try_native_over_parquet(sql, &native_snapshot, &parquet_loc_by_key).await
+            if let Some(result) = try_native_over_parquet(
+                sql,
+                &native_snapshot,
+                &parquet_loc_by_key,
+                &parquet_trust_by_key,
+            )
+            .await
             {
                 tracing::debug!(
                     target: "proximadb::compute_route",
@@ -596,7 +608,13 @@ pub async fn try_run_select(
                 tables: tables.clone(),
                 tenant: tenant_ctx.clone(),
             };
-            shadow_probe_native_parquet(sql, &probe_snapshot, &parquet_loc_by_key).await;
+            shadow_probe_native_parquet(
+                sql,
+                &probe_snapshot,
+                &parquet_loc_by_key,
+                &parquet_trust_by_key,
+            )
+            .await;
         }
         return Some(match engine_result {
             Ok(result) => {
@@ -989,8 +1007,9 @@ async fn shadow_probe_native_parquet(
     sql: &str,
     snapshot: &SnapshotCatalog,
     parquet_loc_by_key: &HashMap<String, String>,
+    parquet_trust_by_key: &HashMap<String, StatsTrust>,
 ) {
-    let _ = try_native_over_parquet(sql, snapshot, parquet_loc_by_key).await;
+    let _ = try_native_over_parquet(sql, snapshot, parquet_loc_by_key, parquet_trust_by_key).await;
 }
 
 /// Serve `sql` on the native vectorized engine over the SAME external parquet
@@ -1015,12 +1034,25 @@ async fn try_native_over_parquet(
     sql: &str,
     snapshot: &SnapshotCatalog,
     parquet_loc_by_key: &HashMap<String, String>,
+    parquet_trust_by_key: &HashMap<String, StatsTrust>,
 ) -> Option<ExecutionPipelineResult> {
     // Single-table parquet only — joins are a separately-gated native path.
     if parquet_loc_by_key.len() != 1 {
         return None;
     }
+    let table_key = parquet_loc_by_key.keys().next()?;
     let location = parquet_loc_by_key.values().next()?;
+    // ADR-058 D5 / §9.A: footer-stats elision (below) is only sound when the
+    // writer is authoritative. External/federated parquet (FederatedRead /
+    // ExternalAuthoritative / ImportedSnapshot) ⇒ Untrusted ⇒ the
+    // COUNT/MIN/MAX-from-footer paths are skipped and the query is served by
+    // the trust-safe value-scan. Materialized parquet (ProjectionPublication,
+    // which `ALTER TABLE … MATERIALIZE` produces) is ProximaDB-generated ⇒
+    // Trusted ⇒ elision stays enabled.
+    let stats_trust = parquet_trust_by_key
+        .get(table_key)
+        .copied()
+        .unwrap_or(StatsTrust::Untrusted);
     let sqlp = &sql[..sql.len().min(70)];
     // Lower the SAME SQL to the relational physical plan (decline → skip).
     let physical = match plan_over_snapshot(sql, snapshot) {
@@ -1062,8 +1094,14 @@ async fn try_native_over_parquet(
     // parquet FOOTER — zero column I/O, flat cost. The single biggest native win at
     // scale (q07 MIN/MAX: a full-column vectorized scan → a footer read). Emits the
     // pre-computed row and bypasses the scan + HashAggregate entirely.
-    if let Some(batch) = elidable_aggregate_batch(&physical, &table, &file_schema) {
-        tracing::debug!(target: "proximadb::native_route", "native ELIDE (footer stats): {sqlp}");
+    // ADR-058 D5 / §9.A: footer-stats elision is TRUST-GATED — only Trusted
+    // (ProximaDB-owned) parquet may answer from the footer; Untrusted
+    // (external/federated) writer footers may be stale/absent ⇒ fall through to
+    // the trust-safe value-scan below.
+    if stats_trust == StatsTrust::Trusted
+        && let Some(batch) = elidable_aggregate_batch(&physical, &table, &file_schema)
+    {
+        tracing::debug!(target: "proximadb::native_route", "native ELIDE (footer stats, trusted): {sqlp}");
         let src = Box::new(
             crate::query::execution::native_parquet_scan::StatsAggregateOperator::new(batch),
         );
@@ -1075,9 +1113,10 @@ async fn try_native_over_parquet(
     // Unfiltered COUNT(*): parquet/PAX carry the row count in the FOOTER, so elide
     // the scan entirely — read footers only, emit the count (a metadata op, not a
     // scan). Detected from the PLAN, not `scan_cols`: the relational Scan schema is
-    // full-width, so COUNT(*) would otherwise read all 105 columns.
+    // full-width, so COUNT(*) would otherwise read all 105 columns. Trust-gated
+    // (§9.A): the footer row-count is only authoritative for Trusted parquet.
     let source: Box<dyn proximadb_execution_contracts::ExecutionOperator> =
-        if is_pure_count_star(&physical) {
+        if stats_trust == StatsTrust::Trusted && is_pure_count_star(&physical) {
             Box::new(
                 crate::query::execution::native_parquet_scan::ParquetScanOperator::new_count_only(
                     store, files,
@@ -1196,6 +1235,57 @@ fn catalog_table_is_parquet_backed(
             None
         }
     })
+}
+
+/// ADR-058 D5 / §9.A — trust level for a parquet table's FOOTER STATISTICS
+/// (row_count / null_count / min-max). Footer-stats elision (answering
+/// COUNT/MIN/MAX from the footer instead of scanning) is only sound when
+/// ProximaDB wrote the footer; an external/federated writer's footer may carry
+/// stale or absent stats, so eliding from it can return a WRONG aggregate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StatsTrust {
+    /// ProximaDB generated the parquet (materialized `ProjectionPublication`,
+    /// `ExportedPublication`, or a WAL-owned authority) ⇒ footer stats are
+    /// authoritative ⇒ elision is sound.
+    Trusted,
+    /// External/federated/imported authority (`FederatedRead` /
+    /// `ExternalAuthoritative` / `ImportedSnapshot`) — the writer is not ProximaDB,
+    /// so footer stats are NOT trusted ⇒ elision is disabled; aggregate via the
+    /// trust-safe value-scan path (`ParquetScanOperator::new`).
+    Untrusted,
+}
+
+/// Derive a parquet table's [`StatsTrust`] from its catalog authority. The ONLY
+/// untrusted writers are external sources ProximaDB did not generate —
+/// `FederatedRead` / `ExternalAuthoritative` / `ImportedSnapshot` (their parquet
+/// footer stats may be stale or absent ⇒ [`StatsTrust::Untrusted`]). Everything
+/// ProximaDB generated — materialized parquet (`ProjectionPublication`, the form
+/// `ALTER TABLE … MATERIALIZE` produces), `ExportedPublication`, the WAL-owned
+/// authorities — is [`StatsTrust::Trusted`] (ProximaDB wrote the footer).
+fn parquet_stats_trust(schema: &proximadb_catalog::CatalogTableSchema) -> StatsTrust {
+    use proximadb_catalog::CatalogAuthorityMode;
+    let external = schema
+        .storage_layouts
+        .iter()
+        .filter(|l| {
+            matches!(
+                l.physical_format,
+                proximadb_catalog::CatalogPhysicalFormat::Parquet
+            )
+        })
+        .any(|l| {
+            matches!(
+                l.authority,
+                CatalogAuthorityMode::FederatedRead
+                    | CatalogAuthorityMode::ExternalAuthoritative
+                    | CatalogAuthorityMode::ImportedSnapshot
+            )
+        });
+    if external {
+        StatsTrust::Untrusted
+    } else {
+        StatsTrust::Trusted
+    }
 }
 
 /// Master switch for the ADR-025 OLAP read-merge. **Default-ON** (ADR-025 PR3):
