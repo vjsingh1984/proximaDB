@@ -1,4 +1,6 @@
-mermaid
+---
+title: ProximaDB - Compute Routing (ComputeScheduler::route_select)
+---
 flowchart TD
     SQL["SQL arrives\n(pgwire:5433 or REST)"] --> LOWER["relational_pipeline.rs\nSQL → logical plan"]
     LOWER --> SCHED["ComputeScheduler::route_select\n(query/compute_scheduler.rs:329)"]

@@ -1,27 +1,32 @@
 This document defines how the ProximaDB architecture atlas is rendered so it is **natively
-visible on GitHub** with zero tooling, while keeping full-fidelity UML source available for
-non-GitHub publishing.
-| Format | GitHub `.md` render | Standalone file | Best for |
+visible on GitHub** with zero tooling, with PNG/SVG export for non-GitHub publishing.
+
+> **Mermaid is the only source format.** All diagrams are `.mermaid` (or embedded in `.md`).
+> There are **no `.puml` files** in the repository — `.gitignore` excludes `*.puml`, so PlantUML
+> is not used. This keeps a single source of truth and guarantees every diagram renders on GitHub.
+
+| Format | GitHub render | Standalone file | Best for |
 |---|---|---|---|
-| **Mermaid** (in `.md`) | native | raw text | **PRIMARY - everything Mermaid can express** |
-| **PlantUML** `.puml` | needs Kroki | raw text | Full-fidelity UML source (class/sequence/deployment) |
-| **PNG / SVG** (exported) | via `![](...)` | yes | Embedding in non-GitHub docs, PDFs, slides |
+| **Mermaid** `.mermaid` / embedded in `.md` | native (in `.md`) / via viewer | raw text | **PRIMARY — all diagrams** |
+| **PNG / SVG** (exported from Mermaid) | via `![](...)` | yes | Embedding in non-GitHub docs, PDFs, slides |
 | **ASCII art** | native (code block) | yes | Simple ideas, inline in prose, email-safe |
-1. **Mermaid-first.** When Mermaid and PlantUML can both express a diagram, prefer **Mermaid**
-   so it renders natively on GitHub.
-2. **PlantUML kept as source-of-truth** for the richer UML views (deployment, class, sequence)
-   that benefit from PlantUML's layout - then exported to PNG/SVG for embedding.
-3. **Kroki fallback.** PlantUML renders inline on GitHub by pointing the image at the public
-   Kroki server: `https://kroki.io/plantuml/svg/<base64-puml>`. Use when a diagram must stay
-   PlantUML but still render on GitHub.
-4. **ASCII art for the simplest ideas** (1-box ownership, inline in prose) - native everywhere,
+
+1. **Mermaid-first and Mermaid-only.** Every diagram is Mermaid. `atlas.md` embeds the key
+   diagrams so the whole system renders on GitHub with zero install; the per-directory `.mermaid`
+   files are the authoritative full-detail source (cataloged in `README.md`).
+2. **Export to PNG/SVG** with the Mermaid CLI (`mmdc`) for slides/PDFs; the public Kroki service
+   is a fallback when `mmdc` is not installed.
+3. **ASCII art** (`ASCII_ART.md`) for the simplest one-box/one-liner ideas — native everywhere,
    no tooling, copy-paste-safe.
-1. Can a reader see it on GitHub with **zero install**? -> Mermaid in `.md` wins.
-2. Is it a class/sequence/deployment diagram needing PlantUML's layout? -> `.puml` + **exported
-   PNG** committed next to it, embedded via `![](./x.png)`.
-3. Is it a one-off simple idea? -> ASCII art inline.
+
+**Decision tree:**
+1. Can a reader see it on GitHub with **zero install**? → Mermaid embedded in `atlas.md` / `README.md`.
+2. Need a PNG/SVG for a slide or PDF? → export from the `.mermaid` with `render_atlas.sh`.
+3. A one-off simple idea? → ASCII art inline.
+
 ```bash
-bash scripts/diagrams/render_atlas.sh
-bash scripts/diagrams/render_atlas.sh --kroki
+bash scripts/diagrams/render_atlas.sh            # export every .mermaid to PNG+SVG
+bash scripts/diagrams/render_atlas.sh --kroki    # emit Kroki-rendered .md sidecars instead
 ```
+
 See `atlas.md` for the **all-Mermaid, natively-rendered single-page view** of the system.

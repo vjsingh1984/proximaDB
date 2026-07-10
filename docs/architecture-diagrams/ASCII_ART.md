@@ -31,5 +31,5 @@ proximadb root crate (src/)  <-- the monolith being decomposed
 ```
  1 idea, inline?            -> ASCII art
  shows on GitHub for free?  -> Mermaid in .md
- class/sequence/deployment? -> .puml + export PNG (or Kroki link)
+ class/sequence/deployment? -> Mermaid .mermaid (export PNG via render_atlas.sh)
 ```
