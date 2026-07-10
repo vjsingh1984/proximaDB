@@ -1186,8 +1186,8 @@ impl InterCentroidMatrix {
     pub fn get_distances_batch_optimized(&self, pairs: &[(usize, usize)]) -> Vec<f32> {
         use crate::compute::QuantizedVector;
         use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-        use crate::compute::quantization::types::UnifiedQuantizationLevel;
         use proximadb_hardware_caps::get_hardware_capabilities;
+        use proximadb_quantization_model::UnifiedQuantizationLevel;
 
         let hw = get_hardware_capabilities();
 

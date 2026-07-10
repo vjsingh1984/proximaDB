@@ -41,6 +41,7 @@ members = [
     "crates/foundation/proximadb-pipeline-operator",
     "crates/foundation/proximadb-proto",
     "crates/foundation/proximadb-quantization-types",
+    "crates/foundation/proximadb-quantization-model",
     "crates/foundation/proximadb-index-types",
     "crates/foundation/proximadb-index-traits",
     "crates/foundation/proximadb-records",
@@ -174,6 +175,7 @@ proximadb-cache = { path = "crates/foundation/proximadb-cache" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
+proximadb-quantization-model = { path = "crates/foundation/proximadb-quantization-model" }
 proximadb-index-types = { path = "crates/foundation/proximadb-index-types" }
 proximadb-index-traits = { path = "crates/foundation/proximadb-index-traits" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
@@ -311,6 +313,7 @@ proximadb-index-types = { path = "crates/foundation/proximadb-index-types" }
 proximadb-index-traits = { path = "crates/foundation/proximadb-index-traits" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
+proximadb-quantization-model = { path = "crates/foundation/proximadb-quantization-model" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
@@ -645,6 +648,7 @@ io-trace = []
 # after P9 recall validation closes.
 experimental-turboquant = [
     "proximadb-quantization-types/experimental-turboquant",
+    "proximadb-quantization-model/experimental-turboquant",
     "proximadb-vector/experimental-turboquant",
     "proximadb-distance-kernel/experimental-turboquant",
     "proximadb-quantization-kernel/experimental-turboquant",

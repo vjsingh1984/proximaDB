@@ -6615,6 +6615,7 @@ dependencies = [
  "proximadb-pipeline-operator",
  "proximadb-proto",
  "proximadb-quantization-kernel",
+ "proximadb-quantization-model",
  "proximadb-quantization-types",
  "proximadb-query",
  "proximadb-query-capability",
@@ -7314,6 +7315,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-quantization-model"
+version = "0.2.0"
+dependencies = [
+ "proximadb-quantization-types",
+ "serde",
+]
+
+[[package]]
 name = "proximadb-quantization-types"
 version = "0.2.0"
 dependencies = [
@@ -7942,6 +7951,7 @@ dependencies = [
  "proximadb-hardware",
  "proximadb-kernel",
  "proximadb-proto",
+ "proximadb-quantization-model",
  "proximadb-quantization-types",
  "proximadb-query-filter",
  "proximadb-records",

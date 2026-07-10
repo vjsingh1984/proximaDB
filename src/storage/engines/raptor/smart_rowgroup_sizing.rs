@@ -96,7 +96,7 @@ pub struct SmartRowGroupSizer {
 }
 
 // Use unified quantization types instead of deprecated proto imports
-use crate::compute::quantization::types::{QuantizationLevel, UnifiedQuantizationLevel};
+use proximadb_quantization_model::{QuantizationLevel, UnifiedQuantizationLevel};
 
 /// Internal quantization config for sizing calculations
 #[derive(Debug, Clone)]
