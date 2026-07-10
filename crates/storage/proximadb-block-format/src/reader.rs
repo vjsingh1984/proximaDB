@@ -59,6 +59,49 @@ pub enum RankMetric {
     Cosine,
 }
 
+/// Decode one rerank-column row (SQ8 or FP16) into `scratch` and score it against
+/// `query` under `metric` — the per-row core of [`PaxBlockReader::rerank_rows`],
+/// extracted so the **ranged** Stage-2 reader (ADR-057 / TD-RDSTRAT-3) can score
+/// only the candidate rows it fetches via `BlockLayout::vector_row_range`, using
+/// the SAME math (byte-identical results). `row_bytes` is the row's stripe slice
+/// (SQ8: `dim` bytes; FP16: `2·dim`). Returns the metric distance (lower = nearer).
+pub fn score_rerank_row(
+    quant_kind: u8,
+    params: &proximadb_codec::Sq8Params,
+    row_bytes: &[u8],
+    query: &[f32],
+    metric: RankMetric,
+    scratch: &mut Vec<f32>,
+) -> f32 {
+    scratch.clear();
+    if quant_kind == QUANT_FP16 {
+        for chunk in row_bytes.chunks_exact(2) {
+            scratch.push(half::f16::from_le_bytes([chunk[0], chunk[1]]).to_f32());
+        }
+    } else {
+        sq8::decode_into(row_bytes, params, scratch);
+    }
+    match metric {
+        // Squared L2 (lower = nearer).
+        RankMetric::L2 => scratch
+            .iter()
+            .zip(query)
+            .map(|(x, q)| (x - q) * (x - q))
+            .sum::<f32>(),
+        // Cosine distance 1 − cos_sim (∈ [0, 2]; lower = nearer).
+        RankMetric::Cosine => {
+            let dot = scratch.iter().zip(query).map(|(x, q)| x * q).sum::<f32>();
+            let norm_x = scratch.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let norm_q = query.iter().map(|q| q * q).sum::<f32>().sqrt();
+            if norm_x > 0.0 && norm_q > 0.0 {
+                1.0 - (dot / (norm_x * norm_q))
+            } else {
+                1.0 // zero vector: maximally dissimilar
+            }
+        }
+    }
+}
+
 impl<'a> PaxBlockReader<'a> {
     /// Parse the block header and footer from `data`.
     ///
@@ -416,35 +459,16 @@ impl<'a> PaxBlockReader<'a> {
             if end > payload.len() {
                 continue;
             }
-            decoded.clear();
-            if entry.quant_kind == QUANT_FP16 {
-                use half::f16;
-                for chunk in payload[off..end].chunks_exact(2) {
-                    decoded.push(f16::from_le_bytes([chunk[0], chunk[1]]).to_f32());
-                }
-            } else {
-                sq8::decode_into(&payload[off..end], &entry.params, &mut decoded);
-            }
-            let dist = match metric {
-                // Squared L2 (lower = nearer).
-                RankMetric::L2 => decoded
-                    .iter()
-                    .zip(query)
-                    .map(|(x, q)| (x - q) * (x - q))
-                    .sum::<f32>(),
-                // Cosine distance 1 − cos_sim (∈ [0, 2]; lower = nearer). Exact on
-                // the SQ8-decoded vector + query (handles non-normalized data).
-                RankMetric::Cosine => {
-                    let dot = decoded.iter().zip(query).map(|(x, q)| x * q).sum::<f32>();
-                    let norm_x = decoded.iter().map(|x| x * x).sum::<f32>().sqrt();
-                    let norm_q = query.iter().map(|q| q * q).sum::<f32>().sqrt();
-                    if norm_x > 0.0 && norm_q > 0.0 {
-                        1.0 - (dot / (norm_x * norm_q))
-                    } else {
-                        1.0 // zero vector: maximally dissimilar
-                    }
-                }
-            };
+            // Per-row decode+score via the shared primitive (the ranged Stage-2
+            // reader scores its `vector_row_range`-fetched rows with the same fn).
+            let dist = score_rerank_row(
+                entry.quant_kind,
+                &entry.params,
+                &payload[off..end],
+                query,
+                metric,
+                &mut decoded,
+            );
             scored.push((row, dist));
         }
         scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -1792,6 +1816,69 @@ mod tests {
             recalls.push(hits as f32 / k as f32);
         }
         recalls.iter().sum::<f32>() / recalls.len() as f32
+    }
+
+    /// TD-RDSTRAT-3 S1b parity: the ranged Stage-2 scorer (`score_rerank_row`, which
+    /// the ranged reader calls on `vector_row_range`-fetched candidate rows) must
+    /// produce BYTE-IDENTICAL `(row, distance)` to the whole-block `rerank_rows` —
+    /// so the selective striped read returns the same top-k as the whole-segment
+    /// read (the S1b parity gate; the SIFT1M recall ratchet is the CI-time gate).
+    #[test]
+    fn ranged_rerank_scorer_matches_whole_rerank_rows() {
+        const N: usize = 512;
+        let (_corpus, block) = build_cold_recall_corpus_and_block(N);
+        let reader = PaxBlockReader::open(&block).unwrap();
+        let dim = reader.vector_params().get(col_id::EMBED_BASE).unwrap().dim as usize;
+
+        for metric in [RankMetric::L2, RankMetric::Cosine] {
+            let query = lcg_vec(42, dim);
+            let cand = reader.rabitq_rank(&query, 64, metric).unwrap();
+            let whole = reader.rerank_rows(0, &query, &cand, metric).unwrap();
+
+            // Replicate Stage 2 as the ranged reader will: read the rerank stripe,
+            // then decode+score ONLY the candidate rows via the shared primitive.
+            let rer = reader
+                .vector_params()
+                .get(crate::col_id::RERANK_BASE)
+                .unwrap();
+            let raw = reader.read_stripe_raw(crate::col_id::RERANK_BASE).unwrap();
+            let n = reader.row_count() as usize;
+            let bm_len = n.div_ceil(8);
+            let bitmap = &raw[..bm_len];
+            let payload = &raw[bm_len..];
+            let stride = if rer.quant_kind == QUANT_FP16 {
+                rer.dim as usize * 2
+            } else {
+                rer.dim as usize
+            };
+            let present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
+            let mut scratch: Vec<f32> = Vec::new();
+            let mut ranged: Vec<(usize, f32)> = Vec::new();
+            for &row in &cand {
+                if row >= n || !present(row) {
+                    continue;
+                }
+                let off = row * stride;
+                if off + stride > payload.len() {
+                    continue;
+                }
+                let d = score_rerank_row(
+                    rer.quant_kind,
+                    &rer.params,
+                    &payload[off..off + stride],
+                    &query,
+                    metric,
+                    &mut scratch,
+                );
+                ranged.push((row, d));
+            }
+            ranged.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            assert_eq!(
+                ranged, whole,
+                "ranged Stage-2 scorer diverged from whole rerank_rows ({metric:?})"
+            );
+        }
     }
 
     /// P3 Phase G — cold-recall ratchet at N=1000 over a REAL two-column PAX block.
