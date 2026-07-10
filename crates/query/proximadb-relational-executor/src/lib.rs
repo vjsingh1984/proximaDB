@@ -236,7 +236,29 @@ pub async fn collect<E: ExecNode + ?Sized>(node: &mut E) -> Result<Vec<Relationa
 
 /// Build an executor tree from a physical plan. Construction is
 /// sync; reader I/O happens later inside `open`.
+/// Stack red-zone / growth for the executor-build recursion (TD-EXEC-2 §1.a); it
+/// mirrors the plan depth exactly like the planner's lowering. Generous pending
+/// Slice-1 calibration — the check is ~ns, growth fires only when near the limit.
+const BUILD_RED_ZONE: usize = 256 * 1024;
+const BUILD_STACK_GROW: usize = 4 * 1024 * 1024;
+
+/// Build an executor tree from a physical plan.
+///
+/// Guards every recursion level with [`stacker::maybe_grow`] so a deeply nested
+/// plan grows the stack on demand rather than overflowing the worker thread
+/// (TD-EXEC-2 §1.a). The recursive descent goes back through this public entry, so
+/// each level checks its own headroom.
 pub fn build_executor<F: ReaderFactory>(
+    plan: PhysicalPlan,
+    factory: &F,
+    ctx: &ExecutionContext,
+) -> Result<Box<dyn ExecNode>, ExecError> {
+    stacker::maybe_grow(BUILD_RED_ZONE, BUILD_STACK_GROW, || {
+        build_executor_inner(plan, factory, ctx)
+    })
+}
+
+fn build_executor_inner<F: ReaderFactory>(
     plan: PhysicalPlan,
     factory: &F,
     ctx: &ExecutionContext,

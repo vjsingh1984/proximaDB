@@ -6681,6 +6681,7 @@ dependencies = [
  "snap",
  "sqlparser 0.59.0",
  "sqlx",
+ "stacker",
  "sysinfo",
  "tantivy",
  "tempfile",
@@ -7596,6 +7597,7 @@ dependencies = [
  "proximadb-relational-reader",
  "proximadb-relational-types",
  "serde",
+ "stacker",
  "thiserror 1.0.69",
  "tokio",
 ]
@@ -7622,6 +7624,7 @@ dependencies = [
  "proximadb-relational-reader",
  "proximadb-relational-types",
  "serde",
+ "stacker",
  "thiserror 1.0.69",
 ]
 

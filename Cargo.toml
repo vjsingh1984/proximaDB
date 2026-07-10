@@ -206,6 +206,10 @@ rand = { version = "0.8", features = ["small_rng"] }
 rayon = "1.10"
 regex = "1.10"
 serde = { version = "1.0", features = ["derive"] }
+# On-demand stack growth for the plan-tree recursions (planner lowering, executor
+# build, native lowering) — grows the stack instead of overflowing on deeply
+# nested plans (TD-EXEC-2 §1.a). Same primitive rustc/Servo use.
+stacker = "0.1"
 tempfile = "3.0"
 thiserror = "1.0"
 tokio = { version = "1.37", features = ["full"] }
@@ -487,6 +491,7 @@ raw-cpuid = "11.0"  # CPU feature detection for x86_64
 
 # Random number generation
 rand.workspace = true
+stacker.workspace = true
 rand_chacha = "0.3"
 rand_distr = "0.4"  # For generating realistic probability distributions
 
