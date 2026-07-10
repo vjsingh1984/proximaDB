@@ -121,6 +121,23 @@ pub async fn try_vectorized(
     if super::native_shadow::is_shape_demoted(physical) {
         return Ok(None);
     }
+    // ADR-058 D1: consult the declared capability descriptor. A `Partial`
+    // verdict GUARANTEES the lowering declines (sound one-way filter — every
+    // reason mirrors a real decline in `walk`/`lower_join`), so decline here
+    // with structured reasons and skip the lowering attempt for clearly-
+    // unsupported shapes. `Full` does NOT guarantee success (deeper constraints
+    // are checked during lowering); fall through and let lower_physical decide.
+    if let super::native_ops::SupportLevel::Partial(reasons) =
+        super::native_ops::vectorized_supports(physical)
+    {
+        let labels: Vec<&'static str> = reasons.iter().map(|r| r.as_label()).collect();
+        tracing::debug!(
+            target: "proximadb::native_vectorized",
+            reasons = ?labels,
+            "vectorized path declined (unsupported plan shape); falling back to Volcano"
+        );
+        return Ok(None);
+    }
     // Any decline (unsupported shape) or failure (execution error) → Volcano.
     let lowered = match super::native_ops::lower_physical(physical, scan_ctx) {
         Ok(l) => l,
