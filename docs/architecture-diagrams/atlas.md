@@ -1,27 +1,33 @@
 # ProximaDB Architecture Atlas (GitHub-Native, Mermaid-First)
 > Single-page, **natively rendered** view of ProximaDB. Every diagram below is Mermaid, so it
-> renders on GitHub with zero install. For PlantUML source (richer class/sequence/deployment
-> layouts) see the `*.puml` files alongside each section, and `RENDERING_STRATEGY.md`.
+> renders on GitHub with zero install. Each section is a **condensed summary**; the canonical,
+> full-detail diagram for every subsystem lives in its layer directory (cataloged in `README.md`).
 **Evidence provenance:** every diagram cites real file paths + symbols (see headers). Graph
 stats: 1,049,585 nodes / 3,225,692 edges / 6,573 IMPLEMENTS (`.victor/init.md`).
 ```
 docs/architecture-diagrams/
 ├── atlas.md                  ← you are here (all-Mermaid, GitHub-native)
-├── README.md                 ← folder index + nav
-├── RENDERING_STRATEGY.md     ← format rules (Mermaid-first, puml→PNG/Kroki, ASCII)
+├── README.md                 ← catalog: every diagram, type, one-line description
+├── RENDERING_STRATEGY.md     ← format rules (Mermaid-first; PNG/SVG export)
 ├── ASCII_ART.md              ← inline, zero-tooling diagrams
-├── 00-system/                ← deployment.puml, top-level-components.puml, use-cases.puml
-├── 01-network/               ← README.md (network component map)
-├── 02-query/                 ← compute-routing.mmd
-├── 03-storage/               ← engine-factory.puml, internal-layers.puml
-├── 04-services/              ← services-layer.puml
-├── 05-write-path/            ← write-sequence.puml
-├── 06-cluster/               ← cluster-coordination.puml
-├── 07-catalog/               ← catalog-model.puml
-├── 08-embedded-clients/      ← embedded-and-sdks.puml
-└── 09-coupling-analysis/     ← README.md (hub types, hotspots, duplication)
+├── 00-system-overview/       ← top-level, deployment, 3 use-case views
+├── 01-network-layer/         ← protocol multiplex (5678), pgwire (5433), MCP, request flow
+├── 02-query-pipeline/        ← ComputeScheduler routing, DataFusion/Volcano, read path
+├── 03-storage-layer/         ← engines, WAL, PAX, Iceberg, 2PC, cache, write path
+├── 04-index-layer/           ← HNSW internals, index subsystem
+├── 04-services-catalog/      ← DML services, RecordStore, catalog, CDC, connectors
+├── 05-cluster-distributed/   ← cluster coordination, partition-lease state machine
+├── 07-datafusion-integration/← DataFusion OLAP (ADR-052)
+├── 07-graph-subsystem/       ← graph component, ORION internals
+├── 08-ai-llm/                ← AI/LLM component, embedding pipeline
+├── 09-clients-sdk/           ← Python SDK architecture
+├── 09-coupling-analysis/     ← god-file coupling hotspots (README + diagram)
+├── 09-security-governance/   ← security component, governance detail
+├── 10-cross-cutting/         ← observability, infrastructure bootstrap
+├── 10-deployment/            ← system deployment
+└── 11-crate-dependency-map/  ← workspace crate layering (CI-enforced)
 ```
-Render PlantUML to PNG/SVG or inline Kroki links: `bash scripts/diagrams/render_atlas.sh [--kroki]`
+Export Mermaid to PNG/SVG: `bash scripts/diagrams/render_atlas.sh`
 ---
 _`src/network/multi_server.rs`, `src/network/postgres/` (5433), `src/network/rest|grpc|arrow_ipc|multiplex` (5678), `src/embedded/`_
 ```mermaid
@@ -193,7 +199,7 @@ flowchart TD
     RRP --> EXEC["ExecNode tree<br/>relational-executor/lib.rs:427"]
     EXEC --> DIST["Distributed shuffle ShuffleKey<br/>crates/query/.../distributed/shuffle.rs:145"]
     EXEC --> RESULT([Result set])
-    classDef seam fill:
+    classDef seam fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
     class DF,NATIVE,ANN seam
 ```
 **ComputeBackend seam (ADR-052):** The engine owns selection. DataFusion's vectorized kernels do OLAP; the native investment is the PAX-native **SCAN** (TD-OLAP-1). Do **not** build native HashAgg/HashJoin/Sort. The seam keeps the backend swappable.
@@ -215,7 +221,7 @@ flowchart TD
     CEDAR[CedarEngine] --> TRAIT
     TST[TstEngine] --> TRAIT
     FACTORY --> CAPREG["CapabilityRegistry factory.rs:126"]
-    classDef portt fill:
+    classDef portt fill:#fff8e1,stroke:#f57f17
     class TRAIT portt
 ```
 **Primary seam for adding a storage backend:** implement `UnifiedStorageFormat` - no service-layer changes (Strategy Pattern). Default trait methods absorb shared logic across engines.
@@ -433,7 +439,7 @@ flowchart TD
     PYPROTO --> OPENAPI
     RSC & GOC & JVMC & TSC --> OPENAPI
 ```
-**CLAUDE mandate
+**SDK REST transport is spec-driven (CLAUDE.md §15):** every SDK's REST surface is generated from `docs/openapi/proximadb-openapi.yaml` (utoipa-emitted); the `<lang>-sdk-codegen-drift` gate rejects hand-rolled REST. Full detail: [`09-clients-sdk/01-python-sdk-architecture.mermaid`](./09-clients-sdk/01-python-sdk-architecture.mermaid).
 ---
 ## 9. Coupling Analysis (Hub Types, Hotspots, Duplication)
 Full analysis: `09-coupling-analysis/README.md` (3 Mermaid diagrams + recommendation table)._
@@ -451,14 +457,76 @@ flowchart LR
         PY3["embedded/python.rs 4,841 lines / 203 symbols"]
         TR["traits/mod.rs 1,815 lines / ~30-fn trait"]
     end
-    classDef gen fill:
-    classDef god fill:
+    classDef gen fill:#eceff1,stroke:#607d8b
+    classDef god fill:#ffebee,stroke:#c62828
     class GR,PV1,PV2 gen
     class DML2,PLE,PY3,TR god
 ```
 **Duplication targets:** proto v1/v2 overlap (25,768 lines parallel defs); trait-stub boilerplate (~30 fns x 8 engines - absorb in trait default methods); catalog backend glue (native/iceberg/delta - promote shared logic to `glue.rs`). **Graph scale:** 1,049,585 nodes / 3,225,692 edges / 6,573 IMPLEMENTS / 163 INHERITS.
+
+## 10. AI / LLM Subsystem & Embedding Pipeline
+`src/ai/` (`llm.rs`, `natural_language_api.rs`, `nlp.rs`, `insights.rs`, `llm_integration/`), `src/automl/`, `src/prompts/`. Full detail: [`08-ai-llm/01-ai-component.mermaid`](./08-ai-llm/01-ai-component.mermaid), [`02-ai-llm-subsystem.mermaid`](./08-ai-llm/02-ai-llm-subsystem.mermaid), [`03-embedding-pipeline.mermaid`](./08-ai-llm/03-embedding-pipeline.mermaid)._
+```mermaid
+flowchart TD
+    NL["Natural Language API<br/>ai/natural_language_api.rs<br/>Text-to-SQL / Text-to-AQL"]
+    LLM["LLM Manager ai/llm.rs<br/>multi-provider: OpenAI/Anthropic/Llama/local"]
+    NLP["NLP ai/nlp.rs<br/>tokenize + intent + entities"]
+    INS["AI Insights ai/insights.rs<br/>anomaly / trend analysis"]
+    AUTOML["AutoML src/automl/<br/>index tuning, quant strategy"]
+    PROMPT["Prompt Store src/prompts/"]
+    NL --> NLP & LLM
+    LLM --> LLM_INT["llm_integration/<br/>provider adapters + fallback chain"]
+    INS --> NL
+    AUTOML --> OPT["optimization.rs / prediction.rs"]
+    PROMPT --> LLM
+```
+---
+## 11. Security, Auth & Governance
+`src/security/`, `src/network/middleware/{auth,tenant,rate_limit}.rs`, `crates/foundation/proximadb-tenant`. Full detail: [`09-security-governance/01-security-component.mermaid`](./09-security-governance/01-security-component.mermaid), [`02-security-governance-detail.mermaid`](./09-security-governance/02-security-governance-detail.mermaid)._
+```mermaid
+flowchart LR
+    TLS["TLS termination<br/>middleware/tls.rs"]
+    AUTHN["Auth (JWT / API key)<br/>network/auth + middleware/auth.rs"]
+    RBAC["RBAC<br/>security/rbac_service.rs"]
+    TENANT["TenantContext<br/>proximadb-tenant -> every I/O boundary"]
+    RATE["Rate limit + backpressure<br/>middleware/"]
+    AUDIT["Audit / compliance<br/>telemetry"]
+    TLS --> AUTHN
+    AUTHN --> RBAC --> TENANT
+    AUTHN --> RATE
+    TENANT --> AUDIT
+```
+**Key invariant:** `TenantContext` (isolation + billing) flows **fail-closed** to every I/O boundary; all object-storage writes go under `DrPathBuilder` (`data/{tenant}/{ns}/…`).
+---
+## 12. Observability & Telemetry
+`src/telemetry/`, Prometheus billing metrics, distributed tracing. Full detail: [`10-cross-cutting/01-observability-subsystem.mermaid`](./10-cross-cutting/01-observability-subsystem.mermaid)._
+```mermaid
+flowchart LR
+    IO["Every I/O boundary<br/>(TenantContext-stamped)"]
+    MET["Metrics: Prometheus<br/>KSU / KRU / KOU / KIU / KEU"]
+    TRACE["Distributed tracing"]
+    AUDIT["Audit trail"]
+    LOG["Structured logs"]
+    HEALTH["Health / readiness"]
+    IO --> MET & TRACE & AUDIT & LOG
+    MET --> HEALTH
+```
+---
+## 13. Index Layer (HNSW / Compact / IVF)
+`src/storage/engines/.../index/` (AXIS). Full detail: [`04-index-layer/01-index-subsystem.mermaid`](./04-index-layer/01-index-subsystem.mermaid), [`02-hnsw-internals.mermaid`](./04-index-layer/02-hnsw-internals.mermaid)._
+```mermaid
+flowchart TD
+    SUB["Index Subsystem<br/>HNSW + Compact + IVF"]
+    HNSW["HNSW<br/>graph ANN (M, ef_construction)"]
+    IVF["IVF<br/>clustered inverted-file"]
+    COMPACT["Compact<br/>segmented / quantized"]
+    QUANT["Quantization<br/>SQ8 / RaBitQ + f32 rerank"]
+    SUB --> HNSW & IVF & COMPACT
+    HNSW --> QUANT
+    IVF --> QUANT
+```
 ---
 - **This file (`atlas.md`)** renders fully on GitHub (Mermaid-native).
-- **PlantUML source** (`*.puml`) gives richer class/sequence/deployment layout - export via `bash scripts/diagrams/render_atlas.sh` (PNG/SVG) or `--kroki` (inline GitHub image links).
-- **ASCII art** (`ASCII_ART.md`) for the simplest one-box/one-liner ideas.
-- Rules: `RENDERING_STRATEGY.md`.
+- **Per-topic drill-down:** each layer directory holds the authoritative full-detail diagrams — see [`README.md`](./README.md) for the complete catalog (47 diagrams, 16 directories).
+- **ASCII art** ([`ASCII_ART.md`](./ASCII_ART.md)) for the simplest one-box/one-liner ideas.
+- Rules: [`RENDERING_STRATEGY.md`](./RENDERING_STRATEGY.md).
