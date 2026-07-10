@@ -783,6 +783,32 @@ fn push_record(
 /// ledger stays ProximaDB-self). Mirrors `tests/clickbench_ledger_e2e.rs`. No
 /// new dependency (uses `std::process` + the operator-provided binary); the
 /// result cache (#708) is default-OFF so ProximaDB's latency is already fair.
+
+/// Strip a terminal `WITH (…) ` storage-parameter clause from a `CREATE TABLE`
+/// DDL. ProximaDB accepts `WITH (cluster_key = '<col>')` (the TD-OLAP-6
+/// sort-on-materialize hint); DuckDB's parser rejects it. The clause is always
+/// at the end of the DDL and at paren depth 0 (after the column-list `)`), so we
+/// locate the first depth-0 `WITH (` and drop from there to the end. A `WITH`
+/// inside the column list (depth > 0) is left untouched. DuckDB builds its own
+/// zone maps on load, so the cluster key is irrelevant to the wall-time baseline.
+fn strip_duckdb_incompatible_storage_param(ddl: &str) -> String {
+    let lower = ddl.to_ascii_lowercase();
+    let Some(rel) = lower.find(" with ") else {
+        return ddl.to_string();
+    };
+    // Only a depth-0 WITH (after the column list closes) is the storage param.
+    let before = &ddl[..rel];
+    let depth: i32 = before.matches('(').count() as i32 - before.matches(')').count() as i32;
+    if depth != 0 {
+        return ddl.to_string();
+    }
+    let after = lower[rel..].trim_start();
+    if !after.starts_with("with (") && !after.starts_with("with(") {
+        return ddl.to_string();
+    }
+    before.trim_end().to_string()
+}
+
 fn run_duckdb_baseline(
     benchmark: &str,
     schema: &[(&str, &str)],
@@ -796,10 +822,14 @@ fn run_duckdb_baseline(
     eprintln!("[{benchmark}] · DuckDB baseline (DUCKDB_BIN={duckdb})");
 
     // Loader SQL: schema.1 is the full `CREATE TABLE` DDL; inserts are standard
-    // `INSERT INTO … VALUES`. DuckDB accepts both.
+    // `INSERT INTO … VALUES`. DuckDB accepts both — EXCEPT ProximaDB's
+    // `WITH (cluster_key = …)` storage param (the TD-OLAP-6 sort-on-materialize
+    // hint), which DuckDB's parser rejects ("WITH clause is not supported for
+    // tables"). Strip it for the baseline: DuckDB builds its own zone maps on
+    // load, so the declared cluster key is irrelevant to the wall-time comparison.
     let mut loader = String::new();
     for (_, ddl) in schema {
-        loader.push_str(ddl);
+        loader.push_str(&strip_duckdb_incompatible_storage_param(ddl));
         loader.push_str(";\n");
     }
     for ins in inserts {
@@ -957,9 +987,20 @@ async fn connect(server: &PgServer) -> Client {
     client
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+/// 8 MB stack — same fix as tpch_pgwire_e2e.rs (planner recursion on deep plans).
+#[test]
 #[ignore = "perf evidence-ledger harness (TD-OLAP-4) — advisory; run with --ignored --nocapture"]
-async fn tpc_perf_ledger() {
+fn tpc_perf_ledger() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_stack_size(8 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    rt.block_on(tpc_perf_ledger_inner());
+}
+
+async fn tpc_perf_ledger_inner() {
     let scale: f64 = std::env::var("TPC_PERF_SCALE")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -1029,21 +1070,23 @@ async fn tpc_perf_ledger() {
         );
     }
 
-    // Console summary: per benchmark × route, pass count + medians.
+    // Console summary: per benchmark × route, pass count + medians. Native and
+    // DataFusion report the `repeat` (warm) temperature; DuckDB is out-of-process
+    // (loaded once, no warm/cold distinction) so it records only `first` — match
+    // that temperature or the DuckDB row silently shows 0/0.
     for benchmark in ["tpch", "tpcds"] {
         for route in ["native", "datafusion", "duckdb"] {
+            let temp = if route == "duckdb" { "first" } else { "repeat" };
             let mut rows: Vec<&LedgerRecord> = records
                 .iter()
-                .filter(|r| {
-                    r.benchmark == benchmark && r.route == route && r.temperature == "repeat"
-                })
+                .filter(|r| r.benchmark == benchmark && r.route == route && r.temperature == temp)
                 .collect();
             rows.sort_by_key(|r| r.wall_ms);
             let ok = rows.iter().filter(|r| r.ok).count();
             let median = rows.get(rows.len() / 2).map(|r| r.wall_ms).unwrap_or(0);
             let bytes: u64 = rows.iter().map(|r| r.snapshot.bytes_read).sum();
             eprintln!(
-                "[{benchmark}/{route}] ok {ok}/{} · median repeat wall {median} ms · total bytes_read {bytes}",
+                "[{benchmark}/{route}] ok {ok}/{} · median {temp} wall {median} ms · total bytes_read {bytes}",
                 rows.len()
             );
         }
@@ -1082,11 +1125,34 @@ async fn tpc_perf_ledger() {
     // Skipped for filtered diagnostic runs — the fixed count is only meaningful
     // for the full ledger.
     if !filtered {
+        // Uniqueness invariant (the real check): one record per
+        // (benchmark, query, route, temperature). The DuckDB baseline
+        // (DUCKDB_BIN set) adds a variable record count depending on load
+        // success, so a fixed magic number no longer holds — check uniqueness,
+        // and that the native+datafusion baseline is always fully measured.
+        use std::collections::HashSet;
+        let mut seen: HashSet<(&str, &str, &str, &str)> = HashSet::new();
+        for r in &ledger.records {
+            assert!(
+                seen.insert((
+                    r.benchmark.as_str(),
+                    r.query.as_str(),
+                    r.route.as_str(),
+                    r.temperature.as_str()
+                )),
+                "duplicate (benchmark, query, route, temperature) record"
+            );
+        }
         let n_queries = 22 + 16;
+        let baseline = ledger
+            .records
+            .iter()
+            .filter(|r| r.route != "duckdb")
+            .count();
         assert_eq!(
-            ledger.records.len(),
-            n_queries * 2 /* routes */ * 2, /* temperatures */
-            "one record per query x route x temperature"
+            baseline,
+            n_queries * 2 /* native + datafusion */ * 2, /* first + repeat */
+            "native+datafusion baseline incomplete (expected one record per query x route x temperature)"
         );
     }
 }
