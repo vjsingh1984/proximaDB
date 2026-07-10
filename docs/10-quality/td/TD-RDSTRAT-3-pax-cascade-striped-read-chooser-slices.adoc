@@ -1,0 +1,120 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-RDSTRAT-3: PAX cascade selective striped read + chooser — atomic slice plan (caps + thresholds)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Blocked on ADR-057 decider sign-off** — do NOT start implementation (S1+) until link:../../12-design/adr/ADR-057-pax-cascade-selective-striped-read-and-chooser.adoc[ADR-057] is **Accepted**. S0 (baseline trace, no product code) may proceed to quantify headroom.
+| Severity | Medium-High (perf + cloud cost — realises the stranded TD-RDSTRAT-1 chooser investment on the live path)
+| Component | PAX RaBitQ cascade: `search/mod.rs` (`try_pax_cascade`), `segment_format.rs` (`rabitq_search_segment`); the ranged reader `proximadb-block-format::ranged`; the chooser core `coalesce_strategy.rs`.
+| Governs / derives from | link:../../12-design/adr/ADR-057-pax-cascade-selective-striped-read-and-chooser.adoc[ADR-057] (the decision) ; link:TD-RDSTRAT-2-chooser-serves-retired-reader.adoc[TD-RDSTRAT-2] (the finding) ; link:TD-RDSTRAT-1-read-strategy-chooser.adoc[TD-RDSTRAT-1] (the chooser core, re-homed here).
+| Relates | link:../../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (bytes-scanned thesis) ; link:../../12-design/adr/ADR-034-objectstore-access-path-codesign.adoc[ADR-034] (io_trace GET-count measurement mandate) ; link:TD-XMODAL-9-crossmodal-fusion-stream-resource-bounds.adoc[TD-XMODAL-9] (the fail-loud resource-cap pattern reused for the caps below).
+|===
+
+== Principle
+
+Every slice is **atomic**: it lands, builds the server binary, and is **independently verifiable** on its
+own gate, **mixed-read-safe**, and **default-OFF** until its gate passes. No slice regresses recall or
+changes results (both read strategies fetch a *subset of the same bytes*). Caps are **fail-loud** (return
+an error — never silently truncate, per TD-XMODAL-9); thresholds are **ratchets** (a regression fails CI).
+
+== Slices (atomic)
+
+[cols="1,3,2", options="header"]
+|===
+| Slice | Deliverable (atomic, default-OFF, mixed-read-safe) | Gate to land
+
+| **S0 — baseline trace** (no product code; may start before sign-off)
+| Extend `tests/rdstrat_get_count_measurement_test.rs` to record, on a cold-tier-simulated (`s3://`-schemed
+  path) representative trace, the cascade's **whole-segment bytes** vs the **logical striped bytes** it
+  already projects (`segment_format.rs:424`). Emits the headroom table that sets the S3 flip threshold.
+| Test green + a recorded headroom number (whole vs logical striped bytes) for ≥1 representative segment.
+
+| **S1 — selective striped read** (flag `PROXIMADB_PAX_STRIPED_READ`, default-OFF)
+| Route the cascade's two stages through `proximadb-block-format::ranged` + `FileSystem::read_ranges`:
+  Stage 1 reads only the RaBitQ **codes stripes**; Stage 2 reads only the **SQ8/exact-f32 bytes for the
+  candidate rows**. Whole-segment stays the default; **fall back to whole-segment when stripe offsets are
+  absent** (mixed-read-safe).
+| **Byte-identical parity** (same candidates + same reranked order as whole-segment) **AND** SIFT1M recall
+  ratchet ≥ floor (below). Server binary builds.
+
+| **S2 — chooser at the cascade** (flag `PROXIMADB_READ_STRATEGY_CHOOSER`, re-homed; observe mode)
+| Wire `choose_read_strategy` (extended with the two-stage byte estimate) at the `try_pax_cascade` decision
+  point; **observe only** — log chosen strategy + predicted/actual cost via the `rdstrat` target; behaviour
+  unchanged (whole-segment) unless S1's flag also engages the striped read.
+| Observe log emitted with a well-formed decision; NO behaviour/trace change when the chooser is OFF
+  (a measurement test asserts arms are identical, as TD-RDSTRAT-2's does today).
+
+| **S3 — flip + cleanup** (default-ON after the gate)
+| Flip the chooser default-ON; make `segment_format.rs:424`'s LOGICAL `record_range_gets` **physical** (fixes
+  the TD-RDSTRAT-2 double-count); **retire / legacy-gate** the dead `.sst` chooser sites
+  (`batch_read_with_filtering`, `traditional_search`).
+| io_trace **bytes-moved reduction ≥ flip threshold** (below) on the S0 cold-tier trace **AND** recall ratchet
+  green **AND** the physical trace matches the prior logical projection within tolerance.
+|===
+
+== Caps (fail-loud — error, never silent truncation; env-overridable; per TD-XMODAL-9)
+
+[cols="2,1,3", options="header"]
+|===
+| Cap | Default | Behaviour on breach
+
+| `PROXIMADB_PAX_STRIPED_MAX_GETS_PER_QUERY` — max coalesced `read_ranges` GETs a single striped query may issue
+| 256
+| Return an error (fail-loud). Guards against a pathological many-block, non-coalescable segment turning a
+  striped read into GET-amplification — the exact anti-pattern TD-151 measured. The chooser should have
+  picked whole-segment first; this is the backstop.
+
+| `PROXIMADB_PAX_STRIPED_MAX_RANGES_PER_BATCH` — max ranges in one `read_ranges` call before splitting
+| 1024
+| Split into multiple batched calls (bounded), each counted; if the split count would exceed the per-query
+  GET cap, fail-loud.
+
+| `PROXIMADB_PAX_RABITQ_POOL` (candidate pool, existing `_MULT`/`_MIN`) — Stage-2 rows read selectively
+| existing (`max(k·100, 1000)`)
+| Unchanged; the striped Stage-2 read fetches exactly the pooled candidate rows. A pool larger than the
+  segment row-count clamps to the segment (no over-read).
+|===
+
+== Thresholds (ratchets — a regression fails CI)
+
+[cols="2,1,3", options="header"]
+|===
+| Threshold | Value | Meaning
+
+| **Recall floor** (`PROXIMADB_SIFT_RECALL_FLOOR`)
+| ≥ 0.90 (SIFT1M recall@10; = the existing `sift_pax_recall_ratchet_test` floor)
+| The striped read must hold recall within the f32-baseline tolerance — it fetches a subset of the SAME
+  bytes, so recall MUST be identical to whole-segment; the ratchet backstops any decode bug.
+
+| **Result parity**
+| byte-identical (0 diffs)
+| Same candidate ids + same reranked order as whole-segment on every gate query. Non-negotiable.
+
+| **Flip gate — bytes-moved reduction** (S3)
+| ≥ 40% on the S0 cold-tier trace (initial target; **finalised from the S0 headroom measurement** — trace-first, not asserted)
+| Only flip default-ON when the measured `io_trace.bytes_read` reduction on a representative selective
+  cold-tier trace clears this bar. If S0 shows less headroom, the target is revised DOWN with the evidence
+  (never flip on an unmeasured claim — ADR-052 observe→ingest→act).
+
+| **No-GET-amplification** (S3)
+| `range_gets(striped) ≤ range_gets(whole)·K`, K=8 (coalesced)
+| The extra GET round-trips from striping must stay bounded (coalesced via `read_ranges`); otherwise the
+  chooser mis-priced and should have picked whole-segment.
+|===
+
+== Verification (per slice)
+
+- **Correctness:** result parity + recall ratchet green at S1 and every later slice.
+- **Cost:** the `io_trace` `bytes_read` / `range_gets` ratchet on the S0 cold-tier trace (physical, not logical,
+  from S3) — never a component microbenchmark (ADR-034).
+- **Server binary builds** at each slice; `cargo clippy --lib --bins -- -D warnings` clean.
+- **Default-OFF → observe → flip** (ADR-052); caps fail-loud; thresholds ratchet.
+
+== Non-goals
+
+- Changing the RaBitQ ranking/rerank math or recall.
+- A PAX format/version bump (stripe offsets already persisted).
+- Wiring ANN into DataFusion pushdown (separate; ADR-057 §7).
+- Starting S1+ before ADR-057 is **Accepted**.
