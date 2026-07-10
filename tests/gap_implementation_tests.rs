@@ -170,6 +170,7 @@ mod gap_tests {
 
     // Test streaming and CDC infrastructure
     mod streaming_cdc {
+        #[cfg(feature = "cdc-kafka")]
         use proximadb::cdc::connectors;
         use proximadb::streaming;
 

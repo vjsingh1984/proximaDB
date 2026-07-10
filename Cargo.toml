@@ -859,6 +859,20 @@ incremental = false
 name = "integration"
 path = "tests/rust/mod.rs"
 
+# CDC integration tests — only built when cdc-kafka is enabled (cdc is feature-gated
+# in src/lib.rs; these tests reference proximadb::cdc::*).
+[[test]]
+name = "cdc_e2e_test"
+required-features = ["cdc-kafka"]
+
+[[test]]
+name = "cdc_integration_test"
+required-features = ["cdc-kafka"]
+
+[[test]]
+name = "cdc_rest_changefeed_e2e"
+required-features = ["cdc-kafka"]
+
 # Benchmark profile - optimized but allows faster iteration than full release
 [profile.bench]
 inherits = "release"
