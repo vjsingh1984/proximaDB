@@ -93,11 +93,14 @@ an error — never silently truncate, per TD-XMODAL-9); thresholds are **ratchet
 | Same candidate ids + same reranked order as whole-segment on every gate query. Non-negotiable.
 
 | **Flip gate — bytes-moved reduction** (S3)
-| ≥ 40% on the S0/S1b trace. **S1a pure-plan headroom measured 2026-07-09: 83.7%** (striped 40,626 / whole 249,735 bytes over a 16-block, 1k×128-d segment; `pax_striped_plan` test) — well above the bar, so the gate holds at ≥ 40%.
-| Only flip default-ON when the measured `io_trace.bytes_read` reduction on a representative selective
-  cold-tier trace (physical, from S1b) clears this bar. The S1a number is the *pure-plan* estimate that
-  validated the build; the flip still gates on the S1b physical trace (never flip on an unmeasured claim —
-  ADR-052 observe→ingest→act).
+| ≥ 40% on the S1b **physical** trace. **S1a pure-plan bracket (2026-07-09): best 83.7% / worst 40.7%** (best 40,626 / worst 148,146 / whole 249,735 bytes; 16-block, 1k×128-d, SQ8-only, no f32 tier; `pax_striped_plan`).
+| The headroom is **config-dependent, NOT a clean "holds"** (adversarial review 2026-07-09): the best case
+  assumes clustered candidates; the worst case (scattered → whole rerank stripe) is ~41% *with* an optimistic
+  CREATED_AT rank proxy — the real RaBitQ codes column is ≈3× larger, pushing the SQ8-only worst case **below
+  the gate**. The robust win comes from (a) segments carrying a heavy **exact-f32 tier** the rerank skips, and
+  (b) segment size ≫ RaBitQ pool. Therefore the flip go/no-go is the **S1b physical io_trace** on representative
+  segments (f32-tier vs SQ8-only), never this pure-plan estimate (ADR-052 observe→ingest→act). S1a's value is
+  the verified composition + the bracket, not a flip signal.
 
 | **No-GET-amplification** (S3)
 | `range_gets(striped) ≤ range_gets(whole)·K`, K=8 (coalesced)

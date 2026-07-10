@@ -28,16 +28,27 @@ use proximadb_block_format::{BlockFooter, BlockLayout, footer_tail_range, metada
 use crate::pax_block::{SEGMENT_MAGIC, SegmentIndex};
 
 /// A planned selective ("striped") read of one PAX segment, as segment-absolute
-/// byte ranges plus the byte totals that quantify the headroom vs a whole-segment
-/// read.
+/// byte ranges plus a byte-cost **bracket** vs a whole-segment read.
+///
+/// The bracket is deliberate: the real Stage-2 cost depends on how scattered the
+/// ranked candidate rows are (best case they are contiguous / coalesce to one
+/// span; worst case they span the whole rerank stripe) and on whether the segment
+/// carries a heavy exact-f32 tier the rerank skips. This pure plan therefore
+/// reports both ends; the **flip decision gates on the S1b *physical* io_trace**,
+/// never on this estimate (TD-RDSTRAT-3 / ADR-052 observe→act).
 #[derive(Debug, Clone)]
 pub struct SegmentStripedPlan {
-    /// Every byte range the striped read fetches, **segment-absolute** and
-    /// ready to hand to `FileSystem::read_ranges` (which coalesces adjacent ones).
+    /// Every byte range the **best-case** striped read fetches, **segment-absolute**
+    /// and ready to hand to `FileSystem::read_ranges` (which coalesces adjacent).
     pub ranges: Vec<Range<u64>>,
-    /// Σ of the `ranges` lengths + the tail-directory read — the striped read's
-    /// total byte cost.
-    pub striped_bytes: u64,
+    /// Best-case striped cost: Σ metadata + rank stripes + the *contiguous*
+    /// candidate rows + the tail-directory read. Optimistic (assumes clustered
+    /// candidates).
+    pub striped_bytes_best: u64,
+    /// Worst-case striped cost: as best, but Stage 2 reads the **whole rerank
+    /// stripe** of every block with any candidate (scattered candidates coalescing
+    /// to the full stripe). This is the conservative bound.
+    pub striped_bytes_worst: u64,
     /// The whole-segment read's byte cost (the segment file size) — the baseline
     /// the striped read replaces.
     pub whole_bytes: u64,
@@ -46,14 +57,23 @@ pub struct SegmentStripedPlan {
 }
 
 impl SegmentStripedPlan {
-    /// Fractional bytes-moved reduction vs the whole-segment read, in `[0, 1)`.
-    /// This is the TD-RDSTRAT-3 flip-gate signal (finalised from real traces in
-    /// S1b; here it is the pure-plan estimate).
-    pub fn reduction_ratio(&self) -> f64 {
-        if self.whole_bytes == 0 {
+    /// Best-case fractional bytes-moved reduction vs the whole-segment read (an
+    /// upper bound on the achievable saving; the flip gates on the S1b trace).
+    pub fn reduction_best(&self) -> f64 {
+        Self::ratio(self.striped_bytes_best, self.whole_bytes)
+    }
+
+    /// Worst-case (conservative) fractional bytes-moved reduction — Stage 2 reads
+    /// the whole rerank stripe. A robust headroom clears the gate even here.
+    pub fn reduction_worst(&self) -> f64 {
+        Self::ratio(self.striped_bytes_worst, self.whole_bytes)
+    }
+
+    fn ratio(striped: u64, whole: u64) -> f64 {
+        if whole == 0 {
             0.0
         } else {
-            1.0 - (self.striped_bytes as f64 / self.whole_bytes as f64)
+            1.0 - (striped as f64 / whole as f64)
         }
     }
 }
@@ -88,13 +108,29 @@ pub fn plan_segment_striped_read(
     let before_magic = &segment[..segment.len() - SEGMENT_MAGIC.len()];
     let index = SegmentIndex::locate(before_magic)?;
 
+    // A block-relative range must lie within the block; a corrupt footer offset
+    // must fail-closed (bail → the caller falls back to the whole-segment read),
+    // never panic (repo NO-panic mandate). Mirrors `PaxBlockReader::open`'s guards.
+    let checked = |r: &Range<u64>, size: u64| -> Result<Range<u64>> {
+        if r.start > r.end || r.end > size {
+            bail!(
+                "striped-read plan: range {r:?} outside a block of {size} bytes (corrupt footer)"
+            );
+        }
+        Ok(r.clone())
+    };
+
     let mut ranges: Vec<Range<u64>> = Vec::new();
-    let mut striped_bytes: u64 = 0;
+    // `common` = tail directory + per-block metadata + the Stage-1 rank stripe
+    // (paid by both best and worst). Stage 2 differs: best = the contiguous
+    // candidate rows; worst = the whole rerank stripe (scattered candidates).
+    let mut common_bytes: u64 = 0;
+    let mut best_stage2: u64 = 0;
+    let mut worst_stage2: u64 = 0;
 
     // Stage 0: the tail directory — one small GET yields every block's offset/size
     // + zone summary (v2), so blocks prune with no per-block metadata reads.
-    let index_read = (index.to_bytes().len() + SEGMENT_MAGIC.len()) as u64;
-    striped_bytes += index_read;
+    common_bytes += (index.to_bytes().len() + SEGMENT_MAGIC.len()) as u64;
 
     let blocks = index.blocks.len();
     for entry in &index.blocks {
@@ -107,73 +143,75 @@ pub fn plan_segment_striped_read(
         let block = &segment[bstart..bend];
 
         // Block footer + metadata (footer-first ranged open). Ranges are
-        // block-relative; shift by `off` for segment-absolute fetch.
+        // block-relative; shift by `off` for segment-absolute fetch. Every
+        // footer-derived range is bounds-checked before slicing.
         let fr = footer_tail_range(size)?;
         let footer = BlockFooter::from_bytes(&block[fr.start as usize..fr.end as usize])?;
-        push(
-            &mut ranges,
-            &mut striped_bytes,
-            off + fr.start,
-            off + fr.end,
-        );
+        push(&mut ranges, &mut common_bytes, off + fr.start, off + fr.end);
 
         let mr = metadata_ranges(&footer, size);
-        let col_meta = block[mr.col_meta.start as usize..mr.col_meta.end as usize].to_vec();
-        push(
-            &mut ranges,
-            &mut striped_bytes,
-            off + mr.col_meta.start,
-            off + mr.col_meta.end,
-        );
-        let vparam = mr.vparam.as_ref().map(|r| {
-            push(&mut ranges, &mut striped_bytes, off + r.start, off + r.end);
-            block[r.start as usize..r.end as usize].to_vec()
-        });
-        let rgdir = mr.rgdir.as_ref().map(|r| {
-            push(&mut ranges, &mut striped_bytes, off + r.start, off + r.end);
-            block[r.start as usize..r.end as usize].to_vec()
-        });
+        let cm = checked(&mr.col_meta, size)?;
+        let col_meta = block[cm.start as usize..cm.end as usize].to_vec();
+        push(&mut ranges, &mut common_bytes, off + cm.start, off + cm.end);
+        let vparam = match mr.vparam.as_ref() {
+            Some(r) => {
+                let r = checked(r, size)?;
+                push(&mut ranges, &mut common_bytes, off + r.start, off + r.end);
+                Some(block[r.start as usize..r.end as usize].to_vec())
+            }
+            None => None,
+        };
+        let rgdir = match mr.rgdir.as_ref() {
+            Some(r) => {
+                let r = checked(r, size)?;
+                push(&mut ranges, &mut common_bytes, off + r.start, off + r.end);
+                Some(block[r.start as usize..r.end as usize].to_vec())
+            }
+            None => None,
+        };
 
         let layout = BlockLayout::assemble(footer, &col_meta, vparam.as_deref(), rgdir.as_deref())?;
 
         // Stage 1: the rank column's full stripe (all rows).
         if let Some(sr) = layout.column_stripe_range(rank_col) {
-            push(
-                &mut ranges,
-                &mut striped_bytes,
-                off + sr.start,
-                off + sr.end,
-            );
+            let sr = checked(&sr, size)?;
+            push(&mut ranges, &mut common_bytes, off + sr.start, off + sr.end);
         }
 
-        // Stage 2: the rerank column for only the first `candidates_per_block`
-        // rows. Also fetch the stripe validity-bitmap prefix (the ranged reader
-        // needs it to resolve nulls), so the plan is a superset-safe estimate.
+        // Stage 2: the rerank column. best = the first `candidates_per_block` rows
+        // (+ the validity-bitmap prefix the ranged reader needs); worst = the whole
+        // rerank stripe (scattered candidates coalesce to the full stripe).
+        let rerank_stripe = layout
+            .column_stripe_range(rerank_col)
+            .map(|r| checked(&r, size))
+            .transpose()?;
         let rows = (candidates_per_block as u32).min(layout.row_count());
         if rows > 0
+            && let Some(stripe) = &rerank_stripe
             && let Some(rr) = layout.vector_row_range(rerank_col, 0, rows)
         {
-            if let Some(sr) = layout.column_stripe_range(rerank_col) {
-                let bitmap_len = layout.row_count().div_ceil(8) as u64;
-                push(
-                    &mut ranges,
-                    &mut striped_bytes,
-                    off + sr.start,
-                    off + sr.start + bitmap_len,
-                );
-            }
+            let rr = checked(&rr, size)?;
+            let bitmap_len = layout.row_count().div_ceil(8) as u64;
+            // Best-case ranges = what S1b fetches for clustered candidates.
             push(
                 &mut ranges,
-                &mut striped_bytes,
-                off + rr.start,
-                off + rr.end,
+                &mut best_stage2,
+                off + stripe.start,
+                off + stripe.start + bitmap_len,
             );
+            push(&mut ranges, &mut best_stage2, off + rr.start, off + rr.end);
+            // Worst-case = the whole rerank stripe (accounting only; not a range).
+            worst_stage2 += stripe.end - stripe.start;
         }
     }
 
+    let striped_bytes_best = common_bytes + best_stage2;
+    let striped_bytes_worst = common_bytes + worst_stage2.max(best_stage2);
+
     Ok(SegmentStripedPlan {
         ranges,
-        striped_bytes,
+        striped_bytes_best,
+        striped_bytes_worst,
         whole_bytes,
         blocks,
     })
@@ -246,31 +284,36 @@ mod tests {
         let plan = plan_segment_striped_read(&seg, col_id::CREATED_AT, col_id::EMBED_BASE, 10)
             .expect("plan");
 
+        // Report the BRACKET, not a point estimate. The best case (clustered
+        // candidates) is an optimistic upper bound; the worst case (scattered
+        // candidates → whole rerank stripe) is the conservative floor. The real
+        // headroom — which depends on candidate scatter, segment size vs the
+        // RaBitQ pool, and whether a heavy exact-f32 tier is present/skipped —
+        // is decided by the S1b PHYSICAL io_trace, never by this pure plan.
         eprintln!(
-            "[S1a headroom] striped {} / whole {} bytes = {:.1}% reduction across {} blocks",
-            plan.striped_bytes,
+            "[S1a headroom bracket] best {:.1}% / worst {:.1}% (best {} / worst {} / whole {} bytes, {} blocks). \
+             NOTE: pure-plan estimate with CREATED_AT rank proxy (real RaBitQ codes ≈3× larger) — \
+             flip gates on the S1b trace.",
+            100.0 * plan.reduction_best(),
+            100.0 * plan.reduction_worst(),
+            plan.striped_bytes_best,
+            plan.striped_bytes_worst,
             plan.whole_bytes,
-            100.0 * plan.reduction_ratio(),
-            plan.blocks
+            plan.blocks,
         );
 
         assert_eq!(plan.blocks, idx.blocks.len());
+        assert!(plan.striped_bytes_worst >= plan.striped_bytes_best);
+        // Weak, robust invariant only: even the best case cannot exceed the whole
+        // read. We deliberately do NOT assert a headroom threshold here — the
+        // magnitude is config-dependent and is measured for real in S1b.
         assert!(
-            plan.striped_bytes < plan.whole_bytes,
-            "striped {} must be < whole {}",
-            plan.striped_bytes,
+            plan.striped_bytes_best < plan.whole_bytes,
+            "best-case striped {} must be < whole {}",
+            plan.striped_bytes_best,
             plan.whole_bytes
         );
-        // The whole vector column dominates the segment; reading it for only a few
-        // candidate rows (plus the small scalar column) must cut well over half.
-        assert!(
-            plan.reduction_ratio() > 0.5,
-            "expected >50% bytes-moved reduction, got {:.1}% (striped {} / whole {})",
-            100.0 * plan.reduction_ratio(),
-            plan.striped_bytes,
-            plan.whole_bytes,
-        );
-        // Every planned range is inside the segment.
+        // Every planned (best-case) range is inside the segment.
         for r in &plan.ranges {
             assert!(r.end <= plan.whole_bytes, "range {r:?} past segment");
         }
