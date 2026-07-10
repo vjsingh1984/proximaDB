@@ -78,6 +78,17 @@ pub trait ExecutionOperator: Send + Sync + std::fmt::Debug {
         None
     }
 
+    /// TD-OLAP-12 morsel-driven parallelism: split this SOURCE operator into `n`
+    /// independent sub-sources, each producing a DISJOINT partition of the output
+    /// (e.g. a parquet scan splits its row-groups across `n` lanes). The
+    /// `MorselScheduler` runs the lanes on separate workers and fans their output
+    /// in. `None` (the default) = not a splittable parallel source → the scheduler
+    /// runs this operator serially. Returning `Some` MUST partition the rows with no
+    /// duplication and no loss (∪ lanes = the serial output, as a set).
+    fn split_parallel(&self, _n: usize) -> Option<Vec<Box<dyn ExecutionOperator>>> {
+        None
+    }
+
     /// Execute: transform an input batch stream into an output batch stream.
     /// The pipeline executor chains operators by feeding the output of one
     /// into the input of the next.

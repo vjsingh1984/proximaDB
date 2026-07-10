@@ -50,6 +50,10 @@ pub(crate) struct ParquetScanOperator {
     /// answer (COUNT(*) is a metadata op, not a scan), matching DataFusion's
     /// `AggregateStatistics` footer elision and avoiding a 100M-row column read.
     count_only: bool,
+    /// TD-OLAP-12 morsel lane: `Some((lane_id, n))` reads only the row-groups where
+    /// `row_group_index % n == lane_id` — the disjoint partition this lane owns.
+    /// `None` reads every row-group (the serial default).
+    lane: Option<(usize, usize)>,
 }
 
 impl ParquetScanOperator {
@@ -65,6 +69,7 @@ impl ParquetScanOperator {
             projection,
             output_schema,
             count_only: false,
+            lane: None,
         }
     }
 
@@ -83,6 +88,20 @@ impl ParquetScanOperator {
             projection: Some(Vec::new()),
             output_schema: Arc::new(arrow_schema::Schema::empty()),
             count_only: true,
+            lane: None,
+        }
+    }
+
+    /// Clone this scan as morsel lane `lane_id` of `n` — reads only its share of the
+    /// row-groups (`% n == lane_id`). Cheap: shares the `Arc` store + file list.
+    fn as_lane(&self, lane_id: usize, n: usize) -> Self {
+        Self {
+            store: self.store.clone(),
+            files: self.files.clone(),
+            projection: self.projection.clone(),
+            output_schema: self.output_schema.clone(),
+            count_only: self.count_only,
+            lane: Some((lane_id, n)),
         }
     }
 }
@@ -91,6 +110,20 @@ impl ParquetScanOperator {
 impl ExecutionOperator for ParquetScanOperator {
     fn output_schema(&self) -> SchemaRef {
         self.output_schema.clone()
+    }
+
+    /// TD-OLAP-12: split into `n` row-group lanes for parallel decode. The
+    /// footer-elision (`count_only`) scan is already metadata-only (no decode) — it
+    /// does not split. `n <= 1` → no split (serial).
+    fn split_parallel(&self, n: usize) -> Option<Vec<Box<dyn ExecutionOperator>>> {
+        if self.count_only || n <= 1 {
+            return None;
+        }
+        Some(
+            (0..n)
+                .map(|i| Box::new(self.as_lane(i, n)) as Box<dyn ExecutionOperator>)
+                .collect(),
+        )
     }
 
     async fn execute(&self, _input: BatchStream) -> Result<BatchStream, ExecutionError> {
@@ -126,6 +159,7 @@ impl ExecutionOperator for ParquetScanOperator {
         // needs one input batch at a time.
         let store = self.store.clone();
         let projection = self.projection.clone();
+        let lane = self.lane;
         let stream = futures::stream::iter(self.files.clone().into_iter().map(Ok))
             .and_then(move |(path, size)| {
                 let store = store.clone();
@@ -145,6 +179,13 @@ impl ExecutionOperator for ParquetScanOperator {
                         let mask =
                             ProjectionMask::roots(builder.parquet_schema(), proj.iter().copied());
                         builder = builder.with_projection(mask);
+                    }
+                    // TD-OLAP-12: a lane reads only its share of the row-groups
+                    // (`% n == lane_id`) — disjoint, so ∪ lanes == the full scan.
+                    if let Some((lane_id, n)) = lane {
+                        let ngroups = builder.metadata().num_row_groups();
+                        let mine: Vec<usize> = (0..ngroups).filter(|i| i % n == lane_id).collect();
+                        builder = builder.with_row_groups(mine);
                     }
                     let inner = builder.build().map_err(|e| {
                         ExecutionError::Execution(format!("parquet build {path}: {e}"))

@@ -48,6 +48,20 @@ pub fn native_join_enabled() -> bool {
     })
 }
 
+/// Gate: parallelize native pipelines with the TD-OLAP-12 morsel scheduler?
+/// Default OFF, distinct from `PROXIMADB_NATIVE_VECTORIZED`/`_JOIN`. When on, a
+/// splittable source (parquet row-group lanes) is decoded across cores and fanned
+/// into the serial downstream operators; a non-splittable source runs serially, so
+/// this is additive and never a correctness dependency.
+pub fn native_morsel_scheduler_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("PROXIMADB_NATIVE_MORSEL")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
+
 /// Gate: run the native-parquet SHADOW probe alongside DataFusion on the OLAP
 /// path? Default OFF — this is a benchmark/measurement instrument, not a product
 /// path: when on, a parquet SELECT that DataFusion serves is ALSO re-planned,
@@ -166,7 +180,41 @@ pub(crate) async fn run_native_over_parquet(
         }
     };
     let started = std::time::Instant::now();
-    let batches = match super::native_ops::execute_pipeline(&lowered).await {
+    // TD-OLAP-12: when the morsel scheduler is enabled AND the shape is a single
+    // (non-join, non-limit) pipeline, decode the source's row-groups across cores
+    // and fan into the serial downstream operators. Otherwise run serially.
+    let use_morsel = native_morsel_scheduler_enabled()
+        && lowered.build_pipeline.is_none()
+        && lowered.limit.is_none();
+    let exec_result = if use_morsel {
+        use futures::StreamExt;
+        use proximadb_execution_contracts::{BatchStream, MorselScheduler};
+        let empty: BatchStream = Box::pin(futures::stream::empty());
+        let sched = super::morsel_scheduler::TokioMorselScheduler::new();
+        match sched.schedule(&lowered.pipeline, empty).await {
+            Ok(mut stream) => {
+                let mut out = Vec::new();
+                let mut err = None;
+                while let Some(b) = stream.next().await {
+                    match b {
+                        Ok(b) => out.push(b),
+                        Err(e) => {
+                            err = Some(e);
+                            break;
+                        }
+                    }
+                }
+                match err {
+                    Some(e) => Err(e),
+                    None => Ok(out),
+                }
+            }
+            Err(e) => Err(e),
+        }
+    } else {
+        super::native_ops::execute_pipeline(&lowered).await
+    };
+    let batches = match exec_result {
         Ok(b) => b,
         Err(reason) => {
             tracing::debug!(
