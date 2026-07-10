@@ -505,6 +505,20 @@ pub async fn try_run_select(
             &crate::query::compute_scheduler::backend_label(&decision.backend),
             started.elapsed().as_millis() as u64,
         );
+        // TD-OLAP-4 (engine dimension): optional native SHADOW — run the same query
+        // on the native vectorized engine over the same parquet, purely to record a
+        // `native-vectorized` compute sample next to DataFusion's for the trace.
+        // Default-OFF, benchmark-only; the result is discarded (DataFusion's stands)
+        // and any failure is swallowed, so it never affects correctness or latency
+        // of the served query.
+        if crate::query::execution::native_engine::native_shadow_enabled() {
+            let probe_snapshot = SnapshotCatalog {
+                dml: dml.clone(),
+                tables: tables.clone(),
+                tenant: tenant_ctx.clone(),
+            };
+            shadow_probe_native_parquet(sql, &probe_snapshot, &parquet_loc_by_key).await;
+        }
         return Some(match engine_result {
             Ok(result) => {
                 if let Some((skey, lsn)) = &cache_ctx {
@@ -634,6 +648,134 @@ fn plan_over_snapshot(
     };
     let planner = Planner::new(resolver);
     Some(planner.plan(logical).map_err(|e| format!("plan: {e}")))
+}
+
+// =========================================================================
+// TD-OLAP-4 native SHADOW probe (engine dimension). Default-OFF, benchmark-only:
+// run the SAME parquet SELECT on the native vectorized engine alongside DataFusion
+// to record a `native-vectorized` compute sample in the io-trace. The native
+// result is discarded (DataFusion's is authoritative) and all failures are
+// swallowed, so the probe never changes the served result or fails a query.
+// =========================================================================
+
+/// Column names emitted by the plan's sole `Scan` node, or `None` if the plan has
+/// zero or more than one scan (multi-table / no-table). Used to build the native
+/// parquet reader's projection so it reads the same columns DataFusion does.
+#[cfg(feature = "datafusion-integration")]
+fn single_scan_columns(plan: &PhysicalPlan) -> Option<Vec<String>> {
+    fn collect(plan: &PhysicalPlan, count: &mut usize, out: &mut Option<Vec<String>>) {
+        match plan {
+            PhysicalPlan::Scan { output_schema, .. } => {
+                *count += 1;
+                *out = Some(
+                    output_schema
+                        .columns
+                        .iter()
+                        .map(|c| c.name.clone())
+                        .collect(),
+                );
+            }
+            PhysicalPlan::Filter { input, .. }
+            | PhysicalPlan::Project { input, .. }
+            | PhysicalPlan::Aggregate { input, .. }
+            | PhysicalPlan::Sort { input, .. }
+            | PhysicalPlan::Limit { input, .. }
+            | PhysicalPlan::Distinct { input, .. }
+            | PhysicalPlan::AssertMaxOneRow { input } => collect(input, count, out),
+            PhysicalPlan::Join { left, right, .. } => {
+                collect(left, count, out);
+                collect(right, count, out);
+            }
+            PhysicalPlan::Union { inputs, .. } => {
+                for i in inputs {
+                    collect(i, count, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut count = 0usize;
+    let mut out = None;
+    collect(plan, &mut count, &mut out);
+    (count == 1).then_some(out).flatten()
+}
+
+/// Run the native vectorized engine over the same external parquet DataFusion just
+/// served, purely to record a per-engine compute sample. Single-table parquet only
+/// (MVP); declines silently on anything native can't yet serve.
+#[cfg(feature = "datafusion-integration")]
+async fn shadow_probe_native_parquet(
+    sql: &str,
+    snapshot: &SnapshotCatalog,
+    parquet_loc_by_key: &HashMap<String, String>,
+) {
+    // Single-table parquet only — joins are a separately-gated native path.
+    if parquet_loc_by_key.len() != 1 {
+        return;
+    }
+    let Some(location) = parquet_loc_by_key.values().next() else {
+        return;
+    };
+    // Lower the SAME SQL to the relational physical plan (decline → skip).
+    let physical = match plan_over_snapshot(sql, snapshot) {
+        Some(Ok(p)) => p,
+        _ => return,
+    };
+    let Some(scan_cols) = single_scan_columns(&physical) else {
+        return;
+    };
+    // Open the same parquet DataFusion read (table-OPEN cache is warm from its run).
+    let table = match crate::datafusion::engine_adapters::ObjectStoreParquetTable::open(location)
+        .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::debug!(target: "proximadb::native_shadow", %e, "shadow: table open declined");
+            return;
+        }
+    };
+    let (store, files, file_schema) = table.native_scan_inputs();
+    // Map the plan's Scan columns → parquet leaf indices by name; build the native
+    // scan output schema from the FILE fields (exact Arrow types). Sort ascending so
+    // the reader's file-order `ProjectionMask::roots` matches the operator schema —
+    // when the plan preserves declared column order (the common case) native aligns;
+    // otherwise the native lowering declines and no sample is recorded.
+    let mut paired: Vec<(usize, arrow::datatypes::Field)> = Vec::with_capacity(scan_cols.len());
+    for name in &scan_cols {
+        let Some((idx, field)) = file_schema
+            .fields()
+            .iter()
+            .enumerate()
+            .find(|(_, f)| f.name() == name)
+        else {
+            return; // column absent from file (schema drift) → never risk a sample
+        };
+        paired.push((idx, field.as_ref().clone()));
+    }
+    paired.sort_by_key(|(i, _)| *i);
+    let projection: Vec<usize> = paired.iter().map(|(i, _)| *i).collect();
+    let out_schema = Arc::new(arrow::datatypes::Schema::new(
+        paired.into_iter().map(|(_, f)| f).collect::<Vec<_>>(),
+    ));
+    let source = Box::new(
+        crate::query::execution::native_parquet_scan::ParquetScanOperator::new(
+            store,
+            files,
+            Some(projection),
+            out_schema,
+        ),
+    );
+    match crate::query::execution::native_engine::run_native_over_parquet(&physical, source).await {
+        Ok(Some(_)) => {
+            tracing::debug!(target: "proximadb::native_shadow", "shadow: native-vectorized sample recorded")
+        }
+        Ok(None) => {
+            tracing::debug!(target: "proximadb::native_shadow", "shadow: native declined (shape/align)")
+        }
+        Err(e) => {
+            tracing::debug!(target: "proximadb::native_shadow", %e, "shadow: native errored")
+        }
+    }
 }
 
 // =========================================================================
@@ -2093,6 +2235,54 @@ mod tests {
             [Statement::Query(query)] => query_engages_relational_engine(query),
             _ => panic!("expected a single SELECT statement"),
         }
+    }
+
+    #[cfg(feature = "datafusion-integration")]
+    fn scan_fixture(cols: &[&str]) -> PhysicalPlan {
+        PhysicalPlan::Scan {
+            table: TableId::new("hits"),
+            output_schema: RelationalSchema::new(
+                cols.iter()
+                    .map(|c| ColumnInfo::new(*c, ProximaType::Int64, false))
+                    .collect(),
+            ),
+            projection: None,
+            predicate: None,
+            limit: None,
+            access: proximadb_relational_planner::ScanAccess::FullScan,
+        }
+    }
+
+    #[cfg(feature = "datafusion-integration")]
+    #[test]
+    fn single_scan_columns_detects_sole_scan_and_rejects_multi_or_none() {
+        // Bare scan → its projected column names.
+        assert_eq!(
+            single_scan_columns(&scan_fixture(&["k", "x"])),
+            Some(vec!["k".to_string(), "x".to_string()])
+        );
+        // Recurses through an intermediate op (Limit) to the sole scan.
+        let limited = PhysicalPlan::Limit {
+            input: Box::new(scan_fixture(&["k", "x"])),
+            limit: Some(10),
+            offset: 0,
+        };
+        assert_eq!(
+            single_scan_columns(&limited),
+            Some(vec!["k".to_string(), "x".to_string()])
+        );
+        // Two scans (Union) → None: the native shadow is single-table only.
+        let two = PhysicalPlan::Union {
+            inputs: vec![scan_fixture(&["k"]), scan_fixture(&["x"])],
+            all: true,
+        };
+        assert_eq!(single_scan_columns(&two), None);
+        // No scan at all → None.
+        let no_scan = PhysicalPlan::Values {
+            rows: vec![],
+            output_schema: RelationalSchema::new(vec![]),
+        };
+        assert_eq!(single_scan_columns(&no_scan), None);
     }
 
     #[test]
