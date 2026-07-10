@@ -15,6 +15,7 @@ path = "src/lib.rs"
 
 [dependencies]
 proximadb-proto.workspace = true
+serde.workspace = true
 
 [lints]
 workspace = true

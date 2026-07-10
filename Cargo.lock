@@ -7899,6 +7899,7 @@ name = "proximadb-tenant"
 version = "0.2.0"
 dependencies = [
  "proximadb-proto",
+ "serde",
 ]
 
 [[package]]

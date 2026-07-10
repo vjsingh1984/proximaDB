@@ -593,14 +593,9 @@ pub fn record_storage_snapshot(
 }
 
 /// One tenant's aggregated **resident** storage at snapshot time — the unit the
-/// durable per-tenant `_metering` writer (TD-161) persists and the OTLP push
-/// emitter ships. Serializable so it is the on-disk record shape under
-/// `DrResolvedPath::metering_subprefix()`.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct TenantStorageUsage {
-    pub tenant_id: String,
-    pub resident_bytes: u64,
-}
+/// Pre-extracted to `proximadb-tenant` (foundation) for the observability crate
+/// extraction. Re-exported here so all existing callers are unchanged.
+pub use proximadb_tenant::TenantStorageUsage;
 
 /// Pure aggregation backing [`record_storage_snapshot`]: sum
 /// `stats.data_size_bytes` per owning tenant across the live collection set.
