@@ -7855,6 +7855,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "proximadb-proto",
+ "proximadb-quantization-model",
  "proximadb-storage-common",
 ]
 
