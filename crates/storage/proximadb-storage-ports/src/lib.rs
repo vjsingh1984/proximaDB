@@ -62,3 +62,45 @@ pub trait StorageEventLogPort: Send + Sync {
     /// open when the event log is unavailable.
     async fn can_compact(&self, collection_id: &str, file_path: &str) -> Result<bool>;
 }
+
+/// Level-specific vector quantization + Hamming distance that storage's
+/// search/compaction paths need.
+///
+/// Inverts `crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine`
+/// (modality-tier `proximadb-quantization-kernel`, re-exported up through
+/// `compute::quantization`): storage holds an `Arc<dyn QuantizationEnginePort>`
+/// and never names the concrete engine, so the storage→modality up-edge dissolves.
+///
+/// The measured storage-driven surface is the level-specific `quantize_to_*`
+/// encoders plus Hamming distance — every signature is primitive in/out
+/// (`&[f32]` → `Vec<u8>`/`Vec<u16>`/tuples/`u32`), so NO modality type crosses
+/// the seam (no facade DTOs needed). The generic level-based `quantize(level)`
+/// is intentionally NOT here: it would drag the modality `UnifiedQuantizationLevel`
+/// type across the boundary. Callers use the level-specific method instead.
+///
+/// The concrete `UnifiedQuantizationEngine` `impl`s this in its own crate — a
+/// downward dep (modality→storage-ports is layering-allowed; the forbidden
+/// direction is storage→modality). The composition root injects the impl.
+pub trait QuantizationEnginePort: Send + Sync {
+    /// 1-bit sign/threshold quantization → packed bits.
+    fn quantize_to_binary(&self, vector: &[f32]) -> Result<Vec<u8>>;
+    /// 8-bit signed scalar quantization.
+    fn quantize_to_int8(&self, vector: &[f32]) -> Result<Vec<u8>>;
+    /// 4-bit scalar quantization → (codes, min, max, len).
+    fn quantize_to_u4(&self, vector: &[f32]) -> Result<(Vec<u8>, f32, f32, usize)>;
+    /// 6-bit scalar quantization → (codes, min, max, len).
+    fn quantize_to_u6(&self, vector: &[f32]) -> Result<(Vec<u8>, f32, f32, usize)>;
+    /// 8-bit unsigned scalar quantization → (codes, min, max).
+    fn quantize_to_u8(&self, vector: &[f32]) -> Result<(Vec<u8>, f32, f32)>;
+    /// 16-bit unsigned scalar quantization → (codes, min, max).
+    fn quantize_to_u16(&self, vector: &[f32]) -> Result<(Vec<u16>, f32, f32)>;
+    /// Product quantization → packed codes.
+    fn quantize_to_pq(
+        &self,
+        vector: &[f32],
+        num_subvectors: usize,
+        bits_per_code: u32,
+    ) -> Result<Vec<u8>>;
+    /// Hamming distance between two bit-packed binary codes.
+    fn calculate_hamming_distance(&self, a: &[u8], b: &[u8]) -> u32;
+}

@@ -43,6 +43,7 @@
 //! - Centroids: 256 per subquantizer (8-bit codes)
 
 use anyhow::{Context, Result};
+use proximadb_storage_ports::QuantizationEnginePort;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::debug;
@@ -2597,5 +2598,42 @@ mod tests {
         assert_eq!(top_5_quantized[0], top_5_raw[0]);
 
         Ok(())
+    }
+}
+
+// Slice D — QuantizationEnginePort impl: exposes the level-specific quantize_to_*
+// surface (primitive in/out) as a storage dependency-inversion port so `src/storage`
+// can hold `Arc<dyn QuantizationEnginePort>` instead of reaching up into this
+// modality crate. Fully-qualified calls delegate to the inherent methods (no
+// recursion). See crates/storage/proximadb-storage-ports/src/lib.rs.
+impl QuantizationEnginePort for UnifiedQuantizationEngine {
+    fn quantize_to_binary(&self, vector: &[f32]) -> Result<Vec<u8>> {
+        UnifiedQuantizationEngine::quantize_to_binary(self, vector)
+    }
+    fn quantize_to_int8(&self, vector: &[f32]) -> Result<Vec<u8>> {
+        UnifiedQuantizationEngine::quantize_to_int8(self, vector)
+    }
+    fn quantize_to_u4(&self, vector: &[f32]) -> Result<(Vec<u8>, f32, f32, usize)> {
+        UnifiedQuantizationEngine::quantize_to_u4(self, vector)
+    }
+    fn quantize_to_u6(&self, vector: &[f32]) -> Result<(Vec<u8>, f32, f32, usize)> {
+        UnifiedQuantizationEngine::quantize_to_u6(self, vector)
+    }
+    fn quantize_to_u8(&self, vector: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
+        UnifiedQuantizationEngine::quantize_to_u8(self, vector)
+    }
+    fn quantize_to_u16(&self, vector: &[f32]) -> Result<(Vec<u16>, f32, f32)> {
+        UnifiedQuantizationEngine::quantize_to_u16(self, vector)
+    }
+    fn quantize_to_pq(
+        &self,
+        vector: &[f32],
+        num_subvectors: usize,
+        bits_per_code: u32,
+    ) -> Result<Vec<u8>> {
+        UnifiedQuantizationEngine::quantize_to_pq(self, vector, num_subvectors, bits_per_code)
+    }
+    fn calculate_hamming_distance(&self, a: &[u8], b: &[u8]) -> u32 {
+        UnifiedQuantizationEngine::calculate_hamming_distance(self, a, b)
     }
 }

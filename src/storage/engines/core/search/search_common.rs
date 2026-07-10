@@ -9,11 +9,11 @@ use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 use crate::core::search::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
 use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 use proximadb_filter_expression::FilterExpression;
+use proximadb_storage_ports::QuantizationEnginePort;
 
 /// Backwards-compat alias for [`UniversalSearchConfig`].
 pub type SearchConfig = UniversalSearchConfig;
@@ -153,7 +153,7 @@ pub trait FileSearcher<F: SearchableFile, B: SearchableBlock>: Send + Sync {
 /// Universal search pipeline used by all engines
 pub struct UniversalSearchPipeline {
     distance_compute: Arc<UnifiedDistanceCompute>,
-    quantization_engine: Arc<UnifiedQuantizationEngine>,
+    quantization_engine: Arc<dyn QuantizationEnginePort>,
     #[allow(dead_code)]
     filter_processor: Arc<FilterProcessor>,
     result_manager: Arc<ResultManager>,
@@ -162,7 +162,7 @@ pub struct UniversalSearchPipeline {
 impl UniversalSearchPipeline {
     pub fn new(
         distance_compute: Arc<UnifiedDistanceCompute>,
-        quantization_engine: Arc<UnifiedQuantizationEngine>,
+        quantization_engine: Arc<dyn QuantizationEnginePort>,
     ) -> Self {
         let dc = distance_compute.clone();
         Self {
@@ -370,24 +370,14 @@ impl UniversalSearchPipeline {
         &self,
         records: Vec<VectorRecord>,
         query_vector: &[f32],
-        threshold: f32,
+        _threshold: f32,
     ) -> Result<Vec<VectorRecord>> {
-        // Use quantization engine for binary filtering
-        // Create a binary quantization level
-        use crate::compute::quantization::quantization_engine::{
-            BinaryQuantization, QuantizationLevel, UnifiedQuantizationLevel,
-        };
-        let binary_level = UnifiedQuantizationLevel {
-            level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
-                sign_based: true,
-                threshold: Some(threshold),
-            })),
-        };
-
-        let _binary_query = self
-            .quantization_engine
-            .quantize(query_vector, &binary_level)
-            .await?;
+        // Use the quantization engine for binary filtering via the port's
+        // level-specific method. The generic level-based quantize() is intentionally
+        // NOT on QuantizationEnginePort (it would drag the modality
+        // UnifiedQuantizationLevel type across the storage seam). The result is
+        // currently unused — binary filtering is a passthrough (see the loop below).
+        let _binary_query = self.quantization_engine.quantize_to_binary(query_vector)?;
 
         let mut filtered = Vec::new();
         for record in records {

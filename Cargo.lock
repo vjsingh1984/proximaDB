@@ -7304,6 +7304,7 @@ dependencies = [
  "proximadb-distance-kernel",
  "proximadb-hardware",
  "proximadb-quantization-types",
+ "proximadb-storage-ports",
  "proximadb-vector",
  "rand 0.8.6",
  "serde",
