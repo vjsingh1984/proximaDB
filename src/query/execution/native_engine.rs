@@ -100,6 +100,57 @@ pub async fn try_vectorized(
     Ok(Some(record_batches_to_pipeline_result(schema, &batches)))
 }
 
+/// TD-OLAP-4 (engine dimension, native-parquet): run `physical` on the native
+/// vectorized engine using `scan_source` — a
+/// [`super::native_parquet_scan::ParquetScanOperator`] built from the SAME
+/// object-store + files + projection the DataFusion adapter reads — as the `Scan`
+/// leaf. This is the shadow entry that lets native serve external-parquet queries
+/// so the io-trace carries a `native-vectorized` compute sample alongside
+/// DataFusion's for the SAME plan and storage.
+///
+/// Returns `Ok(None)` when the path is disabled OR the plan shape is unsupported
+/// (native covers `Filter`/`Project`/`Aggregate`/`Limit` over a `Scan` today) OR
+/// execution failed — the caller keeps DataFusion's result in every such case;
+/// correctness is policed by the shadow-comparison harness.
+pub async fn try_vectorized_over_parquet(
+    physical: &PhysicalPlan,
+    scan_source: Box<dyn proximadb_execution_contracts::ExecutionOperator>,
+) -> Result<Option<ExecutionPipelineResult>, ExecutionError> {
+    if !native_vectorized_enabled() {
+        return Ok(None);
+    }
+    let lowered = match super::native_ops::lower_physical_over_source(physical, scan_source) {
+        Ok(l) => l,
+        Err(reason) => {
+            tracing::debug!(
+                target: "proximadb::native_vectorized",
+                %reason,
+                "native-parquet path declined; keeping DataFusion result"
+            );
+            return Ok(None);
+        }
+    };
+    let started = std::time::Instant::now();
+    let batches = match super::native_ops::execute_pipeline(&lowered).await {
+        Ok(b) => b,
+        Err(reason) => {
+            tracing::debug!(
+                target: "proximadb::native_vectorized",
+                %reason,
+                "native-parquet path failed mid-execution; keeping DataFusion result"
+            );
+            return Ok(None);
+        }
+    };
+    crate::observability::io_trace::record_compute_ms(
+        "native-vectorized",
+        started.elapsed().as_millis() as u64,
+    );
+    crate::observability::io_trace::record_route("vectorized", "NativeVectorized");
+    let schema = lowered.pipeline.output_schema.as_ref();
+    Ok(Some(record_batches_to_pipeline_result(schema, &batches)))
+}
+
 /// Streaming variant — not yet wired (the materialized path serves Phase 2).
 pub async fn try_vectorized_stream(
     _physical: &PhysicalPlan,
