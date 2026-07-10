@@ -905,30 +905,79 @@ pub struct DocumentsTableFunction {
     /// The connection tenant, passed structurally to the scan port (which scopes the collection
     /// key) — NOT folded into the collection name. `None` ⇒ the canonical `DEFAULT_TENANT`.
     tenant: Option<String>,
+    /// The canonical record route (TD-DOC-PUSHDOWN-1): when present AND the collection resolves
+    /// `pax_scan_inputs`, `documents()` serves a storage-inclusive PAX-pruned scan (flushed
+    /// segments + unflushed WAL delta + dead-filter/dedup) that also exposes the shredded
+    /// promoted columns as typed columns. `None` ⇒ the `(id, props)` MemTable path only.
+    record_route: Option<Arc<dyn proximadb_runtime::RecordRoutePort>>,
+    /// The process filesystem factory used to read `.pax` segments for the pushdown scan.
+    filesystem_factory: Option<Arc<crate::storage::persistence::filesystem::FilesystemFactory>>,
 }
 
 impl DocumentsTableFunction {
-    /// Capture the scan port the function will read (no tenant scope).
+    /// Capture the scan port the function will read (no tenant scope, no PAX pushdown).
     pub fn new(scan: Arc<dyn DocumentScanPort>) -> Self {
-        Self { scan, tenant: None }
+        Self {
+            scan,
+            tenant: None,
+            record_route: None,
+            filesystem_factory: None,
+        }
     }
 
     /// Capture the scan port AND the connection tenant, so the read scopes the collection key the
-    /// same way the REST write path does (TD-XMODAL-6).
+    /// same way the REST write path does (TD-XMODAL-6). No PAX pushdown (MemTable path only).
     pub fn with_tenant(scan: Arc<dyn DocumentScanPort>, tenant: Option<String>) -> Self {
-        Self { scan, tenant }
+        Self {
+            scan,
+            tenant,
+            record_route: None,
+            filesystem_factory: None,
+        }
     }
 
     /// Build the function backed by the process document service, scoped to the connection tenant —
-    /// the pgwire OLAP route wiring that makes `documents` read REST/gRPC-written data.
+    /// the pgwire OLAP route wiring that makes `documents` read REST/gRPC-written data. Also wires
+    /// the record route + filesystem factory so a converged collection with `.pax` segments is
+    /// served through the correct storage-inclusive PAX pushdown provider (TD-DOC-PUSHDOWN-1),
+    /// falling back to the `(id, props)` MemTable path when neither is available.
     pub fn from_service_with_tenant(
         service: Arc<crate::storage::document::DocumentService>,
         tenant: Option<String>,
     ) -> Self {
+        let record_route = service.record_route_port();
         Self {
             scan: Arc::new(DocumentServiceScan(service)),
             tenant,
+            record_route,
+            filesystem_factory: crate::services::document_service::filesystem_factory(),
         }
+    }
+
+    /// Try to build the storage-inclusive PAX pushdown provider for `collection`. Returns `None`
+    /// (⇒ MemTable fallback) when the record route / filesystem factory is unwired or the
+    /// collection isn't PAX-pushdown-eligible (`pax_scan_inputs` ⇒ `None`). Resolving the scan
+    /// inputs is async but `call()` is sync, so it runs on the current multi-thread runtime via
+    /// `block_in_place` (the server runtime is multi-thread; tests use `flavor = "multi_thread"`).
+    fn try_pax_provider(&self, collection: &str) -> Option<Arc<dyn TableProvider>> {
+        let route = self.record_route.clone()?;
+        let filesystem_factory = self.filesystem_factory.clone()?;
+        let tenant = self.tenant.clone();
+        let collection_owned = collection.to_string();
+        let inputs = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::try_current().ok().and_then(|h| {
+                h.block_on(route.pax_scan_inputs(&collection_owned, tenant.as_deref()))
+            })
+        })?;
+        Some(Arc::new(
+            crate::datafusion::document_pax_provider::DocumentPaxPushdownProvider::new(
+                route,
+                filesystem_factory,
+                self.tenant.clone(),
+                collection.to_string(),
+                inputs,
+            ),
+        ))
     }
 }
 
@@ -951,6 +1000,15 @@ impl TableFunctionImpl for DocumentsTableFunction {
                 "documents: collection must not be empty".into(),
             ));
         }
+        // TD-DOC-PUSHDOWN-1: prefer the storage-inclusive PAX pushdown provider when the
+        // collection is converged (has resolvable `pax_scan_inputs`). It reads the SAME rows the
+        // MemTable path would (byte-identical) plus the shredded typed columns, pruning the
+        // flushed segments off the wire. Any collection that isn't pushdown-eligible falls back to
+        // the `(id, props)` MemTable path below — mixed-read-safe, no flag-day.
+        if let Some(provider) = self.try_pax_provider(&collection) {
+            return Ok(provider);
+        }
+
         // Structural tenant scoping: pass the connection tenant (defaulting to the one canonical
         // DEFAULT_TENANT) + the tenant-CLEAN collection name to the scan port, which scopes the key
         // the same way the REST ingest wrote it. No name-folding at the SQL layer.

@@ -982,7 +982,6 @@ impl proximadb_runtime::RecordRoutePort for RecordOpsService {
         collection_id: &str,
         tenant: Option<&str>,
     ) -> Option<proximadb_runtime::PaxScanInputs> {
-        use proximadb_catalog::Catalog as _;
         use proximadb_runtime::{PaxColumnDesc, PaxScanInputs};
         // Resolve the collection's catalog schema through the SAME catalog the write
         // path uses, tenant-scoped. Any miss ⇒ None (the caller falls back to the
@@ -1018,6 +1017,24 @@ impl proximadb_runtime::RecordRoutePort for RecordOpsService {
             })
             .collect();
         Some(PaxScanInputs { base_path, columns })
+    }
+
+    async fn unflushed_records(
+        &self,
+        collection_id: &str,
+        tenant: Option<&str>,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant)?;
+        // Unknown collection ⇒ empty (mixed-safe: the caller falls back / merges nothing).
+        let Some(resolved_id) = self
+            .resolve_collection_id_internal(collection_id, tenant_context.as_ref())
+            .await?
+        else {
+            return Ok(Vec::new());
+        };
+        self.vector_operations_service
+            .list_unflushed_raw_with_tenant_context(&resolved_id, tenant_context.as_ref())
+            .await
     }
 
     async fn delete_records(

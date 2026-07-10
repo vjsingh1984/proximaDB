@@ -43,7 +43,7 @@ pub use port::{
     CollectionSchemaUpdate, CollectionTextStorage,
 };
 pub use record_ops_port::RecordOpsPort;
-pub use record_route_port::RecordRoutePort;
+pub use record_route_port::{PaxColumnDesc, PaxScanInputs, RecordRoutePort};
 pub use resources::{MemoryBudget, ResourceManager};
 pub use rich_record::{RichRecordBatchRequest, RichRecordDeleteBatchRequest, RichRecordGetRequest};
 pub use security_port::{PortAuthCredential, PortUserContext, SecurityPort};

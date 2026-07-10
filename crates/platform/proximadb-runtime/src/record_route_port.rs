@@ -133,4 +133,20 @@ pub trait RecordRoutePort: Send + Sync {
     ) -> Option<PaxScanInputs> {
         None
     }
+
+    /// Raw unflushed (WAL/memtable) records for `collection_id`, tenant-scoped but
+    /// **NOT** dead-filtered — tombstones and TTL-expired rows are RETAINED. This is the
+    /// unflushed delta of the storage-inclusive document PAX scan (TD-DOC-PUSHDOWN-1): the
+    /// caller merges these with the flushed PAX segments by `oid` (freshest wins, WAL
+    /// priority on ties) and then applies the canonical `is_record_dead` pass on the merged
+    /// set. Retaining tombstones is what lets an unflushed delete suppress a still-flushed
+    /// live copy (invariant #16d) — a dead-filtered scan cannot express that cross-source
+    /// suppression. Default empty for impls that don't serve documents.
+    async fn unflushed_records(
+        &self,
+        _collection_id: &str,
+        _tenant: Option<&str>,
+    ) -> Result<Vec<ProximaRecord>> {
+        Ok(Vec::new())
+    }
 }
