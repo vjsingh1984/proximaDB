@@ -47,6 +47,21 @@ pub fn native_join_enabled() -> bool {
     })
 }
 
+/// Gate: run the native-parquet SHADOW probe alongside DataFusion on the OLAP
+/// path? Default OFF — this is a benchmark/measurement instrument, not a product
+/// path: when on, a parquet SELECT that DataFusion serves is ALSO re-planned,
+/// re-opened, and re-executed on the native vectorized engine purely to record a
+/// `native-vectorized` compute sample for the engine-dimension trace (TD-OLAP-4).
+/// It roughly doubles the query's work, so it must never be on in production.
+pub fn native_shadow_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("PROXIMADB_NATIVE_SHADOW")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
+
 /// Try the native vectorized execution path for an already-planned query.
 /// Called from `NativeVolcanoEngine::execute_physical` (the single native
 /// chokepoint, above the Volcano) when [`native_vectorized_enabled`] is set.
@@ -119,6 +134,18 @@ pub async fn try_vectorized_over_parquet(
     if !native_vectorized_enabled() {
         return Ok(None);
     }
+    run_native_over_parquet(physical, scan_source).await
+}
+
+/// Gate-free core of the native-parquet path: lower `physical` over `scan_source`,
+/// execute, and record the `native-vectorized` compute + route sample. Shared by
+/// [`try_vectorized_over_parquet`] (product-gated) and the shadow probe (which
+/// gates on [`native_shadow_enabled`] instead, so a measurement run needs a single
+/// env switch). Returns `Ok(None)` on decline (unsupported shape) or failure.
+pub(crate) async fn run_native_over_parquet(
+    physical: &PhysicalPlan,
+    scan_source: Box<dyn proximadb_execution_contracts::ExecutionOperator>,
+) -> Result<Option<ExecutionPipelineResult>, ExecutionError> {
     let lowered = match super::native_ops::lower_physical_over_source(physical, scan_source) {
         Ok(l) => l,
         Err(reason) => {

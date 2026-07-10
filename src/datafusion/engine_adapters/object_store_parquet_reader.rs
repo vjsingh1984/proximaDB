@@ -667,6 +667,28 @@ impl ObjectStoreParquetTable {
         })
     }
 
+    /// TD-OLAP-4 shadow probe: the raw inputs a native
+    /// [`ParquetScanOperator`](crate::query::execution::native_parquet_scan::ParquetScanOperator)
+    /// needs to read the SAME external parquet this DataFusion table reads — the
+    /// traced object store, the distinct files (with footer byte sizes), and the
+    /// file Arrow schema. Whole-file granularity (every row group); the native scan
+    /// does not yet do row-group zone-map pruning, so a native sample built from
+    /// this is an upper bound on selective-filter queries (documented caveat for
+    /// the engine-dimension trace).
+    pub fn native_scan_inputs(
+        &self,
+    ) -> (Arc<dyn ObjectStore>, Vec<(Path, Option<u64>)>, SchemaRef) {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut files: Vec<(Path, Option<u64>)> = Vec::new();
+        for split in &self.splits {
+            if seen.insert(split.file_path.clone()) {
+                let size = self.file_sizes.get(&split.file_path).copied();
+                files.push((Path::from(split.file_path.as_str()), size));
+            }
+        }
+        (self.store.clone(), files, self.schema.clone())
+    }
+
     /// Attach the registered table name (keys the ADR-037 statistics registry
     /// so [`TableProvider::statistics`] can overlay the HLL NDV estimate).
     pub fn with_table_name(mut self, name: impl Into<String>) -> Self {
@@ -1342,6 +1364,33 @@ mod tests {
         let table = ObjectStoreParquetTable::open(&location).await.unwrap();
         assert_eq!(table.split_count(), 2);
         assert_eq!(table.schema().fields().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn native_scan_inputs_yields_distinct_files_with_sizes_and_schema() {
+        // Two row groups live in ONE file → the native scan (whole-file) must see a
+        // single distinct file, with a footer byte size and the full 2-column schema.
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        write_two_row_group_parquet(&data_dir.join("part-0.parquet"));
+
+        let location = format!("file://{}", tmp.path().display());
+        let table = ObjectStoreParquetTable::open(&location).await.unwrap();
+        assert_eq!(table.split_count(), 2, "two row groups");
+
+        let (_store, files, schema) = table.native_scan_inputs();
+        assert_eq!(
+            files.len(),
+            1,
+            "two row groups collapse to one distinct file"
+        );
+        assert!(files[0].0.as_ref().ends_with("part-0.parquet"));
+        assert!(
+            files[0].1.is_some_and(|sz| sz > 0),
+            "footer byte size present"
+        );
+        assert_eq!(schema.fields().len(), 2, "full file schema (k, x)");
     }
 
     #[tokio::test]
