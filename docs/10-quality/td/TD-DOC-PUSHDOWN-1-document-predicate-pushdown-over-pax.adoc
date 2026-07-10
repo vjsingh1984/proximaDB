@@ -120,9 +120,39 @@ DataFusion `FilesystemFactory`/`PhysicalExpr`/Arrow path). So "own the reader" s
   records none itself.)
 * **Adapter — `documents()` → `PaxTableProvider` (REMAINING).** The thin document-side wiring below.
 
-== Design (documents adapter — rides on the ranged reader)
+== ⚠ Adapter correctness blocker (found 2026-07-10 during the build) — read FIRST
 
-Consume, don't rebuild. The remaining *document-side* work is a thin adapter over the ranged reader:
+The adapter is **NOT a thin schema wrapper**: delegating `documents()` to a raw `PaxTableProvider`
+scan is **incorrect**, because a PAX-segment scan sees a *different, wrong* set of rows than the
+canonical document read. Two mandate-#16 violations:
+
+* **Misses unflushed writes (read-after-write).** `.pax` segments hold **flushed** data only. The
+  correct document read is a **storage-inclusive scan** — `list_all_records_with_tenant_context` /
+  `handle_record_scan_paginated_for_tenant` merge the **WAL/memtable (unflushed)** with flushed
+  storage, freshest-per-`oid` winning (`legacy.rs:897`). A segment-only scan drops every recent write.
+* **Returns dead records.** The canonical scan applies `ProximaRecord::is_dead(now_ns)`
+  (`legacy.rs:785`) — tombstones + TTL-expired. `PaxSplitReader` does no dead-filtering, so a raw PAX
+  scan surfaces deleted/expired documents.
+
+So a **correct** `documents()` pushdown is a *storage-inclusive scan whose FLUSHED portion uses PAX
+pruning* instead of a full segment read: (1) PAX-pruned scan of flushed segments [the reader we
+built], (2) `stream_unflushed_records` for the small unflushed delta [predicate applied], (3)
+dead-filter + tombstone-suppress (#16d) + dedup-by-`oid` (freshest wins) + freshness-mode gating
+(#16c). That merge layer — not the schema/reader wiring — is the real remaining work; it is
+substantial and correctness-critical, and overlaps the general "make PAX-backed relational reads
+correct" concern (the storage-inclusive scan the `ComputeScheduler`/warehouse path owns). **Building
+the raw delegation was stopped here to avoid shipping stale/dead-record reads.**
+
+The build got as far as the *correct, reusable* foundation (kept on branch `feat/doc-pax-adapter`,
+unlanded): `RecordRoutePort::pax_scan_inputs` + impl, the `filesystem_factory()` singleton, and a
+type-directed `props`→JSON decode in `PaxSplitReader` (a `Utf8` props field reconstructs the document
+JSON from the msgpack tail, reusing `proxima_tree_to_json_map`). These are prerequisites for the
+correct adapter but are dead code without the merge layer, so they are NOT landed alone.
+
+== Design (documents adapter — rides on the ranged reader + the storage-inclusive merge)
+
+Consume, don't rebuild. The remaining *document-side* work is an adapter over the ranged reader
+**plus the storage-inclusive merge above** (without which it is incorrect):
 
 . **Runtime-safe scan inputs on the record port.** `RecordRoutePort::pax_scan_inputs(collection,
   tenant) -> Option<PaxScanInputs>` returning the `DrPathBuilder` base path + column descriptors
