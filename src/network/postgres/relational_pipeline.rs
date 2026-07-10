@@ -700,6 +700,206 @@ fn single_scan_columns(plan: &PhysicalPlan) -> Option<Vec<String>> {
     (count == 1).then_some(out).flatten()
 }
 
+/// Is this an unfiltered, ungrouped `COUNT(*)` (possibly under a `Limit`) directly
+/// over a `Scan`? Then the answer is the sum of the parquet/PAX footer row counts —
+/// a metadata read, no column scan. (`scan_cols` can't detect this: the relational
+/// `Scan.output_schema` is full-width, so COUNT(*) would otherwise read all columns.)
+#[cfg(feature = "datafusion-integration")]
+fn is_pure_count_star(plan: &PhysicalPlan) -> bool {
+    use proximadb_relational_algebra::AggregateExpr;
+    match plan {
+        // A `COUNT(*)` lowers to `Project(Aggregate(Scan))` (the Project names/orders
+        // the output) — recurse through both Project and Limit to the Aggregate.
+        PhysicalPlan::Limit { input, .. } | PhysicalPlan::Project { input, .. } => {
+            is_pure_count_star(input)
+        }
+        PhysicalPlan::Aggregate {
+            input,
+            group_by,
+            aggregates,
+            having,
+            ..
+        } => {
+            group_by.is_empty()
+                && having.is_none()
+                && !aggregates.is_empty()
+                && aggregates.iter().all(|a| {
+                    matches!(
+                        &a.agg,
+                        AggregateExpr::Count {
+                            arg: None,
+                            distinct: false
+                        }
+                    )
+                })
+                // MUST be an UNFILTERED scan: a pushed-down `Scan.predicate`
+                // (`WHERE AdvEngineID<>0`, `WHERE URL LIKE …`) means the count is
+                // over the FILTERED rows — footer elision would ignore the filter
+                // and return the wrong (whole-table) count.
+                && matches!(input.as_ref(), PhysicalPlan::Scan { predicate: None, .. })
+        }
+        _ => false,
+    }
+}
+
+/// TD-OLAP-4 metadata elision: if the plan is an UNGROUPED, UNFILTERED aggregate
+/// over a `Scan` whose aggregates are all `COUNT(*)` / `COUNT(col)` / `MIN(col)` /
+/// `MAX(col)` on NUMERIC columns, build the answer row directly from the parquet
+/// FOOTER (row count + per-column min/max/null_count) — zero column I/O, flat cost
+/// (matching DataFusion's `AggregateStatistics`). Returns `None` (→ scan) for
+/// SUM/AVG/DISTINCT, non-column args, string columns (truncated stats), or any
+/// column lacking full footer coverage.
+#[cfg(feature = "datafusion-integration")]
+fn elidable_aggregate_batch(
+    plan: &PhysicalPlan,
+    table: &crate::datafusion::engine_adapters::ObjectStoreParquetTable,
+    file_schema: &arrow::datatypes::SchemaRef,
+) -> Option<arrow_array::RecordBatch> {
+    use arrow_array::{ArrayRef, Float64Array, Int64Array};
+    use proximadb_relational_algebra::AggregateExpr;
+    use proximadb_relational_types::Expr;
+
+    fn find_agg(p: &PhysicalPlan) -> Option<&PhysicalPlan> {
+        match p {
+            PhysicalPlan::Project { input, .. } | PhysicalPlan::Limit { input, .. } => {
+                find_agg(input)
+            }
+            PhysicalPlan::Aggregate { .. } => Some(p),
+            _ => None,
+        }
+    }
+    let PhysicalPlan::Aggregate {
+        input,
+        group_by,
+        aggregates,
+        having,
+        ..
+    } = find_agg(plan)?
+    else {
+        return None;
+    };
+    if !group_by.is_empty()
+        || having.is_some()
+        || !matches!(
+            input.as_ref(),
+            PhysicalPlan::Scan {
+                predicate: None,
+                ..
+            }
+        )
+    {
+        return None;
+    }
+    // Resolve a catalog column name to the FILE column (case-insensitive — CamelCase
+    // DDL over a lowercased parquet) → (parquet-stats key, Arrow type).
+    let resolve = |name: &str| -> Option<(String, arrow::datatypes::DataType)> {
+        file_schema
+            .fields()
+            .iter()
+            .find(|f| f.name().eq_ignore_ascii_case(name))
+            .map(|f| (f.name().clone(), f.data_type().clone()))
+    };
+    let rows = table.estimated_rows()?;
+    let mut fields: Vec<arrow::datatypes::Field> = Vec::with_capacity(aggregates.len());
+    let mut arrays: Vec<ArrayRef> = Vec::with_capacity(aggregates.len());
+    for na in aggregates {
+        let (dt, arr): (arrow::datatypes::DataType, ArrayRef) = match &na.agg {
+            AggregateExpr::Count {
+                arg: None,
+                distinct: false,
+            } => (
+                arrow::datatypes::DataType::Int64,
+                std::sync::Arc::new(Int64Array::from(vec![rows as i64])),
+            ),
+            AggregateExpr::Count {
+                arg: Some(Expr::Column(c)),
+                distinct: false,
+            } => {
+                let (cn, _) = resolve(&c.name)?;
+                let (_, _, nulls) = table.aggregate_numeric_bounds(&cn)?;
+                (
+                    arrow::datatypes::DataType::Int64,
+                    std::sync::Arc::new(Int64Array::from(vec![rows.saturating_sub(nulls) as i64])),
+                )
+            }
+            AggregateExpr::Min {
+                arg: Expr::Column(c),
+            }
+            | AggregateExpr::Max {
+                arg: Expr::Column(c),
+            } => {
+                let (cn, dt) = resolve(&c.name)?;
+                let (lo, hi, _) = table.aggregate_numeric_bounds(&cn)?;
+                let v = if matches!(na.agg, AggregateExpr::Max { .. }) {
+                    hi
+                } else {
+                    lo
+                };
+                let arr = arrow::compute::cast(&Float64Array::from(vec![v]), &dt).ok()?;
+                (dt, arr)
+            }
+            // SUM/AVG/DISTINCT/STRING_AGG/non-column → not footer-elidable.
+            _ => return None,
+        };
+        fields.push(arrow::datatypes::Field::new(&na.name, dt, true));
+        arrays.push(arr);
+    }
+    arrow_array::RecordBatch::try_new(
+        std::sync::Arc::new(arrow::datatypes::Schema::new(fields)),
+        arrays,
+    )
+    .ok()
+}
+
+/// Does any `Scan` in the plan carry a pushed-down `predicate`? Native's scan does
+/// NOT apply `Scan.predicate` (no predicate pushdown yet), so it would count/aggregate
+/// the UNFILTERED rows — a wrong result. Filtered scans route to DataFusion (which
+/// applies the predicate + prunes row groups) until native gains predicate pushdown.
+#[cfg(feature = "datafusion-integration")]
+fn plan_scan_has_predicate(plan: &PhysicalPlan) -> bool {
+    match plan {
+        PhysicalPlan::Scan { predicate, .. } => predicate.is_some(),
+        PhysicalPlan::Filter { input, .. }
+        | PhysicalPlan::Project { input, .. }
+        | PhysicalPlan::Aggregate { input, .. }
+        | PhysicalPlan::Sort { input, .. }
+        | PhysicalPlan::Limit { input, .. }
+        | PhysicalPlan::Distinct { input, .. }
+        | PhysicalPlan::AssertMaxOneRow { input } => plan_scan_has_predicate(input),
+        PhysicalPlan::Join { left, right, .. } => {
+            plan_scan_has_predicate(left) || plan_scan_has_predicate(right)
+        }
+        PhysicalPlan::Union { inputs, .. } => inputs.iter().any(plan_scan_has_predicate),
+        _ => false,
+    }
+}
+
+/// Does the plan contain an `Aggregate` with a non-empty `GROUP BY`? Native's
+/// `HashAggregate` is in-memory with no spilling, so a high-cardinality group-by
+/// (e.g. `GROUP BY UserID` over 100M rows) balloons the hash table to tens of GB
+/// and OOMs. Until a bounded/spilling aggregate lands, the shadow declines grouped
+/// aggregates — they route to DataFusion (its partitioned/spilling aggregation
+/// handles them), which is itself the dispatch rule the trace confirms.
+#[cfg(feature = "datafusion-integration")]
+fn plan_has_grouped_aggregate(plan: &PhysicalPlan) -> bool {
+    match plan {
+        PhysicalPlan::Aggregate {
+            input, group_by, ..
+        } => !group_by.is_empty() || plan_has_grouped_aggregate(input),
+        PhysicalPlan::Filter { input, .. }
+        | PhysicalPlan::Project { input, .. }
+        | PhysicalPlan::Sort { input, .. }
+        | PhysicalPlan::Limit { input, .. }
+        | PhysicalPlan::Distinct { input, .. }
+        | PhysicalPlan::AssertMaxOneRow { input } => plan_has_grouped_aggregate(input),
+        PhysicalPlan::Join { left, right, .. } => {
+            plan_has_grouped_aggregate(left) || plan_has_grouped_aggregate(right)
+        }
+        PhysicalPlan::Union { inputs, .. } => inputs.iter().any(plan_has_grouped_aggregate),
+        _ => false,
+    }
+}
+
 /// Run the native vectorized engine over the same external parquet DataFusion just
 /// served, purely to record a per-engine compute sample. Single-table parquet only
 /// (MVP); declines silently on anything native can't yet serve.
@@ -716,14 +916,32 @@ async fn shadow_probe_native_parquet(
     let Some(location) = parquet_loc_by_key.values().next() else {
         return;
     };
+    let sqlp = &sql[..sql.len().min(70)];
     // Lower the SAME SQL to the relational physical plan (decline → skip).
     let physical = match plan_over_snapshot(sql, snapshot) {
         Some(Ok(p)) => p,
-        _ => return,
+        _ => {
+            tracing::debug!(target: "proximadb::native_shadow", "shadow SKIP plan-declined: {sqlp}");
+            return;
+        }
     };
     let Some(scan_cols) = single_scan_columns(&physical) else {
+        tracing::debug!(target: "proximadb::native_shadow", "shadow SKIP not-single-scan: {sqlp}");
         return;
     };
+    // Skip grouped aggregates: native's non-spilling HashAggregate OOMs on
+    // high-cardinality GROUP BY at scale. These route to DataFusion.
+    if plan_has_grouped_aggregate(&physical) {
+        tracing::debug!(target: "proximadb::native_shadow", "shadow SKIP grouped-aggregate: {sqlp}");
+        return;
+    }
+    // Skip filtered scans: native does not apply a pushed-down `Scan.predicate`,
+    // so it would (wrongly) aggregate the unfiltered rows. Route to DataFusion.
+    if plan_scan_has_predicate(&physical) {
+        tracing::debug!(target: "proximadb::native_shadow", "shadow SKIP filtered-scan (no native predicate pushdown): {sqlp}");
+        return;
+    }
+    tracing::debug!(target: "proximadb::native_shadow", "shadow RUN native: {sqlp}");
     // Open the same parquet DataFusion read (table-OPEN cache is warm from its run).
     let table = match crate::datafusion::engine_adapters::ObjectStoreParquetTable::open(location)
         .await
@@ -735,36 +953,82 @@ async fn shadow_probe_native_parquet(
         }
     };
     let (store, files, file_schema) = table.native_scan_inputs();
-    // Map the plan's Scan columns → parquet leaf indices by name; build the native
-    // scan output schema from the FILE fields (exact Arrow types). Sort ascending so
-    // the reader's file-order `ProjectionMask::roots` matches the operator schema —
-    // when the plan preserves declared column order (the common case) native aligns;
-    // otherwise the native lowering declines and no sample is recorded.
-    let mut paired: Vec<(usize, arrow::datatypes::Field)> = Vec::with_capacity(scan_cols.len());
-    for name in &scan_cols {
-        let Some((idx, field)) = file_schema
-            .fields()
-            .iter()
-            .enumerate()
-            .find(|(_, f)| f.name() == name)
-        else {
-            return; // column absent from file (schema drift) → never risk a sample
-        };
-        paired.push((idx, field.as_ref().clone()));
+    // Metadata elision (TD-OLAP-4): unfiltered MIN/MAX/COUNT answered from the
+    // parquet FOOTER — zero column I/O, flat cost. The single biggest native win at
+    // scale (q07 MIN/MAX: a full-column vectorized scan → a footer read). Emits the
+    // pre-computed row and bypasses the scan + HashAggregate entirely.
+    if let Some(batch) = elidable_aggregate_batch(&physical, &table, &file_schema) {
+        tracing::debug!(target: "proximadb::native_shadow", "shadow ELIDE (footer stats): {sqlp}");
+        let src = Box::new(
+            crate::query::execution::native_parquet_scan::StatsAggregateOperator::new(batch),
+        );
+        let _ = crate::query::execution::native_engine::run_native_source_only(src).await;
+        return;
     }
-    paired.sort_by_key(|(i, _)| *i);
-    let projection: Vec<usize> = paired.iter().map(|(i, _)| *i).collect();
-    let out_schema = Arc::new(arrow::datatypes::Schema::new(
-        paired.into_iter().map(|(_, f)| f).collect::<Vec<_>>(),
-    ));
-    let source = Box::new(
-        crate::query::execution::native_parquet_scan::ParquetScanOperator::new(
-            store,
-            files,
-            Some(projection),
-            out_schema,
-        ),
-    );
+    // Unfiltered COUNT(*): parquet/PAX carry the row count in the FOOTER, so elide
+    // the scan entirely — read footers only, emit the count (a metadata op, not a
+    // scan). Detected from the PLAN, not `scan_cols`: the relational Scan schema is
+    // full-width, so COUNT(*) would otherwise read all 105 columns.
+    let source: Box<dyn proximadb_execution_contracts::ExecutionOperator> =
+        if is_pure_count_star(&physical) {
+            Box::new(
+                crate::query::execution::native_parquet_scan::ParquetScanOperator::new_count_only(
+                    store, files,
+                ),
+            )
+        } else {
+            // The relational Scan schema is full-width (no projection pushdown yet), so
+            // `scan_cols` reads every column the scan declares. Native has neither
+            // projection nor predicate pushdown, so a wide scan reads all columns
+            // row-wise — impractically slow at scale. Cap it: route wide scans to
+            // DataFusion (which prunes columns + row groups). This IS the dispatch rule
+            // the trace confirms; narrow scans still sample native. (Lifting the cap
+            // needs projection/predicate pushdown — the medium-tier native enabler.)
+            const NATIVE_SCAN_WIDTH_CAP: usize = 8;
+            if scan_cols.len() > NATIVE_SCAN_WIDTH_CAP {
+                tracing::debug!(
+                    target: "proximadb::native_shadow",
+                    cols = scan_cols.len(),
+                    "shadow SKIP wide-scan (no pushdown): {sqlp}"
+                );
+                return;
+            }
+            // Map the plan's Scan columns → parquet leaf indices by name; build the
+            // native scan output schema from the FILE fields (exact Arrow types). Sort
+            // ascending so the reader's file-order `ProjectionMask::roots` matches the
+            // operator schema — when the plan preserves declared column order (the
+            // common case) native aligns; otherwise the native lowering declines and no
+            // sample is recorded.
+            let mut paired: Vec<(usize, arrow::datatypes::Field)> =
+                Vec::with_capacity(scan_cols.len());
+            for name in &scan_cols {
+                // Match case-insensitively: the catalog/DDL may declare CamelCase
+                // columns over a lowercased parquet (e.g. ClickBench). Ordinals still
+                // align positionally — native ops reference columns by ordinal, not name.
+                let Some((idx, field)) = file_schema
+                    .fields()
+                    .iter()
+                    .enumerate()
+                    .find(|(_, f)| f.name().eq_ignore_ascii_case(name))
+                else {
+                    return; // column absent from file (schema drift) → never risk a sample
+                };
+                paired.push((idx, field.as_ref().clone()));
+            }
+            paired.sort_by_key(|(i, _)| *i);
+            let projection: Vec<usize> = paired.iter().map(|(i, _)| *i).collect();
+            let out_schema = Arc::new(arrow::datatypes::Schema::new(
+                paired.into_iter().map(|(_, f)| f).collect::<Vec<_>>(),
+            ));
+            Box::new(
+                crate::query::execution::native_parquet_scan::ParquetScanOperator::new(
+                    store,
+                    files,
+                    Some(projection),
+                    out_schema,
+                ),
+            )
+        };
     match crate::query::execution::native_engine::run_native_over_parquet(&physical, source).await {
         Ok(Some(_)) => {
             tracing::debug!(target: "proximadb::native_shadow", "shadow: native-vectorized sample recorded")
