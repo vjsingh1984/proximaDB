@@ -10,7 +10,7 @@ use axum::{
     http::StatusCode,
     response::Json as JsonResponse,
 };
-use proximadb_api::rest::v1::add_rest_v1_deprecation_headers;
+use proximadb_api::rest::deprecation::add_rest_v1_deprecation_headers;
 use proximadb_graph_query::service::GraphExecutionService;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};

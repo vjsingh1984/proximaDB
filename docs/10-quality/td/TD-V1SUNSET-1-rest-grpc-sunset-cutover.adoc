@@ -8,7 +8,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Planned — gated.** Not executable until (a) REST-v1 default-off has run a sunset window and (b) the breaking REST flip has product/ops sign-off (certify-before-flip). This TD is the *plan*; no behavior change lands with it.
+| Status | **Partially invalidated — see Reconciliation 2026-07-09.** Step 1 (REST flip) ✅ landed (#814, `9c9b0466`). Step 2 (relocate deprecation-header util) ✅ landed. Step 4 (gRPC v1 api-crate delete) ✅ *already complete* on `develop` (found pre-deleted). **Step 3 (hard-delete api-crate `rest/v1/`) is INVALIDATED** — that dir holds LIVE `/api/v2` port-backed routers, not deprecated v1 adapters; it must NOT be deleted (a rename is TD-104). Step 5 (remove `v1_sunset` middleware) remains gated on sunset-window verification.
 | Severity | Medium — outward-facing break (REST flip `410`s all `/api/v1/*`); recovery is a one-line revert.
 | Component | Network: REST v1 sunset (`src/network/middleware/v1_sunset.rs`) + the deprecated v1 surfaces in `crates/platform/proximadb-api/src/{rest,grpc}/v1/`.
 | Tracked-by | link:../../12-design/V1_RETIREMENT_ROADMAP_2026_07_08.adoc[V1_RETIREMENT_ROADMAP] (strategy, Tier 1); link:../../12-design/adr/ADR-049-v1-to-v2-migration-to-native-model.adoc[ADR-049] (M0-c REST sunset gate); the v1-proto ratchet (`scripts/check_v1_proto_usage.py`).
@@ -49,10 +49,47 @@ the root-crate REST (which is live despite the `v1` path segment):
 [cols="2,4,1", options="header"]
 |===
 | Path | Role | Action
-| `crates/platform/proximadb-api/src/rest/v1/` | **Deprecated** v1 REST adapters (port-backed handlers that forward to v2 + emit deprecation headers). 9 files: `analytics, catalog, document, entities, graph, hybrid, multimodal_query, observability, mod`. | **Delete** (after sunset window + prerequisite below).
-| `src/network/rest/v1/` | **LIVE canonical REST** infrastructure: `AppState`, `RestCoreServices`, `rank`, `rank_backend`, `graph.rs`, `primary_pod`, `progressive_search_handler`. Serves `/api/v2/*` (+ shared router plumbing). | **Keep.** (Touched by TD-104 #761.)
-| `crates/platform/proximadb-api/src/grpc/v1/` | **Deprecated** v1 gRPC services. 11 files: `collection, document, entity, graph, hybrid, observability, security, sql, streaming, vector, mod`. | **Delete** (after sunset window).
+| `crates/platform/proximadb-api/src/rest/v1/` | **LIVE canonical `/api/v2` REST (misnamed)** — port-backed router builders + handlers wired into production at `src/network/rest/v1/handlers.rs:1460-1542`: `create_graph_router` (`/api/v2/graphs/*`), `create_document_router`, `create_observability_router`, `create_multimodal_router`, `create_hybrid_search_router`. 9 files. | **Keep.** Do NOT delete — breaks the build + removes `/api/v2` routes. A module rename/relocate (e.g. `rest::v1`→`rest::canonical`) is TD-104 decomposition, not v1-sunset. |
+| `src/network/rest/v1/` | **LIVE canonical REST** infrastructure: `AppState`, `RestCoreServices`, `rank`, `rank_backend`, `graph.rs`, `primary_pod`, `progressive_search_handler`. Serves `/api/v2/*` (+ shared router plumbing). | **Keep.** (Touched by TD-104 #761.) |
+| `crates/platform/proximadb-api/src/grpc/v1/` | (Was the deprecated v1 gRPC services.) | **Already deleted** on `develop` (pre-existing); `grpc.rs:5-8` records the removal. Nothing remains. |
 |===
+
+== Reconciliation (2026-07-09) — original premise partially invalidated
+
+A fresh `origin/develop` worktree audit (the prompt's "don't trust this blindly"
+step) found the deletion targets are NOT the dead surface this TD assumed:
+
+* **Step 4 (gRPC v1 api-crate) — already complete.**
+  `crates/platform/proximadb-api/src/grpc/v1/` (11 files), `grpc/builder.rs`, and
+  the `lib.rs` `grpc::v1` re-export are all gone; `grpc.rs:5-8` documents the
+  removal. The sole residual `grpc::v1` reference workspace-wide is that
+  historical doc comment. Nothing to land.
+
+* **Step 3 (REST v1 api-crate) — INVALIDATED, do not execute.**
+  `crates/platform/proximadb-api/src/rest/v1/` is **LIVE `/api/v2` code**, not
+  deprecated. `src/network/rest/v1/handlers.rs:1460-1542` wires its
+  `create_{graph,document,observability,multimodal,hybrid_search}_router`
+  builders into production `/api/v2/*` routes (each guarded only by a runtime
+  `if let Some(port)` check — the `use proximadb_api::rest::{...}` imports are
+  compiled unconditionally). The `v1` path segment is a historical misnomer;
+  these are canonical port-backed routers. A blanket `git rm -r` would fail to
+  compile AND delete `/api/v2` routes. Relocating/renaming the module is TD-104
+  (root-crate decomposition) work, out of scope for the v1 sunset.
+
+* **Consequence — the REST v1 sunset is effectively already complete.** The
+  legacy `/api/v1/collections`, `/api/v1/search`, `/api/v1/sql`, and
+  `/api/v1/graph` routes were removed in the "API standardization hard-rename"
+  (see comments at `handlers.rs:1463-1479,1545`), and step 1's `v1_sunset`
+  middleware now `410`s any residual `/api/v1` traffic. No deprecated REST v1
+  *route handlers* remain; only the misnamed live `rest::v1` module dir.
+
+* **Step 2 — landed.** The deprecation-header utility was relocated to a neutral
+  `proximadb_api::rest::deprecation` module (decoupling the live `handlers.rs`
+  from the `rest::v1` namespace). Valid, non-breaking, independent of step 3.
+
+* **Step 5 — unchanged.** Remove `v1_sunset` middleware + mounts only after the
+  flip is proven safe through a sunset window (metrics/access-log/SDK audit).
+  This remains the sole outstanding REST-side action.
 
 == Prerequisite (easy to miss) — relocate the deprecation-header utility
 
@@ -74,14 +111,16 @@ deleted dir, so they go away with it.)
 == Hard-delete scope
 
 * **REST v1 adapters** — `crates/platform/proximadb-api/src/rest/v1/` (9 files).
-* **gRPC v1 services** — `crates/platform/proximadb-api/src/grpc/v1/` (11 files) +
-  the builder arm (`crates/platform/proximadb-api/src/grpc/builder.rs:11-16`,
-  guarded by the `enable_grpc_v1_compat` branch) + the re-export at
-  `crates/platform/proximadb-api/src/lib.rs:42`.
+  ❌ **NOT deletable** — this dir is LIVE `/api/v2` code (see Reconciliation
+  2026-07-09); the original "delete" plan was based on a wrong premise.
+* **gRPC v1 services** — ✅ **already deleted** on `develop`:
+  `crates/platform/proximadb-api/src/grpc/v1/` (11 files) + the builder arm +
+  the `lib.rs:42` re-export are all gone (`grpc.rs:5-8` records it).
 * **v1_sunset middleware** (`src/network/middleware/v1_sunset.rs`) + its two mount
-  points in `rest/server.rs` — delete only **after** the REST default has been off
-  through a sunset window (it's redundant once `/api/v1` is gone and the flip has
-  been observed in prod).
+  points in `rest/server.rs` — ⏳ delete only **after** the REST default has been
+  off through a sunset window (metrics/access-log/SDK audit); it's the escape
+  hatch to re-enable `/api/v1` if a late caller appears. **Sole outstanding
+  REST-side action.**
 
 === Cross-references to update (real breakage, not the live root-crate ones)
 
@@ -118,18 +157,22 @@ traffic:
 
 == Sequenced execution (do NOT collapse into one change)
 
-. **REST default flip** — `v1_sunset.rs:65` `None => true` → `None => false`.
-  One line. Breaking (`410` on `/api/v1/*`). **Requires sign-off.** Observe in
+. ✅ **DONE (#814, `9c9b0466`)** — **REST default flip** — `v1_sunset.rs:65`
+  `None => true` → `None => false`. Breaking (`410` on `/api/v1/*`). Observe in
   prod for the sunset window; revert is trivial if unexpected traffic appears.
-. **Relocate deprecation-header utility** (prerequisite above) — additive,
-  non-breaking, can land before or with step 3.
-. **Hard-delete REST v1 adapters** — remove `crates/platform/proximadb-api/src/rest/v1/`
-  after the window; repoint `handlers.rs:13`.
-. **Hard-delete gRPC v1 services** — remove `grpc/v1/` + builder arm + `lib.rs:42`
-  re-export; rewrite the one integration test.
-. **Remove v1_sunset middleware** + mount points (last; only after the flip is
-  proven safe — it's the escape hatch to re-enable `/api/v1` if a late caller
-  appears).
+. ✅ **DONE** — **Relocate deprecation-header utility** (prerequisite above) —
+  additive, non-breaking; moved to `proximadb_api::rest::deprecation`,
+  `handlers.rs:13` repointed.
+. ❌ **INVALIDATED — DO NOT EXECUTE** — **Hard-delete REST v1 adapters**: the
+  target `crates/platform/proximadb-api/src/rest/v1/` is LIVE `/api/v2` code (see
+  Reconciliation 2026-07-09). Deleting breaks the build + removes `/api/v2`
+  routes. A module rename is TD-104.
+. ✅ **ALREADY COMPLETE on `develop`** — **Hard-delete gRPC v1 services**:
+  `grpc/v1/` + builder arm + `lib.rs:42` re-export were already removed
+  (pre-existing); `grpc.rs:5-8` records it.
+. ⏳ **GATED (sole outstanding REST action)** — **Remove v1_sunset middleware** +
+  mount points (last; only after the flip is proven safe through a sunset window
+  — metrics/access-log/SDK audit — it's the escape hatch to re-enable `/api/v1`).
 . Each step = its own PR, CI-green (incl. `--features cluster` server-bin build +
   the v1-proto ratchet, which must not regress).
 

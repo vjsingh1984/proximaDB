@@ -2,6 +2,7 @@
 //!
 //! HTTP/JSON API handlers via Axum framework.
 
+pub mod deprecation;
 pub mod errors;
 pub mod state;
 pub mod v1;
