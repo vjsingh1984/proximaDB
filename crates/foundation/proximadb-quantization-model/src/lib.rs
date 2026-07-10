@@ -629,3 +629,55 @@ impl QuantizationMethod for UnifiedQuantizationLevel {
         }
     }
 }
+
+// ============================================================================
+// Quantized data types (moved from the modality kernel — Slice D pre-extraction).
+// Foundation-pure (Vec<u8> + the UnifiedQuantizationLevel above + primitive
+// metadata). Shared by storage (data-type refs) + the kernel. Pre-extracting them
+// here makes the upcoming StorageQuantizationEnginePort facade-FREE (the port's
+// return types are these foundation types, not modality types).
+// ============================================================================
+
+/// Metadata for quantized vectors
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct QuantEngineQuantizationMetadata {
+    /// Reference to codebook (for PQ)
+    pub codebook_id: Option<String>,
+    /// Scale factor (for scalar/uniform)
+    pub scale: Option<f32>,
+    /// Offset (for scalar/uniform)
+    pub offset: Option<f32>,
+    /// Original vector norm (useful for some metrics)
+    pub norm: Option<f32>,
+}
+
+/// Backwards-compat alias for [`QuantEngineQuantizationMetadata`].
+pub type QuantizationMetadata = QuantEngineQuantizationMetadata;
+
+/// Quantized vector representation
+#[derive(Debug, Clone)]
+pub struct QuantizedVector {
+    /// The quantized data
+    pub data: Vec<u8>,
+    /// Quantization level used
+    pub quantization_level: UnifiedQuantizationLevel,
+    /// Additional metadata (scale, offset, codebook reference)
+    pub metadata: QuantEngineQuantizationMetadata,
+}
+
+/// Common quantized data structure for storage
+#[derive(Debug, Clone)]
+pub struct StorageQuantizedData {
+    /// Vector ID
+    pub id: String,
+    /// Primary quantization (e.g., PQ codes for ranking)
+    pub primary: Option<QuantizedVector>,
+    /// Filter quantization (e.g., binary sketch for filtering)
+    pub filter: Option<QuantizedVector>,
+    /// Fast quantization (e.g., INT8 for quick distance)
+    pub fast: Option<QuantizedVector>,
+    /// Original dimension
+    pub dimension: usize,
+    /// Metadata about quantization quality
+    pub metadata: QuantizationMetadata,
+}

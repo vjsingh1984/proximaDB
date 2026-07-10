@@ -44,7 +44,6 @@
 
 use anyhow::{Context, Result};
 use proximadb_storage_ports::QuantizationEnginePort;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::debug;
 
@@ -1786,37 +1785,13 @@ impl UnifiedQuantizationEngine {
     }
 }
 
-/// Quantized vector representation
-#[derive(Debug, Clone)]
-pub struct QuantizedVector {
-    /// The quantized data
-    pub data: Vec<u8>,
-
-    /// Quantization level used
-    pub quantization_level: UnifiedQuantizationLevel,
-
-    /// Additional metadata (scale, offset, codebook reference)
-    pub metadata: QuantEngineQuantizationMetadata,
-}
-
-/// Backwards-compat alias for [`QuantEngineQuantizationMetadata`].
-pub type QuantizationMetadata = QuantEngineQuantizationMetadata;
-
-/// Metadata for quantized vectors
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct QuantEngineQuantizationMetadata {
-    /// Reference to codebook (for PQ)
-    pub codebook_id: Option<String>,
-
-    /// Scale factor (for scalar/uniform)
-    pub scale: Option<f32>,
-
-    /// Offset (for scalar/uniform)
-    pub offset: Option<f32>,
-
-    /// Original vector norm (useful for some metrics)
-    pub norm: Option<f32>,
-}
+// Slice D pre-extraction: QuantizedVector + QuantEngineQuantizationMetadata + the
+// QuantizationMetadata alias now live in foundation `proximadb-quantization-model`
+// (foundation-pure: Vec<u8> + UnifiedQuantizationLevel + primitive metadata).
+// Re-exported here so this crate's public API + internal construction are unchanged.
+pub use proximadb_quantization_model::{
+    QuantEngineQuantizationMetadata, QuantizationMetadata, QuantizedVector,
+};
 
 /// In-memory codebook store for testing
 pub struct InMemoryCodebookStore {

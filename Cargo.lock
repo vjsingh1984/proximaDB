@@ -7304,6 +7304,7 @@ dependencies = [
  "dashmap",
  "proximadb-distance-kernel",
  "proximadb-hardware",
+ "proximadb-quantization-model",
  "proximadb-quantization-types",
  "proximadb-storage-ports",
  "proximadb-vector",

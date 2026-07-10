@@ -25,6 +25,7 @@ tracing = { workspace = true }
 proximadb-hardware = { workspace = true }
 proximadb-vector = { workspace = true }
 proximadb-quantization-types = { workspace = true }
+proximadb-quantization-model = { workspace = true }
 proximadb-distance-kernel = { workspace = true }
 # Downward dep (modality→storage-ports): the kernel impls QuantizationEnginePort
 # so storage can depend on the port trait, not on this concrete modality crate.

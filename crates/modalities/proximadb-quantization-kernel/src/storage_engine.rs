@@ -69,27 +69,10 @@ impl Default for StorageQuantizationConfig {
     }
 }
 
-/// Common quantized data structure for storage
-#[derive(Debug, Clone)]
-pub struct StorageQuantizedData {
-    /// Vector ID
-    pub id: String,
-
-    /// Primary quantization (e.g., PQ codes for ranking)
-    pub primary: Option<QuantizedVector>,
-
-    /// Filter quantization (e.g., binary sketch for filtering)
-    pub filter: Option<QuantizedVector>,
-
-    /// Fast quantization (e.g., INT8 for quick distance)
-    pub fast: Option<QuantizedVector>,
-
-    /// Original dimension
-    pub dimension: usize,
-
-    /// Metadata about quantization quality
-    pub metadata: QuantizationMetadata,
-}
+// Slice D pre-extraction: StorageQuantizedData now lives in foundation
+// `proximadb-quantization-model` (foundation-pure). Re-exported here so this crate's
+// public API + internal usage are unchanged.
+pub use proximadb_quantization_model::StorageQuantizedData;
 
 /// Search stages for progressive resolution
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
