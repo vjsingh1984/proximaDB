@@ -8,6 +8,13 @@
 
 Accepted
 
+*Forward link (2026-07-01):* ADR-047 operationalizes this ADR's "xCatalog is the schema
+authority" / "table-collection interchangeable" stance: it makes the canonical `ProximaType`-native
+`CatalogTableSchema` the single persisted schema authority for collections *and* tables, retires the
+narrow `CollectionConfig` schema fields to a legacy read-adapter, and fixes the `StoredSchema`
+non-text-column drop on round-trip. The `collection ≡ table` equivalence is formalized there (no
+rename). See ADR-047 Phases 1 and 5.
+
 == Context
 
 ProximaDB is moving from a vector-first database into a stacked storage platform where the primary

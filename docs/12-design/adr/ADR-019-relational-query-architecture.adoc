@@ -8,6 +8,13 @@
 
 Accepted
 
+*Forward link (2026-07-01):* the "drop the relational backing-collection shim" decision (S5, §Decision
+and §Implications) is scoped and sequenced by ADR-047. ADR-047 first makes the canonical
+`ProximaType`-native `CatalogTableSchema` the persisted schema authority (so a table can have
+zero-or-more vector columns and arbitrary typed columns) and *then* — Phase 5 / `TD-TBL-5` — removes
+the dimension=1 backing-collection shim entirely. The shim cannot be dropped before ADR-047 Phases 1-4
+land.
+
 == Context
 
 ADR-018 captures the multi-phase pgwire/SQL parity roadmap. Phase 1
