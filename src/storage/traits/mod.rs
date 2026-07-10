@@ -593,6 +593,30 @@ pub trait UnifiedStorageFormat: Send + Sync {
     /// Engine-specific statistics collection (required)
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>>;
 
+    /// Point lookup: fetch records by IDs (single or batch). One filesystem
+    /// scan for all IDs (batch-efficient — unlike calling `vector_by_id` N
+    /// times). Returns the records found (missing IDs are simply absent — no
+    /// error). Carries the typed identity for the ADR-031 typed data path.
+    ///
+    /// Default: delegates to `vector_by_id` per-ID (backward-compatible but
+    /// NOT batch-efficient). Override in engines that have batch format-layer
+    /// methods (`batch_read_by_ids`, `query_by_ids`) for real efficiency.
+    async fn point_lookup(
+        &self,
+        collection_id: &str,
+        base_path: &str,
+        ids: &[String],
+        _identity: Option<crate::core::stable_id::CollectionIdentity>,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        let mut results = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(rec) = self.vector_by_id(collection_id, base_path, id).await? {
+                results.push(rec);
+            }
+        }
+        Ok(results)
+    }
+
     /// Retrieve a specific vector by ID from storage (required)
     /// This method should search across all storage layers (memtable, SSTables, Parquet files)
     ///
