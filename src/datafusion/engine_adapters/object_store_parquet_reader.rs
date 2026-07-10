@@ -730,6 +730,31 @@ impl ObjectStoreParquetTable {
         any.then_some(total)
     }
 
+    /// TD-OLAP-4 metadata elision: the footer-derived numeric `(min, max,
+    /// null_count)` for a column, reduced (min-of-mins / max-of-maxes / Σ nulls)
+    /// across ALL row-group splits — the input for eliding unfiltered
+    /// `MIN`/`MAX`/`COUNT(col)` without a scan. Returns `None` unless EVERY split
+    /// carries numeric bounds for the column (a partially-covered column would
+    /// understate the range), or the bounds are non-numeric (truncated string
+    /// stats → the caller scans, matching DataFusion's `Inexact` guard).
+    pub fn aggregate_numeric_bounds(&self, col: &str) -> Option<(f64, f64, u64)> {
+        if self.splits.is_empty() {
+            return None;
+        }
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        let mut nulls: u64 = 0;
+        for split in &self.splits {
+            let cb = split.statistics.column_stats.get(col)?;
+            nulls = nulls.saturating_add(cb.null_count);
+            let mn = cb.min.as_ref()?.as_f64()?;
+            let mx = cb.max.as_ref()?.as_f64()?;
+            lo = lo.min(mn);
+            hi = hi.max(mx);
+        }
+        Some((lo, hi, nulls))
+    }
+
     /// Count row-group splits that survive the given filters. Uses min/max
     /// zone-maps plus (bloom semi-join default-ON; disable with
     /// `PROXIMADB_DF_BLOOM_SEMIJOIN=0`) any split key
@@ -1364,6 +1389,33 @@ mod tests {
         let table = ObjectStoreParquetTable::open(&location).await.unwrap();
         assert_eq!(table.split_count(), 2);
         assert_eq!(table.schema().fields().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn aggregate_numeric_bounds_reduces_min_max_across_row_groups() {
+        // Two row groups: x = [1,2] and [100,101]. Footer elision must reduce to
+        // min-of-mins=1, max-of-maxes=101 across BOTH splits (not just the first).
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        write_two_row_group_parquet(&data_dir.join("part-0.parquet"));
+
+        let location = format!("file://{}", tmp.path().display());
+        let table = ObjectStoreParquetTable::open(&location).await.unwrap();
+        assert_eq!(table.split_count(), 2, "two row groups");
+
+        let (min, max, nulls) = table.aggregate_numeric_bounds("x").expect("numeric bounds");
+        assert_eq!(min, 1.0, "min-of-mins across both row groups");
+        assert_eq!(max, 101.0, "max-of-maxes across both row groups");
+        assert_eq!(nulls, 0);
+        // A truncated-stats / string column reduces to numeric `None` (→ scan).
+        assert!(
+            table.aggregate_numeric_bounds("k").is_none()
+                || table.aggregate_numeric_bounds("k").unwrap().0.is_nan(),
+            "string column has no numeric bounds"
+        );
+        // A missing column → None (never a wrong bound).
+        assert!(table.aggregate_numeric_bounds("nope").is_none());
     }
 
     #[tokio::test]

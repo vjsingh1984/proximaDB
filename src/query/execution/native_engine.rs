@@ -186,6 +186,37 @@ pub(crate) async fn run_native_over_parquet(
     Ok(Some(record_batches_to_pipeline_result(schema, &batches)))
 }
 
+/// Metadata-elision run path (TD-OLAP-4): execute a single source operator that
+/// already emits the final result row (footer `MIN`/`MAX`/`COUNT`), recording the
+/// `native-vectorized` compute + route sample like the scan path. No plan lowering
+/// — the aggregate is elided, so there is no scan and no HashAggregate.
+pub(crate) async fn run_native_source_only(
+    source: Box<dyn proximadb_execution_contracts::ExecutionOperator>,
+) -> Result<Option<ExecutionPipelineResult>, ExecutionError> {
+    let output_schema = source.output_schema();
+    let started = std::time::Instant::now();
+    let batches = match super::native_ops::execute_source(source).await {
+        Ok(b) => b,
+        Err(reason) => {
+            tracing::debug!(
+                target: "proximadb::native_vectorized",
+                %reason,
+                "native metadata-elision failed; keeping DataFusion result"
+            );
+            return Ok(None);
+        }
+    };
+    crate::observability::io_trace::record_compute_ms(
+        "native-vectorized",
+        started.elapsed().as_millis() as u64,
+    );
+    crate::observability::io_trace::record_route("vectorized", "NativeVectorized");
+    Ok(Some(record_batches_to_pipeline_result(
+        output_schema.as_ref(),
+        &batches,
+    )))
+}
+
 /// Streaming variant — not yet wired (the materialized path serves Phase 2).
 pub async fn try_vectorized_stream(
     _physical: &PhysicalPlan,

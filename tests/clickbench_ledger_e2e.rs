@@ -338,6 +338,12 @@ fn duckdb_sql(sql: &str, parquet: &str) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "ClickBench single-node ledger (TD-OLAP-4) — advisory; needs CLICKBENCH_PARQUET"]
 async fn clickbench_ledger() {
+    // Dev-only: honor RUST_LOG so the native-shadow probe's decline reasons are
+    // visible during a diagnostic capture (no-op if RUST_LOG is unset).
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_test_writer()
+        .try_init();
     let parquet = match std::env::var("CLICKBENCH_PARQUET") {
         Ok(p) => p,
         Err(_) => {

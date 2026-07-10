@@ -383,23 +383,32 @@ impl ExecutionOperator for HashAggregateOperator {
         true
     }
 
-    async fn execute(&self, input: BatchStream) -> Result<BatchStream, ExecutionError> {
-        // Collect the entire input (blocking).
+    async fn execute(&self, mut input: BatchStream) -> Result<BatchStream, ExecutionError> {
         let group_by = self.group_by.clone();
         let aggregates = self.aggregates.clone();
         let output_schema = self.output_schema.clone();
 
-        let collected: Vec<RecordBatch> = input
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .collect::<Result<_, _>>()?;
+        // Vectorized fast path for UNGROUPED scalar aggregates (no GROUP BY): fold
+        // Arrow aggregate kernels per batch instead of the row-wise accumulator
+        // loop. This is the dominant OLAP scalar-aggregate shape and was measured
+        // 3-31x slower row-wise at 100M (TD-OLAP-4). Grouped aggregation keeps the
+        // row-wise path below (high-cardinality GROUP BY is routed to DataFusion).
+        if group_by.is_empty() {
+            return ungrouped_vectorized(input, &aggregates, output_schema).await;
+        }
 
         // group key → (group_by values, per-agg accumulators)
         let mut groups: std::collections::HashMap<GroupKey, (Vec<ProximaValue>, Vec<Accumulator>)> =
             std::collections::HashMap::new();
 
-        for batch in &collected {
+        // Stream the input: fold each batch into the hash state, then DROP it —
+        // bounded memory (one batch in flight + the group state), never
+        // materializing the whole input. Collecting all input first OOMs at scale
+        // (a full-width 100M scan is tens of GB). Group state is still unbounded in
+        // the number of distinct groups — high-cardinality GROUP BY is routed away
+        // upstream until a spilling aggregate lands.
+        while let Some(batch) = input.next().await {
+            let batch = batch?;
             let nrows = batch.num_rows();
             for r in 0..nrows {
                 // Build the group key from the group_by columns.
@@ -463,6 +472,215 @@ impl ExecutionOperator for HashAggregateOperator {
             .map_err(|e| ExecutionError::Execution(format!("aggregate output: {e}")))?;
         Ok(Box::pin(futures::stream::once(async move { Ok(batch) })))
     }
+}
+
+// =========================================================================
+// Vectorized UNGROUPED aggregation (TD-OLAP-4): Arrow kernels per batch instead
+// of the row-wise Accumulator loop — the 3-31x compute win on scalar aggregates.
+// Finalization semantics MATCH the row-wise `Accumulator::finalize` exactly
+// (Count→Int64, Sum→Float64|Null, Avg→Float64|Null, Min/Max→value|Null).
+// =========================================================================
+
+/// Running state for one ungrouped aggregate, folded across batches.
+enum UngroupedState {
+    Count { n: i64 },
+    Sum { sum: f64, any: bool },
+    Avg { sum: f64, n: i64 },
+    Min { cur: Option<ProximaValue> },
+    Max { cur: Option<ProximaValue> },
+}
+
+impl UngroupedState {
+    fn new(kind: AggKind) -> Self {
+        match kind {
+            AggKind::Count => Self::Count { n: 0 },
+            AggKind::Sum => Self::Sum {
+                sum: 0.0,
+                any: false,
+            },
+            AggKind::Avg => Self::Avg { sum: 0.0, n: 0 },
+            AggKind::Min => Self::Min { cur: None },
+            AggKind::Max => Self::Max { cur: None },
+        }
+    }
+
+    fn update(&mut self, arg: Option<usize>, batch: &RecordBatch) -> Result<(), ExecutionError> {
+        let need_col = || {
+            arg.ok_or_else(|| {
+                ExecutionError::Execution("SUM/AVG/MIN/MAX requires a column argument".into())
+            })
+        };
+        match self {
+            // COUNT(*): every row; COUNT(col): non-null rows (null_count from the array).
+            Self::Count { n } => match arg {
+                None => *n += batch.num_rows() as i64,
+                Some(c) => {
+                    let col = batch.column(c);
+                    *n += (col.len() - col.null_count()) as i64;
+                }
+            },
+            Self::Sum { sum, any } => {
+                let (s, cnt) = array_sum_count(batch.column(need_col()?))?;
+                *sum += s;
+                if cnt > 0 {
+                    *any = true;
+                }
+            }
+            Self::Avg { sum, n } => {
+                let (s, cnt) = array_sum_count(batch.column(need_col()?))?;
+                *sum += s;
+                *n += cnt;
+            }
+            Self::Min { cur } => {
+                if let Some(v) = array_min_max_proxima(batch.column(need_col()?), false)? {
+                    match cur {
+                        None => *cur = Some(v),
+                        Some(c) if compare_values(&v, c) == std::cmp::Ordering::Less => {
+                            *cur = Some(v)
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Self::Max { cur } => {
+                if let Some(v) = array_min_max_proxima(batch.column(need_col()?), true)? {
+                    match cur {
+                        None => *cur = Some(v),
+                        Some(c) if compare_values(&v, c) == std::cmp::Ordering::Greater => {
+                            *cur = Some(v)
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn finalize(&self) -> ProximaValue {
+        match self {
+            Self::Count { n } => ProximaValue::Int64(*n),
+            Self::Sum { sum, any } => {
+                if *any {
+                    ProximaValue::Float64(*sum)
+                } else {
+                    ProximaValue::Null
+                }
+            }
+            Self::Avg { sum, n } => {
+                if *n == 0 {
+                    ProximaValue::Null
+                } else {
+                    ProximaValue::Float64(sum / (*n as f64))
+                }
+            }
+            Self::Min { cur } | Self::Max { cur } => cur.clone().unwrap_or(ProximaValue::Null),
+        }
+    }
+}
+
+/// Vectorized SUM + non-null count for one column: cast to `Float64` (matching the
+/// row-wise `numeric_to_f64` semantics) then the Arrow `sum` kernel.
+fn array_sum_count(col: &dyn arrow::array::Array) -> Result<(f64, i64), ExecutionError> {
+    let casted = arrow::compute::cast(col, &DataType::Float64)
+        .map_err(|e| ExecutionError::Execution(format!("SUM/AVG cast to f64: {e}")))?;
+    let a = casted
+        .as_any()
+        .downcast_ref::<arrow::array::Float64Array>()
+        .ok_or_else(|| ExecutionError::Execution("f64 downcast".into()))?;
+    let s = arrow::compute::kernels::aggregate::sum(a).unwrap_or(0.0);
+    let n = (a.len() - a.null_count()) as i64;
+    Ok((s, n))
+}
+
+/// Vectorized MIN (or MAX) of one column as a `ProximaValue`, preserving the
+/// column type (type-dispatched Arrow `min`/`max` kernel). `None` on an all-null
+/// or empty batch.
+fn array_min_max_proxima(
+    col: &dyn arrow::array::Array,
+    want_max: bool,
+) -> Result<Option<ProximaValue>, ExecutionError> {
+    use arrow::array::*;
+    use arrow::compute::kernels::aggregate as agg;
+    macro_rules! mm {
+        ($ArrTy:ty, $Prox:path) => {{
+            let a = col
+                .as_any()
+                .downcast_ref::<$ArrTy>()
+                .ok_or_else(|| ExecutionError::Execution("MIN/MAX downcast".into()))?;
+            let r = if want_max { agg::max(a) } else { agg::min(a) };
+            Ok(r.map($Prox))
+        }};
+    }
+    match col.data_type() {
+        DataType::Int8 => mm!(Int8Array, ProximaValue::Int8),
+        DataType::Int16 => mm!(Int16Array, ProximaValue::Int16),
+        DataType::Int32 => mm!(Int32Array, ProximaValue::Int32),
+        DataType::Int64 => mm!(Int64Array, ProximaValue::Int64),
+        DataType::UInt8 => mm!(UInt8Array, ProximaValue::UInt8),
+        DataType::UInt16 => mm!(UInt16Array, ProximaValue::UInt16),
+        DataType::UInt32 => mm!(UInt32Array, ProximaValue::UInt32),
+        DataType::UInt64 => mm!(UInt64Array, ProximaValue::UInt64),
+        DataType::Float32 => mm!(Float32Array, ProximaValue::Float32),
+        DataType::Float64 => mm!(Float64Array, ProximaValue::Float64),
+        DataType::Boolean => {
+            let a = col
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .ok_or_else(|| ExecutionError::Execution("MIN/MAX downcast".into()))?;
+            let r = if want_max {
+                agg::max_boolean(a)
+            } else {
+                agg::min_boolean(a)
+            };
+            Ok(r.map(ProximaValue::Boolean))
+        }
+        DataType::Utf8 => {
+            let a = col
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| ExecutionError::Execution("MIN/MAX downcast".into()))?;
+            let r = if want_max {
+                agg::max_string(a)
+            } else {
+                agg::min_string(a)
+            };
+            Ok(r.map(|s| ProximaValue::String(s.to_string())))
+        }
+        other => Err(ExecutionError::NotImplemented(format!(
+            "vectorized MIN/MAX for {other:?}"
+        ))),
+    }
+}
+
+/// Fold the ungrouped aggregates over the input stream with Arrow kernels, then
+/// emit the single result row. Bounded memory (one batch + O(#aggregates) state).
+async fn ungrouped_vectorized(
+    mut input: BatchStream,
+    aggregates: &[AggSpec],
+    output_schema: SchemaRef,
+) -> Result<BatchStream, ExecutionError> {
+    let mut states: Vec<UngroupedState> = aggregates
+        .iter()
+        .map(|s| UngroupedState::new(s.kind))
+        .collect();
+    while let Some(batch) = input.next().await {
+        let batch = batch?;
+        for (spec, st) in aggregates.iter().zip(states.iter_mut()) {
+            st.update(spec.arg, &batch)?;
+        }
+    }
+    let vals: Vec<ProximaValue> = states.iter().map(|s| s.finalize()).collect();
+    let arrays: Vec<ArrayRef> = vals
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            build_column_array(std::slice::from_ref(v), output_schema.field(i).data_type())
+        })
+        .collect::<Result<_, _>>()?;
+    let batch = RecordBatch::try_new(output_schema, arrays)
+        .map_err(|e| ExecutionError::Execution(format!("aggregate output: {e}")))?;
+    Ok(Box::pin(futures::stream::once(async move { Ok(batch) })))
 }
 
 /// Per-group, per-aggregate accumulator. Mirrors the Volcano `Accumulator`'s NULL
@@ -1260,6 +1478,20 @@ fn agg_output_schema(
 
 /// Drain a [`LoweredPipeline`] to materialized `RecordBatch`es, applying the
 /// trailing `Limit` (offset + optional count) row-wise at the end.
+/// Execute a single source operator as a one-op pipeline (no plan lowering) —
+/// used by the metadata-elision path, where the source already emits the final
+/// result row (TD-OLAP-4). Drains the source to `RecordBatch`es.
+pub(crate) async fn execute_source(
+    source: Box<dyn ExecutionOperator>,
+) -> Result<Vec<RecordBatch>, ExecutionError> {
+    let lowered = LoweredPipeline {
+        pipeline: Pipeline::new(vec![source]),
+        build_pipeline: None,
+        limit: None,
+    };
+    execute_pipeline(&lowered).await
+}
+
 pub(crate) async fn execute_pipeline(
     lowered: &LoweredPipeline,
 ) -> Result<Vec<RecordBatch>, ExecutionError> {
