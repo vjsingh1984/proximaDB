@@ -37,7 +37,7 @@ pub use pgwire::{PostgresServer, PostgresSession};
 pub use grpc::{GrpcApiHandler, GrpcRequest, GrpcResponse};
 pub use rest::{RestApiHandler, RestRequest, RestResponse};
 
-pub use rest::v1::{
+pub use rest::canonical::{
     AnalyticsHandler, AqlHandler, CatalogHandler, CollectionHandler, DocumentHandler,
     DocumentQueryHandler, EntityHandler, GraphHandler, GraphTraversalHandler, HybridSearchHandler,
     LogsHandler, MetricsHandler, ProgressiveSearchHandler, VectorHandler,

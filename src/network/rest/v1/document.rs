@@ -62,7 +62,7 @@ pub struct CreateDocumentRequest {
 
 /// REST request body for document-collection creation (legacy root-crate copy).
 ///
-/// Mirrors `proximadb_api::rest::v1::document::CreateDocumentCollectionRequestBody`
+/// Mirrors `proximadb_api::rest::canonical::document::CreateDocumentCollectionRequestBody`
 /// — Phase 9 will delete this file. The `…Body` suffix distinguishes the
 /// REST shape from the proto-generated `crate::proto::v1::CreateDocumentCollectionRequest`
 /// (the gRPC/wire type) already used in `crate::network::rest::v1::handlers`.

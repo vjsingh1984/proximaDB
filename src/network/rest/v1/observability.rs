@@ -32,7 +32,7 @@ pub struct ObservabilityApiState {
 
 /// REST request body for observability-namespace creation (legacy root-crate copy).
 ///
-/// Mirrors `proximadb_api::rest::v1::observability::CreateNamespaceRequestBody`
+/// Mirrors `proximadb_api::rest::canonical::observability::CreateNamespaceRequestBody`
 /// — Phase 9 will delete this file. The `…Body` suffix distinguishes the
 /// REST shape from the proto-generated `crate::proto::v1::CreateNamespaceRequest`.
 #[derive(Debug, Deserialize)]

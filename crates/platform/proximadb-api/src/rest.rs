@@ -2,10 +2,10 @@
 //!
 //! HTTP/JSON API handlers via Axum framework.
 
+pub mod canonical;
 pub mod deprecation;
 pub mod errors;
 pub mod state;
-pub mod v1;
 pub mod v2;
 
 use serde::Serialize;
@@ -14,18 +14,18 @@ use serde::Serialize;
 pub use errors::{RestError, RestResult};
 pub use state::{RestAppState, TenantContext};
 
-// Re-export v1 handler types and state types
-pub use v1::{
+// Re-export canonical REST handler + state types
+pub use canonical::{
     AnalyticsHandler, AqlHandler, CatalogHandler, CollectionHandler, DocumentHandler,
     DocumentQueryHandler, EntityHandler, GraphHandler, GraphTraversalHandler, HybridSearchHandler,
     LogsHandler, MetricsHandler, ProgressiveSearchHandler, UnifiedQueryRestState, VectorHandler,
 };
-pub use v1::{
+pub use canonical::{
     AnalyticsRestState, DocumentRestState, GraphRestState, HybridRestState, ObservabilityRestState,
 };
 
-// Re-export v1 router builders
-pub use v1::{
+// Re-export canonical REST router builders
+pub use canonical::{
     create_analytics_router, create_document_router, create_graph_router, create_health_router,
     create_hybrid_search_router, create_multimodal_router, create_observability_router,
 };
