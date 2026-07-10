@@ -71,12 +71,19 @@ pub fn native_shadow_enabled() -> bool {
 /// are unsupported (Phase 2: only `Project`/`Filter`/`Limit` over `Values`) OR
 /// execution hit an issue — in every such case the caller falls back to the
 /// Volcano. The experimental, default-off path never fails a query; correctness
-/// is policed by the shadow-comparison harness (TD-OLAP-10 §"Shadow comparison").
+/// is policed by the native-vs-Volcano shadow-comparison harness
+/// ([`super::native_shadow`], ADR-054 §7 Phase 0.5), which auto-demotes a query
+/// shape after a divergence — demoted shapes decline here.
 pub async fn try_vectorized(
     physical: &PhysicalPlan,
     scan_ctx: Option<&super::native_ops::ScanCtx>,
 ) -> Result<Option<ExecutionPipelineResult>, ExecutionError> {
     if !native_vectorized_enabled() {
+        return Ok(None);
+    }
+    // A prior shadow run may have demoted this query shape after observing a
+    // native-vs-Volcano divergence (ADR-054 §7 Phase 0.5). Skip native for it.
+    if super::native_shadow::is_shape_demoted(physical) {
         return Ok(None);
     }
     // Any decline (unsupported shape) or failure (execution error) → Volcano.
