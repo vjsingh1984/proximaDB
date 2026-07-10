@@ -1859,6 +1859,218 @@ mod tests {
         assert_eq!(anti_k, vec![1, 3]);
     }
 
+    fn null_key_batch(
+        k: &[Option<i64>],
+        v: &[&str],
+        k_name: &str,
+        v_name: &str,
+    ) -> (RecordBatch, SchemaRef) {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(k_name, DataType::Int64, true),
+            Field::new(v_name, DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int64Array::from(k.to_vec())),
+                Arc::new(StringArray::from(v.to_vec())),
+            ],
+        )
+        .unwrap();
+        (batch, schema)
+    }
+
+    fn int_key_batch(k: &[i64], name: &str) -> (RecordBatch, SchemaRef) {
+        let schema = Arc::new(Schema::new(vec![Field::new(name, DataType::Int64, false)]));
+        let batch =
+            RecordBatch::try_new(schema.clone(), vec![Arc::new(Int64Array::from(k.to_vec()))])
+                .unwrap();
+        (batch, schema)
+    }
+
+    #[tokio::test]
+    async fn hash_join_null_keys_never_match() {
+        // build (right): k=[Some(2), None]; probe (left): k=[Some(2), None, Some(3)].
+        // A NULL key must never match in ANY kind: NULL build keys are absent from
+        // the map, and a NULL probe key short-circuits to "no match". (TD-OLAP-11
+        // "highest risk" — asserted across all six hash-join kinds.)
+        let out3 = || {
+            Arc::new(Schema::new(vec![
+                Field::new("kl", DataType::Int64, true),
+                Field::new("vl", DataType::Utf8, true),
+                Field::new("vr", DataType::Utf8, true),
+            ]))
+        };
+        let out2 = || {
+            Arc::new(Schema::new(vec![
+                Field::new("kl", DataType::Int64, true),
+                Field::new("vl", DataType::Utf8, true),
+            ]))
+        };
+        let cols3 = || {
+            vec![
+                JoinColumn::Probe(0),
+                JoinColumn::Probe(1),
+                JoinColumn::Build(1),
+            ]
+        };
+        let cols2 = || vec![JoinColumn::Probe(0), JoinColumn::Probe(1)];
+        let bp = || null_key_batch(&[Some(2), None], &["x", "n"], "kr", "vr");
+        let pp = || null_key_batch(&[Some(2), None, Some(3)], &["a", "b", "c"], "kl", "vl");
+        let rows = |bs: Vec<RecordBatch>| bs.iter().map(|b| b.num_rows()).sum::<usize>();
+
+        // Inner: only k=2 matches (NULL never matches).
+        let (b, bs) = bp();
+        let (p, ps) = pp();
+        assert_eq!(
+            rows(run_join(b, bs, p, ps, cols3(), JoinKind::Inner, out3()).await),
+            1
+        );
+        // Left: matched (k=2) + 2 unmatched probe rows (NULL-key, k=3) → 3.
+        let (b, bs) = bp();
+        let (p, ps) = pp();
+        assert_eq!(
+            rows(run_join(b, bs, p, ps, cols3(), JoinKind::Left, out3()).await),
+            3
+        );
+        // Semi: probe rows with a match → only k=2 → 1.
+        let (b, bs) = bp();
+        let (p, ps) = pp();
+        assert_eq!(
+            rows(run_join(b, bs, p, ps, cols2(), JoinKind::Semi, out2()).await),
+            1
+        );
+        // Anti: probe rows without a match → NULL-key row + k=3 → 2.
+        let (b, bs) = bp();
+        let (p, ps) = pp();
+        assert_eq!(
+            rows(run_join(b, bs, p, ps, cols2(), JoinKind::Anti, out2()).await),
+            2
+        );
+        // Right: matched (k=2) + drained unmatched build (the NULL-key build row) → 2.
+        let (b, bs) = bp();
+        let (p, ps) = pp();
+        assert_eq!(
+            rows(run_join(b, bs, p, ps, cols3(), JoinKind::Right, out3()).await),
+            2
+        );
+        // Full: matched (1) + unmatched probe (2) + unmatched build (1) → 4.
+        let (b, bs) = bp();
+        let (p, ps) = pp();
+        assert_eq!(
+            rows(run_join(b, bs, p, ps, cols3(), JoinKind::Full, out3()).await),
+            4
+        );
+    }
+
+    #[tokio::test]
+    async fn hash_join_right_and_full_drain_unmatched_build() {
+        // build (right): k=[2,3,4]; probe (left): k=[1,2,3].
+        let out = || {
+            Arc::new(Schema::new(vec![
+                Field::new("kl", DataType::Int64, true),
+                Field::new("vl", DataType::Utf8, true),
+                Field::new("vr", DataType::Utf8, true),
+            ]))
+        };
+        let cols = || {
+            vec![
+                JoinColumn::Probe(0),
+                JoinColumn::Probe(1),
+                JoinColumn::Build(1),
+            ]
+        };
+
+        // Right: matched (2↔x),(3↔y) + unmatched build {4→z}, probe cols NULL → 3.
+        let (b, bs) = two_col_batch(&[2, 3, 4], &["x", "y", "z"], "kr", "vr");
+        let (p, ps) = two_col_batch(&[1, 2, 3], &["a", "b", "c"], "kl", "vl");
+        let right = run_join(b, bs, p, ps, cols(), JoinKind::Right, out()).await;
+        assert_eq!(right.iter().map(|b| b.num_rows()).sum::<usize>(), 3);
+        // Exactly one row has a NULL probe key — the drained unmatched build row,
+        // which still carries its own value (vr = "z").
+        let mut null_probe_rows = 0;
+        for batch in &right {
+            let kl = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap();
+            let vr = batch
+                .column(2)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+            for r in 0..batch.num_rows() {
+                if kl.is_null(r) {
+                    null_probe_rows += 1;
+                    assert_eq!(vr.value(r), "z");
+                }
+            }
+        }
+        assert_eq!(null_probe_rows, 1);
+
+        // Full: matched (2,3) + unmatched probe {1} + unmatched build {4} → 4.
+        let (b, bs) = two_col_batch(&[2, 3, 4], &["x", "y", "z"], "kr", "vr");
+        let (p, ps) = two_col_batch(&[1, 2, 3], &["a", "b", "c"], "kl", "vl");
+        let full = run_join(b, bs, p, ps, cols(), JoinKind::Full, out()).await;
+        assert_eq!(full.iter().map(|b| b.num_rows()).sum::<usize>(), 4);
+    }
+
+    #[tokio::test]
+    async fn hash_join_bloom_prefilter_direction() {
+        // The bloom is built over BUILD keys and tested against PROBE keys. With
+        // ≥ BLOOM_MIN_KEYS build keys the build op constructs the bloom; probe keys
+        // disjoint from the build set must all miss (TD-OLAP-11: bloom over {build},
+        // probe {disjoint} → all miss), and PRESENT probe keys must still match —
+        // no false drops (the dangerous failure mode if the bloom were built over
+        // probe keys and tested against build keys instead).
+        let build_keys: Vec<i64> = (0..1500).collect(); // > 1024 → bloom is built
+        let probe_keys: Vec<i64> = vec![5, 100000, 100, 100001, 900]; // 3 present, 2 absent
+
+        let (build_batch, build_schema) = int_key_batch(&build_keys, "kr");
+        let (probe_batch, probe_schema) = int_key_batch(&probe_keys, "kl");
+
+        let table_slot = Arc::new(OnceLock::new());
+        let build_op = HashJoinBuildOperator {
+            build_keys: vec![0],
+            build_schema: build_schema.clone(),
+            table_slot: table_slot.clone(),
+            bloom_enabled: true,
+        };
+        let probe_op = HashJoinProbeOperator {
+            table_slot,
+            probe_keys: vec![0],
+            output_columns: vec![JoinColumn::Probe(0)],
+            kind: JoinKind::Inner,
+            output_schema: Arc::new(Schema::new(vec![Field::new("kl", DataType::Int64, true)])),
+        };
+        let lowered = LoweredPipeline {
+            pipeline: Pipeline::new(vec![
+                Box::new(MemoryScanSource::new(vec![probe_batch], probe_schema)),
+                Box::new(probe_op),
+            ]),
+            build_pipeline: Some(Pipeline::new(vec![
+                Box::new(MemoryScanSource::new(vec![build_batch], build_schema)),
+                Box::new(build_op),
+            ])),
+            limit: None,
+        };
+        let batches = execute_pipeline(&lowered).await.unwrap();
+        let mut matched: Vec<i64> = Vec::new();
+        for batch in &batches {
+            let kl = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap();
+            for r in 0..batch.num_rows() {
+                matched.push(kl.value(r));
+            }
+        }
+        matched.sort_unstable();
+        assert_eq!(matched, vec![5, 100, 900]);
+    }
+
     // --- Join routing through lower_physical (ADR-054 Phase 3 routing) ---
 
     #[tokio::test]

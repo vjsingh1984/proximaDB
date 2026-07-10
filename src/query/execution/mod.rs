@@ -15,6 +15,7 @@ pub mod native_engine;
 pub mod native_join_ops;
 pub mod native_ops;
 pub mod native_scan;
+pub mod native_shadow;
 pub mod olap_delta_merge;
 pub mod plan_cache;
 pub mod planner;

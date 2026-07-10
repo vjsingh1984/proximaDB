@@ -291,6 +291,34 @@ impl NativeVolcanoEngine {
         // Default-off; any decline or failure falls back to the Volcano inside
         // `try_vectorized` (the experimental path never fails a query).
         if let Some(result) = super::native_engine::try_vectorized(&physical).await? {
+            // Shadow mode (ADR-054 §7 Phase 0.5, TD-OLAP-11 §Gate): run the
+            // Volcano reference too, compare result multisets, and on divergence
+            // auto-demote the shape + fail safe to the reference. Default-off.
+            if super::native_shadow::native_join_shadow_enabled() {
+                let mut ref_exec = build_executor(
+                    physical.clone(),
+                    factory,
+                    &VolcanoExecutionContext::default(),
+                )
+                .map_err(|e| ExecutionError::Execution(format!("shadow build_executor: {e}")))?;
+                ref_exec
+                    .open()
+                    .await
+                    .map_err(|e| ExecutionError::Execution(format!("shadow open: {e}")))?;
+                let ref_schema = ref_exec.schema().clone();
+                let ref_rows = collect(&mut *ref_exec)
+                    .await
+                    .map_err(|e| ExecutionError::Execution(format!("shadow scan: {e}")))?;
+                let reference = ExecutionPipelineResult {
+                    schema: ref_schema,
+                    rows: ref_rows,
+                };
+                if super::native_shadow::shadow_compare_and_record(&physical, &result, &reference)
+                    .diverged
+                {
+                    return finalize_row_limit(reference, &controls);
+                }
+            }
             return finalize_row_limit(result, &controls);
         }
         let mut exec = build_executor(physical, factory, &VolcanoExecutionContext::default())
