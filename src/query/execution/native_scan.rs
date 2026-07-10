@@ -21,6 +21,8 @@ use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use proximadb_block_format::{ColumnRole, PaxBlockReader};
 use proximadb_execution_contracts::{BatchStream, ExecutionError, ExecutionOperator};
+use proximadb_relational_types::Expr;
+use proximadb_storage_common::format_splits::{ScalarPredicate, ScalarValue};
 use proximadb_storage_common::pax_block::{PaxSegmentScanner, ScanPredicate};
 
 use crate::storage::formats::FileSplit;
@@ -28,13 +30,20 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// A scan operator that reads PAX-backed storage segments and emits Arrow
 /// `RecordBatch`es into the native engine's `BatchStream`. Mirrors
-/// `PaxSplitReader::decode_segment` but without DataFusion types.
+/// `PaxSplitReader::decode_segment` but without DataFusion types. Performs
+/// block-level zone-map pruning via translated `ScalarPredicate`s (the
+/// scan-avoidance lever — TD-OLAP-3's static-pushdown equivalent for the
+/// native path, ADR-052's dominant cost term).
 #[derive(Debug)]
 pub(crate) struct PaxScanOperator {
     splits: Vec<FileSplit>,
     filesystem_factory: Arc<FilesystemFactory>,
     name_to_col_id: HashMap<String, i32>,
     output_schema: SchemaRef,
+    /// Per-column predicates for block-level zone-map pruning (AND-semantics):
+    /// a block is skipped iff ANY predicate provably excludes it. Translated
+    /// from `PhysicalPlan::Scan.predicate` (Expr) at construction time.
+    prune_predicates: Vec<(String, ScalarPredicate)>,
 }
 
 impl PaxScanOperator {
@@ -43,12 +52,14 @@ impl PaxScanOperator {
         filesystem_factory: Arc<FilesystemFactory>,
         name_to_col_id: HashMap<String, i32>,
         output_schema: SchemaRef,
+        prune_predicates: Vec<(String, ScalarPredicate)>,
     ) -> Self {
         Self {
             splits,
             filesystem_factory,
             name_to_col_id,
             output_schema,
+            prune_predicates,
         }
     }
 }
@@ -64,15 +75,14 @@ impl ExecutionOperator for PaxScanOperator {
         let splits = self.splits.clone();
         let name_to_col_id = self.name_to_col_id.clone();
         let schema = self.output_schema.clone();
+        let prune_predicates = self.prune_predicates.clone();
 
-        // Eagerly read + decode all segments (MVP; lazy per-segment streaming is a
-        // follow-on for large multi-segment collections).
         let mut batches = Vec::new();
         for split in &splits {
             let bytes = factory.read(&split.file_path).await.map_err(|e| {
                 ExecutionError::Execution(format!("PAX scan read {}: {e}", split.file_path))
             })?;
-            let decoded = decode_pax_segment(&bytes, &name_to_col_id, &schema)?;
+            let decoded = decode_pax_segment(&bytes, &name_to_col_id, &schema, &prune_predicates)?;
             batches.extend(decoded);
         }
 
@@ -82,19 +92,26 @@ impl ExecutionOperator for PaxScanOperator {
     }
 }
 
-/// Decode one PAX segment file's bytes into `RecordBatch`es — one per block.
-/// Mirrors `PaxSplitReader::decode_segment` but with `ExecutionError` (zero DF).
+/// Decode one PAX segment file's bytes into `RecordBatch`es — one per surviving
+/// block. Block-level zone-map pruning via `prune_predicates` (AND-semantics:
+/// a block is skipped iff ANY predicate provably excludes it).
 fn decode_pax_segment(
     bytes: &[u8],
     name_to_col_id: &HashMap<String, i32>,
     schema: &SchemaRef,
+    prune_predicates: &[(String, ScalarPredicate)],
 ) -> Result<Vec<RecordBatch>, ExecutionError> {
-    let predicate = ScanPredicate::default(); // MVP: no block-level pruning (slice 2)
+    let predicate = ScanPredicate::default(); // tenant/time wired separately
     let mut scanner = PaxSegmentScanner::from_bytes(bytes.to_vec(), predicate)
         .map_err(|e| ExecutionError::Execution(format!("PAX segment open: {e}")))?;
 
     let mut batches = Vec::new();
     while let Some(reader) = scanner.next_block() {
+        // Block-level zone-map pruning (ADR-052 scan-avoidance): skip blocks
+        // provably excluded by ANY conjunctive predicate.
+        if block_pruned(&reader, name_to_col_id, prune_predicates) {
+            continue;
+        }
         let arrays: Vec<ArrayRef> = schema
             .fields()
             .iter()
@@ -105,6 +122,107 @@ fn decode_pax_segment(
         batches.push(batch);
     }
     Ok(batches)
+}
+
+/// AND-semantics block prune: returns `true` if ANY conjunctive predicate
+/// provably excludes the block. Unrecognized column/operator ⇒ no prune
+/// (conservative — correctness preserved).
+fn block_pruned(
+    reader: &PaxBlockReader,
+    name_to_col_id: &HashMap<String, i32>,
+    predicates: &[(String, ScalarPredicate)],
+) -> bool {
+    predicates.iter().any(|(name, pred)| {
+        let Some(&cid) = name_to_col_id.get(name) else {
+            return false; // unknown column → cannot prune
+        };
+        !block_may_contain(reader, cid, pred)
+    })
+}
+
+/// `true` iff the block MAY contain a row satisfying `pred` (i.e. NOT pruned).
+/// Conservative: any unrecognized shape returns `true` (cannot prune).
+/// Mirrors `pax_adapter::block_may_contain`.
+fn block_may_contain(reader: &PaxBlockReader, cid: i32, pred: &ScalarPredicate) -> bool {
+    use ScalarPredicate as P;
+    use ScalarValue as V;
+    match pred {
+        P::Equal(V::Int64(v)) => reader.column_may_contain_i64(cid, *v),
+        P::Equal(V::Float64(v)) => reader.column_range_overlaps_f64(cid, *v, *v),
+        P::Equal(V::String(s)) => reader.column_may_contain_str(cid, s),
+        P::GreaterThan(V::Int64(v)) | P::GreaterThanOrEqual(V::Int64(v)) => {
+            reader.column_range_overlaps_i64(cid, *v, i64::MAX)
+        }
+        P::LessThan(V::Int64(v)) | P::LessThanOrEqual(V::Int64(v)) => {
+            reader.column_range_overlaps_i64(cid, i64::MIN, *v)
+        }
+        P::GreaterThan(V::Float64(v)) | P::GreaterThanOrEqual(V::Float64(v)) => {
+            reader.column_range_overlaps_f64(cid, *v, f64::INFINITY)
+        }
+        P::LessThan(V::Float64(v)) | P::LessThanOrEqual(V::Float64(v)) => {
+            reader.column_range_overlaps_f64(cid, f64::NEG_INFINITY, *v)
+        }
+        _ => true, // unrecognized → conservative (no prune)
+    }
+}
+
+/// Translate a WHERE-clause `Expr` (AND-conjunction of `BinaryOp(op, Column,
+/// Literal)`) into per-column `ScalarPredicate`s for block-level zone-map
+/// pruning. Conservative: unrecognized shapes produce no predicates (no prune).
+pub(crate) fn expr_to_prune_predicates(expr: &Expr) -> Vec<(String, ScalarPredicate)> {
+    use ScalarPredicate as P;
+    use ScalarValue as V;
+    use proximadb_data_model::ProximaValue;
+    use proximadb_relational_types::BinaryOp;
+
+    fn collect(expr: &Expr, out: &mut Vec<(String, ScalarPredicate)>) {
+        match expr {
+            Expr::BinaryOp {
+                op: BinaryOp::And,
+                left,
+                right,
+            } => {
+                collect(left.as_ref(), out);
+                collect(right.as_ref(), out);
+            }
+            Expr::BinaryOp { op, left, right } => {
+                // Expect: Column(name) <op> Literal(value)  OR  Literal <op> Column
+                let (name, value, flipped) = match (left.as_ref(), right.as_ref()) {
+                    (Expr::Column(c), Expr::Literal { value, .. }) => {
+                        (&c.name, value.clone(), false)
+                    }
+                    (Expr::Literal { value, .. }, Expr::Column(c)) => {
+                        (&c.name, value.clone(), true)
+                    }
+                    _ => return, // not a column-vs-literal comparison → skip
+                };
+                let proxima_to_scalar = |v: ProximaValue| match v {
+                    ProximaValue::Int64(x) => Some(V::Int64(x)),
+                    ProximaValue::Float64(x) => Some(V::Float64(x)),
+                    ProximaValue::String(s) => Some(V::String(s)),
+                    _ => None,
+                };
+                let Some(sv) = proxima_to_scalar(value) else {
+                    return; // unsupported scalar type → skip
+                };
+                // Map the BinaryOp to ScalarPredicate, flipping for literal-on-left.
+                let pred = match (op, flipped) {
+                    (BinaryOp::Eq, _) => P::Equal(sv),
+                    (BinaryOp::NotEq, _) => P::NotEqual(sv),
+                    (BinaryOp::Lt, false) | (BinaryOp::Gt, true) => P::LessThan(sv),
+                    (BinaryOp::LtEq, false) | (BinaryOp::GtEq, true) => P::LessThanOrEqual(sv),
+                    (BinaryOp::Gt, false) | (BinaryOp::Lt, true) => P::GreaterThan(sv),
+                    (BinaryOp::GtEq, false) | (BinaryOp::LtEq, true) => P::GreaterThanOrEqual(sv),
+                    _ => return, // unsupported op → skip
+                };
+                out.push((name.clone(), pred));
+            }
+            _ => {} // non-binary expr → skip
+        }
+    }
+    let mut out = Vec::new();
+    collect(expr, &mut out);
+    out
 }
 
 /// Decode one column by name → PAX column_id → typed stripe → Arrow array.
@@ -207,7 +325,7 @@ mod tests {
         );
         let (schema, map) = created_at_schema();
         let split = FileSplit::new_block(path.to_str().unwrap().to_string(), 0, 0, 0, 0);
-        let scan = PaxScanOperator::new(vec![split], fs, map, schema.clone());
+        let scan = PaxScanOperator::new(vec![split], fs, map, schema.clone(), Vec::new());
 
         // Execute the scan.
         let empty: BatchStream = Box::pin(futures::stream::empty());

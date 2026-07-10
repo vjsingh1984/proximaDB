@@ -1009,6 +1009,7 @@ fn walk(plan: &PhysicalPlan, scan_ctx: Option<&ScanCtx>) -> Result<Walked, Execu
         PhysicalPlan::Scan {
             table,
             output_schema,
+            predicate,
             ..
         } => {
             // TD-OLAP-4: a parquet source injected via `lower_physical_over_source`
@@ -1023,7 +1024,7 @@ fn walk(plan: &PhysicalPlan, scan_ctx: Option<&ScanCtx>) -> Result<Walked, Execu
                     limit: None,
                 });
             }
-            use crate::query::execution::native_scan::PaxScanOperator;
+            use crate::query::execution::native_scan::{PaxScanOperator, expr_to_prune_predicates};
             let ctx = scan_ctx.ok_or_else(|| {
                 ExecutionError::NotImplemented(
                     "native scan requires a ScanCtx (no storage context threaded)".into(),
@@ -1036,11 +1037,17 @@ fn walk(plan: &PhysicalPlan, scan_ctx: Option<&ScanCtx>) -> Result<Walked, Execu
                 ))
             })?;
             let arrow_schema = relational_schema_to_arrow(output_schema);
+            // Translate the WHERE predicate → block-level zone-map prune predicates.
+            let prune_predicates = predicate
+                .as_ref()
+                .map(expr_to_prune_predicates)
+                .unwrap_or_default();
             let source = Box::new(PaxScanOperator::new(
                 info.splits.clone(),
                 ctx.filesystem_factory.clone(),
                 info.name_to_col_id.clone(),
                 arrow_schema.clone(),
+                prune_predicates,
             ));
             Ok(Walked {
                 source,
