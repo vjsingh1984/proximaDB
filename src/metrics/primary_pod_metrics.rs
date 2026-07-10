@@ -68,7 +68,7 @@ lazy_static! {
 
     /// Catalog-mirror failures from the Slice 5b.2 REST write-through.
     /// The `reason` label matches the `MirrorFailure::label()` enum
-    /// discriminator in `src/network/rest/v1/primary_pod.rs`:
+    /// discriminator in `src/network/rest/canonical/primary_pod.rs`:
     ///
     /// * `"no_default_catalog"` — bootstrap; rare in steady state.
     /// * `"catalog_error"` — backend rejected the call (e.g. table

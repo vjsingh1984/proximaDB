@@ -110,7 +110,7 @@ pub struct PostgresServer {
 /// every `DdlService` it constructs. Cloning is cheap (three `Arc`s).
 #[derive(Clone)]
 pub struct PgwireRankPipeline {
-    pub services: Arc<crate::network::rest::v1::rank::RankServices>,
+    pub services: Arc<crate::network::rest::canonical::rank::RankServices>,
     pub store: Arc<dyn crate::services::RankProfileStore>,
     /// Durable SQL user-function catalog (UDF F5) so `CREATE FUNCTION` over
     /// pgwire persists into the same store boot recovery replays.
@@ -178,7 +178,7 @@ impl PostgresServer {
     /// `SharedServices.rank_services` + `SharedServices.rank_profile_store`.
     pub fn with_rank_pipeline(
         mut self,
-        services: Arc<crate::network::rest::v1::rank::RankServices>,
+        services: Arc<crate::network::rest::canonical::rank::RankServices>,
         store: Arc<dyn crate::services::RankProfileStore>,
         function_store: Arc<dyn crate::services::FunctionStore>,
     ) -> Self {

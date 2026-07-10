@@ -35,8 +35,8 @@ use proximadb_query::results::UnifiedRecord;
 use proximadb_query_fusion::FusionStrategy;
 
 use crate::core::search::{ComparisonOperator, FilterExpression};
-use crate::network::rest::v1::rank::HybridSearchBackend;
-use crate::network::rest::v1::rank_backend::ProductionHybridBackend;
+use crate::network::rest::canonical::rank::HybridSearchBackend;
+use crate::network::rest::canonical::rank_backend::ProductionHybridBackend;
 use crate::query::aql::sources::vector::VectorAqlSource;
 use crate::query::aql::{
     AqlFrom, AqlPredicate, AqlQuery, AqlResult, AqlSource, AqlValue, AuditContext, AuditFrame,

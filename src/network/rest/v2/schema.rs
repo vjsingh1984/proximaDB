@@ -42,7 +42,7 @@ use utoipa::ToSchema;
 
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
-use crate::network::rest::v1::handlers::AppState;
+use crate::network::rest::canonical::handlers::AppState;
 use proximadb_data_model::ProximaType;
 use proximadb_runtime::{
     CollectionSchemaColumn, CollectionSchemaEnforcement, CollectionSchemaMetadata,

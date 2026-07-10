@@ -2,7 +2,7 @@
 //! per-collection BM25 index and the shared `VectorOpsPort`.
 //!
 //! Commit 2 of 5 in the R-7c production `RankServices` wiring. The trait
-//! it implements lives in `rest::v1::rank` and is consumed by
+//! it implements lives in `rest::canonical::rank` and is consumed by
 //! `HybridCoordinatorAdapter`. By implementing it over the two surfaces
 //! we already construct in `SharedServices` (the shared
 //! `HybridFullTextIndexMap` and the runtime `VectorOpsPort`), we avoid
@@ -18,7 +18,7 @@ use proximadb_rank_core::{RankError, RankResult};
 
 use crate::core::search::hybrid::{BM25Result, TextHighlight, VectorResult};
 use crate::network::hybrid_search::HybridFullTextIndexMap;
-use crate::network::rest::v1::rank::HybridSearchBackend;
+use crate::network::rest::canonical::rank::HybridSearchBackend;
 use crate::proto::proximadb_v1::{SearchQuery, VectorSearchRequest};
 
 /// Recall pool size used when the underlying coordinator does not pass a

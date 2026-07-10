@@ -29,7 +29,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::network::rest::v1::handlers::AppState;
+use crate::network::rest::canonical::handlers::AppState;
 use crate::storage::collection_pinning::{CollectionPinTarget, PinState};
 
 /// PATCH body. Two shapes supported:

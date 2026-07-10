@@ -351,7 +351,7 @@ pub struct SharedServices {
     /// Built around `ProductionHybridBackend` so retrieval lights up
     /// automatically as soon as ingestion populates per-collection BM25 +
     /// vector state.
-    pub rank_services: Arc<crate::network::rest::v1::rank::RankServices>,
+    pub rank_services: Arc<crate::network::rest::canonical::rank::RankServices>,
 
     /// Durable rank-profile catalog backed by the canonical WAL spine.
     ///
@@ -2769,7 +2769,7 @@ async fn build_rank_services(
     fulltext_indexes: crate::network::hybrid_search::HybridFullTextIndexMap,
     canonical_wal_appender: Option<Arc<crate::services::FramedTableWalAppender>>,
 ) -> (
-    Arc<crate::network::rest::v1::rank::RankServices>,
+    Arc<crate::network::rest::canonical::rank::RankServices>,
     Arc<dyn crate::services::RankProfileStore>,
 ) {
     use crate::services::record_store::TableWalAppender;
@@ -2901,12 +2901,12 @@ async fn build_rank_services_with_appender(
     store_appender: Arc<dyn crate::services::record_store::TableWalAppender>,
     recovered_entries: &[proximadb_storage_common::CanonicalWalEntry],
 ) -> (
-    Arc<crate::network::rest::v1::rank::RankServices>,
+    Arc<crate::network::rest::canonical::rank::RankServices>,
     Arc<dyn crate::services::RankProfileStore>,
 ) {
     use crate::core::search::hybrid::FusionStrategy;
-    use crate::network::rest::v1::rank::{HybridCoordinatorAdapter, RankServices};
-    use crate::network::rest::v1::rank_backend::ProductionHybridBackend;
+    use crate::network::rest::canonical::rank::{HybridCoordinatorAdapter, RankServices};
+    use crate::network::rest::canonical::rank_backend::ProductionHybridBackend;
     use crate::observability::rank_metrics::init_rank_pipeline_metrics;
     use crate::services::CanonicalWalRankProfileStore;
 
@@ -2961,7 +2961,7 @@ async fn build_rank_services_with_appender(
 }
 
 fn recover_profile(
-    services: &crate::network::rest::v1::rank::RankServices,
+    services: &crate::network::rest::canonical::rank::RankServices,
     profile: &crate::services::StoredRankProfile,
 ) -> Result<(), String> {
     use proximadb_rank_profile::{CompiledRankProfile, dsl::parse_single};

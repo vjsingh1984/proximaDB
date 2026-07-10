@@ -1,7 +1,7 @@
 //! gRPC handler for the multi-phase ranking pipeline (R-7c.4a.1).
 //!
 //! This is the gRPC twin of the REST handler in
-//! [`crate::network::rest::v1::rank::rank_search_dispatch`]. Both share the
+//! [`crate::network::rest::canonical::rank::rank_search_dispatch`]. Both share the
 //! same in-process `handle_rank_search` core — only the wire format and
 //! the error envelope differ. Keeping the bridge thin and centralised
 //! means future profile / phase changes flow to both protocols without
@@ -28,7 +28,7 @@ use proximadb_kernel::{PhaseId, ScoreComponent as KernelScoreComponent, ScoreVec
 use proximadb_proto::ranking as proto_ranking;
 use proximadb_rank_core::RankError;
 
-use crate::network::rest::v1::rank::{
+use crate::network::rest::canonical::rank::{
     PhaseOverride, RankOverrides, RankSearchRequest, RankSearchResponse, RankServices,
     ScoreVectorDto, ScoredHitDto, handle_rank_search_with_metrics,
 };
@@ -167,7 +167,7 @@ fn kernel_to_proto_component(c: KernelScoreComponent) -> proto_ranking::ScoreCom
 }
 
 // =========================================================================
-// Error mapping — keep in lockstep with rest::v1::rank::rank_search_dispatch
+// Error mapping — keep in lockstep with rest::canonical::rank::rank_search_dispatch
 // =========================================================================
 
 fn rank_error_to_status(e: RankError) -> tonic::Status {
@@ -192,7 +192,7 @@ fn _shape_lock(sv: &ScoreVector) -> PhaseId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::rest::v1::rank::{
+    use crate::network::rest::canonical::rank::{
         CandidateBatch, CandidateProvider, MockRangeCandidateProvider,
     };
     use proximadb_kernel::ScoreComponent;

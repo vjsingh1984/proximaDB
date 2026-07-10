@@ -313,7 +313,7 @@ pub struct TraversalResults {
 /// with the proto `proximadb_v1::TraversalStats` wire form
 /// (execution_time_microseconds: u64) and with the proximadb-query
 /// `HybridTraverseStats` operator-level stats. Renamed to match the
-/// existing pattern in `src/network/rest/v1/graph.rs::RestTraversalStats`
+/// existing pattern in `src/network/rest/canonical/graph.rs::RestTraversalStats`
 /// (legacy root-crate REST DTO with the same field set) so the Phase 9
 /// migration deletes-rather-than-renames.
 #[derive(Debug, Clone, Serialize, Deserialize)]

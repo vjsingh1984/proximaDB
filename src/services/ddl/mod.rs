@@ -469,7 +469,7 @@ pub struct DdlService {
     /// Optional rank-services singleton. When present, `CREATE RANK PROFILE`
     /// also compiles + installs the profile into the live registry so SQL
     /// `RERANK(...)` sees it immediately without waiting for the next boot.
-    rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+    rank_services: Option<Arc<crate::network::rest::canonical::rank::RankServices>>,
     /// Optional durable function catalog (F5). When present, `CREATE FUNCTION`
     /// persists the definition so it is re-registered after a restart; absent
     /// for embedded/test paths (the in-process registration still happens).
@@ -519,7 +519,7 @@ impl DdlService {
     /// requiring a server restart.
     pub fn with_rank_services(
         mut self,
-        services: Arc<crate::network::rest::v1::rank::RankServices>,
+        services: Arc<crate::network::rest::canonical::rank::RankServices>,
     ) -> Self {
         self.rank_services = Some(services);
         self
@@ -1327,7 +1327,7 @@ impl DdlService {
         // non-fp32 collection. The property name matches what the
         // proto / REST handler expose. Same string-label dispatch as
         // `apply_proto_enum_workarounds` in
-        // `crates/platform/proximadb-api/src/rest/v1/catalog.rs` so
+        // `crates/platform/proximadb-api/src/rest/canonical/catalog.rs` so
         // mixed-protocol clients see consistent semantics. Unknown
         // values fall back to Fp32 with a warn-level trace rather
         // than failing the CREATE — the legacy fp32 path is the
@@ -2842,10 +2842,10 @@ mod tests {
 
     fn rank_pipeline_for_tests() -> (
         Arc<dyn crate::services::RankProfileStore>,
-        Arc<crate::network::rest::v1::rank::RankServices>,
+        Arc<crate::network::rest::canonical::rank::RankServices>,
     ) {
         use crate::core::search::hybrid::FusionStrategy;
-        use crate::network::rest::v1::rank::{
+        use crate::network::rest::canonical::rank::{
             HybridCoordinatorAdapter, MockRangeCandidateProvider, RankServices,
         };
         use crate::services::record_store::TableWalAppender;
@@ -2861,7 +2861,7 @@ mod tests {
         // `with_rank_services` builder has a working stub to attach. The
         // candidates aren't exercised by these DDL tests; only the registry
         // + blueprint factory matter.
-        let candidates: Arc<dyn crate::network::rest::v1::rank::CandidateProvider> =
+        let candidates: Arc<dyn crate::network::rest::canonical::rank::CandidateProvider> =
             Arc::new(MockRangeCandidateProvider::default());
         // The HybridCoordinatorAdapter isn't used here but matches the
         // production wiring shape so the test stays close to production.
@@ -2876,7 +2876,7 @@ mod tests {
     struct NoopHybridBackend;
 
     #[async_trait::async_trait]
-    impl crate::network::rest::v1::rank::HybridSearchBackend for NoopHybridBackend {
+    impl crate::network::rest::canonical::rank::HybridSearchBackend for NoopHybridBackend {
         async fn bm25_search(
             &self,
             _collection: &str,

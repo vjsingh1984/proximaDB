@@ -75,7 +75,7 @@ use crate::graph::engines::GraphEngine;
 use crate::graph::rag::{
     KHopSubgraphBuilder, RagBudget, RagPipeline, RagQuery, Subgraph, VectorNodeRetriever,
 };
-use crate::network::rest::v1::handlers::AppState;
+use crate::network::rest::canonical::handlers::AppState;
 use crate::proto::proximadb_v1::{Edge, Node};
 use crate::proto::proximadb_v1::{EmbeddingVersion, PropertyValue};
 

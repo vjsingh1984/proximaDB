@@ -60,7 +60,7 @@ pub use schema::*;
 
 use axum::Router;
 
-use super::v1::handlers::AppState;
+use super::canonical::handlers::AppState;
 
 /// Create the v2 API router with all endpoints
 ///

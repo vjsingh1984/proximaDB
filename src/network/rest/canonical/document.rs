@@ -65,7 +65,7 @@ pub struct CreateDocumentRequest {
 /// Mirrors `proximadb_api::rest::canonical::document::CreateDocumentCollectionRequestBody`
 /// — Phase 9 will delete this file. The `…Body` suffix distinguishes the
 /// REST shape from the proto-generated `crate::proto::v1::CreateDocumentCollectionRequest`
-/// (the gRPC/wire type) already used in `crate::network::rest::v1::handlers`.
+/// (the gRPC/wire type) already used in `crate::network::rest::canonical::handlers`.
 #[derive(Debug, Deserialize)]
 pub struct CreateDocumentCollectionRequestBody {
     /// Collection name

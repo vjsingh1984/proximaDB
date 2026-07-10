@@ -31,7 +31,7 @@ use crate::errors::{ApiError, ApiResult};
 use crate::network::arrow_ipc::ProximaFlightService;
 use crate::network::auth::middleware::DataPlaneCapability;
 use crate::network::middleware::tenant::TenantContext;
-use crate::network::rest::v1::handlers::AppState;
+use crate::network::rest::canonical::handlers::AppState;
 use crate::services::{
     WriteDurabilityRequirement, WriteIntent, WriteLaneRouter, WriteOperationKind,
 };
