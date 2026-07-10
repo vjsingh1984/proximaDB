@@ -93,10 +93,11 @@ an error — never silently truncate, per TD-XMODAL-9); thresholds are **ratchet
 | Same candidate ids + same reranked order as whole-segment on every gate query. Non-negotiable.
 
 | **Flip gate — bytes-moved reduction** (S3)
-| ≥ 40% on the S0 cold-tier trace (initial target; **finalised from the S0 headroom measurement** — trace-first, not asserted)
+| ≥ 40% on the S0/S1b trace. **S1a pure-plan headroom measured 2026-07-09: 83.7%** (striped 40,626 / whole 249,735 bytes over a 16-block, 1k×128-d segment; `pax_striped_plan` test) — well above the bar, so the gate holds at ≥ 40%.
 | Only flip default-ON when the measured `io_trace.bytes_read` reduction on a representative selective
-  cold-tier trace clears this bar. If S0 shows less headroom, the target is revised DOWN with the evidence
-  (never flip on an unmeasured claim — ADR-052 observe→ingest→act).
+  cold-tier trace (physical, from S1b) clears this bar. The S1a number is the *pure-plan* estimate that
+  validated the build; the flip still gates on the S1b physical trace (never flip on an unmeasured claim —
+  ADR-052 observe→ingest→act).
 
 | **No-GET-amplification** (S3)
 | `range_gets(striped) ≤ range_gets(whole)·K`, K=8 (coalesced)
