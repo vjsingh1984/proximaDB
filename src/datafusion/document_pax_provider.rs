@@ -815,4 +815,139 @@ mod tests {
             vec!["d1"]
         );
     }
+
+    /// Gate 4 — the measured pushdown byte gate (ADR-052 invariant 4). A real multi-block PAX
+    /// segment with a shredded `amount` column is scanned through the provider under
+    /// `PROXIMADB_DF_PAX_RANGED`; a selective `amount >= N` predicate must (a) issue ranged GETs
+    /// and read materially FEWER bytes than the whole segment (blocks pruned off the wire), and
+    /// (b) return exactly the matching rows (the residual `FilterExec` guarantees exactness). Run
+    /// under nextest so the `PROXIMADB_DF_PAX_RANGED` OnceLock is process-isolated.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ranged_pushdown_prunes_bytes_and_matches() {
+        use proximadb_block_format::{BlockCompression, BlockMode};
+        use proximadb_data_model::ProximaType;
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        use proximadb_storage_common::pax_block::PaxSegmentWriter;
+
+        // SAFETY (edition 2024): under nextest each test owns its process, so this env mutation is
+        // single-threaded and read before any other `pax_ranged_read_enabled()` call in-process.
+        unsafe { std::env::set_var("PROXIMADB_DF_PAX_RANGED", "1") };
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let seg_dir = dir.path().join("segments");
+        std::fs::create_dir_all(&seg_dir).expect("segments dir");
+        let seg_path = seg_dir.join("data.pax");
+
+        // 600 doc-shaped records with a monotonically increasing `amount`, shredded at USER_BASE,
+        // packed into many small blocks (2 KiB target) so each block owns a contiguous amount
+        // range that Stage-B footer pruning can exclude.
+        let n = 600usize;
+        let mut writer = PaxSegmentWriter::new(
+            &seg_path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "docs",
+            0,
+            1,
+            Some(2048),
+        )
+        .with_shred_spec(vec![("amount".to_string(), col_id::USER_BASE)]);
+        for i in 0..n {
+            let mut props: ProximaTree = HashMap::new();
+            props.insert(
+                "amount".to_string(),
+                ProximaTreeNode::Value(ProximaValue::Int64(i as i64)),
+            );
+            let ts = 1_700_000_000_000_000_000 + i as i64;
+            let mut r = ProximaRecord {
+                oid: format!("v{i:04}"),
+                tenant_id: "t".into(),
+                created_at_ns: ts,
+                updated_at_ns: ts,
+                valid_to_ns: Some(i64::MAX),
+                props,
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: 8,
+                values: EmbeddingValues::Fp32(vec![i as f32 * 0.001; 8]),
+                ..Default::default()
+            });
+            writer.add_record(&r).expect("add record");
+        }
+        let meta = writer.finish().expect("finish segment");
+        assert!(
+            meta.block_count >= 2,
+            "need multiple blocks to prune; got {}",
+            meta.block_count
+        );
+        let file_len = std::fs::metadata(&seg_path).expect("seg meta").len();
+
+        let base = format!("file://{}/", dir.path().display());
+        let ff = crate::storage::persistence::filesystem::FilesystemFactory::create_default_arc()
+            .await
+            .expect("filesystem factory");
+        let columns = vec![PaxColumnDesc {
+            sql_name: "amount".into(),
+            col_id: col_id::USER_BASE,
+            data_type: ProximaType::Int64,
+        }];
+        let route: Arc<dyn RecordRoutePort> = Arc::new(FakeRoute {
+            base: base.clone(),
+            columns: columns.clone(),
+            unflushed: Vec::new(),
+        });
+        let provider = DocumentPaxPushdownProvider::new(
+            route,
+            ff,
+            None,
+            "docs",
+            PaxScanInputs {
+                base_path: base,
+                columns,
+            },
+        );
+
+        let ctx = SessionContext::new();
+        ctx.register_table("documents", Arc::new(provider)).unwrap();
+
+        let (rows, snap) = crate::observability::io_trace::scope(async {
+            let batches = ctx
+                .sql("SELECT id FROM documents WHERE amount >= 580 ORDER BY id")
+                .await
+                .unwrap()
+                .collect()
+                .await
+                .unwrap();
+            let mut ids = Vec::new();
+            for b in &batches {
+                if let Some(c) = b.column(0).as_any().downcast_ref::<StringArray>() {
+                    for i in 0..b.num_rows() {
+                        ids.push(c.value(i).to_string());
+                    }
+                }
+            }
+            (
+                ids,
+                crate::observability::io_trace::snapshot().expect("io_trace scope active"),
+            )
+        })
+        .await;
+
+        // Correctness/parity: exactly amounts 580..=599 survive the residual exact filter.
+        assert_eq!(rows.len(), 20, "amount>=580 ⇒ 20 rows, got {rows:?}");
+        assert_eq!(rows.first().map(String::as_str), Some("v0580"));
+        // Byte win: ranged GETs issued AND fewer bytes read than the whole segment.
+        assert!(
+            snap.range_gets > 0,
+            "expected ranged GETs, got {}",
+            snap.range_gets
+        );
+        assert!(
+            snap.bytes_read < file_len,
+            "pruned bytes_read {} must be < whole segment {file_len}",
+            snap.bytes_read
+        );
+    }
 }
