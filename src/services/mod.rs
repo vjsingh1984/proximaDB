@@ -178,6 +178,7 @@ pub mod collection;
 pub mod ddl;
 pub mod discovery;
 pub mod dml;
+pub mod document_service;
 pub mod embedding_drainer;
 pub mod entity_orchestrator;
 pub mod events;

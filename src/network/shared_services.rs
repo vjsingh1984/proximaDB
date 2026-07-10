@@ -1812,6 +1812,11 @@ impl SharedServices {
             "✅ SharedServices::new - DocumentService wired to canonical record route (ADR-009, gate default-OFF)"
         );
 
+        // ADR-055 P-DFSource: publish the document service as a process singleton so the DataFusion
+        // `documents(collection)` table function (registered per SessionContext) can read it. Mirrors
+        // the timeseries_service wiring; idempotent (first wins).
+        crate::services::document_service::set_document_service(document_service.clone());
+
         // ==================================================================================
         // Create UnifiedQueryFacade - single entry point for all query types
         // This consolidates the 5 parallel query paths into a single unified interface
