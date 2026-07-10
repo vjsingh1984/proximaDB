@@ -260,7 +260,7 @@ impl ProgressiveSearchExecutor {
                                         primary: None,
                                         filter: Some(QuantizedVector {
                                             data: binary_data,
-                                            quantization_level: crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Binary,
+                                            quantization_level: proximadb_quantization_model::UnifiedQuantizationLevel::Binary,
                                             metadata: crate::compute::quantization::QuantizationMetadata::default(),
                                         }),
                                         fast: None,
@@ -278,7 +278,7 @@ impl ProgressiveSearchExecutor {
                                         filter: None,
                                         fast: Some(QuantizedVector {
                                             data: int8_data,
-                                            quantization_level: crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Int8,
+                                            quantization_level: proximadb_quantization_model::UnifiedQuantizationLevel::Int8,
                                             metadata: crate::compute::quantization::QuantizationMetadata::default(),
                                         }),
                                         dimension: record.vector.len(),
@@ -297,9 +297,9 @@ impl ProgressiveSearchExecutor {
                                         id: record.id.clone(),
                                         primary: Some(QuantizedVector {
                                             data: pq_result,
-                                            quantization_level: crate::compute::quantization::types::UnifiedQuantizationLevel {
-                                                level_type: Some(crate::compute::quantization::types::QuantizationLevel::Pq(
-                                                    crate::compute::quantization::types::ProductQuantization {
+                                            quantization_level: proximadb_quantization_model::UnifiedQuantizationLevel {
+                                                level_type: Some(proximadb_quantization_model::QuantizationLevel::Pq(
+                                                    proximadb_quantization_model::ProductQuantization {
                                                         bits_per_code: 8,
                                                         num_subvectors: num_subvectors as i32,
                                                         codebook_id: None,
