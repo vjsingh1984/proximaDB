@@ -366,6 +366,7 @@ pub fn shape_class(shape: &QueryShape) -> String {
     for suffix in [
         shape.cardinality.class_suffix(),
         shape.partition_fanout.class_suffix(),
+        shape.operation_class.class_suffix(),
     ]
     .into_iter()
     .flatten()
@@ -1249,6 +1250,7 @@ mod tests {
             cardinality: CardinalityClass::Large,
             partition_fanout: PartitionFanout::Many,
             pax_backed: false,
+            operation_class: Default::default(),
         });
         assert_eq!(class, "olap/parquet/card=l/part=m");
         // A partially-known shape only appends the known suffix.
@@ -1870,6 +1872,7 @@ mod tests {
             cardinality: CardinalityClass::Large,
             partition_fanout: PartitionFanout::Many,
             pax_backed: false,
+            operation_class: Default::default(),
         });
         let small = shape_class(&QueryShape {
             engages_relational: true,
@@ -1877,6 +1880,7 @@ mod tests {
             cardinality: CardinalityClass::Small,
             partition_fanout: PartitionFanout::Single,
             pax_backed: false,
+            operation_class: Default::default(),
         });
         assert_ne!(big, coarse);
         assert_ne!(small, coarse);
@@ -1904,6 +1908,7 @@ mod tests {
             cardinality: CardinalityClass::Large,
             partition_fanout: PartitionFanout::Many,
             pax_backed: false,
+            operation_class: Default::default(),
         };
         let class = shape_class(&big);
         // Observe Native as confidently cheaper than DataFusion for THIS fine
