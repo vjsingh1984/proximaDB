@@ -957,9 +957,20 @@ async fn connect(server: &PgServer) -> Client {
     client
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+/// 8 MB stack — same fix as tpch_pgwire_e2e.rs (planner recursion on deep plans).
+#[test]
 #[ignore = "perf evidence-ledger harness (TD-OLAP-4) — advisory; run with --ignored --nocapture"]
-async fn tpc_perf_ledger() {
+fn tpc_perf_ledger() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_stack_size(8 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    rt.block_on(tpc_perf_ledger_inner());
+}
+
+async fn tpc_perf_ledger_inner() {
     let scale: f64 = std::env::var("TPC_PERF_SCALE")
         .ok()
         .and_then(|s| s.parse().ok())
