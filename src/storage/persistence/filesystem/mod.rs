@@ -1080,6 +1080,30 @@ impl FilesystemFactory {
         result
     }
 
+    /// Read a single byte range `[offset, offset+length)` from `url`. Convenience
+    /// over `get_filesystem(url).read_range(...)` mirroring [`Self::read`] — used by
+    /// the PAX-native ranged reader to fetch a segment's tail index and individual
+    /// surviving blocks without pulling the whole object (TD-DOC-PUSHDOWN-1).
+    pub async fn read_range(&self, url: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
+        let fs = self.get_filesystem(url)?;
+        let path = Self::resolve_path(url)?;
+        fs.read_range(&path, offset, length).await
+    }
+
+    /// Read multiple byte ranges from `url` in one batched call — the object-store
+    /// backend coalesces adjacent ranges into fewer GETs. Mirrors [`Self::read`];
+    /// the ranged PAX reader uses this to fetch all surviving blocks of a pruned
+    /// scan together.
+    pub async fn read_ranges(
+        &self,
+        url: &str,
+        ranges: Vec<std::ops::Range<u64>>,
+    ) -> FsResult<Vec<Vec<u8>>> {
+        let fs = self.get_filesystem(url)?;
+        let path = Self::resolve_path(url)?;
+        fs.read_ranges(&path, ranges).await
+    }
+
     pub async fn write(
         &self,
         url: &str,
