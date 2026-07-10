@@ -1,0 +1,124 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-DOC-PUSHDOWN-1: Document predicate/projection pushdown over the PAX scan source (ADR-055 P-Pushdown)
+
+[cols="1,3"]
+|===
+|Status|Open — **blocked-on / coordinated-with the OLAP PAX scan source** (TD-OLAP-14 / TD-OLAP-1).
+Design filed here so the ADR-055 rollout has an honest terminal state: the write-side (P-Shred),
+universal provisioning (P-Provision), the `documents(collection)` DataFusion SQL surface (P-DFSource),
+the io_trace evidence gate (P-Trace), and legacy retirement (P-Retire) all landed; **predicate/
+projection pushdown is the one remaining phase, and it is a single coupled piece with the OLAP
+reader — it does not land as independent document code.**
+|Priority|MEDIUM (the co-design payoff phase — turns the declared shredded format into a *measured*
+`bytes_read` reduction; but the byte win is gated on reader-level ranged/pruned PAX reads owned by
+the OLAP workstream, not on document code).
+|Scope|FEAT
+|Date|2026-07-09
+|Relates to|link:../../12-design/adr/ADR-055-document-canonical-format-declaration-and-legacy-retirement.adoc[ADR-055] (canonical
+document format = ProximaRecord-in-PAX, hybrid-shredded — this is its final phase); **TD-OLAP-14**
+(native PAX scan source — the reader this consumes); **TD-OLAP-1** (`PaxTableProvider`/`PaxSplitReader`
+— the DataFusion PAX wedge); TD-OLAP-3 (runtime-filter/bloom scan-pushdown); TD-DOC-CONV-1
+(resolved — id point-get pushdown); TD-DOC-CONV-2 (default-ON cutover); ADR-039 (the DataFusion
+leakage boundary this respects); ADR-052 invariant 4 (measured, not asserted).
+|===
+
+== Goal
+
+A filtered document query — `SELECT ... FROM documents('c') WHERE region = 'US' AND amount > 100` —
+should prune PAX blocks via the shredded columns' zone-maps/blooms (P-Shred emitted `props__region`,
+`props__amount` at `USER_BASE+i` with min/max + bloom), reading materially fewer bytes than the
+whole-segment scan the P-Trace baseline measured. Projection should decode only the referenced
+stripes (the msgpack tail and non-referenced stripes never touched). This is the co-design payoff:
+the declared shredded format exists *to be pruned against*, and the gate is a measured `bytes_read`
+reduction vs P-Trace, not a wired-but-unproven pushdown.
+
+== The load-bearing finding (why this is NOT independent document code)
+
+The `documents(collection)` SQL surface shipped in P-DFSource exposes a deliberately correctness-first
+schema — **`(id: Utf8, props: Utf8-JSON)`** (`src/datafusion/cross_modal.rs`, `documents_schema()`).
+Two consequences make pushdown a *coupled* problem, not a document-provider-local one:
+
+1. **A `(id, props)` schema has no field columns to predicate on.** DataFusion filters over this
+   surface can only reference `id` or the opaque `props` JSON *string* — never a document field like
+   `region`. `DocumentFilter` (the service-layer filter) filters on **props-paths** (document
+   fields). There is therefore *nothing to correctly translate*: an `Expr` over `(id, props)` does
+   not map to a props-path `DocFilterCondition`. Pushing document-field predicates **requires first
+   exposing the shredded/promoted fields as typed columns in the scan schema** — i.e. the catalog
+   schema (system cols + `props__<key>` user-cols), not `(id, props)`.
+
+2. **That typed-column scan is exactly `PaxTableProvider` over the PAX scan source.** Once the schema
+   exposes shredded columns, the provider that reads them *is* `PaxTableProvider` (TD-OLAP-1) backed
+   by `PaxSplitReader` (#736) — `supports_filters_pushdown = Inexact`, filters → `ScanPredicate`
+   (`pax_block.rs`), per-block zone-map/bloom pruning in `PaxSegmentScanner`, projection → stripe
+   subset. The document surface does not get its own pruning reader; it *consumes* that one.
+
+3. **The measured `bytes_read` win is reader-gated — `PaxSplitReader` still reads whole files.**
+   `PaxSplitReader` today does its prune stack *in memory*: `read_split` loads the entire segment
+   (`src/datafusion/engine_adapters/pax_adapter.rs:114`, `.read(&split.file_path)`) and then
+   `PaxSegmentScanner` skips *decoding* pruned blocks. Its own doc-comment is explicit —
+   *"ranged reads are a follow-up. This is the only I/O path"* (`pax_adapter.rs:111`). So wiring
+   `documents()` onto `PaxTableProvider` buys **decode**-pruning (less CPU) but **not** the
+   `bytes_read` reduction the P-Pushdown gate requires: the whole 329,111 B segment is still fetched
+   (`range_gets = 0`). The byte win needs **reader-level ranged reads** — the explicit follow-up,
+   which is `PaxScanOperator`/`ReaderFactory` territory (TD-OLAP-14) or a `PaxSplitReader`
+   ranged-read follow-up (TD-OLAP-3 runtime-filter/scan-pushdown), **not** document code. This is
+   what makes P-Pushdown a coupled, reader-gated deliverable rather than an independent document PR.
+
+So the pushdown schema (shredded typed columns) and the pushdown reader (ranged, pruned PAX reads)
+are **one coupled deliverable**, and the reader half is owned by the OLAP workstream. Building a
+document-local variant now (a bespoke shredded-column provider, or a service-layer `DocumentFilter`
+push over a hand-rolled ranged reader) would duplicate `PaxTableProvider`/`PaxSplitReader`
+(mandate #12) and be superseded the moment TD-OLAP-14 lands. **Rejected.**
+
+[NOTE]
+====
+An earlier P-Pushdown spike went off-spec down exactly this trap: it reimplemented ranged/pruned
+reads inside `pax_adapter.rs` (`PaxSplitReader::ranged_decode`, `FilesystemFactory::read_range`) —
+work that is squarely TD-OLAP-14's `PaxScanOperator` / `ReaderFactory` domain. It was discarded to
+avoid a competing ranged-read implementation colliding with the OLAP scan source. The reader-level
+byte win belongs in TD-OLAP-14; document pushdown consumes it.
+====
+
+== Design (when the OLAP scan source lands)
+
+Consume, don't rebuild. The remaining *document-side* work is a thin adapter over the OLAP reader:
+
+. **Runtime-safe scan inputs on the record port.** `RecordRoutePort::pax_scan_inputs(collection,
+  tenant) -> Option<PaxScanInputs>` returning the `DrPathBuilder` base path + column descriptors
+  (name → PAX `col_id`, from the catalog schema incl. `props__<key>` promoted cols) — a *runtime-safe*
+  value (no `arrow`, no `FilesystemFactory`) so it stays inside the low `proximadb-runtime` crate's
+  layering. Implemented by `RecordOpsService` (which already holds the catalog + path builder).
+. **`filesystem_factory()` process singleton** (mirrors `document_service()`/`timeseries_service()`,
+  `OnceLock`), set at `src/network/shared_services.rs` startup from the existing
+  `FilesystemFactory::create(...)` — so the DataFusion session can build a `PaxTableProvider` without
+  threading the factory through the UDTF.
+. **`documents()` provider delegates to `PaxTableProvider`.** When `pax_scan_inputs` yields a base
+  path with `.pax` segments, `DocumentsTableFunction` builds the catalog Arrow schema + `name_to_col_id`
+  and returns a `PaxTableProvider` (TD-OLAP-1) instead of the `(id, props)` `MemTable`. The
+  `(id, props_json)` surface remains available as the correctness/compat fallback (no segments yet,
+  or the OLAP scan source disabled) — mixed-read-safe, no flag-day.
+. **Filter/projection translation is reused, not written.** `PaxTableProvider` already advertises
+  `Inexact` pushdown and hands filters to the PAX scan; `ScanPredicate` translation lives in
+  `pax_block.rs` / the OLAP `build_scan_predicate` (TD-OLAP-14). The document phase adds *no* new
+  translator.
+
+== Gate (measured, not asserted — ADR-052 invariant 4)
+
+A filtered `documents('c')` query over a shredded segment must record, via the P-Trace io_trace
+hooks (`fetch_doc_pax` / `record_bytes_read` / `record_range_gets`):
+
+* **`bytes_read` < the P-Trace whole-segment baseline** (recorded in `BENCHMARK_EVIDENCE.toml`), and
+* **`range_gets > 0`** — i.e. the scan actually issued ranged reads and skipped blocks, proving
+  pruning rather than wiring, and
+
+* results **byte-identical** to the `(id, props)` `MemTable` path on the same query (correctness
+  parity — the residual `FilterExec` guarantees exactness; pushdown only reduces I/O).
+
+== Coordination / handoff
+
+P-Pushdown is **sequenced after TD-OLAP-14** (native PAX scan source: status *design filed
+2026-07-08, implementation pending sign-off*). When that lands, this phase is the thin adapter above
+(port inputs + singleton + provider delegation) plus the measured gate — reviewable as one small PR
+that consumes the OLAP reader. Until then, ADR-055's document format is fully declared, provisioned,
+SQL-exposed, metered, and legacy-retired; the pruning payoff is the single tracked follow-up here.
