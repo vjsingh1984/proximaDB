@@ -436,6 +436,7 @@ pub async fn try_run_select(
         cardinality
     };
 
+    let operation_class = query_operation_class(query);
     let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: true,
@@ -443,7 +444,7 @@ pub async fn try_run_select(
             pax_backed: false,
             partition_fanout,
             cardinality,
-            operation_class: query_operation_class(query),
+            operation_class,
         },
         // C4: observe-mode advisory from the trace-driven cost model — augments
         // the reason for telemetry/EXPLAIN, never changes the backend.
@@ -462,11 +463,82 @@ pub async fn try_run_select(
     // P1 dispatch driven by the scheduler decision. The DataFusion arm exists only
     // under the feature (and `parquet_backed` — hence a `DataFusionLocal` decision —
     // is only reachable there), so a default build never enters it and stays Volcano.
+    //
+    // The block is entered for the OLAP-over-parquet route: a static `DataFusionLocal`
+    // decision, OR a cost-model override/exploration flip to `Native` on the
+    // `olap/parquet` class (the only class with two freshness-safe engines,
+    // `freshness_safe_backends_from_class`). Routing the override-`Native` case here
+    // rather than to the Volcano keeps a warmed override on the native-over-parquet
+    // path (which reads the external parquet) with DataFusion as the floor — never on
+    // the Volcano, which has no external-parquet scan wired.
     #[cfg(feature = "datafusion-integration")]
-    if matches!(
-        decision.backend,
-        crate::query::table_write_plan::ComputeBackend::DataFusionLocal
-    ) {
+    if parquet_backed
+        && matches!(
+            decision.backend,
+            crate::query::table_write_plan::ComputeBackend::DataFusionLocal
+                | crate::query::table_write_plan::ComputeBackend::Native
+        )
+    {
+        // TD-OLAP-4 "favor native by operation": for the operation classes native
+        // measurably wins — footer-elidable `COUNT(*)`/`MIN`/`MAX` (MetadataElidable)
+        // and narrow unfiltered scalar aggregates (ScalarAggregate) — run the native
+        // vectorized engine over the SAME external parquet as the PRIMARY backend and
+        // return ITS result. DataFusion stays the correctness floor: any decline
+        // (ineligible shape, wide/filtered/grouped scan, native error) falls through
+        // to the DataFusion execution below, so correctness never depends on native.
+        //
+        // Trigger (default-OFF): the explicit `PROXIMADB_NATIVE_ROUTE` master switch,
+        // OR a warmed cost-model override/exploration that advised `Native` for this
+        // operation-keyed `olap/parquet` cell (`PROXIMADB_ROUTE_COST_OVERRIDE`, with
+        // its freshness/RTT/min-advantage gating). Either way the shape gate is the
+        // same measured win-set, and DataFusion is the fallback.
+        let native_advised = matches!(
+            decision.backend,
+            crate::query::table_write_plan::ComputeBackend::Native
+        ) && matches!(
+            decision.source,
+            crate::query::compute_scheduler::RouteSource::OverrideExploit
+                | crate::query::compute_scheduler::RouteSource::OverrideExplore
+        );
+        let native_eligible_op = matches!(
+            operation_class,
+            crate::query::compute_scheduler::OperationClass::MetadataElidable
+                | crate::query::compute_scheduler::OperationClass::ScalarAggregate
+        );
+        if native_eligible_op
+            && (crate::query::execution::native_engine::native_route_enabled() || native_advised)
+        {
+            let native_snapshot = SnapshotCatalog {
+                dml: dml.clone(),
+                tables: tables.clone(),
+                tenant: tenant_ctx.clone(),
+            };
+            // Setup (planning/route) time is attributed here; the native engine records
+            // its own `native-vectorized` compute sample inside the run.
+            crate::observability::io_trace::record_setup_ms(
+                setup_start.elapsed().as_millis() as u64
+            );
+            if let Some(result) =
+                try_native_over_parquet(sql, &native_snapshot, &parquet_loc_by_key).await
+            {
+                tracing::debug!(
+                    target: "proximadb::compute_route",
+                    "native-over-parquet served as PRIMARY (op={:?}); DataFusion floor bypassed",
+                    operation_class
+                );
+                if let Some((skey, lsn)) = &cache_ctx {
+                    populate_olap_result_cache(
+                        result_cache,
+                        skey,
+                        *lsn,
+                        result.clone(),
+                        &native_snapshot.tables,
+                    );
+                }
+                return Some(Ok(result));
+            }
+            // Native declined → fall through to the DataFusion floor below.
+        }
         let parquet_tables: Vec<(String, String)> = tables
             .iter()
             .map(|(k, t)| (t.table_name.clone(), parquet_loc_by_key[k].clone()))
@@ -501,9 +573,15 @@ pub async fn try_run_select(
         // close. `record_compute_ms` no-ops outside an `io_trace` scope.
         crate::observability::io_trace::record_setup_ms(setup_start.elapsed().as_millis() as u64);
         let started = std::time::Instant::now();
-        let engine_result = execute_sql_with_backend(decision.backend.clone(), sql, context).await;
+        // This block IS the DataFusion floor for the OLAP-over-parquet route, so
+        // execute on DataFusion regardless of the scheduler's advised label — a
+        // cost-model override may have set `decision.backend = Native` (routed here
+        // for the native-primary attempt above), but `execute_sql_with_backend` only
+        // serves `DataFusionLocal`; anything else errors `UnsupportedBackend`.
+        let floor_backend = crate::query::table_write_plan::ComputeBackend::DataFusionLocal;
+        let engine_result = execute_sql_with_backend(floor_backend.clone(), sql, context).await;
         crate::observability::io_trace::record_compute_ms(
-            &crate::query::compute_scheduler::backend_label(&decision.backend),
+            &crate::query::compute_scheduler::backend_label(&floor_backend),
             started.elapsed().as_millis() as u64,
         );
         // TD-OLAP-4 (engine dimension): optional native SHADOW — run the same query
@@ -903,54 +981,80 @@ fn plan_has_grouped_aggregate(plan: &PhysicalPlan) -> bool {
 
 /// Run the native vectorized engine over the same external parquet DataFusion just
 /// served, purely to record a per-engine compute sample. Single-table parquet only
-/// (MVP); declines silently on anything native can't yet serve.
+/// (MVP); declines silently on anything native can't yet serve. Thin wrapper over
+/// [`try_native_over_parquet`] that discards the result — the sample it records via
+/// the io-trace is the whole point; DataFusion's answer is the one served.
 #[cfg(feature = "datafusion-integration")]
 async fn shadow_probe_native_parquet(
     sql: &str,
     snapshot: &SnapshotCatalog,
     parquet_loc_by_key: &HashMap<String, String>,
 ) {
+    let _ = try_native_over_parquet(sql, snapshot, parquet_loc_by_key).await;
+}
+
+/// Serve `sql` on the native vectorized engine over the SAME external parquet
+/// DataFusion would read, returning `Some(result)` when native handled it as the
+/// PRIMARY backend (its result is wire-identical to DataFusion's for the routed
+/// shapes) or `None` to route to DataFusion. This is the single native-over-parquet
+/// code path shared by the production route arm ([`try_run_select`], gated on
+/// `native_route_enabled`) and the benchmark shadow probe (gated on
+/// `native_shadow_enabled`) — every eligibility guard and source selection lives
+/// here so the two callers can never diverge (TD-OLAP-4 "favor native by
+/// operation").
+///
+/// Eligibility (any failure → `None`, DataFusion serves): single-table parquet,
+/// a single-scan plan, no grouped aggregate (native's non-spilling HashAggregate
+/// OOMs on high-cardinality `GROUP BY`), no filter predicate (native has no
+/// predicate pushdown, so it would wrongly aggregate unfiltered rows), and a scan
+/// no wider than the width cap. The served shapes are exactly the measured native
+/// wins: footer-elidable `COUNT(*)`/`MIN`/`MAX` and narrow unfiltered scalar
+/// aggregates.
+#[cfg(feature = "datafusion-integration")]
+async fn try_native_over_parquet(
+    sql: &str,
+    snapshot: &SnapshotCatalog,
+    parquet_loc_by_key: &HashMap<String, String>,
+) -> Option<ExecutionPipelineResult> {
     // Single-table parquet only — joins are a separately-gated native path.
     if parquet_loc_by_key.len() != 1 {
-        return;
+        return None;
     }
-    let Some(location) = parquet_loc_by_key.values().next() else {
-        return;
-    };
+    let location = parquet_loc_by_key.values().next()?;
     let sqlp = &sql[..sql.len().min(70)];
     // Lower the SAME SQL to the relational physical plan (decline → skip).
     let physical = match plan_over_snapshot(sql, snapshot) {
         Some(Ok(p)) => p,
         _ => {
-            tracing::debug!(target: "proximadb::native_shadow", "shadow SKIP plan-declined: {sqlp}");
-            return;
+            tracing::debug!(target: "proximadb::native_route", "native SKIP plan-declined: {sqlp}");
+            return None;
         }
     };
     let Some(scan_cols) = single_scan_columns(&physical) else {
-        tracing::debug!(target: "proximadb::native_shadow", "shadow SKIP not-single-scan: {sqlp}");
-        return;
+        tracing::debug!(target: "proximadb::native_route", "native SKIP not-single-scan: {sqlp}");
+        return None;
     };
     // Skip grouped aggregates: native's non-spilling HashAggregate OOMs on
     // high-cardinality GROUP BY at scale. These route to DataFusion.
     if plan_has_grouped_aggregate(&physical) {
-        tracing::debug!(target: "proximadb::native_shadow", "shadow SKIP grouped-aggregate: {sqlp}");
-        return;
+        tracing::debug!(target: "proximadb::native_route", "native SKIP grouped-aggregate: {sqlp}");
+        return None;
     }
     // Skip filtered scans: native does not apply a pushed-down `Scan.predicate`,
     // so it would (wrongly) aggregate the unfiltered rows. Route to DataFusion.
     if plan_scan_has_predicate(&physical) {
-        tracing::debug!(target: "proximadb::native_shadow", "shadow SKIP filtered-scan (no native predicate pushdown): {sqlp}");
-        return;
+        tracing::debug!(target: "proximadb::native_route", "native SKIP filtered-scan (no native predicate pushdown): {sqlp}");
+        return None;
     }
-    tracing::debug!(target: "proximadb::native_shadow", "shadow RUN native: {sqlp}");
+    tracing::debug!(target: "proximadb::native_route", "native RUN: {sqlp}");
     // Open the same parquet DataFusion read (table-OPEN cache is warm from its run).
     let table = match crate::datafusion::engine_adapters::ObjectStoreParquetTable::open(location)
         .await
     {
         Ok(t) => t,
         Err(e) => {
-            tracing::debug!(target: "proximadb::native_shadow", %e, "shadow: table open declined");
-            return;
+            tracing::debug!(target: "proximadb::native_route", %e, "native: table open declined");
+            return None;
         }
     };
     let (store, files, file_schema) = table.native_scan_inputs();
@@ -959,12 +1063,14 @@ async fn shadow_probe_native_parquet(
     // scale (q07 MIN/MAX: a full-column vectorized scan → a footer read). Emits the
     // pre-computed row and bypasses the scan + HashAggregate entirely.
     if let Some(batch) = elidable_aggregate_batch(&physical, &table, &file_schema) {
-        tracing::debug!(target: "proximadb::native_shadow", "shadow ELIDE (footer stats): {sqlp}");
+        tracing::debug!(target: "proximadb::native_route", "native ELIDE (footer stats): {sqlp}");
         let src = Box::new(
             crate::query::execution::native_parquet_scan::StatsAggregateOperator::new(batch),
         );
-        let _ = crate::query::execution::native_engine::run_native_source_only(src).await;
-        return;
+        return native_result(
+            crate::query::execution::native_engine::run_native_source_only(src).await,
+            sqlp,
+        );
     }
     // Unfiltered COUNT(*): parquet/PAX carry the row count in the FOOTER, so elide
     // the scan entirely — read footers only, emit the count (a metadata op, not a
@@ -988,11 +1094,11 @@ async fn shadow_probe_native_parquet(
             const NATIVE_SCAN_WIDTH_CAP: usize = 8;
             if scan_cols.len() > NATIVE_SCAN_WIDTH_CAP {
                 tracing::debug!(
-                    target: "proximadb::native_shadow",
+                    target: "proximadb::native_route",
                     cols = scan_cols.len(),
-                    "shadow SKIP wide-scan (no pushdown): {sqlp}"
+                    "native SKIP wide-scan (no pushdown): {sqlp}"
                 );
-                return;
+                return None;
             }
             // Map the plan's Scan columns → parquet leaf indices by name; build the
             // native scan output schema from the FILE fields (exact Arrow types). Sort
@@ -1012,7 +1118,7 @@ async fn shadow_probe_native_parquet(
                     .enumerate()
                     .find(|(_, f)| f.name().eq_ignore_ascii_case(name))
                 else {
-                    return; // column absent from file (schema drift) → never risk a sample
+                    return None; // column absent from file (schema drift) → never risk a sample
                 };
                 paired.push((idx, field.as_ref().clone()));
             }
@@ -1030,15 +1136,32 @@ async fn shadow_probe_native_parquet(
                 ),
             )
         };
-    match crate::query::execution::native_engine::run_native_over_parquet(&physical, source).await {
-        Ok(Some(_)) => {
-            tracing::debug!(target: "proximadb::native_shadow", "shadow: native-vectorized sample recorded")
+    native_result(
+        crate::query::execution::native_engine::run_native_over_parquet(&physical, source).await,
+        sqlp,
+    )
+}
+
+/// Interpret a native-engine run result for [`try_native_over_parquet`]: `Ok(Some)`
+/// → native served it (return the result); `Ok(None)` → native declined the shape;
+/// `Err` → native errored. In both non-served cases the caller routes to DataFusion.
+#[cfg(feature = "datafusion-integration")]
+fn native_result(
+    run: Result<Option<ExecutionPipelineResult>, crate::query::execution::engine::ExecutionError>,
+    sqlp: &str,
+) -> Option<ExecutionPipelineResult> {
+    match run {
+        Ok(Some(result)) => {
+            tracing::debug!(target: "proximadb::native_route", "native served: {sqlp}");
+            Some(result)
         }
         Ok(None) => {
-            tracing::debug!(target: "proximadb::native_shadow", "shadow: native declined (shape/align)")
+            tracing::debug!(target: "proximadb::native_route", "native declined (shape/align): {sqlp}");
+            None
         }
         Err(e) => {
-            tracing::debug!(target: "proximadb::native_shadow", %e, "shadow: native errored")
+            tracing::debug!(target: "proximadb::native_route", %e, "native errored: {sqlp}");
+            None
         }
     }
 }
