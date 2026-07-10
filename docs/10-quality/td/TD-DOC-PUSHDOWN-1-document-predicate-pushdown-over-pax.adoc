@@ -4,17 +4,22 @@
 
 [cols="1,3"]
 |===
-|Status|Open — **Layer 1 (reader ranged read) LANDED; Layer 2 + adapter remain.** Owning the
-reader (rather than waiting on the OLAP workstream) is underway. **Layer 1** — `PaxSplitReader` now
-fetches a segment via ranged reads (locate the index from a tail suffix → prune whole blocks against
-the index **zone summary** → `read_ranges` only survivors → decode to Arrow), default-OFF
-(`PROXIMADB_DF_PAX_RANGED`), mixed-read-safe (falls back to the whole-file read for any segment
-without a v2 zone index). Verified against the gate shape: a selective predicate reads
-`bytes_read < whole segment` with `range_gets > 0` and returns rows identical to the whole-file path.
-**Layer 2** (shredded user-column ranged pruning) + the **documents adapter** remain — see
-"Remaining". The write-side (P-Shred), universal provisioning (P-Provision), the
-`documents(collection)` DataFusion SQL surface (P-DFSource), the io_trace evidence gate (P-Trace),
-and legacy retirement (P-Retire) all landed previously.
+|Status|Open — **Reader ranged read (Layer 1 + Layer 2) LANDED; documents adapter remains.** Owning
+the reader (rather than waiting on the OLAP workstream) is done. **Layer 1** — `PaxSplitReader`
+fetches a segment via ranged reads: locate the index from a tail suffix → **Stage A** prunes whole
+blocks against the index **zone summary** (canonical columns, no per-block GET) → `read_ranges` only
+survivors → decode to Arrow. **Layer 2** — **Stage B**: when a predicate targets a shredded
+`props__<key>` user column the index summary can't evaluate, each survivor's **footer/metadata** is
+range-read into a `BlockLayout` (carries every column's bounds) and pruned on ALL columns *before* its
+body is fetched, so a pruned block costs only its footer. Both reuse the SAME `BlockZoneSource` prune
+logic as the decode path. Default-OFF (`PROXIMADB_DF_PAX_RANGED`), mixed-read-safe (falls back to the
+whole-file read for any segment without a v2 zone index). Verified against the gate shape: selective
+predicates on BOTH a canonical column (Layer 1) AND a shredded user column (Layer 2) read
+`bytes_read < whole segment` with `range_gets > 0` and return rows identical to the whole-file path.
+The only remaining piece is the **documents adapter** (`documents()` → `PaxTableProvider`) — see
+"Design". The write-side (P-Shred), universal provisioning (P-Provision), the `documents(collection)`
+DataFusion SQL surface (P-DFSource), the io_trace evidence gate (P-Trace), and legacy retirement
+(P-Retire) all landed previously.
 |Priority|MEDIUM (the co-design payoff phase — turns the declared shredded format into a *measured*
 `bytes_read` reduction; but the byte win is gated on reader-level ranged/pruned PAX reads owned by
 the OLAP workstream, not on document code).
@@ -101,14 +106,18 @@ DataFusion `FilesystemFactory`/`PhysicalExpr`/Arrow path). So "own the reader" s
   (`PROXIMADB_DF_PAX_RANGED`), mixed-read-safe fallback to whole-file. io_trace records
   `fetch_pax_ranged` + `bytes_read` + `range_gets`. This is **general** — every DataFusion PAX scan
   with a temporal/canonical predicate now prunes blocks off the wire, not just documents.
-* **Layer 2 — shredded user-column ranged pruning (REMAINING).** The v2 index `BlockZoneSummary`
+* **Layer 2 — shredded user-column ranged pruning (LANDED).** The v2 index `BlockZoneSummary`
   carries **canonical-column** bounds only (`created_at`/`updated_at`/`valid_from`/`valid_to`/
   `edge_weight`); shredded `props__<key>` user columns hit the `_ => {}` arm of `from_column_metas`,
-  so a *document-field* predicate cannot prune from the index alone. Pruning on shredded columns
-  without a full block GET needs **per-block footer ranged reads** — exactly what `RangedSegmentReader`
-  (`BlockLayout` + `metadata_ranges`) already does. Wire `PaxSplitReader` to consume that (adapt
-  `FilesystemFactory`→`ObjectStoreBridge`), or hoist user-column bounds into the index summary
-  (versioned format change). This is what closes the *document-field* `bytes_read` gate.
+  so a *document-field* predicate cannot prune from the index alone. `PaxSplitReader::block_layout_ranged`
+  now range-reads each surviving block's footer + metadata extent (NO stripe bytes) into a
+  `BlockLayout` — reusing the public block-format primitives (`BlockFooter::from_bytes`,
+  `metadata_ranges`, `BlockLayout::assemble`), the `FilesystemFactory` twin of
+  `RangedSegmentReader::build_block_layout` — and `Stage B` prunes on ALL columns before the body is
+  fetched. Engaged only when `needs_footer_prune()` (a predicate on a non-summarized column). This
+  closes the *document-field* `bytes_read` gate. (A separate fix removed a double-count: the
+  filesystem layer already feeds io_trace `bytes_read`/`range_gets` per `read_range`, so `load_ranged`
+  records none itself.)
 * **Adapter — `documents()` → `PaxTableProvider` (REMAINING).** The thin document-side wiring below.
 
 == Design (documents adapter — rides on the ranged reader)
