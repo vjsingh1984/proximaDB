@@ -844,6 +844,12 @@ impl SharedServices {
         );
         debug!("✅ SharedServices::new - Filesystem factory for engines created successfully");
 
+        // TD-DOC-PUSHDOWN-1: publish the storage filesystem factory as a process singleton so the
+        // DataFusion `documents(collection)` UDTF can build a `PaxTableProvider` over a collection's
+        // `.pax` segments for predicate pushdown. Idempotent (first wins); mirrors the
+        // document/timeseries service singletons.
+        crate::services::document_service::set_filesystem_factory(filesystem_factory.clone());
+
         // Create VIPER engine
         debug!("🔧 SharedServices::new - Creating VIPER engine...");
         let viper_config = crate::core::config::ViperConfig::default();

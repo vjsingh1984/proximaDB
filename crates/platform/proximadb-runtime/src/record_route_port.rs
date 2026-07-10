@@ -15,7 +15,38 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use proximadb_data_model::ProximaType;
 use proximadb_records::ProximaRecord;
+
+/// A PAX-native typed column exposed to a DataFusion scan of a document collection —
+/// the seam that lets `documents(collection)` push predicates into the ranged PAX
+/// reader (TD-DOC-PUSHDOWN-1). Runtime-safe (no arrow, no filesystem): the DataFusion
+/// layer maps `data_type` to Arrow (via `catalog_arrow_type`) and resolves the segment
+/// files under [`PaxScanInputs::base_path`] itself.
+#[derive(Debug, Clone)]
+pub struct PaxColumnDesc {
+    /// DataFusion/SQL-facing column name: the prop key for a shredded column, or the
+    /// canonical field name for a system column (e.g. `id`).
+    pub sql_name: String,
+    /// PAX `column_id` the reader keys the prune + decode on.
+    pub col_id: i32,
+    /// Catalog type, mapped to an Arrow `DataType` at the DataFusion boundary.
+    pub data_type: ProximaType,
+}
+
+/// Inputs to build a `PaxTableProvider` over a document collection's `.pax` segments:
+/// the `DrPathBuilder` base path + the typed columns queryable with predicate pushdown
+/// (the system `id` + the collection's shredded `props__<key>` promoted columns). The
+/// `props` JSON tail is served separately by the document layer, not listed here.
+#[derive(Debug, Clone)]
+pub struct PaxScanInputs {
+    /// Object-store base prefix under which the collection's `.pax` segments live.
+    pub base_path: String,
+    /// The collection's shredded `props__<key>` promoted columns, exposed for typed
+    /// predicate pushdown. The system `id` (col 0) and the `props` JSON tail (col 8)
+    /// are always present and are added by the document layer, not listed here.
+    pub columns: Vec<PaxColumnDesc>,
+}
 
 /// Route for the document facade's canonical branch onto the shared record/vector store.
 ///
@@ -88,4 +119,18 @@ pub trait RecordRoutePort: Send + Sync {
         tenant: Option<&str>,
         promote_keys: &[String],
     ) -> Result<()>;
+
+    /// Resolve the inputs to scan `collection_id`'s canonical `.pax` segments through the
+    /// PAX-native ranged reader with predicate pushdown (TD-DOC-PUSHDOWN-1): the segment
+    /// base path + the typed columns (system `id` + the collection's shredded promoted
+    /// `props__<key>` columns). `None` ⇒ the collection isn't PAX-pushdown-eligible (no
+    /// resolvable catalog schema / not converged), and the caller falls back to the
+    /// in-memory document scan. Default `None` for impls that don't serve documents.
+    async fn pax_scan_inputs(
+        &self,
+        _collection_id: &str,
+        _tenant: Option<&str>,
+    ) -> Option<PaxScanInputs> {
+        None
+    }
 }

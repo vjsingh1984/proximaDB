@@ -22,3 +22,23 @@ pub fn set_document_service(service: Arc<DocumentService>) {
 pub fn document_service() -> Option<Arc<DocumentService>> {
     DOCUMENT_SERVICE.get().cloned()
 }
+
+static FILESYSTEM_FACTORY: OnceLock<
+    Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+> = OnceLock::new();
+
+/// Register the process-global filesystem factory (idempotent — first wins). Called once at
+/// server bootstrap. The DataFusion `documents()` UDTF reads it to build a `PaxTableProvider`
+/// over a collection's `.pax` segments for predicate pushdown (TD-DOC-PUSHDOWN-1), rather than
+/// threading an `Arc<FilesystemFactory>` through every session construction.
+pub fn set_filesystem_factory(
+    factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+) {
+    let _ = FILESYSTEM_FACTORY.set(factory);
+}
+
+/// The process-global filesystem factory, if registered.
+pub fn filesystem_factory()
+-> Option<Arc<crate::storage::persistence::filesystem::FilesystemFactory>> {
+    FILESYSTEM_FACTORY.get().cloned()
+}

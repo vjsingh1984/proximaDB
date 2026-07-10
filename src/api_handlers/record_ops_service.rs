@@ -977,6 +977,49 @@ impl proximadb_runtime::RecordRoutePort for RecordOpsService {
             .await
     }
 
+    async fn pax_scan_inputs(
+        &self,
+        collection_id: &str,
+        tenant: Option<&str>,
+    ) -> Option<proximadb_runtime::PaxScanInputs> {
+        use proximadb_catalog::Catalog as _;
+        use proximadb_runtime::{PaxColumnDesc, PaxScanInputs};
+        // Resolve the collection's catalog schema through the SAME catalog the write
+        // path uses, tenant-scoped. Any miss ⇒ None (the caller falls back to the
+        // in-memory document scan — mixed-read-safe).
+        let catalog_manager = self.collection_service.catalog_manager()?;
+        let (catalog, table_id) = catalog_manager
+            .resolve_table_scoped(collection_id, tenant)
+            .await
+            .ok()?;
+        let schema = catalog.get_table(&table_id).await.ok()?;
+        let tenant_context = self.collection_service.load_tenant_context(tenant).ok()?;
+        let base_path = crate::services::record_store::object_store_write_base_path(
+            &schema,
+            tenant_context.as_ref(),
+        );
+        // Shredded promoted columns: prop key (SQL-facing) → the `props__<key>` catalog
+        // column's id + type. Mirrors the write-path shred spec (record_store.rs) so the
+        // reader keys the SAME column ids that were written.
+        let columns = schema
+            .props_auto_promotion
+            .promoted_keys
+            .iter()
+            .filter_map(|(prop_key, col_name)| {
+                schema
+                    .columns
+                    .iter()
+                    .find(|c| &c.name == col_name)
+                    .map(|c| PaxColumnDesc {
+                        sql_name: prop_key.clone(),
+                        col_id: c.id,
+                        data_type: c.data_type.clone(),
+                    })
+            })
+            .collect();
+        Some(PaxScanInputs { base_path, columns })
+    }
+
     async fn delete_records(
         &self,
         collection_id: &str,
