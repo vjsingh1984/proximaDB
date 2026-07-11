@@ -131,21 +131,15 @@ mod tests {
     use super::*;
     use crate::observability::search_plan_trace::{FilterStrategy, IndexRoute};
 
-    fn plan() -> PlanOutput {
-        PlanOutput {
-            filter_strategy: FilterStrategy::HybridFilter,
-            index_route: IndexRoute::FullPrecisionGraph,
-            estimated_selectivity: Some(0.1),
-            gls_score: None,
-        }
-    }
-
-    fn inputs<'a>(plan: &'a PlanOutput) -> TraceBuilderInputs<'a> {
+    fn inputs() -> TraceBuilderInputs {
         TraceBuilderInputs {
             trace_id: "trace-1".into(),
             tenant_id: "tenant-a".into(),
             collection_name: "kb".into(),
-            plan,
+            filter_strategy: FilterStrategy::HybridFilter,
+            index_route: IndexRoute::FullPrecisionGraph,
+            estimated_selectivity: Some(0.1),
+            gls_score: None,
             latency_ms: 12.3,
             index_stats: IndexStats::default(),
             candidate_count: 64,
@@ -163,8 +157,7 @@ mod tests {
 
     #[test]
     fn predicate_shortfall_forces_permission_thin_failure_class() {
-        let p = plan();
-        let mut i = inputs(&p);
+        let mut i = inputs();
         i.predicate_shortfall = Some(PredicateShortfall {
             requested_k: 10,
             returned_k: 3,
@@ -178,8 +171,7 @@ mod tests {
 
     #[test]
     fn identity_fields_propagate() {
-        let p = plan();
-        let t = build(inputs(&p));
+        let t = build(inputs());
         assert_eq!(t.trace_id, "trace-1");
         assert_eq!(t.tenant_id, "tenant-a");
         assert_eq!(t.collection_name, "kb");
@@ -187,8 +179,7 @@ mod tests {
 
     #[test]
     fn plan_fields_propagate() {
-        let p = plan();
-        let t = build(inputs(&p));
+        let t = build(inputs());
         assert_eq!(t.filter_strategy, FilterStrategy::HybridFilter);
         assert_eq!(t.index_route, IndexRoute::FullPrecisionGraph);
         assert_eq!(t.estimated_selectivity, Some(0.1));
@@ -202,8 +193,8 @@ mod tests {
         // on the trace. Without this propagation, the TurboQuant hints
         // would be lost between the executor and the operator-visible
         // structured-log line.
-        let p = plan();
-        let mut i = inputs(&p);
+
+        let mut i = inputs();
         let payload = serde_json::json!({
             "quantization": "turboquant_2bit",
             "blocks_skipped_by_mask": 7,
@@ -219,8 +210,8 @@ mod tests {
         // Default path (most searches): no TurboQuant payload recorded,
         // trace field stays None and serializes away via
         // skip_serializing_if. Confirms no stale-null leakage.
-        let p = plan();
-        let t = build(inputs(&p));
+
+        let t = build(inputs());
         assert!(t.turboquant_explain.is_none());
         let v = serde_json::to_value(&t).expect("serialize trace");
         let obj = v.as_object().expect("trace serializes as object");
@@ -232,8 +223,7 @@ mod tests {
 
     #[test]
     fn execution_counters_propagate() {
-        let p = plan();
-        let mut i = inputs(&p);
+        let mut i = inputs();
         i.candidate_count = 256;
         i.rerank_count = 16;
         i.repair_count = 1;
@@ -247,8 +237,7 @@ mod tests {
 
     #[test]
     fn actual_scan_gb_derived_from_vectors_scanned_and_bytes_per_vector() {
-        let p = plan();
-        let mut i = inputs(&p);
+        let mut i = inputs();
         // 1 GB worth: 1,073,741,824 bytes = 1M vectors × 1024 bytes/vector.
         i.index_stats.vectors_scanned = 1_000_000;
         i.bytes_per_vector = 1024.0;
@@ -260,8 +249,7 @@ mod tests {
 
     #[test]
     fn zero_bytes_per_vector_skips_derivation() {
-        let p = plan();
-        let mut i = inputs(&p);
+        let mut i = inputs();
         i.index_stats.vectors_scanned = 1_000_000;
         i.bytes_per_vector = 0.0;
         let t = build(i);
@@ -273,8 +261,7 @@ mod tests {
 
     #[test]
     fn negative_bytes_per_vector_is_treated_as_zero() {
-        let p = plan();
-        let mut i = inputs(&p);
+        let mut i = inputs();
         i.index_stats.vectors_scanned = 1_000;
         i.bytes_per_vector = -8.0;
         let t = build(i);
@@ -283,8 +270,7 @@ mod tests {
 
     #[test]
     fn cache_result_overrides_plan_default() {
-        let p = plan();
-        let mut i = inputs(&p);
+        let mut i = inputs();
         i.cache_result = CacheResult::Hit;
         let t = build(i);
         assert_eq!(t.cache_result, CacheResult::Hit);
@@ -292,8 +278,7 @@ mod tests {
 
     #[test]
     fn failure_class_propagates_when_set() {
-        let p = plan();
-        let mut i = inputs(&p);
+        let mut i = inputs();
         i.failure_class = Some(FailureClass::BudgetExhausted);
         i.repair_count = 1;
         let t = build(i);
@@ -303,8 +288,7 @@ mod tests {
 
     #[test]
     fn sure_signals_propagate_into_trace() {
-        let p = plan();
-        let mut i = inputs(&p);
+        let mut i = inputs();
         i.sure_signals = SureSignals {
             coverage: 0.8,
             relation_strength: 0.7,
@@ -320,15 +304,13 @@ mod tests {
 
     #[test]
     fn plan_version_defaults_to_one() {
-        let p = plan();
-        let t = build(inputs(&p));
+        let t = build(inputs());
         assert_eq!(t.plan_version, 1);
     }
 
     #[test]
     fn actual_egress_gb_derived_from_cross_az_bytes() {
-        let p = plan();
-        let mut i = inputs(&p);
+        let mut i = inputs();
         i.egress_bytes = 2 * 1_073_741_824; // 2 GiB moved cross-AZ
         let t = build(i);
         assert!((t.actual_egress_gb - 2.0).abs() < 1e-9);
@@ -338,15 +320,14 @@ mod tests {
     fn zero_egress_bytes_is_free_same_az_path() {
         // Default (same-AZ): no cross-AZ bytes → the KEU egress quantity is 0,
         // so no egress is billed on the free path.
-        let p = plan();
-        let t = build(inputs(&p));
+
+        let t = build(inputs());
         assert_eq!(t.actual_egress_gb, 0.0);
     }
 
     #[test]
     fn zero_vectors_scanned_yields_zero_scan_gb_regardless_of_bytes() {
-        let p = plan();
-        let mut i = inputs(&p);
+        let mut i = inputs();
         i.index_stats.vectors_scanned = 0;
         i.bytes_per_vector = 1024.0;
         let t = build(i);

@@ -61,7 +61,7 @@ static TIER_CONFIG: OnceLock<TierConfig> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
 pub struct TierConfig {
-    schema_version: u32,
+    pub schema_version: u32,
     #[allow(dead_code)]
     pub default_tier: String,
     pub tiers: Vec<TierSpec>,
@@ -69,22 +69,22 @@ pub struct TierConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct TierSpec {
-    id: String,
-    prom_label: String,
-    soft_caps: TierSoftCaps,
+    pub id: String,
+    pub prom_label: String,
+    pub soft_caps: TierSoftCaps,
     /// C5 governance tier-entitlement multiplier (Dimension 5). Authored by the
     /// control plane (anvaiops `tiers.json` → `/config/tier-config.json`); absent
     /// in the OSS baseline overlay → `None` → neutral `1.0`. Other overlay fields
     /// (pricing, display, …) are ignored by serde — this reads only the scalar.
     #[serde(default)]
-    cost_multiplier: Option<f64>,
+    pub cost_multiplier: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
-struct TierSoftCaps {
-    scan_budget_gb: f64,
-    ef_search_cap: u32,
-    freshness_sla_seconds: u32,
+pub struct TierSoftCaps {
+    pub scan_budget_gb: f64,
+    pub ef_search_cap: u32,
+    pub freshness_sla_seconds: u32,
 }
 
 /// Resolved tier-config source: where it came from + its raw JSON bytes.
