@@ -1506,7 +1506,11 @@ impl DmlService {
             .await?;
 
         // 5. Flip the catalog layout to a published Parquet projection at the location.
-        let location = format!("{}/{prefix}", warehouse_root_url.trim_end_matches('/'));
+        // ADR-059 first-principles: the `location` is the directory where the
+        // parquet files are IMMEDIATE children (Hive/Unity/Polaris model) — NOT the
+        // table base dir with a `data/` subpath. The parquet is written to
+        // `{prefix}/data/part-0.parquet`, so the location = `{root}/{prefix}/data`.
+        let location = format!("{}/{prefix}/data", warehouse_root_url.trim_end_matches('/'));
         let layout = CatalogStorageLayout {
             name: "parquet-snapshot".to_string(),
             authority: proximadb_catalog::CatalogAuthorityMode::ProjectionPublication,

@@ -559,18 +559,33 @@ impl ObjectStoreParquetTable {
             IcebergObjectStoreBridge::from_url(location)
                 .map_err(|e| df_err(&format!("object-store bridge({location})"), e))?,
         );
+        // ADR-059 first-principles: scan the location's IMMEDIATE parquet files
+        // (Hive/Unity/Polaris model — location = the directory where parquet is
+        // immediate, skipping commit-style `_`/`.` files via the `.parquet`
+        // extension filter). Mixed-read-safe fallback: if no immediate parquet,
+        // try the legacy `data/` subpath (old materialized tables where location
+        // = table base dir, parquet in `{location}/data/`).
         let mut parquet_paths = bridge
-            .list_objects(&Path::from("data"))
+            .list_objects(&Path::from(""))
             .await
-            .map_err(|e| df_err(&format!("list parquet base {location}"), e))?
+            .unwrap_or_default()
             .into_iter()
             .filter(|path| path.as_ref().ends_with(".parquet"))
             .collect::<Vec<_>>();
+        if parquet_paths.is_empty() {
+            parquet_paths = bridge
+                .list_objects(&Path::from("data"))
+                .await
+                .map_err(|e| df_err(&format!("list parquet data/ fallback {location}"), e))?
+                .into_iter()
+                .filter(|path| path.as_ref().ends_with(".parquet"))
+                .collect::<Vec<_>>();
+        }
         parquet_paths.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
         if parquet_paths.is_empty() {
             return Err(df_err(
                 "open object-store parquet base",
-                format!("no data/*.parquet objects under {location}"),
+                format!("no parquet objects under {location} (immediate or data/)"),
             ));
         }
 
