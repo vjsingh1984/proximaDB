@@ -331,6 +331,9 @@ async fn drain_capture() -> Option<IoTraceSnapshot> {
 }
 
 /// Rewrite `FROM hits` to a DuckDB `read_parquet(...)` over the same object.
+/// Only used by the CLI fallback (when the `duckdb` feature is OFF); the
+/// in-process engine registers a `hits` view, so no rewrite is needed.
+#[cfg(not(feature = "duckdb"))]
 fn duckdb_sql(sql: &str, parquet: &str) -> String {
     sql.replace("FROM hits", &format!("FROM read_parquet('{parquet}')"))
 }
@@ -473,7 +476,75 @@ async fn clickbench_ledger() {
     }
     io_trace::set_billing_observer(None);
 
-    // DuckDB baseline (same Parquet), if a binary is provided.
+    // DuckDB baseline (ADR-059): in-process, same Parquet, io-traced — the
+    // engine-behavior-only discriminant (compute_ms; DF-vs-DuckDB on the same
+    // parquet/SQL/process). Re-arm the billing observer (cleared above after the
+    // ProximaDB route) so the instrument scope's snapshot lands in CAPTURE.
+    #[cfg(feature = "duckdb")]
+    {
+        use proximadb::query::execution::engine::{
+            QueryExecutionContext, execute_sql_with_backend,
+        };
+        use proximadb::query::table_write_plan::ComputeBackend;
+        io_trace::set_billing_observer(Some(Box::new(|snap: &IoTraceSnapshot, _tenant| {
+            CAPTURE.lock().expect("capture lock").push(snap.clone());
+        })));
+        for (id, sql) in &queries {
+            CAPTURE.lock().expect("capture lock").clear();
+            // DuckDbLocalEngine registers `CREATE VIEW hits AS SELECT * FROM
+            // read_parquet('{parquet_uri}')`, so the original `FROM hits` SQL
+            // works — no duckdb_sql rewrite needed.
+            let ctx = QueryExecutionContext {
+                parquet_tables: vec![("hits".to_string(), parquet_uri.clone())],
+                ..Default::default()
+            };
+            let t0 = Instant::now();
+            // instrument sets the IO_TRACE scope; the engine's record_compute_ms
+            // lands in it; instrument emits the snapshot → observer → CAPTURE.
+            let sql_owned = sql.to_string();
+            let res = io_trace::instrument(None, "duckdb".to_string(), async move {
+                execute_sql_with_backend(ComputeBackend::DuckDbCompat, &sql_owned, ctx).await
+            })
+            .await;
+            let wall_ms = t0.elapsed().as_millis();
+            let snap = drain_capture().await;
+            let compute_ms = snap.as_ref().map(|s| s.total_compute_ms());
+            let compute_by_engine = snap.and_then(|s| {
+                if s.compute_ms.is_empty() {
+                    None
+                } else {
+                    Some(s.compute_ms)
+                }
+            });
+            let (ok, rows, error) = match res {
+                Ok(r) => (true, r.rows.len(), None),
+                Err(e) => (false, 0, Some(e.to_string())),
+            };
+            records.push(QueryRecord {
+                query: (*id).into(),
+                engine: "duckdb".into(),
+                ok,
+                rows,
+                wall_ms,
+                bytes_read: None,
+                range_gets: None,
+                setup_ms: None,
+                emit_ms: None,
+                session_ms: None,
+                compute_ms,
+                open_ms: None,
+                plan_ms: None,
+                table_open_hits: None,
+                route: Some("DuckDbCompat".into()),
+                compute_by_engine,
+                error,
+            });
+        }
+        io_trace::set_billing_observer(None);
+    }
+    // Fallback: DuckDB CLI subprocess (only when the `duckdb` feature is OFF —
+    // out-of-process, no io-trace; the in-process path above is the ledger route).
+    #[cfg(not(feature = "duckdb"))]
     if let Ok(duckdb) = std::env::var("DUCKDB_BIN") {
         for (id, sql) in &queries {
             let dsql = duckdb_sql(sql, &parquet);
