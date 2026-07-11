@@ -15,17 +15,19 @@ use crate::core::service_types::IndexStats;
 use crate::observability::search_plan_trace::{
     CacheResult, FailureClass, PredicateShortfall, SearchPlanTrace, SureSignals,
 };
-use crate::query::federated::optimizer::plan_builder::PlanOutput;
 
 /// Inputs the runtime hands the builder. References + Copy where possible
 /// so the builder allocates nothing on the hot path.
-pub struct TraceBuilderInputs<'a> {
+pub struct TraceBuilderInputs {
     /// Identity — set by the gateway, never derived.
     pub trace_id: String,
     pub tenant_id: String,
     pub collection_name: String,
     /// Plan output produced by `PlanBuilder::build_for_search`.
-    pub plan: &'a PlanOutput,
+    pub filter_strategy: crate::observability::search_plan_trace::FilterStrategy,
+    pub index_route: crate::observability::search_plan_trace::IndexRoute,
+    pub estimated_selectivity: Option<f64>,
+    pub gls_score: Option<f64>,
     /// End-to-end wall-time of the search call, in milliseconds.
     pub latency_ms: f64,
     /// Per-index counters captured during execution. The builder consumes
@@ -67,7 +69,7 @@ pub struct TraceBuilderInputs<'a> {
 }
 
 /// Build a fully populated `SearchPlanTrace` from the inputs.
-pub fn build(inputs: TraceBuilderInputs<'_>) -> SearchPlanTrace {
+pub fn build(inputs: TraceBuilderInputs) -> SearchPlanTrace {
     let actual_scan_gb = derive_actual_scan_gb(&inputs.index_stats, inputs.bytes_per_vector);
     let actual_egress_gb = bytes_to_gib(inputs.egress_bytes);
     // TD-064: when a predicate shortfall is recorded, ensure failure_class
@@ -82,12 +84,12 @@ pub fn build(inputs: TraceBuilderInputs<'_>) -> SearchPlanTrace {
         tenant_id: inputs.tenant_id,
         collection_name: inputs.collection_name,
         plan_version: 1,
-        filter_strategy: inputs.plan.filter_strategy.clone(),
-        index_route: inputs.plan.index_route.clone(),
+        filter_strategy: inputs.filter_strategy,
+        index_route: inputs.index_route,
         cache_result: inputs.cache_result,
-        estimated_selectivity: inputs.plan.estimated_selectivity,
+        estimated_selectivity: inputs.estimated_selectivity,
         actual_selectivity: None,
-        gls_score: inputs.plan.gls_score,
+        gls_score: inputs.gls_score,
         estimated_scan_gb: None,
         actual_scan_gb,
         actual_egress_gb,
