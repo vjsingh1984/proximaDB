@@ -187,6 +187,76 @@ pub(crate) fn cluster_sort_key(rec: &ProximaRecord, column: &str) -> (bool, i128
     }
 }
 
+/// TD-OLAP-2 (A2): fold the materialized records into per-column HLL sketches
+/// and publish them to the ADR-037 resident statistics registry, keyed by the
+/// table name — the SAME key `ObjectStoreParquetTable::statistics()` passes to
+/// `statistics_from_splits` as `collection` (and the empty-delta OLAP-merge
+/// fast path falls back to that same reader, so the read-mostly benchmark path
+/// is covered). `statistics_from_splits` then overlays
+/// `distinct_count = Inexact(ndv)` from the registry, giving DataFusion's
+/// `EnforceDistribution` rule the NDV it needs to estimate join cardinality
+/// and choose a PARTITIONED (multi-core) hash-join build instead of falling
+/// back to a single-partition build when `distinct_count` is `Absent` (the
+/// measured 100-700× gap vs DuckDB at SF=0.1).
+///
+/// This is the proper fix for the reverted A1 `num_rows`-as-NDV proxy, which
+/// overestimated low-cardinality columns (e.g. `l_returnflag` NDV=2 → proxy=
+/// 60K) and selected an exploding intermediate join plan at SF=0.01. The HLL
+/// carries the TRUE per-column distinct count (±~2% standard error at a fixed
+/// 16 KB/column).
+///
+/// Co-design (TD-OLAP-2 / ADR-037): the dominant cost term moved here is
+/// COMPUTE (the single-threaded join build), and the lever is 1 core → N cores
+/// by feeding the optimizer its missing input — accurate NDV. The sketch is
+/// computed at the write boundary, where the records are already resident in
+/// memory for the Parquet write, so it adds ZERO scans: O(rows × cols) HLL
+/// inserts (~1 s at SF=0.1 = 600 K rows × 16 cols), acceptable for a
+/// materialize DDL.
+///
+/// Mixed-read-safe + best-effort: the registry is in-memory and a miss degrades
+/// to `Absent` (the pre-A2 behavior), never a wrong answer. The summary is
+/// REPLACED (`put`, not `update`) on each materialize because materialize is a
+/// full-overwrite snapshot — the old records are gone, so the old sketches must
+/// not survive. (The SST flush path for vector collections is a follow-on; the
+/// DF/OLAP join path only reads parquet-backed tables, which are always
+/// materialized, so this seam covers the join-parallelism goal.)
+pub(crate) fn publish_ndv_statistics(
+    table_name: &str,
+    schema: &CatalogTableSchema,
+    records: &[ProximaRecord],
+) {
+    use proximadb_search_types::sql_value_filter::proxima_value_to_json;
+
+    let mut summary = crate::core::statistics::StatisticsSummary::new(table_name);
+    summary.set_record_count(records.len() as u64);
+    // Pre-compute (name, type-name) once per column. The type name only feeds
+    // `is_numeric_type` (quantile tracking); the HLL distinct count is type-
+    // agnostic (`canonical_string` keys every value), so NDV is correct even
+    // for types outside the numeric set.
+    let cols: Vec<(&str, serde_json::Value)> = schema
+        .columns
+        .iter()
+        .map(|c| {
+            (
+                c.name.as_str(),
+                serde_json::Value::String(format!("{:?}", c.data_type)),
+            )
+        })
+        .collect();
+    for rec in records {
+        for (name, ty) in &cols {
+            // Same leaf extraction as `cluster_sort_key`: NULL/absent/object
+            // nodes observe as `None` (counted in the null rate, not the HLL).
+            let json_val = rec.props.get(*name).and_then(|node| match node {
+                ProximaTreeNode::Value(v) => Some(proxima_value_to_json(v)),
+                _ => None,
+            });
+            summary.observe_field(name, ty, json_val.as_ref());
+        }
+    }
+    crate::core::statistics::statistics_registry().put(summary);
+}
+
 pub(crate) fn resolve_materialize_prefix(
     tenant_id: &str,
     namespace_id: &str,
@@ -1525,6 +1595,17 @@ impl DmlService {
             ..Default::default()
         };
         catalog.set_storage_layouts(&table_id, vec![layout]).await?;
+
+        // 5b. TD-OLAP-2 (A2): publish per-column NDV sketches (HLL) from the
+        //     just-written records to the ADR-037 resident statistics registry,
+        //     keyed by table name. The DF reader's `statistics()` overlays
+        //     `distinct_count` from this registry, so `EnforceDistribution` can
+        //     pick a partitioned (multi-core) join build. Best-effort + pure
+        //     compute (no scan): the records are already resident, and a miss
+        //     degrades to the pre-A2 `Absent` (never a wrong answer). Run only
+        //     after the write + catalog flip succeed so stats describe data
+        //     that actually landed. See `publish_ndv_statistics`.
+        publish_ndv_statistics(table_name, &schema, &records);
 
         // 6. Best-effort: also publish a spec-shaped Iceberg snapshot (v3) — Avro manifest
         //    + manifest list + TableMetadata under `{prefix}/metadata` — so EXTERNAL Iceberg
