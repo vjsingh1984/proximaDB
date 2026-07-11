@@ -11,10 +11,10 @@
 // like SURE signals and repair counts so the handler doesn't need to know
 // about every trace field individually.
 
-use crate::core::service_types::IndexStats;
 use crate::observability::search_plan_trace::{
     CacheResult, FailureClass, PredicateShortfall, SearchPlanTrace, SureSignals,
 };
+use proximadb_data_model::IndexStats;
 
 /// Inputs the runtime hands the builder. References + Copy where possible
 /// so the builder allocates nothing on the hot path.

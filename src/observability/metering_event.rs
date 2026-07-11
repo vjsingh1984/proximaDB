@@ -253,10 +253,10 @@ fn failure_class_label(f: &crate::observability::search_plan_trace::FailureClass
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::service_types::IndexStats;
     use crate::observability::search_plan_trace::{
         CacheResult, FailureClass, FilterStrategy, IndexRoute, SearchPlanTrace, SureSignals,
     };
+    use proximadb_data_model::IndexStats;
 
     fn trace_template() -> SearchPlanTrace {
         SearchPlanTrace {
