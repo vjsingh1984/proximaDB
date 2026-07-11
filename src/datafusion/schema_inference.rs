@@ -221,6 +221,14 @@ pub fn statistics_from_splits(
                 .and_then(|f| f.distinct_estimate)
             {
                 cs.distinct_count = Precision::Inexact(ndv as usize);
+            } else if num_rows > 0 {
+                // TD-OLAP-2 NDV proxy: when no registry NDV is available,
+                // use num_rows as an Inexact upper bound (NDV ≤ num_rows).
+                // Gives DataFusion's EnforceDistribution rule a non-Absent
+                // estimate so it can choose a partitioned (multi-core) join
+                // build instead of falling back to single-partition (1 core).
+                // The HLL fix (A2) replaces this proxy with accurate NDV.
+                cs.distinct_count = Precision::Inexact(num_rows);
             }
             cs
         })
