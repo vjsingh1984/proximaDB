@@ -34,6 +34,16 @@ pub mod proto {
     pub use proximadb_proto::proximadb_v1;
 }
 
+/// Plain-data types shared across the observability storage seam
+/// (`TraceSpan`, `TraceSummary`, `ObservabilityStorageStats`).
+pub mod model;
+/// Dependency-inversion port for the observability storage layer
+/// (`ObservabilityStoragePort`) — dissolves the facade→storage up-edge.
+pub mod ports;
+
+pub use model::{ObservabilityStorageStats, TraceSpan, TraceSummary};
+pub use ports::ObservabilityStoragePort;
+
 /// Alerting engine — rule-based evaluation, escalation, persistence, notifications.
 pub mod alerting;
 /// Audit logging for compliance and security event tracking.

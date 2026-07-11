@@ -216,6 +216,11 @@ pub trait ObservabilityStorageEngine: Send + Sync {
 pub use self::ingestion::ObservabilityIngester;
 pub use self::query::ObservabilityQueryEngine;
 pub use self::storage::ObservabilityStorage;
+// Storage-seam types + port live in the engine crate; re-export so root paths
+// (`crate::observability::TraceSpan`, `::ObservabilityStoragePort`) resolve.
+pub use proximadb_observability_engine::{
+    ObservabilityStoragePort, ObservabilityStorageStats, TraceSpan, TraceSummary,
+};
 
 /// Observability service - main entry point
 pub struct ObservabilityService {
