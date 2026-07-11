@@ -121,11 +121,20 @@ impl DataFusionLocalEngine {
                 .await?;
                 continue;
             }
+            // ADR-058 D5/§9.A: per-table footer-stats trust (default Trusted).
+            // Untrusted (external/federated) ⇒ the adapter declines to answer
+            // COUNT/MIN/MAX from the parquet footer and scans instead.
+            let stats_trust = context
+                .parquet_table_trust
+                .get(name)
+                .copied()
+                .unwrap_or(proximadb_data_model::StatsTrust::Trusted);
             let table = crate::datafusion::register_object_store_parquet_location(
                 &ctx,
                 name,
                 location,
                 context.tenant_id.as_deref(),
+                stats_trust,
             )
             .await
             .map_err(|e| {
@@ -653,11 +662,15 @@ async fn register_merged_olap_table(
         .await
         .map_err(|e| ExecutionError::Context(format!("olap-merge delta {name}: {e}")))?;
     if changed.is_empty() {
-        crate::datafusion::register_object_store_parquet_location(ctx, name, location, tenant)
-            .await
-            .map_err(|e| {
-                ExecutionError::Context(format!("olap-merge bare register {name}: {e}"))
-            })?;
+        crate::datafusion::register_object_store_parquet_location(
+            ctx,
+            name,
+            location,
+            tenant,
+            proximadb_data_model::StatsTrust::Trusted,
+        )
+        .await
+        .map_err(|e| ExecutionError::Context(format!("olap-merge bare register {name}: {e}")))?;
         return Ok(());
     }
     let suppress: HashSet<String> = changed.iter().cloned().collect();
@@ -666,9 +679,15 @@ async fn register_merged_olap_table(
     //    registration never leaks into the query's table namespace.
     let base_ctx = crate::datafusion::create_session_context()
         .map_err(|e| ExecutionError::Context(format!("olap-merge base session: {e}")))?;
-    crate::datafusion::register_object_store_parquet_location(&base_ctx, name, location, tenant)
-        .await
-        .map_err(|e| ExecutionError::Context(format!("olap-merge base register {name}: {e}")))?;
+    crate::datafusion::register_object_store_parquet_location(
+        &base_ctx,
+        name,
+        location,
+        tenant,
+        proximadb_data_model::StatsTrust::Trusted,
+    )
+    .await
+    .map_err(|e| ExecutionError::Context(format!("olap-merge base register {name}: {e}")))?;
     let base_schema = base_ctx
         .table_provider(name)
         .await

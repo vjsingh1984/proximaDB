@@ -172,6 +172,12 @@ impl ExecutionControls {
 pub struct QueryExecutionContext {
     /// Tables backed by Parquet files (name -> location).
     pub parquet_tables: Vec<(String, String)>,
+    /// ADR-058 D5/§9.A: per-table footer-stats trust, keyed by table name
+    /// (parallel to `parquet_tables`). Drives whether the DataFusion adapter may
+    /// answer COUNT/MIN/MAX from the parquet FOOTER (`Trusted`) or must scan
+    /// (`Untrusted` — external/federated writer's footer is not trusted). Empty
+    /// ⇒ default `Trusted` per-table at registration.
+    pub parquet_table_trust: std::collections::HashMap<String, proximadb_data_model::StatsTrust>,
     /// Optional vector operations service for cross-modal search.
     pub vector_ops: Option<Arc<dyn proximadb_runtime::VectorOpsPort>>,
     /// Optional graph read service for the cross-modal `graph_traverse` table function.

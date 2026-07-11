@@ -26,6 +26,34 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
+// Stats Trust (ADR-058 D5 / §9.A)
+// ---------------------------------------------------------------------------
+
+/// Trust level for a parquet table's FOOTER STATISTICS (row_count /
+/// null_count / min-max). Footer-stats elision — answering `COUNT`/`MIN`/`MAX`
+/// from the parquet footer instead of scanning — is only sound when ProximaDB
+/// wrote the footer; an external/federated writer's footer may carry stale or
+/// absent stats, so eliding from it can return a WRONG aggregate.
+///
+/// Lives in the foundation data-model crate so both the network layer
+/// (`relational_pipeline`, which derives it from catalog authority) and the
+/// DataFusion adapter (which consumes it to gate `statistics_from_splits`) can
+/// share it without an ADR-039 layering violation (the adapter is below the
+/// network layer).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatsTrust {
+    /// ProximaDB generated the parquet (materialized `ProjectionPublication`,
+    /// `ExportedPublication`, or a WAL-owned authority) ⇒ footer stats are
+    /// authoritative ⇒ elision is sound.
+    Trusted,
+    /// External/federated/imported authority (`FederatedRead` /
+    /// `ExternalAuthoritative` / `ImportedSnapshot`) — the writer is not
+    /// ProximaDB, so footer stats are NOT trusted ⇒ elision is disabled; the
+    /// aggregate is computed by scanning real column data.
+    Untrusted,
+}
+
+// ---------------------------------------------------------------------------
 // Modality Discriminators
 // ---------------------------------------------------------------------------
 
