@@ -2782,6 +2782,77 @@ mod tests {
         }
     }
 
+    /// ADR-058 D5 / §9.A: the stats-trust derivation is the load-bearing security
+    /// mapping behind the native route's footer-elision gate — an authority that
+    /// wrongly classifies external parquet as `Trusted` would re-open the
+    /// wrong-`COUNT`/`MIN`/`MAX`-on-external-parquet hole #860 closed. This ratchet
+    /// locks the mapping: external parquet authorities ⇒ `Untrusted`; everything
+    /// ProximaDB authored ⇒ `Trusted`; and the gate is parquet-footer-specific (an
+    /// external authority on a non-parquet layout is NOT a footer-trust concern).
+    #[cfg(feature = "datafusion-integration")]
+    #[test]
+    fn parquet_stats_trust_maps_external_authorities_to_untrusted() {
+        use proximadb_catalog::{
+            CatalogAuthorityMode, CatalogPhysicalFormat, CatalogStorageLayout, CatalogTableSchema,
+        };
+        let layout = |authority, physical_format| CatalogStorageLayout {
+            authority,
+            physical_format,
+            ..Default::default()
+        };
+        let schema_with = |layouts: Vec<CatalogStorageLayout>| {
+            let mut s = CatalogTableSchema::new("t");
+            s.storage_layouts = layouts;
+            s
+        };
+
+        // External / federated / imported PARQUET → Untrusted (footer not ours).
+        for authority in [
+            CatalogAuthorityMode::FederatedRead,
+            CatalogAuthorityMode::ExternalAuthoritative,
+            CatalogAuthorityMode::ImportedSnapshot,
+        ] {
+            let s = schema_with(vec![layout(authority, CatalogPhysicalFormat::Parquet)]);
+            assert_eq!(
+                parquet_stats_trust(&s),
+                StatsTrust::Untrusted,
+                "{authority:?} parquet must be Untrusted — its footer stats are not ProximaDB's"
+            );
+        }
+
+        // ProximaDB-authored PARQUET (incl. the `MATERIALIZE` form) → Trusted.
+        for authority in [
+            CatalogAuthorityMode::ProjectionPublication,
+            CatalogAuthorityMode::ExportedPublication,
+        ] {
+            let s = schema_with(vec![layout(authority, CatalogPhysicalFormat::Parquet)]);
+            assert_eq!(
+                parquet_stats_trust(&s),
+                StatsTrust::Trusted,
+                "{authority:?} parquet is ProximaDB-authored ⇒ footer stats are authoritative"
+            );
+        }
+
+        // The gate is parquet-footer-specific: an external authority on a
+        // NON-parquet layout must not taint trust (no parquet footer is trusted).
+        let s = schema_with(vec![layout(
+            CatalogAuthorityMode::FederatedRead,
+            CatalogPhysicalFormat::ProximaBlock,
+        )]);
+        assert_eq!(
+            parquet_stats_trust(&s),
+            StatsTrust::Trusted,
+            "an external authority on a non-parquet layout is not a footer-trust concern"
+        );
+
+        // No storage layouts at all ⇒ nothing external ⇒ Trusted (fail-open is safe
+        // here: with no parquet layout the elision path is never reached).
+        assert_eq!(
+            parquet_stats_trust(&CatalogTableSchema::new("t")),
+            StatsTrust::Trusted
+        );
+    }
+
     #[test]
     fn operation_class_classifies_olap_shapes() {
         use crate::query::compute_scheduler::OperationClass;
