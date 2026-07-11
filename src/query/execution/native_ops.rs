@@ -983,9 +983,9 @@ pub(crate) fn lower_physical(
 ) -> Result<LoweredPipeline, ExecutionError> {
     // Join is handled specially — it produces two pipelines (build + probe).
     if matches!(plan, PhysicalPlan::Join { .. }) {
-        return lower_join(plan, scan_ctx, 0);
+        return lower_join(plan, scan_ctx);
     }
-    let walked = walk(plan, scan_ctx, 0)?;
+    let walked = walk(plan, scan_ctx)?;
     let (operators, limit) = walked_to_operators(walked);
     Ok(LoweredPipeline {
         pipeline: Pipeline::new(operators),
@@ -1143,7 +1143,6 @@ fn walked_to_operators(walked: Walked) -> (Vec<Box<dyn ExecutionOperator>>, Opti
 fn lower_join(
     plan: &PhysicalPlan,
     scan_ctx: Option<&ScanCtx>,
-    depth: usize,
 ) -> Result<LoweredPipeline, ExecutionError> {
     use crate::query::execution::native_engine::native_join_enabled;
     use crate::query::execution::native_join_ops::{
@@ -1188,8 +1187,8 @@ fn lower_join(
     }
 
     // Walk both subtrees.
-    let left_walked = walk(left, scan_ctx, depth + 1)?;
-    let right_walked = walk(right, scan_ctx, depth + 1)?;
+    let left_walked = walk(left, scan_ctx)?;
+    let right_walked = walk(right, scan_ctx)?;
     let left_schema = left_walked.cur_schema.clone();
     let right_schema = right_walked.cur_schema.clone();
     let (left_ops, _) = walked_to_operators(left_walked);
@@ -1306,23 +1305,27 @@ fn extract_equi_keys(expr: &Expr, left_width: usize) -> Option<Vec<(usize, usize
     }
 }
 
-/// Maximum plan-tree depth the native lowering will attempt before declining
-/// to the Volcano. Prevents stack overflow on deeply nested multi-join plans
-/// (e.g., TPC-H Q2's 5-table join + correlated subquery). 32 is generous for
-/// any realistic OLAP plan (TPC-H's deepest is ~15) while staying well within
-/// tokio's 2 MB worker stack.
-const MAX_WALK_DEPTH: usize = 32;
+/// Stack red-zone / growth for the native lowering recursion (TD-EXEC-2 §1.a).
+/// Retires the former `MAX_WALK_DEPTH=32` depth cap: rather than declining a
+/// deeply nested plan to the Volcano for a stack reason, grow the stack on demand
+/// so native serves any depth correctly on any worker stack. Deliberately generous
+/// pending Slice-1 frame-cost calibration; the per-frame check is a TLS read +
+/// pointer compare (~ns) and a segment allocates only when the descent nears the
+/// limit.
+const WALK_RED_ZONE: usize = 256 * 1024;
+const WALK_STACK_GROW: usize = 4 * 1024 * 1024;
 
-fn walk(
-    plan: &PhysicalPlan,
-    scan_ctx: Option<&ScanCtx>,
-    depth: usize,
-) -> Result<Walked, ExecutionError> {
-    if depth > MAX_WALK_DEPTH {
-        return Err(ExecutionError::NotImplemented(format!(
-            "native lowering exceeded max depth {MAX_WALK_DEPTH} — plan too deeply nested; falling back to Volcano"
-        )));
-    }
+/// Lower a physical-plan subtree to a native pipeline. Guards each recursion level
+/// with [`stacker::maybe_grow`] (TD-EXEC-2 §1.a) so a deep plan grows the stack on
+/// demand rather than overflowing the worker thread; the recursive descent goes
+/// back through this entry, so every level checks its own headroom.
+fn walk(plan: &PhysicalPlan, scan_ctx: Option<&ScanCtx>) -> Result<Walked, ExecutionError> {
+    stacker::maybe_grow(WALK_RED_ZONE, WALK_STACK_GROW, || {
+        walk_inner(plan, scan_ctx)
+    })
+}
+
+fn walk_inner(plan: &PhysicalPlan, scan_ctx: Option<&ScanCtx>) -> Result<Walked, ExecutionError> {
     match plan {
         PhysicalPlan::Values {
             rows,
@@ -1389,7 +1392,7 @@ fn walk(
             })
         }
         PhysicalPlan::Filter { input, predicate } => {
-            let mut w = walk(input, scan_ctx, depth + 1)?;
+            let mut w = walk(input, scan_ctx)?;
             let p = PhysExpr::lower(predicate)?;
             // Fuse into a trailing FilterProject (AND-merge the predicate), else push.
             let fuse = matches!(w.ops.last(), Some(OpSpec::FilterProject { .. }));
@@ -1412,7 +1415,7 @@ fn walk(
             Ok(w) // a filter preserves the column set → cur_schema unchanged
         }
         PhysicalPlan::Project { input, outputs } => {
-            let mut w = walk(input, scan_ctx, depth + 1)?;
+            let mut w = walk(input, scan_ctx)?;
             let indices = lower_column_indices(outputs)?;
             // Output schema of this projection (computed before `indices` is moved
             // into the op below).
@@ -1457,7 +1460,7 @@ fn walk(
                     "HAVING not supported in native HashAggregate".into(),
                 ));
             }
-            let mut w = walk(input, scan_ctx, depth + 1)?;
+            let mut w = walk(input, scan_ctx)?;
             let gb: Vec<usize> = group_by
                 .iter()
                 .map(|ne| lower_col(&ne.expr))
@@ -1481,7 +1484,7 @@ fn walk(
             limit,
             offset,
         } => {
-            let mut w = walk(input, scan_ctx, depth + 1)?;
+            let mut w = walk(input, scan_ctx)?;
             if w.limit.is_some() {
                 return Err(ExecutionError::NotImplemented(
                     "nested Limit not supported in native vectorized path".into(),
