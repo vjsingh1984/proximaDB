@@ -646,7 +646,7 @@ simd-experimental = []
 # (range_gets/bytes_read/compute_ms) and ALL observers (route-cost, cache, and
 # the always-on BILLING observer) stay live regardless — billing is never gated
 # (ADR-027 non-entanglement; enforced by scripts/check_billing_never_gated.py).
-io-trace = []
+io-trace = ["proximadb-observability-engine/io-trace"]
 # TurboQuant data-oblivious quantizer + in-kernel allowlist (ADR-021).
 # Gates the QuantizationLevel::TurboQuant variant in proximadb-vector + the
 # TurboQuantVectorData struct in src/compute/distance_computation/quantized.rs.

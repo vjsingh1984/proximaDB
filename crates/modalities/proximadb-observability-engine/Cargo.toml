@@ -19,6 +19,10 @@ path = "src/lib.rs"
 # size-sensitive `--no-default-features` build can drop it (the module compiles
 # to no-ops). Default-on in the root build (root enables this feature).
 otlp-metering = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
+# Mirrors the root `io-trace` feature: the per-query io_trace bus + the
+# ObjectStore decorator are gated behind this opt-in flag (co-design C0
+# instrumentation). Empty cfg flag — the root enables it when io-trace is on.
+io-trace = []
 
 [dependencies]
 anyhow.workspace = true

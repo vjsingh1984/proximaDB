@@ -901,6 +901,7 @@ mod tests {
     /// so KRU is emitted from `compute_ms` and cannot diverge from the cost
     /// model's view. Drives the real `instrument` drain path end to end.
     #[tokio::test]
+    #[allow(clippy::type_complexity)] // test-only capture cell for the billing observer
     async fn billing_observer_receives_tenant_and_accumulated_compute_ms() {
         use std::sync::{Arc, Mutex};
         let captured: Arc<Mutex<Option<(Option<String>, u64, u64)>>> = Arc::new(Mutex::new(None));
