@@ -159,6 +159,16 @@ pub struct IoTrace {
     /// free same-region path (Dimension 2 — KEU). Recorded only for chargeable
     /// localities; the route cost model's egress weight consumes this.
     egress_bytes: AtomicU64,
+    /// PAX RaBitQ cascade **logical** striped-read projection (ADR-057 / TD-RDSTRAT-3):
+    /// the bytes + ranged GETs a *selective* striped read WOULD move (Stage-1 codes
+    /// stripe + Stage-2 candidate rerank rows, with the real ranked candidate set),
+    /// kept DISTINCT from the physical `bytes_read`/`range_gets` (which today reflect
+    /// the whole-segment `fs.read`). The pair makes the striped-vs-whole headroom
+    /// observable per query on real candidate scatter — the co-design "trace before
+    /// you tune" signal the flip gates on. Recording here is projection-only; it
+    /// moves no bytes and changes no read path.
+    logical_striped_bytes: AtomicU64,
+    logical_striped_gets: AtomicU64,
     /// Embedding API calls (Dimension 5 — KEU, Kilo-Embedding-Units). A neutral
     /// counter for code-embedding operations; pricing happens downstream in
     /// AnvaiOps. Distinct from general read KRU.
@@ -237,6 +247,15 @@ impl IoTrace {
     /// Add to bytes fetched from object storage.
     pub fn record_bytes_read(&self, bytes: u64) {
         self.bytes_read.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    /// Add to the PAX cascade's **logical** striped-read projection (bytes + GETs)
+    /// — the selective read a striped path WOULD issue. Kept distinct from the
+    /// physical counters (ADR-057 / TD-RDSTRAT-3).
+    pub fn record_logical_striped(&self, bytes: u64, gets: u64) {
+        self.logical_striped_bytes
+            .fetch_add(bytes, Ordering::Relaxed);
+        self.logical_striped_gets.fetch_add(gets, Ordering::Relaxed);
     }
 
     /// Add to the count of ranged GET requests issued.
@@ -372,6 +391,8 @@ impl IoTrace {
             delete_ops: self.delete_ops.load(Ordering::Relaxed),
             bytes_read: self.bytes_read.load(Ordering::Relaxed),
             range_gets: self.range_gets.load(Ordering::Relaxed),
+            logical_striped_bytes: self.logical_striped_bytes.load(Ordering::Relaxed),
+            logical_striped_gets: self.logical_striped_gets.load(Ordering::Relaxed),
             splits_total: self.splits_total.load(Ordering::Relaxed),
             splits_pruned: self.splits_pruned.load(Ordering::Relaxed),
             runtime_filter_arrived: self.runtime_filter_arrived.load(Ordering::Relaxed),
@@ -415,6 +436,13 @@ pub struct IoTraceSnapshot {
     pub delete_ops: u64,
     pub bytes_read: u64,
     pub range_gets: u64,
+    /// PAX cascade logical striped-read projection: bytes + ranged GETs a selective
+    /// striped read would move (ADR-057 / TD-RDSTRAT-3). With `bytes_read`
+    /// (whole-segment physical) this yields the measured striped-vs-whole headroom.
+    #[serde(default)]
+    pub logical_striped_bytes: u64,
+    #[serde(default)]
+    pub logical_striped_gets: u64,
     /// Candidate row-group splits considered by scans (TD-OLAP-3).
     #[serde(default)]
     pub splits_total: u64,
@@ -587,6 +615,14 @@ pub fn record_op_str(operation: &str) {
 /// Add to bytes fetched from object storage for the active query.
 pub fn record_bytes_read(bytes: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_bytes_read(bytes));
+}
+
+/// Record the PAX cascade's logical striped-read projection (bytes + GETs a
+/// selective read would move) into the active query trace — distinct from the
+/// physical `bytes_read`/`range_gets` (ADR-057 / TD-RDSTRAT-3). Silently no-ops
+/// outside an active scope; a core counter (always-on, like `record_bytes_read`).
+pub fn record_logical_striped(bytes: u64, gets: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_logical_striped(bytes, gets));
 }
 
 /// Add to the count of ranged GET requests for the active query.

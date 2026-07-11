@@ -388,3 +388,112 @@ async fn rdstrat_get_count_measurement() {
         );
     }
 }
+
+/// TD-RDSTRAT-3 "measure first": the REAL striped-vs-whole headroom on the live PAX
+/// cascade, from the cascade's own per-query trace with the ACTUAL ranked candidate
+/// set (not a pure-plan projection). The cascade reads each segment WHOLE
+/// (`search/mod.rs:271` → physical `io_trace.bytes_read`) but also projects the
+/// selective striped read it *could* have issued — codes stripe + candidate rerank
+/// rows — into the distinct `logical_striped_bytes` counter (`segment_format.rs`).
+/// `1 - logical_striped_bytes / bytes_read` is the measured headroom on real
+/// candidate scatter; it is the ADR-052 observe→act signal the flip gates on.
+///
+/// This is a MEASUREMENT (prints the number); it asserts only that the cascade path
+/// fired (so the number is real), never a headroom threshold — the magnitude is
+/// config-dependent (segment size vs RaBitQ pool; f32-tier opt-in) and is reported,
+/// not gated, here.
+#[tokio::test(flavor = "current_thread")]
+async fn rdstrat_striped_headroom_measure() {
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    // Default arm only — no RDSTRAT env.
+    let n: usize = std::env::var("PROXIMADB_RDSTRAT_N")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n >= TOP_K)
+        .unwrap_or(20_000);
+    let n_queries: usize = std::env::var("PROXIMADB_RDSTRAT_QUERIES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|q| *q > 0)
+        .unwrap_or(20);
+
+    let temp_dir = TempDir::new().unwrap();
+    let coll = collection("rdstrat_headroom", &temp_dir);
+    let engine = SstEngine::new().await.unwrap();
+
+    let mut batch: Vec<VectorRecord> = Vec::with_capacity(BATCH_SIZE);
+    for i in 0..n {
+        batch.push(vector_record(i as u32, synth_vector(i as u32)));
+        if batch.len() == BATCH_SIZE {
+            flush_batch(&engine, &coll, std::mem::take(&mut batch)).await;
+        }
+    }
+    if !batch.is_empty() {
+        flush_batch(&engine, &coll, batch).await;
+    }
+
+    let queries: Vec<Vec<f32>> = (0..n_queries)
+        .map(|q| synth_vector(2_000_000 + q as u32))
+        .collect();
+
+    let engine_ref = &engine;
+    let coll_ref = &coll;
+    let n_q = queries.len() as u64;
+    let snap = proximadb::observability::io_trace::scope(async move {
+        for q in queries {
+            let _ = search_topk(engine_ref, coll_ref, q, false).await;
+        }
+        proximadb::observability::io_trace::snapshot()
+    })
+    .await
+    .expect("io_trace snapshot available inside scope");
+
+    // The whole-segment read (`search/mod.rs:271`) is served from the local mmap
+    // cache, which bypasses `record_bytes_read` — so `io_trace.bytes_read` under-
+    // counts it on local FS. The cold-object-store cost of the current path is the
+    // SEGMENT FILE SIZE (what a cold GET fetches, every query, since the cascade
+    // reads each `.pax` segment whole). Measure that from disk; the mmap amortizes
+    // it on a hot local tier, but the co-design-relevant tier (cold object store)
+    // pays it per query — exactly where the striped read wins.
+    let whole_per_query: u64 = walk_pax_bytes(temp_dir.path());
+    let logical_per_query = snap.logical_striped_bytes / n_q.max(1);
+    let gets_per_query = snap.logical_striped_gets / n_q.max(1);
+    let headroom = if whole_per_query > 0 {
+        100.0 * (1.0 - logical_per_query as f64 / whole_per_query as f64)
+    } else {
+        0.0
+    };
+    eprintln!(
+        "[TD-RDSTRAT-3 measured headroom] N={n} queries={n_queries} DIM={DIMENSION} (SQ8, f32-tier OFF)\n\
+         whole-segment cold-GET bytes/query = {whole_per_query} (Σ .pax segment sizes; mmap-amortized on hot tier)\n\
+         logical striped bytes/query        = {logical_per_query} (gets/query={gets_per_query}; REAL candidate set)\n\
+         => striped-vs-whole headroom       = {headroom:.1}%  (cold object-store, default SQ8 config)",
+    );
+
+    // The cascade must have fired — otherwise we measured nothing. (The default
+    // SstEngine collection flushes RaBitQ .pax segments read via the cascade.)
+    assert!(
+        snap.logical_striped_bytes > 0,
+        "logical_striped_bytes == 0 — the PAX RaBitQ cascade did not run, so no \
+         striped headroom was measured (check the segment format / distance metric)"
+    );
+    assert!(whole_per_query > 0, "no .pax segment bytes found on disk");
+}
+
+/// Sum the sizes of every `.pax` segment under `root` — the cold-GET whole-read
+/// cost per query (the cascade reads each segment whole).
+fn walk_pax_bytes(root: &std::path::Path) -> u64 {
+    let mut total = 0u64;
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return 0;
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            total += walk_pax_bytes(&p);
+        } else if p.extension().is_some_and(|x| x == "pax") {
+            total += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+        }
+    }
+    total
+}

@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Blocked on ADR-057 decider sign-off** — do NOT start implementation (S1+) until link:../../12-design/adr/ADR-057-pax-cascade-selective-striped-read-and-chooser.adoc[ADR-057] is **Accepted**. S0 (baseline trace, no product code) may proceed to quantify headroom.
+| Status | **In progress** (link:../../12-design/adr/ADR-057-pax-cascade-selective-striped-read-and-chooser.adoc[ADR-057] **Accepted 2026-07-09**). **DONE (PR #827):** S0 measured (72.1% @N=8k / 73.4% @N=20k cold-tier headroom on the default SQ8 config, real candidate set — via the new `io_trace.logical_striped_bytes` counter, which also fixed the TD-RDSTRAT-2 double-count) · S1a pure planner (`pax_striped_plan`, fail-closed guards) · **S1b ranged-rerank primitive** (`block-format::score_rerank_row`, parity-verified byte-identical to `rerank_rows`). **REMAINING (S1b-final, focused follow-up):** the async `rabitq_search_segment_ranged` wiring + `try_pax_cascade` flag `PROXIMADB_PAX_STRIPED_READ` (default-OFF) + integration parity test (ranged==whole) + the SIFT1M recall gate (CI). Then S2 (chooser observe) → S3 (flip + retire dead `.sst` sites).
 | Severity | Medium-High (perf + cloud cost — realises the stranded TD-RDSTRAT-1 chooser investment on the live path)
 | Component | PAX RaBitQ cascade: `search/mod.rs` (`try_pax_cascade`), `segment_format.rs` (`rabitq_search_segment`); the ranged reader `proximadb-block-format::ranged`; the chooser core `coalesce_strategy.rs`.
 | Governs / derives from | link:../../12-design/adr/ADR-057-pax-cascade-selective-striped-read-and-chooser.adoc[ADR-057] (the decision) ; link:TD-RDSTRAT-2-chooser-serves-retired-reader.adoc[TD-RDSTRAT-2] (the finding) ; link:TD-RDSTRAT-1-read-strategy-chooser.adoc[TD-RDSTRAT-1] (the chooser core, re-homed here).
@@ -93,10 +93,16 @@ an error — never silently truncate, per TD-XMODAL-9); thresholds are **ratchet
 | Same candidate ids + same reranked order as whole-segment on every gate query. Non-negotiable.
 
 | **Flip gate — bytes-moved reduction** (S3)
-| ≥ 40% on the S0 cold-tier trace (initial target; **finalised from the S0 headroom measurement** — trace-first, not asserted)
-| Only flip default-ON when the measured `io_trace.bytes_read` reduction on a representative selective
-  cold-tier trace clears this bar. If S0 shows less headroom, the target is revised DOWN with the evidence
-  (never flip on an unmeasured claim — ADR-052 observe→ingest→act).
+| ≥ 40%. **MEASURED (2026-07-09) on the live cascade's own per-query trace with the REAL RaBitQ candidate set: 72.1% (N=8k) / 73.4% (N=20k)**, default **SQ8, f32-tier OFF**, cold-object-store cost (whole-segment 5.18 MB vs logical striped 1.38 MB / query @N=20k; `rdstrat_striped_headroom_measure`).
+| The **measured** number supersedes the S1a *pure-plan* bracket (best 83.7% / worst 40.7%) — the pure plan's
+  worst case assumed scattered candidates coalescing to the whole rerank stripe, but the real RaBitQ-ranked
+  pool is **bounded** (≈7 surviving blocks/query @N=20k), so the striped rerank bytes stay ≪ the whole segment
+  EVEN SQ8-only. Method: the cascade reads each segment whole (`search/mod.rs:271`, mmap-amortized on hot local
+  FS — so the cold-GET baseline is the `.pax` segment size, not `io_trace.bytes_read`) while projecting the
+  selective read into the distinct `io_trace.logical_striped_bytes` counter (fixing the TD-RDSTRAT-2
+  double-count). Headroom = `1 − logical_striped / Σ.pax-sizes`. **Holds ≫ gate on the default config** ⇒ S1b
+  greenlit (2026-07-09). f32-tier segments would raise it further (skip the tier). The default-on flip still
+  runs the S3 recall + parity gates.
 
 | **No-GET-amplification** (S3)
 | `range_gets(striped) ≤ range_gets(whole)·K`, K=8 (coalesced)
@@ -112,9 +118,53 @@ an error — never silently truncate, per TD-XMODAL-9); thresholds are **ratchet
 - **Server binary builds** at each slice; `cargo clippy --lib --bins -- -D warnings` clean.
 - **Default-OFF → observe → flip** (ADR-052); caps fail-loud; thresholds ratchet.
 
+== S1 implementation blueprint (substrate verified in-code 2026-07-09)
+
+The selective segment read composes from primitives that ALL already exist — S1 is routing, not
+new format work. Verified call surface:
+
+* **Segment layout** (`crates/storage/proximadb-storage-common/src/pax_block.rs`): a `.pax` segment is
+  `[block(s)][segment_index][SEGMENT_MAGIC]`. The **tail `SegmentIndex`** (v2, `find_at_tail` /
+  `from_bytes`) gives per-block `BlockIndexEntry { offset, size, zone-summary }` and — per its doc —
+  *"random-access block lookup without scanning the whole file"* + block pruning *"from the cached
+  index with zero per-block metadata reads"* (v2 zone summaries).
+* **Per-block ranged reader** (`crates/storage/proximadb-block-format/src/ranged.rs`, pure):
+  `footer_tail_range` → `metadata_ranges` → `BlockLayout::assemble` → `column_stripe_range(col_id)`
+  (whole-column fetch, e.g. the RaBitQ codes stripe) / `vector_row_range(col_id, start_row, end_row)`
+  (per-candidate-row sub-range) → `decode_f32_vec_column` / `decode_i64_column`. Ranges are
+  **object-relative**, so a segment reader shifts them by the block's `offset` (a thin shim).
+* **Batched coalescing GET**: `FileSystem::read_ranges` (one call = one coalesced GET op, io_trace-instrumented).
+* **Chooser core**: `choose_read_strategy` (`coalesce_strategy.rs`, pure + unit-tested).
+
+Planned S1 read (per query, per surviving block):
+
+[loweralpha]
+. Read the segment **tail** (`SegmentIndex` v2) — one small ranged GET; prune blocks via the zone
+  summaries with no further reads.
+. For each surviving block, footer-first via `ranged`: fetch the block footer + metadata + the
+  **RaBitQ codes stripe** (`column_stripe_range(EMBED_BASE)` on the codes column) → `rabitq_rank` →
+  candidate rows. (Stage 1.)
+. Fetch **only the candidate rows'** rerank bytes (`vector_row_range` on the SQ8 / exact-f32 tier
+  column) → rerank. (Stage 2.)
+. All planned ranges across blocks go through one `read_ranges` batch per stage (coalesced GETs).
+
+Shape: add an **async** `rabitq_search_segment_ranged(reader, path, object_size, query, k, pool, …)`
+beside the existing `rabitq_search_segment(bytes, …)` (do NOT change the in-memory API — the
+whole-segment path stays the default). `try_pax_cascade` (`search/mod.rs:271`) chooses between the two;
+default whole-segment, striped behind `PROXIMADB_PAX_STRIPED_READ` (S1) then the chooser (S2). Fall back
+to whole-segment when the segment index is v1/absent or any stripe offset is missing (mixed-read-safe).
+
+Suggested sub-slices (each atomic + verifiable):
+
+* **S1a (pure, no I/O):** a segment-ranged **planner** — given the `SegmentIndex` + per-block
+  `BlockLayout`, emit the exact byte ranges for Stage 1 (codes) and Stage 2 (candidate rows), and a
+  byte-counter test (`ranged.rs`'s `CountingSource` pattern) on a real multi-block segment that reports
+  the **whole-segment vs selective bytes** — this IS the S0 headroom number, produced as a passing test.
+* **S1b (async wiring):** `rabitq_search_segment_ranged` + `try_pax_cascade` flag; parity test
+  (byte-identical candidates + order vs whole-segment) + SIFT1M recall ratchet.
+
 == Non-goals
 
 - Changing the RaBitQ ranking/rerank math or recall.
 - A PAX format/version bump (stripe offsets already persisted).
 - Wiring ANN into DataFusion pushdown (separate; ADR-057 §7).
-- Starting S1+ before ADR-057 is **Accepted**.
