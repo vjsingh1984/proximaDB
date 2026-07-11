@@ -19,7 +19,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::observability::search_plan_trace::{
+use crate::search_plan_trace::{
     CacheResult, FailureClass, FilterStrategy, IndexRoute, SearchPlanTrace,
 };
 
@@ -379,7 +379,7 @@ fn failure_class_label(f: &FailureClass) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observability::search_plan_trace::SureSignals;
+    use crate::search_plan_trace::SureSignals;
     use proximadb_data_model::IndexStats;
 
     fn trace_template() -> SearchPlanTrace {

@@ -37,8 +37,8 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::observability::io_trace::IoTraceSnapshot;
-use crate::observability::search_plan_trace::SearchPlanTrace;
+use crate::io_trace::IoTraceSnapshot;
+use crate::search_plan_trace::SearchPlanTrace;
 
 /// One metering event ready to POST to the operator-configured
 /// metering-events collection. Wraps a `serde_json::Value` so the call
@@ -207,8 +207,8 @@ fn round6(v: f64) -> f64 {
     (v * 1_000_000.0).round() / 1_000_000.0
 }
 
-fn strategy_label(s: &crate::observability::search_plan_trace::FilterStrategy) -> &'static str {
-    use crate::observability::search_plan_trace::FilterStrategy::*;
+fn strategy_label(s: &crate::search_plan_trace::FilterStrategy) -> &'static str {
+    use crate::search_plan_trace::FilterStrategy::*;
     match s {
         PreFilter => "pre_filter",
         HybridFilter => "hybrid_filter",
@@ -216,8 +216,8 @@ fn strategy_label(s: &crate::observability::search_plan_trace::FilterStrategy) -
     }
 }
 
-fn route_label(r: &crate::observability::search_plan_trace::IndexRoute) -> &'static str {
-    use crate::observability::search_plan_trace::IndexRoute::*;
+fn route_label(r: &crate::search_plan_trace::IndexRoute) -> &'static str {
+    use crate::search_plan_trace::IndexRoute::*;
     match r {
         QuantizedGraphThenExact => "quantized_graph_then_exact",
         FullPrecisionGraph => "full_precision_graph",
@@ -227,8 +227,8 @@ fn route_label(r: &crate::observability::search_plan_trace::IndexRoute) -> &'sta
     }
 }
 
-fn cache_result_label(c: &crate::observability::search_plan_trace::CacheResult) -> &'static str {
-    use crate::observability::search_plan_trace::CacheResult::*;
+fn cache_result_label(c: &crate::search_plan_trace::CacheResult) -> &'static str {
+    use crate::search_plan_trace::CacheResult::*;
     match c {
         Hit => "hit",
         Miss => "miss",
@@ -237,8 +237,8 @@ fn cache_result_label(c: &crate::observability::search_plan_trace::CacheResult) 
     }
 }
 
-fn failure_class_label(f: &crate::observability::search_plan_trace::FailureClass) -> &'static str {
-    use crate::observability::search_plan_trace::FailureClass::*;
+fn failure_class_label(f: &crate::search_plan_trace::FailureClass) -> &'static str {
+    use crate::search_plan_trace::FailureClass::*;
     match f {
         BudgetExhausted => "budget_exhausted",
         LowCoverage => "low_coverage",
@@ -253,7 +253,7 @@ fn failure_class_label(f: &crate::observability::search_plan_trace::FailureClass
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observability::search_plan_trace::{
+    use crate::search_plan_trace::{
         CacheResult, FailureClass, FilterStrategy, IndexRoute, SearchPlanTrace, SureSignals,
     };
     use proximadb_data_model::IndexStats;
@@ -350,7 +350,7 @@ mod tests {
         // caller passes an IoTraceSnapshot with non-zero get_ops, the KRU
         // event must surface object_store_gets + object_store_bytes_read so
         // the per-tenant metering collection carries the measured GET count.
-        use crate::observability::io_trace::IoTraceSnapshot;
+        use crate::io_trace::IoTraceSnapshot;
         let t = trace_template();
         let snap = IoTraceSnapshot {
             get_ops: 42,

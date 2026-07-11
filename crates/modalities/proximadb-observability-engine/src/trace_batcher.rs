@@ -26,11 +26,11 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::observability::io_trace::IoTraceSnapshot;
-use crate::observability::metering_event::{MeteringInputs, build_kru};
-use crate::observability::search_plan_trace::SearchPlanTrace;
-use crate::observability::trace_digest::{DigestInputs, digest_hex};
-use crate::observability::trace_fingerprint::{TraceShape, fingerprint_hex};
+use crate::io_trace::IoTraceSnapshot;
+use crate::metering_event::{MeteringInputs, build_kru};
+use crate::search_plan_trace::SearchPlanTrace;
+use crate::trace_digest::{DigestInputs, digest_hex};
+use crate::trace_fingerprint::{TraceShape, fingerprint_hex};
 
 /// One record inside the batch. Owned fields so the batch can outlive
 /// the source traces.
@@ -176,9 +176,7 @@ pub fn homogeneous_inputs<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observability::search_plan_trace::{
-        CacheResult, FilterStrategy, IndexRoute, SureSignals,
-    };
+    use crate::search_plan_trace::{CacheResult, FilterStrategy, IndexRoute, SureSignals};
     use proximadb_data_model::IndexStats;
 
     fn trace_template(trace_id: &str, tenant: &str) -> SearchPlanTrace {

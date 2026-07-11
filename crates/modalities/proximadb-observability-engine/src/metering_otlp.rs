@@ -7,7 +7,7 @@
 //! *durable-file* half).
 //!
 //! **Direction.** This is *export* of proximaDB's own meters, distinct from the
-//! OTLP *ingestion* adapters (`crate::observability::ingestion`) that receive
+//! OTLP *ingestion* adapters (`crate::ingestion`) that receive
 //! third-party telemetry *into* proximaDB. Ingestion reuses proximaDB's own proto
 //! over the existing `tonic`; export must be wire-compatible with arbitrary
 //! standard OTLP collectors, so it uses the official OTLP schema via the

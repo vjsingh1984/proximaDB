@@ -411,12 +411,12 @@ pub struct WebhookPayload {
 }
 
 /// Format severity for display
-fn format_severity_from_enum(severity: crate::observability::alerting::AlertSeverity) -> String {
+fn format_severity_from_enum(severity: crate::alerting::AlertSeverity) -> String {
     match severity {
-        crate::observability::alerting::AlertSeverity::Critical => "Critical".to_string(),
-        crate::observability::alerting::AlertSeverity::High => "High".to_string(),
-        crate::observability::alerting::AlertSeverity::Medium => "Medium".to_string(),
-        crate::observability::alerting::AlertSeverity::Low => "Low".to_string(),
+        crate::alerting::AlertSeverity::Critical => "Critical".to_string(),
+        crate::alerting::AlertSeverity::High => "High".to_string(),
+        crate::alerting::AlertSeverity::Medium => "Medium".to_string(),
+        crate::alerting::AlertSeverity::Low => "Low".to_string(),
     }
 }
 
@@ -461,7 +461,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Run manually with: cargo test --lib -- --ignored test_smtp_notification
     async fn test_smtp_notification() {
-        use crate::observability::alerting::{AlertSeverity, ObservabilityAlert as Alert};
+        use crate::alerting::{AlertSeverity, ObservabilityAlert as Alert};
         use std::collections::HashMap;
 
         // This test sends a real email to singhvjd@gmail.com

@@ -21,7 +21,7 @@
 //!
 //! `IoTrace` captures them. It is bound to the request future as a
 //! [`tokio::task_local!`] — exactly like
-//! [`crate::observability::predicate_diagnostics`] — so any depth of the
+//! [`crate::predicate_diagnostics`] — so any depth of the
 //! storage/engine call stack can record into it without threading a new
 //! parameter through dozens of signatures (the dominant cost of doing this any
 //! other way). At the request boundary the handler wraps the query in
@@ -901,6 +901,7 @@ mod tests {
     /// so KRU is emitted from `compute_ms` and cannot diverge from the cost
     /// model's view. Drives the real `instrument` drain path end to end.
     #[tokio::test]
+    #[allow(clippy::type_complexity)] // test-only capture cell for the billing observer
     async fn billing_observer_receives_tenant_and_accumulated_compute_ms() {
         use std::sync::{Arc, Mutex};
         let captured: Arc<Mutex<Option<(Option<String>, u64, u64)>>> = Arc::new(Mutex::new(None));

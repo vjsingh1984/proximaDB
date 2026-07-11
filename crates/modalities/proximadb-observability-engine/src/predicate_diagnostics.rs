@@ -55,7 +55,7 @@
 
 use std::sync::Mutex;
 
-use crate::observability::search_plan_trace::PredicateShortfall;
+use crate::search_plan_trace::PredicateShortfall;
 
 tokio::task_local! {
     /// Active diagnostics bus for the current task. Bound by [`scope`].
