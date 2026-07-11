@@ -35,16 +35,9 @@ pub use pgwire::{PostgresServer, PostgresSession};
 
 // Re-export common types
 pub use grpc::{GrpcApiHandler, GrpcRequest, GrpcResponse};
-pub use grpc::{GrpcServiceBuilder, GrpcServiceConfig, GrpcServiceFactory, GrpcServices};
 pub use rest::{RestApiHandler, RestRequest, RestResponse};
 
-// Re-export v1 handlers
-pub use grpc::v1::{
-    CollectionServiceImpl, DocumentServiceImpl, EntityServiceImpl, GraphServiceImpl,
-    HybridSearchServiceImpl, ObservabilityServiceImpl, QueryServiceImpl, SecurityServiceImpl,
-    StreamingServiceImpl, VectorServiceImpl,
-};
-pub use rest::v1::{
+pub use rest::canonical::{
     AnalyticsHandler, AqlHandler, CatalogHandler, CollectionHandler, DocumentHandler,
     DocumentQueryHandler, EntityHandler, GraphHandler, GraphTraversalHandler, HybridSearchHandler,
     LogsHandler, MetricsHandler, ProgressiveSearchHandler, VectorHandler,

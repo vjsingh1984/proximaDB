@@ -74,6 +74,10 @@ pub mod logical_lowering;
 // DataFusion-joinable table so one SQL plan joins vector similarity with relational data.
 pub mod cross_modal;
 
+// TD-DOC-PUSHDOWN-1 (ADR-055 P-Pushdown): correct, storage-inclusive `documents(collection)` PAX
+// pushdown provider — flushed PAX-pruned scan + unflushed WAL delta + dead-filter/tombstone merge.
+pub mod document_pax_provider;
+
 // F2: registry -> DataFusion scalar-UDF adapter. Binds engine-neutral ProximaFunctionRegistry
 // kernels into DataFusion as ScalarUDFs (native builtins stay the fast path).
 pub mod registry_udf;
@@ -263,6 +267,19 @@ fn build_session_context(
                 graph,
                 tenant.clone(),
             )),
+        );
+    }
+
+    // F7: the cross-modal moat, document slice — `documents(collection)` as a joinable `(id, props)`
+    // table over the converged document store (ADR-055 P-DFSource), backed by the process document
+    // service (registered only when it is initialised). Lets documents ⋈ vector ⋈ timeseries ⋈
+    // graph ⋈ relational execute in one data-local DataFusion plan instead of client-side glue.
+    if let Some(doc) = crate::services::document_service::document_service() {
+        ctx.register_udtf(
+            "documents",
+            std::sync::Arc::new(
+                cross_modal::DocumentsTableFunction::from_service_with_tenant(doc, tenant.clone()),
+            ),
         );
     }
 

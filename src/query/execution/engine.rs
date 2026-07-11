@@ -172,6 +172,12 @@ impl ExecutionControls {
 pub struct QueryExecutionContext {
     /// Tables backed by Parquet files (name -> location).
     pub parquet_tables: Vec<(String, String)>,
+    /// ADR-058 D5/§9.A: per-table footer-stats trust, keyed by table name
+    /// (parallel to `parquet_tables`). Drives whether the DataFusion adapter may
+    /// answer COUNT/MIN/MAX from the parquet FOOTER (`Trusted`) or must scan
+    /// (`Untrusted` — external/federated writer's footer is not trusted). Empty
+    /// ⇒ default `Trusted` per-table at registration.
+    pub parquet_table_trust: std::collections::HashMap<String, proximadb_data_model::StatsTrust>,
     /// Optional vector operations service for cross-modal search.
     pub vector_ops: Option<Arc<dyn proximadb_runtime::VectorOpsPort>>,
     /// Optional graph read service for the cross-modal `graph_traverse` table function.
@@ -216,6 +222,11 @@ pub async fn execute_sql_with_backend(
             let engine = super::datafusion_engine::DataFusionLocalEngine;
             engine.execute_sql(sql, context).await
         }
+        #[cfg(feature = "duckdb")]
+        ComputeBackend::DuckDbCompat => {
+            let engine = super::duckdb_engine::DuckDbLocalEngine;
+            engine.execute_sql(sql, context).await
+        }
         other => Err(ExecutionError::UnsupportedBackend(other)),
     }
 }
@@ -230,6 +241,11 @@ pub async fn execute_sql_stream_with_backend(
     match backend {
         ComputeBackend::DataFusionLocal => {
             let engine = super::datafusion_engine::DataFusionLocalEngine;
+            engine.execute_sql_stream(sql, context).await
+        }
+        #[cfg(feature = "duckdb")]
+        ComputeBackend::DuckDbCompat => {
+            let engine = super::duckdb_engine::DuckDbLocalEngine;
             engine.execute_sql_stream(sql, context).await
         }
         other => Err(ExecutionError::UnsupportedBackend(other)),
@@ -290,7 +306,41 @@ impl NativeVolcanoEngine {
         // as a trailing `Limit`) is honored by the vectorized lowering too.
         // Default-off; any decline or failure falls back to the Volcano inside
         // `try_vectorized` (the experimental path never fails a query).
-        if let Some(result) = super::native_engine::try_vectorized(&physical).await? {
+        // Production ScanCtx wire (ADR-054 Phase 2.5): build the scan context
+        // from the plan + the lazy-global FilesystemFactory so real PAX-backed
+        // queries route through the native engine. On ANY failure → None → Volcano.
+        let scan_ctx = super::native_engine::build_scan_ctx(&physical).await;
+        if let Some(result) =
+            super::native_engine::try_vectorized(&physical, scan_ctx.as_ref()).await?
+        {
+            // Shadow mode (ADR-054 §7 Phase 0.5, TD-OLAP-11 §Gate): run the
+            // Volcano reference too, compare result multisets, and on divergence
+            // auto-demote the shape + fail safe to the reference. Default-off.
+            if super::native_shadow::native_join_shadow_enabled() {
+                let mut ref_exec = build_executor(
+                    physical.clone(),
+                    factory,
+                    &VolcanoExecutionContext::default(),
+                )
+                .map_err(|e| ExecutionError::Execution(format!("shadow build_executor: {e}")))?;
+                ref_exec
+                    .open()
+                    .await
+                    .map_err(|e| ExecutionError::Execution(format!("shadow open: {e}")))?;
+                let ref_schema = ref_exec.schema().clone();
+                let ref_rows = collect(&mut *ref_exec)
+                    .await
+                    .map_err(|e| ExecutionError::Execution(format!("shadow scan: {e}")))?;
+                let reference = ExecutionPipelineResult {
+                    schema: ref_schema,
+                    rows: ref_rows,
+                };
+                if super::native_shadow::shadow_compare_and_record(&physical, &result, &reference)
+                    .diverged
+                {
+                    return finalize_row_limit(reference, &controls);
+                }
+            }
             return finalize_row_limit(result, &controls);
         }
         let mut exec = build_executor(physical, factory, &VolcanoExecutionContext::default())

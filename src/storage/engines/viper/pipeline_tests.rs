@@ -120,9 +120,7 @@ pub mod viper_pipeline_tests {
             batch_size: 50,
             compression: false,
             sorting_strategy: SortingStrategy::ById,
-            quantization_level: Some(
-                crate::compute::quantization::types::UnifiedQuantizationLevel::Pq8,
-            ),
+            quantization_level: Some(proximadb_quantization_model::UnifiedQuantizationLevel::Pq8),
         };
 
         assert!(!config.enable_preprocessing);

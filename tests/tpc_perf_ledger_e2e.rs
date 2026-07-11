@@ -33,6 +33,7 @@
 //! integration tests are self-contained by convention; keep them in sync.
 
 use std::net::TcpListener;
+#[cfg(not(feature = "duckdb"))]
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -71,6 +72,10 @@ impl PgServer {
         config.server.bind_address = "127.0.0.1".to_string();
         config.server.port = rest_port;
         config.server.data_dir = tmp.path().to_path_buf();
+        // ADR-059: the catalog metadata_url MUST be per-tempdir — the default
+        // ("file://./metadata") is a FIXED relative path that persists across
+        // test runs, carrying stale table locations from previous tempdirs.
+        config.storage.metadata_url = format!("file://{}/metadata", tmp.path().display());
         config.api.rest_port = rest_port;
         config.api.grpc_port = grpc_port;
         config.api.unified_mode = false;
@@ -466,23 +471,63 @@ fn gen_tpch(scale: f64) -> Vec<String> {
 const TPCDS_SCHEMA: &[(&str, &str)] = &[
     (
         "date_dim",
-        "CREATE TABLE date_dim (d_date_sk INT PRIMARY KEY, d_date DATE, d_year INT, d_moy INT, d_qoy INT, d_dom INT, d_dow INT)",
+        "CREATE TABLE date_dim (d_date_sk INT PRIMARY KEY, d_date DATE, d_year INT, d_moy INT, d_qoy INT, d_dom INT, d_dow INT, d_month_seq INT, d_week_seq INT, d_day_name VARCHAR, d_quarter_name VARCHAR)",
     ),
     (
         "item",
-        "CREATE TABLE item (i_item_sk INT PRIMARY KEY, i_item_id VARCHAR, i_brand_id INT, i_brand VARCHAR, i_class_id INT, i_class VARCHAR, i_category_id INT, i_category VARCHAR, i_manufact_id INT, i_current_price DOUBLE PRECISION)",
+        "CREATE TABLE item (i_item_sk INT PRIMARY KEY, i_item_id VARCHAR, i_item_desc VARCHAR, i_brand_id INT, i_brand VARCHAR, i_class_id INT, i_class VARCHAR, i_category_id INT, i_category VARCHAR, i_manufact_id INT, i_manufact VARCHAR, i_current_price DOUBLE PRECISION, i_wholesale_cost DOUBLE PRECISION, i_product_name VARCHAR, i_color VARCHAR, i_units VARCHAR, i_size VARCHAR, i_manager_id INT)",
     ),
     (
         "store",
-        "CREATE TABLE store (s_store_sk INT PRIMARY KEY, s_store_id VARCHAR, s_store_name VARCHAR, s_state VARCHAR)",
+        "CREATE TABLE store (s_store_sk INT PRIMARY KEY, s_store_id VARCHAR, s_store_name VARCHAR, s_state VARCHAR, s_county VARCHAR, s_city VARCHAR, s_zip VARCHAR, s_gmt_offset DOUBLE PRECISION, s_market_id INT, s_number_employees INT, s_company_name VARCHAR, s_company_id INT)",
     ),
     (
         "customer",
-        "CREATE TABLE customer (c_customer_sk INT PRIMARY KEY, c_customer_id VARCHAR, c_first_name VARCHAR, c_last_name VARCHAR, c_current_addr_sk INT, c_birth_country VARCHAR)",
+        "CREATE TABLE customer (c_customer_sk INT PRIMARY KEY, c_customer_id VARCHAR, c_first_name VARCHAR, c_last_name VARCHAR, c_current_addr_sk INT, c_birth_country VARCHAR, c_birth_year INT, c_birth_month INT, c_birth_day INT, c_preferred_cust_flag VARCHAR, c_current_cdemo_sk INT, c_current_hdemo_sk INT, c_salutation VARCHAR, c_login VARCHAR, c_email_address VARCHAR)",
     ),
     (
         "customer_address",
-        "CREATE TABLE customer_address (ca_address_sk INT PRIMARY KEY, ca_state VARCHAR, ca_city VARCHAR, ca_zip VARCHAR, ca_country VARCHAR, ca_gmt_offset DOUBLE PRECISION)",
+        "CREATE TABLE customer_address (ca_address_sk INT PRIMARY KEY, ca_state VARCHAR, ca_city VARCHAR, ca_zip VARCHAR, ca_country VARCHAR, ca_gmt_offset DOUBLE PRECISION, ca_county VARCHAR)",
+    ),
+    (
+        "customer_demographics",
+        "CREATE TABLE customer_demographics (cd_demo_sk INT PRIMARY KEY, cd_gender VARCHAR, cd_marital_status VARCHAR, cd_education_status VARCHAR, cd_purchase_estimate INT, cd_credit_rating VARCHAR, cd_dep_count INT, cd_dep_employed_count INT, cd_dep_college_count INT)",
+    ),
+    (
+        "household_demographics",
+        "CREATE TABLE household_demographics (hd_demo_sk INT PRIMARY KEY, hd_income_band_sk INT, hd_buy_potential VARCHAR, hd_dep_count INT, hd_vehicle_count INT)",
+    ),
+    (
+        "income_band",
+        "CREATE TABLE income_band (ib_income_band_sk INT PRIMARY KEY, ib_lower_bound INT, ib_upper_bound INT)",
+    ),
+    (
+        "promotion",
+        "CREATE TABLE promotion (p_promo_sk INT PRIMARY KEY, p_channel_dmail VARCHAR, p_channel_email VARCHAR, p_channel_event VARCHAR, p_channel_tv VARCHAR)",
+    ),
+    (
+        "warehouse",
+        "CREATE TABLE warehouse (w_warehouse_sk INT PRIMARY KEY, w_warehouse_name VARCHAR, w_state VARCHAR, w_warehouse_sq_ft INT, w_city VARCHAR, w_county VARCHAR, w_country VARCHAR)",
+    ),
+    (
+        "reason",
+        "CREATE TABLE reason (r_reason_sk INT PRIMARY KEY, r_reason_desc VARCHAR)",
+    ),
+    (
+        "time_dim",
+        "CREATE TABLE time_dim (t_time_sk INT PRIMARY KEY, t_time INT, t_hour INT, t_minute INT, t_meal_time VARCHAR)",
+    ),
+    (
+        "ship_mode",
+        "CREATE TABLE ship_mode (sm_ship_mode_sk INT PRIMARY KEY, sm_type VARCHAR, sm_carrier VARCHAR)",
+    ),
+    (
+        "web_site",
+        "CREATE TABLE web_site (web_site_sk INT PRIMARY KEY, web_site_id VARCHAR, web_name VARCHAR, web_company_name VARCHAR)",
+    ),
+    (
+        "call_center",
+        "CREATE TABLE call_center (cc_call_center_sk INT PRIMARY KEY, cc_call_center_id VARCHAR, cc_name VARCHAR, cc_manager VARCHAR, cc_county VARCHAR)",
     ),
     (
         "store_sales",
@@ -490,7 +535,31 @@ const TPCDS_SCHEMA: &[(&str, &str)] = &[
         // the first-DATE-column heuristic finds nothing — declare the cluster
         // key explicitly so sort-on-materialize gives row groups tight
         // ss_sold_date_sk windows (the runtime join filter's prune target).
-        "CREATE TABLE store_sales (ss_sold_date_sk INT, ss_item_sk INT, ss_store_sk INT, ss_customer_sk INT, ss_addr_sk INT, ss_ticket_number INT, ss_quantity INT, ss_sales_price DOUBLE PRECISION, ss_ext_sales_price DOUBLE PRECISION, ss_ext_discount_amt DOUBLE PRECISION, ss_net_profit DOUBLE PRECISION) WITH (cluster_key = 'ss_sold_date_sk')",
+        "CREATE TABLE store_sales (ss_sold_date_sk INT, ss_sold_time_sk INT, ss_item_sk INT, ss_store_sk INT, ss_customer_sk INT, ss_addr_sk INT, ss_cdemo_sk INT, ss_hdemo_sk INT, ss_promo_sk INT, ss_ticket_number INT, ss_quantity INT, ss_wholesale_cost DOUBLE PRECISION, ss_list_price DOUBLE PRECISION, ss_sales_price DOUBLE PRECISION, ss_coupon_amt DOUBLE PRECISION, ss_ext_sales_price DOUBLE PRECISION, ss_ext_wholesale_cost DOUBLE PRECISION, ss_ext_list_price DOUBLE PRECISION, ss_ext_discount_amt DOUBLE PRECISION, ss_ext_tax DOUBLE PRECISION, ss_net_paid DOUBLE PRECISION, ss_net_paid_inc_tax DOUBLE PRECISION, ss_net_profit DOUBLE PRECISION) WITH (cluster_key = 'ss_sold_date_sk')",
+    ),
+    (
+        "store_returns",
+        "CREATE TABLE store_returns (sr_returned_date_sk INT, sr_item_sk INT, sr_customer_sk INT, sr_store_sk INT, sr_ticket_number INT, sr_return_quantity INT, sr_return_amt DOUBLE PRECISION, sr_net_loss DOUBLE PRECISION, sr_reason_sk INT)",
+    ),
+    (
+        "catalog_sales",
+        "CREATE TABLE catalog_sales (cs_sold_date_sk INT, cs_sold_time_sk INT, cs_ship_date_sk INT, cs_item_sk INT, cs_call_center_sk INT, cs_warehouse_sk INT, cs_catalog_page_sk INT, cs_bill_customer_sk INT, cs_ship_customer_sk INT, cs_bill_addr_sk INT, cs_ship_addr_sk INT, cs_bill_cdemo_sk INT, cs_bill_hdemo_sk INT, cs_promo_sk INT, cs_order_number INT, cs_quantity INT, cs_wholesale_cost DOUBLE PRECISION, cs_list_price DOUBLE PRECISION, cs_sales_price DOUBLE PRECISION, cs_coupon_amt DOUBLE PRECISION, cs_ext_sales_price DOUBLE PRECISION, cs_ext_wholesale_cost DOUBLE PRECISION, cs_ext_list_price DOUBLE PRECISION, cs_ext_discount_amt DOUBLE PRECISION, cs_ext_ship_cost DOUBLE PRECISION, cs_net_paid DOUBLE PRECISION, cs_net_paid_inc_tax DOUBLE PRECISION, cs_net_profit DOUBLE PRECISION, cs_ship_mode_sk INT)",
+    ),
+    (
+        "catalog_returns",
+        "CREATE TABLE catalog_returns (cr_returned_date_sk INT, cr_item_sk INT, cr_order_number INT, cr_call_center_sk INT, cr_returning_customer_sk INT, cr_returning_addr_sk INT, cr_return_quantity INT, cr_return_amount DOUBLE PRECISION, cr_refunded_cash DOUBLE PRECISION, cr_reversed_charge DOUBLE PRECISION, cr_store_credit DOUBLE PRECISION, cr_net_loss DOUBLE PRECISION, cr_return_amt_inc_tax DOUBLE PRECISION)",
+    ),
+    (
+        "web_sales",
+        "CREATE TABLE web_sales (ws_sold_date_sk INT, ws_sold_time_sk INT, ws_ship_date_sk INT, ws_item_sk INT, ws_web_site_sk INT, ws_web_page_sk INT, ws_warehouse_sk INT, ws_bill_customer_sk INT, ws_ship_customer_sk INT, ws_bill_addr_sk INT, ws_ship_addr_sk INT, ws_bill_cdemo_sk INT, ws_ship_hdemo_sk INT, ws_order_number INT, ws_quantity INT, ws_wholesale_cost DOUBLE PRECISION, ws_list_price DOUBLE PRECISION, ws_sales_price DOUBLE PRECISION, ws_coupon_amt DOUBLE PRECISION, ws_ext_sales_price DOUBLE PRECISION, ws_ext_wholesale_cost DOUBLE PRECISION, ws_ext_list_price DOUBLE PRECISION, ws_ext_discount_amt DOUBLE PRECISION, ws_ext_ship_cost DOUBLE PRECISION, ws_net_paid DOUBLE PRECISION, ws_net_paid_inc_tax DOUBLE PRECISION, ws_net_profit DOUBLE PRECISION, ws_promo_sk INT, ws_ship_mode_sk INT)",
+    ),
+    (
+        "web_returns",
+        "CREATE TABLE web_returns (wr_returned_date_sk INT, wr_item_sk INT, ws_order_number INT, wr_order_number INT, wr_web_page_sk INT, wr_returning_customer_sk INT, wr_returning_addr_sk INT, wr_refunded_cdemo_sk INT, wr_returning_cdemo_sk INT, wr_refunded_addr_sk INT, wr_reason_sk INT, wr_return_quantity INT, wr_return_amt DOUBLE PRECISION, wr_refunded_cash DOUBLE PRECISION, cr_reversed_charge DOUBLE PRECISION, wr_fee DOUBLE PRECISION, wr_net_loss DOUBLE PRECISION)",
+    ),
+    (
+        "inventory",
+        "CREATE TABLE inventory (inv_date_sk INT, inv_item_sk INT, inv_warehouse_sk INT, inv_quantity_on_hand INT)",
     ),
 ];
 
@@ -499,18 +568,33 @@ fn gen_tpcds(scale: f64) -> Vec<String> {
     let n_item = scaled(18_000, scale, 20);
     let n_cust = scaled(100_000, scale, 10);
     let n_sales = scaled(2_880_000, scale, 300);
-    let n_store = 6u64;
-    // Two years of dates, 1999-2000 (the queries filter d_year=2000, d_moy=11).
+    let n_store = 12u64;
+    let n_warehouse = 5u64;
+    let n_reason = 35u64;
+    let n_call_center = 6u64;
+    // Three years of dates, 1998-2000 (queries filter d_year=1998..2002).
     let mut dates = Vec::new();
     let mut sk = 23_000u64;
-    for y in [1999u64, 2000] {
+    let day_names = [
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+    ];
+    for y in [1998u64, 1999, 2000] {
         for m in 1..=12u64 {
             for d in 1..=28u64 {
                 sk += 1;
-                let dow = sk % 7;
+                let dow = (sk + 5) % 7; // Monday=0 at sk=24500ish
+                let dn = day_names[(dow) as usize % 7];
                 let qoy = m.div_ceil(3);
+                let week_seq = (y - 1998) * 52 + m * 4 + d / 7;
+                let month_seq = (y - 1998) * 12 + m;
                 dates.push(format!(
-                    "({sk}, DATE '{y}-{m:02}-{d:02}', {y}, {m}, {qoy}, {d}, {dow})"
+                    "({sk}, DATE '{y}-{m:02}-{d:02}', {y}, {m}, {qoy}, {d}, {dow}, {month_seq}, {week_seq}, '{dn}', '{y}Q{qoy}')"
                 ));
             }
         }
@@ -525,27 +609,40 @@ fn gen_tpcds(scale: f64) -> Vec<String> {
         ("Sports", 4),
         ("Music", 5),
     ];
-    let states = ["CA", "NY", "TX", "WA", "IL", "GA"];
+    let states = [
+        "CA", "NY", "TX", "WA", "IL", "GA", "TN", "FL", "OH", "MI", "VA", "OR",
+    ];
+    let counties = [
+        "Williamson County",
+        "Franklin Parish",
+        "Bronx County",
+        "Orange County",
+    ];
 
     let mut out = Vec::new();
     out.extend(chunked_inserts(
         "date_dim",
-        "d_date_sk, d_date, d_year, d_moy, d_qoy, d_dom, d_dow",
+        "d_date_sk, d_date, d_year, d_moy, d_qoy, d_dom, d_dow, d_month_seq, d_week_seq, d_day_name, d_quarter_name",
         dates,
         200,
     ));
     out.extend(chunked_inserts(
         "item",
-        "i_item_sk, i_item_id, i_brand_id, i_brand, i_class_id, i_class, i_category_id, i_category, i_manufact_id, i_current_price",
+        "i_item_sk, i_item_id, i_item_desc, i_brand_id, i_brand, i_class_id, i_class, i_category_id, i_category, i_manufact_id, i_manufact, i_current_price, i_wholesale_cost, i_product_name, i_color, i_units, i_size, i_manager_id",
         (1..=n_item)
             .map(|k| {
                 let (cat, cat_id) = categories[rng.below(5) as usize];
                 let brand = 10 * cat_id + 1 + rng.below(5);
+                let manufact_id = 100 + rng.below(10);
+                let price = rng.money(100);
+                let wcost = rng.money(80);
                 format!(
-                    "({k}, 'ITEM{k:05}', {brand}, 'brand{brand}', {cat_id}, 'class{}', {cat_id}, '{cat}', {}, {})",
+                    "({k}, 'ITEM{k:05}', 'desc{k}', {brand}, 'brand{brand}', {cat_id}, 'class{}', {cat_id}, '{cat}', {manufact_id}, 'mfg{manufact_id}', {price}, {wcost}, 'Product{k}', '{}', '{}', '{}', {})",
                     1 + rng.below(3),
-                    100 + rng.below(10),
-                    rng.money(100)
+                    rng.pick(&["powder", "khaki", "brown", "slate", "floral", "spring"]),
+                    rng.pick(&["Ounce", "Box", "Pound", "Each", "Dozen"]),
+                    rng.pick(&["medium", "small", "large", "petite"]),
+                    1 + rng.below(10),
                 )
             })
             .collect(),
@@ -553,12 +650,19 @@ fn gen_tpcds(scale: f64) -> Vec<String> {
     ));
     out.extend(chunked_inserts(
         "store",
-        "s_store_sk, s_store_id, s_store_name, s_state",
+        "s_store_sk, s_store_id, s_store_name, s_state, s_county, s_city, s_zip, s_gmt_offset, s_market_id, s_number_employees, s_company_name, s_company_id",
         (1..=n_store)
             .map(|k| {
+                let st = states[(k as usize - 1) % states.len()];
                 format!(
-                    "({k}, 'STORE{k:02}', 'Store {k}', '{}')",
-                    states[(k - 1) as usize % states.len()]
+                    "({k}, 'STORE{k:02}', 'Store {k}', '{st}', '{}', 'Fairview', '{:05}', -{}.0, {}, {}, 'Company{}', {})",
+                    counties[(k as usize - 1) % counties.len()],
+                    10_000 + k * 137,
+                    5 + (k % 3),
+                    1 + (k % 5),
+                    200 + (k as i64 * 13) % 100,
+                    k,
+                    k,
                 )
             })
             .collect(),
@@ -566,48 +670,207 @@ fn gen_tpcds(scale: f64) -> Vec<String> {
     ));
     out.extend(chunked_inserts(
         "customer_address",
-        "ca_address_sk, ca_state, ca_city, ca_zip, ca_country, ca_gmt_offset",
+        "ca_address_sk, ca_state, ca_city, ca_zip, ca_country, ca_gmt_offset, ca_county",
         (1..=n_cust)
             .map(|k| {
                 format!(
-                    "({k}, '{}', 'City{k}', '{:05}', 'United States', -{}.0)",
+                    "({k}, '{}', 'City{}', '{:05}', 'United States', -{}.0, '{}')",
                     rng.pick(&states),
+                    k,
                     10_000 + rng.below(89_999),
-                    5 + rng.below(4)
+                    5 + rng.below(4),
+                    counties[rng.below(counties.len() as u64) as usize],
+                )
+            })
+            .collect(),
+        200,
+    ));
+    // Demographics: small dimension tables with deterministic small row counts.
+    let n_cdemo = 100u64;
+    out.extend(chunked_inserts(
+        "customer_demographics",
+        "cd_demo_sk, cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating, cd_dep_count, cd_dep_employed_count, cd_dep_college_count",
+        (1..=n_cdemo)
+            .map(|k| {
+                format!(
+                    "({k}, '{}', '{}', '{}', {}, '{}', {}, {}, {})",
+                    rng.pick(&["M", "F"]),
+                    rng.pick(&["M", "S", "W", "D"]),
+                    rng.pick(&["College", "Advanced Degree", "2 yr Degree", "4 yr Degree", "Unknown"]),
+                    1000 + rng.below(9000),
+                    rng.pick(&["Good", "Bad", "High Risk"]),
+                    rng.below(10),
+                    rng.below(5),
+                    rng.below(5),
+                )
+            })
+            .collect(),
+        200,
+    ));
+    let n_hdemo = 100u64;
+    let n_income_band = 20u64;
+    out.extend(chunked_inserts(
+        "household_demographics",
+        "hd_demo_sk, hd_income_band_sk, hd_buy_potential, hd_dep_count, hd_vehicle_count",
+        (1..=n_hdemo)
+            .map(|k| {
+                format!(
+                    "({k}, {}, '{}', {}, {})",
+                    1 + rng.below(n_income_band),
+                    rng.pick(&[">10000", "5000-10000", "Unknown", "0-1000"]),
+                    rng.below(10),
+                    rng.below(5),
                 )
             })
             .collect(),
         200,
     ));
     out.extend(chunked_inserts(
-        "customer",
-        "c_customer_sk, c_customer_id, c_first_name, c_last_name, c_current_addr_sk, c_birth_country",
-        (1..=n_cust)
+        "income_band",
+        "ib_income_band_sk, ib_lower_bound, ib_upper_bound",
+        (1..=n_income_band)
+            .map(|k| format!("({k}, {}, {})", k * 10000, k * 10000 + 10000))
+            .collect(),
+        200,
+    ));
+    out.extend(chunked_inserts(
+        "promotion",
+        "p_promo_sk, p_channel_dmail, p_channel_email, p_channel_event, p_channel_tv",
+        (1..=50u64)
             .map(|k| {
                 format!(
-                    "({k}, 'CUST{k:05}', 'fn{k}', 'ln{k}', {}, '{}')",
-                    1 + rng.below(n_cust),
-                    rng.pick(&["CANADA", "MEXICO", "BRAZIL", "JAPAN"])
+                    "({k}, '{}', '{}', '{}', '{}')",
+                    rng.pick(&["Y", "N"]),
+                    rng.pick(&["Y", "N"]),
+                    rng.pick(&["Y", "N"]),
+                    rng.pick(&["Y", "N"]),
                 )
             })
             .collect(),
         200,
     ));
-    // Clustered by ss_sold_date_sk — see the gen_tpch clustering note.
+    out.extend(chunked_inserts(
+        "warehouse",
+        "w_warehouse_sk, w_warehouse_name, w_state, w_warehouse_sq_ft, w_city, w_county, w_country",
+        (1..=n_warehouse)
+            .map(|k| {
+                format!(
+                    "({k}, 'Warehouse{}', '{}', {}, 'City{}', 'County{}', 'United States')",
+                    k,
+                    rng.pick(&states),
+                    100_000 + k * 5000,
+                    k,
+                    k,
+                )
+            })
+            .collect(),
+        200,
+    ));
+    out.extend(chunked_inserts(
+        "reason",
+        "r_reason_sk, r_reason_desc",
+        (1..=n_reason)
+            .map(|k| format!("({k}, 'reason {}')", k))
+            .collect(),
+        200,
+    ));
+    out.extend(chunked_inserts(
+        "time_dim",
+        "t_time_sk, t_time, t_hour, t_minute, t_meal_time",
+        (0..86_400u64)
+            .step_by(60)
+            .enumerate()
+            .map(|(_, secs)| {
+                let hour = secs / 3600;
+                let minute = (secs % 3600) / 60;
+                let meal = if (8..10).contains(&hour) {
+                    "breakfast"
+                } else if (12..14).contains(&hour) {
+                    "lunch"
+                } else if (18..21).contains(&hour) {
+                    "dinner"
+                } else {
+                    "night"
+                };
+                format!("({secs}, {secs}, {hour}, {minute}, '{meal}')")
+            })
+            .collect(),
+        200,
+    ));
+    out.extend(chunked_inserts(
+        "ship_mode",
+        "sm_ship_mode_sk, sm_type, sm_carrier",
+        (1..=5u64)
+            .map(|k| format!("({k}, 'type{k}', 'CARRIER{k}')"))
+            .collect(),
+        200,
+    ));
+    out.extend(chunked_inserts(
+        "web_site",
+        "web_site_sk, web_site_id, web_name, web_company_name",
+        (1..=6u64)
+            .map(|k| format!("({k}, 'WS{k:02}', 'WebSite{k}', 'pri')"))
+            .collect(),
+        200,
+    ));
+    out.extend(chunked_inserts(
+        "call_center",
+        "cc_call_center_sk, cc_call_center_id, cc_name, cc_manager, cc_county",
+        (1..=n_call_center)
+            .map(|k| format!("({k}, 'CC{k:02}', 'CallCenter{k}', 'Manager{k}', 'County{k}')"))
+            .collect(),
+        200,
+    ));
+    out.extend(chunked_inserts(
+        "customer",
+        "c_customer_sk, c_customer_id, c_first_name, c_last_name, c_current_addr_sk, c_birth_country, c_birth_year, c_birth_month, c_birth_day, c_preferred_cust_flag, c_current_cdemo_sk, c_current_hdemo_sk, c_salutation, c_login, c_email_address",
+        (1..=n_cust)
+            .map(|k| {
+                format!(
+                    "({k}, 'CUST{k:05}', 'fn{k}', 'ln{k}', {}, '{}', {}, {}, {}, '{}', {}, {}, '{}', 'login{k}', 'email{k}')",
+                    1 + rng.below(n_cust),
+                    rng.pick(&["CANADA", "MEXICO", "BRAZIL", "JAPAN"]),
+                    1950 + rng.below(50),
+                    1 + rng.below(12),
+                    1 + rng.below(28),
+                    rng.pick(&["Y", "N"]),
+                    1 + rng.below(n_cdemo),
+                    1 + rng.below(n_hdemo),
+                    rng.pick(&["Mr.", "Ms.", "Dr."]),
+                )
+            })
+            .collect(),
+        200,
+    ));
+    // store_sales — clustered by ss_sold_date_sk. The generator produces a
+    // fully-populated fact row so every TPC-DS query has its columns.
     let mut sales: Vec<(u64, String)> = (1..=n_sales)
         .map(|t| {
-            let qty = 1 + rng.below(10);
+            let qty = 1 + rng.below(100);
             let price = 1 + rng.below(100);
+            let wcost = rng.money(80);
+            let list_price = (price + 10) as u64; // list > sales
+            let ext_sales = qty * price;
+            let ext_wcost = qty * (wcost.parse::<f64>().unwrap_or(0.0) as u64 + 1);
+            let ext_list = qty * list_price;
+            let coupon = rng.below(20);
+            let discount = rng.below(10);
+            let ext_disc = ext_sales * discount / 100;
+            let tax = ext_sales * 8 / 100;
+            let net_paid = ext_sales - ext_disc;
+            let net_profit = net_paid as i64 - ext_wcost as i64;
             let date_sk = first_sk + rng.below(n_dates);
             let row = format!(
-                "({date_sk}, {}, {}, {}, {}, {t}, {qty}, {price}.00, {}.00, {}.00, {}.00)",
+                "({date_sk}, {}, {}, {}, {}, {}, {}, {}, {}, {t}, {qty}, {wcost}, {list_price}, {price}.00, {coupon}.00, {ext_sales}.00, {ext_wcost}.00, {ext_list}.00, {ext_disc}.00, {tax}.00, {net_paid}.00, {}, {net_profit})",
                 rng.skewed_key(n_item),
                 1 + rng.below(n_store),
                 rng.skewed_key(n_cust),
                 1 + rng.below(n_cust),
-                qty * price,
-                rng.below(10),
-                rng.below(30)
+                1 + rng.below(n_cdemo),
+                1 + rng.below(n_hdemo),
+                1 + rng.below(50),
+                rng.below(86400),
+                net_paid + tax,
             );
             (date_sk, row)
         })
@@ -615,8 +878,195 @@ fn gen_tpcds(scale: f64) -> Vec<String> {
     sales.sort_by_key(|(sk, _)| *sk);
     out.extend(chunked_inserts(
         "store_sales",
-        "ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_customer_sk, ss_addr_sk, ss_ticket_number, ss_quantity, ss_sales_price, ss_ext_sales_price, ss_ext_discount_amt, ss_net_profit",
+        "ss_sold_date_sk, ss_sold_time_sk, ss_item_sk, ss_store_sk, ss_customer_sk, ss_addr_sk, ss_cdemo_sk, ss_hdemo_sk, ss_promo_sk, ss_ticket_number, ss_quantity, ss_wholesale_cost, ss_list_price, ss_sales_price, ss_coupon_amt, ss_ext_sales_price, ss_ext_wholesale_cost, ss_ext_list_price, ss_ext_discount_amt, ss_ext_tax, ss_net_paid, ss_net_paid_inc_tax, ss_net_profit",
         sales.into_iter().map(|(_, row)| row).collect(),
+        200,
+    ));
+    // store_returns — a fraction of store_sales get returned.
+    let n_sr = scaled(288_000, scale, 30);
+    let mut sreturns: Vec<(u64, String)> = (1..=n_sr)
+        .map(|t| {
+            let date_sk = first_sk + rng.below(n_dates);
+            let row = format!(
+                "({date_sk}, {}, {}, {}, {t}, {}, {}.00, {}.00, {})",
+                rng.skewed_key(n_item),
+                rng.skewed_key(n_cust),
+                1 + rng.below(n_store),
+                1 + rng.below(5),
+                rng.below(100),
+                rng.below(50),
+                1 + rng.below(35),
+            );
+            (date_sk, row)
+        })
+        .collect();
+    sreturns.sort_by_key(|(sk, _)| *sk);
+    out.extend(chunked_inserts(
+        "store_returns",
+        "sr_returned_date_sk, sr_item_sk, sr_customer_sk, sr_store_sk, sr_ticket_number, sr_return_quantity, sr_return_amt, sr_net_loss, sr_reason_sk",
+        sreturns.into_iter().map(|(_, row)| row).collect(),
+        200,
+    ));
+    // catalog_sales — similar structure to store_sales but with shipping.
+    let n_cs = scaled(1_440_000, scale, 150);
+    let mut csales: Vec<(u64, String)> = (1..=n_cs)
+        .map(|t| {
+            let qty = 1 + rng.below(100);
+            let price = 1 + rng.below(100);
+            let date_sk = first_sk + rng.below(n_dates);
+            let ship_sk = first_sk + rng.below(n_dates);
+            let ext_sales = qty * price;
+            let wcost = rng.money(80);
+            let list_p = price + 10;
+            let time_sk = rng.below(86400);
+            let item = rng.skewed_key(n_item);
+            let cc = 1 + rng.below(n_call_center);
+            let wh = 1 + rng.below(n_warehouse);
+            let page = 1 + rng.below(100);
+            let bc = rng.skewed_key(n_cust);
+            let sc = rng.skewed_key(n_cust);
+            let ba = 1 + rng.below(n_cust);
+            let sa = 1 + rng.below(n_cust);
+            let cd = 1 + rng.below(n_cdemo);
+            let hd = 1 + rng.below(n_hdemo);
+            let promo = 1 + rng.below(50);
+            let ship_cost = ext_sales * 5 / 100;
+            let paid_tax = ext_sales + ext_sales * 8 / 100;
+            let profit = ext_sales * 8 / 100;
+            let sm = 1 + rng.below(5);
+            let row = format!(
+                "({date_sk}, {time_sk}, {ship_sk}, {item}, {cc}, {wh}, {page}, {bc}, {sc}, {ba}, {sa}, {cd}, {hd}, {promo}, {t}, {qty}, {wcost}, {list_p}.00, {price}.00, 0.00, {ext_sales}.00, 0.00, {ext_sales}.00, 0.00, {ship_cost}.00, {ext_sales}.00, {paid_tax}.00, {profit}.00, {sm})"
+            );
+            (date_sk, row)
+        })
+        .collect();
+    csales.sort_by_key(|(sk, _)| *sk);
+    out.extend(chunked_inserts(
+        "catalog_sales",
+        "cs_sold_date_sk, cs_sold_time_sk, cs_ship_date_sk, cs_item_sk, cs_call_center_sk, cs_warehouse_sk, cs_catalog_page_sk, cs_bill_customer_sk, cs_ship_customer_sk, cs_bill_addr_sk, cs_ship_addr_sk, cs_bill_cdemo_sk, cs_bill_hdemo_sk, cs_promo_sk, cs_order_number, cs_quantity, cs_wholesale_cost, cs_list_price, cs_sales_price, cs_coupon_amt, cs_ext_sales_price, cs_ext_wholesale_cost, cs_ext_list_price, cs_ext_discount_amt, cs_ext_ship_cost, cs_net_paid, cs_net_paid_inc_tax, cs_net_profit, cs_ship_mode_sk",
+        csales.into_iter().map(|(_, row)| row).collect(),
+        200,
+    ));
+    // catalog_returns
+    let n_cr = scaled(144_000, scale, 15);
+    let mut creturns: Vec<(u64, String)> = (1..=n_cr)
+        .map(|t| {
+            let date_sk = first_sk + rng.below(n_dates);
+            let row = format!(
+                "({date_sk}, {}, {t}, {}, {}, {}, {}, {}.00, {}.00, {}.00, {}.00, {}.00, {}.00)",
+                rng.skewed_key(n_item),
+                1 + rng.below(n_call_center),
+                rng.skewed_key(n_cust),
+                1 + rng.below(n_cust),
+                rng.below(10),
+                rng.below(50),
+                rng.below(100),
+                rng.below(50),
+                rng.below(50),
+                rng.below(50),
+                rng.below(100),
+            );
+            (date_sk, row)
+        })
+        .collect();
+    creturns.sort_by_key(|(sk, _)| *sk);
+    out.extend(chunked_inserts(
+        "catalog_returns",
+        "cr_returned_date_sk, cr_item_sk, cr_order_number, cr_call_center_sk, cr_returning_customer_sk, cr_returning_addr_sk, cr_return_quantity, cr_return_amount, cr_refunded_cash, cr_reversed_charge, cr_store_credit, cr_net_loss, cr_return_amt_inc_tax",
+        creturns.into_iter().map(|(_, row)| row).collect(),
+        200,
+    ));
+    // web_sales
+    let n_ws = scaled(720_000, scale, 75);
+    let mut wsales: Vec<(u64, String)> = (1..=n_ws)
+        .map(|t| {
+            let qty = 1 + rng.below(100);
+            let price = 1 + rng.below(100);
+            let date_sk = first_sk + rng.below(n_dates);
+            let ship_sk = first_sk + rng.below(n_dates);
+            let ext_sales = qty * price;
+            let time_sk = rng.below(86400);
+            let item = rng.skewed_key(n_item);
+            let ws_site = 1 + rng.below(6);
+            let wp = 1 + rng.below(100);
+            let wh = 1 + rng.below(n_warehouse);
+            let bc = rng.skewed_key(n_cust);
+            let sc = rng.skewed_key(n_cust);
+            let ba = 1 + rng.below(n_cust);
+            let sa = 1 + rng.below(n_cust);
+            let cd = 1 + rng.below(n_cdemo);
+            let hd = 1 + rng.below(n_hdemo);
+            let wcost = rng.money(80);
+            let list_p = price + 10;
+            let ship_cost = ext_sales * 5 / 100;
+            let paid_tax = ext_sales + ext_sales * 8 / 100;
+            let profit = ext_sales * 8 / 100;
+            let promo = 1 + rng.below(50);
+            let sm = 1 + rng.below(5);
+            let row = format!(
+                "({date_sk}, {time_sk}, {ship_sk}, {item}, {ws_site}, {wp}, {wh}, {bc}, {sc}, {ba}, {sa}, {cd}, {hd}, {t}, {qty}, {wcost}, {list_p}.00, {price}.00, 0.00, {ext_sales}.00, 0.00, {ext_sales}.00, 0.00, {ship_cost}.00, {ext_sales}.00, {paid_tax}.00, {profit}.00, {promo}, {sm})"
+            );
+            (date_sk, row)
+        })
+        .collect();
+    wsales.sort_by_key(|(sk, _)| *sk);
+    out.extend(chunked_inserts(
+        "web_sales",
+        "ws_sold_date_sk, ws_sold_time_sk, ws_ship_date_sk, ws_item_sk, ws_web_site_sk, ws_web_page_sk, ws_warehouse_sk, ws_bill_customer_sk, ws_ship_customer_sk, ws_bill_addr_sk, ws_ship_addr_sk, ws_bill_cdemo_sk, ws_ship_hdemo_sk, ws_order_number, ws_quantity, ws_wholesale_cost, ws_list_price, ws_sales_price, ws_coupon_amt, ws_ext_sales_price, ws_ext_wholesale_cost, ws_ext_list_price, ws_ext_discount_amt, ws_ext_ship_cost, ws_net_paid, ws_net_paid_inc_tax, ws_net_profit, ws_promo_sk, ws_ship_mode_sk",
+        wsales.into_iter().map(|(_, row)| row).collect(),
+        200,
+    ));
+    // web_returns
+    let n_wr = scaled(72_000, scale, 8);
+    let mut wreturns: Vec<(u64, String)> = (1..=n_wr)
+        .map(|t| {
+            let date_sk = first_sk + rng.below(n_dates);
+            let item = rng.skewed_key(n_item);
+            let wp = 1 + rng.below(100);
+            let cust = rng.skewed_key(n_cust);
+            let addr = 1 + rng.below(n_cust);
+            let cd1 = 1 + rng.below(n_cdemo);
+            let cd2 = 1 + rng.below(n_cdemo);
+            let raddr = 1 + rng.below(n_cust);
+            let reason = 1 + rng.below(35);
+            let qty = rng.below(10);
+            let amt = rng.below(100);
+            let cash = rng.below(50);
+            let reversed = rng.below(50);
+            let fee = rng.below(50);
+            let loss = rng.below(50);
+            let row = format!(
+                "({date_sk}, {item}, {t}, {t}, {wp}, {cust}, {addr}, {cd1}, {cd2}, {raddr}, {reason}, {qty}, {amt}.00, {cash}.00, {reversed}.00, {fee}.00, {loss}.00)"
+            );
+            (date_sk, row)
+        })
+        .collect();
+    wreturns.sort_by_key(|(sk, _)| *sk);
+    out.extend(chunked_inserts(
+        "web_returns",
+        "wr_returned_date_sk, wr_item_sk, ws_order_number, wr_order_number, wr_web_page_sk, wr_returning_customer_sk, wr_returning_addr_sk, wr_refunded_cdemo_sk, wr_returning_cdemo_sk, wr_refunded_addr_sk, wr_reason_sk, wr_return_quantity, wr_return_amt, wr_refunded_cash, cr_reversed_charge, wr_fee, wr_net_loss",
+        wreturns.into_iter().map(|(_, row)| row).collect(),
+        200,
+    ));
+    // inventory
+    let n_inv = scaled(78_000, scale, 100);
+    let mut inv: Vec<(u64, String)> = (1..=n_inv)
+        .map(|_| {
+            let date_sk = first_sk + rng.below(n_dates);
+            let row = format!(
+                "({date_sk}, {}, {}, {})",
+                rng.skewed_key(n_item),
+                1 + rng.below(n_warehouse),
+                rng.below(1000),
+            );
+            (date_sk, row)
+        })
+        .collect();
+    inv.sort_by_key(|(sk, _)| *sk);
+    out.extend(chunked_inserts(
+        "inventory",
+        "inv_date_sk, inv_item_sk, inv_warehouse_sk, inv_quantity_on_hand",
+        inv.into_iter().map(|(_, row)| row).collect(),
         200,
     ));
     out
@@ -653,11 +1103,111 @@ fn tpch_queries() -> Vec<(&'static str, String)> {
 
 fn tpcds_queries() -> Vec<(&'static str, String)> {
     vec![
+        // q1 — returns: customers above average return per store (CTE + correlated subquery).
+        ("q1", "with customer_total_return as (select sr_customer_sk as ctr_customer_sk, sr_store_sk as ctr_store_sk, sum(sr_return_amt) as ctr_total_return from store_returns, date_dim where sr_returned_date_sk = d_date_sk and d_year = 2000 group by sr_customer_sk, sr_store_sk) select c_customer_id from customer_total_return ctr1, store, customer where ctr1.ctr_total_return > (select avg(ctr_total_return)*1.2 from customer_total_return ctr2 where ctr1.ctr_store_sk = ctr2.ctr_store_sk) and s_store_sk = ctr1.ctr_store_sk and s_state = 'TN' and ctr1.ctr_customer_sk = c_customer_sk order by c_customer_id".to_string()),
+        // q3 — manufacturer revenue by year/brand.
+        ("q3", "select dt.d_year, item.i_brand_id brand_id, item.i_brand brand, sum(ss_ext_sales_price) sum_agg from date_dim dt, store_sales, item where dt.d_date_sk = store_sales.ss_sold_date_sk and store_sales.ss_item_sk = item.i_item_sk and item.i_manufact_id = 100 and dt.d_moy = 11 group by dt.d_year, item.i_brand, item.i_brand_id order by dt.d_year, sum_agg desc, brand_id".to_string()),
+        // q6 — address-state count with subquery on item avg price.
+        ("q6", "select a.ca_state state, count(*) cnt from customer_address a, customer c, store_sales s, date_dim d, item i where a.ca_address_sk = c.c_current_addr_sk and c.c_customer_sk = s.ss_customer_sk and s.ss_sold_date_sk = d.d_date_sk and s.ss_item_sk = i.i_item_sk and d.d_month_seq = (select distinct d_month_seq from date_dim where d_year = 2000 and d_moy = 1) and i.i_current_price > 1.2 * (select avg(j.i_current_price) from item j where j.i_category = i.i_category) group by a.ca_state having count(*) >= 1 order by cnt, a.ca_state".to_string()),
+        // q7 — promo/demographic filtered averages.
+        ("q7", "select i_item_id, avg(ss_quantity) agg1, avg(ss_list_price) agg2, avg(ss_coupon_amt) agg3, avg(ss_sales_price) agg4 from store_sales, customer_demographics, date_dim, item, promotion where ss_sold_date_sk = d_date_sk and ss_item_sk = i_item_sk and ss_cdemo_sk = cd_demo_sk and ss_promo_sk = p_promo_sk and cd_gender = 'M' and cd_marital_status = 'S' and cd_education_status = 'College' and (p_channel_email = 'N' or p_channel_event = 'N') and d_year = 2000 group by i_item_id order by i_item_id".to_string()),
+        // q8 — store net profit by store name for a date range with a subquery on zips.
+        ("q8", "select s_store_name, sum(ss_net_profit) from store_sales, date_dim, store where ss_store_sk = s_store_sk and ss_sold_date_sk = d_date_sk and d_qoy = 2 and d_year = 2000 group by s_store_name order by s_store_name".to_string()),
+        // q9 — CASE buckets over quantity ranges with scalar subqueries.
+        ("q9", "with b1 as (select count(*) as cnt, avg(ss_ext_discount_amt) as disc_avg, avg(ss_net_paid) as paid_avg from store_sales where ss_quantity between 1 and 20), b2 as (select count(*) as cnt, avg(ss_ext_discount_amt) as disc_avg, avg(ss_net_paid) as paid_avg from store_sales where ss_quantity between 21 and 40) select case when b1.cnt > 100 then b1.disc_avg else b1.paid_avg end as bucket1, case when b2.cnt > 100 then b2.disc_avg else b2.paid_avg end as bucket2 from b1, b2".to_string()),
+        // q10 — demographics count with EXISTS.
+        ("q10", "select cd_gender, cd_marital_status, cd_education_status, count(*) cnt1, cd_purchase_estimate, count(*) cnt2, cd_credit_rating, count(*) cnt3, cd_dep_count, count(*) cnt4, cd_dep_employed_count, count(*) cnt5, cd_dep_college_count, count(*) cnt6 from customer c, customer_address ca, customer_demographics where c.c_current_addr_sk = ca.ca_address_sk and cd_demo_sk = c.c_current_cdemo_sk and exists (select * from store_sales, date_dim where c.c_customer_sk = ss_customer_sk and ss_sold_date_sk = d_date_sk and d_year = 2000) group by cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating, cd_dep_count, cd_dep_employed_count, cd_dep_college_count order by cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating, cd_dep_count, cd_dep_employed_count, cd_dep_college_count".to_string()),
+        // q12 — web sales revenue ratio window.
+        ("q12", "select i_item_id, i_category, i_class, i_current_price, sum(ws_ext_sales_price) as itemrevenue, sum(ws_ext_sales_price)*100/sum(sum(ws_ext_sales_price)) over (partition by i_class) as revenueratio from web_sales, item, date_dim where ws_item_sk = i_item_sk and i_category in ('Sports', 'Books', 'Home') and ws_sold_date_sk = d_date_sk and d_year = 2000 group by i_item_id, i_category, i_class, i_current_price order by i_category, i_class, i_item_id, revenueratio".to_string()),
+        // q14 — cross-channel sales (simplified, removing INTERSECT-on-3-channels for now — see q14b for full).
+        ("q14a", "with avg_sales as (select avg(quantity*list_price) average_sales from (select ss_quantity quantity, ss_list_price list_price from store_sales, date_dim where ss_sold_date_sk = d_date_sk and d_year between 1999 and 2000 union all select cs_quantity quantity, cs_list_price list_price from catalog_sales, date_dim where cs_sold_date_sk = d_date_sk and d_year between 1999 and 2000) x) select 'store' channel, i_brand_id, i_class_id, i_category_id, sum(ss_quantity*ss_list_price) sales, count(*) number_sales from store_sales, item, date_dim where ss_item_sk = i_item_sk and ss_sold_date_sk = d_date_sk and d_year = 2000 and d_moy = 11 group by i_brand_id, i_class_id, i_category_id having sum(ss_quantity*ss_list_price) > (select average_sales from avg_sales)".to_string()),
+        // q15 — catalog sales by zip/state/qoy.
+        ("q15", "select ca_zip, sum(cs_sales_price) from catalog_sales, customer, customer_address, date_dim where cs_bill_customer_sk = c_customer_sk and c_current_addr_sk = ca_address_sk and (ca_state in ('CA','WA','GA') or cs_sales_price > 500) and cs_sold_date_sk = d_date_sk and d_qoy = 2 and d_year = 2000 group by ca_zip order by ca_zip".to_string()),
+        // q17 — cross-fact stddev.
+        ("q17", "select i_item_id, s_state, count(ss_quantity) as store_sales_quantitycount, avg(ss_quantity) as store_sales_quantityave, stddev_samp(ss_quantity) as store_sales_quantitystdev, stddev_samp(ss_quantity)/avg(ss_quantity) as store_sales_quantitycov, count(sr_return_quantity) as store_returns_quantitycount, avg(sr_return_quantity) as store_returns_quantityave, stddev_samp(sr_return_quantity) as store_returns_quantitystdev, stddev_samp(sr_return_quantity)/avg(sr_return_quantity) as store_returns_quantitycov, count(cs_quantity) as catalog_sales_quantitycount, avg(cs_quantity) as catalog_sales_quantityave, stddev_samp(cs_quantity) as catalog_sales_quantitystdev, stddev_samp(cs_quantity)/avg(cs_quantity) as catalog_sales_quantitycov from store_sales, store_returns, catalog_sales, date_dim d1, store, item where d1.d_date_sk = ss_sold_date_sk and i_item_sk = ss_item_sk and s_store_sk = ss_store_sk and ss_customer_sk = sr_customer_sk and ss_item_sk = sr_item_sk and ss_ticket_number = sr_ticket_number and sr_customer_sk = cs_bill_customer_sk and sr_item_sk = cs_item_sk group by i_item_id, s_state order by i_item_id, s_state".to_string()),
+        // q19 — brand/manufacturer revenue.
+        ("q19", "select i_brand_id brand_id, i_brand brand, i_manufact_id, i_manufact, sum(ss_ext_sales_price) ext_price from date_dim, store_sales, item, customer, customer_address, store where d_date_sk = ss_sold_date_sk and ss_item_sk = i_item_sk and d_moy = 11 and d_year = 2000 and ss_customer_sk = c_customer_sk and c_current_addr_sk = ca_address_sk and ss_store_sk = s_store_sk group by i_brand, i_brand_id, i_manufact_id, i_manufact order by ext_price desc, i_brand, i_brand_id, i_manufact_id, i_manufact".to_string()),
+        // q20 — catalog revenue ratio window.
+        ("q20", "select i_item_id, i_category, i_class, i_current_price, sum(cs_ext_sales_price) as itemrevenue, sum(cs_ext_sales_price)*100/sum(sum(cs_ext_sales_price)) over (partition by i_class) as revenueratio from catalog_sales, item, date_dim where cs_item_sk = i_item_sk and i_category in ('Sports','Books','Home') and cs_sold_date_sk = d_date_sk and d_year = 2000 group by i_item_id, i_category, i_class, i_current_price order by i_category, i_class, i_item_id, revenueratio".to_string()),
+        // q22 — inventory rollup.
+        ("q22", "select i_product_name, i_brand, i_class, i_category, avg(inv_quantity_on_hand) qoh from inventory, date_dim, item where inv_date_sk = d_date_sk and inv_item_sk = i_item_sk and d_month_seq between 12 and 23 group by rollup(i_product_name, i_brand, i_class, i_category) order by qoh, i_product_name, i_brand, i_class, i_category".to_string()),
+        // q23a — frequent items sales.
+        ("q23a", "with frequent_ss_items as (select i_item_sk item_sk, d_date solddate, count(*) cnt from store_sales, date_dim, item where ss_sold_date_sk = d_date_sk and ss_item_sk = i_item_sk and d_year in (1998, 1999, 2000) group by i_item_sk, d_date having count(*) > 2), max_store_sales as (select max(csales) tpcds_cmax from (select c_customer_sk, sum(ss_quantity*ss_sales_price) csales from store_sales, customer, date_dim where ss_customer_sk = c_customer_sk and ss_sold_date_sk = d_date_sk and d_year in (1998, 1999, 2000) group by c_customer_sk) t1) select sum(sales) from (select cs_quantity*cs_list_price sales from catalog_sales, date_dim where d_year = 1999 and cs_sold_date_sk = d_date_sk and cs_item_sk in (select item_sk from frequent_ss_items)) t2".to_string()),
+        // q24 — store returns with demographics (simplified).
+        ("q24a", "with ssales as (select c_last_name, c_first_name, s_store_name, sum(ss_net_paid) netpaid from store_sales, store_returns, store, item, customer where ss_ticket_number = sr_ticket_number and ss_item_sk = sr_item_sk and ss_customer_sk = c_customer_sk and ss_item_sk = i_item_sk and ss_store_sk = s_store_sk group by c_last_name, c_first_name, s_store_name) select c_last_name, c_first_name, s_store_name, sum(netpaid) paid from ssales group by c_last_name, c_first_name, s_store_name having sum(netpaid) > (select 0.05*avg(netpaid) from ssales) order by c_last_name, c_first_name, s_store_name".to_string()),
+        // q25 — item/store profit and loss across fact tables.
+        ("q25", "select i_item_id, s_store_id, s_store_name, sum(ss_net_profit) as store_sales_profit, sum(sr_net_loss) as store_returns_loss, sum(cs_net_profit) as catalog_sales_profit from store_sales, store_returns, catalog_sales, date_dim d1, date_dim d2, store, item where d1.d_moy = 4 and d1.d_year = 2000 and d1.d_date_sk = ss_sold_date_sk and i_item_sk = ss_item_sk and s_store_sk = ss_store_sk and ss_customer_sk = sr_customer_sk and ss_item_sk = sr_item_sk and ss_ticket_number = sr_ticket_number and sr_returned_date_sk = d2.d_date_sk and sr_customer_sk = cs_bill_customer_sk and sr_item_sk = cs_item_sk group by i_item_id, s_store_id, s_store_name order by i_item_id, s_store_id, s_store_name".to_string()),
+        // q26 — catalog sales + promo/demographics.
+        ("q26", "select i_item_id, avg(cs_quantity) agg1, avg(cs_list_price) agg2, avg(cs_coupon_amt) agg3, avg(cs_sales_price) agg4 from catalog_sales, customer_demographics, date_dim, item, promotion where cs_sold_date_sk = d_date_sk and cs_item_sk = i_item_sk and cs_bill_cdemo_sk = cd_demo_sk and cs_promo_sk = p_promo_sk and cd_gender = 'M' and cd_marital_status = 'S' and cd_education_status = 'College' and (p_channel_email = 'N' or p_channel_event = 'N') and d_year = 2000 group by i_item_id order by i_item_id".to_string()),
+        // q27 — store sales rollup with demographics.
+        ("q27", "select i_item_id, s_state, grouping(s_state) g_state, avg(ss_quantity) agg1, avg(ss_list_price) agg2, avg(ss_coupon_amt) agg3, avg(ss_sales_price) agg4 from store_sales, customer_demographics, date_dim, store, item where ss_sold_date_sk = d_date_sk and ss_item_sk = i_item_sk and ss_store_sk = s_store_sk and ss_cdemo_sk = cd_demo_sk and cd_gender = 'M' and cd_marital_status = 'S' and cd_education_status = 'College' and d_year = 2000 group by rollup(i_item_id, s_state) order by i_item_id, s_state".to_string()),
+        // q28 — bucketed count/avg/various (derived table product).
+        ("q28", "select * from (select avg(ss_list_price) B1_LP, count(ss_list_price) B1_CNT, count(distinct ss_list_price) B1_CNTD from store_sales where ss_quantity between 0 and 5 and (ss_list_price between 8 and 18 or ss_coupon_amt between 459 and 1459 or ss_wholesale_cost between 57 and 77)) B1".to_string()),
+        // q29 — item/store/store-returns/catalog quantities.
+        ("q29", "select i_item_id, s_store_id, s_store_name, sum(ss_quantity) as store_sales_quantity, sum(sr_return_quantity) as store_returns_quantity, sum(cs_quantity) as catalog_sales_quantity from store_sales, store_returns, catalog_sales, date_dim d1, date_dim d2, date_dim d3, store, item where d1.d_moy = 9 and d1.d_year = 1999 and d1.d_date_sk = ss_sold_date_sk and i_item_sk = ss_item_sk and s_store_sk = ss_store_sk and ss_customer_sk = sr_customer_sk and ss_item_sk = sr_item_sk and ss_ticket_number = sr_ticket_number and sr_returned_date_sk = d2.d_date_sk and sr_customer_sk = cs_bill_customer_sk and sr_item_sk = cs_item_sk and cs_sold_date_sk = d3.d_date_sk group by i_item_id, s_store_id, s_store_name order by i_item_id, s_store_id, s_store_name".to_string()),
+        // q32 — excess discount (correlated subquery).
+        ("q32", "select sum(cs_ext_discount_amt) as excess_discount from catalog_sales, item, date_dim where i_manufact_id = 100 and i_item_sk = cs_item_sk and d_date_sk = cs_sold_date_sk and cs_ext_discount_amt > (select 1.3 * avg(cs_ext_discount_amt) from catalog_sales, date_dim where cs_item_sk = i_item_sk and d_date_sk = cs_sold_date_sk)".to_string()),
+        // q33 — union-all sales by manufacturer for a category.
+        ("q33", "with ss as (select i_manufact_id, sum(ss_ext_sales_price) total_sales from store_sales, date_dim, item where i_manufact_id in (select i_manufact_id from item where i_category in ('Electronics')) and ss_item_sk = i_item_sk and ss_sold_date_sk = d_date_sk and d_year = 1999 group by i_manufact_id), cs as (select i_manufact_id, sum(cs_ext_sales_price) total_sales from catalog_sales, date_dim, item where i_manufact_id in (select i_manufact_id from item where i_category in ('Electronics')) and cs_item_sk = i_item_sk and cs_sold_date_sk = d_date_sk and d_year = 1999 group by i_manufact_id) select i_manufact_id, sum(total_sales) total_sales from (select * from ss union all select * from cs) tmp1 group by i_manufact_id order by total_sales".to_string()),
+        // q34 — ticket count by demographics.
+        ("q34", "select c_last_name, c_first_name, c_salutation, c_preferred_cust_flag, ss_ticket_number, cnt from (select ss_ticket_number, ss_customer_sk, count(*) cnt from store_sales, date_dim, store, household_demographics where ss_sold_date_sk = d_date_sk and ss_store_sk = s_store_sk and ss_hdemo_sk = hd_demo_sk and d_year in (1998, 1999, 2000) group by ss_ticket_number, ss_customer_sk) dn, customer where ss_customer_sk = c_customer_sk order by c_last_name, c_first_name, c_salutation, c_preferred_cust_flag desc, ss_ticket_number".to_string()),
+        // q35 — demographics with EXISTS store_sales/web_sales/catalog_sales.
+        ("q35", "select ca_state, cd_gender, cd_marital_status, cd_dep_count, count(*) cnt1, min(cd_dep_count), max(cd_dep_count), avg(cd_dep_count), cd_dep_employed_count, count(*) cnt2, min(cd_dep_employed_count), max(cd_dep_employed_count), avg(cd_dep_employed_count), cd_dep_college_count, count(*) cnt3, min(cd_dep_college_count), max(cd_dep_college_count), avg(cd_dep_college_count) from customer c, customer_address ca, customer_demographics where c.c_current_addr_sk = ca.ca_address_sk and cd_demo_sk = c.c_current_cdemo_sk and exists (select * from store_sales, date_dim where c.c_customer_sk = ss_customer_sk and ss_sold_date_sk = d_date_sk and d_year = 2000 and d_qoy < 4) group by ca_state, cd_gender, cd_marital_status, cd_dep_count, cd_dep_employed_count, cd_dep_college_count order by ca_state, cd_gender, cd_marital_status, cd_dep_count, cd_dep_employed_count, cd_dep_college_count".to_string()),
+        // q36 — gross margin rank window with rollup.
+        ("q36", "select sum(ss_net_profit)/sum(ss_ext_sales_price) as gross_margin, i_category, i_class, grouping(i_category)+grouping(i_class) as lochierarchy, rank() over (partition by grouping(i_category)+grouping(i_class), case when grouping(i_class) = 0 then i_category end order by sum(ss_net_profit)/sum(ss_ext_sales_price) asc) as rank_within_parent from store_sales, date_dim d1, item, store where d1.d_year = 2000 and d1.d_date_sk = ss_sold_date_sk and i_item_sk = ss_item_sk and s_store_sk = ss_store_sk group by rollup(i_category, i_class) order by lochierarchy desc, case when lochierarchy = 0 then i_category end, rank_within_parent".to_string()),
+        // q38 — INTERSECT across store/catalog/web sales.
+        ("q38", "select count(*) from (select distinct c_last_name, c_first_name, d_date from store_sales, date_dim, customer where ss_sold_date_sk = d_date_sk and ss_customer_sk = c_customer_sk intersect select distinct c_last_name, c_first_name, d_date from catalog_sales, date_dim, customer where cs_sold_date_sk = d_date_sk and cs_bill_customer_sk = c_customer_sk intersect select distinct c_last_name, c_first_name, d_date from web_sales, date_dim, customer where ws_sold_date_sk = d_date_sk and ws_bill_customer_sk = c_customer_sk) hot_cust".to_string()),
+        // q42 — year/category revenue.
         ("q42", "select dt.d_year, item.i_category_id, item.i_category, sum(ss_ext_sales_price) as revenue from date_dim dt, store_sales, item where dt.d_date_sk = store_sales.ss_sold_date_sk and store_sales.ss_item_sk = item.i_item_sk and item.i_manufact_id = 100 and dt.d_moy = 11 and dt.d_year = 2000 group by dt.d_year, item.i_category_id, item.i_category order by revenue desc, dt.d_year".to_string()),
+        // q43 — store sales by day-name (CASE + window).
+        ("q43", "select s_store_name, s_store_id, sum(case when (d_day_name='Sunday') then ss_sales_price else null end) sun_sales, sum(case when (d_day_name='Monday') then ss_sales_price else null end) mon_sales, sum(case when (d_day_name='Tuesday') then ss_sales_price else null end) tue_sales, sum(case when (d_day_name='Wednesday') then ss_sales_price else null end) wed_sales, sum(case when (d_day_name='Thursday') then ss_sales_price else null end) thu_sales, sum(case when (d_day_name='Friday') then ss_sales_price else null end) fri_sales, sum(case when (d_day_name='Saturday') then ss_sales_price else null end) sat_sales from date_dim, store_sales, store where d_date_sk = ss_sold_date_sk and s_store_sk = ss_store_sk and d_year = 2000 group by s_store_name, s_store_id order by s_store_name, s_store_id".to_string()),
+        // q45 — web sales by zip/city.
+        ("q45", "select ca_zip, ca_city, sum(ws_sales_price) from web_sales, customer, customer_address, date_dim, item where ws_bill_customer_sk = c_customer_sk and c_current_addr_sk = ca_address_sk and ws_item_sk = i_item_sk and ws_sold_date_sk = d_date_sk and d_qoy = 2 and d_year = 2000 group by ca_zip, ca_city order by ca_zip, ca_city".to_string()),
+        // q46 — store sales with household demographics and city.
+        ("q46", "with dn as (select ss_ticket_number, ss_customer_sk, ca_city as bought_city, sum(ss_coupon_amt) as amt, sum(ss_net_profit) as profit from store_sales, date_dim, store, household_demographics, customer_address where ss_sold_date_sk = d_date_sk and ss_store_sk = s_store_sk and ss_hdemo_sk = hd_demo_sk and ss_addr_sk = ca_address_sk and (hd_dep_count = 4 or hd_vehicle_count = 3) and d_year in (1998, 1999, 2000) group by ss_ticket_number, ss_customer_sk, ca_city) select c_last_name, c_first_name, bought_city, ss_ticket_number, amt, profit from dn, customer where ss_customer_sk = c_customer_sk order by c_last_name, c_first_name, bought_city, ss_ticket_number".to_string()),
+        // q48 — store sales sum quantity by demographics/address.
+        ("q48", "select sum(ss_quantity) from store_sales, store, customer_demographics, customer_address, date_dim where s_store_sk = ss_store_sk and ss_sold_date_sk = d_date_sk and d_year = 2000 and cd_demo_sk = ss_cdemo_sk and cd_marital_status = 'M' and cd_education_status = '4 yr Degree' and ss_sales_price between 100.00 and 150.00 and ss_addr_sk = ca_address_sk and ca_country = 'United States' and ca_state in ('CO', 'OH', 'TX')".to_string()),
+        // q50 — store returns by store with return-date lag buckets.
+        ("q50", "select s_store_name, s_state, sum(case when (sr_returned_date_sk - ss_sold_date_sk <= 30) then 1 else 0 end) as d30, sum(case when (sr_returned_date_sk - ss_sold_date_sk > 30) and (sr_returned_date_sk - ss_sold_date_sk <= 60) then 1 else 0 end) as d31_60, sum(case when (sr_returned_date_sk - ss_sold_date_sk > 60) then 1 else 0 end) as d60plus from store_sales, store_returns, store where ss_ticket_number = sr_ticket_number and ss_item_sk = sr_item_sk and ss_customer_sk = sr_customer_sk and ss_store_sk = s_store_sk group by s_store_name, s_state order by s_store_name, s_state".to_string()),
+        // q52 — brand revenue by year/month.
         ("q52", "select dt.d_year, item.i_brand_id as brand_id, item.i_brand as brand, sum(ss_ext_sales_price) as ext_price from date_dim dt, store_sales, item where dt.d_date_sk = store_sales.ss_sold_date_sk and store_sales.ss_item_sk = item.i_item_sk and dt.d_moy = 11 and dt.d_year = 2000 group by dt.d_year, item.i_brand, item.i_brand_id order by dt.d_year, ext_price desc, brand_id".to_string()),
+        // q53 — window avg of manufacturer sales with CASE.
+        ("q53", "select * from (select i_manufact_id, sum(ss_sales_price) sum_sales, avg(sum(ss_sales_price)) over (partition by i_manufact_id) avg_quarterly_sales from item, store_sales, date_dim, store where ss_item_sk = i_item_sk and ss_sold_date_sk = d_date_sk and ss_store_sk = s_store_sk group by i_manufact_id, d_qoy) tmp1 where case when avg_quarterly_sales > 0 then abs(sum_sales - avg_quarterly_sales)/avg_quarterly_sales else null end > 0.1 order by avg_quarterly_sales, sum_sales, i_manufact_id".to_string()),
+        // q55 — single-brand revenue.
         ("q55", "select i_brand_id as brand_id, i_brand as brand, sum(ss_ext_sales_price) as ext_price from date_dim, store_sales, item where store_sales.ss_sold_date_sk = date_dim.d_date_sk and store_sales.ss_item_sk = item.i_item_sk and i_manufact_id = 100 and d_moy = 11 and d_year = 2000 group by i_brand, i_brand_id order by ext_price desc, i_brand_id".to_string()),
-        ("q3", "select dt.d_year, item.i_brand_id as brand_id, item.i_brand as brand, sum(ss_ext_sales_price) as sum_agg from date_dim dt, store_sales, item where dt.d_date_sk = store_sales.ss_sold_date_sk and store_sales.ss_item_sk = item.i_item_sk and item.i_manufact_id = 100 and dt.d_moy = 11 group by dt.d_year, item.i_brand, item.i_brand_id order by dt.d_year, sum_agg desc, brand_id".to_string()),
-        ("q98", "select i_item_id, i_category, i_class, i_current_price, sum(ss_ext_sales_price) as itemrevenue, sum(ss_ext_sales_price)*100/sum(sum(ss_ext_sales_price)) over (partition by i_class) as revenueratio from store_sales, item, date_dim where ss_item_sk = i_item_sk and i_category in ('Electronics', 'Books') and ss_sold_date_sk = d_date_sk and d_year = 2000 group by i_item_id, i_category, i_class, i_current_price order by i_category, i_class, i_item_id, revenueratio".to_string()),
+        // q56 — union-all sales by item across channels.
+        ("q56", "with ss as (select i_item_id, sum(ss_ext_sales_price) total_sales from store_sales, date_dim, item where ss_item_sk = i_item_sk and ss_sold_date_sk = d_date_sk and d_year = 2000 group by i_item_id), cs as (select i_item_id, sum(cs_ext_sales_price) total_sales from catalog_sales, date_dim, item where cs_item_sk = i_item_sk and cs_sold_date_sk = d_date_sk and d_year = 2000 group by i_item_id) select i_item_id, sum(total_sales) total_sales from (select * from ss union all select * from cs) tmp1 group by i_item_id order by total_sales, i_item_id".to_string()),
+        // q59 — store sales day-of-week sums by store/week.
+        ("q59", "with wss as (select d_week_seq, ss_store_sk, sum(case when (d_day_name='Sunday') then ss_sales_price else null end) sun_sales, sum(case when (d_day_name='Monday') then ss_sales_price else null end) mon_sales, sum(case when (d_day_name='Tuesday') then ss_sales_price else null end) tue_sales from store_sales, date_dim where d_date_sk = ss_sold_date_sk group by d_week_seq, ss_store_sk) select s_store_name, s_store_id, d_week_seq from wss, store where ss_store_sk = s_store_sk order by s_store_name, s_store_id, d_week_seq".to_string()),
+        // q60 — union-all sales by item across channels (Music category).
+        ("q60", "with ss as (select i_item_id, sum(ss_ext_sales_price) total_sales from store_sales, date_dim, item where i_category in ('Music') and ss_item_sk = i_item_sk and ss_sold_date_sk = d_date_sk and d_year = 1999 group by i_item_id), cs as (select i_item_id, sum(cs_ext_sales_price) total_sales from catalog_sales, date_dim, item where i_category in ('Music') and cs_item_sk = i_item_sk and cs_sold_date_sk = d_date_sk and d_year = 1999 group by i_item_id) select i_item_id, sum(total_sales) total_sales from (select * from ss union all select * from cs) tmp1 group by i_item_id order by i_item_id, total_sales".to_string()),
+        // q61 — promotion percentage.
+        ("q61", "select promotions, total, cast(promotions as decimal(15,4))/cast(total as decimal(15,4))*100 from (select sum(ss_ext_sales_price) promotions from store_sales, store, promotion, date_dim, customer, customer_address, item where ss_sold_date_sk = d_date_sk and ss_store_sk = s_store_sk and ss_promo_sk = p_promo_sk and ss_customer_sk = c_customer_sk and ca_address_sk = c_current_addr_sk and ss_item_sk = i_item_sk and d_year = 1999 and d_moy = 11) promotional_sales, (select sum(ss_ext_sales_price) total from store_sales, store, date_dim, customer, customer_address, item where ss_sold_date_sk = d_date_sk and ss_store_sk = s_store_sk and ss_customer_sk = c_customer_sk and ca_address_sk = c_current_addr_sk and ss_item_sk = i_item_sk and d_year = 1999 and d_moy = 11) all_sales".to_string()),
+        // q63 — window avg monthly sales with CASE.
+        ("q63", "select * from (select i_manager_id, sum(ss_sales_price) sum_sales, avg(sum(ss_sales_price)) over (partition by i_manager_id) avg_monthly_sales from item, store_sales, date_dim, store where ss_item_sk = i_item_sk and ss_sold_date_sk = d_date_sk and ss_store_sk = s_store_sk group by i_manager_id, d_moy) tmp1 where case when avg_monthly_sales > 0 then abs(sum_sales - avg_monthly_sales)/avg_monthly_sales else null end > 0.1 order by i_manager_id, avg_monthly_sales, sum_sales".to_string()),
+        // q65 — store revenue vs average.
+        ("q65", "select s_store_name, i_item_desc, sc.revenue, i_current_price, i_wholesale_cost, i_brand from store, item, (select ss_store_sk, avg(revenue) as ave from (select ss_store_sk, ss_item_sk, sum(ss_sales_price) as revenue from store_sales, date_dim where ss_sold_date_sk = d_date_sk group by ss_store_sk, ss_item_sk) sa group by ss_store_sk) sb, (select ss_store_sk, ss_item_sk, sum(ss_sales_price) as revenue from store_sales, date_dim where ss_sold_date_sk = d_date_sk group by ss_store_sk, ss_item_sk) sc where sb.ss_store_sk = sc.ss_store_sk and sc.revenue <= 0.1 * sb.ave and s_store_sk = sc.ss_store_sk and i_item_sk = sc.ss_item_sk order by s_store_name, i_item_desc".to_string()),
+        // q67 — rollup over store sales.
+        ("q67", "select * from (select i_category, i_class, i_brand, i_product_name, d_year, d_qoy, d_moy, s_store_id, sumsales, rank() over (partition by i_category order by sumsales desc) rk from (select i_category, i_class, i_brand, i_product_name, d_year, d_qoy, d_moy, s_store_id, sum(coalesce(ss_sales_price*ss_quantity, 0)) sumsales from store_sales, date_dim, store, item where ss_sold_date_sk = d_date_sk and ss_item_sk = i_item_sk and ss_store_sk = s_store_sk group by rollup(i_category, i_class, i_brand, i_product_name, d_year, d_qoy, d_moy, s_store_id)) dw1) dw2 order by i_category, i_class, i_brand, i_product_name, d_year, d_qoy, d_moy, s_store_id, sumsales, rk".to_string()),
+        // q69 — demographics with EXISTS + NOT EXISTS.
+        ("q69", "select cd_gender, cd_marital_status, cd_education_status, count(*) cnt1, cd_purchase_estimate, count(*) cnt2, cd_credit_rating, count(*) cnt3 from customer c, customer_address ca, customer_demographics where c.c_current_addr_sk = ca.ca_address_sk and ca_state in ('KY', 'GA', 'NM') and cd_demo_sk = c.c_current_cdemo_sk and exists (select * from store_sales, date_dim where c.c_customer_sk = ss_customer_sk and ss_sold_date_sk = d_date_sk and d_year = 2000) and not exists (select * from web_sales, date_dim where c.c_customer_sk = ws_bill_customer_sk and ws_sold_date_sk = d_date_sk and d_year = 2000) group by cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating order by cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating".to_string()),
+        // q70 — store sales rollup by state/county with window.
+        ("q70", "select sum(ss_net_profit) as total_sum, s_state, s_county, grouping(s_state)+grouping(s_county) as lochierarchy, rank() over (partition by grouping(s_state)+grouping(s_county), case when grouping(s_county) = 0 then s_state end order by sum(ss_net_profit) desc) as rank_within_parent from store_sales, date_dim d1, store where d1.d_date_sk = ss_sold_date_sk and s_store_sk = ss_store_sk group by rollup(s_state, s_county) order by lochierarchy desc, case when lochierarchy = 0 then s_state end, rank_within_parent".to_string()),
+        // q76 — NULL-key sales across channels (UNION ALL).
+        ("q76", "select channel, col_name, d_year, d_qoy, i_category, count(*) sales_cnt, sum(ext_sales_price) sales_amt from (select 'store' as channel, 'ss_store_sk' col_name, d_year, d_qoy, i_category, ss_ext_sales_price ext_sales_price from store_sales, item, date_dim where ss_store_sk is null and ss_sold_date_sk = d_date_sk and ss_item_sk = i_item_sk union all select 'web' as channel, 'ws_ship_customer_sk' col_name, d_year, d_qoy, i_category, ws_ext_sales_price ext_sales_price from web_sales, item, date_dim where ws_ship_customer_sk is null and ws_sold_date_sk = d_date_sk and ws_item_sk = i_item_sk union all select 'catalog' as channel, 'cs_ship_addr_sk' col_name, d_year, d_qoy, i_category, cs_ext_sales_price ext_sales_price from catalog_sales, item, date_dim where cs_ship_addr_sk is null and cs_sold_date_sk = d_date_sk and cs_item_sk = i_item_sk) foo group by channel, col_name, d_year, d_qoy, i_category order by channel, col_name, d_year, d_qoy, i_category".to_string()),
+        // q79 — store sales ticket summary with demographics.
+        ("q79", "select c_last_name, c_first_name, ss_ticket_number, amt, profit from (select ss_ticket_number, ss_customer_sk, sum(ss_coupon_amt) amt, sum(ss_net_profit) profit from store_sales, date_dim, store, household_demographics where ss_sold_date_sk = d_date_sk and ss_store_sk = s_store_sk and ss_hdemo_sk = hd_demo_sk and (hd_dep_count = 6 or hd_vehicle_count > 2) and d_year in (1998, 1999, 2000) group by ss_ticket_number, ss_customer_sk) ms, customer where ss_customer_sk = c_customer_sk order by c_last_name, c_first_name, profit".to_string()),
+        // q82 — inventory items by price/manufacturer.
+        ("q82", "select i_item_id, i_current_price from item, inventory, date_dim, store_sales where i_current_price between 62 and 92 and inv_item_sk = i_item_sk and d_date_sk = inv_date_sk and i_manufact_id in (100, 101, 102) and inv_quantity_on_hand between 100 and 500 and ss_item_sk = i_item_sk group by i_item_id, i_current_price order by i_item_id".to_string()),
+        // q87 — EXCEPT across store/catalog/web sales.
+        ("q87", "select count(*) from ((select distinct c_last_name, c_first_name, d_date from store_sales, date_dim, customer where ss_sold_date_sk = d_date_sk and ss_customer_sk = c_customer_sk) except (select distinct c_last_name, c_first_name, d_date from catalog_sales, date_dim, customer where cs_sold_date_sk = d_date_sk and cs_bill_customer_sk = c_customer_sk)) cool_cust".to_string()),
+        // q93 — store sales minus returns by reason.
+        ("q93", "select ss_customer_sk, sum(act_sales) sumsales from (select ss_item_sk, ss_ticket_number, ss_customer_sk, case when sr_return_quantity is not null then (ss_quantity-sr_return_quantity)*ss_sales_price else (ss_quantity*ss_sales_price) end act_sales from store_sales left outer join store_returns on (sr_item_sk = ss_item_sk and sr_ticket_number = ss_ticket_number), reason where sr_reason_sk = r_reason_sk) t group by ss_customer_sk order by sumsales, ss_customer_sk".to_string()),
+        // q97 — FULL OUTER JOIN store-only/catalog-only/store-and-catalog.
+        ("q97", "with ssci as (select ss_customer_sk customer_sk, ss_item_sk item_sk from store_sales, date_dim where ss_sold_date_sk = d_date_sk group by ss_customer_sk, ss_item_sk), csci as (select cs_bill_customer_sk customer_sk, cs_item_sk item_sk from catalog_sales, date_dim where cs_sold_date_sk = d_date_sk group by cs_bill_customer_sk, cs_item_sk) select sum(case when ssci.customer_sk is not null and csci.customer_sk is null then 1 else 0 end) store_only, sum(case when ssci.customer_sk is null and csci.customer_sk is not null then 1 else 0 end) catalog_only, sum(case when ssci.customer_sk is not null and csci.customer_sk is not null then 1 else 0 end) store_and_catalog from ssci full outer join csci on (ssci.customer_sk = csci.customer_sk and ssci.item_sk = csci.item_sk)".to_string()),
+        // q98 — window revenue ratio (store).
+        ("q98", "select i_item_id, i_category, i_class, i_current_price, sum(ss_ext_sales_price) as itemrevenue, sum(ss_ext_sales_price)*100/sum(sum(ss_ext_sales_price)) over (partition by i_class) as revenueratio from store_sales, item, date_dim where ss_item_sk = i_item_sk and i_category in ('Sports', 'Books', 'Home') and ss_sold_date_sk = d_date_sk and d_year = 2000 group by i_item_id, i_category, i_class, i_current_price order by i_category, i_class, i_item_id, revenueratio".to_string()),
+        // --- Conformance feature-coverage queries (original 16, kept for ratchet). ---
         ("win_rank", "select i_category, i_brand, sum(ss_ext_sales_price) as rev, rank() over (partition by i_category order by sum(ss_ext_sales_price) desc) as rnk from store_sales, item where ss_item_sk = i_item_sk group by i_category, i_brand order by i_category, rnk".to_string()),
         ("win_running", "select d_date, sum(ss_ext_sales_price) as daily, sum(sum(ss_ext_sales_price)) over (order by d_date rows between unbounded preceding and current row) as running from store_sales, date_dim where ss_sold_date_sk = d_date_sk group by d_date order by d_date".to_string()),
         ("rollup", "select i_category, i_class, sum(ss_net_profit) as profit from store_sales, item where ss_item_sk = i_item_sk group by rollup(i_category, i_class) order by i_category, i_class".to_string()),
@@ -774,6 +1324,74 @@ fn push_record(
     out.push(rec);
 }
 
+/// ADR-059: query `xcatalog.table_routing` for each table's materialized-parquet
+/// `location` (the catalog-introspection `location` column), so the in-process
+/// DuckDB engine reads the SAME parquet DataFusion reads (apples-to-apples).
+#[cfg(feature = "duckdb")]
+async fn query_parquet_locations(client: &Client, table_names: &[&str]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let Ok(msgs) = client
+        .simple_query("SELECT * FROM xcatalog.table_routing")
+        .await
+    else {
+        return out;
+    };
+    for m in msgs {
+        if let SimpleQueryMessage::Row(row) = m {
+            // table_name = col 2 (table_catalog, table_schema, table_name);
+            // location = col 12 (the last, added by ADR-059).
+            let name = row.get(2).unwrap_or_default().to_string();
+            let loc = row.get(12).unwrap_or_default().to_string();
+            // Only the benchmark's tables (filter out system/internal tables
+            // whose locations may be invalid → would break the DuckDB session).
+            if !loc.is_empty() && table_names.contains(&name.as_str()) {
+                out.push((name, loc));
+            }
+        }
+    }
+    out
+}
+
+/// ADR-059: run one query on the in-process DuckDB engine over the materialized
+/// parquet, io-traced (compute_ms). Mirrors `measure` (clear CAPTURE → run →
+/// drain) but via `execute_sql_with_backend(DuckDbCompat)` in
+/// `io_trace::instrument` instead of pgwire.
+#[cfg(feature = "duckdb")]
+async fn measure_duckdb_inprocess(
+    sql: &str,
+    parquet_tables: &[(String, String)],
+) -> Result<(usize, u128, IoTraceSnapshot), (u128, String)> {
+    use proximadb::query::execution::engine::{QueryExecutionContext, execute_sql_with_backend};
+    use proximadb::query::table_write_plan::ComputeBackend;
+    CAPTURE.lock().expect("lock").clear();
+    let ctx = QueryExecutionContext {
+        parquet_tables: parquet_tables.to_vec(),
+        ..Default::default()
+    };
+    let t0 = Instant::now();
+    // instrument sets the IO_TRACE scope; DuckDbLocalEngine records compute_ms;
+    // instrument emits the snapshot → billing observer → CAPTURE.
+    let sql_owned = sql.to_string();
+    let res = io_trace::instrument(None, "duckdb".to_string(), async move {
+        execute_sql_with_backend(ComputeBackend::DuckDbCompat, &sql_owned, ctx).await
+    })
+    .await;
+    let wall_ms = t0.elapsed().as_millis();
+    // Drain CAPTURE (same 60×5ms poll as `measure`).
+    let mut snap = IoTraceSnapshot::default();
+    for _ in 0..60 {
+        if let Some(s) = CAPTURE.lock().expect("lock").pop() {
+            snap = s;
+            break;
+        }
+        sleep(Duration::from_millis(5)).await;
+    }
+    match res {
+        Ok(r) => Ok((r.rows.len(), wall_ms, snap)),
+        Err(e) => Err((wall_ms, e.to_string())),
+    }
+}
+
 /// DuckDB external baseline (TD-OLAP-4 "external baselines"). When `DUCKDB_BIN`
 /// is set, load the SAME synthetic-tpc data (the `schema` CREATE TABLEs + the
 /// `inserts` — both DuckDB-compatible standard SQL) into a persistent temp
@@ -783,6 +1401,34 @@ fn push_record(
 /// ledger stays ProximaDB-self). Mirrors `tests/clickbench_ledger_e2e.rs`. No
 /// new dependency (uses `std::process` + the operator-provided binary); the
 /// result cache (#708) is default-OFF so ProximaDB's latency is already fair.
+
+/// Strip a terminal `WITH (…) ` storage-parameter clause from a `CREATE TABLE`
+/// DDL. ProximaDB accepts `WITH (cluster_key = '<col>')` (the TD-OLAP-6
+/// sort-on-materialize hint); DuckDB's parser rejects it. The clause is always
+/// at the end of the DDL and at paren depth 0 (after the column-list `)`), so we
+/// locate the first depth-0 `WITH (` and drop from there to the end. A `WITH`
+/// inside the column list (depth > 0) is left untouched. DuckDB builds its own
+/// zone maps on load, so the cluster key is irrelevant to the wall-time baseline.
+#[cfg(not(feature = "duckdb"))]
+fn strip_duckdb_incompatible_storage_param(ddl: &str) -> String {
+    let lower = ddl.to_ascii_lowercase();
+    let Some(rel) = lower.find(" with ") else {
+        return ddl.to_string();
+    };
+    // Only a depth-0 WITH (after the column list closes) is the storage param.
+    let before = &ddl[..rel];
+    let depth: i32 = before.matches('(').count() as i32 - before.matches(')').count() as i32;
+    if depth != 0 {
+        return ddl.to_string();
+    }
+    let after = lower[rel..].trim_start();
+    if !after.starts_with("with (") && !after.starts_with("with(") {
+        return ddl.to_string();
+    }
+    before.trim_end().to_string()
+}
+
+#[cfg(not(feature = "duckdb"))]
 fn run_duckdb_baseline(
     benchmark: &str,
     schema: &[(&str, &str)],
@@ -796,10 +1442,14 @@ fn run_duckdb_baseline(
     eprintln!("[{benchmark}] · DuckDB baseline (DUCKDB_BIN={duckdb})");
 
     // Loader SQL: schema.1 is the full `CREATE TABLE` DDL; inserts are standard
-    // `INSERT INTO … VALUES`. DuckDB accepts both.
+    // `INSERT INTO … VALUES`. DuckDB accepts both — EXCEPT ProximaDB's
+    // `WITH (cluster_key = …)` storage param (the TD-OLAP-6 sort-on-materialize
+    // hint), which DuckDB's parser rejects ("WITH clause is not supported for
+    // tables"). Strip it for the baseline: DuckDB builds its own zone maps on
+    // load, so the declared cluster key is irrelevant to the wall-time comparison.
     let mut loader = String::new();
     for (_, ddl) in schema {
-        loader.push_str(ddl);
+        loader.push_str(&strip_duckdb_incompatible_storage_param(ddl));
         loader.push_str(";\n");
     }
     for ins in inserts {
@@ -945,6 +1595,28 @@ async fn run_benchmark(
             push_record(out, benchmark, id, "datafusion", temperature, r);
         }
     }
+
+    // ADR-059: DuckDB in-process route (post-MATERIALIZE, same parquet, io-traced).
+    // Reads the SAME materialized parquet DataFusion reads (apples-to-apples), via
+    // the in-process DuckDbLocalEngine, io-traced (compute_ms). The CLI fallback
+    // (after shutdown, below) runs only when the `duckdb` feature is OFF.
+    #[cfg(feature = "duckdb")]
+    {
+        let table_names: Vec<&str> = schema.iter().map(|(n, _)| *n).collect();
+        let parquet_tables = query_parquet_locations(client, &table_names).await;
+        if parquet_tables.is_empty() {
+            eprintln!("[{benchmark}] · DuckDB in-process SKIPPED (no parquet locations)");
+        } else {
+            eprintln!(
+                "[{benchmark}] · DuckDB in-process baseline ({} parquet tables)",
+                parquet_tables.len()
+            );
+            for (id, sql) in &queries {
+                let r = measure_duckdb_inprocess(sql, &parquet_tables).await;
+                push_record(out, benchmark, id, "duckdb", "first", r);
+            }
+        }
+    }
 }
 
 async fn connect(server: &PgServer) -> Client {
@@ -957,9 +1629,20 @@ async fn connect(server: &PgServer) -> Client {
     client
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+/// 8 MB stack — same fix as tpch_pgwire_e2e.rs (planner recursion on deep plans).
+#[test]
 #[ignore = "perf evidence-ledger harness (TD-OLAP-4) — advisory; run with --ignored --nocapture"]
-async fn tpc_perf_ledger() {
+fn tpc_perf_ledger() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_stack_size(8 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    rt.block_on(tpc_perf_ledger_inner());
+}
+
+async fn tpc_perf_ledger_inner() {
     let scale: f64 = std::env::var("TPC_PERF_SCALE")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -999,13 +1682,16 @@ async fn tpc_perf_ledger() {
         )
         .await;
         server.shutdown().await;
-        run_duckdb_baseline(
-            "tpch",
-            TPCH_SCHEMA,
-            &gen_tpch(scale),
-            &keep_queries(tpch_queries()),
-            &mut records,
-        );
+        #[cfg(not(feature = "duckdb"))]
+        {
+            run_duckdb_baseline(
+                "tpch",
+                TPCH_SCHEMA,
+                &gen_tpch(scale),
+                &keep_queries(tpch_queries()),
+                &mut records,
+            );
+        }
     }
     if benchmark_filter.as_deref().is_none_or(|b| b == "tpcds") {
         let server = PgServer::start().await.expect("server start (tpcds)");
@@ -1020,30 +1706,35 @@ async fn tpc_perf_ledger() {
         )
         .await;
         server.shutdown().await;
-        run_duckdb_baseline(
-            "tpcds",
-            TPCDS_SCHEMA,
-            &gen_tpcds(scale),
-            &keep_queries(tpcds_queries()),
-            &mut records,
-        );
+        #[cfg(not(feature = "duckdb"))]
+        {
+            run_duckdb_baseline(
+                "tpcds",
+                TPCDS_SCHEMA,
+                &gen_tpcds(scale),
+                &keep_queries(tpcds_queries()),
+                &mut records,
+            );
+        }
     }
 
-    // Console summary: per benchmark × route, pass count + medians.
+    // Console summary: per benchmark × route, pass count + medians. Native and
+    // DataFusion report the `repeat` (warm) temperature; DuckDB is out-of-process
+    // (loaded once, no warm/cold distinction) so it records only `first` — match
+    // that temperature or the DuckDB row silently shows 0/0.
     for benchmark in ["tpch", "tpcds"] {
         for route in ["native", "datafusion", "duckdb"] {
+            let temp = if route == "duckdb" { "first" } else { "repeat" };
             let mut rows: Vec<&LedgerRecord> = records
                 .iter()
-                .filter(|r| {
-                    r.benchmark == benchmark && r.route == route && r.temperature == "repeat"
-                })
+                .filter(|r| r.benchmark == benchmark && r.route == route && r.temperature == temp)
                 .collect();
             rows.sort_by_key(|r| r.wall_ms);
             let ok = rows.iter().filter(|r| r.ok).count();
             let median = rows.get(rows.len() / 2).map(|r| r.wall_ms).unwrap_or(0);
             let bytes: u64 = rows.iter().map(|r| r.snapshot.bytes_read).sum();
             eprintln!(
-                "[{benchmark}/{route}] ok {ok}/{} · median repeat wall {median} ms · total bytes_read {bytes}",
+                "[{benchmark}/{route}] ok {ok}/{} · median {temp} wall {median} ms · total bytes_read {bytes}",
                 rows.len()
             );
         }
@@ -1080,13 +1771,39 @@ async fn tpc_perf_ledger() {
 
     // Advisory skeleton: assert only harness integrity, never perf numbers.
     // Skipped for filtered diagnostic runs — the fixed count is only meaningful
-    // for the full ledger.
+    // for the full ledger. DuckDB baseline records (route "duckdb") are excluded
+    // from the count — they are an optional external baseline.
     if !filtered {
-        let n_queries = 22 + 16;
+        // Uniqueness invariant (the real check): one record per
+        // (benchmark, query, route, temperature). The DuckDB baseline
+        // (DUCKDB_BIN set) adds a variable record count depending on load
+        // success, so a fixed magic number no longer holds — check uniqueness,
+        // and that the native+datafusion baseline is always fully measured.
+        use std::collections::HashSet;
+        let mut seen: HashSet<(&str, &str, &str, &str)> = HashSet::new();
+        for r in &ledger.records {
+            assert!(
+                seen.insert((
+                    r.benchmark.as_str(),
+                    r.query.as_str(),
+                    r.route.as_str(),
+                    r.temperature.as_str()
+                )),
+                "duplicate (benchmark, query, route, temperature) record"
+            );
+        }
+        // Dynamic: TPC-DS query count grows with coverage (#855); TPC-H is the
+        // fixed 22. Both routes × both temperatures must be measured per query.
+        let n_queries = 22 + tpcds_queries().len();
+        let baseline = ledger
+            .records
+            .iter()
+            .filter(|r| r.route != "duckdb")
+            .count();
         assert_eq!(
-            ledger.records.len(),
-            n_queries * 2 /* routes */ * 2, /* temperatures */
-            "one record per query x route x temperature"
+            baseline,
+            n_queries * 2 /* native + datafusion */ * 2, /* first + repeat */
+            "native+datafusion baseline incomplete (expected one record per query x route x temperature)"
         );
     }
 }

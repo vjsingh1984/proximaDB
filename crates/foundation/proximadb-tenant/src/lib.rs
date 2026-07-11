@@ -382,3 +382,27 @@ mod tests {
         );
     }
 }
+
+// ============================================================================
+// Tenant consumption types (pre-extracted from root src/metrics + src/catalog
+// for the observability crate extraction — Slice D root-crate shrinkage).
+// Foundation-pure: String + u64 primitives + serde.
+// ============================================================================
+
+/// Per-tenant resident storage usage snapshot (for consumption metering).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TenantStorageUsage {
+    pub tenant_id: String,
+    pub resident_bytes: u64,
+}
+
+// ============================================================================
+
+// ============================================================================
+// Tenant tier system (moved from src/catalog/tenant_tier.rs — Slice D).
+// ============================================================================
+pub mod tenant_tier_types;
+pub use tenant_tier_types::{
+    FeatureFlags, ObjectEconomyQuantizationCeiling, TenantTierRecord, Tier,
+    TierObjectEconomyConfig, tier_config,
+};

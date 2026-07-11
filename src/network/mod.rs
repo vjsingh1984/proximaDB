@@ -206,6 +206,9 @@ pub mod storage_write_fence;
 // (root-crate decomposition).
 pub use proximadb_tls as tls;
 /// Unix-domain socket binding helpers for portless ("embedded") transport mode.
+/// UDS (tokio's `UnixListener`) is unix-only; on non-unix (Windows) the module is
+/// absent and the transport bind sites fall back to a "use TCP" error.
+#[cfg(unix)]
 pub mod uds;
 
 pub use metrics_service::*;

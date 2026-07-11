@@ -21,6 +21,7 @@ path = "src/lib.rs"
 # (only compiled when feature is on). Default off.
 experimental-turboquant = [
     "proximadb-quantization-types/experimental-turboquant",
+    "proximadb-quantization-model/experimental-turboquant",
     "dep:faer",
     "dep:statrs",
     "dep:rand_chacha",
@@ -37,6 +38,7 @@ proximadb-hardware = { path = "../../foundation/proximadb-hardware" }
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 proximadb-proto = { path = "../../foundation/proximadb-proto" }
 proximadb-quantization-types = { path = "../../foundation/proximadb-quantization-types" }
+proximadb-quantization-model = { workspace = true }
 proximadb-records = { workspace = true }
 proximadb-query-filter = { path = "../../query/proximadb-query-filter" }
 proximadb-vector-query = { path = "../../query/proximadb-vector-query" }

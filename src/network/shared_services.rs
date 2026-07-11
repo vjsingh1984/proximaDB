@@ -351,7 +351,7 @@ pub struct SharedServices {
     /// Built around `ProductionHybridBackend` so retrieval lights up
     /// automatically as soon as ingestion populates per-collection BM25 +
     /// vector state.
-    pub rank_services: Arc<crate::network::rest::v1::rank::RankServices>,
+    pub rank_services: Arc<crate::network::rest::canonical::rank::RankServices>,
 
     /// Durable rank-profile catalog backed by the canonical WAL spine.
     ///
@@ -843,6 +843,12 @@ impl SharedServices {
             .await?,
         );
         debug!("✅ SharedServices::new - Filesystem factory for engines created successfully");
+
+        // TD-DOC-PUSHDOWN-1: publish the storage filesystem factory as a process singleton so the
+        // DataFusion `documents(collection)` UDTF can build a `PaxTableProvider` over a collection's
+        // `.pax` segments for predicate pushdown. Idempotent (first wins); mirrors the
+        // document/timeseries service singletons.
+        crate::services::document_service::set_filesystem_factory(filesystem_factory.clone());
 
         // Create VIPER engine
         debug!("🔧 SharedServices::new - Creating VIPER engine...");
@@ -1692,6 +1698,9 @@ impl SharedServices {
         // Create DocumentService (moved up for UnifiedHandlers)
         debug!("🔧 SharedServices::new - Creating DocumentService for document queries...");
         let document_base_path = storage_config.metadata_url.replace("file://", "");
+        // TD-DOC-RETIRE-1 P2 rewires this to the canonical constructor
+        // (with_canonical_record_store_and_wal); the deprecated call is intentional until then.
+        #[allow(deprecated)]
         let document_service = match DocumentService::new_with_wal(
             sst_engine_for_documents,
             &document_base_path,
@@ -1811,6 +1820,11 @@ impl SharedServices {
         debug!(
             "✅ SharedServices::new - DocumentService wired to canonical record route (ADR-009, gate default-OFF)"
         );
+
+        // ADR-055 P-DFSource: publish the document service as a process singleton so the DataFusion
+        // `documents(collection)` table function (registered per SessionContext) can read it. Mirrors
+        // the timeseries_service wiring; idempotent (first wins).
+        crate::services::document_service::set_document_service(document_service.clone());
 
         // ==================================================================================
         // Create UnifiedQueryFacade - single entry point for all query types
@@ -2761,7 +2775,7 @@ async fn build_rank_services(
     fulltext_indexes: crate::network::hybrid_search::HybridFullTextIndexMap,
     canonical_wal_appender: Option<Arc<crate::services::FramedTableWalAppender>>,
 ) -> (
-    Arc<crate::network::rest::v1::rank::RankServices>,
+    Arc<crate::network::rest::canonical::rank::RankServices>,
     Arc<dyn crate::services::RankProfileStore>,
 ) {
     use crate::services::record_store::TableWalAppender;
@@ -2893,12 +2907,12 @@ async fn build_rank_services_with_appender(
     store_appender: Arc<dyn crate::services::record_store::TableWalAppender>,
     recovered_entries: &[proximadb_storage_common::CanonicalWalEntry],
 ) -> (
-    Arc<crate::network::rest::v1::rank::RankServices>,
+    Arc<crate::network::rest::canonical::rank::RankServices>,
     Arc<dyn crate::services::RankProfileStore>,
 ) {
     use crate::core::search::hybrid::FusionStrategy;
-    use crate::network::rest::v1::rank::{HybridCoordinatorAdapter, RankServices};
-    use crate::network::rest::v1::rank_backend::ProductionHybridBackend;
+    use crate::network::rest::canonical::rank::{HybridCoordinatorAdapter, RankServices};
+    use crate::network::rest::canonical::rank_backend::ProductionHybridBackend;
     use crate::observability::rank_metrics::init_rank_pipeline_metrics;
     use crate::services::CanonicalWalRankProfileStore;
 
@@ -2953,7 +2967,7 @@ async fn build_rank_services_with_appender(
 }
 
 fn recover_profile(
-    services: &crate::network::rest::v1::rank::RankServices,
+    services: &crate::network::rest::canonical::rank::RankServices,
     profile: &crate::services::StoredRankProfile,
 ) -> Result<(), String> {
     use proximadb_rank_profile::{CompiledRankProfile, dsl::parse_single};

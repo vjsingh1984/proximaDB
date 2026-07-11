@@ -23,8 +23,8 @@ use utoipa::ToSchema;
 use crate::errors::{ApiError, ApiResult};
 use crate::graph::{PropertyValue, property_value::Value as GraphValue};
 use crate::network::middleware::tenant::TenantContext;
+use crate::network::rest::canonical::handlers::AppState;
 use crate::network::rest::openapi::ErrorResponse;
-use crate::network::rest::v1::handlers::AppState;
 use crate::services::entity_orchestrator::{
     EntityEmbedding, EntityOrchestrator, EntityProvenance, EntityRelation, EntityUpsert,
 };

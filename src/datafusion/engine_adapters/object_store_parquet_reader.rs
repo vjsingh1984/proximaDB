@@ -536,6 +536,12 @@ pub struct ObjectStoreParquetTable {
     /// key-column materialization because they let pruning happen from metadata
     /// without reading the data column first.
     row_group_bloom_cache: Arc<Mutex<RowGroupBloomCache>>,
+    /// ADR-058 D5/§9.A: trust level for this table's parquet footer stats.
+    /// `Trusted` (default — ProximaDB wrote the footer) ⇒ `statistics_from_splits`
+    /// may surface footer row_count/null_count/min-max as `Precision::Exact` for
+    /// DataFusion's `AggregateStatistics` elision. `Untrusted` (external/federated)
+    /// ⇒ stats are surfaced as `Precision::Absent` so COUNT/MIN/MAX scan.
+    stats_trust: proximadb_data_model::StatsTrust,
 }
 
 impl ObjectStoreParquetTable {
@@ -553,18 +559,33 @@ impl ObjectStoreParquetTable {
             IcebergObjectStoreBridge::from_url(location)
                 .map_err(|e| df_err(&format!("object-store bridge({location})"), e))?,
         );
+        // ADR-059 first-principles: scan the location's IMMEDIATE parquet files
+        // (Hive/Unity/Polaris model — location = the directory where parquet is
+        // immediate, skipping commit-style `_`/`.` files via the `.parquet`
+        // extension filter). Mixed-read-safe fallback: if no immediate parquet,
+        // try the legacy `data/` subpath (old materialized tables where location
+        // = table base dir, parquet in `{location}/data/`).
         let mut parquet_paths = bridge
-            .list_objects(&Path::from("data"))
+            .list_objects(&Path::from(""))
             .await
-            .map_err(|e| df_err(&format!("list parquet base {location}"), e))?
+            .unwrap_or_default()
             .into_iter()
             .filter(|path| path.as_ref().ends_with(".parquet"))
             .collect::<Vec<_>>();
+        if parquet_paths.is_empty() {
+            parquet_paths = bridge
+                .list_objects(&Path::from("data"))
+                .await
+                .map_err(|e| df_err(&format!("list parquet data/ fallback {location}"), e))?
+                .into_iter()
+                .filter(|path| path.as_ref().ends_with(".parquet"))
+                .collect::<Vec<_>>();
+        }
         parquet_paths.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
         if parquet_paths.is_empty() {
             return Err(df_err(
                 "open object-store parquet base",
-                format!("no data/*.parquet objects under {location}"),
+                format!("no parquet objects under {location} (immediate or data/)"),
             ));
         }
 
@@ -631,6 +652,7 @@ impl ObjectStoreParquetTable {
             table_name: None,
             split_key_cache: Arc::new(Mutex::new(HashMap::new())),
             row_group_bloom_cache: Arc::new(Mutex::new(HashMap::new())),
+            stats_trust: proximadb_data_model::StatsTrust::Trusted,
         })
     }
 
@@ -664,13 +686,46 @@ impl ObjectStoreParquetTable {
             // Per-query caches start empty (#742) — the table-OPEN cache reuses the
             // immutable footer discovery, not these query-time bloom/key caches.
             row_group_bloom_cache: Arc::new(Mutex::new(HashMap::new())),
+            stats_trust: proximadb_data_model::StatsTrust::Trusted,
         })
+    }
+
+    /// TD-OLAP-4 shadow probe: the raw inputs a native
+    /// [`ParquetScanOperator`](crate::query::execution::native_parquet_scan::ParquetScanOperator)
+    /// needs to read the SAME external parquet this DataFusion table reads — the
+    /// traced object store, the distinct files (with footer byte sizes), and the
+    /// file Arrow schema. Whole-file granularity (every row group); the native scan
+    /// does not yet do row-group zone-map pruning, so a native sample built from
+    /// this is an upper bound on selective-filter queries (documented caveat for
+    /// the engine-dimension trace).
+    pub fn native_scan_inputs(
+        &self,
+    ) -> (Arc<dyn ObjectStore>, Vec<(Path, Option<u64>)>, SchemaRef) {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut files: Vec<(Path, Option<u64>)> = Vec::new();
+        for split in &self.splits {
+            if seen.insert(split.file_path.clone()) {
+                let size = self.file_sizes.get(&split.file_path).copied();
+                files.push((Path::from(split.file_path.as_str()), size));
+            }
+        }
+        (self.store.clone(), files, self.schema.clone())
     }
 
     /// Attach the registered table name (keys the ADR-037 statistics registry
     /// so [`TableProvider::statistics`] can overlay the HLL NDV estimate).
     pub fn with_table_name(mut self, name: impl Into<String>) -> Self {
         self.table_name = Some(name.into());
+        self
+    }
+
+    /// ADR-058 D5/§9.A: set this table's footer-stats trust level. Called at
+    /// registration with the per-table trust derived from the catalog authority
+    /// (`Trusted` for ProximaDB-generated parquet, `Untrusted` for
+    /// external/federated). Controls whether `statistics_from_splits` may
+    /// surface footer stats as `Precision::Exact` for AggregateStatistics elision.
+    pub fn with_stats_trust(mut self, trust: proximadb_data_model::StatsTrust) -> Self {
+        self.stats_trust = trust;
         self
     }
 
@@ -706,6 +761,31 @@ impl ObjectStoreParquetTable {
             }
         }
         any.then_some(total)
+    }
+
+    /// TD-OLAP-4 metadata elision: the footer-derived numeric `(min, max,
+    /// null_count)` for a column, reduced (min-of-mins / max-of-maxes / Σ nulls)
+    /// across ALL row-group splits — the input for eliding unfiltered
+    /// `MIN`/`MAX`/`COUNT(col)` without a scan. Returns `None` unless EVERY split
+    /// carries numeric bounds for the column (a partially-covered column would
+    /// understate the range), or the bounds are non-numeric (truncated string
+    /// stats → the caller scans, matching DataFusion's `Inexact` guard).
+    pub fn aggregate_numeric_bounds(&self, col: &str) -> Option<(f64, f64, u64)> {
+        if self.splits.is_empty() {
+            return None;
+        }
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        let mut nulls: u64 = 0;
+        for split in &self.splits {
+            let cb = split.statistics.column_stats.get(col)?;
+            nulls = nulls.saturating_add(cb.null_count);
+            let mn = cb.min.as_ref()?.as_f64()?;
+            let mx = cb.max.as_ref()?.as_f64()?;
+            lo = lo.min(mn);
+            hi = hi.max(mx);
+        }
+        Some((lo, hi, nulls))
     }
 
     /// Count row-group splits that survive the given filters. Uses min/max
@@ -1007,6 +1087,7 @@ impl TableProvider for ObjectStoreParquetTable {
             &self.schema,
             self.table_name.as_deref(),
             df_stats_value_bounds_enabled(),
+            self.stats_trust,
         ))
     }
 
@@ -1038,6 +1119,7 @@ impl TableProvider for ObjectStoreParquetTable {
                 &self.schema,
                 self.table_name.as_deref(),
                 df_stats_value_bounds_enabled(),
+                self.stats_trust,
             ),
             projection.map(|p| p.as_slice()),
         );
@@ -1265,14 +1347,18 @@ pub async fn register_object_store_parquet_location(
     name: &str,
     location: &str,
     tenant: Option<&str>,
+    stats_trust: proximadb_data_model::StatsTrust,
 ) -> DFResult<Arc<ObjectStoreParquetTable>> {
     // Table-OPEN cache (TD-OLAP-4): on a hit, skip LIST + HEAD + footer discovery
     // and rebuild the table from cached metadata + a fresh per-query traced store.
     // Gated default-OFF; the cache is a pure function of the immutable snapshot,
     // invalidated on re-MATERIALIZE.
     if let Some(disc) = super::table_open_cache::get(tenant, location) {
-        let table =
-            Arc::new(ObjectStoreParquetTable::from_cached(&disc, location)?.with_table_name(name));
+        let table = Arc::new(
+            ObjectStoreParquetTable::from_cached(&disc, location)?
+                .with_table_name(name)
+                .with_stats_trust(stats_trust),
+        );
         ctx.register_table(name, table.clone())?;
         crate::observability::io_trace::record_table_open(true);
         return Ok(table);
@@ -1281,7 +1367,8 @@ pub async fn register_object_store_parquet_location(
     let table = Arc::new(
         ObjectStoreParquetTable::open(location)
             .await?
-            .with_table_name(name),
+            .with_table_name(name)
+            .with_stats_trust(stats_trust),
     );
     super::table_open_cache::insert(tenant, location, table.discovery());
     crate::observability::io_trace::record_table_open(false);
@@ -1345,6 +1432,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn aggregate_numeric_bounds_reduces_min_max_across_row_groups() {
+        // Two row groups: x = [1,2] and [100,101]. Footer elision must reduce to
+        // min-of-mins=1, max-of-maxes=101 across BOTH splits (not just the first).
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        write_two_row_group_parquet(&data_dir.join("part-0.parquet"));
+
+        let location = format!("file://{}", tmp.path().display());
+        let table = ObjectStoreParquetTable::open(&location).await.unwrap();
+        assert_eq!(table.split_count(), 2, "two row groups");
+
+        let (min, max, nulls) = table.aggregate_numeric_bounds("x").expect("numeric bounds");
+        assert_eq!(min, 1.0, "min-of-mins across both row groups");
+        assert_eq!(max, 101.0, "max-of-maxes across both row groups");
+        assert_eq!(nulls, 0);
+        // A truncated-stats / string column reduces to numeric `None` (→ scan).
+        assert!(
+            table.aggregate_numeric_bounds("k").is_none()
+                || table.aggregate_numeric_bounds("k").unwrap().0.is_nan(),
+            "string column has no numeric bounds"
+        );
+        // A missing column → None (never a wrong bound).
+        assert!(table.aggregate_numeric_bounds("nope").is_none());
+    }
+
+    #[tokio::test]
+    async fn native_scan_inputs_yields_distinct_files_with_sizes_and_schema() {
+        // Two row groups live in ONE file → the native scan (whole-file) must see a
+        // single distinct file, with a footer byte size and the full 2-column schema.
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        write_two_row_group_parquet(&data_dir.join("part-0.parquet"));
+
+        let location = format!("file://{}", tmp.path().display());
+        let table = ObjectStoreParquetTable::open(&location).await.unwrap();
+        assert_eq!(table.split_count(), 2, "two row groups");
+
+        let (_store, files, schema) = table.native_scan_inputs();
+        assert_eq!(
+            files.len(),
+            1,
+            "two row groups collapse to one distinct file"
+        );
+        assert!(files[0].0.as_ref().ends_with("part-0.parquet"));
+        assert!(
+            files[0].1.is_some_and(|sz| sz > 0),
+            "footer byte size present"
+        );
+        assert_eq!(schema.fields().len(), 2, "full file schema (k, x)");
+    }
+
+    #[tokio::test]
     async fn estimated_rows_and_bytes_sum_row_group_footer_stats() {
         let tmp = tempfile::tempdir().unwrap();
         let data_dir = tmp.path().join("data");
@@ -1390,7 +1531,13 @@ mod tests {
         );
 
         // With bounds enabled: min-of-mins / max-of-maxes across row groups.
-        let full = statistics_from_splits(&table.splits, &table.schema, None, true);
+        let full = statistics_from_splits(
+            &table.splits,
+            &table.schema,
+            None,
+            true,
+            proximadb_data_model::StatsTrust::Trusted,
+        );
         let k = &full.column_statistics[0];
         assert_eq!(
             k.min_value,
@@ -1425,9 +1572,15 @@ mod tests {
 
         let location = format!("file://{}", tmp.path().display());
         let ctx = SessionContext::new();
-        register_object_store_parquet_location(&ctx, "t", &location, None)
-            .await
-            .unwrap();
+        register_object_store_parquet_location(
+            &ctx,
+            "t",
+            &location,
+            None,
+            proximadb_data_model::StatsTrust::Trusted,
+        )
+        .await
+        .unwrap();
 
         // Row group 1 holds x ∈ {1,2}; row group 2 holds x ∈ {100,101}.
         let df = ctx.sql("SELECT x FROM t WHERE x > 50").await.unwrap();
@@ -1866,9 +2019,15 @@ mod tests {
                 let ctx = SessionContext::new();
                 // Register (wraps the store) INSIDE the scope so the io_trace
                 // handle is captured for spawned-partition reads.
-                register_object_store_parquet_location(&ctx, "t", location, None)
-                    .await
-                    .unwrap();
+                register_object_store_parquet_location(
+                    &ctx,
+                    "t",
+                    location,
+                    None,
+                    proximadb_data_model::StatsTrust::Trusted,
+                )
+                .await
+                .unwrap();
                 let batches = ctx.sql(query).await.unwrap().collect().await.unwrap();
                 let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
                 let snap = io_trace::snapshot().expect("snapshot inside scope");

@@ -36,8 +36,8 @@ ADR-056 commits ProximaDB to the **predicate-pushdown school** as the lead adapt
 [cols="1,3,2,1",options="header"]
 |===
 | Slice | What | Deps / Gate | Status
-| **AQE-S7** | **Unified `MemoryPool` (DuckDB TMM pattern)** for TD-OLAP-11 — one global budget, *observed* cardinalities, operator-side spill callbacks (not per-operator limits → OOM-or-over-spill). | Deps: TD-OLAP-11. Gate: no OOM cliff under concurrent breakers. | ⬜
-| **AQE-S8** | **Optimistic hash→grace_hash on memory threshold** — single HJ algorithm, graceful degrade via radix+spill (no re-sort). Adaptive re-bucketing under skew. | Deps: **S7**, TD-OLAP-11. Gate: spill-regime strict-better than DataFusion (which has no spill). | ⬜
+| **AQE-S7** | **Unified `MemoryPool` (DuckDB TMM pattern)** for TD-OLAP-11 — one global budget, *observed* cardinalities, operator-side spill callbacks (not per-operator limits → OOM-or-over-spill). | Deps: TD-OLAP-11 **(landed #779 — dep met; #779 is in-memory-only, this closes the spill gap)**. Gate: no OOM cliff under concurrent breakers. | ⬜ (unblocked)
+| **AQE-S8** | **Optimistic hash→grace_hash on memory threshold** — single HJ algorithm, graceful degrade via radix+spill (no re-sort). Adaptive re-bucketing under skew. | Deps: **S7**, TD-OLAP-11 **(landed #779)**. Gate: spill-regime strict-better than DataFusion (which has no spill). | ⬜
 |===
 
 === Design directives (binding, from ADR-056 §6 — file as amendments, not feature slices)
@@ -45,7 +45,7 @@ ADR-056 commits ProximaDB to the **predicate-pushdown school** as the lead adapt
 [cols="1,3,2,1",options="header"]
 |===
 | Slice | What | Deps / Gate | Status
-| **AQE-S9** | **`HashJoinBuild`/`HashJoinProbe` (TD-OLAP-11, #779) as an explicit materialization boundary** — not an in-memory handoff; the OnceLock is the stage boundary. Amends ADR-054 §5. Preserves the future re-plan option (Tier 3) without paying now. | Deps: TD-OLAP-11 (#779). Gate: design review. | 🔄 (in #779 design)
+| **AQE-S9** | **`HashJoinBuild`/`HashJoinProbe` (TD-OLAP-11, #779) as an explicit materialization boundary** — not an in-memory handoff; the OnceLock is the stage boundary. Amends ADR-054 §5. Preserves the future re-plan option (Tier 3) without paying now. | Deps: TD-OLAP-11 (#779). Gate: design review. | ✅ **#779 (2026-07-08)** — `native_join_ops.rs`: blocking build + `OnceLock` publish (in-memory only; spill = S7/S8)
 | **AQE-S10** | **Cache-composition fix** — adaptive plans are data-dependent → plan cache becomes plan-shape-aware OR bypass for adaptive plans (model: `query_result_cache.rs:freshness_eligible` Strong-bypass). Invariant 16b/16c interaction. | Deps: **S4** (when plans become adaptive). Gate: no stale-plan reads. | ⬜
 | **AQE-S11** | **Runtime-filter wait-time configurable dial** (Impala `RUNTIME_FILTER_WAIT_TIME_MS` — effective default 1000 ms / 1 s; query-option literal default `0` = inherit the impalad startup flag; time-zero rule, graceful late-arrival). Replaces the hardcoded 10s; emit the dial's value into IoTrace so the router learns per-workload. | Deps: none. Gate: env knob + TPC-DS ledger holds. | ⬜
 |===
@@ -90,3 +90,8 @@ AQE-S11 (wait-time dial) ──────────────────�
 == Tracking convention
 
 Status updates go here (⬜/🔄/✅/⏸) + a one-line "what landed" per slice as PRs merge. Cross-session agents read this table to know what's done. Each slice's PR should reference `TD-AQE-1` + the slice id (e.g., `AQE-S1`) in the commit/PR title.
+
+=== What landed
+
+* **AQE-S1 ✅ — #784 (2026-07-08):** bloom semi-join promoted default-ON (`PROXIMADB_DF_BLOOM_SEMIJOIN` ⇒ `.unwrap_or(true)`, opt out `=0`) in `object_store_parquet_reader.rs`.
+* **AQE-S9 ✅ — #779 (2026-07-08):** native hash join (TD-OLAP-11) landed with the explicit build→probe materialization boundary in `src/query/execution/native_join_ops.rs` (blocking build + `concat_batches`, frozen `Arc<JoinHashTable>` published via `OnceLock`, probe gates on `table_slot.get()`). In-memory only — no spill (Phase 3.0); the spill gap is AQE-S7/S8, whose TD-OLAP-11 dependency is now met.

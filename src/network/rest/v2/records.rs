@@ -47,7 +47,7 @@ use crate::api_handlers::{
 use crate::errors::{ApiError, ApiResult};
 use crate::network::auth::middleware::DataPlaneCapability;
 use crate::network::middleware::tenant::TenantContext;
-use crate::network::rest::v1::handlers::AppState;
+use crate::network::rest::canonical::handlers::AppState;
 use crate::services::{
     WriteDurabilityRequirement, WriteIntent, WriteLaneRouter, WriteOperationKind,
 };
@@ -1806,7 +1806,10 @@ pub async fn search_with_typed_filters(
                     trace_id: request_id.clone(),
                     tenant_id: tenant.tenant_id.clone(),
                     collection_name: collection.clone(),
-                    plan: &cached_plan.plan,
+                    filter_strategy: cached_plan.plan.filter_strategy.clone(),
+                    index_route: cached_plan.plan.index_route.clone(),
+                    estimated_selectivity: cached_plan.plan.estimated_selectivity,
+                    gls_score: cached_plan.plan.gls_score,
                     latency_ms: latency_ms as f64,
                     index_stats: crate::core::service_types::IndexStats::default(),
                     candidate_count: results.len() as u32,

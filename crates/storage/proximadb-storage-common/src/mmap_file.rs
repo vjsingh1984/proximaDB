@@ -79,9 +79,20 @@ impl MmapFile {
         })
     }
 
-    /// Advise the kernel about access pattern
+    /// Advise the kernel about access pattern.
+    ///
+    /// `memmap2::Mmap::advise` wraps POSIX `madvise`, which exists only on unix;
+    /// `memmap2::Advice` is not defined on Windows. Advice is a non-binding
+    /// performance hint, so on non-unix this is a correct no-op.
     pub fn advise(&self, advice: Advice) -> Result<()> {
-        self.mmap.advise(advice.into())?;
+        #[cfg(unix)]
+        {
+            self.mmap.advise(advice.into())?;
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = advice;
+        }
         Ok(())
     }
 }
@@ -212,6 +223,10 @@ pub enum Advice {
     DontNeed,
 }
 
+// `memmap2::Advice` (POSIX `madvise` wrapper) is unix-only, so this conversion
+// is gated to unix; on non-unix the advice is dropped (see `MmapFile::advise`).
+// The public `Advice` enum above stays cross-platform.
+#[cfg(unix)]
 impl From<Advice> for memmap2::Advice {
     fn from(advice: Advice) -> Self {
         match advice {
@@ -443,6 +458,7 @@ mod tests {
             Advice::WillNeed,
             Advice::DontNeed,
         ] {
+            #[cfg(unix)]
             let _: memmap2::Advice = advice.into();
             mmap.advise(advice)?;
         }

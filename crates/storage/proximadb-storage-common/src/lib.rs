@@ -31,6 +31,7 @@ pub mod observability_cardinality;
 pub mod observability_partitioning;
 pub mod observability_rollups;
 pub mod pax_block;
+pub mod pax_striped_plan;
 pub mod proxima_arrow;
 pub mod proxima_parquet;
 pub mod proxima_schema;

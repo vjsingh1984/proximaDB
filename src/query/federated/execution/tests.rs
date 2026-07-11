@@ -62,7 +62,7 @@ mod tests {
         // The projection must emit the canonical 5-column rerank shape
         // with phase = "second" so SRF consumers can distinguish full-
         // pipeline rows from the first-phase-only stub path.
-        use crate::network::rest::v1::rank::{ScoreVectorDto, ScoredHitDto};
+        use crate::network::rest::canonical::rank::{ScoreVectorDto, ScoredHitDto};
         use arrow::array::{Float32Array, StringArray};
 
         let hits = vec![

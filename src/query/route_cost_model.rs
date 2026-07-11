@@ -366,6 +366,7 @@ pub fn shape_class(shape: &QueryShape) -> String {
     for suffix in [
         shape.cardinality.class_suffix(),
         shape.partition_fanout.class_suffix(),
+        shape.operation_class.class_suffix(),
     ]
     .into_iter()
     .flatten()
@@ -431,6 +432,16 @@ struct CostQuantities {
     egress_bytes: f64,
     bytes_written: f64,
     compute_ms: f64,
+    // Diagnostic observability (ADR-056 AQE-S2): the runtime-filter skip ratio
+    // + the wait-outcome ratio. NOT in `score` (pruning already reduced
+    // `range_gets`/`bytes_read` — scoring these double-counts). Recorded per
+    // (shape-class, backend) so promotion/demotion gates + AQE-S4 (build/probe
+    // swap) can read them.
+    splits_total: f64,
+    splits_pruned: f64,
+    runtime_filter_arrived: f64,
+    runtime_filter_timed_out: f64,
+    runtime_filter_wait_ms: f64,
 }
 
 impl CostQuantities {
@@ -441,6 +452,11 @@ impl CostQuantities {
             egress_bytes: snap.egress_bytes as f64,
             bytes_written: snap.bytes_written as f64,
             compute_ms: snap.total_compute_ms() as f64,
+            splits_total: snap.splits_total as f64,
+            splits_pruned: snap.splits_pruned as f64,
+            runtime_filter_arrived: snap.runtime_filter_arrived as f64,
+            runtime_filter_timed_out: snap.runtime_filter_timed_out as f64,
+            runtime_filter_wait_ms: snap.runtime_filter_wait_ms as f64,
         }
     }
 }
@@ -453,6 +469,11 @@ struct Cell {
     egress_bytes: f64,
     bytes_written: f64,
     compute_ms: f64,
+    splits_total: f64,
+    splits_pruned: f64,
+    runtime_filter_arrived: f64,
+    runtime_filter_timed_out: f64,
+    runtime_filter_wait_ms: f64,
     samples: u64,
 }
 
@@ -464,6 +485,11 @@ impl Cell {
             self.egress_bytes = q.egress_bytes;
             self.bytes_written = q.bytes_written;
             self.compute_ms = q.compute_ms;
+            self.splits_total = q.splits_total;
+            self.splits_pruned = q.splits_pruned;
+            self.runtime_filter_arrived = q.runtime_filter_arrived;
+            self.runtime_filter_timed_out = q.runtime_filter_timed_out;
+            self.runtime_filter_wait_ms = q.runtime_filter_wait_ms;
         } else {
             let blend = |old: f64, new: f64| alpha * new + (1.0 - alpha) * old;
             self.range_gets = blend(self.range_gets, q.range_gets);
@@ -471,6 +497,14 @@ impl Cell {
             self.egress_bytes = blend(self.egress_bytes, q.egress_bytes);
             self.bytes_written = blend(self.bytes_written, q.bytes_written);
             self.compute_ms = blend(self.compute_ms, q.compute_ms);
+            self.splits_total = blend(self.splits_total, q.splits_total);
+            self.splits_pruned = blend(self.splits_pruned, q.splits_pruned);
+            self.runtime_filter_arrived =
+                blend(self.runtime_filter_arrived, q.runtime_filter_arrived);
+            self.runtime_filter_timed_out =
+                blend(self.runtime_filter_timed_out, q.runtime_filter_timed_out);
+            self.runtime_filter_wait_ms =
+                blend(self.runtime_filter_wait_ms, q.runtime_filter_wait_ms);
         }
         self.samples += 1;
     }
@@ -482,6 +516,11 @@ impl Cell {
             egress_bytes: self.egress_bytes,
             bytes_written: self.bytes_written,
             compute_ms: self.compute_ms,
+            splits_total: self.splits_total,
+            splits_pruned: self.splits_pruned,
+            runtime_filter_arrived: self.runtime_filter_arrived,
+            runtime_filter_timed_out: self.runtime_filter_timed_out,
+            runtime_filter_wait_ms: self.runtime_filter_wait_ms,
         }
     }
 }
@@ -1162,6 +1201,25 @@ mod tests {
     }
 
     #[test]
+    fn cost_quantities_carry_split_and_wait_observability() {
+        // ADR-056 AQE-S2: splits_pruned + the runtime-filter wait outcome flow
+        // from IoTraceSnapshot → CostQuantities (diagnostic observability for
+        // the route model; NOT in the score fn).
+        let mut snap = IoTraceSnapshot::default();
+        snap.splits_total = 100;
+        snap.splits_pruned = 37;
+        snap.runtime_filter_arrived = 4;
+        snap.runtime_filter_timed_out = 1;
+        snap.runtime_filter_wait_ms = 4_200;
+        let q = CostQuantities::from_snapshot(&snap);
+        assert_eq!(q.splits_total, 100.0);
+        assert_eq!(q.splits_pruned, 37.0);
+        assert_eq!(q.runtime_filter_arrived, 4.0);
+        assert_eq!(q.runtime_filter_timed_out, 1.0);
+        assert_eq!(q.runtime_filter_wait_ms, 4_200.0);
+    }
+
+    #[test]
     fn shape_class_mirrors_scheduler_signals() {
         // Unknown finer signals (the default) keep the coarse 2-part class.
         assert_eq!(
@@ -1192,6 +1250,7 @@ mod tests {
             cardinality: CardinalityClass::Large,
             partition_fanout: PartitionFanout::Many,
             pax_backed: false,
+            operation_class: Default::default(),
         });
         assert_eq!(class, "olap/parquet/card=l/part=m");
         // A partially-known shape only appends the known suffix.
@@ -1813,6 +1872,7 @@ mod tests {
             cardinality: CardinalityClass::Large,
             partition_fanout: PartitionFanout::Many,
             pax_backed: false,
+            operation_class: Default::default(),
         });
         let small = shape_class(&QueryShape {
             engages_relational: true,
@@ -1820,6 +1880,7 @@ mod tests {
             cardinality: CardinalityClass::Small,
             partition_fanout: PartitionFanout::Single,
             pax_backed: false,
+            operation_class: Default::default(),
         });
         assert_ne!(big, coarse);
         assert_ne!(small, coarse);
@@ -1847,6 +1908,7 @@ mod tests {
             cardinality: CardinalityClass::Large,
             partition_fanout: PartitionFanout::Many,
             pax_backed: false,
+            operation_class: Default::default(),
         };
         let class = shape_class(&big);
         // Observe Native as confidently cheaper than DataFusion for THIS fine

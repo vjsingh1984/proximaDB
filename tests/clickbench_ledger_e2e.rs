@@ -285,12 +285,25 @@ struct QueryRecord {
     /// resolution + route classification (TD-OLAP-4).
     #[serde(skip_serializing_if = "Option::is_none")]
     setup_ms: Option<u64>,
+    /// pgwire result-emit wall ms — row encode + socket write (TD-OLAP-4).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    emit_ms: Option<u64>,
     /// SessionContext build wall ms — per-query context+UDF setup (TD-OLAP-4).
     #[serde(skip_serializing_if = "Option::is_none")]
     session_ms: Option<u64>,
     /// Execution (compute) wall ms attributed by the engine (TD-OLAP-4).
     #[serde(skip_serializing_if = "Option::is_none")]
     compute_ms: Option<u64>,
+    /// Engine/route this query was served on — `(shape_class, backend_label)`, the
+    /// engine dimension of the geometry-dependent dispatch (TD-OLAP-4 Slice 0).
+    /// For external-parquet ClickBench this is `DataFusionLocal` (native cannot
+    /// serve external parquet yet), making the current engine coverage explicit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    route: Option<String>,
+    /// Full per-engine compute breakdown (`{engine: ms}`) — distinguishes
+    /// `datafusion` / `native-vectorized` / `volcano` for the cost-model tensor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compute_by_engine: Option<std::collections::BTreeMap<String, u64>>,
     /// Table-OPEN floor (discovery + footer) wall ms — TD-OLAP-4. Drops to ~0 on a
     /// warm table-open cache hit; the direct signal for the cache lever.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -318,6 +331,9 @@ async fn drain_capture() -> Option<IoTraceSnapshot> {
 }
 
 /// Rewrite `FROM hits` to a DuckDB `read_parquet(...)` over the same object.
+/// Only used by the CLI fallback (when the `duckdb` feature is OFF); the
+/// in-process engine registers a `hits` view, so no rewrite is needed.
+#[cfg(not(feature = "duckdb"))]
 fn duckdb_sql(sql: &str, parquet: &str) -> String {
     sql.replace("FROM hits", &format!("FROM read_parquet('{parquet}')"))
 }
@@ -325,6 +341,12 @@ fn duckdb_sql(sql: &str, parquet: &str) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "ClickBench single-node ledger (TD-OLAP-4) — advisory; needs CLICKBENCH_PARQUET"]
 async fn clickbench_ledger() {
+    // Dev-only: honor RUST_LOG so the native-shadow probe's decline reasons are
+    // visible during a diagnostic capture (no-op if RUST_LOG is unset).
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_test_writer()
+        .try_init();
     let parquet = match std::env::var("CLICKBENCH_PARQUET") {
         Ok(p) => p,
         Err(_) => {
@@ -374,25 +396,33 @@ async fn clickbench_ledger() {
             bytes_read,
             range_gets,
             setup_ms,
+            emit_ms,
             session_ms,
             compute_ms,
             open_ms,
             plan_ms,
             table_open_hits,
+            route,
+            compute_by_engine,
         ) = snap
             .map(|s| {
                 (
                     Some(s.bytes_read),
                     Some(s.range_gets),
                     Some(s.setup_ms),
+                    Some(s.emit_ms),
                     Some(s.session_ms),
                     Some(s.total_compute_ms()),
                     Some(s.open_ms),
                     Some(s.plan_ms),
                     Some(s.table_open_hits),
+                    s.route.as_ref().map(|(_, backend)| backend.clone()),
+                    Some(s.compute_ms.clone()),
                 )
             })
-            .unwrap_or((None, None, None, None, None, None, None, None));
+            .unwrap_or((
+                None, None, None, None, None, None, None, None, None, None, None,
+            ));
         match res {
             Ok(msgs) => {
                 let rows = msgs
@@ -408,11 +438,14 @@ async fn clickbench_ledger() {
                     bytes_read,
                     range_gets,
                     setup_ms,
+                    emit_ms,
                     session_ms,
                     compute_ms,
                     open_ms,
                     plan_ms,
                     table_open_hits,
+                    route,
+                    compute_by_engine,
                     error: None,
                 });
             }
@@ -425,11 +458,14 @@ async fn clickbench_ledger() {
                 bytes_read,
                 range_gets,
                 setup_ms,
+                emit_ms,
                 session_ms,
                 compute_ms,
                 open_ms,
                 plan_ms,
                 table_open_hits,
+                route,
+                compute_by_engine,
                 error: Some(
                     e.as_db_error()
                         .map(|d| d.message().to_string())
@@ -440,7 +476,75 @@ async fn clickbench_ledger() {
     }
     io_trace::set_billing_observer(None);
 
-    // DuckDB baseline (same Parquet), if a binary is provided.
+    // DuckDB baseline (ADR-059): in-process, same Parquet, io-traced — the
+    // engine-behavior-only discriminant (compute_ms; DF-vs-DuckDB on the same
+    // parquet/SQL/process). Re-arm the billing observer (cleared above after the
+    // ProximaDB route) so the instrument scope's snapshot lands in CAPTURE.
+    #[cfg(feature = "duckdb")]
+    {
+        use proximadb::query::execution::engine::{
+            QueryExecutionContext, execute_sql_with_backend,
+        };
+        use proximadb::query::table_write_plan::ComputeBackend;
+        io_trace::set_billing_observer(Some(Box::new(|snap: &IoTraceSnapshot, _tenant| {
+            CAPTURE.lock().expect("capture lock").push(snap.clone());
+        })));
+        for (id, sql) in &queries {
+            CAPTURE.lock().expect("capture lock").clear();
+            // DuckDbLocalEngine registers `CREATE VIEW hits AS SELECT * FROM
+            // read_parquet('{parquet_uri}')`, so the original `FROM hits` SQL
+            // works — no duckdb_sql rewrite needed.
+            let ctx = QueryExecutionContext {
+                parquet_tables: vec![("hits".to_string(), parquet_uri.clone())],
+                ..Default::default()
+            };
+            let t0 = Instant::now();
+            // instrument sets the IO_TRACE scope; the engine's record_compute_ms
+            // lands in it; instrument emits the snapshot → observer → CAPTURE.
+            let sql_owned = sql.to_string();
+            let res = io_trace::instrument(None, "duckdb".to_string(), async move {
+                execute_sql_with_backend(ComputeBackend::DuckDbCompat, &sql_owned, ctx).await
+            })
+            .await;
+            let wall_ms = t0.elapsed().as_millis();
+            let snap = drain_capture().await;
+            let compute_ms = snap.as_ref().map(|s| s.total_compute_ms());
+            let compute_by_engine = snap.and_then(|s| {
+                if s.compute_ms.is_empty() {
+                    None
+                } else {
+                    Some(s.compute_ms)
+                }
+            });
+            let (ok, rows, error) = match res {
+                Ok(r) => (true, r.rows.len(), None),
+                Err(e) => (false, 0, Some(e.to_string())),
+            };
+            records.push(QueryRecord {
+                query: (*id).into(),
+                engine: "duckdb".into(),
+                ok,
+                rows,
+                wall_ms,
+                bytes_read: None,
+                range_gets: None,
+                setup_ms: None,
+                emit_ms: None,
+                session_ms: None,
+                compute_ms,
+                open_ms: None,
+                plan_ms: None,
+                table_open_hits: None,
+                route: Some("DuckDbCompat".into()),
+                compute_by_engine,
+                error,
+            });
+        }
+        io_trace::set_billing_observer(None);
+    }
+    // Fallback: DuckDB CLI subprocess (only when the `duckdb` feature is OFF —
+    // out-of-process, no io-trace; the in-process path above is the ledger route).
+    #[cfg(not(feature = "duckdb"))]
     if let Ok(duckdb) = std::env::var("DUCKDB_BIN") {
         for (id, sql) in &queries {
             let dsql = duckdb_sql(sql, &parquet);
@@ -460,11 +564,14 @@ async fn clickbench_ledger() {
                 bytes_read: None,
                 range_gets: None,
                 setup_ms: None,
+                emit_ms: None,
                 session_ms: None,
                 compute_ms: None,
                 open_ms: None,
                 plan_ms: None,
                 table_open_hits: None,
+                route: None,
+                compute_by_engine: None,
                 error: (!ok).then(|| {
                     out.as_ref()
                         .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())

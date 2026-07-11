@@ -552,6 +552,12 @@ impl CatalogIntrospectionService {
                 property_value(&schema, &["freshness_sla", "projection_freshness"])
                     .unwrap_or_default(),
                 policy_boundary(&schema),
+                // ADR-059: the materialized-parquet location (storage_layout.location)
+                // so the perf-ledger harness can register the SAME parquet with an
+                // in-process DuckDB engine (apples-to-apples vs DataFusion).
+                primary_layout
+                    .and_then(|l| l.location.clone())
+                    .unwrap_or_default(),
             ]);
         }
 
@@ -570,8 +576,10 @@ impl CatalogIntrospectionService {
                 "isolation_profile".to_string(),
                 "freshness_sla".to_string(),
                 "policy_boundary".to_string(),
+                "location".to_string(),
             ],
             column_types: vec![
+                "text".to_string(),
                 "text".to_string(),
                 "text".to_string(),
                 "text".to_string(),
@@ -1191,14 +1199,26 @@ impl CatalogIntrospectionService {
         // as an internal `proximadb.<ns>` collection namespace and as the
         // SQL-standard `<ns>` schema (observed: `b` listed twice as
         // `proximadb.default.b` and `public.b`). Collapse by normalized identity
-        // (see `table_identity_key`), preferring the SQL-standard form (no
-        // `proximadb.` prefix) so the surviving row displays the standard schema
-        // name. Same-name tables in different user namespaces stay distinct.
-        tables.sort_by_key(|(_, table_id, _)| {
-            table_id
-                .namespace
-                .first()
-                .is_some_and(|first| first.eq_ignore_ascii_case("proximadb"))
+        // (see `table_identity_key`), preferring:
+        //   1. The catalog with a materialized Parquet layout (the CURRENT
+        //      storage state — `set_storage_layouts` updates only the internal
+        //      `proximadb.` catalog, so the SQL-standard form may be stale).
+        //   2. The SQL-standard form (no `proximadb.` prefix) as a tiebreaker.
+        // Same-name tables in different user namespaces stay distinct.
+        tables.sort_by_key(|(_, table_id, schema)| {
+            let has_parquet = schema
+                .storage_layouts
+                .iter()
+                .any(|l| l.physical_format == crate::catalog::CatalogPhysicalFormat::Parquet);
+            // Sort key: (!has_parquet, is_proximadb) — Parquet layouts first,
+            // then non-proximadb (SQL-standard) within each group.
+            (
+                !has_parquet,
+                table_id
+                    .namespace
+                    .first()
+                    .is_some_and(|first| first.eq_ignore_ascii_case("proximadb")),
+            )
         });
         let mut seen = std::collections::BTreeSet::new();
         tables.retain(|(_, table_id, _)| seen.insert(table_identity_key(table_id)));
@@ -1239,11 +1259,21 @@ fn matches_filter(value: &str, filter: Option<&str>) -> bool {
 }
 
 fn primary_layout(schema: &CatalogTableSchema) -> Option<&crate::catalog::CatalogStorageLayout> {
+    // Prefer the materialized Parquet layout (ProjectionPublication) — it has
+    // the correct `location` (the data dir where parquet is immediate, per
+    // ADR-059). The original "primary" layout may have a stale/empty location.
     schema
         .storage_layouts
         .iter()
         .rev()
-        .find(|layout| layout.name == "primary")
+        .find(|l| l.physical_format == crate::catalog::CatalogPhysicalFormat::Parquet)
+        .or_else(|| {
+            schema
+                .storage_layouts
+                .iter()
+                .rev()
+                .find(|l| l.name == "primary")
+        })
         .or_else(|| schema.storage_layouts.first())
 }
 

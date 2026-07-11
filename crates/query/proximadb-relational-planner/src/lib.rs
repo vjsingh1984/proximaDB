@@ -51,6 +51,11 @@ use proximadb_relational_types::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Plan geometry — a cheap, pre-execution geometric summary of a [`PhysicalPlan`]
+/// (TD-EXEC-2 Slice 1). Observe-only: it makes no decision and changes no behavior.
+pub mod plan_geometry;
+pub use plan_geometry::{OpKind, PlanGeometry, measure_geometry};
+
 // =========================================================================
 // Errors
 // =========================================================================
@@ -734,7 +739,28 @@ pub fn fold_expr(expr: Expr) -> Expr {
 // Pass 2: Lower to physical
 // =========================================================================
 
+/// Stack red-zone / growth for the plan-tree lowering recursion (TD-EXEC-2 §1.a).
+/// Deliberately generous pending Slice-1 frame-cost calibration: the per-frame
+/// check is a TLS read + pointer compare (~ns) and a fresh segment is allocated
+/// only when the descent actually nears the limit — so any plan depth lowers
+/// correctly on any worker stack, retiring the flat-8 MB dependence.
+const LOWER_RED_ZONE: usize = 256 * 1024;
+const LOWER_STACK_GROW: usize = 4 * 1024 * 1024;
+
+/// Lower a logical plan to a physical plan.
+///
+/// Guards every recursion level with [`stacker::maybe_grow`] so a deeply nested
+/// plan (deep join / correlated-subquery trees, e.g. TPC-H Q2/Q7) grows the stack
+/// on demand instead of overflowing the worker thread (TD-EXEC-2 §1.a). The
+/// recursive descent goes back through this public entry, so each level checks its
+/// own headroom.
 pub fn lower_to_physical(node: LogicalNode) -> PhysicalPlan {
+    stacker::maybe_grow(LOWER_RED_ZONE, LOWER_STACK_GROW, || {
+        lower_to_physical_inner(node)
+    })
+}
+
+fn lower_to_physical_inner(node: LogicalNode) -> PhysicalPlan {
     match node {
         LogicalNode::Scan {
             table,
@@ -2353,6 +2379,45 @@ mod tests {
             pk_columns: pk,
             secondary_columns: secondary.into_iter().map(String::from).collect(),
         }
+    }
+
+    // --- Stack safety (TD-EXEC-2 §1.a) --------------------------------
+
+    /// By-construction gate: a pathologically deep plan lowers without a stack
+    /// overflow. `lower_to_physical` recurses once per plan level; on a small
+    /// worker stack a deep enough plan overflows unless `stacker::maybe_grow`
+    /// grows the stack on demand. We run the lowering on a deliberately tiny
+    /// 512 KiB thread stack and a depth far beyond what that stack holds by
+    /// recursion — so a regression that drops the `maybe_grow` guard aborts the
+    /// process (SIGSEGV/SIGABRT → test fails) instead of passing by luck on the
+    /// large default stack. This is the correctness half of TD-EXEC-2's stack
+    /// model, independent of any calibrated estimate.
+    #[test]
+    fn deep_plan_lowers_without_stack_overflow() {
+        // ~20 k levels: a 512 KiB stack holds only ~1 k lowering frames, so this
+        // FORCES `maybe_grow` to fire many times.
+        const DEPTH: usize = 20_000;
+        // Build iteratively (no build-time recursion) so only the LOWERING
+        // recursion is exercised.
+        let mut node = users_scan();
+        for _ in 0..DEPTH {
+            node = LogicalNode::Filter {
+                input: Box::new(node),
+                predicate: Expr::literal(ProximaValue::Int64(1)),
+            };
+        }
+        let handle = std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(move || {
+                let physical = lower_to_physical(node);
+                // The unit under test (deep lowering) has already succeeded; avoid a
+                // recursive Drop of the deep result overflowing this small stack.
+                std::mem::forget(physical);
+            })
+            .expect("spawn small-stack thread");
+        handle
+            .join()
+            .expect("deep lowering must not overflow the 512 KiB stack (maybe_grow)");
     }
 
     // --- Constant folding ---------------------------------------------

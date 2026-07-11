@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use proximadb_catalog::{
     CatalogColumn, CatalogIndex, CatalogIndexType, CatalogPhysicalFormat, CatalogProjection,
     CatalogProjectionKind, CatalogStorageLayout, CatalogStorageLayoutKind, CatalogTableSchema,
-    ProjectionFreshness, TableIdentifier,
+    ProjectionFreshness, PropsAutoPromotionPolicy, TableIdentifier,
 };
 use proximadb_data_model::ProximaType;
 
@@ -410,6 +410,24 @@ pub(crate) fn catalog_schema_from_collection(
         }
     }
 
+    // P-Shred follow-up (ADR-055): for document / canonical-record collections, turn on the
+    // props-auto-promotion policy AND register each declared filterable column (id >= 100) as a
+    // promoted props key. This is what makes hybrid shredding actually FIRE: the flush path
+    // (`write_mutations` -> `with_shred_spec`) reads `promoted_keys` to route those hot props into
+    // typed user-columns. The msgpack `props` tail stays authoritative (clone-not-remove, #767).
+    // `document_default()` also flips `enabled` on for adaptive promotion of additional hot keys
+    // once the compaction-time evaluator is wired (a separate follow-up; today only these declared
+    // keys shred). Gated on `enable_proxima_record` so non-document collections are unaffected.
+    if config.enable_proxima_record == Some(true) {
+        let mut policy = PropsAutoPromotionPolicy::document_default();
+        for col in schema.columns.iter().filter(|c| c.id >= 100) {
+            policy
+                .promoted_keys
+                .insert(col.name.clone(), col.name.clone());
+        }
+        schema.props_auto_promotion = policy;
+    }
+
     for index in &config.index_configs {
         let index_type = catalog_index_type(index.algorithm);
         schema = schema.with_index(CatalogIndex::new(
@@ -650,5 +668,72 @@ fn storage_engine_from_catalog(engine: &str) -> i32 {
         "TITAN" => StorageEngine::Titan as i32,
         "CHRONO" => StorageEngine::Chrono as i32,
         _ => StorageEngine::Sst as i32,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn doc_collection_with_filterable(name: &str, field: &str, document: bool) -> Collection {
+        Collection {
+            id: name.to_string(),
+            config: Some(CollectionConfig {
+                name: name.to_string(),
+                dimension: 0,
+                enable_proxima_record: if document { Some(true) } else { None },
+                filterable_columns: vec![FilterableColumnSpec {
+                    name: field.to_string(),
+                    indexed: true,
+                    supports_range: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn document_collection_seeds_promoted_keys_from_filterable_columns() {
+        // P-Shred follow-up (ADR-055): a document collection's declared filterable column becomes a
+        // promoted props key at create time, so the flush shred path (write_mutations →
+        // with_shred_spec, #767) routes props.<field> into a typed user-column (id ≥ 100). This is
+        // the create-time population that makes shredding FIRE (was empty before).
+        let schema =
+            catalog_schema_from_collection(&doc_collection_with_filterable("docs", "status", true))
+                .expect("schema");
+        assert!(
+            schema.props_auto_promotion.enabled,
+            "props-auto-promotion enabled (document_default) for document collections"
+        );
+        assert_eq!(
+            schema
+                .props_auto_promotion
+                .promoted_keys
+                .get("status")
+                .map(String::as_str),
+            Some("status"),
+            "declared index field seeded as a promoted props key"
+        );
+        assert!(
+            schema
+                .columns
+                .iter()
+                .any(|c| c.name == "status" && c.id >= 100),
+            "promoted column present at id ≥ USER_BASE"
+        );
+    }
+
+    #[test]
+    fn non_document_collection_is_unaffected() {
+        // Gated on enable_proxima_record: a plain vector collection with filterable columns must NOT
+        // get props-auto-promotion (its PAX layout is unchanged — mixed-safe).
+        let schema = catalog_schema_from_collection(&doc_collection_with_filterable(
+            "vecs", "status", false,
+        ))
+        .expect("schema");
+        assert!(!schema.props_auto_promotion.enabled);
+        assert!(schema.props_auto_promotion.promoted_keys.is_empty());
     }
 }

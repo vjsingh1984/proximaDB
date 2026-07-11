@@ -5,8 +5,8 @@
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | Proposed (filed 2026-07-09, multi-source research-backed; **claims validated 2026-07-09** — see §10). Decider sign-off pending.
-| Decider | (pending)
+| Status | **Accepted** (filed 2026-07-09; claims validated 2026-07-09 — see §10; **decider sign-off 2026-07-09**).
+| Decider | Vijaykumar Singh (2026-07-09)
 | Date | 2026-07-09
 | Relates to | link:ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (scan-avoidance is the dominant cloud-OLAP cost term — the spine this decision rests on), link:ADR-054-native-execution-engine-progressive-cutover.adoc[ADR-054] (the native operators the adaptations plug into), link:ADR-050-statistics-fed-datafusion-route-selection.adoc[ADR-050] (the cost router / inter-query learn loop), link:ADR-039-allow-list-no-root-internal-leak.adoc[ADR-039] (the DataFusion leakage boundary the pushdown seam respects).
 | Refines | ADR-052 invariant 3 (scan-avoidance first) — *operationalized* as "predicate-pushdown is the lead adaptive school." Amends ADR-054 §5: the `HashJoinBuild`/`HashJoinProbe` boundary (TD-OLAP-11) MUST be an explicit materialization point from day one to preserve the future re-plan option.
@@ -40,7 +40,7 @@ AQE is **not one technique**; it is two architectural schools, and which one fit
 The survey surfaced a **stronger predicate-pushdown substrate than the question assumed**:
 
 1. **TD-OLAP-3 dynamic runtime filters — default-ON, measured −10.9% TPC-DS total / ≈30–57% `bytes_read` on star joins** (measured per-query 29.9–56.7%; ledger: `docs/_internal/status/TPC_PERF_GATE_EVIDENCE_V6_2026_07_06.adoc`). `src/datafusion/proxima_scan_exec.rs`: the scan carries `dynamic_filters`, gated `runtime_filter_prune_enabled()` (env `PROXIMADB_DF_RUNTIME_FILTER_PRUNE`, default ON), applied via `split_pruned_by_runtime_filters` which **awaits the dynamic filter's `wait_complete()` with a 10s timeout**. **This `wait_complete()` rendezvous is exactly the intra-query sync barrier the re-plan school needs** — a free hook, default-ON, waiting to be exploited beyond filter-propagation.
-2. **Bloom semi-join — built + tested, default-OFF** (`PROXIMADB_DF_BLOOM_SEMIJOIN`, `object_store_parquet_reader.rs`), ready to promote (MVP-1). Load-bearing direction: bloom over the in-list/dimension keys; split keys tested against it.
+2. **Bloom semi-join — now default-ON** (`PROXIMADB_DF_BLOOM_SEMIJOIN`, `object_store_parquet_reader.rs`; `.unwrap_or(true)`, promoted in **#784** = MVP-1/AQE-S1, opt out with `=0`). Load-bearing direction: bloom over the in-list/dimension keys; split keys tested against it. _(Was default-OFF when this ADR was filed; landed 2026-07-08.)_
 3. **The lock-free inter-query learn loop.** `src/query/route_cost_model.rs`: `RouteCostModel` with `ArcSwap<RouteRecommendationTable>`; consult = one load + one HashMap get; `observe_by_label` debounces recompute every 64 obs. The score function is a **co-design cost model** — `per_mib_egress` weighted 25.0 (the dominant *bandwidth* term) sitting under `per_get`=20.0 *per ranged GET*, whose `round-trip ≫ egress ≫ read-bw(5.0) ≫ CPU(1.0)` ordering (the source's own `CostWeights` doc) makes the **I/O round-trip** the dominant cost term overall — a cardinality-free model, exactly ADR-052's cost spine.
 4. **Per-block + per-row-group PAX zone maps** (`crates/storage/proximadb-block-format`: `ColumnMeta` min/max/null_count/distinct_hint/bloom; `ROW_GROUP_SIZE=8192`). `BlockZoneSource` abstracts zone-map access over full-object + ranged reads.
 5. **TupleDomain-equivalent predicate types** (`format_splits.rs`: `ScalarPredicate`, `ColumnBounds`) + the translation layers (`predicate_pushdown.rs`, `physical_filter_translate.rs`).
@@ -74,7 +74,7 @@ ClickHouse composes **three orthogonal layers**, all cutting `bytes_read`: (a) *
 **Commit to the predicate-pushdown school as the lead**, with a thin, targeted set of operator-internal adaptations, and **defer the full re-plan school** until a native stage abstraction + distributed execution exist. This matches (a) our streaming substrate (§2), (b) ADR-052's scan-avoidance thesis (§4.1), and (c) the single-node convergence (§4.2). The actionable set (full detail + sequence in link:../../10-quality/td/TD-AQE-1-adaptive-execution-roadmap.adoc[TD-AQE-1]):
 
 **Tier 1 — high leverage, cheap, reuses existing seams:**
-. **Promote bloom semi-join to default-ON** (MVP-1, TD-OLAP-3 completion). Correctness-neutral (no false negatives); qa-gate `bytes_read` ratchet verifies.
+. **Promote bloom semi-join to default-ON** (MVP-1, TD-OLAP-3 completion). Correctness-neutral (no false negatives); qa-gate `bytes_read` ratchet verifies. **✅ Landed (#784, 2026-07-08).**
 . **Surface `splits_pruned` + observed build cardinality into `CostQuantities`/`IoTrace`** (MVP-2) — the measurement substrate every AQE decision needs; composes with the existing debounced learn-loop, no new mechanism.
 . **DuckDB-style build-min/max → probe scan** (MVP-3) — 2 scalars observed at the build pipeline-breaker (free), pushed through TD-OLAP-3's seam; complements bloom.
 . **Exploit `wait_complete()` for build/probe swap + SMJ→BHJ** (MVP-4) — the barrier already exists; this is Spark-AQE-(b) for free.
@@ -92,7 +92,7 @@ ClickHouse composes **three orthogonal layers**, all cutting `bytes_read`: (a) *
 
 == 6. Design directives (binding)
 
-1. **`HashJoinBuild`/`HashJoinProbe` (TD-OLAP-11, #779) MUST be an explicit materialization boundary from day one** — not an in-memory handoff. This preserves the future re-plan option (Tier 3) *without paying for it now* (the OnceLock handoff already is a barrier; declare it the stage boundary). Amends ADR-054 §5.
+1. **`HashJoinBuild`/`HashJoinProbe` (TD-OLAP-11, #779) MUST be an explicit materialization boundary from day one** — not an in-memory handoff. This preserves the future re-plan option (Tier 3) *without paying for it now* (the OnceLock handoff already is a barrier; declare it the stage boundary). Amends ADR-054 §5. **✅ Satisfied by #779** (`src/query/execution/native_join_ops.rs`): `HashJoinBuildOperator::is_blocking()==true` fully collects + `concat_batches` the build side, freezes it into an `Arc<JoinHashTable>`, and publishes via `Arc<OnceLock<…>>`; the probe gates on `table_slot.get()` ("join probe ran before build published"). The boundary is explicit but **in-memory only (Phase 3.0 — no spill yet)**; the spill gap is closed by Tier 2 (AQE-S7 MemoryPool + AQE-S8 grace-hash).
 2. **Cache-composition fix (invariant 16b/16c interaction):** adaptive plans are data-dependent — the same SQL can yield different plans across runs. The plan cache must become **plan-shape-aware** (key on plan, not SQL) or **bypass for adaptive plans**. Model: the existing Strong-bypass (`query_result_cache.rs:freshness_eligible`) — an "AQE-bypass" gate.
 3. **The runtime-filter wait-time becomes a configurable dial** (Impala `RUNTIME_FILTER_WAIT_TIME_MS` — effective default 1000 ms / 1 s; the query option itself defaults to `0` = inherit the impalad `--runtime_filter_wait_time_ms` startup flag, which is 1000 ms; time-zero rule, graceful late-arrival) — our hardcoded 10s has no knob. On object-storage the wait is *more* favorable than HDFS (each skipped ranged GET = round-trip + egress $), so default short + emit the dial's value into IoTrace so the router learns per-workload.
 4. **"Observed not estimated" is the rule** for MemoryPool/spill decisions — our Parquet regime has weak stats, exactly the case DuckDB designed the TMM for.
@@ -148,3 +148,8 @@ Every falsifiable claim in this ADR was re-verified: the §3 substrate inventory
 * **Impala `RUNTIME_FILTER_WAIT_TIME_MS`**: effective default 1000 ms, but the query-option literal default is `0` (inherit the impalad startup flag). Clarified in §6 + §8.
 
 **Citations confirmed correct as written:** Photon (Xue et al., PVLDB 17(12):3947–3959, 2024); DuckDB 1.1.0 min/max runtime filters (2024-09-09); "Saving Private Hash Join" (Kuiper et al., PVLDB 18(8):2748–2760, 2025); ClickHouse PREWHERE-default / 1,576× lazy-materialization / 10 MiB-or-8192-row granularity; SPARK-32268 bloom-join TPC-DS numbers (q16 1.83× / q36 1.38× / q57 1.39×); and the "Kaloilidis" citation correctly flagged as hallucinated.
+
+**Post-merge reconciliation (2026-07-09).** `develop` advanced while this ADR was in review; two changes make earlier statements land as fact:
+
+* **AQE-S1 shipped (#784):** bloom semi-join is now **default-ON** (§3 item 2, §5 Tier-1 updated). The "ready to promote / default-OFF" framing is superseded.
+* **AQE-S9 / TD-OLAP-11 shipped (#779):** the §6-directive-1 materialization boundary is now realized in `native_join_ops.rs` (blocking build + `OnceLock` publish) — in-memory only, spill deferred to Tier 2 (AQE-S7/S8). Their deps are now unblocked. See TD-AQE-1 for the updated slice statuses.

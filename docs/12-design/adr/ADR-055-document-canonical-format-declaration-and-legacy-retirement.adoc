@@ -177,11 +177,15 @@ bespoke provider; route `query_documents`/`aggregate_documents` through it. Corr
 |Query results match the in-memory path exactly; engine owns selection (`route_select`).
 
 |P-Pushdown
-|**True pushdown — REUSE `PaxSplitReader` (#736)**. Its zone-map/bloom pruning + projection +
-(Inexact) filter pushdown already exist; wire document metadata predicates through the v2
-fail-loud filter seam (`sql_value_filter.rs`, #747) into that scan (shredded cols prune, tail
-decoded only when projected).
-|A bake shows pruning reduces `bytes_read` below the 329,111 B P-Trace baseline (`range_gets > 0`); results identical.
+|**REUSE `PaxSplitReader` (#736), reader-gated — see TD-DOC-PUSHDOWN-1.** Its zone-map/bloom
+*decode*-pruning + projection + (Inexact) filter pushdown exist, but it still fetches the whole
+segment (`pax_adapter.rs:111` — *"ranged reads are a follow-up"*), so the *document adapter*
+(pax-scan-inputs port + `filesystem_factory()` singleton + `documents()`→`PaxTableProvider` over the
+shredded catalog schema) is landable but yields decode-pruning only. The measured `bytes_read` win
+is **coupled to reader-level ranged reads** (TD-OLAP-14 `PaxScanOperator`/`ReaderFactory`, or a
+`PaxSplitReader` ranged-read follow-up per TD-OLAP-3) — document code consumes it, never
+reimplements it. Tracked as **TD-DOC-PUSHDOWN-1**.
+|A bake shows pruning reduces `bytes_read` below the 329,111 B P-Trace baseline (`range_gets > 0`); results identical. **(Gate deferred to TD-DOC-PUSHDOWN-1 — reader-ranged-read-gated.)**
 
 |P-Retire
 |**Deprecate + remove legacy** (own TD — NOT subsumed by the #751 v1-*proto* retirement roadmap,

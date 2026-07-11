@@ -8,12 +8,12 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use super::{MetadataFilter, SwiftFile};
-use crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel;
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine,
 };
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
+use proximadb_quantization_model::UnifiedQuantizationLevel;
 use proximadb_records::ProximaRecord;
 
 fn record_vector(record: &ProximaRecord) -> &[f32] {

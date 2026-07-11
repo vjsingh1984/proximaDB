@@ -7,11 +7,11 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use proximadb_distance_kernel::engine::{DistanceMetric, UnifiedDistanceCompute};
+use proximadb_quantization_model::UnifiedQuantizationLevel;
 
 use super::clustering::HilbertKey;
 use super::{HelixConfig, SStableMetadata};
@@ -352,7 +352,7 @@ impl ProgressiveSearchCoordinator {
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let _ = (distance_metric, quantization_level); // Currently unused, will be used for future optimizations
         // Determine if we should use binary or INT8 based on quantization level
-        use crate::compute::quantization::types::QuantizationLevel;
+        use proximadb_quantization_model::QuantizationLevel;
         let use_binary = matches!(
             &quantization_level.level_type,
             Some(QuantizationLevel::Binary(_))

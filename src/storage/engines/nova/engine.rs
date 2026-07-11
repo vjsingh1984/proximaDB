@@ -266,15 +266,9 @@ impl NovaEngine {
         // Configure storage quantization for NOVA (columnar engine)
         let storage_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig {
-                primary_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Pq8,
-                ),
-                filter_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Binary,
-                ),
-                fast_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Int8,
-                ),
+                primary_level: Some(proximadb_quantization_model::UnifiedQuantizationLevel::Pq8),
+                filter_level: Some(proximadb_quantization_model::UnifiedQuantizationLevel::Binary),
+                fast_level: Some(proximadb_quantization_model::UnifiedQuantizationLevel::Int8),
                 distance_metric: DistanceMetric::Cosine,
                 enable_progressive: true,
                 filter_threshold: 100.0,

@@ -30,7 +30,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, trace, warn};
 
 // Import UnifiedQuantizationLevel
-use crate::compute::quantization::types::UnifiedQuantizationLevel;
+use proximadb_quantization_model::UnifiedQuantizationLevel;
 
 // Import column constants from columnar module
 use crate::storage::engines::core::formats::columnar::{
@@ -451,20 +451,17 @@ impl ViperEngine {
         let storage_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig {
                 // PQ8 with 32 subquantizers - achieves 32x compression for 768D vectors
-                primary_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::pq8(32),
-                ),
+                primary_level: Some(proximadb_quantization_model::UnifiedQuantizationLevel::pq8(
+                    32,
+                )),
                 // Binary quantization for initial filtering - 32x reduction
                 filter_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::binary(),
+                    proximadb_quantization_model::UnifiedQuantizationLevel::binary(),
                 ),
                 // INT8 for intermediate precision - 4x reduction with 98% recall
-                fast_level: Some(
-                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
-                ),
+                fast_level: Some(proximadb_quantization_model::UnifiedQuantizationLevel::int8()),
                 // Cosine is default, but can be overridden per collection
-                distance_metric:
-                    proximadb_distance_kernel::engine::DistanceMetric::Cosine,
+                distance_metric: proximadb_distance_kernel::engine::DistanceMetric::Cosine,
                 // Enable Binary→INT8→PQ→FP32 progressive refinement
                 enable_progressive: true,
                 // Initial filter returns 100x final k for refinement
@@ -1776,7 +1773,7 @@ impl ViperEngine {
         operation_context: &str,
         collection_size: Option<usize>,
     ) -> bool {
-        crate::compute::quantization::selection::QuantizationSelector::should_use_persistent_quantization_simple(
+        crate::storage::compute_bridge::selection::QuantizationSelector::should_use_persistent_quantization_simple(
             operation_context,
             collection_size,
         )
@@ -1791,7 +1788,7 @@ impl ViperEngine {
         if self.should_use_persistent_quantization(operation_context, collection_size) {
             // Use global quantization cache for persistent operations
             if let Some(global_cache) =
-                crate::compute::quantization::global_cache::GlobalQuantizationCache::instance()
+                crate::storage::compute_bridge::global_cache::GlobalQuantizationCache::instance()
             {
                 global_cache
                     .get_or_create_engine("default_collection".to_string())
@@ -2668,11 +2665,9 @@ impl UnifiedStorageFormat for ViperEngine {
                 ),
                 filterable_columns: Vec::new(), // Populated from collection config at query time
                 available_quantization: vec![
-                crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::pq8(
-                    32,
-                ),
-                crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
-            ],
+                    proximadb_quantization_model::UnifiedQuantizationLevel::pq8(32),
+                    proximadb_quantization_model::UnifiedQuantizationLevel::int8(),
+                ],
                 storage_info: crate::core::search::search_interface::StorageInfo {
                     is_cloud_storage: true,
                     storage_type: "VIPER".to_string(),

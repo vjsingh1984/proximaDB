@@ -1,8 +1,6 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 
-#![allow(dead_code)]
-
 //! # Native hash-join operators (ADR-054 Phase 3, TD-OLAP-11)
 //!
 //! The native radix/bloom/spill hash join — the #1 performance lever (closes the
@@ -17,12 +15,13 @@
 //! * [`HashJoinProbeOperator`] — STREAMING. Per probe batch: bloom pre-filter →
 //!   hash-table lookup → late-materialize matched pairs via `arrow::compute::take`.
 //!
-//! MVP `JoinKind`: Inner / Left / Semi / Anti. Right / Full (unmatched-build
-//! drain) + spill + radix are deferred (see TD-OLAP-11). NULL join keys never
-//! match in any kind.
+//! MVP `JoinKind`: Inner / Left / Right / Full / Semi / Anti. Right / Full drain
+//! the unmatched build rows after the probe stream ends (probe columns
+//! NULL-padded). Spill + radix are deferred (see TD-OLAP-11). NULL join keys
+//! never match in any kind.
 
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use arrow::array::{Array, ArrayRef, RecordBatch, UInt32Array};
 use arrow::compute::{concat_batches, take};
@@ -43,6 +42,13 @@ const BLOOM_MIN_KEYS: usize = 1024;
 
 /// Canonical byte encoding of a composite join key at `row` across `columns`.
 /// Returns `None` if ANY key column is NULL at that row (NULL keys never match).
+///
+/// The encoding is **self-delimiting** — fixed-width cells occupy their type's
+/// fixed width and variable-length cells are length-prefixed (see
+/// [`encode_cell`]) — so concatenating columns is injective across a fixed key
+/// schema: two distinct key tuples can never encode to the same bytes. (A naïve
+/// trailing `0` separator is NOT injective — a varlen value may itself contain
+/// `0x00`, e.g. `("a\0","b")` and `("a","\0b")` would collide.)
 fn canonical_key_bytes(
     columns: &[&dyn Array],
     row: usize,
@@ -53,7 +59,6 @@ fn canonical_key_bytes(
             return Ok(None);
         }
         encode_cell(*col, row, &mut buf)?;
-        buf.push(0); // separator (multi-column keys)
     }
     Ok(Some(buf))
 }
@@ -103,11 +108,11 @@ fn encode_cell(array: &dyn Array, row: usize, out: &mut Vec<u8>) -> Result<(), E
         DataType::Float64 => {
             out.extend_from_slice(&dcast!(array, Float64Array).value(row).to_le_bytes())
         }
-        DataType::Utf8 => out.extend_from_slice(dcast!(array, StringArray).value(row).as_bytes()),
+        DataType::Utf8 => encode_varlen(dcast!(array, StringArray).value(row).as_bytes(), out),
         DataType::LargeUtf8 => {
-            out.extend_from_slice(dcast!(array, LargeStringArray).value(row).as_bytes())
+            encode_varlen(dcast!(array, LargeStringArray).value(row).as_bytes(), out)
         }
-        DataType::Binary => out.extend_from_slice(dcast!(array, BinaryArray).value(row)),
+        DataType::Binary => encode_varlen(dcast!(array, BinaryArray).value(row), out),
         other => {
             return Err(ExecutionError::NotImplemented(format!(
                 "join key type {other:?} not supported in native hash join"
@@ -115,6 +120,14 @@ fn encode_cell(array: &dyn Array, row: usize, out: &mut Vec<u8>) -> Result<(), E
         }
     }
     Ok(())
+}
+
+/// Append a variable-length cell to `out`, length-prefixed (u32 LE) so that the
+/// concatenated composite key stays injective even when the bytes contain
+/// `0x00`. (Join keys are small; a `u32` length is never the binding limit.)
+fn encode_varlen(bytes: &[u8], out: &mut Vec<u8>) {
+    out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+    out.extend_from_slice(bytes);
 }
 
 /// The build side's hash table: composite-key bytes → build-side row indices.
@@ -233,7 +246,9 @@ impl ExecutionOperator for HashJoinBuildOperator {
 // =========================================================================
 
 /// Streams probe batches: bloom pre-filter → hash-table lookup → late-materialize.
-/// MVP `JoinKind`: Inner / Left / Semi / Anti.
+/// MVP `JoinKind`: Inner / Left / Right / Full / Semi / Anti. For Right/Full the
+/// operator appends a final batch of the unmatched build rows once the probe
+/// stream ends (probe columns NULL-padded).
 #[derive(Debug)]
 pub(crate) struct HashJoinProbeOperator {
     pub table_slot: Arc<OnceLock<Arc<JoinHashTable>>>,
@@ -270,17 +285,54 @@ impl ExecutionOperator for HashJoinProbeOperator {
         let kind = self.kind;
         let output_schema = self.output_schema.clone();
 
-        Ok(Box::pin(input.map(move |result| {
+        // Right/Full must emit the unmatched BUILD rows after the probe stream
+        // ends; track which build rows matched (across all probe batches) in a
+        // shared bitmap that the drain tail reads once the probe stream drains.
+        let matched_build: Option<Arc<Mutex<Vec<bool>>>> =
+            if matches!(kind, JoinKind::Right | JoinKind::Full) {
+                Some(Arc::new(Mutex::new(vec![
+                    false;
+                    table.build_batch.num_rows()
+                ])))
+            } else {
+                None
+            };
+
+        let probe_table = table.clone();
+        let probe_mb = matched_build.clone();
+        let probe_cols = output_columns.clone();
+        let probe_out_schema = output_schema.clone();
+        let mapped = input.map(move |result| {
             let probe_batch = result?;
             probe_one_batch(
-                &table,
+                &probe_table,
                 &probe_batch,
                 &probe_keys,
-                &output_columns,
+                &probe_cols,
                 kind,
-                &output_schema,
+                &probe_out_schema,
+                probe_mb.as_deref(),
             )
-        })))
+        });
+
+        match matched_build {
+            None => Ok(Box::pin(mapped)),
+            Some(mb) => {
+                // After the probe stream drains, emit one batch of the unmatched
+                // build rows (or nothing when every build row matched).
+                let tail = futures::stream::once(async move {
+                    drain_unmatched_build(&table, &output_columns, &output_schema, &mb)
+                })
+                .filter_map(|r| async move {
+                    match r {
+                        Ok(Some(batch)) => Some(Ok(batch)),
+                        Ok(None) => None,
+                        Err(e) => Some(Err(e)),
+                    }
+                });
+                Ok(Box::pin(mapped.chain(tail)))
+            }
+        }
     }
 }
 
@@ -292,6 +344,7 @@ fn probe_one_batch(
     output_columns: &[JoinColumn],
     kind: JoinKind,
     output_schema: &SchemaRef,
+    matched_build: Option<&Mutex<Vec<bool>>>,
 ) -> Result<RecordBatch, ExecutionError> {
     let probe_key_cols: Vec<&dyn Array> = probe_keys
         .iter()
@@ -331,11 +384,26 @@ fn probe_one_batch(
         }
     }
 
+    // Record matched build rows for Right/Full's end-of-stream unmatched-build
+    // drain (only tracked when `matched_build` is `Some`, i.e. Right/Full).
+    if let Some(mb) = matched_build {
+        let mut guard = mb
+            .lock()
+            .map_err(|_| ExecutionError::Execution("join matched-build lock poisoned".into()))?;
+        for &br in &build_idx {
+            if let Some(slot) = guard.get_mut(br as usize) {
+                *slot = true;
+            }
+        }
+    }
+
     let probe_indices = UInt32Array::from(probe_idx);
     let build_indices = UInt32Array::from(build_idx);
 
     let columns: Vec<ArrayRef> = match kind {
-        JoinKind::Inner => {
+        // Right's streaming portion == Inner (matched pairs only; unmatched probe
+        // rows are dropped). Its unmatched build rows are appended by the drain.
+        JoinKind::Inner | JoinKind::Right => {
             // One output row per (probe row, matched build row).
             output_columns
                 .iter()
@@ -350,7 +418,9 @@ fn probe_one_batch(
                 .collect::<Result<_, _>>()
                 .map_err(|e| ExecutionError::Execution(format!("join take: {e}")))?
         }
-        JoinKind::Left => {
+        // Full's streaming portion == Left (matched pairs + unmatched probe rows,
+        // build NULL-padded). Its unmatched build rows are appended by the drain.
+        JoinKind::Left | JoinKind::Full => {
             // Matched pairs + unmatched probe rows (build cols NULL-padded).
             let n_unmatched = left_unmatched.len();
             let matched_probe = &probe_indices;
@@ -399,13 +469,59 @@ fn probe_one_batch(
         }
         other => {
             return Err(ExecutionError::NotImplemented(format!(
-                "JoinKind {other:?} not supported in native hash join MVP (Inner/Left/Semi/Anti)"
+                "JoinKind {other:?} not supported in native hash join MVP \
+                 (supported: Inner/Left/Right/Full/Semi/Anti)"
             )));
         }
     };
 
     RecordBatch::try_new(output_schema.clone(), columns)
         .map_err(|e| ExecutionError::Execution(format!("join output batch: {e}")))
+}
+
+/// After the probe stream ends, emit the unmatched BUILD rows for `Right`/`Full`:
+/// build columns taken from the unmatched build indices, probe columns NULL-padded
+/// (using each output column's declared type). Returns `Ok(None)` when every build
+/// row matched (nothing to drain).
+fn drain_unmatched_build(
+    table: &JoinHashTable,
+    output_columns: &[JoinColumn],
+    output_schema: &SchemaRef,
+    matched_build: &Mutex<Vec<bool>>,
+) -> Result<Option<RecordBatch>, ExecutionError> {
+    let unmatched: Vec<u32> = {
+        let guard = matched_build
+            .lock()
+            .map_err(|_| ExecutionError::Execution("join matched-build lock poisoned".into()))?;
+        guard
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &m)| if m { None } else { Some(i as u32) })
+            .collect()
+    };
+    if unmatched.is_empty() {
+        return Ok(None);
+    }
+    let n = unmatched.len();
+    let build_indices = UInt32Array::from(unmatched);
+    let columns: Vec<ArrayRef> = output_columns
+        .iter()
+        .enumerate()
+        .map(|(i, jc)| match jc {
+            JoinColumn::Build(c) => {
+                take(table.build_batch.column(*c).as_ref(), &build_indices, None)
+                    .map_err(|e| ExecutionError::Execution(format!("join build-drain take: {e}")))
+            }
+            // Probe columns are unmatched here → NULL of the output column's type.
+            JoinColumn::Probe(_) => Ok(arrow::array::new_null_array(
+                output_schema.field(i).data_type(),
+                n,
+            )),
+        })
+        .collect::<Result<_, _>>()?;
+    RecordBatch::try_new(output_schema.clone(), columns)
+        .map(Some)
+        .map_err(|e| ExecutionError::Execution(format!("join build-drain batch: {e}")))
 }
 
 /// Distinct, sorted row indices from a (sorted, possibly-duplicated) UInt32 index array.

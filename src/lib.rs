@@ -234,7 +234,12 @@ pub mod observability;
 pub mod streaming;
 
 /// Change Data Capture (CDC) module for database synchronization
-/// Captures changes from PostgreSQL, MySQL, MongoDB and streams to Kafka, webhooks
+/// Captures changes from PostgreSQL, MySQL, MongoDB and streams to Kafka, webhooks.
+/// Feature-gated behind `cdc-kafka` (not a default feature) — the module has 0
+/// cross-module inbound references (dead to the root), so excluding it from the
+/// default build removes ~16K symbols from the monolithic test binary (OOM relief,
+/// TD-CI-1) with zero caller impact. Enable with `--features cdc-kafka`.
+#[cfg(feature = "cdc-kafka")]
 #[allow(missing_docs)]
 pub mod cdc;
 

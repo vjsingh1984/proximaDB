@@ -7,13 +7,19 @@
 
 pub mod datafusion_bridge;
 pub mod datafusion_engine;
+#[cfg(feature = "duckdb")]
+pub mod duckdb_engine;
 pub mod engine;
 
 pub mod executor;
 pub mod low_latency_executor;
+pub mod morsel_scheduler;
 pub mod native_engine;
 pub mod native_join_ops;
 pub mod native_ops;
+pub mod native_parquet_scan;
+pub mod native_scan;
+pub mod native_shadow;
 pub mod olap_delta_merge;
 pub mod plan_cache;
 pub mod planner;

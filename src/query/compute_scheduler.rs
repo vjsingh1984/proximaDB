@@ -118,14 +118,50 @@ impl PartitionFanout {
     }
 }
 
+/// TD-OLAP-4 operation dimension: the OLAP operation class, so the cost model
+/// keys its per-engine samples by *what the query does* (the geometry the shadow
+/// ledger showed engines win/lose on), not just cardinality/partition. Default
+/// `Unknown` preserves the coarse class + warmed cells.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OperationClass {
+    #[default]
+    Unknown,
+    /// Unfiltered scalar aggregate answerable from footer stats — `COUNT(*)`,
+    /// `MIN`/`MAX`. Native wins (metadata elision, flat cost).
+    MetadataElidable,
+    /// Ungrouped scalar aggregate over column data — `SUM`/`AVG`/filtered `COUNT`.
+    /// Native-competitive once vectorized + morsel-parallel (TD-OLAP-12).
+    ScalarAggregate,
+    /// `GROUP BY` aggregate. High-cardinality → DataFusion (native has no spilling).
+    Grouped,
+    /// String-heavy predicate/projection — `LIKE`/regex/string funcs. DataFusion
+    /// (native has no predicate pushdown / wide-string kernels yet).
+    StringHeavy,
+    /// Anything else — joins, window, subquery, plain projection.
+    Other,
+}
+
+impl OperationClass {
+    pub(crate) fn class_suffix(self) -> Option<&'static str> {
+        match self {
+            OperationClass::Unknown => None,
+            OperationClass::MetadataElidable => Some("op=meta"),
+            OperationClass::ScalarAggregate => Some("op=agg"),
+            OperationClass::Grouped => Some("op=grp"),
+            OperationClass::StringHeavy => Some("op=str"),
+            OperationClass::Other => Some("op=other"),
+        }
+    }
+}
+
 /// Shape signals the scheduler routes on.
 ///
 /// P0 used only `engages_relational` — the join / `GROUP BY` / aggregate / set-op
 /// gate (the OLAP-shape signal). P1 added `parquet_backed`. C4 Phase-2b adds the
 /// §5.2 Phase-1 inputs — `cardinality` and `partition_fanout` — which refine the
 /// cost-model shape-class so routing and exploration discriminate beyond
-/// `olap/oltp × native/parquet`. Both default to `Unknown`, preserving the
-/// coarse class (and warmed cells) for planners that cannot estimate them.
+/// `olap/oltp × native/parquet`. TD-OLAP-4 adds `operation_class`. All default to
+/// `Unknown`, preserving the coarse class (and warmed cells).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct QueryShape {
     /// The query lowers against the relational algebra engine for a reason the
@@ -144,6 +180,9 @@ pub struct QueryShape {
     /// TD-OLAP-1 slice 2: tables backed by PAX segments (not Parquet). When
     /// true + `pax_reader_enabled()`, routes to DataFusion via PaxSplitReader.
     pub pax_backed: bool,
+    /// TD-OLAP-4: the OLAP operation class (metadata-elidable / scalar-aggregate /
+    /// grouped / string-heavy) — the geometry dimension the engines win/lose on.
+    pub operation_class: OperationClass,
 }
 
 /// TD-OLAP-1 slice 2: PAX-native OLAP scan gate (inline — not imported from

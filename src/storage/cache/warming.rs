@@ -359,8 +359,9 @@ impl CacheWarmer {
         // For now, use default path
         let _base_path = "/data/collections";
         engine
-            .vector_by_id(collection_id, _base_path, vector_id)
+            .point_lookup(collection_id, _base_path, &[vector_id.to_string()], None)
             .await
+            .map(|v| v.into_iter().next())
     }
 
     /// Helper: Warm specific collection

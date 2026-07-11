@@ -1,0 +1,81 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= ADR-059: DuckDB-Local as a plugin OLAP engine — geometry-routed, behind the ComputeBackend seam (hybrid trait+enum dispatch)
+
+[cols="1,3",options="header"]
+|===
+| Field | Value
+| Status | **Proposed** (filed 2026-07-10). Grounded in the SF=0.1 measurement (TD-OLAP-15 §DuckDB gap) + the TD-OLAP-2 diagnosis (missing NDV → DataFusion CBO-blind → 100–700× join gap at scale). Decider sign-off pending.
+| Decider | Vijaykumar Singh (2026-07-10)
+| Date | 2026-07-10
+| Relates to | link:ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (bytes-scanned is the dominant cloud-OLAP cost term; the seam is swappable), link:ADR-039-olap-engine-boundary-swappable-physical-backend.adoc[ADR-039] (the backend leakage boundary / seam), link:ADR-058-engine-routing-eligibility-selection-stats-trust.adoc[ADR-058] (eligibility-vs-selection routing; D2 keeps `ComputeBackend` an enum), link:ADR-054-native-execution-engine-progressive-cutover.adoc[ADR-054] (the native engine — orthogonal PAX wedge), link:../../10-quality/td/TD-OLAP-15-native-engine-measured-posture-sf001.adoc[TD-OLAP-15] (the measured gap), link:../../10-quality/td/TD-OLAP-2-statistics-fed-cbo-cardinality.adoc[TD-OLAP-2] (the DF-CBO fix this partly defers), link:../../10-quality/td/TD-EXEC-2-plan-geometry-resource-model.adoc[TD-EXEC-2] (plan-geometry → engine routing).
+| Refines | ADR-052's "DataFusion is the OLAP engine" → **"the OLAP engine is router-selected per query geometry; DuckDB-Local is a plugin OLAP engine for join-heavy parquet, DataFusion the fallback, native the PAX-wedge."** Reaffirms ADR-058 D2 (enum for routing) + clarifies the `ExecutionEngine` trait is the open execution seam.
+| Tracked under | Wiring TD (to be filed on sign-off): `impl ExecutionEngine for DuckDbLocalEngine`; register ProximaDB parquet via DuckDB's object-store reader; ADR-058 router selects `DuckDbCompat` for join-heavy parquet OLAP.
+|===
+
+== 1. Context + the question
+
+The SF=0.1 measurement (TD-OLAP-15) showed the DuckDB gap **widens with scale**: 25–70× at SF=0.01 → **100–700× at SF=0.1** (Q5 552×, Q8 556×, q61 697×). DataFusion scales ~super-linearly on joins (Q8: 310ms→17233ms for 10× data — a bad plan), while DuckDB stays flat at ~25–35ms (multi-core + CBO reorder + broadcast). The TD-OLAP-2 diagnosis confirmed the root cause: **missing NDV (`distinct_count`) → DataFusion's CBO can't estimate join cardinality → no reorder, no `BroadcastJoin`** → catastrophic join plans. `splits_pruned` *does* fire at SF=0.1 (zone-map pruning works), so the gap is **compute (join plan), not bytes-scanned** — and it worsens super-linearly without stats.
+
+TD-OLAP-2 (populate NDV → DF CBO) is the proper fix but is substantial (statistics-collection infrastructure) and uncertain (would DF+NDV match DuckDB's mature optimizer?). The question: **wire DuckDB-Local embedded as a plugin OLAP engine now** to close the 100–700× gap immediately, while native builds its wedge and TD-OLAP-2 lands?
+
+== 2. The decision
+
+=== D1 — DuckDB-Local embedded as a plugin OLAP engine for parquet/materialized tables
+DuckDB (in-process, like DataFusion) serves the **join-heavy parquet OLAP path** (today's DataFusion path). It reads the **same materialized parquet** via its object-store reader — no data migration. It closes the gap because it owns the **compute term** (CBO + broadcast + vectorized joins) that is the confirmed root cause; the bytes-scanned term is unchanged. The `ComputeBackend::DuckDbCompat` enum variant already exists (`table_write_plan.rs:113`) — wiring = implementing the engine, not adding the variant.
+
+=== D2 — Hybrid dispatch: `ExecutionEngine` trait (execution, open) + `ComputeBackend` enum (routing, closed)
+Best practice for a multi-engine DB is **open execution, closed routing**:
+- **`ExecutionEngine` trait** (`engine.rs:102`) is the open execution seam — `DataFusionLocalEngine` already implements it; `DuckDbLocalEngine` implements it; future engines plug in here as one impl. DuckDB does NOT require a new trait or registry.
+- **`ComputeBackend` enum** stays the routing/selection surface (ADR-058 D2's decision holds — it's open via `ExternalDelegated(String)`, the per-backend property helpers are trivial, and `dyn`-dispatch is once-per-query via the trait, not on a hot loop).
+
+**Not a full trait-ify of `ComputeBackend`.** The engine set *converges* (see D4 — eventually native-modes for load-bearing), it does not grow unboundedly, so an open plugin *registry* is over-engineering. Adding DuckDB = `impl ExecutionEngine for DuckDbLocalEngine` + wire the existing `DuckDbCompat` arm in `execute_sql_with_backend`.
+
+=== D3 — Geometry-shape routing (ADR-058 + TD-EXEC-2): each shape → the engine that owns its dominant cost term
+The router (ADR-058 eligibility-then-selection) picks the engine per **query geometry** (shape) by co-design cost-term:
+- **Join-heavy parquet OLAP** → DuckDB (compute-term advantage: CBO/broadcast).
+- **PAX / native vector store** → native scan wedge (bytes-scanned advantage: PAX-native scan + footer-elision, ADR-052/TD-OLAP-1).
+- **Simple / point / OLTP** → native Volcano or DataFusion (the floor).
+
+This is the TD-EXEC-2 plan-geometry → resource/cost model: geometry decides which engine's dominant-cost-term advantage applies.
+
+=== D4 — Final state: native (modes) load-bearing; for now shapes route to whichever engine wins
+The end-state is **native in various modes for load-bearing shapes** (the ADR-054 progressive cutover — native vectorized + morsel + spill for the shapes it can serve soundly). **For now**, geometry routes to DuckDB/DataFusion/native per perf + co-design cost — DuckDB is the perf bridge for join-OLAP until native's join/spill/CBO (TD-OLAP-11 + TD-OLAP-2) closes the gap on the shapes native owns. DuckDB is **not** "until native replaces it on parquet-OLAP" — native's wedge is the PAX scan + multimodal join, not parquet-OLAP-join-perf; DuckDB may remain the parquet-OLAP engine permanently.
+
+=== D5 — DataFusion stays the floor/fallback; TD-OLAP-2 continues
+DF remains the swappable floor (the ADR-039 seam's default). TD-OLAP-2 (DF + NDV/CBO) continues as the **fallback-path investment** — if DuckDB is ever unavailable (dep/operational), DF+CBO is the backup. Do not delete that work.
+
+=== D6 — Native is NOT defunded
+DuckDB serves parquet-OLAP; native's wedge (PAX scan + footer-elision + multimodal join, ADR-052/TD-OLAP-1/ADR-054) is **orthogonal**. The two-engine (now three: DuckDB + DF + native) strategy: each engine owns its dominant-cost-term advantage. DuckDB's perf does not reduce urgency for native's wedge — that's the differentiator, not parquet-join-perf.
+
+== 3. Co-design / first-principles reasoning
+
+Per the co-design mandate (name the dominant dimensional cost term):
+- **DuckDB** moves the **compute** term (join plan: CBO reorder + broadcast + vectorized) — the confirmed root cause of the 100–700× gap. It reads the same bytes (no bytes-scanned regression); it fixes the compute.
+- **Native** moves the **bytes-scanned** term (PAX-native scan + footer-elision) — its wedge. Orthogonal to DuckDB's compute advantage.
+- **Routing** is the dimensional delegation (ADR-058): geometry → the engine that owns the cost term the query is bound by. A join-bound query → compute engine (DuckDB); a scan-bound query → scan engine (native).
+- First-principles check vs the ecosystem: Postgres (table access methods + FDWs = open execution via traits, closed routing), Spark (catalyst + pluggable execution), Trino (connector trait). The hybrid (open execution trait + closed routing enum) is the established pattern; a single closed enum or a fully-open registry are the two extremes this steers between.
+
+== 4. Alternatives rejected
+
+- **Full trait-ify of `ComputeBackend` (open plugin registry).** Rejected (ADR-058 D2's reasoning, reaffirmed): the engine set converges to native-modes (D4), not unbounded growth; the enum is already open via `ExternalDelegated(String)`; `dyn`-dispatch once-per-query is fine but a registry is YAGNI. The `ExecutionEngine` trait already gives the open-execution property.
+- **Just fix DF (TD-OLAP-2) instead of adding DuckDB.** Rejected as the *sole* path: TD-OLAP-2 is substantial + uncertain (DF+NDV may not match DuckDB's mature optimizer). DuckDB closes the gap decisively now; TD-OLAP-2 continues as the fallback-path investment (D5). Both, not either/or.
+- **DuckDB as a CLI subprocess (like the benchmark baseline).** Rejected: per-query process spawn + no shared state. Embedded (in-process) is the right posture (shared, like DF).
+- **Let DuckDB replace native.** Rejected (D6): native's wedge (PAX/multimodal) is orthogonal; DuckDB doesn't read PAX or host multimodal join semantics.
+
+== 5. Consequences
+
+*Positive:* closes a 100–700× join gap immediately; exercises the plugin architecture (ADR-039/058) the system was built for; DuckDB handles *more* SQL than DF/Volcano (window/ROLLUP/CUBE — fewer feature gaps, recall the TPC-DS native failures); each engine owns its cost-term advantage (clean separation).
+
+*Negative / trade-offs:* **`libduckdb` is a heavy C++ native dependency** in a Rust project (build complexity, binary size, supply-chain) — DataFusion is pure-Rust, DuckDB is not; this is the main cost. **Operational**: another in-process engine (memory, threads, version pinning). **SQL dialect**: DuckDB ≈ Postgres-ish but differs; net positive (more complete). **Risk of defunding native**: mitigated by D6 (orthogonal wedge) — must be policed at the ADR/roadmap level.
+
+*Non-goals:* this ADR does not wire DuckDB (that's the follow-up TD/PR); does not trait-ify `ComputeBackend` (D2); does not retire DataFusion (D5); does not change the native wedge (D6).
+
+== 6. Rollout (announced here; implemented in follow-up PRs)
+
+1. **Wire `DuckDbLocalEngine`** — `impl ExecutionEngine`; register ProximaDB parquet via DuckDB's object-store reader; wire the `DuckDbCompat` arm in `execute_sql_with_backend`. Default-OFF (env gate) + ledger-gated promotion (ADR-054 progressive-cutover discipline).
+2. **Geometry routing** — ADR-058 router selects `DuckDbCompat` for join-heavy parquet OLAP (eligibility: parquet-backed + join/agg shape; DF the fallback). The cost model (ADR-058 D3/D4) learns per-shape-per-engine.
+3. **Trust gate (ADR-058 D5/§9.A)** — DuckDB reads the same parquet; the `StatsTrust` gate applies (external parquet → DuckDB scans, doesn't trust footer for elision — though DuckDB's own elision is its internal concern; the gate is at ProximaDB's parquet-registration boundary).
+4. *(Converges)* native-modes for load-bearing shapes (ADR-054) — DuckDB remains for the shapes native doesn't own.
+
+Each step default-safe + ledger-gated, mixed-read-safe, behind the ADR-054 progressive-cutover discipline.

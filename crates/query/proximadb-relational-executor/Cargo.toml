@@ -22,6 +22,7 @@ proximadb-relational-reader = { workspace = true }
 proximadb-relational-planner = { workspace = true }
 proximadb-functions = { workspace = true }
 serde.workspace = true
+stacker.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

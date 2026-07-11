@@ -20,12 +20,13 @@
 //! surface (ADR-049, closes TD-121). This middleware is the *enabling slice* for
 //! that retirement on the REST edge: when the `PROXIMADB_REST_V1_COMPAT` flag is
 //! off, requests to the deprecated `/api/v1/*` surface are answered with
-//! `410 Gone` + RFC 8594 deprecation headers instead of being served — mirroring
-//! the gRPC v1 compat gate (`PROXIMADB_GRPC_V1_COMPAT`).
+//! `410 Gone` + RFC 8594 deprecation headers instead of being served (the gRPC
+//! v1 compat gate was removed in TD-V1SUNSET-1 step 4).
 //!
-//! The flag is **on by default**, so behavior is unchanged until an operator
-//! explicitly disables v1 (starting the sunset clock without a flag-day). The
-//! `/api/v2/*` surface is never affected.
+//! The flag is **off by default** (TD-V1SUNSET-1 step 1: the breaking cutover —
+//! `/api/v1/*` returns `410 Gone` unless explicitly re-enabled). Set
+//! `PROXIMADB_REST_V1_COMPAT=1` to temporarily re-enable v1 during migration.
+//! The `/api/v2/*` surface is never affected.
 
 use axum::{
     Json,
@@ -47,7 +48,7 @@ pub const REST_V1_COMPAT_ENV: &str = "PROXIMADB_REST_V1_COMPAT";
 pub const REST_V1_SUNSET_ENV: &str = "PROXIMADB_REST_V1_SUNSET";
 
 /// Whether the deprecated `/api/v1/*` surface should still be served. Defaults
-/// to `true` (on) when the env var is unset.
+/// to `false` (off) when the env var is unset (TD-V1SUNSET-1 step 1).
 pub fn rest_v1_compat_enabled() -> bool {
     parse_compat_flag(std::env::var(REST_V1_COMPAT_ENV).ok().as_deref())
 }
@@ -62,7 +63,7 @@ fn parse_compat_flag(value: Option<&str>) -> bool {
                 || v.eq_ignore_ascii_case("off")
                 || v.eq_ignore_ascii_case("no"))
         }
-        None => true,
+        None => false,
     }
 }
 
@@ -123,7 +124,7 @@ mod tests {
 
     #[test]
     fn compat_flag_parsing() {
-        assert!(parse_compat_flag(None)); // default on
+        assert!(!parse_compat_flag(None)); // default off (TD-V1SUNSET-1 step 1)
         assert!(parse_compat_flag(Some("1")));
         assert!(parse_compat_flag(Some("true")));
         assert!(parse_compat_flag(Some("on")));

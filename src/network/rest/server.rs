@@ -26,7 +26,7 @@ use tower_http::compression::CompressionLayer;
 use tower_http::decompression::DecompressionLayer;
 use tower_http::trace::TraceLayer;
 
-use super::v1::handlers::{AppState, RestCoreServices, create_router};
+use super::canonical::handlers::{AppState, RestCoreServices, create_router};
 use crate::monitoring::MetricsCollector;
 use crate::network::middleware::backpressure::{
     BackpressureConfig, create_concurrency_limit_layer,
@@ -386,7 +386,7 @@ impl RestServer {
         ports: Option<RestServerPorts>,
         catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
         queue_client: Option<Arc<proximadb_queue::QueueClient>>,
-        fulltext_indexes: Option<crate::network::rest::v1::handlers::FullTextIndexMap>,
+        fulltext_indexes: Option<crate::network::rest::canonical::handlers::FullTextIndexMap>,
         discovery_service: Option<Arc<crate::services::discovery::DiscoveryService>>,
         external_collection_service: Option<
             Arc<crate::services::external_collection::ExternalCollectionService>,
@@ -487,10 +487,11 @@ impl RestServer {
         let state_for_v2 = state.clone();
         let mut base_router = create_router(state.clone());
 
-        // ADR-049 M0-c: gate the deprecated /api/v1/* surface behind
-        // PROXIMADB_REST_V1_COMPAT (on by default). When off, /api/v1/* is
-        // answered with 410 Gone + RFC 8594 deprecation headers; /api/v2/* is
-        // never affected. This starts the v1 sunset clock without a flag-day.
+        // ADR-049 M0-c / TD-V1SUNSET-1 step 1: the deprecated /api/v1/*
+        // surface is gated behind PROXIMADB_REST_V1_COMPAT (now OFF by default).
+        // /api/v1/* is answered with 410 Gone + RFC 8594 deprecation headers;
+        // /api/v2/* is never affected. Set PROXIMADB_REST_V1_COMPAT=1 to
+        // temporarily re-enable v1 during migration.
         let rest_v1_compat = crate::network::middleware::v1_sunset::rest_v1_compat_enabled();
         base_router = base_router.layer(middleware::from_fn_with_state(
             rest_v1_compat,
@@ -715,9 +716,9 @@ impl RestServer {
         segment_registry: Option<Arc<crate::catalog::SegmentRegistry>>,
         catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
         queue_client: Option<Arc<proximadb_queue::QueueClient>>,
-        fulltext_indexes: Option<crate::network::rest::v1::handlers::FullTextIndexMap>,
+        fulltext_indexes: Option<crate::network::rest::canonical::handlers::FullTextIndexMap>,
         recall_probe_gate: Option<Arc<crate::catalog::RecallProbeGate>>,
-        rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+        rank_services: Option<Arc<crate::network::rest::canonical::rank::RankServices>>,
         rank_profile_store: Option<Arc<dyn crate::services::RankProfileStore>>,
         discovery_service: Option<Arc<crate::services::discovery::DiscoveryService>>,
         external_collection_service: Option<
@@ -813,10 +814,11 @@ impl RestServer {
         let state_for_v2 = state.clone();
         let mut base_router = create_router(state.clone());
 
-        // ADR-049 M0-c: gate the deprecated /api/v1/* surface behind
-        // PROXIMADB_REST_V1_COMPAT (on by default). When off, /api/v1/* is
-        // answered with 410 Gone + RFC 8594 deprecation headers; /api/v2/* is
-        // never affected. This starts the v1 sunset clock without a flag-day.
+        // ADR-049 M0-c / TD-V1SUNSET-1 step 1: the deprecated /api/v1/*
+        // surface is gated behind PROXIMADB_REST_V1_COMPAT (now OFF by default).
+        // /api/v1/* is answered with 410 Gone + RFC 8594 deprecation headers;
+        // /api/v2/* is never affected. Set PROXIMADB_REST_V1_COMPAT=1 to
+        // temporarily re-enable v1 during migration.
         let rest_v1_compat = crate::network::middleware::v1_sunset::rest_v1_compat_enabled();
         base_router = base_router.layer(middleware::from_fn_with_state(
             rest_v1_compat,
@@ -1036,19 +1038,29 @@ impl RestServer {
 
     /// Start the REST server without TLS (plaintext)
     async fn start_plaintext(self) -> anyhow::Result<()> {
-        // Portless ("embedded") mode: serve over a Unix-domain socket.
+        // Portless ("embedded") mode: serve over a Unix-domain socket (unix-only).
         if let Some(uds_path) = self.uds_path.clone() {
-            tracing::info!(
-                "Starting REST server (plaintext) on unix:{}",
-                uds_path.display()
-            );
-            Self::log_endpoints(&self.bind_addr, false);
-            // axum 0.8 serves any `Listener`; tokio's UnixListener qualifies.
-            let listener = crate::network::uds::bind_unix_listener(&uds_path).map_err(|e| {
-                anyhow::anyhow!("REST UDS bind failed at {}: {}", uds_path.display(), e)
-            })?;
-            axum::serve(listener, self.router.into_make_service()).await?;
-            return Ok(());
+            #[cfg(unix)]
+            {
+                tracing::info!(
+                    "Starting REST server (plaintext) on unix:{}",
+                    uds_path.display()
+                );
+                Self::log_endpoints(&self.bind_addr, false);
+                // axum 0.8 serves any `Listener`; tokio's UnixListener qualifies.
+                let listener = crate::network::uds::bind_unix_listener(&uds_path).map_err(|e| {
+                    anyhow::anyhow!("REST UDS bind failed at {}: {}", uds_path.display(), e)
+                })?;
+                axum::serve(listener, self.router.into_make_service()).await?;
+                return Ok(());
+            }
+            #[cfg(not(unix))]
+            {
+                anyhow::bail!(
+                    "REST UDS (unix:{}) is not supported on this platform; use TCP",
+                    uds_path.display()
+                );
+            }
         }
 
         tracing::info!("Starting REST server (plaintext) on {}", self.bind_addr);

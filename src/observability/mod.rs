@@ -64,9 +64,9 @@
 // - JSON over HTTP
 
 /// Alerting engine with rule-based evaluation and notification channels.
-pub mod alerting;
+pub use proximadb_observability_engine::alerting;
 /// Audit logging for compliance and security event tracking.
-pub mod audit;
+pub use proximadb_observability_engine::audit;
 /// High-throughput ingestion pipeline with multi-format parsing.
 pub mod ingestion;
 /// Per-query I/O trace bus (C0 — co-design trace substrate). Task-local
@@ -74,25 +74,25 @@ pub mod ingestion;
 /// moved, footer-cache outcomes, cross-AZ egress, compute-ms by engine) the
 /// co-design cost model minimizes. See
 /// `docs/12-design/CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` §4.1.
-pub mod io_trace;
+pub use proximadb_observability_engine::io_trace;
 /// Metering event builder — converts SearchPlanTrace → operator metering
 /// event JSON shape so the data plane and operator pipelines can't drift.
-pub mod metering_event;
+pub use proximadb_observability_engine::metering_event;
 /// TD-161 external OTLP metering push — ships per-tenant billing meters to a
 /// standard OTLP collector (ADR-027 dual-sink push half). Feature `otlp-metering`
 /// + runtime-gated by `PROXIMADB_OTLP_ENDPOINT`; compiles to no-ops otherwise.
-pub mod metering_otlp;
+pub use proximadb_observability_engine::metering_otlp;
 /// [`ObjectStore`](object_store::ObjectStore) decorator feeding the per-query
 /// io_trace (ADR-030/TD-158) — first consumer: the DataFusion Parquet leaf,
 /// closing the "DataFusion route reports zero bytes" trace gap.
-pub mod object_store_trace;
+pub use proximadb_observability_engine::object_store_trace;
 /// Embedding-precision metrics — Prometheus gauges/counters per
 /// EMBEDDING_PRECISION_LLD_2026_05_22 §"Observability (Q11)" (PR 7b).
-pub mod precision_metrics;
+pub use proximadb_observability_engine::precision_metrics;
 /// TD-064 predicate diagnostics bus — task-local channel that carries
 /// recall-shortfall events from AxisManager-deep search paths to the
 /// REST/gRPC handler that builds the SearchPlanTrace.
-pub mod predicate_diagnostics;
+pub use proximadb_observability_engine::predicate_diagnostics;
 /// Query engine for logs, metrics, and traces with PromQL support.
 pub mod query;
 /// Rank-pipeline metrics — Prometheus histograms/counters per
@@ -100,33 +100,33 @@ pub mod query;
 pub mod rank_metrics;
 /// Route explain builder — human-readable explanation derived from a
 /// populated SearchPlanTrace for the LLD §1 debug=true response.
-pub mod route_explain;
+pub use proximadb_observability_engine::route_explain;
 /// SearchPlanTrace — per-query telemetry envelope feeding KRU billing and the
 /// learned planner v2 (LLD §10).
-pub mod search_plan_trace;
+pub use proximadb_observability_engine::search_plan_trace;
 /// Post-execution SearchPlanTrace builder.
-pub mod search_plan_trace_builder;
+pub use proximadb_observability_engine::search_plan_trace_builder;
 /// Time-partitioned storage for observability data with WAL durability.
 pub mod storage;
 /// Tenant Prometheus label resolver — bundles tenant_id → bounded
 /// label resolution with the LLD's cardinality-safety guardrail.
-pub mod tenant_label;
+pub use proximadb_observability_engine::tenant_label;
 /// Trace batcher — bundles N populated traces into one POST payload
 /// for the async billing sink (digest-keyed dedup + fingerprint-aware).
-pub mod trace_batcher;
+pub use proximadb_observability_engine::trace_batcher;
 /// Trace digest — stable FNV-1a hash for billing-event dedup +
 /// idempotency keys on the async sink.
-pub mod trace_digest;
+pub use proximadb_observability_engine::trace_digest;
 /// Trace fingerprint — shape-only hash for incident-triage grouping.
-pub mod trace_fingerprint;
+pub use proximadb_observability_engine::trace_fingerprint;
 /// Trace retention policy — companion to trace_sampling; per-tier age
 /// windows + soft storage-budget shedding.
-pub mod trace_retention;
+pub use proximadb_observability_engine::trace_retention;
 /// Trace sampling policy — LLD-anchored down-sampling by tier + load.
-pub mod trace_sampling;
+pub use proximadb_observability_engine::trace_sampling;
 /// Workload mix detector — aggregates fingerprint counts into a typed
 /// summary for tier-recommendation hints and cache-warm targeting.
-pub mod workload_mix;
+pub use proximadb_observability_engine::workload_mix;
 
 use std::collections::HashMap;
 use std::sync::Arc;

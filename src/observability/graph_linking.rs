@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Result;
 
-use crate::graph::{Edge, GraphService, Node};
+use proximadb_graph_model::{Edge, Node};
 use crate::observability::storage::traces::TraceSpan;
 use crate::proto::proximadb_v1::{CreateGraphRequest, EdgeQuery, PropertyValue, property_value};
 

@@ -55,7 +55,7 @@ use arrow_array::{
 use arrow_ipc::writer::StreamWriter;
 use arrow_schema::{DataType, Field, Schema};
 
-use crate::network::rest::v1::rank::{
+use crate::network::rest::canonical::rank::{
     RankSearchRequest, RankSearchResponse, RankServices, handle_rank_search_with_metrics,
 };
 use proximadb_rank_core::RankError;
@@ -259,7 +259,7 @@ fn _unused_btreemap_marker(_: BTreeMap<String, ()>) {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::rest::v1::rank::{
+    use crate::network::rest::canonical::rank::{
         CandidateBatch, CandidateProvider, ScoreVectorDto, ScoredHitDto,
     };
     use arrow_array::Array;

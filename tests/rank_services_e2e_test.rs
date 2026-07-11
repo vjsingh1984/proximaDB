@@ -26,11 +26,11 @@ use std::sync::Arc;
 
 use prometheus::{Encoder, Registry, TextEncoder};
 use proximadb::core::search::hybrid::FusionStrategy;
-use proximadb::network::rest::v1::rank::{
+use proximadb::network::rest::canonical::rank::{
     CandidateProvider, HybridCoordinatorAdapter, HybridSearchBackend, MockRangeCandidateProvider,
     RankSearchRequest, RankServices,
 };
-use proximadb::network::rest::v1::rank_profile::{
+use proximadb::network::rest::canonical::rank_profile::{
     InstallRankProfileRequest, install_rank_profile_inner,
 };
 use proximadb::observability::rank_metrics::RankPipelineMetrics;
@@ -135,7 +135,7 @@ async fn rest_install_then_search_emits_spec_metrics() -> Result<(), Box<dyn std
         .rank_profile
         .as_deref()
         .and_then(|name| services.second_phase_scorer(name));
-    let response = proximadb::network::rest::v1::rank::handle_rank_search_with_metrics(
+    let response = proximadb::network::rest::canonical::rank::handle_rank_search_with_metrics(
         request,
         services.profile_registry.as_ref(),
         services.candidate_provider.as_ref(),

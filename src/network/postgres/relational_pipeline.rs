@@ -30,7 +30,7 @@ use crate::query::execution::{
 };
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
-use proximadb_data_model::{ProximaType, ProximaValue};
+use proximadb_data_model::{ProximaType, ProximaValue, StatsTrust};
 use proximadb_functions::builtins;
 use proximadb_relational_algebra::TableId;
 use proximadb_relational_engine::{
@@ -315,6 +315,13 @@ pub async fn try_run_select(
         None
     };
 
+    // TD-OLAP-4 result-path probe: time ALL of `try_run_select` before execution
+    // — including the path-1 engine-catalog `lower_sql` attempt below, which a
+    // DataFusion-routed query pays and fails before reaching the path-2 setup.
+    // The earlier per-query floor decomposition attributed ~0 ms to the path-2
+    // setup alone; starting the clock here tests whether the ~46 ms remainder is
+    // the (previously untimed) path-1 lowering attempt.
+    let setup_start = std::time::Instant::now();
     // 1) Existing in-memory-engine path (preserves the demo table and any
     //    engine-resident tables). Only engages when the SQL lowers against the
     //    engine's own catalog; a catalog miss falls through to the real-data
@@ -350,10 +357,6 @@ pub async fn try_run_select(
     // `CatalogLookup`/`ReaderFactory` traits can't await). Rows are fetched
     // lazily per scan in `DmlTableReader::open`, with the executor's
     // projection/predicate/limit pushed into storage.
-    // TD-OLAP-4: time this pre-execution setup (schema pre-resolution + route
-    // classification) — measurement showed this path-2 setup, not open/session/
-    // plan/compute, is the per-query wall floor the native early-return path skips.
-    let setup_start = std::time::Instant::now();
     let mut names = Vec::new();
     collect_table_names(query, &mut names);
     let mut tables: HashMap<String, PreparedTable> = HashMap::new();
@@ -362,6 +365,12 @@ pub async fn try_run_select(
     // (nor advertised) when the build can't honor it.
     #[cfg(feature = "datafusion-integration")]
     let mut parquet_loc_by_key: HashMap<String, String> = HashMap::new();
+    // ADR-058 D5 / §9.A: per-table footer-stats trust, parallel to
+    // `parquet_loc_by_key`. Drives whether the native route may answer
+    // COUNT/MIN/MAX from the parquet FOOTER (Trusted) or must value-scan
+    // (Untrusted — external/federated writer's footer is not trusted).
+    #[cfg(feature = "datafusion-integration")]
+    let mut parquet_trust_by_key: HashMap<String, StatsTrust> = HashMap::new();
     // ADR-025: per-table OLAP read-merge params (snapshot_lsn + PK column) for the
     // opted-in parquet-backed tables; empty ⇒ all reads stay on the bare Parquet path.
     #[cfg(feature = "datafusion-integration")]
@@ -379,6 +388,7 @@ pub async fn try_run_select(
                 #[cfg(feature = "datafusion-integration")]
                 if let Some(location) = catalog_table_is_parquet_backed(&catalog_schema) {
                     parquet_loc_by_key.insert(key.clone(), location);
+                    parquet_trust_by_key.insert(key.clone(), parquet_stats_trust(&catalog_schema));
                     if let Some(params) = olap_delta_table_params(&catalog_schema) {
                         olap_delta_tables.insert(key.clone(), params);
                     }
@@ -433,6 +443,7 @@ pub async fn try_run_select(
         cardinality
     };
 
+    let operation_class = query_operation_class(query);
     let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: true,
@@ -440,6 +451,7 @@ pub async fn try_run_select(
             pax_backed: false,
             partition_fanout,
             cardinality,
+            operation_class,
         },
         // C4: observe-mode advisory from the trace-driven cost model — augments
         // the reason for telemetry/EXPLAIN, never changes the backend.
@@ -458,17 +470,105 @@ pub async fn try_run_select(
     // P1 dispatch driven by the scheduler decision. The DataFusion arm exists only
     // under the feature (and `parquet_backed` — hence a `DataFusionLocal` decision —
     // is only reachable there), so a default build never enters it and stays Volcano.
+    //
+    // The block is entered for the OLAP-over-parquet route: a static `DataFusionLocal`
+    // decision, OR a cost-model override/exploration flip to `Native` on the
+    // `olap/parquet` class (the only class with two freshness-safe engines,
+    // `freshness_safe_backends_from_class`). Routing the override-`Native` case here
+    // rather than to the Volcano keeps a warmed override on the native-over-parquet
+    // path (which reads the external parquet) with DataFusion as the floor — never on
+    // the Volcano, which has no external-parquet scan wired.
     #[cfg(feature = "datafusion-integration")]
-    if matches!(
-        decision.backend,
-        crate::query::table_write_plan::ComputeBackend::DataFusionLocal
-    ) {
+    if parquet_backed
+        && matches!(
+            decision.backend,
+            crate::query::table_write_plan::ComputeBackend::DataFusionLocal
+                | crate::query::table_write_plan::ComputeBackend::Native
+        )
+    {
+        // TD-OLAP-4 "favor native by operation": for the operation classes native
+        // measurably wins — footer-elidable `COUNT(*)`/`MIN`/`MAX` (MetadataElidable)
+        // and narrow unfiltered scalar aggregates (ScalarAggregate) — run the native
+        // vectorized engine over the SAME external parquet as the PRIMARY backend and
+        // return ITS result. DataFusion stays the correctness floor: any decline
+        // (ineligible shape, wide/filtered/grouped scan, native error) falls through
+        // to the DataFusion execution below, so correctness never depends on native.
+        //
+        // Trigger (default-OFF): the explicit `PROXIMADB_NATIVE_ROUTE` master switch,
+        // OR a warmed cost-model override/exploration that advised `Native` for this
+        // operation-keyed `olap/parquet` cell (`PROXIMADB_ROUTE_COST_OVERRIDE`, with
+        // its freshness/RTT/min-advantage gating). Either way the shape gate is the
+        // same measured win-set, and DataFusion is the fallback.
+        let native_advised = matches!(
+            decision.backend,
+            crate::query::table_write_plan::ComputeBackend::Native
+        ) && matches!(
+            decision.source,
+            crate::query::compute_scheduler::RouteSource::OverrideExploit
+                | crate::query::compute_scheduler::RouteSource::OverrideExplore
+        );
+        let native_eligible_op = matches!(
+            operation_class,
+            crate::query::compute_scheduler::OperationClass::MetadataElidable
+                | crate::query::compute_scheduler::OperationClass::ScalarAggregate
+        );
+        if native_eligible_op
+            && (crate::query::execution::native_engine::native_route_enabled() || native_advised)
+        {
+            let native_snapshot = SnapshotCatalog {
+                dml: dml.clone(),
+                tables: tables.clone(),
+                tenant: tenant_ctx.clone(),
+            };
+            // Setup (planning/route) time is attributed here; the native engine records
+            // its own `native-vectorized` compute sample inside the run.
+            crate::observability::io_trace::record_setup_ms(
+                setup_start.elapsed().as_millis() as u64
+            );
+            if let Some(result) = try_native_over_parquet(
+                sql,
+                &native_snapshot,
+                &parquet_loc_by_key,
+                &parquet_trust_by_key,
+            )
+            .await
+            {
+                tracing::debug!(
+                    target: "proximadb::compute_route",
+                    "native-over-parquet served as PRIMARY (op={:?}); DataFusion floor bypassed",
+                    operation_class
+                );
+                if let Some((skey, lsn)) = &cache_ctx {
+                    populate_olap_result_cache(
+                        result_cache,
+                        skey,
+                        *lsn,
+                        result.clone(),
+                        &native_snapshot.tables,
+                    );
+                }
+                return Some(Ok(result));
+            }
+            // Native declined → fall through to the DataFusion floor below.
+        }
         let parquet_tables: Vec<(String, String)> = tables
             .iter()
             .map(|(k, t)| (t.table_name.clone(), parquet_loc_by_key[k].clone()))
             .collect();
+        // ADR-058 D5/§9.A: per-table footer-stats trust, keyed by table_name
+        // (matching `parquet_tables`), derived from `parquet_trust_by_key`
+        // (keyed by the canonical table key). Drives adapter elision gating.
+        let parquet_table_trust: HashMap<String, StatsTrust> = tables
+            .iter()
+            .filter_map(|(k, t)| {
+                parquet_trust_by_key
+                    .get(k)
+                    .map(|tr| (t.table_name.clone(), *tr))
+            })
+            .collect();
         let context = QueryExecutionContext {
             parquet_tables,
+            parquet_table_trust,
             vector_ops,
             graph_ops,
             tenant_id: tenant.map(str::to_string),
@@ -497,11 +597,37 @@ pub async fn try_run_select(
         // close. `record_compute_ms` no-ops outside an `io_trace` scope.
         crate::observability::io_trace::record_setup_ms(setup_start.elapsed().as_millis() as u64);
         let started = std::time::Instant::now();
-        let engine_result = execute_sql_with_backend(decision.backend.clone(), sql, context).await;
+        // This block IS the DataFusion floor for the OLAP-over-parquet route, so
+        // execute on DataFusion regardless of the scheduler's advised label — a
+        // cost-model override may have set `decision.backend = Native` (routed here
+        // for the native-primary attempt above), but `execute_sql_with_backend` only
+        // serves `DataFusionLocal`; anything else errors `UnsupportedBackend`.
+        let floor_backend = crate::query::table_write_plan::ComputeBackend::DataFusionLocal;
+        let engine_result = execute_sql_with_backend(floor_backend.clone(), sql, context).await;
         crate::observability::io_trace::record_compute_ms(
-            &crate::query::compute_scheduler::backend_label(&decision.backend),
+            &crate::query::compute_scheduler::backend_label(&floor_backend),
             started.elapsed().as_millis() as u64,
         );
+        // TD-OLAP-4 (engine dimension): optional native SHADOW — run the same query
+        // on the native vectorized engine over the same parquet, purely to record a
+        // `native-vectorized` compute sample next to DataFusion's for the trace.
+        // Default-OFF, benchmark-only; the result is discarded (DataFusion's stands)
+        // and any failure is swallowed, so it never affects correctness or latency
+        // of the served query.
+        if crate::query::execution::native_engine::native_shadow_enabled() {
+            let probe_snapshot = SnapshotCatalog {
+                dml: dml.clone(),
+                tables: tables.clone(),
+                tenant: tenant_ctx.clone(),
+            };
+            shadow_probe_native_parquet(
+                sql,
+                &probe_snapshot,
+                &parquet_loc_by_key,
+                &parquet_trust_by_key,
+            )
+            .await;
+        }
         return Some(match engine_result {
             Ok(result) => {
                 if let Some((skey, lsn)) = &cache_ctx {
@@ -634,6 +760,469 @@ fn plan_over_snapshot(
 }
 
 // =========================================================================
+// TD-OLAP-4 native SHADOW probe (engine dimension). Default-OFF, benchmark-only:
+// run the SAME parquet SELECT on the native vectorized engine alongside DataFusion
+// to record a `native-vectorized` compute sample in the io-trace. The native
+// result is discarded (DataFusion's is authoritative) and all failures are
+// swallowed, so the probe never changes the served result or fails a query.
+// =========================================================================
+
+/// Column names emitted by the plan's sole `Scan` node, or `None` if the plan has
+/// zero or more than one scan (multi-table / no-table). Used to build the native
+/// parquet reader's projection so it reads the same columns DataFusion does.
+#[cfg(feature = "datafusion-integration")]
+fn single_scan_columns(plan: &PhysicalPlan) -> Option<Vec<String>> {
+    fn collect(plan: &PhysicalPlan, count: &mut usize, out: &mut Option<Vec<String>>) {
+        match plan {
+            PhysicalPlan::Scan { output_schema, .. } => {
+                *count += 1;
+                *out = Some(
+                    output_schema
+                        .columns
+                        .iter()
+                        .map(|c| c.name.clone())
+                        .collect(),
+                );
+            }
+            PhysicalPlan::Filter { input, .. }
+            | PhysicalPlan::Project { input, .. }
+            | PhysicalPlan::Aggregate { input, .. }
+            | PhysicalPlan::Sort { input, .. }
+            | PhysicalPlan::Limit { input, .. }
+            | PhysicalPlan::Distinct { input, .. }
+            | PhysicalPlan::AssertMaxOneRow { input } => collect(input, count, out),
+            PhysicalPlan::Join { left, right, .. } => {
+                collect(left, count, out);
+                collect(right, count, out);
+            }
+            PhysicalPlan::Union { inputs, .. } => {
+                for i in inputs {
+                    collect(i, count, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut count = 0usize;
+    let mut out = None;
+    collect(plan, &mut count, &mut out);
+    (count == 1).then_some(out).flatten()
+}
+
+/// Is this an unfiltered, ungrouped `COUNT(*)` (possibly under a `Limit`) directly
+/// over a `Scan`? Then the answer is the sum of the parquet/PAX footer row counts —
+/// a metadata read, no column scan. (`scan_cols` can't detect this: the relational
+/// `Scan.output_schema` is full-width, so COUNT(*) would otherwise read all columns.)
+#[cfg(feature = "datafusion-integration")]
+fn is_pure_count_star(plan: &PhysicalPlan) -> bool {
+    use proximadb_relational_algebra::AggregateExpr;
+    match plan {
+        // A `COUNT(*)` lowers to `Project(Aggregate(Scan))` (the Project names/orders
+        // the output) — recurse through both Project and Limit to the Aggregate.
+        PhysicalPlan::Limit { input, .. } | PhysicalPlan::Project { input, .. } => {
+            is_pure_count_star(input)
+        }
+        PhysicalPlan::Aggregate {
+            input,
+            group_by,
+            aggregates,
+            having,
+            ..
+        } => {
+            group_by.is_empty()
+                && having.is_none()
+                && !aggregates.is_empty()
+                && aggregates.iter().all(|a| {
+                    matches!(
+                        &a.agg,
+                        AggregateExpr::Count {
+                            arg: None,
+                            distinct: false
+                        }
+                    )
+                })
+                // MUST be an UNFILTERED scan: a pushed-down `Scan.predicate`
+                // (`WHERE AdvEngineID<>0`, `WHERE URL LIKE …`) means the count is
+                // over the FILTERED rows — footer elision would ignore the filter
+                // and return the wrong (whole-table) count.
+                && matches!(input.as_ref(), PhysicalPlan::Scan { predicate: None, .. })
+        }
+        _ => false,
+    }
+}
+
+/// TD-OLAP-4 metadata elision: if the plan is an UNGROUPED, UNFILTERED aggregate
+/// over a `Scan` whose aggregates are all `COUNT(*)` / `COUNT(col)` / `MIN(col)` /
+/// `MAX(col)` on NUMERIC columns, build the answer row directly from the parquet
+/// FOOTER (row count + per-column min/max/null_count) — zero column I/O, flat cost
+/// (matching DataFusion's `AggregateStatistics`). Returns `None` (→ scan) for
+/// SUM/AVG/DISTINCT, non-column args, string columns (truncated stats), or any
+/// column lacking full footer coverage.
+#[cfg(feature = "datafusion-integration")]
+fn elidable_aggregate_batch(
+    plan: &PhysicalPlan,
+    table: &crate::datafusion::engine_adapters::ObjectStoreParquetTable,
+    file_schema: &arrow::datatypes::SchemaRef,
+) -> Option<arrow_array::RecordBatch> {
+    use arrow_array::{ArrayRef, Float64Array, Int64Array};
+    use proximadb_relational_algebra::AggregateExpr;
+    use proximadb_relational_types::Expr;
+
+    fn find_agg(p: &PhysicalPlan) -> Option<&PhysicalPlan> {
+        match p {
+            PhysicalPlan::Project { input, .. } | PhysicalPlan::Limit { input, .. } => {
+                find_agg(input)
+            }
+            PhysicalPlan::Aggregate { .. } => Some(p),
+            _ => None,
+        }
+    }
+    let PhysicalPlan::Aggregate {
+        input,
+        group_by,
+        aggregates,
+        having,
+        ..
+    } = find_agg(plan)?
+    else {
+        return None;
+    };
+    if !group_by.is_empty()
+        || having.is_some()
+        || !matches!(
+            input.as_ref(),
+            PhysicalPlan::Scan {
+                predicate: None,
+                ..
+            }
+        )
+    {
+        return None;
+    }
+    // Resolve a catalog column name to the FILE column (case-insensitive — CamelCase
+    // DDL over a lowercased parquet) → (parquet-stats key, Arrow type).
+    let resolve = |name: &str| -> Option<(String, arrow::datatypes::DataType)> {
+        file_schema
+            .fields()
+            .iter()
+            .find(|f| f.name().eq_ignore_ascii_case(name))
+            .map(|f| (f.name().clone(), f.data_type().clone()))
+    };
+    let rows = table.estimated_rows()?;
+    let mut fields: Vec<arrow::datatypes::Field> = Vec::with_capacity(aggregates.len());
+    let mut arrays: Vec<ArrayRef> = Vec::with_capacity(aggregates.len());
+    for na in aggregates {
+        let (dt, arr): (arrow::datatypes::DataType, ArrayRef) = match &na.agg {
+            AggregateExpr::Count {
+                arg: None,
+                distinct: false,
+            } => (
+                arrow::datatypes::DataType::Int64,
+                std::sync::Arc::new(Int64Array::from(vec![rows as i64])),
+            ),
+            AggregateExpr::Count {
+                arg: Some(Expr::Column(c)),
+                distinct: false,
+            } => {
+                let (cn, _) = resolve(&c.name)?;
+                let (_, _, nulls) = table.aggregate_numeric_bounds(&cn)?;
+                (
+                    arrow::datatypes::DataType::Int64,
+                    std::sync::Arc::new(Int64Array::from(vec![rows.saturating_sub(nulls) as i64])),
+                )
+            }
+            AggregateExpr::Min {
+                arg: Expr::Column(c),
+            }
+            | AggregateExpr::Max {
+                arg: Expr::Column(c),
+            } => {
+                let (cn, dt) = resolve(&c.name)?;
+                let (lo, hi, _) = table.aggregate_numeric_bounds(&cn)?;
+                let v = if matches!(na.agg, AggregateExpr::Max { .. }) {
+                    hi
+                } else {
+                    lo
+                };
+                let arr = arrow::compute::cast(&Float64Array::from(vec![v]), &dt).ok()?;
+                (dt, arr)
+            }
+            // SUM/AVG/DISTINCT/STRING_AGG/non-column → not footer-elidable.
+            _ => return None,
+        };
+        fields.push(arrow::datatypes::Field::new(&na.name, dt, true));
+        arrays.push(arr);
+    }
+    arrow_array::RecordBatch::try_new(
+        std::sync::Arc::new(arrow::datatypes::Schema::new(fields)),
+        arrays,
+    )
+    .ok()
+}
+
+/// Does any `Scan` in the plan carry a pushed-down `predicate`? Native's scan does
+/// NOT apply `Scan.predicate` (no predicate pushdown yet), so it would count/aggregate
+/// the UNFILTERED rows — a wrong result. Filtered scans route to DataFusion (which
+/// applies the predicate + prunes row groups) until native gains predicate pushdown.
+#[cfg(feature = "datafusion-integration")]
+fn plan_scan_has_predicate(plan: &PhysicalPlan) -> bool {
+    match plan {
+        PhysicalPlan::Scan { predicate, .. } => predicate.is_some(),
+        PhysicalPlan::Filter { input, .. }
+        | PhysicalPlan::Project { input, .. }
+        | PhysicalPlan::Aggregate { input, .. }
+        | PhysicalPlan::Sort { input, .. }
+        | PhysicalPlan::Limit { input, .. }
+        | PhysicalPlan::Distinct { input, .. }
+        | PhysicalPlan::AssertMaxOneRow { input } => plan_scan_has_predicate(input),
+        PhysicalPlan::Join { left, right, .. } => {
+            plan_scan_has_predicate(left) || plan_scan_has_predicate(right)
+        }
+        PhysicalPlan::Union { inputs, .. } => inputs.iter().any(plan_scan_has_predicate),
+        _ => false,
+    }
+}
+
+/// Does the plan contain an `Aggregate` with a non-empty `GROUP BY`? Native's
+/// `HashAggregate` is in-memory with no spilling, so a high-cardinality group-by
+/// (e.g. `GROUP BY UserID` over 100M rows) balloons the hash table to tens of GB
+/// and OOMs. Until a bounded/spilling aggregate lands, the shadow declines grouped
+/// aggregates — they route to DataFusion (its partitioned/spilling aggregation
+/// handles them), which is itself the dispatch rule the trace confirms.
+#[cfg(feature = "datafusion-integration")]
+fn plan_has_grouped_aggregate(plan: &PhysicalPlan) -> bool {
+    match plan {
+        PhysicalPlan::Aggregate {
+            input, group_by, ..
+        } => !group_by.is_empty() || plan_has_grouped_aggregate(input),
+        PhysicalPlan::Filter { input, .. }
+        | PhysicalPlan::Project { input, .. }
+        | PhysicalPlan::Sort { input, .. }
+        | PhysicalPlan::Limit { input, .. }
+        | PhysicalPlan::Distinct { input, .. }
+        | PhysicalPlan::AssertMaxOneRow { input } => plan_has_grouped_aggregate(input),
+        PhysicalPlan::Join { left, right, .. } => {
+            plan_has_grouped_aggregate(left) || plan_has_grouped_aggregate(right)
+        }
+        PhysicalPlan::Union { inputs, .. } => inputs.iter().any(plan_has_grouped_aggregate),
+        _ => false,
+    }
+}
+
+/// Run the native vectorized engine over the same external parquet DataFusion just
+/// served, purely to record a per-engine compute sample. Single-table parquet only
+/// (MVP); declines silently on anything native can't yet serve. Thin wrapper over
+/// [`try_native_over_parquet`] that discards the result — the sample it records via
+/// the io-trace is the whole point; DataFusion's answer is the one served.
+#[cfg(feature = "datafusion-integration")]
+async fn shadow_probe_native_parquet(
+    sql: &str,
+    snapshot: &SnapshotCatalog,
+    parquet_loc_by_key: &HashMap<String, String>,
+    parquet_trust_by_key: &HashMap<String, StatsTrust>,
+) {
+    let _ = try_native_over_parquet(sql, snapshot, parquet_loc_by_key, parquet_trust_by_key).await;
+}
+
+/// Serve `sql` on the native vectorized engine over the SAME external parquet
+/// DataFusion would read, returning `Some(result)` when native handled it as the
+/// PRIMARY backend (its result is wire-identical to DataFusion's for the routed
+/// shapes) or `None` to route to DataFusion. This is the single native-over-parquet
+/// code path shared by the production route arm ([`try_run_select`], gated on
+/// `native_route_enabled`) and the benchmark shadow probe (gated on
+/// `native_shadow_enabled`) — every eligibility guard and source selection lives
+/// here so the two callers can never diverge (TD-OLAP-4 "favor native by
+/// operation").
+///
+/// Eligibility (any failure → `None`, DataFusion serves): single-table parquet,
+/// a single-scan plan, no grouped aggregate (native's non-spilling HashAggregate
+/// OOMs on high-cardinality `GROUP BY`), no filter predicate (native has no
+/// predicate pushdown, so it would wrongly aggregate unfiltered rows), and a scan
+/// no wider than the width cap. The served shapes are exactly the measured native
+/// wins: footer-elidable `COUNT(*)`/`MIN`/`MAX` and narrow unfiltered scalar
+/// aggregates.
+#[cfg(feature = "datafusion-integration")]
+async fn try_native_over_parquet(
+    sql: &str,
+    snapshot: &SnapshotCatalog,
+    parquet_loc_by_key: &HashMap<String, String>,
+    parquet_trust_by_key: &HashMap<String, StatsTrust>,
+) -> Option<ExecutionPipelineResult> {
+    // Single-table parquet only — joins are a separately-gated native path.
+    if parquet_loc_by_key.len() != 1 {
+        return None;
+    }
+    let table_key = parquet_loc_by_key.keys().next()?;
+    let location = parquet_loc_by_key.values().next()?;
+    // ADR-058 D5 / §9.A: footer-stats elision (below) is only sound when the
+    // writer is authoritative. External/federated parquet (FederatedRead /
+    // ExternalAuthoritative / ImportedSnapshot) ⇒ Untrusted ⇒ the
+    // COUNT/MIN/MAX-from-footer paths are skipped and the query is served by
+    // the trust-safe value-scan. Materialized parquet (ProjectionPublication,
+    // which `ALTER TABLE … MATERIALIZE` produces) is ProximaDB-generated ⇒
+    // Trusted ⇒ elision stays enabled.
+    let stats_trust = parquet_trust_by_key
+        .get(table_key)
+        .copied()
+        .unwrap_or(StatsTrust::Untrusted);
+    let sqlp = &sql[..sql.len().min(70)];
+    // Lower the SAME SQL to the relational physical plan (decline → skip).
+    let physical = match plan_over_snapshot(sql, snapshot) {
+        Some(Ok(p)) => p,
+        _ => {
+            tracing::debug!(target: "proximadb::native_route", "native SKIP plan-declined: {sqlp}");
+            return None;
+        }
+    };
+    let Some(scan_cols) = single_scan_columns(&physical) else {
+        tracing::debug!(target: "proximadb::native_route", "native SKIP not-single-scan: {sqlp}");
+        return None;
+    };
+    // Skip grouped aggregates: native's non-spilling HashAggregate OOMs on
+    // high-cardinality GROUP BY at scale. These route to DataFusion.
+    // Opt-in gate (PROXIMADB_NATIVE_ALLOW_GROUPED_AGG): allow grouped aggregates
+    // when the caller knows the group cardinality is safe (e.g., SF=0.01 with
+    // low-cardinality GROUP BY like Q1's l_returnflag/l_linestatus → 8 groups).
+    if plan_has_grouped_aggregate(&physical)
+        && std::env::var("PROXIMADB_NATIVE_ALLOW_GROUPED_AGG").is_err()
+    {
+        tracing::debug!(target: "proximadb::native_route", "native SKIP grouped-aggregate: {sqlp}");
+        return None;
+    }
+    // Skip filtered scans: native does not apply a pushed-down `Scan.predicate`,
+    // so it would (wrongly) aggregate the unfiltered rows. Route to DataFusion.
+    if plan_scan_has_predicate(&physical) {
+        tracing::debug!(target: "proximadb::native_route", "native SKIP filtered-scan (no native predicate pushdown): {sqlp}");
+        return None;
+    }
+    tracing::debug!(target: "proximadb::native_route", "native RUN: {sqlp}");
+    // Open the same parquet DataFusion read (table-OPEN cache is warm from its run).
+    let table = match crate::datafusion::engine_adapters::ObjectStoreParquetTable::open(location)
+        .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::debug!(target: "proximadb::native_route", %e, "native: table open declined");
+            return None;
+        }
+    };
+    let (store, files, file_schema) = table.native_scan_inputs();
+    // Metadata elision (TD-OLAP-4): unfiltered MIN/MAX/COUNT answered from the
+    // parquet FOOTER — zero column I/O, flat cost. The single biggest native win at
+    // scale (q07 MIN/MAX: a full-column vectorized scan → a footer read). Emits the
+    // pre-computed row and bypasses the scan + HashAggregate entirely.
+    // ADR-058 D5 / §9.A: footer-stats elision is TRUST-GATED — only Trusted
+    // (ProximaDB-owned) parquet may answer from the footer; Untrusted
+    // (external/federated) writer footers may be stale/absent ⇒ fall through to
+    // the trust-safe value-scan below.
+    if stats_trust == StatsTrust::Trusted
+        && let Some(batch) = elidable_aggregate_batch(&physical, &table, &file_schema)
+    {
+        tracing::debug!(target: "proximadb::native_route", "native ELIDE (footer stats, trusted): {sqlp}");
+        let src = Box::new(
+            crate::query::execution::native_parquet_scan::StatsAggregateOperator::new(batch),
+        );
+        return native_result(
+            crate::query::execution::native_engine::run_native_source_only(src).await,
+            sqlp,
+        );
+    }
+    // Unfiltered COUNT(*): parquet/PAX carry the row count in the FOOTER, so elide
+    // the scan entirely — read footers only, emit the count (a metadata op, not a
+    // scan). Detected from the PLAN, not `scan_cols`: the relational Scan schema is
+    // full-width, so COUNT(*) would otherwise read all 105 columns. Trust-gated
+    // (§9.A): the footer row-count is only authoritative for Trusted parquet.
+    let source: Box<dyn proximadb_execution_contracts::ExecutionOperator> =
+        if stats_trust == StatsTrust::Trusted && is_pure_count_star(&physical) {
+            Box::new(
+                crate::query::execution::native_parquet_scan::ParquetScanOperator::new_count_only(
+                    store, files,
+                ),
+            )
+        } else {
+            // The relational Scan schema is full-width (no projection pushdown yet), so
+            // `scan_cols` reads every column the scan declares. Native has neither
+            // projection nor predicate pushdown, so a wide scan reads all columns
+            // row-wise — impractically slow at scale. Cap it: route wide scans to
+            // DataFusion (which prunes columns + row groups). This IS the dispatch rule
+            // the trace confirms; narrow scans still sample native. (Lifting the cap
+            // needs projection/predicate pushdown — the medium-tier native enabler.)
+            const NATIVE_SCAN_WIDTH_CAP: usize = 8;
+            if scan_cols.len() > NATIVE_SCAN_WIDTH_CAP {
+                tracing::debug!(
+                    target: "proximadb::native_route",
+                    cols = scan_cols.len(),
+                    "native SKIP wide-scan (no pushdown): {sqlp}"
+                );
+                return None;
+            }
+            // Map the plan's Scan columns → parquet leaf indices by name; build the
+            // native scan output schema from the FILE fields (exact Arrow types). Sort
+            // ascending so the reader's file-order `ProjectionMask::roots` matches the
+            // operator schema — when the plan preserves declared column order (the
+            // common case) native aligns; otherwise the native lowering declines and no
+            // sample is recorded.
+            let mut paired: Vec<(usize, arrow::datatypes::Field)> =
+                Vec::with_capacity(scan_cols.len());
+            for name in &scan_cols {
+                // Match case-insensitively: the catalog/DDL may declare CamelCase
+                // columns over a lowercased parquet (e.g. ClickBench). Ordinals still
+                // align positionally — native ops reference columns by ordinal, not name.
+                let Some((idx, field)) = file_schema
+                    .fields()
+                    .iter()
+                    .enumerate()
+                    .find(|(_, f)| f.name().eq_ignore_ascii_case(name))
+                else {
+                    return None; // column absent from file (schema drift) → never risk a sample
+                };
+                paired.push((idx, field.as_ref().clone()));
+            }
+            paired.sort_by_key(|(i, _)| *i);
+            let projection: Vec<usize> = paired.iter().map(|(i, _)| *i).collect();
+            let out_schema = Arc::new(arrow::datatypes::Schema::new(
+                paired.into_iter().map(|(_, f)| f).collect::<Vec<_>>(),
+            ));
+            Box::new(
+                crate::query::execution::native_parquet_scan::ParquetScanOperator::new(
+                    store,
+                    files,
+                    Some(projection),
+                    out_schema,
+                ),
+            )
+        };
+    native_result(
+        crate::query::execution::native_engine::run_native_over_parquet(&physical, source).await,
+        sqlp,
+    )
+}
+
+/// Interpret a native-engine run result for [`try_native_over_parquet`]: `Ok(Some)`
+/// → native served it (return the result); `Ok(None)` → native declined the shape;
+/// `Err` → native errored. In both non-served cases the caller routes to DataFusion.
+#[cfg(feature = "datafusion-integration")]
+fn native_result(
+    run: Result<Option<ExecutionPipelineResult>, crate::query::execution::engine::ExecutionError>,
+    sqlp: &str,
+) -> Option<ExecutionPipelineResult> {
+    match run {
+        Ok(Some(result)) => {
+            tracing::debug!(target: "proximadb::native_route", "native served: {sqlp}");
+            Some(result)
+        }
+        Ok(None) => {
+            tracing::debug!(target: "proximadb::native_route", "native declined (shape/align): {sqlp}");
+            None
+        }
+        Err(e) => {
+            tracing::debug!(target: "proximadb::native_route", %e, "native errored: {sqlp}");
+            None
+        }
+    }
+}
+
+// =========================================================================
 // P1: DataFusion OLAP route over Parquet-backed tables (course-correction §6 P1)
 // Gated on `datafusion-integration`; when the feature is off none of this is
 // compiled and `try_run_select` behaves exactly as before (Volcano only).
@@ -663,6 +1252,39 @@ fn catalog_table_is_parquet_backed(
             None
         }
     })
+}
+
+/// Derive a parquet table's [`StatsTrust`] from its catalog authority. The ONLY
+/// untrusted writers are external sources ProximaDB did not generate —
+/// `FederatedRead` / `ExternalAuthoritative` / `ImportedSnapshot` (their parquet
+/// footer stats may be stale or absent ⇒ [`StatsTrust::Untrusted`]). Everything
+/// ProximaDB generated — materialized parquet (`ProjectionPublication`, the form
+/// `ALTER TABLE … MATERIALIZE` produces), `ExportedPublication`, the WAL-owned
+/// authorities — is [`StatsTrust::Trusted`] (ProximaDB wrote the footer).
+fn parquet_stats_trust(schema: &proximadb_catalog::CatalogTableSchema) -> StatsTrust {
+    use proximadb_catalog::CatalogAuthorityMode;
+    let external = schema
+        .storage_layouts
+        .iter()
+        .filter(|l| {
+            matches!(
+                l.physical_format,
+                proximadb_catalog::CatalogPhysicalFormat::Parquet
+            )
+        })
+        .any(|l| {
+            matches!(
+                l.authority,
+                CatalogAuthorityMode::FederatedRead
+                    | CatalogAuthorityMode::ExternalAuthoritative
+                    | CatalogAuthorityMode::ImportedSnapshot
+            )
+        });
+    if external {
+        StatsTrust::Untrusted
+    } else {
+        StatsTrust::Trusted
+    }
 }
 
 /// Master switch for the ADR-025 OLAP read-merge. **Default-ON** (ADR-025 PR3):
@@ -1782,6 +2404,79 @@ fn query_engages_relational_engine(query: &SqlQuery) -> bool {
 /// shape GUARANTEES a tiny result, else `Unknown` (never over-claims). Pure AST
 /// walk — zero route-time I/O (co-design P5: I/O round-trips, not CPU, dominate;
 /// the route path must not probe storage).
+/// TD-OLAP-4 operation dimension: classify the SELECT's OLAP operation from the AST
+/// (syntax-only, zero route-time I/O). Feeds the cost-model shape-class so per-engine
+/// samples accumulate per operation — the geometry the shadow ledger showed engines
+/// win/lose on. Priority: grouped > string-heavy > metadata-elidable > scalar-agg.
+fn query_operation_class(query: &SqlQuery) -> crate::query::compute_scheduler::OperationClass {
+    use crate::query::compute_scheduler::OperationClass;
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return OperationClass::Other;
+    };
+    let has_group_by = match &select.group_by {
+        GroupByExpr::All(_) => true,
+        GroupByExpr::Expressions(exprs, _) => !exprs.is_empty(),
+    };
+    if has_group_by {
+        return OperationClass::Grouped;
+    }
+    // A LIKE/regex predicate → native can't push it down → DataFusion class.
+    if select.selection.as_ref().is_some_and(expr_is_string_heavy) {
+        return OperationClass::StringHeavy;
+    }
+    let has_agg = select.projection.iter().any(select_item_has_aggregate);
+    if has_agg && select.having.is_none() {
+        // Unfiltered + every projection a COUNT/MIN/MAX → footer-elidable.
+        if select.selection.is_none()
+            && select
+                .projection
+                .iter()
+                .all(select_item_is_elidable_aggregate)
+        {
+            return OperationClass::MetadataElidable;
+        }
+        return OperationClass::ScalarAggregate;
+    }
+    OperationClass::Other
+}
+
+/// Does the predicate use a string-matching construct (`LIKE`/`ILIKE`/`SIMILAR TO`
+/// or a `regexp_*` function)? Recursive over boolean structure.
+fn expr_is_string_heavy(expr: &SqlExpr) -> bool {
+    match expr {
+        SqlExpr::Like { .. } | SqlExpr::ILike { .. } | SqlExpr::SimilarTo { .. } => true,
+        SqlExpr::Function(f) => {
+            let n = f.name.to_string().to_ascii_lowercase();
+            matches!(
+                n.rsplit('.').next().unwrap_or(&n),
+                "regexp_replace" | "regexp_match" | "regexp_matches" | "regexp_like"
+            )
+        }
+        SqlExpr::BinaryOp { left, right, .. } => {
+            expr_is_string_heavy(left) || expr_is_string_heavy(right)
+        }
+        SqlExpr::UnaryOp { expr, .. } | SqlExpr::Nested(expr) | SqlExpr::Cast { expr, .. } => {
+            expr_is_string_heavy(expr)
+        }
+        _ => false,
+    }
+}
+
+/// Is this projection item a `COUNT`/`MIN`/`MAX` aggregate (footer-elidable, unlike
+/// `SUM`/`AVG` which need column data)?
+fn select_item_is_elidable_aggregate(item: &SelectItem) -> bool {
+    let expr = match item {
+        SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } => e,
+        _ => return false,
+    };
+    if let SqlExpr::Function(f) = expr {
+        let n = f.name.to_string().to_ascii_lowercase();
+        matches!(n.rsplit('.').next().unwrap_or(&n), "count" | "min" | "max")
+    } else {
+        false
+    }
+}
+
 fn query_cardinality_hint(query: &SqlQuery) -> crate::query::compute_scheduler::CardinalityClass {
     use crate::query::compute_scheduler::CardinalityClass;
     // sqlparser 0.59 carries LIMIT on the Query as a `LimitClause` enum (standard
@@ -2090,6 +2785,166 @@ mod tests {
             [Statement::Query(query)] => query_engages_relational_engine(query),
             _ => panic!("expected a single SELECT statement"),
         }
+    }
+
+    /// ADR-058 D5 / §9.A: the stats-trust derivation is the load-bearing security
+    /// mapping behind the native route's footer-elision gate — an authority that
+    /// wrongly classifies external parquet as `Trusted` would re-open the
+    /// wrong-`COUNT`/`MIN`/`MAX`-on-external-parquet hole #860 closed. This ratchet
+    /// locks the mapping: external parquet authorities ⇒ `Untrusted`; everything
+    /// ProximaDB authored ⇒ `Trusted`; and the gate is parquet-footer-specific (an
+    /// external authority on a non-parquet layout is NOT a footer-trust concern).
+    #[cfg(feature = "datafusion-integration")]
+    #[test]
+    fn parquet_stats_trust_maps_external_authorities_to_untrusted() {
+        use proximadb_catalog::{
+            CatalogAuthorityMode, CatalogPhysicalFormat, CatalogStorageLayout, CatalogTableSchema,
+        };
+        let layout = |authority, physical_format| CatalogStorageLayout {
+            authority,
+            physical_format,
+            ..Default::default()
+        };
+        let schema_with = |layouts: Vec<CatalogStorageLayout>| {
+            let mut s = CatalogTableSchema::new("t");
+            s.storage_layouts = layouts;
+            s
+        };
+
+        // External / federated / imported PARQUET → Untrusted (footer not ours).
+        for authority in [
+            CatalogAuthorityMode::FederatedRead,
+            CatalogAuthorityMode::ExternalAuthoritative,
+            CatalogAuthorityMode::ImportedSnapshot,
+        ] {
+            let s = schema_with(vec![layout(authority, CatalogPhysicalFormat::Parquet)]);
+            assert_eq!(
+                parquet_stats_trust(&s),
+                StatsTrust::Untrusted,
+                "{authority:?} parquet must be Untrusted — its footer stats are not ProximaDB's"
+            );
+        }
+
+        // ProximaDB-authored PARQUET (incl. the `MATERIALIZE` form) → Trusted.
+        for authority in [
+            CatalogAuthorityMode::ProjectionPublication,
+            CatalogAuthorityMode::ExportedPublication,
+        ] {
+            let s = schema_with(vec![layout(authority, CatalogPhysicalFormat::Parquet)]);
+            assert_eq!(
+                parquet_stats_trust(&s),
+                StatsTrust::Trusted,
+                "{authority:?} parquet is ProximaDB-authored ⇒ footer stats are authoritative"
+            );
+        }
+
+        // The gate is parquet-footer-specific: an external authority on a
+        // NON-parquet layout must not taint trust (no parquet footer is trusted).
+        let s = schema_with(vec![layout(
+            CatalogAuthorityMode::FederatedRead,
+            CatalogPhysicalFormat::ProximaBlock,
+        )]);
+        assert_eq!(
+            parquet_stats_trust(&s),
+            StatsTrust::Trusted,
+            "an external authority on a non-parquet layout is not a footer-trust concern"
+        );
+
+        // No storage layouts at all ⇒ nothing external ⇒ Trusted (fail-open is safe
+        // here: with no parquet layout the elision path is never reached).
+        assert_eq!(
+            parquet_stats_trust(&CatalogTableSchema::new("t")),
+            StatsTrust::Trusted
+        );
+    }
+
+    #[test]
+    fn operation_class_classifies_olap_shapes() {
+        use crate::query::compute_scheduler::OperationClass;
+        let op = |sql: &str| {
+            let s = Parser::parse_sql(&GenericDialect {}, sql).expect("parse");
+            match s.as_slice() {
+                [Statement::Query(q)] => query_operation_class(q),
+                _ => panic!("one SELECT"),
+            }
+        };
+        // Unfiltered COUNT(*) / MIN / MAX → footer-elidable (native wins).
+        assert_eq!(
+            op("SELECT COUNT(*) FROM hits"),
+            OperationClass::MetadataElidable
+        );
+        assert_eq!(
+            op("SELECT MIN(eventdate), MAX(eventdate) FROM hits"),
+            OperationClass::MetadataElidable
+        );
+        // SUM/AVG need column data → scalar aggregate.
+        assert_eq!(
+            op("SELECT SUM(advengineid), AVG(resolutionwidth) FROM hits"),
+            OperationClass::ScalarAggregate
+        );
+        // A plain (non-string) filter is still a scalar aggregate.
+        assert_eq!(
+            op("SELECT COUNT(*) FROM hits WHERE advengineid <> 0"),
+            OperationClass::ScalarAggregate
+        );
+        // LIKE predicate → string-heavy (routes to DataFusion).
+        assert_eq!(
+            op("SELECT COUNT(*) FROM hits WHERE url LIKE '%google%'"),
+            OperationClass::StringHeavy
+        );
+        // GROUP BY → grouped.
+        assert_eq!(
+            op("SELECT regionid, COUNT(*) FROM hits GROUP BY regionid"),
+            OperationClass::Grouped
+        );
+    }
+
+    #[cfg(feature = "datafusion-integration")]
+    fn scan_fixture(cols: &[&str]) -> PhysicalPlan {
+        PhysicalPlan::Scan {
+            table: TableId::new("hits"),
+            output_schema: RelationalSchema::new(
+                cols.iter()
+                    .map(|c| ColumnInfo::new(*c, ProximaType::Int64, false))
+                    .collect(),
+            ),
+            projection: None,
+            predicate: None,
+            limit: None,
+            access: proximadb_relational_planner::ScanAccess::FullScan,
+        }
+    }
+
+    #[cfg(feature = "datafusion-integration")]
+    #[test]
+    fn single_scan_columns_detects_sole_scan_and_rejects_multi_or_none() {
+        // Bare scan → its projected column names.
+        assert_eq!(
+            single_scan_columns(&scan_fixture(&["k", "x"])),
+            Some(vec!["k".to_string(), "x".to_string()])
+        );
+        // Recurses through an intermediate op (Limit) to the sole scan.
+        let limited = PhysicalPlan::Limit {
+            input: Box::new(scan_fixture(&["k", "x"])),
+            limit: Some(10),
+            offset: 0,
+        };
+        assert_eq!(
+            single_scan_columns(&limited),
+            Some(vec!["k".to_string(), "x".to_string()])
+        );
+        // Two scans (Union) → None: the native shadow is single-table only.
+        let two = PhysicalPlan::Union {
+            inputs: vec![scan_fixture(&["k"]), scan_fixture(&["x"])],
+            all: true,
+        };
+        assert_eq!(single_scan_columns(&two), None);
+        // No scan at all → None.
+        let no_scan = PhysicalPlan::Values {
+            rows: vec![],
+            output_schema: RelationalSchema::new(vec![]),
+        };
+        assert_eq!(single_scan_columns(&no_scan), None);
     }
 
     #[test]

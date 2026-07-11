@@ -29,6 +29,7 @@ members = [
     "crates/foundation/proximadb-compression-types",
     "crates/foundation/proximadb-config",
     "crates/foundation/proximadb-data-model",
+    "crates/foundation/proximadb-graph-model",
     "crates/foundation/proximadb-distance-types",
     "crates/foundation/proximadb-encoding-types",
     "crates/foundation/proximadb-filter-expression",
@@ -41,6 +42,7 @@ members = [
     "crates/foundation/proximadb-pipeline-operator",
     "crates/foundation/proximadb-proto",
     "crates/foundation/proximadb-quantization-types",
+    "crates/foundation/proximadb-quantization-model",
     "crates/foundation/proximadb-index-types",
     "crates/foundation/proximadb-index-traits",
     "crates/foundation/proximadb-records",
@@ -67,6 +69,7 @@ members = [
     "crates/modalities/proximadb-quantization-kernel",
     "crates/modalities/proximadb-document",
     "crates/modalities/proximadb-observability",
+    "crates/modalities/proximadb-observability-engine",
     "crates/modalities/proximadb-embedding",
     "crates/modalities/proximadb-queue",
     "crates/modalities/proximadb-rank-core",
@@ -159,6 +162,7 @@ chrono = { version = "0.4.31", features = ["serde"] }
 clap = { version = "4.0", features = ["derive"] }
 hyper = { version = "1.0" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
+proximadb-graph-model = { path = "crates/foundation/proximadb-graph-model" }
 proximadb-config = { path = "crates/foundation/proximadb-config" }
 proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
@@ -174,6 +178,7 @@ proximadb-cache = { path = "crates/foundation/proximadb-cache" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
+proximadb-quantization-model = { path = "crates/foundation/proximadb-quantization-model" }
 proximadb-index-types = { path = "crates/foundation/proximadb-index-types" }
 proximadb-index-traits = { path = "crates/foundation/proximadb-index-traits" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
@@ -201,6 +206,10 @@ rand = { version = "0.8", features = ["small_rng"] }
 rayon = "1.10"
 regex = "1.10"
 serde = { version = "1.0", features = ["derive"] }
+# On-demand stack growth for the plan-tree recursions (planner lowering, executor
+# build, native lowering) — grows the stack instead of overflowing on deeply
+# nested plans (TD-EXEC-2 §1.a). Same primitive rustc/Servo use.
+stacker = "0.1"
 tempfile = "3.0"
 thiserror = "1.0"
 tokio = { version = "1.37", features = ["full"] }
@@ -213,6 +222,7 @@ proximadb-vector = { path = "crates/modalities/proximadb-vector" }
 proximadb-quantization-kernel = { path = "crates/modalities/proximadb-quantization-kernel" }
 proximadb-document = { path = "crates/modalities/proximadb-document" }
 proximadb-observability = { path = "crates/modalities/proximadb-observability" }
+proximadb-observability-engine = { path = "crates/modalities/proximadb-observability-engine" }
 proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
 proximadb-rank-core = { path = "crates/modalities/proximadb-rank-core" }
 proximadb-rank-features = { path = "crates/modalities/proximadb-rank-features" }
@@ -297,6 +307,7 @@ proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
 proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
+proximadb-graph-model = { path = "crates/foundation/proximadb-graph-model" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
 proximadb-functions = { path = "crates/foundation/proximadb-functions" }
@@ -311,6 +322,7 @@ proximadb-index-types = { path = "crates/foundation/proximadb-index-types" }
 proximadb-index-traits = { path = "crates/foundation/proximadb-index-traits" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
+proximadb-quantization-model = { path = "crates/foundation/proximadb-quantization-model" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
@@ -342,6 +354,7 @@ proximadb-cache = { path = "crates/foundation/proximadb-cache" }
 proximadb-document = { path = "crates/modalities/proximadb-document" }
 proximadb-graph = { path = "crates/modalities/proximadb-graph" }
 proximadb-observability = { path = "crates/modalities/proximadb-observability" }
+proximadb-observability-engine = { path = "crates/modalities/proximadb-observability-engine" }
 proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
 proximadb-queue = { path = "crates/modalities/proximadb-queue" }
 proximadb-rank-core = { path = "crates/modalities/proximadb-rank-core" }
@@ -439,6 +452,11 @@ arrow-cast = { version = "58", default-features = false }
 # DataFusion for SQL and compute engine compatibility (Arrow 57 compatible)
 datafusion = { version = "54.0", default-features = false, features = ["sql", "regex_expressions", "unicode_expressions", "datetime_expressions", "math_expressions"], optional = true }
 datafusion-common = { version = "54.0", optional = true }
+# ADR-059: DuckDB-Local as a plugin OLAP engine (in-process, behind the
+# `duckdb` feature, default OFF). `bundled` builds libduckdb from source so no
+# system DuckDB is required. Used by the perf-ledger harnesses for an
+# in-process, io-traced DuckDB baseline (ADR-059 D1/D2).
+duckdb = { version = "1.1", features = ["bundled", "parquet"], optional = true }
 
 # Advanced compression for recovery-optimized WAL
 lz4_flex = "0.11"        # Faster LZ4 implementation
@@ -478,6 +496,7 @@ raw-cpuid = "11.0"  # CPU feature detection for x86_64
 
 # Random number generation
 rand.workspace = true
+stacker.workspace = true
 rand_chacha = "0.3"
 rand_distr = "0.4"  # For generating realistic probability distributions
 
@@ -637,7 +656,7 @@ simd-experimental = []
 # (range_gets/bytes_read/compute_ms) and ALL observers (route-cost, cache, and
 # the always-on BILLING observer) stay live regardless — billing is never gated
 # (ADR-027 non-entanglement; enforced by scripts/check_billing_never_gated.py).
-io-trace = []
+io-trace = ["proximadb-observability-engine/io-trace"]
 # TurboQuant data-oblivious quantizer + in-kernel allowlist (ADR-021).
 # Gates the QuantizationLevel::TurboQuant variant in proximadb-vector + the
 # TurboQuantVectorData struct in src/compute/distance_computation/quantized.rs.
@@ -645,6 +664,7 @@ io-trace = []
 # after P9 recall validation closes.
 experimental-turboquant = [
     "proximadb-quantization-types/experimental-turboquant",
+    "proximadb-quantization-model/experimental-turboquant",
     "proximadb-vector/experimental-turboquant",
     "proximadb-distance-kernel/experimental-turboquant",
     "proximadb-quantization-kernel/experimental-turboquant",
@@ -678,7 +698,7 @@ gcp = ["dep:google-cloud-storage"]
 # durable FileSystem `_metering` writer is ALWAYS compiled (OSS-native, no deps) — only
 # this push path is feature-gated to keep the opentelemetry transitive surface out of
 # default builds. Verify the server binary builds with AND without this feature (#11).
-otlp-metering = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
+otlp-metering = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "proximadb-observability-engine/otlp-metering"]
 
 # ============================================================================
 # OPTIONAL INTEGRATION FEATURES
@@ -769,6 +789,10 @@ graph-first-sks = []
 # DataFusion integration for compute engine compatibility
 # DataFusion 51.x uses Arrow 57.x — versions are aligned as of 2026-04
 datafusion-integration = ["dep:datafusion", "dep:datafusion-common"]
+# ADR-059: in-process DuckDB OLAP engine (default OFF — adds the libduckdb C++
+# build). Enables the perf-ledger harnesses to run DuckDB in-process (io-traced,
+# same parquet/SQL) instead of the CLI subprocess.
+duckdb = ["dep:duckdb"]
 
 # Hardware acceleration features
 gpu = ["metal", "proximadb-hardware-caps/gpu", "proximadb-distance-kernel/gpu"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
@@ -854,6 +878,20 @@ incremental = false
 [[test]]
 name = "integration"
 path = "tests/rust/mod.rs"
+
+# CDC integration tests — only built when cdc-kafka is enabled (cdc is feature-gated
+# in src/lib.rs; these tests reference proximadb::cdc::*).
+[[test]]
+name = "cdc_e2e_test"
+required-features = ["cdc-kafka"]
+
+[[test]]
+name = "cdc_integration_test"
+required-features = ["cdc-kafka"]
+
+[[test]]
+name = "cdc_rest_changefeed_e2e"
+required-features = ["cdc-kafka"]
 
 # Benchmark profile - optimized but allows faster iteration than full release
 [profile.bench]

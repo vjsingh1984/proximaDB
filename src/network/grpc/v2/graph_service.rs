@@ -7,7 +7,7 @@
 //!
 //! This is the canonical, always-registered graph surface (`proximadb.v2.
 //! ProximaGraphService`). It replaces the deprecated `proximadb.v1.GraphService`,
-//! which is only reachable behind `enable_grpc_v1_compat` (default off).
+//! which was removed in TD-V1SUNSET-1 step 4.
 //!
 //! ## Design
 //!

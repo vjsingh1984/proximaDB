@@ -102,8 +102,7 @@ pub struct ProcessingConfig {
     pub sorting_strategy: SortingStrategy,
 
     /// Vector quantization level (None = no quantization)
-    pub quantization_level:
-        Option<crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel>,
+    pub quantization_level: Option<proximadb_quantization_model::UnifiedQuantizationLevel>,
 }
 
 /// Flushing configuration
@@ -1080,8 +1079,8 @@ impl VectorRecordProcessor {
     async fn apply_vector_quantization(
         &self,
         records: &[VectorRecord],
-        quantization_level: crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel,
-    ) -> Result<Vec<crate::compute::quantization::quantization_engine::QuantizedVector>> {
+        quantization_level: proximadb_quantization_model::UnifiedQuantizationLevel,
+    ) -> Result<Vec<proximadb_quantization_model::QuantizedVector>> {
         if records.is_empty() {
             return Ok(vec![]);
         }
@@ -1115,12 +1114,11 @@ impl VectorRecordProcessor {
                 );
 
                 // Convert StorageQuantizedData to QuantizedVector
-                let quantized_vectors: Vec<
-                    crate::compute::quantization::quantization_engine::QuantizedVector,
-                > = storage_quantized_data
-                    .into_iter()
-                    .filter_map(|data| data.primary)
-                    .collect();
+                let quantized_vectors: Vec<proximadb_quantization_model::QuantizedVector> =
+                    storage_quantized_data
+                        .into_iter()
+                        .filter_map(|data| data.primary)
+                        .collect();
 
                 // Log quantization success
                 debug!(
@@ -1147,7 +1145,7 @@ impl VectorRecordProcessor {
         records: &[VectorRecord],
     ) -> Result<(
         RecordBatch,
-        Option<Vec<crate::compute::quantization::quantization_engine::QuantizedVector>>,
+        Option<Vec<proximadb_quantization_model::QuantizedVector>>,
     )> {
         if records.is_empty() {
             return Err(anyhow::anyhow!("Cannot process empty record set"));
@@ -2065,9 +2063,7 @@ impl ParquetFlusher {
     pub async fn flush_batch_with_quantization(
         &self,
         batch: RecordBatch,
-        quantized_vectors: Option<
-            Vec<crate::compute::quantization::quantization_engine::QuantizedVector>,
-        >,
+        quantized_vectors: Option<Vec<proximadb_quantization_model::QuantizedVector>>,
         output_path: &str,
     ) -> Result<ViperPipelineFlushResult> {
         // Augment batch with quantized vector columns if available
@@ -2180,7 +2176,7 @@ impl ParquetFlusher {
     fn augment_batch_with_quantized_vectors(
         &self,
         batch: RecordBatch,
-        quantized_vectors: &[crate::compute::quantization::quantization_engine::QuantizedVector],
+        quantized_vectors: &[proximadb_quantization_model::QuantizedVector],
     ) -> Result<RecordBatch> {
         // Quantization types now from unified compute module
         use arrow_array::{BinaryArray, UInt8Array};
@@ -2201,8 +2197,8 @@ impl ParquetFlusher {
 
         // Group quantized vectors by quantization level for efficient column storage
         let mut quantization_groups: std::collections::HashMap<
-            crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel,
-            Vec<&crate::compute::quantization::quantization_engine::QuantizedVector>,
+            proximadb_quantization_model::UnifiedQuantizationLevel,
+            Vec<&proximadb_quantization_model::QuantizedVector>,
         > = std::collections::HashMap::new();
 
         for qvec in quantized_vectors {
@@ -2215,7 +2211,7 @@ impl ParquetFlusher {
         // Create columns for each quantization level
         for (level, qvecs) in quantization_groups {
             match level.level_type {
-                Some(crate::compute::quantization::types::QuantizationLevel::Pq(pq)) => {
+                Some(proximadb_quantization_model::QuantizationLevel::Pq(pq)) => {
                     let bits_per_code = pq.bits_per_code;
                     let num_subvectors = pq.num_subvectors;
                     // Store PQ codes as binary data
@@ -2241,7 +2237,7 @@ impl ParquetFlusher {
                     }
                 }
 
-                Some(crate::compute::quantization::types::QuantizationLevel::Scalar(scalar)) => {
+                Some(proximadb_quantization_model::QuantizationLevel::Scalar(scalar)) => {
                     let bits = scalar.bits;
                     // Store uniform quantization as packed binary data
                     let mut data_owned: Vec<Vec<u8>> = Vec::new(); // All owned data
@@ -2276,24 +2272,24 @@ impl ParquetFlusher {
                     continue;
                 }
 
-                Some(crate::compute::quantization::types::QuantizationLevel::None(_)) => {
+                Some(proximadb_quantization_model::QuantizationLevel::None(_)) => {
                     // No quantization - skip
                     continue;
                 }
 
-                Some(crate::compute::quantization::types::QuantizationLevel::Uniform(_)) => {
+                Some(proximadb_quantization_model::QuantizationLevel::Uniform(_)) => {
                     // Uniform quantization - handle similar to INT8
                     // Deferred: Implement uniform quantization handling
                     continue;
                 }
 
-                Some(crate::compute::quantization::types::QuantizationLevel::Binary(_)) => {
+                Some(proximadb_quantization_model::QuantizationLevel::Binary(_)) => {
                     // Binary quantization - handle as binary data
                     // Deferred: Implement binary quantization handling
                     continue;
                 }
 
-                Some(crate::compute::quantization::types::QuantizationLevel::Custom(custom)) => {
+                Some(proximadb_quantization_model::QuantizationLevel::Custom(custom)) => {
                     let bits_per_element = custom.bits_per_element;
                     // Handle custom quantization similar to uniform
                     let mut data_owned: Vec<Vec<u8>> = Vec::new(); // All owned data
@@ -2326,7 +2322,7 @@ impl ParquetFlusher {
                 // pipeline below — they have their own `.tq` wire format
                 // (LLD §3). Skip here; P8 wires the durable storage path.
                 #[cfg(feature = "experimental-turboquant")]
-                Some(crate::compute::quantization::types::QuantizationLevel::TurboQuant(_)) => {
+                Some(proximadb_quantization_model::QuantizationLevel::TurboQuant(_)) => {
                     debug!(
                         "TurboQuant quantization level encountered in VIPER pipeline; \
                          skipping (storage routes through .tq files per TURBOQUANT_LLD §3)",
@@ -2342,7 +2338,7 @@ impl ParquetFlusher {
 
         for qvec in quantized_vectors {
             // Get bits per value based on quantization level
-            use crate::compute::quantization::types::QuantizationLevel;
+            use proximadb_quantization_model::QuantizationLevel;
             let (bits, is_product_quant) = match &qvec.quantization_level.level_type {
                 Some(QuantizationLevel::Binary(_)) => (1, false),
                 Some(QuantizationLevel::Scalar(s)) => (s.bits as u8, false),
@@ -3655,7 +3651,7 @@ impl Default for ViperPipelineConfig {
                 compression: true,
                 sorting_strategy: SortingStrategy::ByTimestamp,
                 quantization_level: Some(
-                    crate::compute::quantization::types::UnifiedQuantizationLevel::Int8,
+                    proximadb_quantization_model::UnifiedQuantizationLevel::Int8,
                 ), // Default to 8-bit quantization
             },
             flushing_config: FlushingConfig {

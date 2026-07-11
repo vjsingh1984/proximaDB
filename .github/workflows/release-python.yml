@@ -97,6 +97,15 @@ jobs:
           # flowing if it bites, and it surfaces as its own portability follow-up.
           - os: macos-14
             target: aarch64
+          # Windows x86_64 (MSVC). Enabled after the windows-compile-ratchet
+          # (TD-EMBED-1) proved the whole engine + `python` feature + C-deps
+          # compile on x86_64-pc-windows-msvc: two small #[cfg(unix)] gates
+          # (memmap2::Advice #800, Unix-domain sockets #808) were the only
+          # blockers. Pinned to windows-2022 to match the ratchet-proven env —
+          # the runner ships NASM + Strawberry Perl, so openssl/vendored's
+          # openssl-src build (VC-WIN64A) works without extra setup.
+          - os: windows-2022
+            target: x86_64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -7,7 +7,7 @@
 
 use serde_json::json;
 
-use proximadb::network::rest::v1::handlers::{
+use proximadb::network::rest::canonical::handlers::{
     HybridIndexRequest, HybridSearchHit, LegacyHybridSearchRequest, LegacyHybridSearchResponse,
 };
 

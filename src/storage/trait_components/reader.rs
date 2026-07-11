@@ -40,6 +40,25 @@ pub trait StorageReader: Send + Sync {
     /// - `Ok(Some(vector))`: Vector found
     /// - `Ok(None)`: Vector not found
     /// - `Err(e)`: Error during lookup
+    /// Point lookup: batch ID-based record retrieval (single or multiple IDs).
+    /// One filesystem scan for all IDs. Returns records found (missing IDs
+    /// absent — no error). Default delegates to `vector_by_id` per-ID.
+    async fn point_lookup(
+        &self,
+        collection_id: &str,
+        base_path: &str,
+        ids: &[String],
+        _identity: Option<crate::core::stable_id::CollectionIdentity>,
+    ) -> Result<Vec<ProximaRecord>> {
+        let mut results = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(rec) = self.vector_by_id(collection_id, base_path, id).await? {
+                results.push(rec);
+            }
+        }
+        Ok(results)
+    }
+
     async fn vector_by_id(
         &self,
         collection_id: &str,

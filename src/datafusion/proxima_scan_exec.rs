@@ -210,6 +210,24 @@ pub fn runtime_filter_prune_enabled() -> bool {
     })
 }
 
+/// The probe scan's wait budget for the build-side runtime filter's
+/// `wait_complete()` rendezvous (ADR-056 AQE-S11). Default **1500 ms** —
+/// Impala's effective 1000 ms + margin; on object-storage the wait is *more*
+/// favorable than HDFS (each skipped ranged GET = round-trip + egress $, the
+/// dominant term). Tunable per workload; the arrived-vs-timed-out outcome is
+/// recorded into `IoTrace` so the route cost model learns whether the budget
+/// pays. Set `PROXIMADB_DF_RUNTIME_FILTER_WAIT_MS` to override.
+pub fn runtime_filter_wait_ms() -> u64 {
+    static WAIT_MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *WAIT_MS.get_or_init(|| {
+        std::env::var("PROXIMADB_DF_RUNTIME_FILTER_WAIT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|&ms| ms > 0)
+            .unwrap_or(1500)
+    })
+}
+
 impl ProximaScanExec {
     /// Create a new ProximaScanExec using the builder pattern.
     pub fn builder() -> ProximaScanExecBuilder {
@@ -408,15 +426,31 @@ impl ExecutionPlan for ProximaScanExec {
         // evaluated — bounded by a timeout so no plan shape can stall a scan
         // (on timeout, splits are read unpruned: conservative). Per-split
         // evaluation below stays as defense-in-depth.
+        //
+        // ADR-056 AQE-S11: the budget is a configurable dial
+        // (`PROXIMADB_DF_RUNTIME_FILTER_WAIT_MS`, default 1500 ms) and the
+        // arrived-vs-timed-out outcome is recorded into `IoTrace` so the route
+        // cost model learns per-workload whether the wait pays.
         let wait_filters = dynamic_filters.clone();
+        let wait_trace = self.trace.clone();
+        let wait_budget_ms = runtime_filter_wait_ms();
         let head = futures::stream::once(async move {
             for dynamic in &wait_filters {
                 if let Some(df) = dynamic.downcast_ref::<DynamicFilterPhysicalExpr>() {
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_secs(10),
+                    let started = std::time::Instant::now();
+                    let arrived = tokio::time::timeout(
+                        std::time::Duration::from_millis(wait_budget_ms),
                         df.wait_complete(),
                     )
-                    .await;
+                    .await
+                    .is_ok();
+                    let waited_ms = started.elapsed().as_millis() as u64;
+                    match &wait_trace {
+                        Some(t) => t.record_runtime_filter_wait(arrived, waited_ms),
+                        None => crate::observability::io_trace::record_runtime_filter_wait(
+                            arrived, waited_ms,
+                        ),
+                    }
                 }
             }
             futures::stream::empty::<DFResult<RecordBatch>>()

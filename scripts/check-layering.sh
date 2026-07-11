@@ -10,4 +10,4 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 cd "$ROOT_DIR"
 python3 scripts/check_workspace_boundaries.py --strict
-python3 scripts/check_workspace_boundaries.py --storage-up-edges --max-storage-up-edges 271
+python3 scripts/check_workspace_boundaries.py --storage-up-edges --max-storage-up-edges 197

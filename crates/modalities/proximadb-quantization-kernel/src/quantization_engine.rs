@@ -43,7 +43,7 @@
 //! - Centroids: 256 per subquantizer (8-bit codes)
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use proximadb_storage_ports::QuantizationEnginePort;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -1785,37 +1785,13 @@ impl UnifiedQuantizationEngine {
     }
 }
 
-/// Quantized vector representation
-#[derive(Debug, Clone)]
-pub struct QuantizedVector {
-    /// The quantized data
-    pub data: Vec<u8>,
-
-    /// Quantization level used
-    pub quantization_level: UnifiedQuantizationLevel,
-
-    /// Additional metadata (scale, offset, codebook reference)
-    pub metadata: QuantEngineQuantizationMetadata,
-}
-
-/// Backwards-compat alias for [`QuantEngineQuantizationMetadata`].
-pub type QuantizationMetadata = QuantEngineQuantizationMetadata;
-
-/// Metadata for quantized vectors
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct QuantEngineQuantizationMetadata {
-    /// Reference to codebook (for PQ)
-    pub codebook_id: Option<String>,
-
-    /// Scale factor (for scalar/uniform)
-    pub scale: Option<f32>,
-
-    /// Offset (for scalar/uniform)
-    pub offset: Option<f32>,
-
-    /// Original vector norm (useful for some metrics)
-    pub norm: Option<f32>,
-}
+// Slice D pre-extraction: QuantizedVector + QuantEngineQuantizationMetadata + the
+// QuantizationMetadata alias now live in foundation `proximadb-quantization-model`
+// (foundation-pure: Vec<u8> + UnifiedQuantizationLevel + primitive metadata).
+// Re-exported here so this crate's public API + internal construction are unchanged.
+pub use proximadb_quantization_model::{
+    QuantEngineQuantizationMetadata, QuantizationMetadata, QuantizedVector,
+};
 
 /// In-memory codebook store for testing
 pub struct InMemoryCodebookStore {
@@ -2597,5 +2573,42 @@ mod tests {
         assert_eq!(top_5_quantized[0], top_5_raw[0]);
 
         Ok(())
+    }
+}
+
+// Slice D — QuantizationEnginePort impl: exposes the level-specific quantize_to_*
+// surface (primitive in/out) as a storage dependency-inversion port so `src/storage`
+// can hold `Arc<dyn QuantizationEnginePort>` instead of reaching up into this
+// modality crate. Fully-qualified calls delegate to the inherent methods (no
+// recursion). See crates/storage/proximadb-storage-ports/src/lib.rs.
+impl QuantizationEnginePort for UnifiedQuantizationEngine {
+    fn quantize_to_binary(&self, vector: &[f32]) -> Result<Vec<u8>> {
+        UnifiedQuantizationEngine::quantize_to_binary(self, vector)
+    }
+    fn quantize_to_int8(&self, vector: &[f32]) -> Result<Vec<u8>> {
+        UnifiedQuantizationEngine::quantize_to_int8(self, vector)
+    }
+    fn quantize_to_u4(&self, vector: &[f32]) -> Result<(Vec<u8>, f32, f32, usize)> {
+        UnifiedQuantizationEngine::quantize_to_u4(self, vector)
+    }
+    fn quantize_to_u6(&self, vector: &[f32]) -> Result<(Vec<u8>, f32, f32, usize)> {
+        UnifiedQuantizationEngine::quantize_to_u6(self, vector)
+    }
+    fn quantize_to_u8(&self, vector: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
+        UnifiedQuantizationEngine::quantize_to_u8(self, vector)
+    }
+    fn quantize_to_u16(&self, vector: &[f32]) -> Result<(Vec<u16>, f32, f32)> {
+        UnifiedQuantizationEngine::quantize_to_u16(self, vector)
+    }
+    fn quantize_to_pq(
+        &self,
+        vector: &[f32],
+        num_subvectors: usize,
+        bits_per_code: u32,
+    ) -> Result<Vec<u8>> {
+        UnifiedQuantizationEngine::quantize_to_pq(self, vector, num_subvectors, bits_per_code)
+    }
+    fn calculate_hamming_distance(&self, a: &[u8], b: &[u8]) -> u32 {
+        UnifiedQuantizationEngine::calculate_hamming_distance(self, a, b)
     }
 }
