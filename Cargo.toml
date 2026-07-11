@@ -452,6 +452,11 @@ arrow-cast = { version = "58", default-features = false }
 # DataFusion for SQL and compute engine compatibility (Arrow 57 compatible)
 datafusion = { version = "54.0", default-features = false, features = ["sql", "regex_expressions", "unicode_expressions", "datetime_expressions", "math_expressions"], optional = true }
 datafusion-common = { version = "54.0", optional = true }
+# ADR-059: DuckDB-Local as a plugin OLAP engine (in-process, behind the
+# `duckdb` feature, default OFF). `bundled` builds libduckdb from source so no
+# system DuckDB is required. Used by the perf-ledger harnesses for an
+# in-process, io-traced DuckDB baseline (ADR-059 D1/D2).
+duckdb = { version = "1.1", features = ["bundled", "parquet"], optional = true }
 
 # Advanced compression for recovery-optimized WAL
 lz4_flex = "0.11"        # Faster LZ4 implementation
@@ -784,6 +789,10 @@ graph-first-sks = []
 # DataFusion integration for compute engine compatibility
 # DataFusion 51.x uses Arrow 57.x — versions are aligned as of 2026-04
 datafusion-integration = ["dep:datafusion", "dep:datafusion-common"]
+# ADR-059: in-process DuckDB OLAP engine (default OFF — adds the libduckdb C++
+# build). Enables the perf-ledger harnesses to run DuckDB in-process (io-traced,
+# same parquet/SQL) instead of the CLI subprocess.
+duckdb = ["dep:duckdb"]
 
 # Hardware acceleration features
 gpu = ["metal", "proximadb-hardware-caps/gpu", "proximadb-distance-kernel/gpu"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)

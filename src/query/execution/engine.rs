@@ -222,6 +222,11 @@ pub async fn execute_sql_with_backend(
             let engine = super::datafusion_engine::DataFusionLocalEngine;
             engine.execute_sql(sql, context).await
         }
+        #[cfg(feature = "duckdb")]
+        ComputeBackend::DuckDbCompat => {
+            let engine = super::duckdb_engine::DuckDbLocalEngine;
+            engine.execute_sql(sql, context).await
+        }
         other => Err(ExecutionError::UnsupportedBackend(other)),
     }
 }
@@ -236,6 +241,11 @@ pub async fn execute_sql_stream_with_backend(
     match backend {
         ComputeBackend::DataFusionLocal => {
             let engine = super::datafusion_engine::DataFusionLocalEngine;
+            engine.execute_sql_stream(sql, context).await
+        }
+        #[cfg(feature = "duckdb")]
+        ComputeBackend::DuckDbCompat => {
+            let engine = super::duckdb_engine::DuckDbLocalEngine;
             engine.execute_sql_stream(sql, context).await
         }
         other => Err(ExecutionError::UnsupportedBackend(other)),

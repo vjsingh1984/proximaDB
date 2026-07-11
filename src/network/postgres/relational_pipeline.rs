@@ -1080,7 +1080,12 @@ async fn try_native_over_parquet(
     };
     // Skip grouped aggregates: native's non-spilling HashAggregate OOMs on
     // high-cardinality GROUP BY at scale. These route to DataFusion.
-    if plan_has_grouped_aggregate(&physical) {
+    // Opt-in gate (PROXIMADB_NATIVE_ALLOW_GROUPED_AGG): allow grouped aggregates
+    // when the caller knows the group cardinality is safe (e.g., SF=0.01 with
+    // low-cardinality GROUP BY like Q1's l_returnflag/l_linestatus → 8 groups).
+    if plan_has_grouped_aggregate(&physical)
+        && std::env::var("PROXIMADB_NATIVE_ALLOW_GROUPED_AGG").is_err()
+    {
         tracing::debug!(target: "proximadb::native_route", "native SKIP grouped-aggregate: {sqlp}");
         return None;
     }
