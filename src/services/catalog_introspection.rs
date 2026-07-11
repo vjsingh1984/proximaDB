@@ -552,6 +552,12 @@ impl CatalogIntrospectionService {
                 property_value(&schema, &["freshness_sla", "projection_freshness"])
                     .unwrap_or_default(),
                 policy_boundary(&schema),
+                // ADR-059: the materialized-parquet location (storage_layout.location)
+                // so the perf-ledger harness can register the SAME parquet with an
+                // in-process DuckDB engine (apples-to-apples vs DataFusion).
+                primary_layout
+                    .and_then(|l| l.location.clone())
+                    .unwrap_or_default(),
             ]);
         }
 
@@ -570,8 +576,10 @@ impl CatalogIntrospectionService {
                 "isolation_profile".to_string(),
                 "freshness_sla".to_string(),
                 "policy_boundary".to_string(),
+                "location".to_string(),
             ],
             column_types: vec![
+                "text".to_string(),
                 "text".to_string(),
                 "text".to_string(),
                 "text".to_string(),

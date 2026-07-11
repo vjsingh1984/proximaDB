@@ -33,6 +33,7 @@
 //! integration tests are self-contained by convention; keep them in sync.
 
 use std::net::TcpListener;
+#[cfg(not(feature = "duckdb"))]
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -1319,6 +1320,72 @@ fn push_record(
     out.push(rec);
 }
 
+/// ADR-059: query `xcatalog.table_routing` for each table's materialized-parquet
+/// `location` (the catalog-introspection `location` column), so the in-process
+/// DuckDB engine reads the SAME parquet DataFusion reads (apples-to-apples).
+#[cfg(feature = "duckdb")]
+async fn query_parquet_locations(client: &Client) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let Ok(msgs) = client
+        .simple_query("SELECT * FROM xcatalog.table_routing")
+        .await
+    else {
+        return out;
+    };
+    for m in msgs {
+        if let SimpleQueryMessage::Row(row) = m {
+            // table_name = col 2 (table_catalog, table_schema, table_name);
+            // location = col 12 (the last, added by ADR-059).
+            let name = row.get(2).unwrap_or_default().to_string();
+            let loc = row.get(12).unwrap_or_default().to_string();
+            if !loc.is_empty() {
+                out.push((name, loc));
+            }
+        }
+    }
+    out
+}
+
+/// ADR-059: run one query on the in-process DuckDB engine over the materialized
+/// parquet, io-traced (compute_ms). Mirrors `measure` (clear CAPTURE → run →
+/// drain) but via `execute_sql_with_backend(DuckDbCompat)` in
+/// `io_trace::instrument` instead of pgwire.
+#[cfg(feature = "duckdb")]
+async fn measure_duckdb_inprocess(
+    sql: &str,
+    parquet_tables: &[(String, String)],
+) -> Result<(usize, u128, IoTraceSnapshot), (u128, String)> {
+    use proximadb::query::execution::engine::{QueryExecutionContext, execute_sql_with_backend};
+    use proximadb::query::table_write_plan::ComputeBackend;
+    CAPTURE.lock().expect("lock").clear();
+    let ctx = QueryExecutionContext {
+        parquet_tables: parquet_tables.to_vec(),
+        ..Default::default()
+    };
+    let t0 = Instant::now();
+    // instrument sets the IO_TRACE scope; DuckDbLocalEngine records compute_ms;
+    // instrument emits the snapshot → billing observer → CAPTURE.
+    let sql_owned = sql.to_string();
+    let res = io_trace::instrument(None, "duckdb".to_string(), async move {
+        execute_sql_with_backend(ComputeBackend::DuckDbCompat, &sql_owned, ctx).await
+    })
+    .await;
+    let wall_ms = t0.elapsed().as_millis();
+    // Drain CAPTURE (same 60×5ms poll as `measure`).
+    let mut snap = IoTraceSnapshot::default();
+    for _ in 0..60 {
+        if let Some(s) = CAPTURE.lock().expect("lock").pop() {
+            snap = s;
+            break;
+        }
+        sleep(Duration::from_millis(5)).await;
+    }
+    match res {
+        Ok(r) => Ok((r.rows.len(), wall_ms, snap)),
+        Err(e) => Err((wall_ms, e.to_string())),
+    }
+}
+
 /// DuckDB external baseline (TD-OLAP-4 "external baselines"). When `DUCKDB_BIN`
 /// is set, load the SAME synthetic-tpc data (the `schema` CREATE TABLEs + the
 /// `inserts` — both DuckDB-compatible standard SQL) into a persistent temp
@@ -1336,6 +1403,7 @@ fn push_record(
 /// locate the first depth-0 `WITH (` and drop from there to the end. A `WITH`
 /// inside the column list (depth > 0) is left untouched. DuckDB builds its own
 /// zone maps on load, so the cluster key is irrelevant to the wall-time baseline.
+#[cfg(not(feature = "duckdb"))]
 fn strip_duckdb_incompatible_storage_param(ddl: &str) -> String {
     let lower = ddl.to_ascii_lowercase();
     let Some(rel) = lower.find(" with ") else {
@@ -1354,6 +1422,7 @@ fn strip_duckdb_incompatible_storage_param(ddl: &str) -> String {
     before.trim_end().to_string()
 }
 
+#[cfg(not(feature = "duckdb"))]
 fn run_duckdb_baseline(
     benchmark: &str,
     schema: &[(&str, &str)],
@@ -1520,6 +1589,27 @@ async fn run_benchmark(
             push_record(out, benchmark, id, "datafusion", temperature, r);
         }
     }
+
+    // ADR-059: DuckDB in-process route (post-MATERIALIZE, same parquet, io-traced).
+    // Reads the SAME materialized parquet DataFusion reads (apples-to-apples), via
+    // the in-process DuckDbLocalEngine, io-traced (compute_ms). The CLI fallback
+    // (after shutdown, below) runs only when the `duckdb` feature is OFF.
+    #[cfg(feature = "duckdb")]
+    {
+        let parquet_tables = query_parquet_locations(client).await;
+        if parquet_tables.is_empty() {
+            eprintln!("[{benchmark}] · DuckDB in-process SKIPPED (no parquet locations)");
+        } else {
+            eprintln!(
+                "[{benchmark}] · DuckDB in-process baseline ({} parquet tables)",
+                parquet_tables.len()
+            );
+            for (id, sql) in &queries {
+                let r = measure_duckdb_inprocess(sql, &parquet_tables).await;
+                push_record(out, benchmark, id, "duckdb", "first", r);
+            }
+        }
+    }
 }
 
 async fn connect(server: &PgServer) -> Client {
@@ -1585,13 +1675,16 @@ async fn tpc_perf_ledger_inner() {
         )
         .await;
         server.shutdown().await;
-        run_duckdb_baseline(
-            "tpch",
-            TPCH_SCHEMA,
-            &gen_tpch(scale),
-            &keep_queries(tpch_queries()),
-            &mut records,
-        );
+        #[cfg(not(feature = "duckdb"))]
+        {
+            run_duckdb_baseline(
+                "tpch",
+                TPCH_SCHEMA,
+                &gen_tpch(scale),
+                &keep_queries(tpch_queries()),
+                &mut records,
+            );
+        }
     }
     if benchmark_filter.as_deref().is_none_or(|b| b == "tpcds") {
         let server = PgServer::start().await.expect("server start (tpcds)");
@@ -1606,13 +1699,16 @@ async fn tpc_perf_ledger_inner() {
         )
         .await;
         server.shutdown().await;
-        run_duckdb_baseline(
-            "tpcds",
-            TPCDS_SCHEMA,
-            &gen_tpcds(scale),
-            &keep_queries(tpcds_queries()),
-            &mut records,
-        );
+        #[cfg(not(feature = "duckdb"))]
+        {
+            run_duckdb_baseline(
+                "tpcds",
+                TPCDS_SCHEMA,
+                &gen_tpcds(scale),
+                &keep_queries(tpcds_queries()),
+                &mut records,
+            );
+        }
     }
 
     // Console summary: per benchmark × route, pass count + medians. Native and
