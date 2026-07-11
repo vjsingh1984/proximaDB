@@ -220,6 +220,36 @@ impl UnifiedStorageFormat for SstEngine {
         self.search_vectors_unified(ctx).await
     }
 
+    /// ADR-031 + point-lookup: batch ID-based record retrieval. One
+    /// `read_all_records` scan + ID filter (vs N stub `vector_by_id` calls
+    /// that each returned `None`). Uses the typed data path when identity is
+    /// present (Phase 4d).
+    async fn point_lookup(
+        &self,
+        collection_id: &str,
+        base_path: &str,
+        ids: &[String],
+        identity: Option<crate::core::stable_id::CollectionIdentity>,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        use crate::storage::trait_components::path_resolver::collection_data_path_typed;
+        use std::collections::HashSet;
+
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let data_path = collection_data_path_typed(base_path, collection_id, identity);
+        let all_records = self
+            .read_all_records(collection_id, Some(&data_path))
+            .await?;
+
+        let id_set: HashSet<&str> = ids.iter().map(|s| s.as_str()).collect();
+        Ok(all_records
+            .into_iter()
+            .filter(|r| id_set.contains(r.oid.as_str()))
+            .collect())
+    }
+
     /// Get real collection statistics for cost-based query optimization
     async fn collection_stats(
         &self,
