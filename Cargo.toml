@@ -69,6 +69,7 @@ members = [
     "crates/modalities/proximadb-quantization-kernel",
     "crates/modalities/proximadb-document",
     "crates/modalities/proximadb-observability",
+    "crates/modalities/proximadb-observability-engine",
     "crates/modalities/proximadb-embedding",
     "crates/modalities/proximadb-queue",
     "crates/modalities/proximadb-rank-core",
@@ -217,6 +218,7 @@ proximadb-vector = { path = "crates/modalities/proximadb-vector" }
 proximadb-quantization-kernel = { path = "crates/modalities/proximadb-quantization-kernel" }
 proximadb-document = { path = "crates/modalities/proximadb-document" }
 proximadb-observability = { path = "crates/modalities/proximadb-observability" }
+proximadb-observability-engine = { path = "crates/modalities/proximadb-observability-engine" }
 proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
 proximadb-rank-core = { path = "crates/modalities/proximadb-rank-core" }
 proximadb-rank-features = { path = "crates/modalities/proximadb-rank-features" }
@@ -348,6 +350,7 @@ proximadb-cache = { path = "crates/foundation/proximadb-cache" }
 proximadb-document = { path = "crates/modalities/proximadb-document" }
 proximadb-graph = { path = "crates/modalities/proximadb-graph" }
 proximadb-observability = { path = "crates/modalities/proximadb-observability" }
+proximadb-observability-engine = { path = "crates/modalities/proximadb-observability-engine" }
 proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
 proximadb-queue = { path = "crates/modalities/proximadb-queue" }
 proximadb-rank-core = { path = "crates/modalities/proximadb-rank-core" }
@@ -685,7 +688,7 @@ gcp = ["dep:google-cloud-storage"]
 # durable FileSystem `_metering` writer is ALWAYS compiled (OSS-native, no deps) — only
 # this push path is feature-gated to keep the opentelemetry transitive surface out of
 # default builds. Verify the server binary builds with AND without this feature (#11).
-otlp-metering = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
+otlp-metering = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "proximadb-observability-engine/otlp-metering"]
 
 # ============================================================================
 # OPTIONAL INTEGRATION FEATURES

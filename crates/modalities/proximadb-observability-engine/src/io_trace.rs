@@ -21,7 +21,7 @@
 //!
 //! `IoTrace` captures them. It is bound to the request future as a
 //! [`tokio::task_local!`] — exactly like
-//! [`crate::observability::predicate_diagnostics`] — so any depth of the
+//! [`crate::predicate_diagnostics`] — so any depth of the
 //! storage/engine call stack can record into it without threading a new
 //! parameter through dozens of signatures (the dominant cost of doing this any
 //! other way). At the request boundary the handler wraps the query in

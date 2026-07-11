@@ -6612,6 +6612,7 @@ dependencies = [
  "proximadb-multimodel-query",
  "proximadb-object-store",
  "proximadb-observability",
+ "proximadb-observability-engine",
  "proximadb-observability-query",
  "proximadb-pipeline-operator",
  "proximadb-proto",
@@ -7261,6 +7262,36 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-observability-engine"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "dashmap",
+ "futures",
+ "hex",
+ "lettre",
+ "object_store",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "prometheus",
+ "proximadb-data-model",
+ "proximadb-kernel",
+ "proximadb-records",
+ "proximadb-tenant",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

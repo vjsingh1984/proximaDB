@@ -11,7 +11,7 @@
 // like SURE signals and repair counts so the handler doesn't need to know
 // about every trace field individually.
 
-use crate::observability::search_plan_trace::{
+use crate::search_plan_trace::{
     CacheResult, FailureClass, PredicateShortfall, SearchPlanTrace, SureSignals,
 };
 use proximadb_data_model::IndexStats;
@@ -24,8 +24,8 @@ pub struct TraceBuilderInputs {
     pub tenant_id: String,
     pub collection_name: String,
     /// Plan output produced by `PlanBuilder::build_for_search`.
-    pub filter_strategy: crate::observability::search_plan_trace::FilterStrategy,
-    pub index_route: crate::observability::search_plan_trace::IndexRoute,
+    pub filter_strategy: crate::search_plan_trace::FilterStrategy,
+    pub index_route: crate::search_plan_trace::IndexRoute,
     pub estimated_selectivity: Option<f64>,
     pub gls_score: Option<f64>,
     /// End-to-end wall-time of the search call, in milliseconds.
@@ -129,7 +129,7 @@ fn bytes_to_gib(bytes: u64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observability::search_plan_trace::{FilterStrategy, IndexRoute};
+    use crate::search_plan_trace::{FilterStrategy, IndexRoute};
 
     fn inputs() -> TraceBuilderInputs {
         TraceBuilderInputs {

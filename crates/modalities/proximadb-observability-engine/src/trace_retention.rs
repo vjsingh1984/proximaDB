@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::observability::trace_sampling::TierLabel;
+use crate::trace_sampling::TierLabel;
 
 /// One per-tier retention window.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

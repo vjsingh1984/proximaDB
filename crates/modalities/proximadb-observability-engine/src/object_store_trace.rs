@@ -1,7 +1,7 @@
 //! Query-scoped I/O tracing for `object_store`-backed readers.
 //!
 //! [`TracingObjectStore`] decorates any [`ObjectStore`] and feeds the
-//! per-query [`crate::observability::io_trace`] accumulator (ADR-030 /
+//! per-query [`crate::io_trace`] accumulator (ADR-030 /
 //! TD-158): GET ops, ranged-GET counts, bytes read/written, list/delete ops.
 //! All recording helpers are no-ops outside an `io_trace::scope`, so wrapping
 //! a store is unconditional and free on non-query paths.
@@ -25,7 +25,7 @@ use object_store::{
     Result as ObjectStoreResult,
 };
 
-use crate::observability::io_trace::{self, IoOp, IoTrace};
+use crate::io_trace::{self, IoOp, IoTrace};
 
 /// An [`ObjectStore`] decorator that records every read/write into the
 /// per-query I/O trace.
@@ -204,7 +204,7 @@ impl ObjectStore for TracingObjectStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observability::io_trace::IoTraceSnapshot;
+    use crate::io_trace::IoTraceSnapshot;
     use object_store::ObjectStoreExt;
     use object_store::memory::InMemory;
     use std::sync::Mutex;

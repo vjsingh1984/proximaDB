@@ -31,7 +31,7 @@
 // variant could include collection_name when the SRE wants per-collection
 // grouping — left out of v1 to keep the bucket count manageable.
 
-use crate::observability::search_plan_trace::{
+use crate::search_plan_trace::{
     CacheResult, FailureClass, FilterStrategy, IndexRoute, SearchPlanTrace,
 };
 
@@ -254,7 +254,7 @@ fn failure_class_label(f: &FailureClass) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observability::search_plan_trace::SureSignals;
+    use crate::search_plan_trace::SureSignals;
     use proximadb_data_model::IndexStats;
 
     fn trace_template() -> SearchPlanTrace {
