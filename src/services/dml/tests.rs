@@ -2639,17 +2639,18 @@ async fn materialize_table_writes_parquet_and_flips_catalog_layout() {
     // the namespace's own (rename-stable) `namespace_id`, no legacy fork.
     assert!(
         location.starts_with("memory:///warehouse/data/default_tenant/ns_")
-            && location.ends_with("/inv"),
+            && location.ends_with("/inv/data"),
         "embedded materialize must use the canonical DrPath layout: {location}"
     );
 
-    // The Parquet snapshot landed where the OLAP reader lists `{location}/data/*.parquet`,
-    // and reads back all three rows. Derive the prefix from the resolved location
-    // so the read tracks the real (opaque) namespace_id.
+    // The Parquet snapshot landed where the OLAP reader lists `{location}/*.parquet`
+    // (ADR-059: `location` is the dir where the parquet files are IMMEDIATE
+    // children), and reads back all three rows. Derive the prefix from the
+    // resolved location so the read tracks the real (opaque) namespace_id.
     let prefix = location
         .strip_prefix("memory:///warehouse/")
         .expect("location under warehouse root");
-    let data_object = object_store::path::Path::from(format!("{prefix}/data/part-0.parquet"));
+    let data_object = object_store::path::Path::from(format!("{prefix}/part-0.parquet"));
     let mut stream = bridge
         .read_parquet_batches(
             &data_object,
@@ -2910,7 +2911,7 @@ async fn materialize_drpath_layout_uses_opaque_namespace_id() {
         loc.starts_with("memory:///wh/data/acmecorp/ns_"),
         "drpath layout must use the opaque namespace_id: {loc}"
     );
-    assert!(loc.ends_with("/inv"), "loc={loc}");
+    assert!(loc.ends_with("/inv/data"), "loc={loc}");
     assert!(!loc.contains("default_tenant"), "loc={loc}");
 }
 
