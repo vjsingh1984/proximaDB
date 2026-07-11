@@ -4,7 +4,9 @@
 
 [cols="1,3"]
 |===
-|Status|Open — **Reader ranged read (Layer 1 + Layer 2) LANDED; documents adapter remains.** Owning
+|Status|In progress — **Reader ranged read (Layer 1 + Layer 2) LANDED; documents adapter now IMPLEMENTED**
+(the correct storage-inclusive merge — `DocumentPaxPushdownProvider`, see "Design (implemented)" below).
+Owning
 the reader (rather than waiting on the OLAP workstream) is done. **Layer 1** — `PaxSplitReader`
 fetches a segment via ranged reads: locate the index from a tail suffix → **Stage A** prunes whole
 blocks against the index **zone summary** (canonical columns, no per-block GET) → `read_ranges` only
@@ -148,6 +150,36 @@ unlanded): `RecordRoutePort::pax_scan_inputs` + impl, the `filesystem_factory()`
 type-directed `props`→JSON decode in `PaxSplitReader` (a `Utf8` props field reconstructs the document
 JSON from the msgpack tail, reusing `proxima_tree_to_json_map`). These are prerequisites for the
 correct adapter but are dead code without the merge layer, so they are NOT landed alone.
+
+== ✅ Resolution — the merge layer is built (`DocumentPaxPushdownProvider`, `src/datafusion/document_pax_provider.rs`)
+
+The correctness blocker above is resolved by a storage-inclusive, record-level merge provider that
+consumes the ranged reader for the flushed half:
+
+* **Flushed, pruned** — `PaxSplitReader` (constructed WITH the query's WHERE predicates lowered to
+  `PhysicalExpr`, so `prune_predicates` actually engage; `PaxTableProvider::reader()` passes empty
+  filters and is therefore NOT reused) reads each `.pax` segment ranged under `PROXIMADB_DF_PAX_RANGED`,
+  decoding `id`(col 0) + `updated_at`(3) + `valid_to`(5) + `props`(8, raw msgpack) + the shredded
+  `props__<key>` columns. Props are read as the msgpack tail and reconstructed to the SAME stripped
+  tree the MemTable path serves (reserved `_document_collection`/`_document_type` keys removed), so
+  output is byte-identical.
+* **Unflushed delta** — a new `RecordRoutePort::unflushed_records` returns the RAW WAL/memtable records
+  INCLUDING tombstones and TTL-expired rows (backed by `get_collection_vectors`, NOT the dead-filtering
+  `stream_unflushed_records` — which drops tombstones and so cannot suppress a still-flushed live copy).
+* **Merge** — by `oid` (= the document id; the converged write stamps `oid = record.id`), freshest
+  `updated_at_ns` winning with WAL priority on ties (dedup-by-oid), then the canonical
+  `is_record_dead(valid_to_ns, now_ns)` pass drops tombstoned/expired survivors — this is where a WAL
+  tombstone suppresses the flushed live copy (#16d). Result rows are byte-identical to the `(id, props)`
+  MemTable path plus the shredded typed columns (Option-A schema).
+* **Freshness (#16c)** — the provider always recomputes the WAL delta and never consults the query
+  cache, so it is `Strong` by construction.
+
+Wired at the `documents()` UDTF (`DocumentsTableFunction::from_service_with_tenant` →
+`try_pax_provider`): when `pax_scan_inputs` resolves it serves this provider; otherwise it falls back
+to the `(id, props)` MemTable path (mixed-read-safe, no flag-day). `supports_filters_pushdown = Inexact`
+so the residual `FilterExec` guarantees exactness. Gates: read-after-write, dead-record/tombstone,
+dedup-freshest and shredded-typed-column tests pass (`document_pax_provider::tests`); the measured
+`bytes_read`/`range_gets` byte gate is inherited from the reader's landed ranged tests.
 
 == Design (documents adapter — rides on the ranged reader + the storage-inclusive merge)
 

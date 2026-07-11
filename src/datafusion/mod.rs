@@ -74,6 +74,10 @@ pub mod logical_lowering;
 // DataFusion-joinable table so one SQL plan joins vector similarity with relational data.
 pub mod cross_modal;
 
+// TD-DOC-PUSHDOWN-1 (ADR-055 P-Pushdown): correct, storage-inclusive `documents(collection)` PAX
+// pushdown provider — flushed PAX-pruned scan + unflushed WAL delta + dead-filter/tombstone merge.
+pub mod document_pax_provider;
+
 // F2: registry -> DataFusion scalar-UDF adapter. Binds engine-neutral ProximaFunctionRegistry
 // kernels into DataFusion as ScalarUDFs (native builtins stay the fast path).
 pub mod registry_udf;

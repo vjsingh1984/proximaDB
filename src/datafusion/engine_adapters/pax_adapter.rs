@@ -36,7 +36,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use arrow_array::{ArrayRef, BinaryArray, Float64Array, Int64Array, RecordBatch, StringArray};
-use arrow_schema::SchemaRef;
+use arrow_schema::{DataType, Field, SchemaRef};
 use async_trait::async_trait;
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::execution::SendableRecordBatchStream;
@@ -271,7 +271,7 @@ impl PaxSplitReader {
             let arrays: Vec<ArrayRef> = out_schema
                 .fields()
                 .iter()
-                .map(|f| self.decode_column(&reader, f.name()))
+                .map(|f| self.decode_column(&reader, f))
                 .collect::<DFResult<_>>()?;
             let batch = RecordBatch::try_new(out_schema.clone(), arrays).map_err(|e| {
                 DataFusionError::Execution(format!("PAX ranged batch build failed: {e}"))
@@ -365,7 +365,7 @@ impl PaxSplitReader {
             let arrays: Vec<ArrayRef> = out_schema
                 .fields()
                 .iter()
-                .map(|f| self.decode_column(&reader, f.name()))
+                .map(|f| self.decode_column(&reader, f))
                 .collect::<DFResult<_>>()?;
             let batch = RecordBatch::try_new(out_schema.clone(), arrays)
                 .map_err(|e| DataFusionError::Execution(format!("PAX batch build failed: {e}")))?;
@@ -392,8 +392,12 @@ impl PaxSplitReader {
         self.pruned_by(reader)
     }
 
-    /// Decode one column by its DataFusion name → PAX column_id → typed stripe.
-    fn decode_column(&self, reader: &PaxBlockReader, name: &str) -> DFResult<ArrayRef> {
+    /// Decode one column by its DataFusion field (name → PAX column_id → typed stripe).
+    /// The target Arrow type is type-directed for the `props` tail: a `Utf8` field
+    /// reconstructs the document JSON object from the msgpack tail (the `documents()`
+    /// surface, TD-DOC-PUSHDOWN-1); a `Binary` field emits the raw msgpack bytes.
+    fn decode_column(&self, reader: &PaxBlockReader, field: &Field) -> DFResult<ArrayRef> {
+        let name = field.name();
         let cid = *self
             .name_to_col_id
             .get(name)
@@ -410,6 +414,9 @@ impl PaxSplitReader {
         Ok(match meta.data_type_id {
             0x03 => Arc::new(Int64Array::from(decode_i64(reader, cid, name)?)),
             0x02 => Arc::new(Float64Array::from(decode_f64(reader, cid, name)?)),
+            0xff if meta.role == ColumnRole::Props && field.data_type() == &DataType::Utf8 => {
+                Arc::new(StringArray::from(decode_props_json(reader, cid, name)?))
+            }
             0xff if meta.role == ColumnRole::Props => {
                 Arc::new(BinaryArray::from_iter(decode_bytes(reader, cid, name)?))
             }
@@ -506,6 +513,34 @@ fn decode_bytes(reader: &PaxBlockReader, cid: i32, name: &str) -> DFResult<Vec<O
     reader.decode_bytes_stripe(cid).ok_or_else(|| {
         DataFusionError::Execution(format!("PAX: bytes decode failed for {name} (id {cid})"))
     })
+}
+
+/// Decode the `props` tail (msgpack-serialized [`proximadb_records::ProximaTree`] per row)
+/// into JSON-object strings — the `documents()` surface (TD-DOC-PUSHDOWN-1). Reuses the SAME
+/// `ProximaTree → JSON` mapping the in-memory document scan uses (`proxima_tree_to_json_map`),
+/// so a document read is identical whether served by the PAX scan or the MemTable path. A row
+/// whose msgpack fails to parse yields an empty object (defensive; never panics).
+fn decode_props_json(
+    reader: &PaxBlockReader,
+    cid: i32,
+    name: &str,
+) -> DFResult<Vec<Option<String>>> {
+    use proximadb_records::ProximaTree;
+    Ok(decode_bytes(reader, cid, name)?
+        .into_iter()
+        .map(|opt| {
+            opt.map(|bytes| match rmp_serde::from_slice::<ProximaTree>(&bytes) {
+                Ok(tree) => {
+                    let map: serde_json::Map<String, serde_json::Value> =
+                        crate::core::search::sql_value_filter::proxima_tree_to_json_map(&tree)
+                            .into_iter()
+                            .collect();
+                    serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_default()
+                }
+                Err(_) => "{}".to_string(),
+            })
+        })
+        .collect())
 }
 
 /// `true` iff the block MAY contain a row satisfying `pred` (i.e. NOT pruned).

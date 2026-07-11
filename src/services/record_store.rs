@@ -274,7 +274,7 @@ fn sanitize_object_path_segment(value: &str) -> String {
 }
 
 #[allow(clippy::expect_used)] // DrPathBuilder::build is infallible for this internally-constructed namespace
-fn object_store_write_base_path(
+pub(crate) fn object_store_write_base_path(
     schema: &CatalogTableSchema,
     tenant_context: Option<&TenantContext>,
 ) -> String {

@@ -800,6 +800,33 @@ impl VectorOperationsService {
         Ok(records)
     }
 
+    /// Raw unflushed (WAL/memtable) records for `collection_id`, tenant-filtered but
+    /// **NOT** dead-filtered — tombstones and TTL-expired rows are RETAINED. This is the
+    /// unflushed half of the storage-inclusive document PAX scan (TD-DOC-PUSHDOWN-1): the
+    /// caller merges these with the flushed PAX scan by `oid` (freshest wins, WAL priority)
+    /// and applies the canonical `is_record_dead` pass on the merged set. Retaining
+    /// tombstones here is what lets an unflushed delete suppress a still-flushed live copy
+    /// (invariant #16d) — `stream_unflushed_records` drops tombstones internally and so
+    /// cannot express that cross-source suppression.
+    pub async fn list_unflushed_raw_with_tenant_context(
+        &self,
+        collection_id: &str,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<Vec<ProximaRecord>> {
+        self.validate_tenant_collection_access(collection_id, tenant_context)
+            .await?;
+        let mut records = self
+            .wal_manager
+            .get_collection_vectors(collection_id)
+            .await?;
+        if let Some(tenant_context) = tenant_context {
+            records.retain(|record| {
+                record.tenant_id.is_empty() || record.tenant_id == tenant_context.tenant_id
+            });
+        }
+        Ok(records)
+    }
+
     /// Paginated record scan (TD-099(3d) push-down). Returns up to `limit`
     /// records with canonical key `(updated_at_ns, oid)` strictly greater than
     /// `cursor`, in ascending order, plus the next cursor (when the page is
