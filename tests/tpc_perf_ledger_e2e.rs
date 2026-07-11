@@ -1324,7 +1324,7 @@ fn push_record(
 /// `location` (the catalog-introspection `location` column), so the in-process
 /// DuckDB engine reads the SAME parquet DataFusion reads (apples-to-apples).
 #[cfg(feature = "duckdb")]
-async fn query_parquet_locations(client: &Client) -> Vec<(String, String)> {
+async fn query_parquet_locations(client: &Client, table_names: &[&str]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let Ok(msgs) = client
         .simple_query("SELECT * FROM xcatalog.table_routing")
@@ -1338,7 +1338,9 @@ async fn query_parquet_locations(client: &Client) -> Vec<(String, String)> {
             // location = col 12 (the last, added by ADR-059).
             let name = row.get(2).unwrap_or_default().to_string();
             let loc = row.get(12).unwrap_or_default().to_string();
-            if !loc.is_empty() {
+            // Only the benchmark's tables (filter out system/internal tables
+            // whose locations may be invalid → would break the DuckDB session).
+            if !loc.is_empty() && table_names.contains(&name.as_str()) {
                 out.push((name, loc));
             }
         }
@@ -1596,7 +1598,8 @@ async fn run_benchmark(
     // (after shutdown, below) runs only when the `duckdb` feature is OFF.
     #[cfg(feature = "duckdb")]
     {
-        let parquet_tables = query_parquet_locations(client).await;
+        let table_names: Vec<&str> = schema.iter().map(|(n, _)| *n).collect();
+        let parquet_tables = query_parquet_locations(client, &table_names).await;
         if parquet_tables.is_empty() {
             eprintln!("[{benchmark}] · DuckDB in-process SKIPPED (no parquet locations)");
         } else {
