@@ -72,6 +72,10 @@ impl PgServer {
         config.server.bind_address = "127.0.0.1".to_string();
         config.server.port = rest_port;
         config.server.data_dir = tmp.path().to_path_buf();
+        // ADR-059: the catalog metadata_url MUST be per-tempdir — the default
+        // ("file://./metadata") is a FIXED relative path that persists across
+        // test runs, carrying stale table locations from previous tempdirs.
+        config.storage.metadata_url = format!("file://{}/metadata", tmp.path().display());
         config.api.rest_port = rest_port;
         config.api.grpc_port = grpc_port;
         config.api.unified_mode = false;
