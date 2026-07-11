@@ -9,9 +9,9 @@
 /// Input adapters for multiple ingestion formats (OTLP, Syslog, CEF/LEEF, etc.).
 pub mod adapters;
 /// Lock-free ring buffer for high-throughput event buffering.
-pub mod buffer;
+pub use proximadb_observability_engine::ingestion::buffer;
 /// Log parser for converting raw input into structured log entries.
-pub mod parser;
+pub use proximadb_observability_engine::ingestion::parser;
 
 use std::sync::Arc;
 

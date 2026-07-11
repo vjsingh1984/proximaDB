@@ -9,11 +9,11 @@
 /// Log query builder, filtering, aggregation, and pattern detection.
 pub mod logs;
 /// Metric query builder with time-series aggregation functions.
-pub mod metrics;
+pub use proximadb_observability_engine::query::metrics;
 /// PromQL-compatible query language parser and executor.
-pub mod promql;
+pub use proximadb_observability_engine::query::promql;
 /// Full-text log search powered by Tantivy with BM25 ranking.
-pub mod tantivy_log_index;
+pub use proximadb_observability_engine::query::tantivy_log_index;
 /// Trace query engine for distributed tracing analysis.
 pub mod traces;
 
