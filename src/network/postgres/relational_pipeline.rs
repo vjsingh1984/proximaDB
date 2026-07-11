@@ -30,7 +30,7 @@ use crate::query::execution::{
 };
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
-use proximadb_data_model::{ProximaType, ProximaValue};
+use proximadb_data_model::{ProximaType, ProximaValue, StatsTrust};
 use proximadb_functions::builtins;
 use proximadb_relational_algebra::TableId;
 use proximadb_relational_engine::{
@@ -555,8 +555,20 @@ pub async fn try_run_select(
             .iter()
             .map(|(k, t)| (t.table_name.clone(), parquet_loc_by_key[k].clone()))
             .collect();
+        // ADR-058 D5/§9.A: per-table footer-stats trust, keyed by table_name
+        // (matching `parquet_tables`), derived from `parquet_trust_by_key`
+        // (keyed by the canonical table key). Drives adapter elision gating.
+        let parquet_table_trust: HashMap<String, StatsTrust> = tables
+            .iter()
+            .filter_map(|(k, t)| {
+                parquet_trust_by_key
+                    .get(k)
+                    .map(|tr| (t.table_name.clone(), *tr))
+            })
+            .collect();
         let context = QueryExecutionContext {
             parquet_tables,
+            parquet_table_trust,
             vector_ops,
             graph_ops,
             tenant_id: tenant.map(str::to_string),
@@ -1235,24 +1247,6 @@ fn catalog_table_is_parquet_backed(
             None
         }
     })
-}
-
-/// ADR-058 D5 / §9.A — trust level for a parquet table's FOOTER STATISTICS
-/// (row_count / null_count / min-max). Footer-stats elision (answering
-/// COUNT/MIN/MAX from the footer instead of scanning) is only sound when
-/// ProximaDB wrote the footer; an external/federated writer's footer may carry
-/// stale or absent stats, so eliding from it can return a WRONG aggregate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum StatsTrust {
-    /// ProximaDB generated the parquet (materialized `ProjectionPublication`,
-    /// `ExportedPublication`, or a WAL-owned authority) ⇒ footer stats are
-    /// authoritative ⇒ elision is sound.
-    Trusted,
-    /// External/federated/imported authority (`FederatedRead` /
-    /// `ExternalAuthoritative` / `ImportedSnapshot`) — the writer is not ProximaDB,
-    /// so footer stats are NOT trusted ⇒ elision is disabled; aggregate via the
-    /// trust-safe value-scan path (`ParquetScanOperator::new`).
-    Untrusted,
 }
 
 /// Derive a parquet table's [`StatsTrust`] from its catalog authority. The ONLY

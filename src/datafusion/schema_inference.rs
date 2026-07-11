@@ -112,7 +112,17 @@ pub fn statistics_from_splits(
     schema: &ArrowSchema,
     collection: Option<&str>,
     include_value_bounds: bool,
+    stats_trust: proximadb_data_model::StatsTrust,
 ) -> Statistics {
+    // ADR-058 D5/§9.A: Untrusted (external/federated) parquet ⇒ do NOT surface
+    // footer stats as Exact. The writer's footer may be stale or absent, so
+    // eliding COUNT/MIN/MAX from it could return a WRONG aggregate. Return all
+    // Absent so DataFusion's AggregateStatistics declines to elide (scans real
+    // column data instead). Trusted (ProximaDB-generated) ⇒ the footer is
+    // authoritative ⇒ fall through to Exact elision.
+    if matches!(stats_trust, proximadb_data_model::StatsTrust::Untrusted) {
+        return Statistics::new_unknown(schema);
+    }
     let mut num_rows = 0usize;
     let mut any_rows = false;
     let mut total_bytes = 0usize;
@@ -626,7 +636,13 @@ mod tests {
             ),
         ];
 
-        let stats = statistics_from_splits(&splits, &schema, None, true);
+        let stats = statistics_from_splits(
+            &splits,
+            &schema,
+            None,
+            true,
+            proximadb_data_model::StatsTrust::Trusted,
+        );
 
         assert_eq!(stats.num_rows, Precision::Exact(5));
         assert_eq!(stats.total_byte_size, Precision::Inexact(300));
@@ -674,7 +690,13 @@ mod tests {
             split_with_bounds(2, 10, &[]),
         ];
 
-        let stats = statistics_from_splits(&splits, &schema, None, true);
+        let stats = statistics_from_splits(
+            &splits,
+            &schema,
+            None,
+            true,
+            proximadb_data_model::StatsTrust::Trusted,
+        );
         let x = &stats.column_statistics[0];
         assert_eq!(x.min_value, Precision::Absent);
         assert_eq!(x.max_value, Precision::Absent);
@@ -698,7 +720,13 @@ mod tests {
             &[("x", serde_json::json!(0), serde_json::json!(63), 0)],
         )];
 
-        let stats = statistics_from_splits(&splits, &schema, Some(collection), true);
+        let stats = statistics_from_splits(
+            &splits,
+            &schema,
+            Some(collection),
+            true,
+            proximadb_data_model::StatsTrust::Trusted,
+        );
         crate::core::statistics::statistics_registry().remove(collection);
 
         match stats.column_statistics[0].distinct_count {
@@ -723,7 +751,13 @@ mod tests {
             &[("x", serde_json::json!(1), serde_json::json!(2), 3)],
         )];
 
-        let stats = statistics_from_splits(&splits, &schema, None, false);
+        let stats = statistics_from_splits(
+            &splits,
+            &schema,
+            None,
+            false,
+            proximadb_data_model::StatsTrust::Trusted,
+        );
         let x = &stats.column_statistics[0];
         // Bounds suppressed (the recursive interval-analysis trigger)…
         assert_eq!(x.min_value, Precision::Absent);
@@ -755,7 +789,13 @@ mod tests {
             ],
         )];
 
-        let stats = statistics_from_splits(&splits, &schema, None, true);
+        let stats = statistics_from_splits(
+            &splits,
+            &schema,
+            None,
+            true,
+            proximadb_data_model::StatsTrust::Trusted,
+        );
 
         let f = &stats.column_statistics[0];
         assert_eq!(
@@ -786,7 +826,13 @@ mod tests {
                 ("name", serde_json::json!("a"), serde_json::json!("b"), 0),
             ],
         )];
-        let full = statistics_from_splits(&splits, &schema, None, true);
+        let full = statistics_from_splits(
+            &splits,
+            &schema,
+            None,
+            true,
+            proximadb_data_model::StatsTrust::Trusted,
+        );
 
         let projected = project_statistics(&full, Some(&[1]));
         assert_eq!(projected.column_statistics.len(), 1);

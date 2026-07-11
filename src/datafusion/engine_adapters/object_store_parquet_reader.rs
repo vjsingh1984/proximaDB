@@ -536,6 +536,12 @@ pub struct ObjectStoreParquetTable {
     /// key-column materialization because they let pruning happen from metadata
     /// without reading the data column first.
     row_group_bloom_cache: Arc<Mutex<RowGroupBloomCache>>,
+    /// ADR-058 D5/§9.A: trust level for this table's parquet footer stats.
+    /// `Trusted` (default — ProximaDB wrote the footer) ⇒ `statistics_from_splits`
+    /// may surface footer row_count/null_count/min-max as `Precision::Exact` for
+    /// DataFusion's `AggregateStatistics` elision. `Untrusted` (external/federated)
+    /// ⇒ stats are surfaced as `Precision::Absent` so COUNT/MIN/MAX scan.
+    stats_trust: proximadb_data_model::StatsTrust,
 }
 
 impl ObjectStoreParquetTable {
@@ -631,6 +637,7 @@ impl ObjectStoreParquetTable {
             table_name: None,
             split_key_cache: Arc::new(Mutex::new(HashMap::new())),
             row_group_bloom_cache: Arc::new(Mutex::new(HashMap::new())),
+            stats_trust: proximadb_data_model::StatsTrust::Trusted,
         })
     }
 
@@ -664,6 +671,7 @@ impl ObjectStoreParquetTable {
             // Per-query caches start empty (#742) — the table-OPEN cache reuses the
             // immutable footer discovery, not these query-time bloom/key caches.
             row_group_bloom_cache: Arc::new(Mutex::new(HashMap::new())),
+            stats_trust: proximadb_data_model::StatsTrust::Trusted,
         })
     }
 
@@ -693,6 +701,16 @@ impl ObjectStoreParquetTable {
     /// so [`TableProvider::statistics`] can overlay the HLL NDV estimate).
     pub fn with_table_name(mut self, name: impl Into<String>) -> Self {
         self.table_name = Some(name.into());
+        self
+    }
+
+    /// ADR-058 D5/§9.A: set this table's footer-stats trust level. Called at
+    /// registration with the per-table trust derived from the catalog authority
+    /// (`Trusted` for ProximaDB-generated parquet, `Untrusted` for
+    /// external/federated). Controls whether `statistics_from_splits` may
+    /// surface footer stats as `Precision::Exact` for AggregateStatistics elision.
+    pub fn with_stats_trust(mut self, trust: proximadb_data_model::StatsTrust) -> Self {
+        self.stats_trust = trust;
         self
     }
 
@@ -1054,6 +1072,7 @@ impl TableProvider for ObjectStoreParquetTable {
             &self.schema,
             self.table_name.as_deref(),
             df_stats_value_bounds_enabled(),
+            self.stats_trust,
         ))
     }
 
@@ -1085,6 +1104,7 @@ impl TableProvider for ObjectStoreParquetTable {
                 &self.schema,
                 self.table_name.as_deref(),
                 df_stats_value_bounds_enabled(),
+                self.stats_trust,
             ),
             projection.map(|p| p.as_slice()),
         );
@@ -1312,14 +1332,18 @@ pub async fn register_object_store_parquet_location(
     name: &str,
     location: &str,
     tenant: Option<&str>,
+    stats_trust: proximadb_data_model::StatsTrust,
 ) -> DFResult<Arc<ObjectStoreParquetTable>> {
     // Table-OPEN cache (TD-OLAP-4): on a hit, skip LIST + HEAD + footer discovery
     // and rebuild the table from cached metadata + a fresh per-query traced store.
     // Gated default-OFF; the cache is a pure function of the immutable snapshot,
     // invalidated on re-MATERIALIZE.
     if let Some(disc) = super::table_open_cache::get(tenant, location) {
-        let table =
-            Arc::new(ObjectStoreParquetTable::from_cached(&disc, location)?.with_table_name(name));
+        let table = Arc::new(
+            ObjectStoreParquetTable::from_cached(&disc, location)?
+                .with_table_name(name)
+                .with_stats_trust(stats_trust),
+        );
         ctx.register_table(name, table.clone())?;
         crate::observability::io_trace::record_table_open(true);
         return Ok(table);
@@ -1328,7 +1352,8 @@ pub async fn register_object_store_parquet_location(
     let table = Arc::new(
         ObjectStoreParquetTable::open(location)
             .await?
-            .with_table_name(name),
+            .with_table_name(name)
+            .with_stats_trust(stats_trust),
     );
     super::table_open_cache::insert(tenant, location, table.discovery());
     crate::observability::io_trace::record_table_open(false);
@@ -1491,7 +1516,13 @@ mod tests {
         );
 
         // With bounds enabled: min-of-mins / max-of-maxes across row groups.
-        let full = statistics_from_splits(&table.splits, &table.schema, None, true);
+        let full = statistics_from_splits(
+            &table.splits,
+            &table.schema,
+            None,
+            true,
+            proximadb_data_model::StatsTrust::Trusted,
+        );
         let k = &full.column_statistics[0];
         assert_eq!(
             k.min_value,
@@ -1526,9 +1557,15 @@ mod tests {
 
         let location = format!("file://{}", tmp.path().display());
         let ctx = SessionContext::new();
-        register_object_store_parquet_location(&ctx, "t", &location, None)
-            .await
-            .unwrap();
+        register_object_store_parquet_location(
+            &ctx,
+            "t",
+            &location,
+            None,
+            proximadb_data_model::StatsTrust::Trusted,
+        )
+        .await
+        .unwrap();
 
         // Row group 1 holds x ∈ {1,2}; row group 2 holds x ∈ {100,101}.
         let df = ctx.sql("SELECT x FROM t WHERE x > 50").await.unwrap();
@@ -1967,9 +2004,15 @@ mod tests {
                 let ctx = SessionContext::new();
                 // Register (wraps the store) INSIDE the scope so the io_trace
                 // handle is captured for spawned-partition reads.
-                register_object_store_parquet_location(&ctx, "t", location, None)
-                    .await
-                    .unwrap();
+                register_object_store_parquet_location(
+                    &ctx,
+                    "t",
+                    location,
+                    None,
+                    proximadb_data_model::StatsTrust::Trusted,
+                )
+                .await
+                .unwrap();
                 let batches = ctx.sql(query).await.unwrap().collect().await.unwrap();
                 let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
                 let snap = io_trace::snapshot().expect("snapshot inside scope");
