@@ -14,6 +14,7 @@ use super::quantization_engine::{
     UnifiedQuantizationEngine, UnifiedQuantizationLevel,
 };
 use proximadb_distance_kernel::engine::{DistanceMetric, UnifiedDistanceCompute};
+use proximadb_storage_ports::StorageQuantizationEnginePort;
 // Note: create_distance_calculator is available but not currently used
 // use proximadb_distance_kernel::create_distance_calculator;
 use proximadb_hardware::{SimdLevel, best_simd_level};
@@ -1521,5 +1522,34 @@ mod tests {
         let original_size = vectors.len() * vectors[0].len() * 4;
         let savings = engine.calculate_savings(original_size, &quantized);
         assert!(savings > 0.2); // Should have at least 20% savings (relaxed for simple test vectors)
+    }
+}
+
+// Slice D — StorageQuantizationEnginePort impl: exposes the collection-aware batch
+// quantize/dequantize surface as a storage dependency-inversion port so `src/storage`
+// can hold `Arc<dyn StorageQuantizationEnginePort>` instead of the concrete engine.
+// Facade-FREE: all return types (Vec<StorageQuantizedData>, Vec<f32>) + params
+// (UnifiedQuantizationLevel, &QuantizedVector) are foundation types (moved by #842).
+// Fully-qualified calls delegate to the inherent methods (no recursion).
+#[async_trait::async_trait]
+impl StorageQuantizationEnginePort for StorageQuantizationEngine {
+    async fn quantize_batch(
+        &self,
+        vectors: &[Vec<f32>],
+        ids: Option<&[String]>,
+    ) -> Result<Vec<StorageQuantizedData>> {
+        StorageQuantizationEngine::quantize_batch(self, vectors, ids).await
+    }
+
+    async fn quantize_batch_with_level(
+        &self,
+        vectors: &[Vec<f32>],
+        level: UnifiedQuantizationLevel,
+    ) -> Result<Vec<StorageQuantizedData>> {
+        StorageQuantizationEngine::quantize_batch_with_level(self, vectors, level).await
+    }
+
+    async fn dequantize(&self, quantized: &QuantizedVector) -> Result<Vec<f32>> {
+        StorageQuantizationEngine::dequantize(self, quantized).await
     }
 }

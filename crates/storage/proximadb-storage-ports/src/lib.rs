@@ -123,3 +123,40 @@ pub trait GraphOperationsPort: Send + Sync {
         request: proximadb_proto::proximadb_v1::CreateGraphRequest,
     ) -> Result<std::sync::Arc<proximadb_proto::proximadb_v1::GraphCollection>>;
 }
+
+use proximadb_quantization_model::{
+    QuantizedVector, StorageQuantizedData, UnifiedQuantizationLevel,
+};
+
+/// Collection-aware batch quantization + dequantization that storage's
+/// write/compaction/search paths need.
+///
+/// Inverts `StorageQuantizationEngine` (modality-tier kernel): storage holds an
+/// `Arc<dyn StorageQuantizationEnginePort>` and never names the concrete engine.
+/// The return types (`Vec<StorageQuantizedData>`, `Vec<f32>`) and params
+/// (`UnifiedQuantizationLevel`, `&QuantizedVector`) are all foundation types
+/// (moved by #842) → **facade-FREE** (no DTO/adaptor layer).
+///
+/// The concrete `StorageQuantizationEngine` `impl`s this in its own crate (a
+/// downward dep — modality→storage-ports is layering-allowed). The composition
+/// root injects the impl. Training (`train(&mut self)`) is NOT on the port
+/// (it's `&mut self`, not object-safe) — training happens before injection.
+#[async_trait::async_trait]
+pub trait StorageQuantizationEnginePort: Send + Sync {
+    /// Quantize a batch of vectors using the engine's configured levels.
+    async fn quantize_batch(
+        &self,
+        vectors: &[Vec<f32>],
+        ids: Option<&[String]>,
+    ) -> Result<Vec<StorageQuantizedData>>;
+
+    /// Quantize a batch with a specific level override.
+    async fn quantize_batch_with_level(
+        &self,
+        vectors: &[Vec<f32>],
+        level: UnifiedQuantizationLevel,
+    ) -> Result<Vec<StorageQuantizedData>>;
+
+    /// Dequantize a vector back to approximate float values.
+    async fn dequantize(&self, quantized: &QuantizedVector) -> Result<Vec<f32>>;
+}

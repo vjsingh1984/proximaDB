@@ -18,6 +18,10 @@ anyhow.workspace = true
 async-trait.workspace = true
 proximadb-proto.workspace = true
 proximadb-storage-common.workspace = true
+# Foundation-tier: the StorageQuantizationEnginePort returns these data types
+# (Vec<StorageQuantizedData>, &QuantizedVector, UnifiedQuantizationLevel) — moved to
+# foundation by #842, so the port is facade-FREE (no DTO/adaptor layer).
+proximadb-quantization-model.workspace = true
 
 [lints]
 workspace = true
