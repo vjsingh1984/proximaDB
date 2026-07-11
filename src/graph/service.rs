@@ -3541,13 +3541,13 @@ mod tests {
 #[async_trait::async_trait]
 impl proximadb_storage_ports::GraphOperationsPort for GraphOperationsService {
     async fn list_graphs(&self) -> anyhow::Result<Vec<String>> {
-        GraphOperationsService::list_graphs(self).await
+        Ok(GraphOperationsService::list_graphs(self).await?)
     }
 
     async fn create_graph_collection(
         &self,
         request: proximadb_proto::proximadb_v1::CreateGraphRequest,
     ) -> anyhow::Result<std::sync::Arc<proximadb_proto::proximadb_v1::GraphCollection>> {
-        GraphOperationsService::create_graph_collection(self, request).await
+        Ok(GraphOperationsService::create_graph_collection(self, request).await?)
     }
 }

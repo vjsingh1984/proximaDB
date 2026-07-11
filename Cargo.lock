@@ -7907,8 +7907,13 @@ dependencies = [
 name = "proximadb-tenant"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "proximadb-proto",
  "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

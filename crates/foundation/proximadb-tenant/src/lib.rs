@@ -397,3 +397,12 @@ pub struct TenantStorageUsage {
 }
 
 // ============================================================================
+
+// ============================================================================
+// Tenant tier system (moved from src/catalog/tenant_tier.rs — Slice D).
+// ============================================================================
+pub mod tenant_tier_types;
+pub use tenant_tier_types::{
+    FeatureFlags, ObjectEconomyQuantizationCeiling, TenantTierRecord, Tier,
+    TierObjectEconomyConfig, tier_config,
+};
