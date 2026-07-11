@@ -62,12 +62,14 @@ fn run_duckdb(
     let conn = duckdb::Connection::open_in_memory()
         .map_err(|e| ExecutionError::Execution(format!("duckdb open: {e}")))?;
     // Register each parquet table as a view over `read_parquet` — DuckDB reads
-    // the SAME materialized parquet ProximaDB wrote (same data; no re-load).
+    // the SAME materialized parquet ProximaDB wrote (same data; no re-load). The
+    // `location` is the table's base directory (the catalog API contract — like
+    // Hive/Unity/Polaris: the reader scans immediate parquet files in it,
+    // skipping commit-style files `_`/`.` prefixed; partitioned layouts use
+    // `colname=value/` subdirs). NOT a recursive glob.
     for (name, location) in &context.parquet_tables {
-        // Quote the view name + single-quote the location (object-store URL/path).
-        // `name`/`location` are ProximaDB-controlled (catalog + materialize), not
-        // user input, so interpolation is safe here.
-        let ddl = format!("CREATE VIEW \"{name}\" AS SELECT * FROM read_parquet('{location}')");
+        let base = location.trim_end_matches('/');
+        let ddl = format!("CREATE VIEW \"{name}\" AS SELECT * FROM read_parquet('{base}')");
         conn.execute_batch(&ddl)
             .map_err(|e| ExecutionError::Execution(format!("duckdb register {name}: {e}")))?;
     }
