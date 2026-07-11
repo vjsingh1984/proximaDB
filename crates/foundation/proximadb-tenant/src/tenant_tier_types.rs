@@ -1,4 +1,6 @@
 // Tenant tier store — durable tier policy for multi-tenant SaaS enforcement.
+use serde::{Deserialize, Serialize};
+
 //
 // Holds the per-tenant policy that the LLD §3 planner and the §4 router both
 // consult on every search:
@@ -14,15 +16,7 @@
 // (defaults to `proximadb_tenant_tier`). Callers depend on `TenantTierStore`,
 // not the concrete backing, so the swap is transparent.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
-
-use anyhow::Result;
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
-use tracing::{debug, warn};
+use std::sync::OnceLock;
 
 // ── Tier config (compile-time baseline + runtime overlay) ───────────────────
 //
@@ -74,7 +68,7 @@ pub struct TierConfig {
 }
 
 #[derive(Debug, Deserialize)]
-struct TierSpec {
+pub struct TierSpec {
     id: String,
     prom_label: String,
     soft_caps: TierSoftCaps,
