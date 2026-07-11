@@ -994,6 +994,103 @@ pub(crate) fn lower_physical(
     })
 }
 
+// ADR-058 D1 — the *declared* capability of the native vectorized path: a
+// shallow classification of which `PhysicalPlan` node variants the engine can
+// lower. This is the single source of truth for "can native-vectorized handle
+// this plan shape?" so the capability is stated once (and re-asserted by the
+// drift test below), rather than re-derived by each caller.
+//
+// **Sound one-way filter:** a [`SupportLevel::Partial`] verdict GUARANTEES
+// [`lower_physical`] declines — every [`SupportReason`] mirrors a concrete
+// decline in `walk`/`lower_join`. [`SupportLevel::Full`] does NOT guarantee
+// success: deeper constraints (distinct aggregates, non-column projections,
+// equi-key extractability, scan-source availability, `MAX_WALK_DEPTH`) are
+// checked only during lowering. Callers may safely short-circuit on `Partial`;
+// on `Full` they must still attempt the lowering.
+#[derive(Debug, Clone)]
+pub(crate) enum SupportLevel {
+    /// Every node variant on every path is in the supported set.
+    Full,
+    /// At least one unsupported node (or structural red-flag); carries the reasons.
+    Partial(Vec<SupportReason>),
+}
+
+/// Why the vectorized path does not support a plan. Each variant mirrors a
+/// concrete decline site in the lowering (`walk`/`lower_join`) — see the drift
+/// test `vectorized_supports_drift_matches_lowering`.
+#[derive(Debug, Clone)]
+pub(crate) enum SupportReason {
+    /// A `PhysicalPlan` variant the vectorized lowering does not handle
+    /// ("Sort", "Distinct", "Union", "SetOp", "AssertMaxOneRow") — `walk`'s
+    /// catch-all declines it.
+    UnsupportedNode(&'static str),
+    /// `Aggregate` with a `HAVING` clause — the native `HashAggregate` has no
+    /// post-filter pass (`walk`'s Aggregate arm declines on `having.is_some()`).
+    AggregateHaving,
+    /// Two `Limit` nodes on one walk-path — the second is nested (`walk`'s Limit
+    /// arm declines when `w.limit` is already set).
+    NestedLimit,
+}
+
+impl SupportReason {
+    /// Short tracing label — reads the carried node name for `UnsupportedNode`
+    /// so the reason is observable in the decline log (not only via `Debug`).
+    pub(crate) fn as_label(&self) -> &'static str {
+        match self {
+            SupportReason::UnsupportedNode(node) => node,
+            SupportReason::AggregateHaving => "AggregateHaving",
+            SupportReason::NestedLimit => "NestedLimit",
+        }
+    }
+}
+
+/// Classify a plan's support for the native vectorized path. Walks the same
+/// node set `walk`/`lower_join` handle. `limit_count` is reset at each `Join`
+/// (each side is lowered independently by `lower_join`, with its own limit slot).
+pub(crate) fn vectorized_supports(plan: &PhysicalPlan) -> SupportLevel {
+    let mut reasons = Vec::new();
+    classify_support(plan, 0, &mut reasons);
+    if reasons.is_empty() {
+        SupportLevel::Full
+    } else {
+        SupportLevel::Partial(reasons)
+    }
+}
+
+fn classify_support(plan: &PhysicalPlan, limit_count: u8, reasons: &mut Vec<SupportReason>) {
+    match plan {
+        PhysicalPlan::Values { .. } | PhysicalPlan::Scan { .. } => {}
+        PhysicalPlan::Filter { input, .. } | PhysicalPlan::Project { input, .. } => {
+            classify_support(input, limit_count, reasons);
+        }
+        PhysicalPlan::Aggregate { input, having, .. } => {
+            if having.is_some() {
+                reasons.push(SupportReason::AggregateHaving);
+            }
+            classify_support(input, limit_count, reasons);
+        }
+        PhysicalPlan::Limit { input, .. } => {
+            if limit_count >= 1 {
+                reasons.push(SupportReason::NestedLimit);
+            }
+            classify_support(input, limit_count + 1, reasons);
+        }
+        // `Join` is lowered by `lower_join`, which walks each side independently
+        // (fresh limit slot per side) — reset the counter at the join boundary.
+        PhysicalPlan::Join { left, right, .. } => {
+            classify_support(left, 0, reasons);
+            classify_support(right, 0, reasons);
+        }
+        PhysicalPlan::Sort { .. } => reasons.push(SupportReason::UnsupportedNode("Sort")),
+        PhysicalPlan::Distinct { .. } => reasons.push(SupportReason::UnsupportedNode("Distinct")),
+        PhysicalPlan::AssertMaxOneRow { .. } => {
+            reasons.push(SupportReason::UnsupportedNode("AssertMaxOneRow"));
+        }
+        PhysicalPlan::Union { .. } => reasons.push(SupportReason::UnsupportedNode("Union")),
+        PhysicalPlan::SetOp { .. } => reasons.push(SupportReason::UnsupportedNode("SetOp")),
+    }
+}
+
 /// Convert a [`Walked`] (source + OpSpec chain) into a concrete operator chain
 /// + the trailing `Limit`. Extracted so `lower_join` can reuse it for each side.
 fn walked_to_operators(walked: Walked) -> (Vec<Box<dyn ExecutionOperator>>, Option<LimitSpec>) {
@@ -2421,6 +2518,53 @@ mod tests {
     }
 
     // --- Join routing through lower_physical (ADR-054 Phase 3 routing) ---
+
+    /// ADR-058 D1 drift guard: `vectorized_supports` must agree with
+    /// `lower_physical` — if the descriptor marks a plan `Partial`, the lowering
+    /// MUST decline (sound one-way filter); if `Full`, the lowering MAY succeed.
+    /// Prevents the declared capability from drifting from the actual lowering.
+    #[test]
+    fn vectorized_supports_drift_matches_lowering() {
+        use proximadb_relational_types::ColumnInfo;
+        let schema = RelationalSchema::new(vec![ColumnInfo::new("k", ProximaType::Int64, true)]);
+        let values_leaf = || PhysicalPlan::Values {
+            rows: vec![vec![Expr::Literal {
+                value: ProximaValue::Int64(1),
+                ty: ProximaType::Int64,
+            }]],
+            output_schema: schema.clone(),
+        };
+
+        // Full: a bare Values leaf is fully supported, and the lowering succeeds.
+        assert!(matches!(
+            vectorized_supports(&values_leaf()),
+            SupportLevel::Full
+        ));
+        assert!(lower_physical(&values_leaf(), None).is_ok());
+
+        // Partial (NestedLimit): two Limits on one path → the descriptor flags
+        // it AND the lowering declines. Proves the one-way invariant.
+        let nested = PhysicalPlan::Limit {
+            input: Box::new(PhysicalPlan::Limit {
+                input: Box::new(values_leaf()),
+                limit: Some(10),
+                offset: 0,
+            }),
+            limit: Some(5),
+            offset: 0,
+        };
+        match vectorized_supports(&nested) {
+            SupportLevel::Partial(rs) => assert!(
+                rs.iter().any(|r| matches!(r, SupportReason::NestedLimit)),
+                "expected NestedLimit reason, got {rs:?}"
+            ),
+            SupportLevel::Full => panic!("nested Limit must be classified Partial"),
+        }
+        assert!(
+            lower_physical(&nested, None).is_err(),
+            "nested Limit must be declined by the lowering"
+        );
+    }
 
     #[tokio::test]
     async fn join_routes_through_lower_physical() {
