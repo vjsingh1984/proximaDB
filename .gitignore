@@ -21,12 +21,12 @@
 *.dylib
 
 # Test binaries
-*-test
-*-test.exe
+/*-test  # root-anchored: avoid matching source test dirs
+/*-test.exe
 
 # Benchmark binaries
-*-bench
-*-bench.exe
+/*-bench  # root-anchored: was catching the proximadb-recall-bench crate
+/*-bench.exe
 
 # Workspace benchmark application source
 !apps/proximadb-bench/
@@ -280,7 +280,7 @@ cobertura.xml
 # Test data directories
 test_100k_*/
 test_10k_*/
-test_*/
+/test_*/  # root-anchored: was catching tests/tdd/test_utils source
 tests_new/
 # misc/  # Uncommented to allow tracking misc folder
 obsolete/
