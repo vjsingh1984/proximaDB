@@ -7,6 +7,8 @@
 
 pub mod datafusion_bridge;
 pub mod datafusion_engine;
+#[cfg(feature = "duckdb")]
+pub mod duckdb_engine;
 pub mod engine;
 
 pub mod executor;
