@@ -1247,11 +1247,21 @@ fn matches_filter(value: &str, filter: Option<&str>) -> bool {
 }
 
 fn primary_layout(schema: &CatalogTableSchema) -> Option<&crate::catalog::CatalogStorageLayout> {
+    // Prefer the materialized Parquet layout (ProjectionPublication) — it has
+    // the correct `location` (the data dir where parquet is immediate, per
+    // ADR-059). The original "primary" layout may have a stale/empty location.
     schema
         .storage_layouts
         .iter()
         .rev()
-        .find(|layout| layout.name == "primary")
+        .find(|l| l.physical_format == crate::catalog::CatalogPhysicalFormat::Parquet)
+        .or_else(|| {
+            schema
+                .storage_layouts
+                .iter()
+                .rev()
+                .find(|l| l.name == "primary")
+        })
         .or_else(|| schema.storage_layouts.first())
 }
 
