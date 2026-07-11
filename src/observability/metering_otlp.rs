@@ -27,7 +27,7 @@
 //! (proximaDB's own KSU/KRU/… semantics) but the *seam* is the OTLP standard, so
 //! any collector (Grafana/Datadog/AnvaiOps) reads it without bespoke glue.
 
-use crate::metrics::consumption_metrics::TenantStorageUsage;
+use proximadb_tenant::TenantStorageUsage;
 
 #[cfg(feature = "otlp-metering")]
 pub use imp::{init_from_env, record_storage_snapshot, shutdown};

@@ -3532,3 +3532,22 @@ mod tests {
         assert!(missing.is_err(), "missing node should error");
     }
 }
+
+// Slice D — GraphOperationsPort impl: exposes the 2-method graph-collection
+// surface that observability's telemetry-graph-linker needs as a DI port, so
+// observability can hold Arc<dyn GraphOperationsPort> instead of the concrete
+// GraphOperationsService. Delegates to the inherent methods (fully-qualified,
+// no recursion). See crates/storage/proximadb-storage-ports/src/lib.rs.
+#[async_trait::async_trait]
+impl proximadb_storage_ports::GraphOperationsPort for GraphOperationsService {
+    async fn list_graphs(&self) -> anyhow::Result<Vec<String>> {
+        Ok(GraphOperationsService::list_graphs(self).await?)
+    }
+
+    async fn create_graph_collection(
+        &self,
+        request: proximadb_proto::proximadb_v1::CreateGraphRequest,
+    ) -> anyhow::Result<std::sync::Arc<proximadb_proto::proximadb_v1::GraphCollection>> {
+        Ok(GraphOperationsService::create_graph_collection(self, request).await?)
+    }
+}

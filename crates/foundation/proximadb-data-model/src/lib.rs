@@ -22,7 +22,6 @@
 use arrow_schema::{
     DataType as ArrowDataType, Field, IntervalUnit as ArrowIntervalUnit, TimeUnit as ArrowTimeUnit,
 };
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -892,4 +891,79 @@ mod tests {
 
         assert_eq!(original, decoded);
     }
+}
+use serde::{Deserialize, Serialize};
+
+pub type IndexStats = ServiceIndexStats;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ServiceIndexStats {
+    /// Total vectors in the index
+    pub total_vectors: i64,
+    /// Vectors compared during distance calculation
+    pub vectors_compared: i64,
+    /// Vectors scanned (pre-filter)
+    pub vectors_scanned: i64,
+    /// Total distance calculations performed
+    pub distance_calculations: i64,
+    /// Number of index nodes visited during traversal
+    pub nodes_visited: i64,
+    /// Fraction of vectors eliminated by metadata filters (0.0 to 1.0)
+    pub filter_efficiency: f32,
+    /// Index cache hits during search
+    pub cache_hits: i64,
+    /// Index cache misses during search
+    pub cache_misses: i64,
+
+    // ── LLD trace-spine counters (Phase 0 additions; stub-zero until later phases)
+    /// Average per-block fill (0.0–1.0). Target rises above 0.30 once the
+    /// block-aware AXIS runtime lands; baseline is <0.15 per arXiv 2603.01779.
+    #[serde(default)]
+    pub block_fill_pct: f64,
+    /// Graph nodes routed through in memory without an SSD read because their
+    /// predicate failed (GateANN graph tunneling, arXiv 2603.21466). 0 until
+    /// tunneling is wired in Phase 3.
+    #[serde(default)]
+    pub tunneled_nodes: i64,
+    /// Candidates traversed in the quantized (2-bit/BQ) metric space (QuIVer
+    /// arXiv 2605.02171). 0 until the quantized route is enabled in Phase 4.
+    #[serde(default)]
+    pub quantized_hops: i64,
+    /// Record-level buffer-pool hits (VeloANN arXiv 2602.22805). Compared
+    /// against `page_hits` to validate the record-level cache wins.
+    #[serde(default)]
+    pub record_hits: i64,
+    /// Page-level cache hits, retained for comparison against `record_hits`.
+    #[serde(default)]
+    pub page_hits: i64,
+    /// Whether a catapult shortcut edge was used to pick the entry node
+    /// (CatapultDB arXiv 2603.02164). False until catapults land in Phase 7.
+    #[serde(default)]
+    pub catapult_used: bool,
+    /// Object-storage/SST selected blocks after vector access-method pruning.
+    #[serde(default)]
+    pub object_selected_blocks: i64,
+    /// Object-storage/SST blocks pruned before data-block reads.
+    #[serde(default)]
+    pub object_pruned_blocks: i64,
+    /// Planned object range GET/read requests.
+    #[serde(default)]
+    pub object_estimated_gets: i64,
+    /// Actual object range GET/read requests issued by the reader.
+    #[serde(default)]
+    pub object_actual_gets: i64,
+    /// Planned remote/range bytes for object-economy reads.
+    #[serde(default)]
+    pub object_estimated_remote_bytes: i64,
+    /// Actual remote/range bytes read by the object-economy path.
+    #[serde(default)]
+    pub object_actual_remote_bytes: i64,
+    /// Bytes read because selected blocks were coalesced across small gaps.
+    #[serde(default)]
+    pub object_overfetch_bytes: i64,
+    /// SST blocks skipped by per-block vector-bounds (L2 lower-bound) pruning,
+    /// before their data blocks were read (TD-040). Distinct from
+    /// `object_pruned_blocks`, which counts range-plan-level pruning.
+    #[serde(default)]
+    pub object_vector_bounds_pruned_blocks: i64,
 }

@@ -6598,6 +6598,7 @@ dependencies = [
  "proximadb-functions",
  "proximadb-graph",
  "proximadb-graph-arrow",
+ "proximadb-graph-model",
  "proximadb-graph-query",
  "proximadb-graph-subset",
  "proximadb-hardware",
@@ -7058,6 +7059,14 @@ dependencies = [
  "proximadb-graph-query",
  "proximadb-kernel",
  "serde_json",
+]
+
+[[package]]
+name = "proximadb-graph-model"
+version = "0.2.0"
+dependencies = [
+ "proximadb-proto",
+ "serde",
 ]
 
 [[package]]
@@ -7898,7 +7907,13 @@ dependencies = [
 name = "proximadb-tenant"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "proximadb-proto",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

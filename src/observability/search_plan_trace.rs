@@ -17,7 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::service_types::IndexStats;
+use proximadb_data_model::IndexStats;
 
 /// Filter execution strategy chosen by the cost-aware planner (LLD §3).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]

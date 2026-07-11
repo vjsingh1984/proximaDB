@@ -104,3 +104,22 @@ pub trait QuantizationEnginePort: Send + Sync {
     /// Hamming distance between two bit-packed binary codes.
     fn calculate_hamming_distance(&self, a: &[u8], b: &[u8]) -> u32;
 }
+
+/// Graph collection operations that observability's telemetry-graph-linker needs.
+///
+/// Inverts `GraphOperationsService` (root `src/graph/service.rs`): observability
+/// holds `Arc<dyn GraphOperationsPort>` instead of `Arc<GraphService>`. The
+/// measured surface is 2 methods, both foundation-typed (proto `CreateGraphRequest`
+/// + `GraphCollection`, `Vec<String>`). The concrete `GraphOperationsService`
+/// `impl`s this in the root (it defines the type → can impl any trait for it).
+#[async_trait::async_trait]
+pub trait GraphOperationsPort: Send + Sync {
+    /// List all graph collection IDs.
+    async fn list_graphs(&self) -> Result<Vec<String>>;
+
+    /// Create a new graph collection. Returns the created collection.
+    async fn create_graph_collection(
+        &self,
+        request: proximadb_proto::proximadb_v1::CreateGraphRequest,
+    ) -> Result<std::sync::Arc<proximadb_proto::proximadb_v1::GraphCollection>>;
+}

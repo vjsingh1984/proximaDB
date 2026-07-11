@@ -254,8 +254,8 @@ fn failure_class_label(f: &FailureClass) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::service_types::IndexStats;
     use crate::observability::search_plan_trace::SureSignals;
+    use proximadb_data_model::IndexStats;
 
     fn trace_template() -> SearchPlanTrace {
         SearchPlanTrace {

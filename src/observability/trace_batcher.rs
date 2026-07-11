@@ -176,10 +176,10 @@ pub fn homogeneous_inputs<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::service_types::IndexStats;
     use crate::observability::search_plan_trace::{
         CacheResult, FilterStrategy, IndexRoute, SureSignals,
     };
+    use proximadb_data_model::IndexStats;
 
     fn trace_template(trace_id: &str, tenant: &str) -> SearchPlanTrace {
         SearchPlanTrace {

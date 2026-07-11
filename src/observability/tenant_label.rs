@@ -25,7 +25,7 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::tenant_tier::{TenantTierRecord, Tier};
+use proximadb_tenant::{TenantTierRecord, Tier};
 
 /// Resolver that takes a `TenantTierRecord` and exposes
 /// cardinality-safe labels.
@@ -118,7 +118,7 @@ pub fn is_bounded_label(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::tenant_tier::FeatureFlags;
+    use proximadb_tenant::FeatureFlags;
 
     fn record(tenant_id: &str, tier: Tier) -> TenantTierRecord {
         TenantTierRecord {
