@@ -29,6 +29,7 @@ members = [
     "crates/foundation/proximadb-compression-types",
     "crates/foundation/proximadb-config",
     "crates/foundation/proximadb-data-model",
+    "crates/foundation/proximadb-graph-model",
     "crates/foundation/proximadb-distance-types",
     "crates/foundation/proximadb-encoding-types",
     "crates/foundation/proximadb-filter-expression",
@@ -160,6 +161,7 @@ chrono = { version = "0.4.31", features = ["serde"] }
 clap = { version = "4.0", features = ["derive"] }
 hyper = { version = "1.0" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
+proximadb-graph-model = { path = "crates/foundation/proximadb-graph-model" }
 proximadb-config = { path = "crates/foundation/proximadb-config" }
 proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
@@ -299,6 +301,7 @@ proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
 proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
+proximadb-graph-model = { path = "crates/foundation/proximadb-graph-model" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
 proximadb-functions = { path = "crates/foundation/proximadb-functions" }
