@@ -809,7 +809,11 @@ fn decode_dictionary_str_col(data: &[u8], count: usize) -> Result<Vec<Option<Str
 /// (validity bit clear) are returned as `None` regardless of their zeroed slot.
 /// Parse the per-row RaBitQ codes from a stripe (validity bitmap + per row
 /// `[dist f32][inv_factor f32][bits ceil(dim/8)]`). Absent rows → `None`.
-fn parse_rabitq_codes(data: &[u8], count: usize, dim: usize) -> Result<Vec<Option<RaBitQCode>>> {
+pub(crate) fn parse_rabitq_codes(
+    data: &[u8],
+    count: usize,
+    dim: usize,
+) -> Result<Vec<Option<RaBitQCode>>> {
     let bits_len = dim.div_ceil(8);
     let stride = 8 + bits_len;
     let bm_len = count.div_ceil(8);
