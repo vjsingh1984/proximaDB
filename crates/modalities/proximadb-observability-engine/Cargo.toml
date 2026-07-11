@@ -35,12 +35,19 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 object_store.workspace = true
+regex.workspace = true
+# Proto types — moved query/ingestion leaves name `crate::proto::proximadb_v1::*`
+# (mirrors the root src/proto/mod.rs re-export).
+proximadb-proto.workspace = true
 # These are root-only deps (not yet in workspace.dependencies) — declared
 # explicitly with the same version specs as the root crate so cargo unifies
 # them. A future chore can promote them to workspace.dependencies.
 bytes = "1.5"
+crossbeam = "0.8"
+chrono-tz = "0.10"
 hex = "0.4"
 prometheus = "0.14"
+tantivy = "0.22"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 # Alerting notification channels (email + webhook) — root-only deps, same specs.
 lettre = "0.11"

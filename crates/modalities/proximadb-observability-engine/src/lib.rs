@@ -27,10 +27,20 @@
 //! crates (serde, tokio, prometheus, opentelemetry). No upward edge into the
 //! root.
 
+/// Proto re-export so moved modules' `crate::proto::proximadb_v1::*` paths
+/// resolve (mirrors the root `src/proto/mod.rs`). Add more re-exports as the
+/// extracted surface grows.
+pub mod proto {
+    pub use proximadb_proto::proximadb_v1;
+}
+
 /// Alerting engine — rule-based evaluation, escalation, persistence, notifications.
 pub mod alerting;
 /// Audit logging for compliance and security event tracking.
 pub mod audit;
+/// High-throughput ingestion pipeline — foundation-pure leaves (`buffer`,
+/// `parser`). The facade + format adapters remain in the root.
+pub mod ingestion;
 /// Per-query I/O trace bus (co-design C0 — physical-dimension trace substrate).
 pub mod io_trace;
 /// Metering event builder — SearchPlanTrace → operator metering-event JSON.
@@ -44,6 +54,10 @@ pub mod object_store_trace;
 pub mod precision_metrics;
 /// TD-064 predicate diagnostics bus — recall-shortfall events from deep search.
 pub mod predicate_diagnostics;
+/// Query engine for logs, metrics, and traces — foundation-pure leaves
+/// (`promql`, `tantivy_log_index`, `metrics`). The facade + logs + traces
+/// remain in the root.
+pub mod query;
 /// Route explain builder — human-readable explanation from a SearchPlanTrace.
 pub mod route_explain;
 /// SearchPlanTrace — per-query telemetry envelope (KRU billing + learned planner).
