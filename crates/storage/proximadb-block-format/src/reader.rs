@@ -721,7 +721,7 @@ fn decode_f64_with_encoding(data: &[u8], encoding_id: u8, count: usize) -> Resul
     }
 }
 
-fn decode_str_with_encoding(
+pub(crate) fn decode_str_with_encoding(
     data: &[u8],
     encoding_id: u8,
     count: usize,

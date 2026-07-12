@@ -25,8 +25,8 @@ use anyhow::{Result, bail};
 
 use crate::{
     reader::{
-        RankMetric, decode_f32_vec_v2, decode_i64_with_encoding, parse_rabitq_codes,
-        score_rerank_row,
+        RankMetric, decode_f32_vec_v2, decode_i64_with_encoding, decode_str_with_encoding,
+        parse_rabitq_codes, score_rerank_row,
     },
     record::col_id,
     rowgroup::RowGroupBlock,
@@ -213,6 +213,18 @@ impl BlockLayout {
             .get(column_id)
             .ok_or_else(|| anyhow::anyhow!("no vector params for column {column_id}"))?;
         decode_f32_vec_v2(stripe_bytes, self.footer.n_rows as usize, entry)
+    }
+
+    /// Decode a string column (e.g. `col_id::OID`) from its range-fetched stripe
+    /// bytes — the ranged analogue of [`crate::reader::PaxBlockReader::decode_str_stripe`],
+    /// used to attach ids to the ranked candidate rows.
+    pub fn decode_str_column(
+        &self,
+        column_id: i32,
+        stripe_bytes: &[u8],
+    ) -> Option<Vec<Option<String>>> {
+        let meta = self.meta(column_id)?;
+        decode_str_with_encoding(stripe_bytes, meta.encoding_id, self.footer.n_rows as usize).ok()
     }
 
     // ── Ranged RaBitQ cascade (ADR-057 / TD-RDSTRAT-3 S1b) ──────────────────────
