@@ -91,6 +91,27 @@ lazy_static! {
         "Analytic queries routed to the Native row engine (unmaterialized) — consider ALTER TABLE MATERIALIZE",
         &["shape_class"],
     );
+
+    /// Consults that found no baked entry for the query's shape-class — the
+    /// ADR-058 D3 frozen-table *density* invariant made falsifiable: a hot query
+    /// class with a nonzero miss rate after warm-up means the class key (e.g. a
+    /// new refinement tier) fragmented the cells faster than they warm.
+    pub static ref ROUTE_CONSULT_MISS_TOTAL: CounterVec = register_counter_vec_safe(
+        "proximadb_route_consult_miss_total",
+        "Cost-model consults that resolved no recommendation for the shape-class (ADR-058 D3 density check)",
+        &["shape_class"],
+    );
+
+    /// TD-EXEC-2 Slice 3 calibration accuracy: the geometry band the route was
+    /// keyed on (AST estimate) vs the measured plan-geometry band, per fold.
+    /// Divergence rate = fraction of samples where the labels differ; a rising
+    /// off-diagonal means the AST estimator needs a band refit (from the
+    /// ledger's measured `plan_depth`/`plan_blocking` distribution).
+    pub static ref ROUTE_GEOMETRY_ESTIMATE_TOTAL: CounterVec = register_counter_vec_safe(
+        "proximadb_route_geometry_estimate_total",
+        "Route-time geometry band estimate vs measured plan-geometry band (TD-EXEC-2 Slice 3 calibration)",
+        &["estimated", "measured"],
+    );
 }
 
 /// Record one route-decision outcome. `source` is the [`crate::query::compute_scheduler::RouteSource`]
@@ -105,6 +126,21 @@ pub fn record_decision(backend_label: &str, shape_class: &str, source: &str) {
 pub fn record_olap_on_native(shape_class: &str) {
     ROUTE_OLAP_ON_NATIVE_TOTAL
         .with_label_values(&[shape_class])
+        .inc();
+}
+
+/// Record a consult that resolved no recommendation for `shape_class`.
+pub fn record_consult_miss(shape_class: &str) {
+    ROUTE_CONSULT_MISS_TOTAL
+        .with_label_values(&[shape_class])
+        .inc();
+}
+
+/// Record one estimated-vs-measured geometry band sample (bare band labels,
+/// e.g. `sxlo`; the `geom=` prefix is stripped by the caller).
+pub fn record_geometry_estimate(estimated: &str, measured: &str) {
+    ROUTE_GEOMETRY_ESTIMATE_TOTAL
+        .with_label_values(&[estimated, measured])
         .inc();
 }
 

@@ -347,10 +347,12 @@ pub fn final_cost(base_score: f64, tenant_id: Option<&str>) -> f64 {
 /// Stable shape-class key the model aggregates under. The coarse base mirrors the
 /// scheduler's binary signals (`engages_relational` × `parquet_backed`); C4
 /// Phase-2b refines it with the §5.2 Phase-1 inputs — cardinality and partition
-/// fan-out — but only when they are *known*. An `Unknown` signal contributes no
-/// suffix, so a planner that cannot estimate them yields exactly the original
-/// 2-part key (`olap/parquet`, `oltp/native`, …) — backward-compatible with
-/// warmed cells and existing EXPLAIN output.
+/// fan-out — TD-OLAP-4 with the operation class, and TD-EXEC-2 Slice 3 with the
+/// plan-geometry tier (`geom=<depth-band>x<blocking-band>`) — but only when they
+/// are *known*. An `Unknown` signal contributes no suffix, so a planner that
+/// cannot estimate them yields exactly the original 2-part key (`olap/parquet`,
+/// `oltp/native`, …) — backward-compatible with warmed cells and existing
+/// EXPLAIN output.
 pub fn shape_class(shape: &QueryShape) -> String {
     let workload = if shape.engages_relational {
         "olap"
@@ -367,6 +369,7 @@ pub fn shape_class(shape: &QueryShape) -> String {
         shape.cardinality.class_suffix(),
         shape.partition_fanout.class_suffix(),
         shape.operation_class.class_suffix(),
+        shape.geometry.class_suffix(),
     ]
     .into_iter()
     .flatten()
@@ -644,6 +647,30 @@ pub trait RouteConsult {
     /// Lock-free consult for one shape-class. `None` when the class has no baked
     /// entry (cold start — the caller keeps the static route).
     fn consult(&self, shape_class: &str) -> Option<ClassRecommendation>;
+    /// Hierarchical consult (TD-EXEC-2 Slice 3): the refined class first, then
+    /// each progressively coarser ancestor (one `/suffix` stripped at a time)
+    /// down to the 2-part `workload/base` key. Returns the recommendation and
+    /// the class level that served it. Refining the key must never orphan
+    /// warmed learning: a query keyed `olap/parquet/geom=mxhi` is served by the
+    /// warmed `olap/parquet` cells until its own refined cell warms via the
+    /// stamped fold — so the frozen table stays effectively *dense* across
+    /// key-refinement generations (ADR-058 D3), instead of every new tier
+    /// resetting the model. A bounded handful of hash gets against the same
+    /// frozen table — still lock-free, still consult-O(1).
+    fn consult_with_fallback(&self, shape_class: &str) -> Option<(ClassRecommendation, String)> {
+        let mut level = shape_class;
+        loop {
+            if let Some(rec) = self.consult(level) {
+                return Some((rec, level.to_string()));
+            }
+            match level.rfind('/') {
+                // Strip the last `/suffix`; the 2-part `workload/base` key is
+                // the floor (its prefix has no further `/`).
+                Some(idx) if level[..idx].contains('/') => level = &level[..idx],
+                _ => return None,
+            }
+        }
+    }
     /// Whether live override is currently enabled (reads the live `AtomicBool`).
     fn override_active(&self) -> bool;
     /// Advance and return the exploration rate-limit tick (pre-increment value).
@@ -839,6 +866,27 @@ impl RouteCostModel {
     /// the form the io_trace ingestion observer uses, since io_trace stamps a
     /// neutral label, not a `ComputeBackend` (no layer-up dependency).
     pub fn observe_by_label(&self, shape_class: &str, backend_label: &str, snap: &IoTraceSnapshot) {
+        // TD-EXEC-2 Slice 3 calibration loop, closed at the observe→ingest seam
+        // (off the query path): the `geom=` band the route was KEYED on (an AST
+        // estimate stamped into the class at decision time) vs the band of the
+        // MEASURED plan geometry the trace carries (Slice 1). This makes the
+        // estimator's accuracy a live, falsifiable series — divergence rate =
+        // fraction of folds where the labels differ — not just an offline
+        // ledger analysis. Skipped when the trace has no measured geometry
+        // (e.g. the DataFusion route plans outside the native planner).
+        if snap.plan_depth > 0
+            && let Some(estimated) = shape_class.split('/').find(|s| s.starts_with("geom="))
+            && let Some(measured) = crate::query::compute_scheduler::GeometryClass::from_estimate(
+                snap.plan_depth as u32,
+                snap.plan_blocking as u32,
+            )
+            .class_suffix()
+        {
+            crate::metrics::route_metrics::record_geometry_estimate(
+                estimated.trim_start_matches("geom="),
+                measured.trim_start_matches("geom="),
+            );
+        }
         let key = (shape_class.to_string(), backend_label.to_string());
         {
             let mut cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
@@ -1251,6 +1299,7 @@ mod tests {
             partition_fanout: PartitionFanout::Many,
             pax_backed: false,
             operation_class: Default::default(),
+            geometry: Default::default(),
         });
         assert_eq!(class, "olap/parquet/card=l/part=m");
         // A partially-known shape only appends the known suffix.
@@ -1261,6 +1310,158 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(partial, "oltp/native/card=s");
+    }
+
+    #[test]
+    fn shape_class_appends_geometry_tier_when_known() {
+        use crate::query::compute_scheduler::GeometryClass;
+        // TD-EXEC-2 Slice 3: a known geometry estimate appends the geom tier
+        // after every other suffix, so cells warm per shape⊕geometry class.
+        let class = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            geometry: GeometryClass::from_estimate(8, 4),
+            ..Default::default()
+        });
+        assert_eq!(class, "olap/parquet/geom=mxhi");
+        // Unknown geometry contributes nothing — warmed cells stay valid.
+        let coarse = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            ..Default::default()
+        });
+        assert_eq!(coarse, "olap/parquet");
+        // The tier composes with the other refinements in stable order.
+        let full = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            cardinality: crate::query::compute_scheduler::CardinalityClass::Large,
+            operation_class: crate::query::compute_scheduler::OperationClass::Grouped,
+            geometry: GeometryClass::from_estimate(3, 1),
+            ..Default::default()
+        });
+        assert_eq!(full, "olap/parquet/card=l/op=grp/geom=sxlo");
+    }
+
+    #[test]
+    fn geometry_bands_bucket_at_the_documented_cutoffs() {
+        use crate::query::compute_scheduler::{BlockingBand, DepthBand, GeometryClass};
+        // Depth: ≤6 shallow, 7–12 mid, >12 deep. Blocking: 0 / 1–2 / ≥3.
+        assert_eq!(
+            GeometryClass::from_estimate(6, 0),
+            GeometryClass::Known {
+                depth: DepthBand::Shallow,
+                blocking: BlockingBand::Zero,
+            }
+        );
+        assert_eq!(
+            GeometryClass::from_estimate(7, 2),
+            GeometryClass::Known {
+                depth: DepthBand::Mid,
+                blocking: BlockingBand::Low,
+            }
+        );
+        assert_eq!(
+            GeometryClass::from_estimate(13, 3),
+            GeometryClass::Known {
+                depth: DepthBand::Deep,
+                blocking: BlockingBand::High,
+            }
+        );
+    }
+
+    #[test]
+    fn consult_falls_back_to_the_warmed_ancestor_class() {
+        // TD-EXEC-2 Slice 3 / ADR-058 D3: refining the key must not orphan
+        // warmed learning. Warm only the coarse base class; a query keyed with
+        // the geometry tier must still be served — by the ancestor's cells —
+        // and report which level served it.
+        let m = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_recompute_every(1);
+        m.observe(
+            "olap/parquet",
+            &ComputeBackend::DataFusionLocal,
+            &snap(4, 4096, 2),
+        );
+        // Refined key has no cell of its own → ancestor serves.
+        let (rec, level) = m
+            .consult_with_fallback("olap/parquet/card=l/geom=mxhi")
+            .expect("ancestor cells must serve the refined class");
+        assert_eq!(level, "olap/parquet");
+        assert!(!rec.ranked().is_empty());
+        // Direct (non-fallback) consult still misses the refined key.
+        assert!(m.consult("olap/parquet/card=l/geom=mxhi").is_none());
+        // Once the refined class warms, it is preferred over the ancestor.
+        m.observe(
+            "olap/parquet/card=l/geom=mxhi",
+            &ComputeBackend::Native,
+            &snap(2, 1024, 1),
+        );
+        let (_, level) = m
+            .consult_with_fallback("olap/parquet/card=l/geom=mxhi")
+            .expect("refined cells must now serve");
+        assert_eq!(level, "olap/parquet/card=l/geom=mxhi");
+        // A class with no warmed ancestor at any level misses entirely.
+        assert!(m.consult_with_fallback("oltp/native/geom=sx0").is_none());
+    }
+
+    #[test]
+    fn observe_emits_the_geometry_calibration_sample() {
+        // The observe→ingest seam compares the `geom=` band the class was keyed
+        // on against the measured plan geometry in the trace. mxhi estimated;
+        // depth 3 / blocking 1 measured → sxlo (a divergence sample).
+        let before = crate::metrics::route_metrics::ROUTE_GEOMETRY_ESTIMATE_TOTAL
+            .with_label_values(&["mxhi", "sxlo"])
+            .get();
+        let mut s = snap(2, 1024, 1);
+        s.plan_depth = 3;
+        s.plan_blocking = 1;
+        let m = RouteCostModel::new();
+        m.observe_by_label("olap/parquet/geom=mxhi", "Native", &s);
+        let after = crate::metrics::route_metrics::ROUTE_GEOMETRY_ESTIMATE_TOTAL
+            .with_label_values(&["mxhi", "sxlo"])
+            .get();
+        assert_eq!(after - before, 1.0);
+        // No measured geometry (plan_depth 0) → no sample.
+        let before = crate::metrics::route_metrics::ROUTE_GEOMETRY_ESTIMATE_TOTAL
+            .with_label_values(&["mxhi", "sxlo"])
+            .get();
+        m.observe_by_label("olap/parquet/geom=mxhi", "Native", &snap(2, 1024, 1));
+        let after = crate::metrics::route_metrics::ROUTE_GEOMETRY_ESTIMATE_TOTAL
+            .with_label_values(&["mxhi", "sxlo"])
+            .get();
+        assert_eq!(after - before, 0.0);
+    }
+
+    #[test]
+    fn cells_warm_independently_per_geometry_class() {
+        use crate::query::compute_scheduler::GeometryClass;
+        // Two shapes identical except for the geometry band must fold into
+        // DIFFERENT cells — the whole point of the tier (TD-EXEC-2 Slice 3).
+        let scan_heavy = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            geometry: GeometryClass::from_estimate(3, 1),
+            ..Default::default()
+        });
+        let join_heavy = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            geometry: GeometryClass::from_estimate(9, 4),
+            ..Default::default()
+        });
+        assert_ne!(scan_heavy, join_heavy);
+        let m = RouteCostModel::new();
+        m.observe(&scan_heavy, &ComputeBackend::Native, &snap(10, 1024, 5));
+        assert!(
+            m.estimate(&scan_heavy, &ComputeBackend::Native).is_some(),
+            "observed class must have a cell"
+        );
+        assert!(
+            m.estimate(&join_heavy, &ComputeBackend::Native).is_none(),
+            "sibling geometry class must stay cold — no cross-band bleed"
+        );
     }
 
     #[test]
@@ -1873,6 +2074,7 @@ mod tests {
             partition_fanout: PartitionFanout::Many,
             pax_backed: false,
             operation_class: Default::default(),
+            geometry: Default::default(),
         });
         let small = shape_class(&QueryShape {
             engages_relational: true,
@@ -1881,6 +2083,7 @@ mod tests {
             partition_fanout: PartitionFanout::Single,
             pax_backed: false,
             operation_class: Default::default(),
+            geometry: Default::default(),
         });
         assert_ne!(big, coarse);
         assert_ne!(small, coarse);
@@ -1909,6 +2112,7 @@ mod tests {
             partition_fanout: PartitionFanout::Many,
             pax_backed: false,
             operation_class: Default::default(),
+            geometry: Default::default(),
         };
         let class = shape_class(&big);
         // Observe Native as confidently cheaper than DataFusion for THIS fine
@@ -1930,6 +2134,45 @@ mod tests {
         assert!(
             decision.reason.contains("OVERRIDE"),
             "expected override reason, got: {}",
+            decision.reason
+        );
+    }
+
+    #[test]
+    fn ancestor_cells_serve_a_geometry_refined_route() {
+        // TD-EXEC-2 Slice 3 continuity: a query whose class carries the NEW
+        // geometry tier is still served by cells warmed under the pre-tier key
+        // (hierarchical consult), the override flips on that ancestor evidence,
+        // and the decision discloses which level served it. Without this, every
+        // key refinement would reset all learning (ADR-058 D3 violation).
+        use crate::query::compute_scheduler::{ComputeScheduler, GeometryClass, QueryShape};
+        let m = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_min_advantage(0.1)
+            .with_recompute_every(1);
+        m.set_override_enabled(true);
+        // Warm ONLY the coarse pre-tier class.
+        for _ in 0..3 {
+            m.observe("olap/parquet", &ComputeBackend::Native, &snap(2, 8192, 1));
+            m.observe(
+                "olap/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &snap(40, 1 << 20, 8),
+            );
+        }
+        let refined = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            geometry: GeometryClass::from_estimate(9, 4),
+            ..Default::default()
+        };
+        assert_eq!(shape_class(&refined), "olap/parquet/geom=mxhi");
+        let decision = ComputeScheduler::new().route_select_advised(refined, Some(&m));
+        assert_eq!(decision.backend, ComputeBackend::Native);
+        assert!(
+            decision.reason.contains("OVERRIDE")
+                && decision.reason.contains("[cells: olap/parquet]"),
+            "expected ancestor-served override, got: {}",
             decision.reason
         );
     }

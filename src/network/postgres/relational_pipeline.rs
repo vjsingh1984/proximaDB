@@ -445,6 +445,11 @@ pub async fn try_run_select(
     };
 
     let operation_class = query_operation_class(query);
+    // TD-EXEC-2 Slice 3: the geometry tier — bucketed depth × breaker bands
+    // estimated from the AST, refining the cost-model class so EWMA cells
+    // accumulate per shape⊕geometry (the dimension TD-OLAP-15 measured engines
+    // win/lose on).
+    let geometry = query_geometry_class(query);
     let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: true,
@@ -453,6 +458,7 @@ pub async fn try_run_select(
             partition_fanout,
             cardinality,
             operation_class,
+            geometry,
         },
         // C4: observe-mode advisory from the trace-driven cost model — augments
         // the reason for telemetry/EXPLAIN, never changes the backend.
@@ -2571,6 +2577,107 @@ fn cardinality_hint_body(body: &SetExpr) -> crate::query::compute_scheduler::Car
     }
 }
 
+/// TD-EXEC-2 Slice 3: estimate the plan-geometry bands (depth × pipeline
+/// breakers) from the AST — a pure syntax walk, zero route-time I/O (co-design
+/// P5), computed BEFORE lowering because the route decision precedes the
+/// physical plan. Key consistency is by construction: `finalize_route` stamps
+/// the geometry-refined shape-class into the io_trace, so the consult key and
+/// the EWMA fold key are the same string even when the estimate is imperfect.
+/// The *measured* `plan_depth`/`plan_blocking` recorded per query by
+/// `plan_instrumented` (TD-EXEC-2 Slice 1) sit beside the stamped class in the
+/// ledger, exposing the prediction error for band refitting.
+fn query_geometry_class(query: &SqlQuery) -> crate::query::compute_scheduler::GeometryClass {
+    let (depth, blocking) = geometry_of_query(query);
+    crate::query::compute_scheduler::GeometryClass::from_estimate(depth, blocking)
+}
+
+/// Estimated (longest root→leaf operator chain, pipeline-breaker count) for a
+/// query. Mirrors what lowering emits: the body's plan plus `Sort` for ORDER BY
+/// (a breaker, per `plan_geometry::OpKind::is_blocking`) and `Limit`.
+fn geometry_of_query(query: &SqlQuery) -> (u32, u32) {
+    let (mut depth, mut blocking) = geometry_of_body(&query.body);
+    if query.order_by.is_some() {
+        depth += 1; // Sort
+        blocking += 1;
+    }
+    if query.limit_clause.is_some() {
+        depth += 1; // Limit
+    }
+    (depth, blocking)
+}
+
+fn geometry_of_body(body: &SetExpr) -> (u32, u32) {
+    match body {
+        SetExpr::Select(select) => {
+            // The deepest FROM chain feeds the plan's leaf slot; additional
+            // comma-separated FROM items lower as cross joins above it.
+            let mut depth = 1u32; // Scan/Values floor (also covers empty FROM)
+            let mut blocking = 0u32;
+            let mut first = true;
+            for twj in &select.from {
+                let (d, b) = geometry_of_table_with_joins(twj);
+                blocking += b;
+                if first {
+                    depth = d;
+                    first = false;
+                } else {
+                    depth = depth.max(d) + 1; // implicit cross join
+                    blocking += 1;
+                }
+            }
+            if select.selection.is_some() {
+                depth += 1; // Filter
+            }
+            let has_group_by = match &select.group_by {
+                GroupByExpr::All(_) => true,
+                GroupByExpr::Expressions(exprs, _) => !exprs.is_empty(),
+            };
+            let has_agg = select.projection.iter().any(select_item_has_aggregate);
+            if has_group_by || has_agg {
+                depth += 1; // Aggregate
+                blocking += 1;
+            }
+            if select.having.is_some() {
+                depth += 1; // post-aggregate Filter
+            }
+            depth += 1; // Project
+            if select.distinct.is_some() {
+                depth += 1; // Distinct
+            }
+            (depth, blocking)
+        }
+        SetExpr::Query(q) => geometry_of_query(q),
+        SetExpr::SetOperation { left, right, .. } => {
+            let (dl, bl) = geometry_of_body(left);
+            let (dr, br) = geometry_of_body(right);
+            (dl.max(dr) + 1, bl + br)
+        }
+        _ => (1, 0),
+    }
+}
+
+/// One FROM item: the join chain lowers left-deep, so each JOIN adds one level
+/// above its deeper input and counts as one pipeline breaker.
+fn geometry_of_table_with_joins(twj: &TableWithJoins) -> (u32, u32) {
+    let (mut depth, mut blocking) = geometry_of_table_factor(&twj.relation);
+    for join in &twj.joins {
+        let (d, b) = geometry_of_table_factor(&join.relation);
+        depth = depth.max(d) + 1; // Join node above the deeper side
+        blocking += b + 1; // the Join itself is a breaker
+    }
+    (depth, blocking)
+}
+
+fn geometry_of_table_factor(tf: &TableFactor) -> (u32, u32) {
+    match tf {
+        TableFactor::Derived { subquery, .. } => geometry_of_query(subquery),
+        TableFactor::NestedJoin {
+            table_with_joins, ..
+        } => geometry_of_table_with_joins(table_with_joins),
+        _ => (1, 0), // named table → Scan leaf
+    }
+}
+
 fn set_expr_engages(body: &SetExpr) -> bool {
     match body {
         SetExpr::SetOperation { .. } => true,
@@ -2931,6 +3038,65 @@ mod tests {
         assert_eq!(
             op("SELECT regionid, COUNT(*) FROM hits GROUP BY regionid"),
             OperationClass::Grouped
+        );
+    }
+
+    #[test]
+    fn geometry_class_bands_separate_scan_from_join_shapes() {
+        use crate::query::compute_scheduler::{BlockingBand, DepthBand, GeometryClass};
+        let geom = |sql: &str| {
+            let s = Parser::parse_sql(&GenericDialect {}, sql).expect("parse");
+            match s.as_slice() {
+                [Statement::Query(q)] => query_geometry_class(q),
+                _ => panic!("one SELECT"),
+            }
+        };
+        // Plain filtered scan (scan→filter→project) — shallow, no breakers.
+        assert_eq!(
+            geom("SELECT id FROM t WHERE x = 1"),
+            GeometryClass::Known {
+                depth: DepthBand::Shallow,
+                blocking: BlockingBand::Zero,
+            }
+        );
+        // ClickBench posture: single-table aggregate — shallow, low breakers
+        // (the shapes TD-OLAP-15 measured native winning).
+        assert_eq!(
+            geom("SELECT COUNT(*) FROM hits"),
+            GeometryClass::Known {
+                depth: DepthBand::Shallow,
+                blocking: BlockingBand::Low,
+            }
+        );
+        // TPC-H posture: join chain + GROUP BY + ORDER BY — high breakers
+        // (the shapes TD-OLAP-15 measured DataFusion winning).
+        let tpch_ish = geom(
+            "SELECT c.name, SUM(o.total) FROM customer c \
+             JOIN orders o ON c.id = o.cid \
+             JOIN lineitem l ON o.id = l.oid \
+             WHERE o.d > 5 GROUP BY c.name ORDER BY 2 DESC LIMIT 10",
+        );
+        assert_eq!(
+            tpch_ish,
+            GeometryClass::Known {
+                depth: DepthBand::Mid,
+                blocking: BlockingBand::High,
+            }
+        );
+        // A derived-table subquery deepens the leaf; set-ops sum branch breakers.
+        let nested = geom(
+            "SELECT a FROM (SELECT a FROM u JOIN v ON u.i = v.i \
+             GROUP BY a ORDER BY a) t WHERE a > 0 ORDER BY a",
+        );
+        assert!(
+            matches!(
+                nested,
+                GeometryClass::Known {
+                    depth: DepthBand::Mid | DepthBand::Deep,
+                    blocking: BlockingBand::High,
+                }
+            ),
+            "nested join+agg+two sorts must band mid/deep × high: {nested:?}"
         );
     }
 
