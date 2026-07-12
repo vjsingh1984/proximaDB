@@ -25,7 +25,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use proximadb_cache::{CacheBudget, CacheKey, CacheKind, TenantCache};
 
-use crate::catalog::CorpusVersionRegistry;
+use crate::CorpusVersionRegistry;
 use crate::proto::proximadb_v1::Collection;
 
 /// Per-tenant in-memory byte ceiling (ADR-035): 1 MB is ample for an MVP

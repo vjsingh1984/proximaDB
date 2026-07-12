@@ -65,7 +65,7 @@
 
 use std::sync::Arc;
 
-use proximadb_catalog::CatalogColumn;
+use crate::CatalogColumn;
 use proximadb_data_model::ProximaType;
 use serde::{Deserialize, Serialize};
 
@@ -881,10 +881,7 @@ impl TableRoutingRow {
                     "external-policy".to_string()
                 }
                 Some(layout)
-                    if matches!(
-                        layout.authority,
-                        proximadb_catalog::CatalogAuthorityMode::FederatedRead
-                    ) =>
+                    if matches!(layout.authority, crate::CatalogAuthorityMode::FederatedRead) =>
                 {
                     "connector-enforced".to_string()
                 }
@@ -1301,9 +1298,9 @@ impl InformationSchemaResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::TableIdentifier;
-    use crate::catalog::internal::InternalSchemaRegistry;
-    use proximadb_catalog::{
+    use crate::TableIdentifier;
+    use crate::internal::InternalSchemaRegistry;
+    use crate::{
         CatalogProjection, CatalogProjectionKind, CatalogStorageLayout, CatalogStorageLayoutKind,
         CatalogStorageSpecialization, CatalogTableSchema, CatalogWorkloadProfile,
         RelationalCapabilities,

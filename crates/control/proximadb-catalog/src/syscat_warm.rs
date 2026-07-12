@@ -32,9 +32,9 @@ use async_trait::async_trait;
 use prost::Message;
 use tracing::debug;
 
-use crate::catalog::CorpusVersionRegistry;
-use crate::catalog::syscat_cache::CatalogMetadataSource;
+use crate::CorpusVersionRegistry;
 use crate::proto::proximadb_v1::Collection;
+use crate::syscat_cache::CatalogMetadataSource;
 
 /// mtime backstop: a warm file older than this is treated as a miss regardless of
 /// version (mirrors the hot tier's 5-minute TTL — a freshness ceiling).

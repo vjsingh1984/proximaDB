@@ -16,8 +16,23 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+// Proto re-export so modules extracted from the root `src/catalog` keep their
+// `crate::proto::proximadb_v1::*` paths (mirrors the observability engine crate).
+pub mod proto {
+    pub use proximadb_proto::proximadb_v1;
+}
+
 pub mod cache;
+// Runtime/wiring modules extracted from the root `src/catalog` (decomposition
+// Slice 1 — foundation-pure leaves). The root `crate::catalog` re-exports these
+// so existing `crate::catalog::*` import paths are unchanged.
 pub mod canonical_precision;
+pub mod corpus_version_fs_store;
+pub mod internal;
+pub mod partition_pruning;
+pub mod recall_probe;
+pub mod syscat_cache;
+pub mod syscat_warm;
 // Collection-level DR / CRR engine contract (P1 of
 // COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc).
 pub mod collection_dr_policy;

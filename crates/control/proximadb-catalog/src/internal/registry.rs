@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::CatalogTableSchema;
 use anyhow::{Result, anyhow};
-use proximadb_catalog::CatalogTableSchema;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -15,7 +15,7 @@ use super::{
     CatalogObject, ConstraintEnforcer, ObjectSchema, ObjectType, SchemaEnforcementMode,
     TableConstraint,
 };
-use crate::catalog::TableIdentifier;
+use crate::TableIdentifier;
 
 /// Internal schema registry for multi-model objects
 pub struct InternalSchemaRegistry {
@@ -145,7 +145,7 @@ impl InternalSchemaRegistry {
         native_embedding: bool,
     ) -> Result<Arc<CatalogObject>> {
         use super::{ModelProperties, VectorProperties};
-        use proximadb_catalog::CatalogColumn;
+        use crate::CatalogColumn;
         use proximadb_data_model::ProximaType;
 
         let vector_column = CatalogColumn::new(
@@ -193,7 +193,7 @@ impl InternalSchemaRegistry {
         json_schema: Option<&str>,
     ) -> Result<Arc<CatalogObject>> {
         use super::{DocumentProperties, ModelProperties};
-        use proximadb_catalog::CatalogColumn;
+        use crate::CatalogColumn;
         use proximadb_data_model::ProximaType;
 
         let object_schema = ObjectSchema {
@@ -275,7 +275,7 @@ impl InternalSchemaRegistry {
         retention_seconds: u64,
     ) -> Result<Arc<CatalogObject>> {
         use super::{ModelProperties, ObservabilityProperties};
-        use proximadb_catalog::CatalogColumn;
+        use crate::CatalogColumn;
         use proximadb_data_model::ProximaType;
 
         let object_schema = ObjectSchema {
@@ -559,7 +559,7 @@ impl Default for InternalSchemaRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_catalog::CatalogColumn;
+    use crate::CatalogColumn;
     use proximadb_data_model::ProximaType;
 
     #[tokio::test]

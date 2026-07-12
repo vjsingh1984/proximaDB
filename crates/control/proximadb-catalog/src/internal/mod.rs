@@ -35,13 +35,13 @@ pub mod enforcement;
 pub mod information_schema;
 pub mod registry;
 
-use anyhow::Result;
-use arrow_schema::{Field as ArrowField, Schema as ArrowSchema};
-use proximadb_catalog::{
+use crate::{
     CatalogColumn, CatalogIndex, CatalogProjection, CatalogStorageLayout,
     CatalogStorageSpecialization, CatalogTableSchema, CatalogWorkloadProfile,
     RelationalCapabilities,
 };
+use anyhow::Result;
+use arrow_schema::{Field as ArrowField, Schema as ArrowSchema};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -266,7 +266,7 @@ impl ObjectSchema {
             .map(|col| {
                 ArrowField::new(
                     &col.name,
-                    proximadb_catalog::catalog_arrow_type(&col.data_type),
+                    crate::catalog_arrow_type(&col.data_type),
                     col.nullable,
                 )
             })

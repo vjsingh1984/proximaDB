@@ -78,12 +78,12 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::{CatalogPartitionSpec, PartitionTransform};
 use anyhow::Result;
 use chrono::{DateTime, Datelike, Utc};
-use proximadb_catalog::{CatalogPartitionSpec, PartitionTransform};
 use serde::{Deserialize, Serialize};
 
-use crate::core::search::{ComparisonOperator, FilterExpression};
+use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 
 /// Backwards-compat alias for [`PartitionPruningResult`].
 pub type PruningResult = PartitionPruningResult;
@@ -763,7 +763,7 @@ mod tests {
     }
 
     fn create_test_partition_spec() -> CatalogPartitionSpec {
-        use proximadb_catalog::{CatalogPartitionField, PartitionTransform};
+        use crate::{CatalogPartitionField, PartitionTransform};
         CatalogPartitionSpec {
             spec_id: 0,
             fields: vec![

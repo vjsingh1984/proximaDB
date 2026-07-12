@@ -34,7 +34,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::catalog::corpus_version::CorpusVersionStore;
+use crate::corpus_version::CorpusVersionStore;
 
 /// One row in the JSON-on-disk shape. `serde` handles the
 /// round-trip; the shape is intentionally flat so a future migration
