@@ -35,6 +35,25 @@ pub struct FramedTableWalAppender {
     path: PathBuf,
     next_sequence: AtomicU64,
     append_lock: Mutex<()>,
+    /// TD-OLAP-17: per-collection high-water sequence_number, bumped atomically
+    /// under `append_lock` on every append. Lets `read_changes_since` skip the
+    /// O(WAL) scan when a collection hasn't advanced past a reader's `since_lsn`
+    /// (the DF table-OPEN floor). Sync lock (parking_lot) so the sync trait method
+    /// `collection_max_sequence_for` can read it without `.await`. Not rebuilt on
+    /// recovery → after a restart the first read per collection scans (the original
+    /// behavior) until the next write repopulates it; a recovery rebuild is a
+    /// follow-on. Never regresses (worst case = scan).
+    collection_max: parking_lot::Mutex<std::collections::HashMap<String, u64>>,
+}
+
+/// Extract the `collection_id` a canonical operation targets, if any (the
+/// shared WAL tags every entry; non-record ops carry none).
+fn collection_id_of(op: &CanonicalOperation) -> Option<&str> {
+    match op {
+        CanonicalOperation::RecordUpsert { collection_id, .. }
+        | CanonicalOperation::RecordDelete { collection_id, .. } => Some(collection_id.as_str()),
+        _ => None,
+    }
 }
 
 impl FramedTableWalAppender {
@@ -56,6 +75,7 @@ impl FramedTableWalAppender {
             path,
             next_sequence: AtomicU64::new(recovery.last_sequence),
             append_lock: Mutex::new(()),
+            collection_max: parking_lot::Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -146,7 +166,28 @@ impl TableWalAppender for FramedTableWalAppender {
         self.next_sequence
             .store(base_sequence + entries.len() as u64, Ordering::SeqCst);
 
+        // TD-OLAP-17: bump the per-collection high-water so `read_changes_since`
+        // can skip the O(WAL) scan for collections that haven't advanced past a
+        // reader's `since_lsn`. Still under `append_lock` (held above) and after
+        // `sync_data`, so a reader that observes this high-water is guaranteed the
+        // entry is durable.
+        {
+            let mut maxes = self.collection_max.lock();
+            for entry in &entries {
+                if let Some(c) = collection_id_of(&entry.operation) {
+                    let cur = maxes.entry(c.to_string()).or_insert(0);
+                    if entry.sequence_number > *cur {
+                        *cur = entry.sequence_number;
+                    }
+                }
+            }
+        }
+
         Ok(entries)
+    }
+
+    fn collection_max_sequence_for(&self, collection_id: &str) -> Option<u64> {
+        self.collection_max.lock().get(collection_id).copied()
     }
 }
 
@@ -161,6 +202,8 @@ impl TableWalAppender for FramedTableWalAppender {
 pub struct MemoryTableWalAppender {
     next_sequence: AtomicU64,
     entries: Mutex<Vec<CanonicalWalEntry>>,
+    /// TD-OLAP-17 per-collection high-water (see `FramedTableWalAppender`).
+    collection_max: parking_lot::Mutex<std::collections::HashMap<String, u64>>,
 }
 
 impl MemoryTableWalAppender {
@@ -169,6 +212,7 @@ impl MemoryTableWalAppender {
         Self {
             next_sequence: AtomicU64::new(0),
             entries: Mutex::new(Vec::new()),
+            collection_max: parking_lot::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -206,7 +250,32 @@ impl TableWalAppender for MemoryTableWalAppender {
         self.next_sequence
             .store(base + entries.len() as u64, Ordering::SeqCst);
         self.entries.lock().await.extend(entries.clone());
+        // TD-OLAP-17: bump the per-collection high-water (see FramedTableWalAppender).
+        {
+            let mut maxes = self.collection_max.lock();
+            for entry in &entries {
+                if let Some(c) = collection_id_of(&entry.operation) {
+                    let cur = maxes.entry(c.to_string()).or_insert(0);
+                    if entry.sequence_number > *cur {
+                        *cur = entry.sequence_number;
+                    }
+                }
+            }
+        }
         Ok(entries)
+    }
+
+    /// TD-OLAP-17: surface the in-memory entries through the trait so
+    /// `read_changes_since` (the CDC feed + OLAP delta merge) works on the
+    /// `opt_config = None` boot path that uses this appender. Without this
+    /// override the trait default returned empty, so the change-feed was silently
+    /// empty for in-memory WALs.
+    async fn read_all_entries(&self) -> Result<Vec<CanonicalWalEntry>> {
+        Ok(self.entries().await)
+    }
+
+    fn collection_max_sequence_for(&self, collection_id: &str) -> Option<u64> {
+        self.collection_max.lock().get(collection_id).copied()
     }
 }
 
