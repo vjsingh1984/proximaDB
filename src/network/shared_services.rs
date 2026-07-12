@@ -511,6 +511,13 @@ impl SharedServices {
         }
 
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
+        // Inject the object-store filesystem resolver (root half of the
+        // CatalogFilesystemResolver port-inversion). Lazily creates a
+        // FilesystemFactory only if an s3://gs://az:// catalog URL is used;
+        // local `file://` setups never touch it.
+        catalog_manager
+            .set_filesystem_resolver(Arc::new(crate::catalog::LazyFilesystemResolver::new()))
+            .await;
 
         // SharedServices owns metadata configuration logic
         info!(

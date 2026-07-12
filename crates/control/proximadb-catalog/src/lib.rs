@@ -33,6 +33,12 @@ pub mod partition_pruning;
 pub mod recall_probe;
 pub mod syscat_cache;
 pub mod syscat_warm;
+// Catalog runtime manager (Slice 2) — `CatalogManager` + `TableOpLockRegistry`,
+// moved from the root `src/catalog/mod.rs`. Object-store catalog URLs route
+// through the injected `CatalogFilesystemResolver` port (no catalog->storage
+// up-edge).
+pub mod manager;
+pub use manager::{CatalogFilesystemResolver, CatalogManager, TableOpLockRegistry};
 // Collection-level DR / CRR engine contract (P1 of
 // COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc).
 pub mod collection_dr_policy;
