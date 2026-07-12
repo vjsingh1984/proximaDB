@@ -55,14 +55,10 @@ pub struct TierDataMovement {
     storage_engine: StorageEngineType,
 }
 
-/// The storage engine implementation that determines the on-disk data format
-#[derive(Debug, Clone)]
-pub enum StorageEngineType {
-    /// Sorted String Table engine (ProximaBlocks hybrid columnar format)
-    SST,
-    /// VIPER columnar Parquet-based engine
-    VIPER,
-}
+/// Canonical storage engine type (re-exported from `proximadb-storage-common` via
+/// `core::types`). The previous local 2-variant copy (a subset: SST, VIPER) was
+/// consolidated into the single source of truth.
+pub use crate::core::types::StorageEngineType;
 
 impl TierDataMovement {
     /// Create a new coordinator for the given collection and storage engine type
@@ -86,6 +82,10 @@ impl TierDataMovement {
             | InfrastructureTier::CloudDeepArchive { .. } => match self.storage_engine {
                 StorageEngineType::SST => TierDataFormat::SST,
                 StorageEngineType::VIPER => TierDataFormat::VIPER,
+                // Non-columnar engines (TST/NOVA/etc.) default to the SST
+                // (ProximaBlocks) tier format — consistent with the strategy→type
+                // mapping in `storage/traits` (Cedar/Chrono→SST).
+                _ => TierDataFormat::SST,
             },
         }
     }

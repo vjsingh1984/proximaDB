@@ -8,16 +8,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-/// Storage engine types for metrics tracking
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum StorageEngineType {
-    SST,
-    VIPER,
-    NOVA,
-    RAPTOR,
-    SWIFT,
-    HELIX,
-}
+/// Canonical storage engine type (re-exported from `proximadb-storage-common` via
+/// `core::types`). The previous local 6-variant copy (a subset missing TST) was
+/// consolidated into the single source of truth.
+pub use crate::core::types::StorageEngineType;
 
 /// File operation types
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -264,6 +258,9 @@ impl FilesystemMetricsCollector {
                     .helix_bytes_written
                     .fetch_add(bytes, Ordering::Relaxed);
             }
+            // TST (and any future engine) has no dedicated per-engine counter yet;
+            // only the general counters below are updated.
+            _ => {}
         }
 
         // Also update general counters
@@ -385,6 +382,13 @@ impl FilesystemMetricsCollector {
                     .general_metrics
                     .helix_bytes_written
                     .load(Ordering::Relaxed),
+            },
+            // TST (and any future engine) has no dedicated per-engine counters yet.
+            _ => EngineFileStats {
+                files_read: 0,
+                files_written: 0,
+                bytes_read: 0,
+                bytes_written: 0,
             },
         }
     }
