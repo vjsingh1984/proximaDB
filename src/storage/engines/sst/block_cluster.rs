@@ -62,13 +62,13 @@ pub fn cluster_order(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>
     let mut mean = vec![0f64; dim];
     let mut n = 0u64;
     for r in records {
-        if let Some(v) = embedding_f32(r, idx) {
-            if v.len() == dim {
-                for (m, &x) in mean.iter_mut().zip(v) {
-                    *m += x as f64;
-                }
-                n += 1;
+        if let Some(v) = embedding_f32(r, idx)
+            && v.len() == dim
+        {
+            for (m, &x) in mean.iter_mut().zip(v) {
+                *m += x as f64;
             }
+            n += 1;
         }
     }
     if n == 0 {
@@ -102,11 +102,7 @@ fn sign_gray_key(v: &[f32], mean: &[f64]) -> Vec<u8> {
     let mut key = vec![0u8; dim.div_ceil(8)];
     let mut prev = 0u8;
     for i in 0..dim {
-        let raw = if (v[i] as f64) - mean[i] >= 0.0 {
-            1u8
-        } else {
-            0u8
-        };
+        let raw = u8::from((v[i] as f64) - mean[i] >= 0.0);
         let g = raw ^ prev;
         prev = raw;
         if g != 0 {
