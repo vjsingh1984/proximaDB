@@ -12,6 +12,7 @@
 //! `crate::core::search::{results, bounded_queue, sql_value_filter,
 //! json_value_serde, json_comparison}::*` paths resolve unchanged.
 
+pub mod block_prune;
 pub mod bounded_queue;
 pub mod json_comparison;
 pub mod json_value_serde;

@@ -7,7 +7,8 @@
 // path resolves unchanged. The non-extractable orchestration types
 // (`UnifiedSearchParams`, the search engines) remain in this module.
 pub use proximadb_search_types::{
-    bounded_queue, json_comparison, json_value_serde, results, sql_value_filter,
+    block_prune::BlockPruneMode, bounded_queue, json_comparison, json_value_serde, results,
+    sql_value_filter,
 };
 
 pub mod cross_modal_fusion;
@@ -575,16 +576,10 @@ impl BlockPruneConfig {
     }
 }
 
-/// Block pruning mode.
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub enum BlockPruneMode {
-    /// Prune to sqrt(total_blocks)
-    Sqrt,
-    /// Prune by a configured ratio
-    Ratio,
-    /// Prune to a fixed number of blocks
-    Fixed(usize),
-}
+// `BlockPruneMode` is re-exported from `proximadb_search_types::block_prune`
+// (root-crate decomposition, Slice D / D2 link 2). The enum definition now lives
+// in the foundation crate; the `pub use` at the top of this module keeps
+// `crate::core::search::BlockPruneMode` resolving unchanged.
 
 impl Default for UnifiedSearchParams {
     fn default() -> Self {

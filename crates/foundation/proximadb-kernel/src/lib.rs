@@ -5,6 +5,7 @@
 //! transport, or binding implementations.
 
 pub mod base62;
+pub mod batch_id;
 pub mod checksum;
 pub mod config_error;
 pub mod encoding;
@@ -20,6 +21,7 @@ pub mod stream_error;
 pub mod uuid;
 
 pub use base62::*;
+pub use batch_id::CompactBatchId;
 pub use checksum::*;
 pub use config_error::ConfigError;
 pub use encoding::*;
