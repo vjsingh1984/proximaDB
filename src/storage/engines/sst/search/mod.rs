@@ -248,7 +248,8 @@ impl SstEngine {
         distance_metric: DistanceMetric,
     ) -> anyhow::Result<Option<Vec<OptimizedSearchRecord>>> {
         use crate::storage::engines::sst::segment_format::{
-            MetaPrune, pax_field_to_col, rabitq_search_segment,
+            MetaPrune, pax_field_to_col, rabitq_search_segment, rabitq_search_segment_ranged,
+            striped_read_enabled,
         };
         use proximadb_block_format::RankMetric;
         // Map the query metric to a cascade rank metric. Dot/max-IP and exotic
@@ -261,24 +262,46 @@ impl SstEngine {
         }) else {
             return Ok(None);
         };
-        // Read the segment bytes once; the generic-scan branch uses the sstable
-        // reader instead, so this read is exclusive to the cascade (no double-read).
         let fs = self
             .filesystem()
             .get_filesystem(sstable_path)
             .map_err(|e| anyhow::anyhow!("opening PAX segment {sstable_path}: {e}"))?;
-        let bytes = fs
-            .read(sstable_path)
-            .await
-            .map_err(|e| anyhow::anyhow!("reading PAX segment {sstable_path}: {e}"))?;
         let pool = Self::pax_rabitq_pool_for_top_k(k);
-        let prune = filter_expression.map(|filter| MetaPrune {
-            filter,
-            field_to_col: &pax_field_to_col,
-        });
-        let Some(hits) = rabitq_search_segment(&bytes, query_vector, k, pool, rank_metric, prune)?
-        else {
-            return Ok(None); // not PAX / no RaBitQ → caller falls back
+
+        // Selective (striped) read when engaged + unfiltered (ADR-057 / TD-RDSTRAT-3
+        // Slice C, default-OFF): reads only the codes + candidate-rerank + OID
+        // stripes via `fs.read_range`, byte-identical top-k to the whole read. Any
+        // `None` (index doesn't fit a bounded suffix / not RaBitQ) falls through to
+        // the whole-segment read (mixed-read-safe). Filtered queries stay on the
+        // whole path (metadata pruning over the ranged reader is a follow-up).
+        let hits = 'hits: {
+            if striped_read_enabled()
+                && filter_expression.is_none()
+                && let Some(hits) = rabitq_search_segment_ranged(
+                    fs.as_ref(),
+                    sstable_path,
+                    query_vector,
+                    k,
+                    pool,
+                    rank_metric,
+                )
+                .await?
+            {
+                break 'hits hits;
+            }
+            // Whole-segment read (default, striped-declined, or filtered).
+            let bytes = fs
+                .read(sstable_path)
+                .await
+                .map_err(|e| anyhow::anyhow!("reading PAX segment {sstable_path}: {e}"))?;
+            let prune = filter_expression.map(|filter| MetaPrune {
+                filter,
+                field_to_col: &pax_field_to_col,
+            });
+            match rabitq_search_segment(&bytes, query_vector, k, pool, rank_metric, prune)? {
+                Some(hits) => hits,
+                None => return Ok(None), // not PAX / no RaBitQ → caller falls back
+            }
         };
         let records = hits
             .into_iter()
