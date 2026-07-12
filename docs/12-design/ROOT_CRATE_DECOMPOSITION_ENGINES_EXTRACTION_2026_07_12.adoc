@@ -1,0 +1,113 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= Root-Crate Decomposition — `src/storage/engines` Extraction (2026-07-12)
+
+[NOTE]
+====
+**📣 ANNOUNCED — new parallel track. Re-orient here.** Fresh code-graph metrics
+(`.victor/project.db`, `graph_module_metric`, computed 2026-07-12) re-prioritize
+the decomposition: `src/storage/engines` is the **definitive lever** for the
+build-OOM / `CARGO_BUILD_JOBS>1` goal, and it can be extracted **incrementally
+via clean leaves** — not only as a monolith after the full Slice-D port-inversion.
+This track runs **in parallel with** (not after) the catalog/metrics track.
+See link:ROOT_CRATE_DECOMPOSITION_CATALOG_METRICS_2026_07_12.adoc[catalog/metrics] +
+link:ROOT_CRATE_DECOMPOSITION_CI_BUILD_OPTIMIZATION_2026_07_11.adoc[CI-build-opt].
+====
+
+== Why this track is the lever (the OOM math)
+
+The root crate's single `rustc` compile (`--test` cfg) = **12.8 GiB RSS**
+(measured live, 2026-07-12). To make `CARGO_BUILD_JOBS=2` viable on the 16 GiB
+runners the root single-compile RSS must drop below ~8 GiB — i.e. **~37% of
+`src/` symbols must leave the root unit (~318K of ~860K).**
+
+`src/storage/engines` is **188,097 symbols = 22% of `src/`** (64% of `src/storage`),
+measured `instability = 0.74` (leaf-like: it depends outward far more than inward).
+It is the single biggest, and the most extractable, chunk. Engines + the rest of
+storage (34% total) is the **only** subsystem large enough to reach the jobs=2
+threshold by itself. Catalog + metrics together are ~3.4% — valuable for SOLID
+hygiene but **cannot** enable jobs=2.
+
+== The fresh-metric finding the prior plan under-weights
+
+The link:ROOT_CRATE_DECOMPOSITION_CI_BUILD_OPTIMIZATION_2026_07_11.adoc[CI-build-opt]
+doc treats `src/storage` as a monolith blocked by coupling cycles
+(`raptor/common.rs` Ca=126, `persistence/filesystem/local.rs` Ca=69, …) that need
+the full Slice-D port-inversion *first*. The per-file metrics refine that:
+**engines is leaf-like, and most of its bulk is in clean leaves (Ca = 0–5) that
+can move to crates NOW, before the cycle-hub inversion.**
+
+== Clean-leaf extraction queue (extract first — near-zero rerouting cost)
+
+Each is a cohesive per-engine implementation behind an existing engine-port trait;
+move to `crates/storage/proximadb-engine-<name>/` (or the existing engine crates).
+`Ca` = afferent (root dependents that must reroute through the port); the low-Ca
+leaves need little/no facade work.
+
+[cols="3,1,1,1,1",options="header"]
+|===
+| engine leaf (src/storage/engines/...) | symbols | Ca | inst | note
+| `raptor/writer.rs`        | 5,434 | **0** | 1.0  | cleanest — start here
+| `raptor/consolidated_reader.rs` | 3,862 | 3 | 0.86 | clean
+| `viper/pipeline.rs`       | 3,145 | 1 | 0.88 | clean
+| `core/.../columnar_query_reader.rs` | 3,079 | 5 | 0.77 | clean (columnar scan reader)
+| `raptor/engine.rs`        | 2,876 | **0** | 1.0  | clean
+| `document/service.rs` *(non-engine, also clean)* | 2,924 | 1 | 0.96 | adjacent clean leaf
+|===
+
+Approx **~21K symbols** moveable in the first clean-leaf slice with Ca ≤ 5.
+
+== Sequencing (this track)
+
+. **Engines Slice 1 (clean leaves)** — extract the Ca=0–5 leaves above behind
+  their existing engine-port traits. Mixed-read-safe (read paths reuse the
+  existing port), default-OFF until round-trip/recall tests pass (the RaBitQ/PAX
+  migration pattern). No prerequisite.
+. **Engines Slice 2 (cycle-hub engines)** — the higher-Ca engine cores
+  (`raptor/common.rs` Ca=126, `viper/engine.rs` Ca=35, `sst/object_economy_directory.rs`
+  Ca=82) require the Slice-D port-inversion first to sever the cycles.
+. **Rest of storage** — persistence, WAL, formats, document, cache — follows the
+  same measured-coupling / port-inversion approach; completes the ~34% extraction
+  → root single-compile RSS ≈ 8.4 GiB → + catalog/metrics/query/network slices
+  → < 8 GiB → `CARGO_BUILD_JOBS=2` viable.
+
+== Parallel-track coordination
+
+* **Catalog/metrics track** (link:ROOT_CRATE_DECOMPOSITION_CATALOG_METRICS_2026_07_12.adoc[plan]):
+  continues as the incremental-cleanliness track (low risk; ~29K symbols). Do
+  **not** serialize behind it — run concurrently.
+* **Slice-D port-inversion** (link:ROOT_CRATE_DECOMPOSITION_SLICE_D_PORT_INVERSION_2026_06_26.adoc[plan]):
+  unblocks Engines Slice 2 (the cycle hubs) + the storage up-edges. The two are
+  complementary — Slice D defines the ports the engines implement.
+* **No file overlap** with catalog/metrics or the in-flight ADR-058 work —
+  engines extraction touches `src/storage/engines/` + the engine crates only.
+
+== Reproducibility — re-derive the ranking from the live graph
+
+[source,bash]
+----
+DB="file:.victor/project.db?immutable=1"   # readonly snapshot; live graph-watch
+# engines sub-slice + clean leaves
+sqlite3 "$DB" "
+  SELECT module_path, symbol_count, afferent_coupling ca, efferent_coupling ce,
+         ROUND(instability,2) inst
+  FROM graph_module_metric
+  WHERE module_path LIKE 'src/storage/engines/%'
+    AND symbol_count > 1500 AND afferent_coupling < 8
+  ORDER BY symbol_count DESC;"
+# per-src-subdir totals (engines dominates)
+sqlite3 "$DB" "
+  SELECT CASE WHEN module_path LIKE 'src/storage/engines/%' THEN 'src/storage/engines'
+              WHEN module_path LIKE 'src/storage/%' THEN 'src/storage (rest)'
+              WHEN module_path LIKE 'src/%/%' THEN 'src/'||substr(module_path,5,instr(substr(module_path,5)||'/','/')-1)
+              ELSE module_path END subdir,
+         SUM(symbol_count) syms, SUM(afferent_coupling) ca, ROUND(AVG(instability),2) inst
+  FROM graph_module_metric WHERE module_path LIKE 'src/%'
+  GROUP BY subdir ORDER BY syms DESC LIMIT 12;"
+----
+
+== Refs
+link:ROOT_CRATE_DECOMPOSITION_CI_BUILD_OPTIMIZATION_2026_07_11.adoc[CI-build-opt (#876)],
+link:ROOT_CRATE_DECOMPOSITION_STORAGE_EXTRACTION_PLAN_2026_07_11.adoc[storage-extraction],
+link:ROOT_CRATE_DECOMPOSITION_SLICE_D_PORT_INVERSION_2026_06_26.adoc[Slice-D port-inversion],
+ADR-052 (analytics-competitiveness — ClickBench/TPC need a fast, parallel build).

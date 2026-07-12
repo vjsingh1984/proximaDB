@@ -10,6 +10,19 @@ root subsystems flagged by the observability handoff — `src/catalog` and
 future metrics crate. Uses the same measured-coupling / port-inversion approach
 that landed observability Slices 1–3 (#878/#879/#887).
 
+[NOTE]
+====
+**📣 Re-orientation (2026-07-12, fresh graph metrics):** this catalog/metrics
+track is the **incremental-cleanliness** track (~29K symbols ≈ 3.4% of `src/` —
+valuable for SOLID hygiene but it **cannot enable `CARGO_BUILD_JOBS=2`** on its
+own). The **higher-ROI-for-OOM track is `src/storage/engines` extraction**
+(188K symbols ≈ 22% of `src/`, leaf-like, clean Ca=0–5 leaves) — see
+link:ROOT_CRATE_DECOMPOSITION_ENGINES_EXTRACTION_2026_07_12.adoc[the engines-extraction plan].
+Run the two **in parallel**; do not serialize catalog/metrics ahead of engines.
+The build-OOM goal (root single-compile RSS 12.8 GiB → < 8 GiB) is owned by the
+engines track.
+====
+
 toc::[]
 
 == Why these two
