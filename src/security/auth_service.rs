@@ -905,43 +905,12 @@ pub struct ClientCertificateData {
     pub raw_cert_der: Option<Vec<u8>>,
 }
 
-impl UnifiedUserContext {
-    /// Create anonymous user context
-    pub fn anonymous() -> Self {
-        Self {
-            user_id: "anonymous".to_string(),
-            tenant_id: None,
-            roles: vec!["anonymous".to_string()],
-            effective_permissions: HashSet::new(),
-            auth_method: UnifiedAuthMethod::Internal,
-            session_id: format!("anon_{}", uuid::Uuid::new_v4()),
-            expires_at: None,
-            created_at: Utc::now(),
-            metadata: HashMap::new(),
-        }
-    }
-
-    /// Check if user is authenticated
-    pub fn is_authenticated(&self) -> bool {
-        self.user_id != "anonymous"
-    }
-
-    /// Check if user session is expired
-    pub fn is_session_expired(&self) -> bool {
-        match self.expires_at {
-            Some(expires_at) => Utc::now() > expires_at,
-            None => false,
-        }
-    }
-
-    /// Get user display name
-    pub fn display_name(&self) -> String {
-        self.metadata
-            .get("display_name")
-            .unwrap_or(&self.user_id)
-            .clone()
-    }
-}
+// NOTE: the inherent `impl UnifiedUserContext { anonymous / is_authenticated /
+// is_session_expired / display_name }` block previously defined here was moved
+// to `proximadb_tenant::rbac_context` (Slice D hoist) — inherent impls must live
+// in the defining crate, and the type now lives in the foundation `proximadb-
+// tenant` crate. All methods remain accessible in scope via the
+// `crate::security::rbac_service` re-export.
 
 /// Create audit event for authentication attempt
 fn create_auth_audit_event(
