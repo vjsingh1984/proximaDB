@@ -620,10 +620,10 @@ impl Default for ConstraintEnforcer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::internal::{
+    use crate::CatalogColumn;
+    use crate::internal::{
         CatalogObject, ObjectSchema, ObjectType, SchemaEnforcementMode, TableConstraint,
     };
-    use proximadb_catalog::CatalogColumn;
     use proximadb_data_model::ProximaType;
 
     fn create_test_object() -> CatalogObject {

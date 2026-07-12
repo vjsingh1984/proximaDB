@@ -26,7 +26,7 @@ pub mod traits {
 }
 
 // Partition pruning for query optimization
-pub mod partition_pruning;
+pub use proximadb_catalog::partition_pruning;
 
 // CATALOG_OBJECT_MODEL #3 read-port: catalog adapter for AXIS index-location resolution.
 pub mod index_location_resolver;
@@ -34,14 +34,14 @@ pub mod index_location_resolver;
 // ADR-035 / TD-SC-1: per-tenant system-catalog hot read cache (byte-bounded,
 // TTL'd, corpus-version-stamped) — fronts the canonical catalog so metadata
 // reads avoid the 1+N+M object-store round-trips.
-pub mod syscat_cache;
+pub use proximadb_catalog::syscat_cache;
 
 // ADR-035 / TD-SC-2: on-disk warm tier between the hot cache and the canonical
 // catalog (OS page cache instead of object-store round-trips on a hot miss).
-pub mod syscat_warm;
+pub use proximadb_catalog::syscat_warm;
 
 // Internal schema registry (multi-model unified catalog)
-pub mod internal;
+pub use proximadb_catalog::internal;
 
 // Iceberg REST catalog server — service layer translating internal ↔ Iceberg REST types
 pub mod iceberg_rest_service;
@@ -61,7 +61,7 @@ pub use tenant_tier::{
 };
 
 // Recall probe gate — gating logic for the quantized route default-on (LLD §5).
-pub mod recall_probe;
+pub use proximadb_catalog::recall_probe;
 pub use recall_probe::{ProbeConfig, ProbeOutcome, ProbeScope, ProbeState, RecallProbeGate};
 
 /// Soft-cap budget guard — gateway-side check returning structured rejection.
@@ -92,11 +92,11 @@ pub use corpus_version::CorpusVersionRegistry;
 // Relocated to the proximadb-catalog crate; re-exported here for source compatibility.
 pub use proximadb_catalog::corpus_version;
 
+pub use corpus_version_fs_store::FileSystemCorpusVersionStore;
 /// File-backed CorpusVersionStore — first concrete durable backend
 /// for single-node deployments. Other backends (catalog row, KV)
 /// can implement the trait independently.
-pub mod corpus_version_fs_store;
-pub use corpus_version_fs_store::FileSystemCorpusVersionStore;
+pub use proximadb_catalog::corpus_version_fs_store;
 
 // Feature-gated catalog backends — canonical impls live in `proximadb-catalog`.
 #[cfg(feature = "delta-lake")]
