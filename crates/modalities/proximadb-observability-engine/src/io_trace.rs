@@ -207,6 +207,25 @@ pub struct IoTrace {
     /// discovery and reuses cached schema/splits/file-sizes.
     table_open_hits: AtomicU64,
     table_open_misses: AtomicU64,
+    /// Plan-geometry vector (TD-EXEC-2 Slice 1, observe-only): the pre-execution
+    /// geometric summary of the served physical plan — depth, node/leaf counts,
+    /// fan-out, blocking-operator count — recorded at the plan→execute seam as
+    /// neutral scalars (io_trace never depends on a query-layer type). One
+    /// measured vector feeds three resource laws: stack sizing, engine routing,
+    /// parallelism. Max semantics so a multi-statement scope keeps its deepest plan.
+    plan_depth: AtomicU64,
+    plan_nodes: AtomicU64,
+    plan_leaves: AtomicU64,
+    plan_fanout: AtomicU64,
+    plan_blocking: AtomicU64,
+    /// Per-operator-kind counts of the served plan (TD-EXEC-2) — the histogram
+    /// half of the geometry vector, keyed by neutral op-kind labels.
+    plan_ops: Mutex<BTreeMap<String, u64>>,
+    /// Measured stack high-water mark (bytes) of the plan-tree recursions
+    /// (planner lowering + executor build), sampled via the planner's
+    /// `stack_probe` (TD-EXEC-2 Slice 1). Max across recordings — the binding
+    /// per-query figure that calibrates `frame_bytes[op_kind]`.
+    stack_hwm_bytes: AtomicU64,
     /// The route this query was served on, as `(shape_class, backend_label)`
     /// strings (co-design C4). Stamped by the `ComputeScheduler` so the flush can
     /// feed the trace-driven cost model the cost of *this kind of query on that
@@ -345,6 +364,37 @@ impl IoTrace {
         self.plan_ms.fetch_add(ms, Ordering::Relaxed);
     }
 
+    /// Record the served plan's geometry vector (TD-EXEC-2 Slice 1, observe-only):
+    /// neutral scalars measured from the physical plan at the plan→execute seam,
+    /// plus the per-op-kind histogram as `(label, count)` pairs. Scalars keep the
+    /// max so a multi-statement scope reflects its deepest plan; histogram counts
+    /// accumulate.
+    pub fn record_plan_geometry(
+        &self,
+        depth: u64,
+        nodes: u64,
+        leaves: u64,
+        fanout: u64,
+        blocking: u64,
+        ops: &[(&str, u64)],
+    ) {
+        self.plan_depth.fetch_max(depth, Ordering::Relaxed);
+        self.plan_nodes.fetch_max(nodes, Ordering::Relaxed);
+        self.plan_leaves.fetch_max(leaves, Ordering::Relaxed);
+        self.plan_fanout.fetch_max(fanout, Ordering::Relaxed);
+        self.plan_blocking.fetch_max(blocking, Ordering::Relaxed);
+        let mut g = self.plan_ops.lock().unwrap_or_else(|p| p.into_inner());
+        for (kind, count) in ops {
+            *g.entry((*kind).to_string()).or_insert(0) += count;
+        }
+    }
+
+    /// Record a measured stack high-water mark (bytes) for one of the plan-tree
+    /// recursions (TD-EXEC-2 Slice 1). Max semantics — the binding figure wins.
+    pub fn record_stack_hwm(&self, bytes: u64) {
+        self.stack_hwm_bytes.fetch_max(bytes, Ordering::Relaxed);
+    }
+
     /// Record a table-OPEN cache outcome: `true` = hit (discovery reused, no
     /// LIST/HEAD/footer I/O), `false` = miss (cold open).
     pub fn record_table_open(&self, hit: bool) {
@@ -417,6 +467,17 @@ impl IoTrace {
             plan_ms: self.plan_ms.load(Ordering::Relaxed),
             table_open_hits: self.table_open_hits.load(Ordering::Relaxed),
             table_open_misses: self.table_open_misses.load(Ordering::Relaxed),
+            plan_depth: self.plan_depth.load(Ordering::Relaxed),
+            plan_nodes: self.plan_nodes.load(Ordering::Relaxed),
+            plan_leaves: self.plan_leaves.load(Ordering::Relaxed),
+            plan_fanout: self.plan_fanout.load(Ordering::Relaxed),
+            plan_blocking: self.plan_blocking.load(Ordering::Relaxed),
+            plan_ops: self
+                .plan_ops
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone(),
+            stack_hwm_bytes: self.stack_hwm_bytes.load(Ordering::Relaxed),
             route: self.route(),
         }
     }
@@ -497,6 +558,30 @@ pub struct IoTraceSnapshot {
     /// Table-OPEN cache misses (cold open).
     #[serde(default)]
     pub table_open_misses: u64,
+    /// Served plan's longest root→leaf path (TD-EXEC-2 geometry; 0 = not recorded).
+    #[serde(default)]
+    pub plan_depth: u64,
+    /// Served plan's total operator count (TD-EXEC-2 geometry).
+    #[serde(default)]
+    pub plan_nodes: u64,
+    /// Served plan's leaf (scan/values) count — source fan-in (TD-EXEC-2 geometry).
+    #[serde(default)]
+    pub plan_leaves: u64,
+    /// Served plan's widest sibling set — parallelism signal (TD-EXEC-2 geometry).
+    #[serde(default)]
+    pub plan_fanout: u64,
+    /// Served plan's pipeline-breaker count (joins+sorts+aggregates) —
+    /// memory/spill signal (TD-EXEC-2 geometry).
+    #[serde(default)]
+    pub plan_blocking: u64,
+    /// Served plan's per-operator-kind histogram (TD-EXEC-2 geometry).
+    #[serde(default)]
+    pub plan_ops: BTreeMap<String, u64>,
+    /// Measured stack high-water mark (bytes) of the plan-tree recursions,
+    /// via the planner's `stack_probe` (TD-EXEC-2 Slice 1). The calibration
+    /// figure that resolves `frame_bytes[op_kind]`; 0 = not measured.
+    #[serde(default)]
+    pub stack_hwm_bytes: u64,
 }
 
 impl IoTraceSnapshot {
@@ -695,6 +780,28 @@ pub fn record_open_ms(ms: u64) {
 /// Add pgwire relational-pipeline setup wall ms to the active query trace.
 pub fn record_setup_ms(ms: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_setup_ms(ms));
+}
+
+/// Record the served plan's geometry vector for the active query (TD-EXEC-2
+/// Slice 1, observe-only). Core counter (always-on, like `record_plan_ms`):
+/// the route cost model's geometry tier and the stack calibration fit both
+/// consume it from the ledger. Silently no-ops outside an active scope.
+pub fn record_plan_geometry(
+    depth: u64,
+    nodes: u64,
+    leaves: u64,
+    fanout: u64,
+    blocking: u64,
+    ops: &[(&str, u64)],
+) {
+    let _ =
+        IO_TRACE.try_with(|t| t.record_plan_geometry(depth, nodes, leaves, fanout, blocking, ops));
+}
+
+/// Record a measured plan-recursion stack high-water mark (bytes) for the
+/// active query (TD-EXEC-2 Slice 1). Silently no-ops outside an active scope.
+pub fn record_stack_hwm(bytes: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_stack_hwm(bytes));
 }
 
 /// Add pgwire result-emit wall ms (row encode + socket write) to the active trace.

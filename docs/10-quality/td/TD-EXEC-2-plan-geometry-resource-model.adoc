@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open — design filed 2026-07-10.** First-principles generalization of TD-EXEC-1 (which named the flat 8 MB stack a "blunt band-aid" and asked for measured, shape-sized allocation). Extends the ADR-050/#840 route cost model, not a new engine.
+| Status | **Open — design filed 2026-07-10.** First-principles generalization of TD-EXEC-1 (which named the flat 8 MB stack a "blunt band-aid" and asked for measured, shape-sized allocation). Extends the ADR-050/#840 route cost model, not a new engine. **Progress:** Slice 0 (stack safety, `maybe_grow`) landed via #851; Slice 1 core (`PlanGeometry` + iterative `measure_geometry`) via #854; **Slice 1 calibration + seam wiring landed 2026-07-11** — the ~100× `frame_bytes` unknown is *resolved by measurement* (see §1.b): lowering ≈ **1.46 KB/frame**, executor build ≈ **2.35 KB/frame** (release; 8.7 / 16.3 KB debug), and geometry + `plan_ms` + `stack_hwm_bytes` now record into the io-trace/ledger at the pgwire plan→execute seam.
 | Priority | **P1** — the router and the stack allocator both decide resources today by *rule-of-thumb* (a 2-bit `match` for engine, a flat 8 MB for stack). Both are the same missing capability: predict a query's resource footprint from its plan *geometry*, calibrated by measurement. Closes TD-EXEC-1 Phase 1 and makes the ADR-050 cost model live.
 | Severity | **High for the stack half** (revised) — the band-aid is *test-only*: #843/#846 raised the 8 MB stack in the three TPC test harnesses, but the **production server runs on the tokio default 2 MB** (`apps/proximadb-server/src/main.rs:121` = bare `#[tokio::main]`; the only 8 MB is `EmbeddedProximaDB::new`, `src/embedded/mod.rs:828`, the PyO3 path). The dominant consumer is the **planner recursion, which runs *before any engine*** — so the native `MAX_WALK_DEPTH=32` guard does not protect it. A deep OLAP query (Q2/Q7 already at SF ≥ 0.01) SIGABRTs the production pgwire *process* → this is a **P1 availability bug**, not a sizing inefficiency. Medium for the routing half (leaves the measured cost model dark, `PROXIMADB_ROUTE_COST_OVERRIDE` OFF). *This severity split is why the stack **safety** primitive (§1) is decoupled from — and lands ahead of — the estimate/calibration/routing.*
 | Component | *new* `PlanGeometry` + `measure_geometry` in `crates/query/proximadb-relational-planner/src/lib.rs`; *new* stack estimator (`crates/query/proximadb-relational-planner` or a leaf crate); extends `IoTrace`/`IoTraceSnapshot` (`src/observability/io_trace.rs`), the ledger `LedgerRecord` (`tests/tpc_perf_ledger_e2e.rs`), `QueryShape`/`shape_class` (`src/query/compute_scheduler.rs`, `src/query/route_cost_model.rs`), and the pgwire worker spawn (`src/network/postgres/mod.rs:249`).
@@ -65,6 +65,29 @@ stack_bytes(plan) ≈ C_planner · max_depth
 ....
 
 `C_planner` and `frame_bytes[op_kind]` are **measured** (calibrated from per-query `stacker::remaining_stack()` high-water marks, recorded to the ledger), O(1) to evaluate from `max_depth` + deepest-path op-kinds. The estimate is used to (i) pre-size the worker/segment so the *common* deep plan avoids the mid-descent growth allocation, and optionally (ii) route to a tiered pool — OLTP (≤512 KB shallow) vs OLAP (deep join+subquery). Because these are optimizations, a *wrong* estimate costs a growth allocation or a suboptimal pool — never a crash.
+
+**Measured (Slice 1 calibration, 2026-07-11 — the ~100× unknown resolved).** The `stack_probe`
+module (planner crate) arms a thread-local low-water probe around the guarded recursions; the
+`calibrate_lowering_frame_cost` / `calibrate_build_frame_cost` tests measure a 100-deep vs
+1100-deep filter chain on a dedicated large-stack thread (no `maybe_grow` growth, exact reading)
+and divide out the fixed overhead:
+
+[cols="2,1,1", options="header"]
+|===
+| Recursion | Release | Debug
+| planner `lower_to_physical` | **≈ 1 456 B/frame** | ≈ 8 656 B/frame
+| executor `build_executor` | **≈ 2 352 B/frame** | ≈ 16 336 B/frame
+|===
+
+TD-EXEC-1's 100–200 KB/frame estimate was ~100× high; the ~1 KB code-probe guess was right for
+release builds. The recursions run sequentially and the stack unwinds between them, so the
+binding figure is the **max** per level (executor build), not the sum. Consequences: (a) a
+default 2 MB tokio worker holds ~850 build frames in release but only ~125 in debug — consistent
+with the Q2/Q7 overflows having surfaced in (debug-built) test harnesses at modest plan depths;
+(b) the Slice-0 `red_zone = 256 KiB` buys ~110 release build-frames of headroom per check —
+comfortably safe; (c) a Slice-2 estimate can seed `frame_bytes ≈ 2.4 KB (release) / 16 KB
+(debug)` per plan level, refined per-op-kind by the ledger fit. The tests double as regression
+ratchets (fail past 32 KiB/frame — frame-bloat detection ~14× above measured release cost).
 
 * TD-EXEC-1 Phase 2 (iterative planner, heap work-list) **zeroes the `C_planner · max_depth` term** at the source; the estimator then reflects only the executor's residual recursion. `maybe_grow` makes the iterative planner a *performance* optimization (fewer segment allocations, better cache locality), no longer a correctness prerequisite — the estimator measures its win.
 
