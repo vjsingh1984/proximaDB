@@ -36,13 +36,12 @@ pub struct FramedTableWalAppender {
     next_sequence: AtomicU64,
     append_lock: Mutex<()>,
     /// TD-OLAP-17: per-collection high-water sequence_number, bumped atomically
-    /// under `append_lock` on every append. Lets `read_changes_since` skip the
-    /// O(WAL) scan when a collection hasn't advanced past a reader's `since_lsn`
-    /// (the DF table-OPEN floor). Sync lock (parking_lot) so the sync trait method
-    /// `collection_max_sequence_for` can read it without `.await`. Not rebuilt on
-    /// recovery → after a restart the first read per collection scans (the original
-    /// behavior) until the next write repopulates it; a recovery rebuild is a
-    /// follow-on. Never regresses (worst case = scan).
+    /// under `append_lock` on every append, AND seeded from the recovered entries
+    /// on `open` (so read-only-after-restart tables fast-path immediately). Lets
+    /// `read_changes_since` skip the O(WAL) scan when a collection hasn't advanced
+    /// past a reader's `since_lsn` (the DF table-OPEN floor). Sync lock
+    /// (parking_lot) so the sync trait method `collection_max_sequence_for` can
+    /// read it without `.await`. Never regresses (worst case = scan).
     collection_max: parking_lot::Mutex<std::collections::HashMap<String, u64>>,
 }
 
@@ -75,7 +74,7 @@ impl FramedTableWalAppender {
             path,
             next_sequence: AtomicU64::new(recovery.last_sequence),
             append_lock: Mutex::new(()),
-            collection_max: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            collection_max: parking_lot::Mutex::new(recovery.collection_max),
         })
     }
 
@@ -282,6 +281,9 @@ impl TableWalAppender for MemoryTableWalAppender {
 #[derive(Debug)]
 struct WalRecoveryState {
     last_sequence: u64,
+    /// TD-OLAP-17 recovery rebuild: per-collection high-water seeded from the
+    /// recovered entries, so read-only-after-restart tables fast-path immediately.
+    collection_max: std::collections::HashMap<String, u64>,
     valid_len: u64,
     file_len: u64,
 }
@@ -292,6 +294,7 @@ async fn recover_wal_state(path: &Path) -> Result<WalRecoveryState> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Ok(WalRecoveryState {
                 last_sequence: 0,
+                collection_max: std::collections::HashMap::new(),
                 valid_len: 0,
                 file_len: 0,
             });
@@ -308,9 +311,24 @@ async fn recover_wal_state(path: &Path) -> Result<WalRecoveryState> {
         .map(|entry| entry.sequence_number)
         .max()
         .unwrap_or(0);
+    // TD-OLAP-17 recovery rebuild: seed the per-collection high-water from the
+    // recovered entries so a read-mostly table fast-paths immediately after a
+    // restart, without waiting for the next write to repopulate it. No extra I/O
+    // — `scan_wal_bytes` already parsed every entry for `last_sequence`.
+    let mut collection_max: std::collections::HashMap<String, u64> =
+        std::collections::HashMap::new();
+    for entry in &scan.entries {
+        if let Some(c) = collection_id_of(&entry.operation) {
+            let cur = collection_max.entry(c.to_string()).or_insert(0);
+            if entry.sequence_number > *cur {
+                *cur = entry.sequence_number;
+            }
+        }
+    }
 
     Ok(WalRecoveryState {
         last_sequence,
+        collection_max,
         valid_len: scan.valid_len as u64,
         file_len: bytes.len() as u64,
     })
@@ -674,6 +692,39 @@ mod tests {
                     .chain()
                     .any(|cause| cause.to_string().contains("checksum mismatch"))
         );
+
+        Ok(())
+    }
+
+    /// TD-OLAP-17 recovery rebuild: reopening a WAL (process restart) must
+    /// re-seed the per-collection high-water from the recovered entries, so a
+    /// read-mostly table fast-paths immediately instead of scanning every query
+    /// until the next write repopulates it.
+    #[tokio::test]
+    async fn framed_table_wal_rebuilds_collection_high_water_on_open() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let wal_path = dir.path().join("highwater.wal");
+
+        // Append for two collections, then drop the appender (simulate process exit).
+        {
+            let appender = FramedTableWalAppender::open(&wal_path).await?;
+            appender
+                .append_operations(vec![upsert_operation("orders", "o1")], None)
+                .await?;
+            appender
+                .append_operations(vec![upsert_operation("orders", "o2")], None)
+                .await?;
+            appender
+                .append_operations(vec![upsert_operation("lineitems", "l1")], None)
+                .await?;
+        }
+
+        // Reopen = restart. The high-water is rebuilt from the recovered WAL:
+        // orders → seq 2, lineitems → seq 3 (the global counter assigned 1,2,3).
+        let reopened = FramedTableWalAppender::open(&wal_path).await?;
+        assert_eq!(reopened.collection_max_sequence_for("orders"), Some(2));
+        assert_eq!(reopened.collection_max_sequence_for("lineitems"), Some(3));
+        assert_eq!(reopened.collection_max_sequence_for("never-written"), None);
 
         Ok(())
     }
