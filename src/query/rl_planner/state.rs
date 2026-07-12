@@ -5,30 +5,11 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Storage engine types for state encoding
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-pub enum StorageEngineType {
-    #[default]
-    SST,
-    HELIX,
-    VIPER,
-    SWIFT,
-    NOVA,
-    RAPTOR,
-}
-
-impl std::fmt::Display for StorageEngineType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::SST => write!(f, "SST"),
-            Self::HELIX => write!(f, "HELIX"),
-            Self::VIPER => write!(f, "VIPER"),
-            Self::SWIFT => write!(f, "SWIFT"),
-            Self::NOVA => write!(f, "NOVA"),
-            Self::RAPTOR => write!(f, "RAPTOR"),
-        }
-    }
-}
+/// Canonical storage engine type (re-exported from `proximadb-storage-common` via
+/// `core::types`). The previous local 6-variant copy (a subset missing TST) was
+/// consolidated into the single source of truth; the canonical type carries its
+/// own `Display`/`as_str`/`from_name`/`FromStr`.
+pub use crate::core::types::StorageEngineType;
 
 /// Available index types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

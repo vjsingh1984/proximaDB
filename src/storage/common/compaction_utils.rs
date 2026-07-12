@@ -18,73 +18,13 @@ use crate::core::config::CompactionConfig;
 use crate::storage::common::compaction_orchestrator::{GenericFileMetadata, TieredFileRegistry};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
-/// Storage engine type for EventLog filtering
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum StorageEngineType {
-    SST,
-    VIPER,
-    NOVA,
-    SWIFT,
-    HELIX,
-    RAPTOR,
-    TST,
-}
-
-impl std::fmt::Display for StorageEngineType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            StorageEngineType::SST => write!(f, "SST"),
-            StorageEngineType::VIPER => write!(f, "VIPER"),
-            StorageEngineType::NOVA => write!(f, "NOVA"),
-            StorageEngineType::SWIFT => write!(f, "SWIFT"),
-            StorageEngineType::HELIX => write!(f, "HELIX"),
-            StorageEngineType::RAPTOR => write!(f, "RAPTOR"),
-            StorageEngineType::TST => write!(f, "TST"),
-        }
-    }
-}
-
-impl StorageEngineType {
-    /// Convert from proto StorageEngine enum
-    pub fn from_proto(engine: i32) -> Self {
-        use crate::proto::proximadb_v1::StorageEngine;
-        match StorageEngine::try_from(engine) {
-            Ok(StorageEngine::Sst) => StorageEngineType::SST,
-            Ok(StorageEngine::Viper) => StorageEngineType::VIPER,
-            Ok(StorageEngine::Nova) => StorageEngineType::NOVA,
-            Ok(StorageEngine::Swift) => StorageEngineType::SWIFT,
-            Ok(StorageEngine::Tst) => StorageEngineType::TST,
-            _ => StorageEngineType::VIPER, // Default to VIPER
-        }
-    }
-
-    /// Convert from string representation
-    pub fn from_str_uppercase(s: &str) -> Self {
-        match s.to_uppercase().as_str() {
-            "SST" => StorageEngineType::SST,
-            "VIPER" => StorageEngineType::VIPER,
-            "NOVA" => StorageEngineType::NOVA,
-            "SWIFT" => StorageEngineType::SWIFT,
-            "HELIX" => StorageEngineType::HELIX,
-            "RAPTOR" => StorageEngineType::RAPTOR,
-            "TST" => StorageEngineType::TST,
-            _ => StorageEngineType::VIPER, // Default to VIPER
-        }
-    }
-
-    /// Get file extension for this engine type
-    pub fn file_extension(&self) -> &str {
-        match self {
-            StorageEngineType::SST => ".sst",
-            StorageEngineType::VIPER => ".parquet",
-            StorageEngineType::NOVA => ".nova",
-            StorageEngineType::SWIFT => ".swift",
-            StorageEngineType::HELIX => ".helix",
-            StorageEngineType::RAPTOR => ".raptor",
-            StorageEngineType::TST => ".tst",
-        }
-    }
-}
+/// Canonical storage engine type (re-exported from `proximadb-storage-common` via
+/// `core::types`). The previous local 7-variant copy was consolidated into the
+/// single source of truth — variant sets were identical (SST/VIPER/NOVA/SWIFT/
+/// HELIX/RAPTOR/TST). The dead `from_proto`/`from_str_uppercase`/`file_extension`
+/// helpers had no external callers and were dropped (proto bridging lives on the
+/// canonical type and the proto-bridge impls in `background_flush_context`).
+pub use crate::core::types::StorageEngineType;
 
 /// Result of file discovery with EventLog filtering
 #[derive(Debug, Clone)]
@@ -475,21 +415,6 @@ pub struct CompactionTaskInfo {
     pub extension: String,
     pub pending_files_count: usize,
     pub total_files_count: usize,
-}
-
-impl StorageEngineType {
-    /// Get string representation
-    pub fn as_str(&self) -> &str {
-        match self {
-            StorageEngineType::SST => "SST",
-            StorageEngineType::VIPER => "VIPER",
-            StorageEngineType::NOVA => "NOVA",
-            StorageEngineType::SWIFT => "SWIFT",
-            StorageEngineType::HELIX => "HELIX",
-            StorageEngineType::RAPTOR => "RAPTOR",
-            StorageEngineType::TST => "TST",
-        }
-    }
 }
 
 /// Self-healing behavior for compaction
