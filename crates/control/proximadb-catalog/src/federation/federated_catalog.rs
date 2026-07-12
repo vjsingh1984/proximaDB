@@ -11,9 +11,9 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::catalog::internal::InternalSchemaRegistry;
-use crate::catalog::traits::Catalog;
-use crate::catalog::{CatalogManager, TableIdentifier};
+use crate::Catalog;
+use crate::internal::InternalSchemaRegistry;
+use crate::{CatalogManager, TableIdentifier};
 
 use super::external::{ExternalCatalog, ExternalCatalogType};
 

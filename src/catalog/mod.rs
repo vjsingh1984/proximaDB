@@ -50,8 +50,10 @@ pub mod iceberg_rest_service;
 pub mod segment_registry;
 pub use segment_registry::SegmentRegistry;
 
-// Catalog federation (unified view across internal and external catalogs)
-pub mod federation;
+// Catalog federation (unified view across internal and external catalogs).
+// Moved to proximadb-catalog (Slice 3); re-exported so `crate::catalog::federation::*`
+// paths are unchanged.
+pub use proximadb_catalog::federation;
 
 // Tenant tier store — per-tenant policy + budget + feature flags (LLD §3, §4).
 pub mod tenant_tier;
