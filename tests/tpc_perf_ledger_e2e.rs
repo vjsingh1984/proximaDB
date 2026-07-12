@@ -1571,11 +1571,20 @@ async fn run_benchmark(
     );
 
     // Native/Volcano route (pre-MATERIALIZE).
-    for (id, sql) in &queries {
-        for temperature in ["first", "repeat"] {
-            let r = measure(client, sql).await;
-            push_record(out, benchmark, id, "native", temperature, r);
+    // `TPC_PERF_SKIP_NATIVE=1` skips this route — useful when iterating on the
+    // DataFusion (post-MATERIALIZE) or DuckDB routes in isolation, since the
+    // row-at-a-time Volcano path is the slow floor (pathological on
+    // subquery-heavy shapes like TPC-H Q2). Default: run it (full comparison).
+    let skip_native = std::env::var("TPC_PERF_SKIP_NATIVE").is_ok();
+    if !skip_native {
+        for (id, sql) in &queries {
+            for temperature in ["first", "repeat"] {
+                let r = measure(client, sql).await;
+                push_record(out, benchmark, id, "native", temperature, r);
+            }
         }
+    } else {
+        eprintln!("[{benchmark}] · skipping native/Volcano route (TPC_PERF_SKIP_NATIVE)");
     }
 
     // Flip to parquet-backed → DataFusion route.
@@ -1793,8 +1802,15 @@ async fn tpc_perf_ledger_inner() {
             );
         }
         // Dynamic: TPC-DS query count grows with coverage (#855); TPC-H is the
-        // fixed 22. Both routes × both temperatures must be measured per query.
+        // fixed 22. Both routes × both temperatures must be measured per query
+        // (unless `TPC_PERF_SKIP_NATIVE` drops the Volcano route for focused
+        // DF/DuckDB iteration — then only the datafusion route is expected).
         let n_queries = 22 + tpcds_queries().len();
+        let n_routes = if std::env::var("TPC_PERF_SKIP_NATIVE").is_ok() {
+            1 // datafusion only
+        } else {
+            2 // native + datafusion
+        };
         let baseline = ledger
             .records
             .iter()
@@ -1802,7 +1818,7 @@ async fn tpc_perf_ledger_inner() {
             .count();
         assert_eq!(
             baseline,
-            n_queries * 2 /* native + datafusion */ * 2, /* first + repeat */
+            n_queries * n_routes * 2, /* first + repeat */
             "native+datafusion baseline incomplete (expected one record per query x route x temperature)"
         );
     }
