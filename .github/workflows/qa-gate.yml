@@ -196,9 +196,11 @@ jobs:
   cloud-emulator-object-store:
     name: Cloud object-store emulators (Azurite/MinIO/fake-gcs)
     runs-on: ubuntu-latest
-    # The --all scope compiles the full main crate under CARGO_BUILD_JOBS=1 (the OOM
-    # mitigation — see scripts/run_cloud_emulator_tests.sh); serialized compile is
-    # ~35-40m, so 60m leaves headroom over the old 45m budget that the OOM-kill hit.
+    # The --all scope compiles the full main crate under CARGO_BUILD_JOBS=2 (see
+    # scripts/run_cloud_emulator_tests.sh) — a middle ground that stays off the 16GB
+    # runner's OOM cliff while halving the old jobs=1 ~35-40m serialized compile that
+    # grew past this budget and got cancelled mid-build (#882). 60m (1h) leaves ample
+    # headroom for the ~20m parallel compile + emulator round-trips.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
