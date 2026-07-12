@@ -54,6 +54,7 @@ use thiserror::Error;
 /// Plan geometry — a cheap, pre-execution geometric summary of a [`PhysicalPlan`]
 /// (TD-EXEC-2 Slice 1). Observe-only: it makes no decision and changes no behavior.
 pub mod plan_geometry;
+pub mod stack_probe;
 pub use plan_geometry::{OpKind, PlanGeometry, measure_geometry};
 
 // =========================================================================
@@ -756,6 +757,10 @@ const LOWER_STACK_GROW: usize = 4 * 1024 * 1024;
 /// own headroom.
 pub fn lower_to_physical(node: LogicalNode) -> PhysicalPlan {
     stacker::maybe_grow(LOWER_RED_ZONE, LOWER_STACK_GROW, || {
+        // TD-EXEC-2 Slice 1: sample the recursion's stack low-water mark when a
+        // probe is armed (a TLS read + branch otherwise — same order as the
+        // maybe_grow check above).
+        stack_probe::note();
         lower_to_physical_inner(node)
     })
 }
@@ -2418,6 +2423,63 @@ mod tests {
         handle
             .join()
             .expect("deep lowering must not overflow the 512 KiB stack (maybe_grow)");
+    }
+
+    /// Lowering stack high-water for a `depth`-level filter chain, measured on a
+    /// dedicated large-stack thread so `maybe_grow` never switches segments and
+    /// the probe reading is exact (see `stack_probe` module docs).
+    fn lowering_stack_hwm(depth: usize) -> u64 {
+        std::thread::Builder::new()
+            // Large enough that even TD-EXEC-1's 200 KB/frame upper guess for
+            // ~1.1k frames fits without segment growth.
+            .stack_size(256 * 1024 * 1024)
+            .spawn(move || {
+                let mut node = users_scan();
+                for _ in 0..depth {
+                    node = LogicalNode::Filter {
+                        input: Box::new(node),
+                        predicate: Expr::literal(ProximaValue::Int64(1)),
+                    };
+                }
+                let (physical, hwm) = stack_probe::probe(|| lower_to_physical(node));
+                // Avoid a deep recursive Drop; only the measurement matters.
+                std::mem::forget(physical);
+                hwm
+            })
+            .expect("spawn large-stack calibration thread")
+            .join()
+            .expect("calibration lowering must not fail")
+    }
+
+    /// TD-EXEC-2 Slice 1 calibration: measure the real per-frame stack cost of
+    /// the lowering recursion, resolving the ~100× `frame_bytes` unknown
+    /// (TD-EXEC-1 estimated 100–200 KB/frame; a code probe suggested ~1 KB).
+    /// The delta between two chain depths divides out the fixed arm-to-entry
+    /// overhead, leaving bytes-per-frame. The upper bound is a regression
+    /// ratchet: a change that bloats lowering frames past 32 KiB fails here
+    /// long before it re-approaches the TD-EXEC-1 guess.
+    #[test]
+    fn calibrate_lowering_frame_cost() {
+        let shallow = lowering_stack_hwm(100);
+        let deep = lowering_stack_hwm(1100);
+        if shallow == 0 && deep == 0 {
+            // Platform cannot report remaining stack; nothing to calibrate.
+            return;
+        }
+        assert!(
+            deep > shallow,
+            "1100-deep lowering must consume more stack than 100-deep: \
+             shallow={shallow} deep={deep}"
+        );
+        let per_frame = (deep - shallow) / 1000;
+        eprintln!(
+            "TD-EXEC-2 Slice-1 calibration: lowering frame cost ≈ {per_frame} B/frame \
+             (hwm {shallow} B @ depth 100 → {deep} B @ depth 1100)"
+        );
+        assert!(
+            per_frame <= 32 * 1024,
+            "lowering frame cost regressed past 32 KiB/frame: measured {per_frame} B/frame"
+        );
     }
 
     // --- Constant folding ---------------------------------------------

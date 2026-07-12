@@ -40,6 +40,7 @@ use proximadb_relational_executor::{ExecError, NodeMetric, ReaderFactory};
 use proximadb_relational_frontend::{CatalogLookup, lower_sql};
 use proximadb_relational_planner::{
     CapabilityResolver, PhysicalPlan, Planner, StaticCapabilities, explain_physical,
+    measure_geometry, stack_probe,
 };
 use proximadb_relational_reader::{ReaderCapabilities, ReaderError, RelationalReader, ScanContext};
 use proximadb_relational_types::{ColumnInfo, Expr, ExprError, RelationalRow, RelationalSchema};
@@ -679,8 +680,42 @@ async fn run_plan<F: ReaderFactory, R: CapabilityResolver>(
     controls: ExecutionControls,
 ) -> Result<ExecutionPipelineResult, String> {
     let planner = Planner::new(resolver);
-    let physical = planner.plan(logical).map_err(|e| format!("plan: {e}"))?;
+    let physical = plan_instrumented(&planner, logical)?;
     execute_physical(physical, factory, controls).await
+}
+
+/// Plan `logical` and record the TD-EXEC-2 Slice-1 observe-only trace fields into
+/// the active io_trace scope: planning wall ms, the planner recursion's measured
+/// stack high-water mark (via `stack_probe`), and the served plan's geometry
+/// vector (`measure_geometry`, iterative — safe on any depth). This is the
+/// plan→execute seam the calibration ledger reads; it makes no decision and
+/// changes no behavior, and every record call no-ops outside an io_trace scope.
+fn plan_instrumented<R: CapabilityResolver>(
+    planner: &Planner<R>,
+    logical: proximadb_relational_algebra::LogicalNode,
+) -> Result<PhysicalPlan, String> {
+    let plan_start = std::time::Instant::now();
+    let (planned, stack_hwm) = stack_probe::probe(|| planner.plan(logical));
+    let physical = planned.map_err(|e| format!("plan: {e}"))?;
+    crate::observability::io_trace::record_plan_ms(plan_start.elapsed().as_millis() as u64);
+    if stack_hwm > 0 {
+        crate::observability::io_trace::record_stack_hwm(stack_hwm);
+    }
+    let g = measure_geometry(&physical);
+    let ops: Vec<(&str, u64)> = g
+        .op_histogram
+        .iter()
+        .map(|(kind, count)| (kind.as_str(), u64::from(*count)))
+        .collect();
+    crate::observability::io_trace::record_plan_geometry(
+        g.max_depth as u64,
+        g.node_count as u64,
+        g.leaf_count as u64,
+        g.max_fanout as u64,
+        u64::from(g.blocking_count),
+        &ops,
+    );
+    Ok(physical)
 }
 
 /// Build + open + drain an executor for an already-planned `physical` plan.
@@ -756,7 +791,7 @@ fn plan_over_snapshot(
         secondary_by_table,
     };
     let planner = Planner::new(resolver);
-    Some(planner.plan(logical).map_err(|e| format!("plan: {e}")))
+    Some(plan_instrumented(&planner, logical))
 }
 
 // =========================================================================

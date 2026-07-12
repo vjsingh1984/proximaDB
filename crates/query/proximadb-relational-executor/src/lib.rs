@@ -254,6 +254,10 @@ pub fn build_executor<F: ReaderFactory>(
     ctx: &ExecutionContext,
 ) -> Result<Box<dyn ExecNode>, ExecError> {
     stacker::maybe_grow(BUILD_RED_ZONE, BUILD_STACK_GROW, || {
+        // TD-EXEC-2 Slice 1: sample the recursion's stack low-water mark when a
+        // probe is armed (a TLS read + branch otherwise — same order as the
+        // maybe_grow check above).
+        proximadb_relational_planner::stack_probe::note();
         build_executor_inner(plan, factory, ctx)
     })
 }
@@ -2628,6 +2632,66 @@ mod tests {
         exec.open().await.unwrap();
         let rows = collect(&mut *exec).await.unwrap();
         assert_eq!(rows.len(), 3);
+    }
+
+    /// Executor-build stack high-water for a `depth`-level filter chain, measured
+    /// on a dedicated large-stack thread so `maybe_grow` never switches segments
+    /// and the probe reading is exact (see the planner's `stack_probe` docs).
+    fn build_stack_hwm(depth: usize) -> u64 {
+        use proximadb_relational_planner::stack_probe;
+        std::thread::Builder::new()
+            // Large enough that even TD-EXEC-1's 200 KB/frame upper guess for
+            // ~1.1k frames fits without segment growth.
+            .stack_size(256 * 1024 * 1024)
+            .spawn(move || {
+                let mut plan = scan_users();
+                for _ in 0..depth {
+                    plan = PhysicalPlan::Filter {
+                        input: Box::new(plan),
+                        predicate: Expr::literal(ProximaValue::Boolean(true)),
+                    };
+                }
+                let f = factory_with_users();
+                let ctx = ExecutionContext::default();
+                let (exec, hwm) = stack_probe::probe(|| build_executor(plan, &f, &ctx));
+                // Avoid a deep recursive Drop of the executor tree; only the
+                // measurement matters here.
+                std::mem::forget(exec.expect("deep build must succeed"));
+                hwm
+            })
+            .expect("spawn large-stack calibration thread")
+            .join()
+            .expect("calibration build must not fail")
+    }
+
+    /// TD-EXEC-2 Slice 1 calibration: measure the real per-frame stack cost of
+    /// the executor-build recursion — the second of the three depth-proportional
+    /// recursions (planner lowering, executor build, native walk) — resolving
+    /// the ~100× `frame_bytes` unknown for this crate. The delta between two
+    /// chain depths divides out fixed overhead; the upper bound is a regression
+    /// ratchet against frame bloat.
+    #[test]
+    fn calibrate_build_frame_cost() {
+        let shallow = build_stack_hwm(100);
+        let deep = build_stack_hwm(1100);
+        if shallow == 0 && deep == 0 {
+            // Platform cannot report remaining stack; nothing to calibrate.
+            return;
+        }
+        assert!(
+            deep > shallow,
+            "1100-deep build must consume more stack than 100-deep: \
+             shallow={shallow} deep={deep}"
+        );
+        let per_frame = (deep - shallow) / 1000;
+        eprintln!(
+            "TD-EXEC-2 Slice-1 calibration: executor-build frame cost ≈ {per_frame} B/frame \
+             (hwm {shallow} B @ depth 100 → {deep} B @ depth 1100)"
+        );
+        assert!(
+            per_frame <= 32 * 1024,
+            "executor-build frame cost regressed past 32 KiB/frame: measured {per_frame} B/frame"
+        );
     }
 
     #[tokio::test]

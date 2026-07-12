@@ -343,8 +343,16 @@ impl NativeVolcanoEngine {
             }
             return finalize_row_limit(result, &controls);
         }
-        let mut exec = build_executor(physical, factory, &VolcanoExecutionContext::default())
-            .map_err(|e| ExecutionError::Execution(format!("build_executor: {e}")))?;
+        // TD-EXEC-2 Slice 1 (observe-only): measure the build recursion's stack
+        // high-water mark alongside the plan-lowering probe at the plan seam.
+        let (built, build_hwm) = proximadb_relational_planner::stack_probe::probe(|| {
+            build_executor(physical, factory, &VolcanoExecutionContext::default())
+        });
+        if build_hwm > 0 {
+            crate::observability::io_trace::record_stack_hwm(build_hwm);
+        }
+        let mut exec =
+            built.map_err(|e| ExecutionError::Execution(format!("build_executor: {e}")))?;
         controls.check_cancelled()?;
         exec.open()
             .await
@@ -377,8 +385,16 @@ impl NativeVolcanoEngine {
     ) -> Result<ExecutionStreamResult, ExecutionError> {
         controls.check_cancelled()?;
         let physical = cap_plan(physical, &controls);
-        let mut exec = build_executor(physical, factory, &VolcanoExecutionContext::default())
-            .map_err(|e| ExecutionError::Execution(format!("build_executor: {e}")))?;
+        // TD-EXEC-2 Slice 1 (observe-only): measure the build recursion's stack
+        // high-water mark alongside the plan-lowering probe at the plan seam.
+        let (built, build_hwm) = proximadb_relational_planner::stack_probe::probe(|| {
+            build_executor(physical, factory, &VolcanoExecutionContext::default())
+        });
+        if build_hwm > 0 {
+            crate::observability::io_trace::record_stack_hwm(build_hwm);
+        }
+        let mut exec =
+            built.map_err(|e| ExecutionError::Execution(format!("build_executor: {e}")))?;
         controls.check_cancelled()?;
         exec.open()
             .await
