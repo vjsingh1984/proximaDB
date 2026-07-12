@@ -171,6 +171,19 @@ pub fn write_pax_segment_full(
     f32_tier: bool,
     target_block: Option<usize>,
 ) -> Result<SegmentMeta> {
+    // TD-RDSTRAT-5 S1 (default-OFF): reorder records by their sign-code so
+    // spatially-close vectors co-locate into the same block, and compute each
+    // block's centroid for the Vector Object Economy directory. Reordering is
+    // result-preserving (the reader ranks/dedups by distance + OID). When the
+    // flag is off, records write in insertion order and no centroids are computed
+    // — zero behaviour/cost change.
+    let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
+    let order = if cluster {
+        crate::storage::engines::sst::block_cluster::cluster_order(records, 0)
+    } else {
+        None
+    };
+
     let mut writer = PaxSegmentWriter::new(
         path,
         BlockMode::Pax,
@@ -182,9 +195,19 @@ pub fn write_pax_segment_full(
     )
     .with_quant(quant)
     .with_f32_tier(f32_tier)
-    .with_rerank_quant(rerank_quant);
-    for record in records {
-        writer.add_record(record)?;
+    .with_rerank_quant(rerank_quant)
+    .with_block_centroids(cluster);
+    match &order {
+        Some(perm) => {
+            for &i in perm {
+                writer.add_record(&records[i])?;
+            }
+        }
+        None => {
+            for record in records {
+                writer.add_record(record)?;
+            }
+        }
     }
     writer.finish()
 }

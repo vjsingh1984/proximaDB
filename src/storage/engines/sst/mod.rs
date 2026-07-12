@@ -243,6 +243,7 @@ pub mod sst_reader;
 pub mod writer;
 
 // New modular structure
+pub mod block_cluster; // TD-RDSTRAT-5 S1: sort-by-code block clustering at PAX write
 pub mod block_format;
 pub mod blocks;
 pub mod codebook_integration;
