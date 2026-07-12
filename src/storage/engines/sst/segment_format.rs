@@ -664,6 +664,48 @@ pub async fn rabitq_search_segment_ranged(
     Ok(Some(hits))
 }
 
+/// Cheap cost inputs for the S2 read-strategy chooser, read from the tail segment
+/// index alone (one small ranged read — no per-block metadata, no stripe bytes):
+/// `(n_blocks, total_block_bytes, segment_size)`. Returns `None` when the index
+/// can't be located from a bounded suffix (caller then defaults to the whole read).
+/// `total_block_bytes` (Σ block sizes) is the whole-read byte cost; the striped read
+/// touches only a fraction (codes + candidate rerank), estimated by the caller.
+pub async fn segment_index_summary(
+    fs: &dyn proximadb_storage_filesystem_types::FileSystem,
+    path: &str,
+) -> Result<Option<(u64, u64, u64)>> {
+    use proximadb_storage_common::pax_block::SegmentIndex;
+
+    let size = fs
+        .metadata(path)
+        .await
+        .map_err(|e| anyhow::anyhow!("index-summary stat {path}: {e}"))?
+        .size;
+    if size < SEGMENT_MAGIC.len() as u64 {
+        return Ok(None);
+    }
+    let mut suffix_len = (64 * 1024u64).min(size);
+    loop {
+        let suffix = fs
+            .read_range(path, size - suffix_len, suffix_len)
+            .await
+            .map_err(|e| anyhow::anyhow!("index-summary suffix {path}: {e}"))?;
+        if !suffix.ends_with(SEGMENT_MAGIC) {
+            return Ok(None);
+        }
+        let before_magic = &suffix[..suffix.len() - SEGMENT_MAGIC.len()];
+        match SegmentIndex::locate(before_magic) {
+            Ok(idx) => {
+                let n_blocks = idx.blocks.len() as u64;
+                let total_block_bytes: u64 = idx.blocks.iter().map(|b| b.size as u64).sum();
+                return Ok(Some((n_blocks, total_block_bytes, size)));
+            }
+            Err(_) if suffix_len < size => suffix_len = (suffix_len * 8).min(size),
+            Err(_) => return Ok(None),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1515,5 +1557,58 @@ mod tests {
                 "striped read must byte-identically match the whole segment ({metric:?})"
             );
         }
+    }
+
+    /// TD-RDSTRAT-3 S2: `segment_index_summary` reads the cost inputs from the tail
+    /// index alone — block count + Σ block sizes + segment size — for a real
+    /// multi-block segment, without touching stripe bytes.
+    #[tokio::test]
+    async fn segment_index_summary_reads_cost_inputs_from_tail() {
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        let records: Vec<ProximaRecord> = (0..400)
+            .map(|i| {
+                rec(
+                    &format!("r{i}"),
+                    1000 + i as i64,
+                    (0..64)
+                        .map(|d| ((i * 131 + d * 17) % 251) as f32 * 0.01)
+                        .collect(),
+                )
+            })
+            .collect();
+        write_pax_segment_full(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+        )
+        .unwrap();
+        let file_size = std::fs::metadata(&path).unwrap().len();
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+
+        let (n_blocks, total_block_bytes, seg_size) =
+            segment_index_summary(&fs, path.to_str().unwrap())
+                .await
+                .unwrap()
+                .expect("index summary for a RaBitQ segment");
+        assert!(
+            n_blocks >= 2,
+            "small block threshold ⇒ multi-block, got {n_blocks}"
+        );
+        assert_eq!(seg_size, file_size, "segment size = file size");
+        // Σ block bytes < segment size (the index + magic are the remainder).
+        assert!(
+            total_block_bytes > 0 && total_block_bytes < seg_size,
+            "Σ block bytes {total_block_bytes} must be in (0, {seg_size})"
+        );
     }
 }

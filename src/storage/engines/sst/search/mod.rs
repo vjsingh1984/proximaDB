@@ -247,9 +247,12 @@ impl SstEngine {
         k: usize,
         distance_metric: DistanceMetric,
     ) -> anyhow::Result<Option<Vec<OptimizedSearchRecord>>> {
+        use crate::storage::engines::core::coalesce_strategy::{
+            choose_whole_vs_striped, is_cloud_path, read_strategy_chooser_enabled,
+        };
         use crate::storage::engines::sst::segment_format::{
             MetaPrune, pax_field_to_col, rabitq_search_segment, rabitq_search_segment_ranged,
-            striped_read_enabled,
+            segment_index_summary, striped_read_enabled,
         };
         use proximadb_block_format::RankMetric;
         // Map the query metric to a cascade rank metric. Dot/max-IP and exotic
@@ -268,15 +271,53 @@ impl SstEngine {
             .map_err(|e| anyhow::anyhow!("opening PAX segment {sstable_path}: {e}"))?;
         let pool = Self::pax_rabitq_pool_for_top_k(k);
 
-        // Selective (striped) read when engaged + unfiltered (ADR-057 / TD-RDSTRAT-3
-        // Slice C, default-OFF): reads only the codes + candidate-rerank + OID
-        // stripes via `fs.read_range`, byte-identical top-k to the whole read. Any
-        // `None` (index doesn't fit a bounded suffix / not RaBitQ) falls through to
-        // the whole-segment read (mixed-read-safe). Filtered queries stay on the
-        // whole path (metadata pruning over the ranged reader is a follow-up).
+        // Decide whole vs selective (striped) read (ADR-057 / TD-RDSTRAT-3). Only
+        // unfiltered queries are eligible for the striped path (metadata pruning
+        // over the ranged reader is a follow-up). Precedence:
+        //   S2 chooser (PROXIMADB_READ_STRATEGY_CHOOSER) — cost-driven, tier-aware:
+        //     estimate the striped vs whole cost from the tail index (one small read)
+        //     and pick via `choose_whole_vs_striped`; the choice is observe-logged.
+        //   else S1b flag (PROXIMADB_PAX_STRIPED_READ) — raw opt-in.
+        // Both default OFF ⇒ whole read. The striped read is byte-identical, so this
+        // only changes cost; any `None` falls through to the whole read (mixed-read-safe).
+        let use_striped = filter_expression.is_none()
+            && if read_strategy_chooser_enabled() {
+                match segment_index_summary(fs.as_ref(), sstable_path).await? {
+                    Some((n_blocks, total_block_bytes, whole_bytes)) => {
+                        // Striped cost estimate (chooser INPUT, not a hardcoded
+                        // selectivity threshold — the flip gate uses real io_trace):
+                        // Stage-1 codes ≈ 1/6 of the block bytes, Stage-2 SQ8 rerank
+                        // ≈ pool·dim, and ~4 coalesced GETs/block + the index GET.
+                        let dim = query_vector.len() as u64;
+                        let striped_bytes_est = total_block_bytes / 6 + pool as u64 * dim;
+                        let striped_gets_est = 1 + 4 * n_blocks;
+                        let is_cloud = is_cloud_path(sstable_path);
+                        let pick_striped = choose_whole_vs_striped(
+                            is_cloud,
+                            whole_bytes,
+                            striped_gets_est,
+                            striped_bytes_est,
+                        );
+                        tracing::debug!(
+                            target: "rdstrat",
+                            pick_striped,
+                            is_cloud,
+                            n_blocks,
+                            whole_bytes,
+                            striped_bytes_est,
+                            striped_gets_est,
+                            "TD-RDSTRAT-3 S2 cascade read-strategy choice (observe)"
+                        );
+                        pick_striped
+                    }
+                    None => false, // index unreadable → whole
+                }
+            } else {
+                striped_read_enabled()
+            };
+
         let hits = 'hits: {
-            if striped_read_enabled()
-                && filter_expression.is_none()
+            if use_striped
                 && let Some(hits) = rabitq_search_segment_ranged(
                     fs.as_ref(),
                     sstable_path,
