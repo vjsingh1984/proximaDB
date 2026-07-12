@@ -51,6 +51,7 @@ members = [
     "crates/foundation/proximadb-relational-types",
     "crates/foundation/proximadb-functions",
     "crates/control/proximadb-catalog",
+    "crates/control/proximadb-metrics",
     "crates/horizontal/proximadb-codec",
     "crates/horizontal/proximadb-compression",
     "crates/horizontal/proximadb-embedded-common",
@@ -192,6 +193,7 @@ proximadb-relational-executor = { path = "crates/query/proximadb-relational-exec
 proximadb-relational-frontend = { path = "crates/query/proximadb-relational-frontend" }
 proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+proximadb-metrics = { path = "crates/control/proximadb-metrics" }
 arc-swap = "1.7"
 dashmap = "6.1.0"
 moka = { version = "0.12", features = ["future"] }
@@ -324,6 +326,7 @@ proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-quantization-model = { path = "crates/foundation/proximadb-quantization-model" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+proximadb-metrics = { path = "crates/control/proximadb-metrics" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
 proximadb-mcp = { path = "crates/platform/proximadb-mcp" }

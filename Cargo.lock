@@ -6794,6 +6794,7 @@ dependencies = [
  "proximadb-index-types",
  "proximadb-kernel",
  "proximadb-mcp",
+ "proximadb-metrics",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
  "proximadb-object-store",
@@ -7379,6 +7380,28 @@ name = "proximadb-memory-pool"
 version = "0.2.0"
 dependencies = [
  "parking_lot",
+ "tracing",
+]
+
+[[package]]
+name = "proximadb-metrics"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dashmap",
+ "lazy_static",
+ "prometheus",
+ "proximadb-catalog",
+ "proximadb-config",
+ "proximadb-hardware",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
  "tracing",
 ]
 

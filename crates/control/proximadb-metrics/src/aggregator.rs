@@ -221,10 +221,7 @@ impl MetricsAggregationEngine {
     }
 
     /// Calculate total bytes read from existing metrics
-    fn calculate_total_bytes_read(
-        &self,
-        metrics: &[&crate::metrics::schema::CollectionMetrics],
-    ) -> i64 {
+    fn calculate_total_bytes_read(&self, metrics: &[&crate::schema::CollectionMetrics]) -> i64 {
         // Estimate read bytes from operation counts and average vector size
         let total_searches: i64 = metrics.iter().map(|m| m.total_searches).sum();
         let avg_vector_size = metrics
@@ -238,7 +235,7 @@ impl MetricsAggregationEngine {
     }
 
     /// Calculate error count from operation metrics
-    fn calculate_error_count(&self, metrics: &[&crate::metrics::schema::CollectionMetrics]) -> i64 {
+    fn calculate_error_count(&self, metrics: &[&crate::schema::CollectionMetrics]) -> i64 {
         // Estimate errors from total operations and historical patterns
         let total_ops: i64 = metrics
             .iter()
@@ -250,10 +247,7 @@ impl MetricsAggregationEngine {
     }
 
     /// Calculate success rate from operation metrics
-    fn calculate_success_rate(
-        &self,
-        metrics: &[&crate::metrics::schema::CollectionMetrics],
-    ) -> f32 {
+    fn calculate_success_rate(&self, metrics: &[&crate::schema::CollectionMetrics]) -> f32 {
         let total_ops: i64 = metrics
             .iter()
             .map(|m| m.total_inserts + m.total_updates + m.total_deletes + m.total_searches)

@@ -19,7 +19,7 @@
 //!   `recall_drift.kind` field: `none`, `ef_search_only`,
 //!   `rebuild_required`, `unwired`. The one-hot encoding makes
 //!   alerts trivial — e.g.
-//!     `axis_recall_drift_status{kind="rebuild_required"} == 1`
+//!   `axis_recall_drift_status{kind="rebuild_required"} == 1`
 //!   fires when any collection needs reclustering.
 //!
 //! * `axis_recall_drift_observations_total{collection}` — count of
@@ -37,7 +37,7 @@
 //! The `collection` label is high-cardinality (one series per
 //! collection). The `kind` label is bounded to 4 values. Total
 //! gauge series ≈ 4 × num_collections. For deployments with
-//! >10K collections this is the kind of label that should be
+//! over 10K collections this is the kind of label that should be
 //! collapsed via Prometheus relabeling before persistence.
 
 use lazy_static::lazy_static;
