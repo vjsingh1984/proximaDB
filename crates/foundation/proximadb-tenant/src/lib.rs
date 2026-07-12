@@ -406,3 +406,16 @@ pub use tenant_tier_types::{
     FeatureFlags, ObjectEconomyQuantizationCeiling, TenantTierRecord, Tier,
     TierObjectEconomyConfig, tier_config,
 };
+
+// ============================================================================
+// RBAC authorization-context data types (moved from
+// `src/security/rbac_service.rs` — Slice D root-crate shrinkage).
+// Leaf data types (permission enum, auth method, user/tenant context) with no
+// root-internal dependencies — pure String / chrono / serde / std collections.
+// The originating `rbac_service.rs` keeps a `pub use` re-export of every type
+// below, so existing `crate::security::rbac_service::<Type>` paths are unchanged.
+// ============================================================================
+pub mod rbac_context;
+pub use rbac_context::{
+    RbacTenantContext, UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext,
+};

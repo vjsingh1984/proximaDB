@@ -8141,11 +8141,13 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "proximadb-proto",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
