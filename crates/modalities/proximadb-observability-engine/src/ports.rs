@@ -52,6 +52,34 @@ pub trait ObservabilityStoragePort: Send + Sync {
         limit: usize,
     ) -> Result<Vec<TraceSummary>>;
 
+    /// Summarize traces for a single service in a time window (capped at `limit`).
+    async fn query_traces_by_service(
+        &self,
+        namespace: &str,
+        service: &str,
+        start_ns: i64,
+        end_ns: i64,
+        limit: usize,
+    ) -> Result<Vec<TraceSummary>>;
+
+    /// Query raw log entries overlapping a time window (capped at `limit`).
+    async fn query_logs(
+        &self,
+        namespace: &str,
+        start_ns: i64,
+        end_ns: i64,
+        limit: usize,
+    ) -> Result<Vec<LogEntry>>;
+
+    /// Query raw metric samples for one metric over a time window.
+    async fn query_metrics(
+        &self,
+        namespace: &str,
+        metric_name: &str,
+        start_ns: i64,
+        end_ns: i64,
+    ) -> Result<Vec<MetricSample>>;
+
     /// Per-namespace storage statistics.
     async fn stats(&self, namespace: &str) -> Result<ObservabilityStorageStats>;
 }

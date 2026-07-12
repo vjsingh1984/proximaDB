@@ -8,14 +8,17 @@
 //!
 //! ## Extraction status (root-crate decomposition)
 //!
-//! This crate is **Slice 1** of the observability extraction from the
-//! monolithic root crate: it holds the *foundation-pure* modules (no dependency
-//! on root storage/query/services). The *coupled* core — `ingestion`, `query`,
-//! `graph_linking`, and the top-level `mod.rs` service orchestration — remains
-//! in the root `src/observability/` because it depends on the WAL-backed
-//! `ObservabilityStorage` (which carries root-storage up-edges). Slice 2 will
-//! land that core behind an `ObservabilityStoragePort` (dependency inversion),
-//! at which point it joins this crate.
+//! Slices 1–2 extracted the foundation-pure leaves (alerting/audit/trace,
+//! promql/tantivy/metrics, buffer/parser). **Slice 3** (this revision) landed
+//! the *facade* behind the [`ObservabilityStoragePort`] (dependency inversion):
+//! `service` (`ObservabilityService` + param/result structs) and the
+//! `query`/`ingestion` facades (`ObservabilityQueryEngine`/`ObservabilityIngester`)
+//! now live here and hold `Arc<dyn ObservabilityStoragePort>`.
+//! The root composition root injects the concrete WAL-backed
+//! `ObservabilityStorage` (which impls the port). The format *adapters*
+//! (OTLP/Syslog/CEF/… ingress servers), `graph_linking` (orphan/dead code), and
+//! `storage/` (WAL up-edges) remain in the root `src/observability/`, as does
+//! the `impl ObservabilityStorageOperations` (root-local trait).
 //!
 //! The root `crate::observability` module re-exports this crate, so the
 //! ~80 inbound callers (`crate::*`) are unchanged.
@@ -40,6 +43,10 @@ pub mod model;
 /// Dependency-inversion port for the observability storage layer
 /// (`ObservabilityStoragePort`) — dissolves the facade→storage up-edge.
 pub mod ports;
+/// Top-level observability service facade (`ObservabilityService`) + the
+/// ingestion/query param/result structs. Holds `Arc<dyn ObservabilityStoragePort>`;
+/// the root injects the concrete WAL-backed `ObservabilityStorage`.
+pub mod service;
 
 pub use model::{ObservabilityStorageStats, TraceSpan, TraceSummary};
 pub use ports::ObservabilityStoragePort;

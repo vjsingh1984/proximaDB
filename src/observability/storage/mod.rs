@@ -492,6 +492,39 @@ impl crate::observability::ObservabilityStoragePort for ObservabilityStorage {
     async fn stats(&self, namespace: &str) -> Result<ObservabilityStorageStats> {
         self.stats(namespace).await
     }
+
+    async fn query_traces_by_service(
+        &self,
+        namespace: &str,
+        service: &str,
+        start_ns: i64,
+        end_ns: i64,
+        limit: usize,
+    ) -> Result<Vec<TraceSummary>> {
+        self.query_traces_by_service(namespace, service, start_ns, end_ns, limit)
+            .await
+    }
+
+    async fn query_logs(
+        &self,
+        namespace: &str,
+        start_ns: i64,
+        end_ns: i64,
+        limit: usize,
+    ) -> Result<Vec<LogEntry>> {
+        self.query_logs(namespace, start_ns, end_ns, limit).await
+    }
+
+    async fn query_metrics(
+        &self,
+        namespace: &str,
+        metric_name: &str,
+        start_ns: i64,
+        end_ns: i64,
+    ) -> Result<Vec<MetricSample>> {
+        self.query_metrics(namespace, metric_name, start_ns, end_ns)
+            .await
+    }
 }
 
 #[cfg(test)]

@@ -12,7 +12,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Result;
 use proximadb_observability::trace_data_to_proxima_record;
 use proximadb_records::ProximaRecord;
-use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::proto::proximadb_v1::{
