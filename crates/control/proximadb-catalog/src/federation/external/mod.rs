@@ -263,7 +263,7 @@ pub struct FederationColumnStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::federation::federated_catalog::ConstraintLevel;
+    use crate::federation::federated_catalog::ConstraintLevel;
 
     #[test]
     fn test_external_catalog_type_constraint_support() {
