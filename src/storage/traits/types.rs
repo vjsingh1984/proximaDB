@@ -187,64 +187,19 @@ pub enum PerformanceTier {
     Auto,
 }
 
-/// Storage engine strategy enumeration for polymorphic engine selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum StorageEngineStrategy {
-    /// SST engine - hybrid columnar with ProximaBlocks
-    #[default]
-    Sst,
-
-    /// VIPER engine - columnar Parquet with advanced quantization
-    Viper,
-
-    /// HELIX engine - time-series optimized storage
-    Helix,
-
-    /// NOVA engine - next-gen columnar with integrated quantization
-    Nova,
-
-    /// SWIFT engine - hierarchical superblock architecture
-    Swift,
-
-    /// RAPTOR engine - experimental parallel tiered storage
-    Raptor,
-
-    /// Hybrid engine - combines row and column optimized paths
-    Hybrid,
-
-    /// TST engine - time-series optimized storage
-    TimeSeries,
-
-    /// CEDAR engine - unified multimodal storage
-    Cedar,
-
-    /// CHRONO engine - temporal data storage
-    Chrono,
-}
-
-/// Backwards-compat **format** alias for [`StorageEngineStrategy`] (engines →
-/// formats convergence). Variants are reached through the alias, e.g.
-/// `StorageFormatStrategy::Sst`. New code may use this name;
-/// `StorageEngineStrategy` remains during the migration window (see
-/// `docs/12-design/NAMING_CONVENTIONS.adoc`).
-pub type StorageFormatStrategy = StorageEngineStrategy;
+/// Storage engine strategy enumeration for polymorphic engine selection
+/// (re-export).
+///
+/// `StorageEngineStrategy` and its `StorageFormatStrategy` alias have been
+/// hoisted to the `proximadb-storage-ports` crate alongside the rest of the
+/// engine-capability descriptor cluster. These thin re-exports preserve the
+/// existing `crate::storage::traits::{StorageEngineStrategy, StorageFormatStrategy}`
+/// paths so every caller resolves unchanged.
+pub use proximadb_storage_ports::{StorageEngineStrategy, StorageFormatStrategy};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn storage_format_strategy_alias_is_interchangeable() {
-        // The format alias names the same type — default + variants match.
-        assert_eq!(StorageFormatStrategy::default(), StorageEngineStrategy::Sst);
-        let s: StorageFormatStrategy = StorageEngineStrategy::Viper;
-        assert_eq!(s, StorageEngineStrategy::Viper);
-        // And serializes identically (same type, no wire change).
-        assert_eq!(
-            serde_json::to_string(&StorageFormatStrategy::Helix).unwrap(),
-            serde_json::to_string(&StorageEngineStrategy::Helix).unwrap()
-        );
-    }
 
     #[test]
     fn test_flush_parameters_default() {

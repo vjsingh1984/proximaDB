@@ -15,6 +15,8 @@ use anyhow::Result;
 use proximadb_proto::proximadb_v1::Collection;
 use proximadb_storage_common::StorageEngineType;
 
+pub mod capabilities;
+pub use capabilities::*;
 pub mod path_resolver;
 pub use path_resolver::{CollectionPathResolver, StorageAssignment};
 
