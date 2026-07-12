@@ -7465,6 +7465,7 @@ dependencies = [
  "futures",
  "hex",
  "lettre",
+ "num_cpus",
  "object_store",
  "opentelemetry",
  "opentelemetry-otlp",

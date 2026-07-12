@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use crate::observability::storage::traces::TraceSpan;
+use crate::model::TraceSpan;
 
 /// Trace query builder
 pub struct TraceQueryBuilder {
