@@ -1276,47 +1276,13 @@ pub trait UnifiedStorageFormat: Send + Sync {
             }
         }
 
-        // 🚀 INDEX UPDATES: Notify EventLog for AXIS indexing service
-        if result.success
-            && let Some(collection_id) = &params.collection_id
-        {
-            // Notify EventLog so AXIS consumer can build indexes asynchronously
-            if let Some(event_log) = crate::services::events::log::event_log_service() {
-                // Use engine_type() method (OCP-compliant - no string matching)
-                let storage_engine_type = self.engine_type();
-
-                let vector_count = result.entries_flushed.unwrap_or(0) as usize;
-                // Use file_paths from FlushResult for AXIS index building
-                if let Err(e) = event_log
-                    .notify_flush(
-                        collection_id,
-                        result.file_paths.clone(),
-                        vector_count,
-                        false, // has_quantized - DEFERRED: pass from params
-                        true,  // has_fp32
-                        storage_engine_type,
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        "⚠️ Failed to notify EventLog about flush for '{}': {}",
-                        collection_id,
-                        e
-                    );
-                } else {
-                    tracing::info!(
-                        "📢 Notified EventLog for AXIS indexing: '{}' ({} vectors)",
-                        collection_id,
-                        vector_count
-                    );
-                }
-            } else {
-                tracing::debug!(
-                    "🔄 Flush successful for collection: {} - EventLog not initialized",
-                    collection_id
-                );
-            }
-        }
+        // NOTE: AXIS/EventLog flush notification is intentionally NOT done here.
+        // The traits layer is a pure consumer (no root-service dependency) — each
+        // engine that needs to trigger async AXIS index building on flush notifies
+        // the EventLog from its own `do_flush` (see VIPER, HELIX, SWIFT, NOVA), and
+        // SST performs direct AXIS indexing via TD-112 `index_flushed_into_axis`.
+        // Centralizing it here created a reach-in into the root event-log service
+        // that blocks moving this module to a crate (root-crate decomposition gap 4).
 
         Ok(result)
     }
