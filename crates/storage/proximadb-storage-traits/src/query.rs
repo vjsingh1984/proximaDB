@@ -3,13 +3,11 @@
 //! This module provides types used by storage engines during query execution,
 //! including row-level security predicates, search parameters, and metadata.
 
-use crate::core::search::BlockPruneMode;
-use crate::proto::proximadb_v1::Collection;
-use crate::security::rbac_service::{TenantContext, UnifiedUserContext};
-use crate::storage::trait_components::path_resolver::{
-    collection_data_path_typed, typed_identity_from_storage_assignment,
-};
+use proximadb_proto::proximadb_v1::Collection;
 pub use proximadb_quantization_types::QuantizationType;
+use proximadb_search_types::block_prune::BlockPruneMode;
+use proximadb_storage_ports::{collection_data_path_typed, typed_identity_from_storage_assignment};
+use proximadb_tenant::{RbacTenantContext as TenantContext, UnifiedUserContext};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -73,7 +71,7 @@ impl RlsRecordPredicate {
 #[derive(Debug, Clone)]
 pub struct StorageQueryContext {
     /// Original search parameters (immutable reference)
-    pub search_params: Arc<crate::core::search::SearchParams>,
+    pub search_params: Arc<proximadb_search_types::search_params::SearchParams>,
 
     /// Collection configuration from cache (immutable reference)
     /// Contains storage_assignment with storage URL
@@ -134,7 +132,7 @@ pub struct StorageQueryMetadata {
 #[derive(Debug, Clone)]
 pub struct ParsedQuantizationConfig {
     /// Strategy being used (SmartDefaults, CustomLevels, etc.)
-    pub strategy: crate::proto::proximadb_v1::quantization_config::Strategy,
+    pub strategy: proximadb_proto::proximadb_v1::quantization_config::Strategy,
 
     /// Whether progressive search is enabled
     pub progressive_search_enabled: bool,
@@ -199,7 +197,7 @@ impl StorageQueryContext {
     /// reaches here with no `custom_levels`, there are simply no progressive
     /// levels configured (the consumer never second-guesses the producer).
     fn parse_quantization_config(
-        quant_config: &crate::proto::proximadb_v1::QuantizationConfig,
+        quant_config: &proximadb_proto::proximadb_v1::QuantizationConfig,
         _dimension: usize,
     ) -> Option<ParsedQuantizationConfig> {
         if !quant_config.enabled.unwrap_or(false) {
@@ -227,9 +225,9 @@ impl StorageQueryContext {
 
     /// Parse proto levels into internal format.
     fn parse_proto_levels(
-        proto_levels: &[crate::proto::proximadb_v1::QuantizationLevel],
+        proto_levels: &[proximadb_proto::proximadb_v1::QuantizationLevel],
     ) -> Vec<QuantizationLevel> {
-        use crate::proto::proximadb_v1::quantization_level::QuantizationType as ProtoQuantType;
+        use proximadb_proto::proximadb_v1::quantization_level::QuantizationType as ProtoQuantType;
 
         let mut levels: Vec<_> = proto_levels
             .iter()
@@ -260,7 +258,7 @@ impl StorageQueryContext {
 
     /// Create a new search context from cached components.
     pub fn new(
-        search_params: Arc<crate::core::search::SearchParams>,
+        search_params: Arc<proximadb_search_types::search_params::SearchParams>,
         collection: Arc<Collection>,
     ) -> Self {
         let config = collection.config.as_ref();
@@ -268,15 +266,19 @@ impl StorageQueryContext {
 
         let storage_strategy = config
             .and_then(|c| c.storage_engine)
-            .and_then(|e| crate::proto::proximadb_v1::StorageEngine::try_from(e).ok())
+            .and_then(|e| proximadb_proto::proximadb_v1::StorageEngine::try_from(e).ok())
             .map_or(StorageFormatStrategy::Sst, |engine| match engine {
-                crate::proto::proximadb_v1::StorageEngine::Viper => StorageFormatStrategy::Viper,
-                crate::proto::proximadb_v1::StorageEngine::Sst => StorageFormatStrategy::Sst,
-                crate::proto::proximadb_v1::StorageEngine::Nova => StorageFormatStrategy::Nova,
-                crate::proto::proximadb_v1::StorageEngine::Helix => StorageFormatStrategy::Helix,
-                crate::proto::proximadb_v1::StorageEngine::Swift => StorageFormatStrategy::Swift,
-                crate::proto::proximadb_v1::StorageEngine::Raptor => StorageFormatStrategy::Raptor,
-                crate::proto::proximadb_v1::StorageEngine::Tst => StorageFormatStrategy::TimeSeries,
+                proximadb_proto::proximadb_v1::StorageEngine::Viper => StorageFormatStrategy::Viper,
+                proximadb_proto::proximadb_v1::StorageEngine::Sst => StorageFormatStrategy::Sst,
+                proximadb_proto::proximadb_v1::StorageEngine::Nova => StorageFormatStrategy::Nova,
+                proximadb_proto::proximadb_v1::StorageEngine::Helix => StorageFormatStrategy::Helix,
+                proximadb_proto::proximadb_v1::StorageEngine::Swift => StorageFormatStrategy::Swift,
+                proximadb_proto::proximadb_v1::StorageEngine::Raptor => {
+                    StorageFormatStrategy::Raptor
+                }
+                proximadb_proto::proximadb_v1::StorageEngine::Tst => {
+                    StorageFormatStrategy::TimeSeries
+                }
                 _ => StorageFormatStrategy::Sst,
             });
 
@@ -310,49 +312,49 @@ impl StorageQueryContext {
             distance_metric: config
                 .and_then(|c| c.distance_metric)
                 .and_then(|metric| {
-                    crate::proto::proximadb_v1::DistanceMetric::try_from(metric).ok()
+                    proximadb_proto::proximadb_v1::DistanceMetric::try_from(metric).ok()
                 })
                 .map_or(
                     proximadb_distance_kernel::DistanceMetric::Cosine,
                     |metric| match metric {
-                        crate::proto::proximadb_v1::DistanceMetric::Unspecified
-                        | crate::proto::proximadb_v1::DistanceMetric::Cosine => {
+                        proximadb_proto::proximadb_v1::DistanceMetric::Unspecified
+                        | proximadb_proto::proximadb_v1::DistanceMetric::Cosine => {
                             proximadb_distance_kernel::DistanceMetric::Cosine
                         }
-                        crate::proto::proximadb_v1::DistanceMetric::Euclidean => {
+                        proximadb_proto::proximadb_v1::DistanceMetric::Euclidean => {
                             proximadb_distance_kernel::DistanceMetric::Euclidean
                         }
-                        crate::proto::proximadb_v1::DistanceMetric::DotProduct => {
+                        proximadb_proto::proximadb_v1::DistanceMetric::DotProduct => {
                             proximadb_distance_kernel::DistanceMetric::DotProduct
                         }
-                        crate::proto::proximadb_v1::DistanceMetric::Hamming => {
+                        proximadb_proto::proximadb_v1::DistanceMetric::Hamming => {
                             proximadb_distance_kernel::DistanceMetric::Hamming
                         }
-                        crate::proto::proximadb_v1::DistanceMetric::Manhattan => {
+                        proximadb_proto::proximadb_v1::DistanceMetric::Manhattan => {
                             proximadb_distance_kernel::DistanceMetric::Manhattan
                         }
-                        crate::proto::proximadb_v1::DistanceMetric::Jaccard => {
+                        proximadb_proto::proximadb_v1::DistanceMetric::Jaccard => {
                             proximadb_distance_kernel::DistanceMetric::Jaccard
                         }
-                        crate::proto::proximadb_v1::DistanceMetric::Angular => {
+                        proximadb_proto::proximadb_v1::DistanceMetric::Angular => {
                             proximadb_distance_kernel::DistanceMetric::Angular
                         }
-                        crate::proto::proximadb_v1::DistanceMetric::Chebyshev => {
+                        proximadb_proto::proximadb_v1::DistanceMetric::Chebyshev => {
                             proximadb_distance_kernel::DistanceMetric::Chebyshev
                         }
-                        crate::proto::proximadb_v1::DistanceMetric::Canberra => {
+                        proximadb_proto::proximadb_v1::DistanceMetric::Canberra => {
                             proximadb_distance_kernel::DistanceMetric::Canberra
                         }
-                        crate::proto::proximadb_v1::DistanceMetric::Minkowski => {
+                        proximadb_proto::proximadb_v1::DistanceMetric::Minkowski => {
                             proximadb_distance_kernel::DistanceMetric::Minkowski
                         }
-                        crate::proto::proximadb_v1::DistanceMetric::BrayCurtis => {
+                        proximadb_proto::proximadb_v1::DistanceMetric::BrayCurtis => {
                             proximadb_distance_kernel::DistanceMetric::BrayCurtis
                         }
-                        crate::proto::proximadb_v1::DistanceMetric::Hellinger => {
+                        proximadb_proto::proximadb_v1::DistanceMetric::Hellinger => {
                             proximadb_distance_kernel::DistanceMetric::Hellinger
                         }
-                        crate::proto::proximadb_v1::DistanceMetric::Custom => {
+                        proximadb_proto::proximadb_v1::DistanceMetric::Custom => {
                             proximadb_distance_kernel::DistanceMetric::Custom
                         }
                     },

@@ -1100,12 +1100,6 @@ impl UnifiedStorageFormat for SwiftEngine {
         StorageFormatStrategy::Swift
     }
 
-    fn get_filesystem_factory(
-        &self,
-    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-        &self.filesystem
-    }
-
     // =============================================================================
     // CORE OPERATIONS
     // =============================================================================
@@ -1873,6 +1867,15 @@ impl UnifiedStorageFormat for SwiftEngine {
                 | "compression"
                 | "batch_operations"
         )
+    }
+}
+
+#[allow(deprecated)] // SwiftEngine is #[deprecated] (experimental); accessing its own field is intentional
+impl crate::storage::traits::EngineFilesystemAccess for SwiftEngine {
+    fn get_filesystem_factory(
+        &self,
+    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
+        &self.filesystem
     }
 }
 

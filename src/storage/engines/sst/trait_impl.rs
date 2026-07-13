@@ -45,12 +45,6 @@ impl UnifiedStorageFormat for SstEngine {
         StorageFormatStrategy::Sst
     }
 
-    fn get_filesystem_factory(
-        &self,
-    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-        self.filesystem().as_ref()
-    }
-
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
         info!("🚀 SST: Starting flush operation");
         // Use the flush module implementation directly
@@ -417,6 +411,14 @@ impl UnifiedStorageFormat for SstEngine {
             required_tenant_id: tenant_id.map(str::to_string),
             required_principal: principal.map(str::to_string),
         })
+    }
+}
+
+impl crate::storage::traits::EngineFilesystemAccess for SstEngine {
+    fn get_filesystem_factory(
+        &self,
+    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
+        self.filesystem().as_ref()
     }
 }
 

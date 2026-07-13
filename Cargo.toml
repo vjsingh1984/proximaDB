@@ -80,6 +80,7 @@ members = [
     "crates/modalities/proximadb-rank-onnx",
     "crates/storage/proximadb-storage-common",
     "crates/storage/proximadb-storage-ports",
+    "crates/storage/proximadb-storage-traits",
     "crates/storage/proximadb-storage-encryption",
     "crates/storage/proximadb-block-format",
     "crates/storage/proximadb-object-store",
@@ -240,6 +241,7 @@ proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
 proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
+proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }
 proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
@@ -249,6 +251,7 @@ proximadb-storage-filesystem-types = { path = "crates/storage/proximadb-storage-
 proximadb-storage-strategy = { path = "crates/storage/proximadb-storage-strategy" }
 proximadb-storage-tenant = { path = "crates/storage/proximadb-storage-tenant" }
 proximadb-storage-transaction = { path = "crates/storage/proximadb-storage-transaction" }
+proximadb-query-capability = { path = "crates/query/proximadb-query-capability" }
 crc32fast = "1.4"
 rmp-serde = "1.1"
 tonic-prost = "0.14"
@@ -340,6 +343,7 @@ proximadb-security = { path = "crates/horizontal/proximadb-security" }
 proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
+proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }
 proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-object-store = { path = "crates/storage/proximadb-object-store" }

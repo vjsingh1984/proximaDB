@@ -2867,7 +2867,10 @@ impl UnifiedStorageFormat for RaptorEngine {
         // Return OptimizedSearchRecord directly
         Ok(results)
     }
+}
 
+#[allow(deprecated)] // RaptorEngine is #[deprecated] (experimental); accessing its own field is intentional
+impl crate::storage::traits::EngineFilesystemAccess for RaptorEngine {
     fn get_filesystem_factory(
         &self,
     ) -> &crate::storage::persistence::filesystem::FilesystemFactory {

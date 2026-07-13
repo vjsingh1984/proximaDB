@@ -6840,6 +6840,7 @@ dependencies = [
  "proximadb-storage-ports",
  "proximadb-storage-strategy",
  "proximadb-storage-tenant",
+ "proximadb-storage-traits",
  "proximadb-storage-transaction",
  "proximadb-telemetry",
  "proximadb-tenant",
@@ -8142,6 +8143,29 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-storage-traits"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "proximadb-data-model",
+ "proximadb-distance-kernel",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "proximadb-quantization-types",
+ "proximadb-records",
+ "proximadb-search-types",
+ "proximadb-storage-common",
+ "proximadb-storage-ports",
+ "proximadb-tenant",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

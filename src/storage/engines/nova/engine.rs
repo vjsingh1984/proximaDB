@@ -1380,12 +1380,6 @@ impl UnifiedStorageFormat for NovaEngine {
         reader.read_all_records(0, None).await
     }
 
-    fn get_filesystem_factory(
-        &self,
-    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-        &self.filesystem
-    }
-
     // CORE OPERATIONS
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
         // Delegate to modularized flush operations
@@ -1810,6 +1804,14 @@ impl UnifiedStorageFormat for NovaEngine {
             required_tenant_id: tenant_id.map(str::to_string),
             required_principal: principal.map(str::to_string),
         })
+    }
+}
+
+impl crate::storage::traits::EngineFilesystemAccess for NovaEngine {
+    fn get_filesystem_factory(
+        &self,
+    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
+        &self.filesystem
     }
 }
 
