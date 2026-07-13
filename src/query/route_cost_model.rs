@@ -700,13 +700,18 @@ fn parse_backend_label(label: &str) -> Option<ComputeBackend> {
     }
 }
 
-/// The freshness-safe backend SET for a shape-class, derived from its prefix —
-/// reproduces `compute_scheduler::override_candidates` without a [`QueryShape`].
+/// The freshness-safe backend SET for a shape-class, derived from its prefix.
 /// Only `olap/parquet` has two freshness-compatible engines (Native's
 /// strong-freshness scan and DataFusion's base-snapshot scan both correctly
 /// answer an analytic query); every other class keeps its single static
 /// backend, so a baked override can never flip a query onto an engine that
 /// would serve it incorrectly.
+///
+/// NOTE (TD-ROUTE-1): freshness-safety is baked here, but *capability*
+/// eligibility is NOT — the class string carries no join signal (a
+/// `JOIN … GROUP BY` classes as `op=grp`), so join-bearing plans are kept off
+/// Native at decision time in `ComputeScheduler::route_select_advised` via
+/// `QueryShape::join_bearing`, which also covers ancestor-fallback consults.
 fn freshness_safe_backends_from_class(shape_class: &str) -> Vec<ComputeBackend> {
     if shape_class.starts_with("olap/parquet") {
         vec![ComputeBackend::Native, ComputeBackend::DataFusionLocal]
@@ -1300,6 +1305,7 @@ mod tests {
             pax_backed: false,
             operation_class: Default::default(),
             geometry: Default::default(),
+            join_bearing: false,
         });
         assert_eq!(class, "olap/parquet/card=l/part=m");
         // A partially-known shape only appends the known suffix.
@@ -2075,6 +2081,7 @@ mod tests {
             pax_backed: false,
             operation_class: Default::default(),
             geometry: Default::default(),
+            join_bearing: false,
         });
         let small = shape_class(&QueryShape {
             engages_relational: true,
@@ -2084,6 +2091,7 @@ mod tests {
             pax_backed: false,
             operation_class: Default::default(),
             geometry: Default::default(),
+            join_bearing: false,
         });
         assert_ne!(big, coarse);
         assert_ne!(small, coarse);
@@ -2113,6 +2121,7 @@ mod tests {
             pax_backed: false,
             operation_class: Default::default(),
             geometry: Default::default(),
+            join_bearing: false,
         };
         let class = shape_class(&big);
         // Observe Native as confidently cheaper than DataFusion for THIS fine

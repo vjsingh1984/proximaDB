@@ -142,6 +142,7 @@ fn simulate(rounds: u64) -> (Vec<(String, Regret)>, f64, f64) {
             pax_backed: false,
             operation_class: Default::default(),
             geometry: Default::default(),
+            join_bearing: false,
         },
         static_backend: ComputeBackend::DataFusionLocal,
         arms: vec![
