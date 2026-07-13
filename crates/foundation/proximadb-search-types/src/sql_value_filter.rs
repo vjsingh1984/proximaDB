@@ -957,7 +957,7 @@ mod tests {
             operator: ComparisonOperator::Equals,
             value: json!(2),
         };
-        assert_eq!(evaluate_filter_proxima(&filter, &props), true);
+        assert!(evaluate_filter_proxima(&filter, &props));
         assert!(evaluate_filter_proxima_strict(&filter, &props).unwrap());
     }
 

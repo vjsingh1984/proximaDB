@@ -53,7 +53,7 @@ fn cluster_key_resolution_and_sort_order() {
         }
         r
     };
-    let mut records = vec![rec(Some(30)), rec(None), rec(Some(10)), rec(Some(20))];
+    let mut records = [rec(Some(30)), rec(None), rec(Some(10)), rec(Some(20))];
     records.sort_by_cached_key(|r| cluster_sort_key(r, "created"));
     let keys: Vec<Option<i32>> = records
         .iter()

@@ -779,8 +779,7 @@ fn gen_tpcds(scale: f64) -> Vec<String> {
         "t_time_sk, t_time, t_hour, t_minute, t_meal_time",
         (0..86_400u64)
             .step_by(60)
-            .enumerate()
-            .map(|(_, secs)| {
+            .map(|secs| {
                 let hour = secs / 3600;
                 let minute = (secs % 3600) / 60;
                 let meal = if (8..10).contains(&hour) {
@@ -849,7 +848,7 @@ fn gen_tpcds(scale: f64) -> Vec<String> {
             let qty = 1 + rng.below(100);
             let price = 1 + rng.below(100);
             let wcost = rng.money(80);
-            let list_price = (price + 10) as u64; // list > sales
+            let list_price = price + 10; // list > sales
             let ext_sales = qty * price;
             let ext_wcost = qty * (wcost.parse::<f64>().unwrap_or(0.0) as u64 + 1);
             let ext_list = qty * list_price;
@@ -1481,15 +1480,15 @@ fn run_duckdb_baseline(
         .arg(&db_path)
         .stdin(Stdio::from(loader_file))
         .output();
-    if let Ok(o) = &load_output {
-        if !o.status.success() {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            eprintln!(
-                "[{benchmark}] · DuckDB load FAILED: {}",
-                stderr.lines().next().unwrap_or("?")
-            );
-            return; // don't run queries against a failed load
-        }
+    if let Ok(o) = &load_output
+        && !o.status.success()
+    {
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        eprintln!(
+            "[{benchmark}] · DuckDB load FAILED: {}",
+            stderr.lines().next().unwrap_or("?")
+        );
+        return; // don't run queries against a failed load
     }
 
     // Verify: confirm data actually loaded (COUNT on the first table).
