@@ -19,6 +19,11 @@ async-trait.workspace = true
 serde.workspace = true
 proximadb-proto.workspace = true
 proximadb-storage-common.workspace = true
+# Foundation-tier: FilterExpression (ScanStrategy::FilteredScan predicates) +
+# ProximaRecord (ScanIterator::next_batch item type) — pure-data scan-strategy
+# types reference no root-internal types.
+proximadb-filter-expression.workspace = true
+proximadb-records.workspace = true
 # Foundation-tier: CollectionIdentity (typed path helpers) +
 # the StorageQuantizationEnginePort data types below, all foundation types
 # so the ports are facade-FREE (no DTO/adaptor layer).

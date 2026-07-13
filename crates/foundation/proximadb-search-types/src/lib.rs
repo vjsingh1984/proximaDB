@@ -7,14 +7,16 @@
 //! upward dependencies on the storage/compute/index/query orchestration layers.
 //!
 //! The orchestration types that remain in `proximadb::core::search`
-//! (`UnifiedSearchParams` and the search engines) depend *down* on this crate;
-//! the root re-exports every module here so existing
-//! `crate::core::search::{results, bounded_queue, sql_value_filter,
-//! json_value_serde, json_comparison}::*` paths resolve unchanged.
+//! (the search engines) depend *down* on this crate; the root re-exports every
+//! module here so existing `crate::core::search::{results, bounded_queue,
+//! sql_value_filter, json_value_serde, json_comparison, search_params}::*`
+//! paths resolve unchanged. The `UnifiedSearchParams` cluster has been hoisted
+//! here too (gap 1) — it depended only on foundation types.
 
 pub mod block_prune;
 pub mod bounded_queue;
 pub mod json_comparison;
 pub mod json_value_serde;
 pub mod results;
+pub mod search_params;
 pub mod sql_value_filter;

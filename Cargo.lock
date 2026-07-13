@@ -7931,6 +7931,7 @@ dependencies = [
  "proximadb-filter-expression",
  "proximadb-kernel",
  "proximadb-proto",
+ "proximadb-quantization-model",
  "proximadb-records",
  "serde",
  "serde_json",
@@ -8108,9 +8109,11 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "proximadb-filter-expression",
  "proximadb-kernel",
  "proximadb-proto",
  "proximadb-quantization-model",
+ "proximadb-records",
  "proximadb-storage-common",
  "serde",
 ]
