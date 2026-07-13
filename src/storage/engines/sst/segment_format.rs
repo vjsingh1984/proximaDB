@@ -542,6 +542,10 @@ pub async fn rabitq_search_segment_ranged(
     k: usize,
     pool: usize,
     metric: RankMetric,
+    // TD-RDSTRAT-5 S3: when `Some`, scan ONLY these block indices (the centroid
+    // probe-prune survivors). `None` scans every block (unchanged behaviour). An
+    // index out of range is simply never matched (no panic).
+    selected: Option<&[usize]>,
 ) -> Result<Option<Vec<CascadeHit>>> {
     use proximadb_block_format::BlockFooter;
     use proximadb_block_format::ranged::{BlockLayout, footer_tail_range, metadata_ranges};
@@ -578,7 +582,13 @@ pub async fn rabitq_search_segment_ranged(
     let pool = pool.max(k);
     let mut any_rabitq = false;
     let mut hits: Vec<CascadeHit> = Vec::new();
-    for entry in &index.blocks {
+    for (block_idx, entry) in index.blocks.iter().enumerate() {
+        // S3 centroid prune: skip blocks the probe-prune didn't select.
+        if let Some(sel) = selected
+            && !sel.contains(&block_idx)
+        {
+            continue;
+        }
         let (off, bsz) = (entry.offset, entry.size as u64);
         if off + bsz > size {
             anyhow::bail!("striped read: block [{off}..+{bsz}] past segment {size}");
@@ -1568,7 +1578,7 @@ mod tests {
             let whole = rabitq_search_segment(&bytes, &query, 10, 100, metric, None)
                 .unwrap()
                 .expect("whole cascade hits");
-            let ranged = rabitq_search_segment_ranged(&fs, path_str, &query, 10, 100, metric)
+            let ranged = rabitq_search_segment_ranged(&fs, path_str, &query, 10, 100, metric, None)
                 .await
                 .unwrap()
                 .expect("ranged cascade hits");
@@ -1580,6 +1590,109 @@ mod tests {
                 "striped read must byte-identically match the whole segment ({metric:?})"
             );
         }
+    }
+
+    /// TD-RDSTRAT-5 S3: the block filter on the ranged reader. Selecting ALL block
+    /// indices is byte-identical to `None` (parity); a strict subset scans only
+    /// those blocks (fewer/equal hits); the empty set scans nothing (`None`).
+    #[tokio::test]
+    async fn ranged_block_filter_selects_only_chosen_blocks() {
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        let (dim, n) = (64usize, 400usize);
+        let corpus: Vec<Vec<f32>> = (0..n)
+            .map(|i| {
+                (0..dim)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec(&format!("r{i}"), 1000 + i as i64, v.clone()))
+            .collect();
+        write_pax_segment_full(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+        )
+        .unwrap();
+        let path_str = path.to_str().unwrap();
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let query = corpus[137].clone();
+        let (n_blocks, _, _) = segment_index_summary(&fs, path_str)
+            .await
+            .unwrap()
+            .expect("summary");
+        assert!(
+            n_blocks >= 2,
+            "need a multi-block segment to exercise the filter"
+        );
+        let key = |h: &[CascadeHit]| {
+            h.iter()
+                .map(|x| (x.oid.clone(), x.distance))
+                .collect::<Vec<_>>()
+        };
+
+        let none =
+            rabitq_search_segment_ranged(&fs, path_str, &query, 10, 100, RankMetric::L2, None)
+                .await
+                .unwrap()
+                .expect("hits");
+        let all_sel: Vec<usize> = (0..n_blocks as usize).collect();
+        let all = rabitq_search_segment_ranged(
+            &fs,
+            path_str,
+            &query,
+            10,
+            100,
+            RankMetric::L2,
+            Some(&all_sel),
+        )
+        .await
+        .unwrap()
+        .expect("hits");
+        assert_eq!(
+            key(&none),
+            key(&all),
+            "selecting all blocks == None (parity)"
+        );
+
+        let b0 = rabitq_search_segment_ranged(
+            &fs,
+            path_str,
+            &query,
+            10,
+            100,
+            RankMetric::L2,
+            Some(&[0]),
+        )
+        .await
+        .unwrap()
+        .expect("block 0 hits");
+        assert!(!b0.is_empty(), "block 0 carries RaBitQ candidates");
+        assert!(
+            b0.len() <= none.len(),
+            "a strict subset scans fewer-or-equal blocks"
+        );
+
+        let empty =
+            rabitq_search_segment_ranged(&fs, path_str, &query, 10, 100, RankMetric::L2, Some(&[]))
+                .await
+                .unwrap();
+        assert!(
+            empty.is_none_or(|h| h.is_empty()),
+            "empty selection scans no blocks ⇒ no hits"
+        );
     }
 
     /// TD-RDSTRAT-3 S2: `segment_index_summary` reads the cost inputs from the tail

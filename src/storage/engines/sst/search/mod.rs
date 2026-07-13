@@ -239,6 +239,73 @@ impl SstEngine {
     /// **Metric gate.** Serves only Euclidean collections — the cascade's rerank is
     /// L2-validated (recall 0.932 @ N=100k). Other metrics stay on the generic scan
     /// until the cascade is metric-generalized + re-validated (follow-up).
+    /// TD-RDSTRAT-5 S3: the block indices to scan for `sstable_path`, from the
+    /// Vector Object Economy directory's per-block centroids (loaded cache-first).
+    /// Returns `None` — "scan every block" (unchanged) — whenever the prune can't
+    /// apply: no directory cache, the directory is missing/stale/corrupt, this file
+    /// isn't in the directory, or it carries no centroids (unclustered). So the
+    /// caller degrades safely to the full scan. `Some(indices)` are the survivors of
+    /// [`select_blocks_by_centroid`] over the file's block centroids.
+    async fn voe_centroid_selected_blocks(
+        &self,
+        collection_id: &str,
+        collection_root: &str,
+        sstable_path: &str,
+        query: &[f32],
+        metric: DistanceMetric,
+    ) -> Option<Vec<usize>> {
+        use crate::storage::engines::sst::IndexEntry;
+        use crate::storage::engines::sst::object_economy_directory::load_directory_for;
+        use crate::storage::engines::sst::readers::block_pruning::select_blocks_by_centroid;
+        use proximadb_catalog::CatalogAuthorityMode;
+
+        let cache = self.directory_cache_ref()?;
+        let fs = self.filesystem().get_filesystem(sstable_path).ok()?;
+        let handle = cache.handle_for(collection_id);
+        let (cid, root) = (collection_id.to_string(), collection_root.to_string());
+        let entry = handle
+            .get_or_load(move || async move {
+                load_directory_for(
+                    fs.as_ref(),
+                    &cid,
+                    &root,
+                    0,
+                    CatalogAuthorityMode::RebuildableProjection,
+                )
+                .await
+            })
+            .await;
+        if entry.status.is_degraded() {
+            return None; // missing / stale / corrupt → full scan (mixed-read-safe)
+        }
+        let file = entry
+            .directory
+            .files
+            .iter()
+            .find(|f| f.object_url == sstable_path)?;
+        // Adapt the directory's per-block centroids → `IndexEntry` (only the
+        // centroid fields matter to the pruner) and reuse the existing prune.
+        let entries: Vec<IndexEntry> = file
+            .blocks
+            .iter()
+            .map(|b| IndexEntry {
+                block_centroid: b.centroid_fp32.clone().unwrap_or_default(),
+                block_centroid_fp16: b.centroid_fp16.clone(),
+                ..Default::default()
+            })
+            .collect();
+        // No usable centroids (unclustered segment) ⇒ don't prune.
+        if entries
+            .iter()
+            .all(|e| e.block_centroid.is_empty() && e.block_centroid_fp16.is_none())
+        {
+            return None;
+        }
+        let prune = crate::core::search::BlockPruneConfig::default();
+        Some(select_blocks_by_centroid(query, &entries, metric, &prune))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     async fn try_pax_cascade(
         &self,
         sstable_path: &str,
@@ -246,6 +313,8 @@ impl SstEngine {
         filter_expression: Option<&FilterExpression>,
         k: usize,
         distance_metric: DistanceMetric,
+        collection_id: &str,
+        collection_root: &str,
     ) -> anyhow::Result<Option<Vec<OptimizedSearchRecord>>> {
         use crate::storage::engines::core::coalesce_strategy::{
             choose_whole_vs_striped, is_cloud_path, read_strategy_chooser_enabled,
@@ -316,7 +385,40 @@ impl SstEngine {
                 striped_read_enabled()
             };
 
+        // TD-RDSTRAT-5 S3 (default-OFF): centroid probe-prune. When enabled and the
+        // VOE directory yields a block selection for this file, scan ONLY those
+        // blocks via the ranged reader (forces the ranged path). `None` ⇒ no prune
+        // ⇒ the existing whole/striped logic below (mixed-read-safe fallback).
+        let selected_blocks: Option<Vec<usize>> = if filter_expression.is_none()
+            && crate::storage::engines::sst::block_cluster::centroid_prune_enabled()
+        {
+            self.voe_centroid_selected_blocks(
+                collection_id,
+                collection_root,
+                sstable_path,
+                query_vector,
+                distance_metric,
+            )
+            .await
+        } else {
+            None
+        };
+
         let hits = 'hits: {
+            if let Some(sel) = selected_blocks.as_deref()
+                && let Some(hits) = rabitq_search_segment_ranged(
+                    fs.as_ref(),
+                    sstable_path,
+                    query_vector,
+                    k,
+                    pool,
+                    rank_metric,
+                    Some(sel),
+                )
+                .await?
+            {
+                break 'hits hits;
+            }
             if use_striped
                 && let Some(hits) = rabitq_search_segment_ranged(
                     fs.as_ref(),
@@ -325,6 +427,7 @@ impl SstEngine {
                     k,
                     pool,
                     rank_metric,
+                    None,
                 )
                 .await?
             {
@@ -1075,6 +1178,8 @@ impl SstEngine {
                         filter_expression,
                         k,
                         distance_metric,
+                        collection_id,
+                        storage_url,
                     )
                     .await
                 {
