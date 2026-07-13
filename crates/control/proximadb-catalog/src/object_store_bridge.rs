@@ -9,7 +9,7 @@ use proximadb_kernel::error::StorageError;
 use proximadb_records::ProximaRecord;
 use std::sync::Arc;
 
-use crate::proxima_schema::ProximaSchema;
+use crate::CatalogTableSchema as ProximaSchema;
 
 pub use object_store::ObjectStore as BridgeObjectStore;
 pub use object_store::memory::InMemory as BridgeInMemoryObjectStore;

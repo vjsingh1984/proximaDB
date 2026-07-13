@@ -237,7 +237,7 @@ notes = "TD-119 Phase 1 (2026-06-18): persisted versioned metadata.json + manife
 controlling_td = ["TD-119"]
 evidence = [
   "crates/storage/proximadb-iceberg-engine/src/metadata.rs:1",
-  "src/catalog/iceberg_rest_service.rs:1",
+  "crates/control/proximadb-catalog/src/iceberg_rest_service.rs:1",
 ]
 
 [[capabilities]]

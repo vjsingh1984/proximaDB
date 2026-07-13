@@ -43,11 +43,14 @@ pub use proximadb_catalog::syscat_warm;
 // Internal schema registry (multi-model unified catalog)
 pub use proximadb_catalog::internal;
 
-// Iceberg REST catalog server — service layer translating internal ↔ Iceberg REST types
-pub mod iceberg_rest_service;
+// Iceberg REST catalog server — service layer translating internal ↔ Iceberg REST types.
+// Moved to proximadb-catalog (unblocked by the `ObjectStoreBridge` contract descending
+// into that crate); re-exported so `crate::catalog::iceberg_rest_service::*` is unchanged.
+pub use proximadb_catalog::iceberg_rest_service;
 
-// PAX segment registry — bridges write path (gRPC v2) with Iceberg REST snapshot stats
-pub mod segment_registry;
+// PAX segment registry — bridges write path (gRPC v2) with Iceberg REST snapshot stats.
+// Moved to proximadb-catalog (unblocked by `SegmentMeta` moving into proximadb-block-format).
+pub use proximadb_catalog::segment_registry;
 pub use segment_registry::SegmentRegistry;
 
 // Catalog federation (unified view across internal and external catalogs).

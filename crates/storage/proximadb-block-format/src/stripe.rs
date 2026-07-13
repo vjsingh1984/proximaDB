@@ -347,6 +347,29 @@ impl BlockStats {
     }
 }
 
+/// Per-segment statistics returned when a PAX segment is finalised.
+///
+/// Maps directly to Iceberg `DataFile` fields for manifest generation. Lives
+/// here (next to the per-block [`BlockStats`] it aggregates) so segment-level
+/// consumers below the storage layer — e.g. the catalog's segment registry —
+/// can depend on it without pulling in the segment writer/scanner runtime.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SegmentMeta {
+    pub path: std::path::PathBuf,
+    pub size_bytes: u64,
+    pub block_count: u32,
+    pub row_count: u64,
+    /// Per-block statistics for Iceberg manifest data-file descriptors.
+    pub block_stats: Vec<BlockStats>,
+    /// TD-RDSTRAT-5 S1: per-block **centroid** (mean of the block's embedding-0
+    /// f32 vectors), one entry per block in emission order — the vector zone-map
+    /// the Vector Object Economy directory prunes on. Empty unless the writer was
+    /// built with `PaxSegmentWriter::with_block_centroids` (default off, so
+    /// pre-existing callers pay nothing). A block with no Fp32 embedding gets an
+    /// empty centroid.
+    pub block_centroids: Vec<Vec<f32>>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

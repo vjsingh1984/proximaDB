@@ -137,6 +137,21 @@ Catalog → `proximadb-catalog`:
 * **Slice 3 (#900, `8b3c8d873`)** — `federation/{mod,external,federated_catalog}`
   → crate. Rewrite: `crate::catalog::traits::Catalog` → `crate::Catalog` (crate
   exposes `Catalog` at root, no `traits` shim).
+* **Slice 4** — `iceberg_rest_service` + `segment_registry` → crate, unblocked
+  by moving the two cycle-causing items DOWN instead of hoisting a foundation
+  crate: (a) the `ObjectStoreBridge` contract module descended from
+  `proximadb-storage-common` into `proximadb-catalog` (the cross-layer contract
+  crate storage-common already depends on; the trait's `ProximaSchema` param is
+  in-crate `CatalogTableSchema`); (b) `SegmentMeta` descended into
+  `proximadb-block-format` next to the `BlockStats` it aggregates. Both old
+  paths re-exported (`storage_common::object_store_bridge::*`,
+  `storage_common::pax_block::SegmentMeta`) → zero reroutes for existing users.
+  Catalog crate +deps: object_store/futures/arrow-array/kernel/block-format;
+  `proximadb-iceberg-engine` as a **dev-dependency** (Cargo-legal dev cycle) for
+  the bridge test, which had to move from the lib `#[cfg(test)]` module to
+  `tests/iceberg_rest_service_bridge.rs` — inside a unit test, `crate::` trait
+  identity differs from the `proximadb_catalog` the engine implements against.
+  `CAPABILITY_MATRIX.toml` evidence path updated to the crate location.
 
 Metrics → NEW control crate `proximadb-metrics` (**#907, `f31940693`**):
 ~25 foundation-pure files — collectors access/document/query/storage/system +
@@ -161,14 +176,14 @@ so cross-module `super::Type`/`crate::Type` refs resolve after the
   `cache::{CacheTier,CacheMetrics,CrossCacheOrchestrator}`,
   `tiering::{MigrationResult,PerformanceTier}`, WAL, `collection_pinning`,
   `path_resolver`, `background_flush_context`) like observability Slice 3 did.
-. **Catalog `iceberg_rest_service` + `segment_registry`** — BOTH blocked on the
-  SAME `ObjectStoreBridge` cycle (`proximadb_storage_common::object_store_bridge::
-  ObjectStoreBridge`; `storage-common → catalog` is a downward edge → catalog→
-  storage-common cycles). Unblock = hoist `ObjectStoreBridge` (+ its
-  `ProximaSchema` dep, foundation-clean — only uses `proximadb-data-model`) to a
-  foundation crate via the re-export-shim pattern (move + storage-common
-  re-exports → ~18 existing users unchanged). Then both files follow
-  `CatalogManager` into the crate.
+. **Catalog `iceberg_rest_service` + `segment_registry`** — DONE (Slice 4
+  above). NOTE the originally-planned foundation hoist was infeasible:
+  `ProximaSchema` is a re-export of `proximadb_catalog::CatalogTableSchema`,
+  whose field-type closure (`CatalogIndex`, `CatalogStorageLayout`,
+  `AnnFilteringPolicy`, `embedding_precision_policy::*`, …) is ~the whole
+  catalog contract surface — NOT "only proximadb-data-model". Moving the
+  contracts DOWN into the crates below (catalog / block-format) was the cheap
+  correct unblock.
 
 === Gotchas (all verified)
 

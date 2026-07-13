@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
-use proximadb_storage_common::pax_block::SegmentMeta;
+use proximadb_block_format::SegmentMeta;
 
 /// Aggregated per-collection stats derived from registered PAX segments.
 #[derive(Debug, Clone, Default)]

@@ -64,13 +64,24 @@ pub mod embedding_precision_policy;
 pub mod glue;
 pub mod hive;
 pub mod iceberg;
+// Iceberg REST catalog service + PAX segment registry (moved from the root
+// `src/catalog` — they follow `CatalogManager` into this crate now that the
+// `ObjectStoreBridge` contract and `SegmentMeta` live at or below this layer).
+pub mod iceberg_rest_service;
 pub mod id_allocator;
 pub mod native;
+// The canonical object-storage bridge contract (moved down from
+// `proximadb-storage-common`, which re-exports it at the old path). Lives in
+// this cross-layer contract crate so catalog services (Iceberg REST manifest
+// generation) and the storage plane share one trait without a dependency cycle.
+pub mod object_store_bridge;
 pub mod oltp;
 #[cfg(feature = "polaris-catalog")]
 pub mod polaris;
 pub mod relational;
 pub mod schema;
+pub mod segment_registry;
+pub use segment_registry::SegmentRegistry;
 pub mod system_columns;
 #[cfg(feature = "unity-catalog")]
 pub mod unity;
