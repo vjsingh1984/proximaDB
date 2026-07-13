@@ -663,13 +663,42 @@ fn record_logical_plan_geometry(plan: &datafusion::logical_expr::LogicalPlan) {
 fn measure_logical_geometry(
     plan: &datafusion::logical_expr::LogicalPlan,
 ) -> (u64, u64, u64, u64, u64, Vec<(&'static str, u64)>) {
-    use datafusion::logical_expr::LogicalPlan as Lp;
+    let (depth, nodes, leaves, fanout, blocking, ops) = measure_logical_geometry_inner(plan);
+    (
+        depth,
+        nodes,
+        leaves,
+        fanout,
+        blocking,
+        ops.into_iter().collect(),
+    )
+}
+
+#[allow(clippy::type_complexity)]
+fn measure_logical_geometry_inner(
+    plan: &datafusion::logical_expr::LogicalPlan,
+) -> (
+    u64,
+    u64,
+    u64,
+    u64,
+    u64,
+    std::collections::BTreeMap<&'static str, u64>,
+) {
+    use datafusion::logical_expr::{Expr as DfExpr, LogicalPlan as Lp};
+    use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
     let mut max_depth = 0u64;
     let mut nodes = 0u64;
     let mut leaves = 0u64;
     let mut max_fanout = 0u64;
     let mut blocking = 0u64;
     let mut ops: std::collections::BTreeMap<&'static str, u64> = std::collections::BTreeMap::new();
+    // Expression-embedded subquery plans (scalar / EXISTS / IN) with the depth
+    // of the node that carries them. They are NOT tree inputs — `inputs()`
+    // never yields them — so a plain child walk under-measures exactly the
+    // shapes the estimator counts as hoisted branches (observed: Q4/Q17/Q20/
+    // Q22/q32 audited as estimator over-estimates until this walk landed).
+    let mut sub_plans: Vec<(std::sync::Arc<Lp>, u64)> = Vec::new();
     let mut work: Vec<(&Lp, u64)> = vec![(plan, 1)];
     while let Some((node, depth)) = work.pop() {
         nodes += 1;
@@ -692,6 +721,23 @@ fn measure_logical_geometry(
         if is_blocking {
             blocking += 1;
         }
+        for expr in node.expressions() {
+            let _ = expr.apply(|e| {
+                match e {
+                    DfExpr::ScalarSubquery(sq) => {
+                        sub_plans.push((std::sync::Arc::clone(&sq.subquery), depth));
+                    }
+                    DfExpr::Exists(ex) => {
+                        sub_plans.push((std::sync::Arc::clone(&ex.subquery.subquery), depth));
+                    }
+                    DfExpr::InSubquery(is) => {
+                        sub_plans.push((std::sync::Arc::clone(&is.subquery.subquery), depth));
+                    }
+                    _ => {}
+                }
+                Ok(TreeNodeRecursion::Continue)
+            });
+        }
         let inputs = node.inputs();
         max_fanout = max_fanout.max(inputs.len() as u64);
         if inputs.is_empty() {
@@ -701,14 +747,24 @@ fn measure_logical_geometry(
             work.push((child, depth + 1));
         }
     }
-    (
-        max_depth,
-        nodes,
-        leaves,
-        max_fanout,
-        blocking,
-        ops.into_iter().collect(),
-    )
+    // Fold each subquery branch: its ops are real work, its deepest path may
+    // exceed the outer chain, and decorrelation lowers the branch to a join —
+    // count that breaker so the measurement matches what executes (and the
+    // estimator's hoisted-branch semantics). Function-level recursion here is
+    // bounded by SQL subquery NESTING, which sqlparser's recursion limit caps
+    // at parse time — unlike chain depth, it cannot be adversarially deep.
+    for (sub, parent_depth) in sub_plans {
+        let (sd, sn, sl, sf, sb, sops) = measure_logical_geometry_inner(&sub);
+        max_depth = max_depth.max(parent_depth + 1 + sd);
+        nodes += sn;
+        leaves += sl;
+        max_fanout = max_fanout.max(sf);
+        blocking += sb + 1; // the decorrelated join
+        for (k, v) in sops {
+            *ops.entry(k).or_insert(0) += v;
+        }
+    }
+    (max_depth, nodes, leaves, max_fanout, blocking, ops)
 }
 
 #[cfg(feature = "datafusion-integration")]
@@ -1012,6 +1068,37 @@ mod geometry_tests {
         assert_eq!(get("filter"), Some(1));
         assert_eq!(get("sort"), Some(1));
         assert_eq!(get("limit"), Some(1));
+    }
+
+    #[test]
+    fn logical_geometry_measures_expression_subquery_branches() {
+        use datafusion::logical_expr::exists;
+        use std::sync::Arc;
+        // Subquery branch: values → filter (depth 2, 2 nodes, 0 breakers).
+        let sub = LogicalPlanBuilder::values(vec![vec![lit(1i64)]])
+            .expect("values")
+            .filter(lit(true))
+            .expect("filter")
+            .build()
+            .expect("build");
+        // Outer: filter(EXISTS(sub)) is the root (depth 1), values below it
+        // (depth 2); the branch hangs off the filter node.
+        let plan = LogicalPlanBuilder::values(vec![vec![lit(2i64)]])
+            .expect("values")
+            .filter(exists(Arc::new(sub)))
+            .expect("filter")
+            .build()
+            .expect("build");
+        let (depth, nodes, leaves, _fanout, blocking, ops) = measure_logical_geometry(&plan);
+        // Outer tree: filter(1) + values(2). Branch folds beneath the filter:
+        // parent_depth(1) + 1 + sub_depth(2) = 4.
+        assert_eq!(depth, 4, "deepest path runs through the subquery branch");
+        assert_eq!(nodes, 4, "outer 2 + branch 2");
+        assert_eq!(leaves, 2, "one leaf per side");
+        assert_eq!(blocking, 1, "the decorrelated join is a breaker");
+        let get = |k: &str| ops.iter().find(|(l, _)| *l == k).map(|(_, n)| *n);
+        assert_eq!(get("filter"), Some(2), "both filters counted");
+        assert_eq!(get("values"), Some(2));
     }
 
     #[test]

@@ -46,7 +46,7 @@ use proximadb_relational_reader::{ReaderCapabilities, ReaderError, RelationalRea
 use proximadb_relational_types::{ColumnInfo, Expr, ExprError, RelationalRow, RelationalSchema};
 use sqlparser::ast::{
     BinaryOperator, Expr as SqlExpr, GroupByExpr, Query as SqlQuery, SelectItem, SetExpr,
-    Statement, TableFactor, TableWithJoins,
+    SetOperator, Statement, TableFactor, TableWithJoins,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -2705,6 +2705,36 @@ fn geometry_of_body(body: &SetExpr) -> (u32, u32) {
             if select.having.is_some() {
                 depth += 1; // post-aggregate Filter
             }
+            // v2 (measured 2026-07-13): predicate/projection subqueries lower
+            // to HOISTED join branches (semi/anti/left) — the deepest path may
+            // run through the branch, and each hoist is a breaker. v1 ignored
+            // them; TPC-H Q22 measured mxhi against an sxlo estimate.
+            let mut subqueries: Vec<&SqlQuery> = Vec::new();
+            if let Some(sel) = &select.selection {
+                geometry_subqueries_of_expr(sel, &mut subqueries);
+            }
+            if let Some(having) = &select.having {
+                geometry_subqueries_of_expr(having, &mut subqueries);
+            }
+            for item in &select.projection {
+                if let SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } = item
+                {
+                    geometry_subqueries_of_expr(e, &mut subqueries);
+                }
+            }
+            for sub in subqueries {
+                let (sd, sb) = geometry_of_query(sub);
+                depth = depth.max(sd) + 1; // hoisted Join above the deeper side
+                blocking += sb + 1; // branch breakers + the join itself
+            }
+            // v2: a window function lowers to a Window node plus the sort it
+            // implies — two extra levels (measured: win_rank/win_running
+            // banded mxhi against an sxhi estimate; depth-only divergence, so
+            // no breaker is added — mirrors `measure_logical_geometry`, which
+            // labels window without counting it as blocking).
+            if select.projection.iter().any(select_item_has_window) {
+                depth += 2;
+            }
             depth += 1; // Project
             if select.distinct.is_some() {
                 depth += 1; // Distinct
@@ -2712,10 +2742,21 @@ fn geometry_of_body(body: &SetExpr) -> (u32, u32) {
             (depth, blocking)
         }
         SetExpr::Query(q) => geometry_of_query(q),
-        SetExpr::SetOperation { left, right, .. } => {
+        SetExpr::SetOperation {
+            op, left, right, ..
+        } => {
             let (dl, bl) = geometry_of_body(left);
             let (dr, br) = geometry_of_body(right);
-            (dl.max(dr) + 1, bl + br)
+            match op {
+                // UNION streams through a concat node.
+                SetOperator::Union => (dl.max(dr) + 1, bl + br),
+                // v2: EXCEPT/INTERSECT lower to distinct-aggregates on BOTH
+                // sides under an anti/semi join plus alias/projection wrappers
+                // — not a single set node (measured: both banded mxhi against
+                // an sxlo estimate; the DF lowering adds ~5 levels and 3
+                // breakers: two side aggregates + the join).
+                _ => (dl.max(dr) + 5, bl + br + 3),
+            }
         }
         _ => (1, 0),
     }
@@ -2740,6 +2781,45 @@ fn geometry_of_table_factor(tf: &TableFactor) -> (u32, u32) {
             table_with_joins, ..
         } => geometry_of_table_with_joins(table_with_joins),
         _ => (1, 0), // named table → Scan leaf
+    }
+}
+
+/// Collect the subqueries in an expression tree (scalar `(SELECT …)`,
+/// `EXISTS`, `IN (SELECT …)`) — the shapes lowering hoists into join
+/// branches. Traversal mirrors [`where_has_subquery`].
+fn geometry_subqueries_of_expr<'a>(expr: &'a SqlExpr, out: &mut Vec<&'a SqlQuery>) {
+    match expr {
+        SqlExpr::Subquery(q) => out.push(q),
+        SqlExpr::Exists { subquery, .. } => out.push(subquery),
+        SqlExpr::InSubquery { subquery, .. } => out.push(subquery),
+        SqlExpr::BinaryOp { left, right, .. } => {
+            geometry_subqueries_of_expr(left, out);
+            geometry_subqueries_of_expr(right, out);
+        }
+        SqlExpr::UnaryOp { expr, .. } | SqlExpr::Nested(expr) | SqlExpr::Cast { expr, .. } => {
+            geometry_subqueries_of_expr(expr, out)
+        }
+        _ => {}
+    }
+}
+
+/// True if a projection item applies a window function (`… OVER (…)`).
+fn select_item_has_window(item: &SelectItem) -> bool {
+    let expr = match item {
+        SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } => e,
+        _ => return false,
+    };
+    expr_has_window(expr)
+}
+
+fn expr_has_window(expr: &SqlExpr) -> bool {
+    match expr {
+        SqlExpr::Function(f) => f.over.is_some(),
+        SqlExpr::BinaryOp { left, right, .. } => expr_has_window(left) || expr_has_window(right),
+        SqlExpr::UnaryOp { expr, .. } | SqlExpr::Nested(expr) | SqlExpr::Cast { expr, .. } => {
+            expr_has_window(expr)
+        }
+        _ => false,
     }
 }
 
@@ -3198,6 +3278,61 @@ mod tests {
                 }
             ),
             "nested join+agg+two sorts must band mid/deep × high: {nested:?}"
+        );
+    }
+
+    #[test]
+    fn geometry_estimator_v2_covers_the_measured_gaps() {
+        use crate::query::compute_scheduler::{BlockingBand, DepthBand, GeometryClass};
+        let raw = |sql: &str| {
+            let s = Parser::parse_sql(&GenericDialect {}, sql).expect("parse");
+            match s.as_slice() {
+                [Statement::Query(q)] => geometry_of_query(q),
+                _ => panic!("one SELECT"),
+            }
+        };
+        let geom = |sql: &str| {
+            let (d, b) = raw(sql);
+            GeometryClass::from_estimate(d, b)
+        };
+        // Gap 1 — predicate subqueries (TPC-H Q22 shape: v1 banded sxlo,
+        // measured mxhi). Each subquery is a hoisted join branch.
+        let q22ish = geom(
+            "SELECT cntrycode, COUNT(*) FROM customer              WHERE c_acctbal > (SELECT AVG(c_acctbal) FROM customer WHERE c_acctbal > 0)              AND NOT EXISTS (SELECT * FROM orders WHERE o_custkey = c_custkey)              GROUP BY cntrycode ORDER BY cntrycode",
+        );
+        assert_eq!(
+            q22ish,
+            GeometryClass::Known {
+                depth: DepthBand::Mid,
+                blocking: BlockingBand::High,
+            },
+            "Q22 shape must band mxhi (measured 10x5)"
+        );
+        // Gap 2 — window functions add Window + implied-sort levels
+        // (depth-only; window is not a breaker in the OpKind vocabulary).
+        let (d_plain, b_plain) = raw("SELECT x FROM t");
+        let (d_win, b_win) = raw("SELECT rank() OVER (ORDER BY x) FROM t");
+        assert_eq!(d_win, d_plain + 2, "window adds two levels");
+        assert_eq!(b_win, b_plain, "window adds no breaker");
+        // Gap 3 — EXCEPT/INTERSECT lower to side-aggregates + join, unlike
+        // UNION's streaming concat (measured: simple set-ops banded mxhi).
+        let except = geom("SELECT a FROM t EXCEPT SELECT a FROM u");
+        assert_eq!(
+            except,
+            GeometryClass::Known {
+                depth: DepthBand::Mid,
+                blocking: BlockingBand::High,
+            },
+            "EXCEPT must band mid x high"
+        );
+        let union = geom("SELECT a FROM t UNION ALL SELECT a FROM u");
+        assert_eq!(
+            union,
+            GeometryClass::Known {
+                depth: DepthBand::Shallow,
+                blocking: BlockingBand::Zero,
+            },
+            "UNION ALL stays a streaming concat"
         );
     }
 
