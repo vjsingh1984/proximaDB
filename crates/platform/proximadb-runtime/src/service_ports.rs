@@ -102,6 +102,28 @@ pub trait VectorOpsPort: Send + Sync {
         tenant_id: Option<&str>,
     ) -> Result<VectorOperationResponse>;
 
+    /// TD-XMODAL-4 S2: the **single canonical native vector-search kernel** — the
+    /// v2 path shared by the pgvector `<->` operator and the `vector_search(...)`
+    /// UDTF, returning [`OptimizedSearchRecord`]s for internal (Rust) callers.
+    /// Tenant-scoped + **fail-closed** when `tenant_id` is provided (the impl
+    /// validates collection access for the tenant before searching). The default
+    /// impl returns empty (test doubles need not override).
+    ///
+    /// (This is the one port method that exposes the v2 search-result type rather
+    /// than a proto type — a deliberate exception so both SQL surfaces share one
+    /// kernel instead of diverging; the types are foundation crates, so
+    /// `proximadb-runtime` stays monolith-independent.)
+    async fn unified_search_native(
+        &self,
+        _collection_id: &str,
+        _query_vector: Vec<f32>,
+        _k: usize,
+        _filter: Option<proximadb_filter_expression::FilterExpression>,
+        _tenant_id: Option<&str>,
+    ) -> Result<Vec<proximadb_search_types::results::OptimizedSearchRecord>> {
+        Ok(Vec::new())
+    }
+
     /// Execute a batch upsert/delete, tenant-scoped when `tenant_id` is provided.
     async fn batch_upsert(
         &self,
