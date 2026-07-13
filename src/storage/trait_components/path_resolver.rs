@@ -56,7 +56,16 @@ use std::sync::Arc;
 // signatures only). The root-catalog-coupled concrete impls below stay here
 // and `impl` the crate trait. Re-exported so existing callers
 // (`crate::storage::trait_components::path_resolver::*`) keep compiling.
-pub use proximadb_storage_ports::{CollectionPathResolver, StorageAssignment};
+//
+// `collection_data_path_typed` + `typed_identity_from_storage_assignment` were
+// also hoisted (their only deps are foundation types `CollectionIdentity`
+// [kernel] + `StoragePath` [storage-common] + proto `StorageAssignment`), so
+// they are re-exported here too — the wal/index typed helpers stay root because
+// nothing outside the root calls them yet (no benefit to the move).
+pub use proximadb_storage_ports::{
+    CollectionPathResolver, StorageAssignment, collection_data_path_typed,
+    typed_identity_from_storage_assignment,
+};
 
 // ============================================================================
 // Standard Implementations
@@ -456,83 +465,6 @@ pub fn typed_paths_enabled() -> bool {
         Ok(v) => v == "1" || v.eq_ignore_ascii_case("true"),
         Err(_) => false,
     })
-}
-
-/// ADR-031 Phase 4d: recover a [`CollectionIdentity`] from a proto
-/// [`StorageAssignment`](crate::proto::proximadb_v1::StorageAssignment)'s typed
-/// triple, for the **catalog-free engine read paths**.
-///
-/// Engines resolve data/wal/index paths deep in the search/flush stack with no
-/// catalog/schema access — the typed identity cannot be re-minted at read time,
-/// so it is carried on the proto collection (set at create by the manager when
-/// `PROXIMADB_TYPED_PATHS=1`) and reconstituted here. All three fields are `Some`
-/// together (the manager sets them atomically) or all `None` (env OFF / legacy
-/// collection created before 4d) → `None` → the typed path helpers fall back to
-/// the byte-identical legacy path (mixed-read-safe per-collection).
-///
-/// `namespace_id` is a `u16` in the typed identity but stored as `uint32` in
-/// proto (proto has no `uint16`); it is narrowed here. Values > `u16::MAX` are
-/// impossible by construction (the catalog mints `NamespaceId = u16`), so the
-/// narrowing is infallible in practice — `None` is returned defensively if a
-/// future caller somehow stored an out-of-range value.
-pub fn typed_identity_from_storage_assignment(
-    storage_assignment: Option<&crate::proto::proximadb_v1::StorageAssignment>,
-) -> Option<CollectionIdentity> {
-    let sa = storage_assignment?;
-    let account_id = sa.typed_account_id?;
-    let namespace_id = sa.typed_namespace_id?;
-    let collection_id = sa.typed_collection_id?;
-    // Proto has no uint16; narrow back to the typed NamespaceId (u16).
-    let namespace_id = if namespace_id <= u32::from(u16::MAX) {
-        namespace_id as u16
-    } else {
-        // Defensive: out-of-range means the triple wasn't minted by the catalog
-        // — treat as legacy rather than truncate silently.
-        return None;
-    };
-    Some(CollectionIdentity {
-        account_id,
-        namespace_id,
-        collection_id,
-    })
-}
-
-// ---------------------------------------------------------------------------
-// ADR-031 Phase 4c: typed collection DATA subpaths.
-// ---------------------------------------------------------------------------
-//
-// `CollectionIdentity` is a ROOT type (`crate::core::stable_id`); `StoragePath`
-// lives in `proximadb-storage-common`, which CANNOT import root types (workspace
-// boundary). So the typed variants live HERE — a root helper that wraps the
-// legacy `StoragePath` calls for the `None` (legacy) branch and composes the
-// account-rooted zero-padded base62 path for the `Some(identity)` branch.
-//
-// Both branches share the SAME trailing subpath suffix as the legacy
-// `StoragePath::collection_*_path` (`/data`, `/wal`, `/indexes` — NO trailing
-// slash), so the `None` branch is **byte-identical** to the pre-4c path and the
-// `Some` branch differs only in the prefix (mixed-read-safe per-collection).
-
-/// ADR-031 Phase 4c: typed collection **data** directory path.
-///
-/// * `Some(identity)` → `{base}/accounts/{acct}/{ns}/{coll}/data`
-///   (zero-padded base62, no tenant slot — Phase 4 hierarchy collapse).
-/// * `None`           → byte-identical legacy
-///   [`StoragePath::collection_data_path`] (`{base}/{collection_id}/data`).
-///
-/// The trailing suffix (`/data`, no slash) matches the legacy contract exactly
-/// so reads/writes against a legacy collection (`None`) resolve unchanged.
-pub fn collection_data_path_typed(
-    base: &str,
-    collection_id: &str,
-    identity: Option<CollectionIdentity>,
-) -> String {
-    match identity {
-        Some(id) => {
-            let (acct, ns, coll) = id.path_segments();
-            format!("{base}/accounts/{acct}/{ns}/{coll}/data")
-        }
-        None => StoragePath::collection_data_path(base, collection_id),
-    }
 }
 
 /// ADR-031 Phase 4c: typed collection **WAL** directory path.
