@@ -17,6 +17,8 @@ use proximadb_storage_common::StorageEngineType;
 
 pub mod capabilities;
 pub use capabilities::*;
+pub mod scan_strategy;
+pub use scan_strategy::{ScanCostEstimate, ScanIterator, ScanStatistics, ScanStrategy};
 pub mod path_resolver;
 pub use path_resolver::{
     CollectionPathResolver, StorageAssignment, collection_data_path_typed,
