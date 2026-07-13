@@ -22,6 +22,8 @@ pub use path_resolver::{
     CollectionPathResolver, StorageAssignment, collection_data_path_typed,
     typed_identity_from_storage_assignment,
 };
+pub mod scan_strategy;
+pub use scan_strategy::*;
 
 /// Read access to collection metadata that storage needs at flush/compaction
 /// time (fetch the proto `Collection` for a name or UUID).

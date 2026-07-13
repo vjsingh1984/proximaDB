@@ -27,6 +27,11 @@ proximadb-kernel.workspace = true
 # (Vec<StorageQuantizedData>, &QuantizedVector, UnifiedQuantizationLevel) — moved to
 # foundation by #842, so the port is facade-FREE (no DTO/adaptor layer).
 proximadb-quantization-model.workspace = true
+# Foundation-tier: the hoisted scan-strategy surface (ScanStrategy, ScanIterator,
+# UnifiedScanEngine, …) names these primitive contract types.
+proximadb-filter-expression.workspace = true
+proximadb-records.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
