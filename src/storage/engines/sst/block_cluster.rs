@@ -20,11 +20,23 @@ use proximadb_records::{EmbeddingValues, ProximaRecord};
 /// reorder records by their sign-code at flush/compaction so blocks are
 /// spatially coherent (and centroids are computed for the VOE directory).
 pub fn block_cluster_enabled() -> bool {
-    match std::env::var("PROXIMADB_PAX_BLOCK_CLUSTER")
-        .ok()
-        .as_deref()
-        .map(str::trim)
-    {
+    env_flag_on("PROXIMADB_PAX_BLOCK_CLUSTER")
+}
+
+/// TD-RDSTRAT-5 S3 (read side): opt-in for the VOE-directory centroid probe-prune
+/// at the PAX cascade. Default OFF — the cascade scans every block; set
+/// `PROXIMADB_PAX_CENTROID_PRUNE=1` to load the Vector Object Economy directory
+/// (cache-first) and scan only the blocks whose centroid survives the prune.
+/// Recall-affecting, so it stays default-OFF behind this flag until the SIFT1M
+/// recall ratchet (CI gate) clears the flip. Falls back to the unfiltered scan
+/// whenever the directory is absent/stale or the segment wasn't clustered.
+pub fn centroid_prune_enabled() -> bool {
+    env_flag_on("PROXIMADB_PAX_CENTROID_PRUNE")
+}
+
+/// Shared truthy-env parser for the block-clustering flags.
+fn env_flag_on(var: &str) -> bool {
+    match std::env::var(var).ok().as_deref().map(str::trim) {
         Some(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes"),
         None => false,
     }
