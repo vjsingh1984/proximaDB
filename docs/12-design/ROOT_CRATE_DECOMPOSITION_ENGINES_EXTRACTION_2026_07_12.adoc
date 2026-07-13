@@ -106,6 +106,83 @@ sqlite3 "$DB" "
   GROUP BY subdir ORDER BY syms DESC LIMIT 12;"
 ----
 
+== Clean-leaf movability — efferent-corrected recon (2026-07-13)
+
+[WARNING]
+====
+The Ca-based queue above ranks by **afferent** coupling (reroute cost), which is
+**misleading for extraction sequencing**. A leaf's movability is gated by its
+**efferent** deps (what it pulls from the root), not by how many callers reroute.
+`raptor/writer.rs` (Ca=0) is the *worst* mover, not the best — it has the heaviest
+efferent coupling. The table below supersedes the Ca ordering for sequencing.
+====
+
+=== Finding 1 — these leaves do NOT implement `UnifiedStorageFormat`
+
+Per-source verification (`impl ... for ...` blocks): `viper/pipeline.rs`,
+`raptor/consolidated_reader.rs`, and `raptor/writer.rs` implement only engine-
+internal traits (`VectorProcessor`, plain structs) — **not** the engine port trait.
+The `UnifiedStorageFormat` impls live in the engine *entry* types (`ViperEngine`
+in `engine.rs`, etc.). **Implication:** the sub-component leaves are *not* directly
+gated on link-7 (traits→crate); they are gated on the **FilesystemFactory port**
+(which link-7 delivers) + per-leaf deps.
+
+=== Finding 2 — FilesystemFactory is the common enabler + link-7's last blocker
+
+`FilesystemFactory` (`src/storage/persistence/filesystem/mod.rs:261`) is returned by
+the `UnifiedStorageFormat` method (`traits/mod.rs:1084`) and the `impl_engine_identity!`
+macro (`traits/mod.rs:483/503`), and injected by every engine leaf as
+`Arc<FilesystemFactory>`. Port-inverting it unlocks **both** link-7 and the leaves.
+
+The hard work is already done — the reuse path is trivial:
+
+* `FileSystem` trait **already exists** in `proximadb-storage-filesystem-types`
+  (`lib.rs:468`, 20+ methods).
+* The catalog crate's `CatalogFilesystemResolver` port
+  (`crates/control/proximadb-catalog/src/manager.rs`, returns `Arc<dyn FileSystem>`)
+  is the **exact precedent** — root `LazyFilesystemResolver` wraps `FilesystemFactory`.
+* Measured caller surface = **4 methods**: `get_filesystem`, `create_dir_all`,
+  `delete`, `write`.
+
+Mirror it as a `FilesystemPort` in `proximadb-storage-ports` (delegating to the
+existing `FileSystem` trait); root `FilesystemFactory` impls it (downward edge).
+Then change the `UnifiedStorageFormat` accessor from `-> &FilesystemFactory` to
+`-> Arc<dyn FilesystemPort>` and update the macro. Engine structs swap
+`Arc<FilesystemFactory>` → `Arc<dyn FilesystemPort>` (a type swap, no structural change).
+
+=== Per-leaf efferent resolution (supersedes the Ca ordering)
+
+[cols="2,1,1,4,2",options="header"]
+|===
+| leaf | LOC | Ca | real efferent gates | verdict
+| `viper/pipeline.rs` | 3.7K | 1 | FilesystemFactory port + `CodebookStore`/`StorageQuantizationConfig` (verify `StorageQuantizationEnginePort` covers; else small port). proto(20)=free, quant engines(9)=ports-exist. | **cleanest first leaf** (post-FS-port)
+| `raptor/consolidated_reader.rs` | 4.2K | 3 | FS port + **hoist `TransactionCoordinator`** (root→`proximadb-storage-transaction`) + **hoist `CrossCacheOrchestrator`** (root→cache crate). search-types=free. | 2nd; needs 2 hoists
+| `raptor/writer.rs` | 5.8K | **0** | FS port + **new `AxisClusteringPort`** (`ReusableClusteringEngine` is port-compatible: 3 methods) + **hoist `LocalFileSystem`** (concrete; `FileSystem` trait exists). quant=ports, bloom=free. | Ca=0 but **heaviest**; Wave 2-3
+| `raptor/engine.rs`, `core/.../columnar_query_reader.rs` | 3.3K/3K | - | 36-37 `crate::storage::` deps each (heavy internal coupling) | last; move as engine cohort
+|===
+
+`VectorProcessor` note: defined at `viper/pipeline.rs:301` *and* `viper/factory.rs:325`
+— these are two **distinct module-scoped traits** (legal Rust, not a duplicate/bug);
+the pipeline one (`impl VectorProcessor for VectorRecordProcessor`, line 1829) moves
+with `pipeline.rs`. Optional naming cleanup, not a blocker.
+
+=== Recommended sequence
+
+. **FilesystemFactory → `FilesystemPort`** (storage-ports) — common enabler + unblocks
+  link-7. **Expected to be delivered by the `decomp-traits-to-crate` (link-7) session**
+  as its last blocker; do NOT duplicate — coordinate.
+. **After link-7 lands:** extract `viper/pipeline.rs` → `proximadb-engine-viper`
+  (resolve `CodebookStore` via the existing `StorageQuantizationEnginePort` if possible).
+  Ca=1 → one re-export shim. Round-trip/recall-gate any quantized path.
+. **`consolidated_reader`** after hoisting `TransactionCoordinator` +
+  `CrossCacheOrchestrator`.
+. **`writer`** after `AxisClusteringPort` — defer to Wave 2-3.
+
+Coordination: the FS-port + link-7 are owned by the link-7 session; engine-leaf
+slices MUST NOT start until the FS-port lands (they all inject it). Recon done
+2026-07-13 via 4 parallel read-only agents (VectorProcessor dup, FS-port design,
+consolidated_reader deps, writer gap-analysis).
+
 == Refs
 link:ROOT_CRATE_DECOMPOSITION_CI_BUILD_OPTIMIZATION_2026_07_11.adoc[CI-build-opt (#876)],
 link:ROOT_CRATE_DECOMPOSITION_STORAGE_EXTRACTION_PLAN_2026_07_11.adoc[storage-extraction],
