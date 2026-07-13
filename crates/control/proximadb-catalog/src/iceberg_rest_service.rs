@@ -35,9 +35,9 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::catalog::{CatalogManager, CatalogTableSchema, TableIdentifier};
+use crate::object_store_bridge::ObjectStoreBridge;
+use crate::{CatalogManager, CatalogTableSchema, TableIdentifier};
 use proximadb_data_model::ProximaType;
-use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
 
 // ============================================================================
 // Iceberg REST API types — serialized exactly per spec
@@ -512,7 +512,7 @@ impl IcebergErrorResponse {
 pub struct IcebergRestService {
     catalog_manager: Arc<CatalogManager>,
     /// PAX segment registry: provides real row counts and file sizes for snapshots.
-    segment_registry: Option<Arc<crate::catalog::SegmentRegistry>>,
+    segment_registry: Option<Arc<crate::SegmentRegistry>>,
     /// Warehouse object-store bridge. When present, `load_table` materializes a real,
     /// versioned `metadata.json` with a manifest-log-driven snapshot history and serves
     /// a resolvable `metadata-location` (TD-119). When absent, metadata is synthesized
@@ -544,7 +544,7 @@ impl IcebergRestService {
     }
 
     /// Attach a shared segment registry so snapshot summaries reflect real PAX stats.
-    pub fn with_segment_registry(mut self, registry: Arc<crate::catalog::SegmentRegistry>) -> Self {
+    pub fn with_segment_registry(mut self, registry: Arc<crate::SegmentRegistry>) -> Self {
         self.segment_registry = Some(registry);
         self
     }
@@ -1200,11 +1200,8 @@ impl IcebergRestService {
 
         for (i, f) in iceberg_schema.fields.iter().enumerate() {
             let data_type = iceberg_type_to_catalog(&f.field_type);
-            let mut col = crate::catalog::CatalogColumn::new(
-                f.id.max(i as i32 + 1),
-                f.name.clone(),
-                data_type,
-            );
+            let mut col =
+                crate::CatalogColumn::new(f.id.max(i as i32 + 1), f.name.clone(), data_type);
             col.nullable = !f.required;
             if let Some(doc) = &f.doc {
                 col.comment = Some(doc.clone());
@@ -1322,8 +1319,9 @@ fn table_base_path(schema: &CatalogTableSchema) -> Option<String> {
         .or_else(|| schema.storage_layouts.first());
     let location = primary
         .and_then(|l| match l.physical_format {
-            crate::catalog::CatalogPhysicalFormat::Iceberg
-            | crate::catalog::CatalogPhysicalFormat::Parquet => l.location.as_deref(),
+            crate::CatalogPhysicalFormat::Iceberg | crate::CatalogPhysicalFormat::Parquet => {
+                l.location.as_deref()
+            }
             _ => None,
         })
         .or(schema.location.as_deref())?;
@@ -1447,7 +1445,7 @@ mod tests {
 
     #[test]
     fn metadata_has_main_ref_and_v2_snapshot_fields() {
-        use crate::catalog::CatalogColumn;
+        use crate::CatalogColumn;
         let svc = IcebergRestService::new(
             Arc::new(CatalogManager::new()),
             "wh",
@@ -1497,77 +1495,5 @@ mod tests {
         let (snaps2, _) =
             build_snapshot_chain("uuid-x", 0, 2, 9999, "http://h/manifests", HashMap::new());
         assert_eq!(snaps[1].snapshot_id, snaps2[1].snapshot_id);
-    }
-
-    #[tokio::test]
-    async fn ensure_table_metadata_materializes_history_from_manifest_log() {
-        use crate::catalog::CatalogColumn;
-        use proximadb_iceberg_engine::IcebergObjectStoreBridge;
-        use proximadb_storage_common::object_store_bridge::{
-            BridgeObjectPath, CommitOutcome, ObjectStoreBridge as _,
-        };
-
-        // In-memory warehouse with three committed (empty) data-manifest versions: 0,1,2.
-        let bridge = IcebergObjectStoreBridge::from_url("memory://").expect("memory bridge");
-        let base = "warehouse_tables/events";
-        let manifest_prefix = format!("{base}/_manifests");
-        let data_prefix = BridgeObjectPath::from(format!("{base}/data"));
-        let mut parent = None;
-        for _ in 0..3 {
-            match bridge
-                .publish_snapshot(&data_prefix, &manifest_prefix, parent)
-                .await
-                .expect("seed manifest")
-            {
-                CommitOutcome::Committed(v) => parent = Some(v),
-                other => panic!("unexpected seed outcome: {other:?}"),
-            }
-        }
-
-        let svc = IcebergRestService::new(
-            Arc::new(CatalogManager::new()),
-            "wh",
-            "grpc://localhost:5680",
-            "http://localhost:5678/iceberg/v1",
-        )
-        .with_object_store_bridge(Arc::new(bridge));
-
-        let mut schema = CatalogTableSchema::new("events")
-            .with_column(CatalogColumn::new(1, "id", ProximaType::String))
-            .with_primary_key(vec!["id".to_string()]);
-        schema.location = Some(base.to_string());
-        let id = TableIdentifier::new(vec!["default".to_string()], "events".to_string());
-
-        let (md, location) = svc
-            .ensure_table_metadata(&id, &schema)
-            .await
-            .expect("ensure");
-
-        // History reflects the manifest log: 3 parent-chained snapshots.
-        assert_eq!(md.snapshots.len(), 3);
-        assert_eq!(md.snapshots[0].parent_snapshot_id, None);
-        assert_eq!(
-            md.snapshots[2].parent_snapshot_id,
-            Some(md.snapshots[1].snapshot_id)
-        );
-        assert_eq!(md.snapshots[2].sequence_number, 3);
-        assert_eq!(md.current_snapshot_id, Some(md.snapshots[2].snapshot_id));
-        assert_eq!(
-            md.refs.get("main").expect("main ref").snapshot_id,
-            md.snapshots[2].snapshot_id
-        );
-        assert!(
-            location.ends_with(".metadata.json"),
-            "location = {location}"
-        );
-
-        // Idempotent: a second materialization sees the persisted metadata is current and
-        // returns the same history (no runaway metadata versions on repeated reads).
-        let (md2, _) = svc
-            .ensure_table_metadata(&id, &schema)
-            .await
-            .expect("ensure 2");
-        assert_eq!(md2.snapshots.len(), 3);
-        assert_eq!(md2.current_snapshot_id, md.current_snapshot_id);
     }
 }

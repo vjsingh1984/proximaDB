@@ -244,6 +244,7 @@ proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
 proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }
 proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
+proximadb-iceberg-engine = { path = "crates/storage/proximadb-iceberg-engine" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
 proximadb-storage-operations = { path = "crates/storage/proximadb-storage-operations" }
 proximadb-storage-optimization = { path = "crates/storage/proximadb-storage-optimization" }

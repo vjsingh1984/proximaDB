@@ -26,7 +26,14 @@ pub mod id_index;
 pub mod metadata_collector;
 pub mod mmap_file;
 pub mod native_metadata;
-pub mod object_store_bridge;
+/// Re-export shim — the canonical `ObjectStoreBridge` contract now lives in
+/// `proximadb-catalog` (the cross-layer contract crate this crate already
+/// depends on), so catalog-side services can consume it without a
+/// `catalog -> storage-common` cycle. All historical
+/// `proximadb_storage_common::object_store_bridge::*` paths keep working.
+pub mod object_store_bridge {
+    pub use proximadb_catalog::object_store_bridge::*;
+}
 pub mod observability_cardinality;
 pub mod observability_partitioning;
 pub mod observability_rollups;
