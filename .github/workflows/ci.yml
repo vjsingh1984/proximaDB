@@ -28,6 +28,13 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   CARGO_INCREMENTAL: 0
+  # Lean CI compile profiles — cut DWARF line-tables (~1.5–3 GiB off the
+  # root-crate test-compile RSS). CI doesn't need backtraces (panics still
+  # print file:line via the panic message); local dev keeps line-tables-only
+  # via the Cargo.toml [profile.test] default. CARGO_INCREMENTAL=0 above
+  # already disables incr-comp, so only debug needs cutting here.
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 # ============================================================================
 # This consolidated CI workflow combines:
