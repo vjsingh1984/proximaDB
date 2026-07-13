@@ -1179,6 +1179,8 @@ jobs:
     # fix for the root-crate test compile (mirrors the rust-test job).
     env:
       CARGO_BUILD_JOBS: 1
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: /home/runner/.cache/sccache
     strategy:
       fail-fast: false
       matrix:
@@ -1197,6 +1199,15 @@ jobs:
           prefix-key: "v1-rust-compile-${{ matrix.shape }}"
           shared-key: "build"
 
+      # sccache complements rust-cache: caches individual rustc invocations
+      # (content-addressed), so it hits even when the target/ artifact cache misses.
+      - uses: mozilla-actions/sccache-action@v0
+      - uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: sccache-${{ runner.os }}-
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -1204,6 +1215,9 @@ jobs:
 
       - name: cargo check ${{ matrix.args }}
         run: cargo check ${{ matrix.args }}
+
+      - name: sccache stats
+        run: sccache --show-stats || true
 
   # ============================================================================
   # BUILD - Compile Rust binaries
@@ -1259,6 +1273,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [changes, rust-build]
     if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.test_tier == 'true' && !inputs.skip_tests
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: /home/runner/.cache/sccache
     strategy:
       fail-fast: false
       matrix:
@@ -1278,6 +1295,15 @@ jobs:
         with:
           prefix-key: "v1-rust-nightly-dev"
           shared-key: "build"
+
+      # sccache complements rust-cache: caches individual rustc invocations
+      # (content-addressed), so it hits even when the target/ artifact cache misses.
+      - uses: mozilla-actions/sccache-action@v0
+      - uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: sccache-${{ runner.os }}-
 
       - name: Install Dependencies
         run: |
@@ -1305,6 +1331,9 @@ jobs:
           else
             cargo test ${{ matrix.args }} -- --test-threads=${{ matrix.threads }}
           fi
+
+      - name: sccache stats
+        run: sccache --show-stats || true
 
   # TD-168 develop early-detection: run the CHEAP object-store Cool-tier tests
   # (scripts/run_cloud_emulator_tests.sh --fast — compiles only the small
@@ -1533,12 +1562,23 @@ jobs:
     needs: [changes, rust-test]
     if: needs.changes.outputs.extensive == 'true'
     continue-on-error: true
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: /home/runner/.cache/sccache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-nightly-coverage"
+      # sccache complements rust-cache: caches individual rustc invocations
+      # (content-addressed), so it hits even when the target/ artifact cache misses.
+      - uses: mozilla-actions/sccache-action@v0
+      - uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: sccache-${{ runner.os }}-
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -1572,6 +1612,8 @@ jobs:
         with:
           files: coverage/cobertura.xml
           fail_ci_if_error: false
+      - name: sccache stats
+        run: sccache --show-stats || true
 
   # ============================================================================
   # PYTHON SDK TESTS
