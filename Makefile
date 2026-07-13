@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline v1-proto-usage-report v1-proto-usage-no-regression v1-proto-usage-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check docs-claim-check release-smoke cloud-emulator-test
+.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline v1-proto-usage-report v1-proto-usage-no-regression v1-proto-usage-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check docs-claim-check status-asof-check release-smoke cloud-emulator-test
 
 # Default target
 all: build test
@@ -185,7 +185,7 @@ tenant-path-check:
 	@echo "🏢 Validating tenant path isolation guard..."
 	python3 scripts/check_tenant_path_guard.py
 
-work-commit-check: fmt-check deterministic-commit-contract-check docs-claim-check capability-matrix-check workspace-boundaries-check tenant-path-check panic-policy-module-guard hygiene-check
+work-commit-check: fmt-check deterministic-commit-contract-check docs-claim-check status-asof-check capability-matrix-check workspace-boundaries-check tenant-path-check panic-policy-module-guard hygiene-check
 	@echo "✅ work-commit-check: deterministic architecture and commit guardrails passed"
 
 validated-commit-check: work-commit-check
@@ -283,6 +283,14 @@ docs-claim-check:
 		exit 1; \
 	fi; \
 	echo "✅ No public-doc references to internal marketing copy."
+
+# Fails if a status-of-record doc (SYSTEM_MAP, SUPPORTED_SURFACE) is missing its
+# `// status-as-of:` tag or the tag is stale (default 60 days). The tag asserts the
+# doc's current-state sections were re-verified against HEAD on that date — bump it
+# only after re-verifying, never mechanically. Allowlist lives in the script (TD-DOCS-2).
+status-asof-check:
+	@echo "📅 Checking status-of-record docs for stale status-as-of tags..."
+	@python3 scripts/check_status_as_of.py
 
 # Minimum smoke battery for the release cut. Each entry must be a non-ignored test
 # that exercises the canonical v2 record path or one of the diagnostic blocks

@@ -155,8 +155,10 @@ impl ProximaDB {
 
         // Co-design C4: wire the io_trace flush to feed the trace-driven route
         // cost model, so completed routed queries teach the ComputeScheduler the
-        // measured cost of each (shape-class, backend). Observe-mode today —
-        // routing is unchanged until a later flag-gated slice.
+        // measured cost of each (shape-class, backend). Observe-mode by default —
+        // the live-override slice is landed but flag-gated
+        // (PROXIMADB_ROUTE_COST_OVERRIDE, default OFF; enablement gated by
+        // TD-ROUTE-1's capability-aware candidate fix).
         crate::query::route_cost_model::install_route_cost_observer();
         // Warm the cost model from persisted cells so the measured routing
         // history survives restarts (behavior unchanged while override is off).

@@ -3,6 +3,9 @@
 :toclevels: 2
 :icons: font
 :last-updated: 2026-06-17
+// status-as-of: 2026-06-17
+// The status-as-of tag above is checked by scripts/check_status_as_of.py (wired into
+// `make work-commit-check`): re-verify the support tiers against HEAD, then bump it.
 
 [.lead]
 Canonical product support contract for the ProximaDB working tree. This document separates customer-safe defaults from beta and experimental surfaces.
