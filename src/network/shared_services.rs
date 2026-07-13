@@ -2143,8 +2143,16 @@ impl SharedServices {
         // adapter.execute_sql) and the RecordOpsService (REST write path), so DDL
         // writes over either surface address the same catalog state and execute
         // tenant-scoped.
-        let ddl_service =
-            std::sync::Arc::new(crate::services::DdlService::new(catalog_manager.clone()));
+        // Wire the primary-pod registry + this pod's id so collection/table-scoped
+        // DDL fast-fails misrouted writes (ADR-032). The lease manager (full lease
+        // acquire/renew) is attached separately once constructed later in this fn.
+        let ddl_service = std::sync::Arc::new(
+            crate::services::DdlService::new(catalog_manager.clone())
+                .with_primary_pod_registry(primary_pod_registry.clone())
+                .with_self_pod_id(crate::cluster::primary_pod_registry::resolve_self_pod_id(
+                    None,
+                )),
+        );
         // Wire QueryFacadeAdapter onto the runtime handler for unified SQL routing.
         // This enables SQL queries to flow through the facade when the
         // unified-facade-routing feature is enabled. The adapter carries the
