@@ -96,7 +96,6 @@ jobs:
       storage_changes: ${{ steps.filter.outputs.storage_changes }}
       graph_changes: ${{ steps.filter.outputs.graph_changes }}
       core_changes: ${{ steps.filter.outputs.core_changes }}
-      gpu_paths: ${{ steps.filter.outputs.gpu_paths }}
       network_changes: ${{ steps.filter.outputs.network_changes }}
       pgwire_accuracy_changes: ${{ steps.filter.outputs.pgwire_accuracy_changes }}
       object_store_cloud_changes: ${{ steps.filter.outputs.object_store_cloud_changes }}
@@ -223,11 +222,6 @@ jobs:
               - 'src/lib.rs'
               - 'Cargo.toml'
               - 'Cargo.lock'
-            gpu_paths:
-              - 'src/compute/gpu/**'
-              - 'src/compute/distance_computation/**'
-              - 'src/core/hardware_capabilities.rs'
-              - 'Cargo.toml'
             network_changes:
               - 'src/network/**'
               - 'src/api_handlers/**'
@@ -268,39 +262,15 @@ jobs:
               - 'clients/jvm/spark-connector/**'
               - 'src/connectors/spark.rs'
 
-  # ============================================================================
-  # GPU FEATURE CHECK (macOS) — the `gpu = ["metal"]` feature is macOS-only
-  # (metal) and was previously built by NO CI job, so the GPU path could rot
-  # silently. This compiles `--features gpu` on a macOS runner whenever GPU /
-  # hardware-capabilities / distance code changes, making that path verifiable
-  # (prerequisite for the hardware_capabilities GPU-edge inversion — issue #162).
-  # Advisory (not in `ci-success` needs) until proven stable; promote to required
-  # once it's green across a few runs.
-  # ============================================================================
-  gpu-feature-check:
-    name: GPU Feature Check (macOS)
-    # macos-13 (x86_64), NOT macos-14 (arm64): ring 0.17.x's aarch64 cpu module
-    # has a `CAPS_STATIC` const-assertion that panics on the macos-14 runner —
-    # even on the pinned 1.95.0 toolchain, and it does NOT reproduce on local
-    # Apple Silicon (the x86_64-linux jobs build ring fine). x86_64 macOS still
-    # compiles the `metal` GPU backend, so this verifies `--features gpu` builds
-    # without tripping the aarch64-runner ring bug. arm64-macOS GPU coverage is
-    # tracked separately (issue #184).
-    runs-on: macos-13
-    needs: changes
-    if: needs.changes.outputs.gpu_paths == 'true'
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      # Match the repo toolchain pin (rust-toolchain.toml = 1.95.0).
-      - uses: dtolnay/rust-toolchain@1.95.0
-      - name: Install protobuf
-        run: brew install protobuf
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "v1-rust-gpu-macos"
-      - name: cargo check --features gpu
-        run: cargo check -p proximadb --lib --features gpu
+  # NOTE (2026-07-13): the former `gpu-feature-check` (macOS) job was REMOVED.
+  # It was pinned to `runs-on: macos-13` — the last free x86_64 macOS image,
+  # which GitHub has retired — so the job could never be scheduled: it sat
+  # QUEUED for 10+ hours on any PR touching Cargo.toml, holding the whole run
+  # "in progress" and blocking `gh run rerun --failed` of legitimately flaked
+  # jobs. macos-14+ runners are arm64, where ring 0.17.x's `CAPS_STATIC`
+  # const-assertion breaks the build, so there is currently NO runnable free
+  # macOS target for `--features gpu` (metal). arm64-macOS GPU coverage stays
+  # tracked in issue #184; restore a macOS job there once ring/runner allow.
 
   # ============================================================================
   # QUALITY CHECKS - Run in parallel, fast feedback
@@ -1278,6 +1248,9 @@ jobs:
   rust-test:
     name: Rust Tests (${{ matrix.test-type }})
     runs-on: ubuntu-latest
+    # Fail fast instead of the 360-min default if a hang sneaks in; the healthy
+    # job finishes in ~30-45 min (compile-bound at CARGO_BUILD_JOBS=1).
+    timeout-minutes: 90
     needs: [changes, rust-build]
     if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.test_tier == 'true' && !inputs.skip_tests
     # NO sccache here (reverted from #920): with RUSTC_WRAPPER=sccache this job's
@@ -1319,6 +1292,22 @@ jobs:
       - name: Install nextest
         if: matrix.test-type == 'unit'
         uses: taiki-e/install-action@nextest
+
+      # OOM insurance for the unit matrix row: the root crate's 8400-test lib
+      # binary peaks close to the 16GB hosted-runner ceiling during the
+      # single-rustc codegen+link phase (CARGO_BUILD_JOBS=1 serializes CRATE
+      # compiles but cannot cap that one process). Two runner OOM-kills
+      # ("shutdown signal", exit 143) happened on 2026-07-13 even with
+      # CARGO_PROFILE_*_DEBUG=0 (#919). 12G of swap on the big ephemeral /mnt
+      # disk turns a residual spike into a slowdown instead of a dead runner.
+      - name: Add swap headroom
+        if: matrix.test-type == 'unit'
+        run: |
+          sudo fallocate -l 12G /mnt/swapfile-ci
+          sudo chmod 600 /mnt/swapfile-ci
+          sudo mkswap /mnt/swapfile-ci
+          sudo swapon /mnt/swapfile-ci
+          free -h
 
       - name: Run Tests
         run: |
