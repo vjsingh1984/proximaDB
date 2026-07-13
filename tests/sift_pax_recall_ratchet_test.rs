@@ -359,6 +359,148 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
     );
 }
 
+/// TD-RDSTRAT-5 flip gate: the VOE-directory centroid prune must (a) ACTUALLY
+/// engage on SIFT (not silently fall back to a full scan) and (b) hold recall@10
+/// within tolerance. The engine is wired WITH a directory cache and clustering +
+/// prune are enabled, so a flush emits the directory and the read prunes;
+/// io_trace's `centroid_pruned_blocks > 0` proves engagement (a full-scan fallback
+/// would leave it 0 and fail — no false positive). Gates the default-ON flip.
+#[tokio::test]
+async fn sift_voe_centroid_prune_recall_at_10_ratchet() {
+    unsafe {
+        std::env::set_var("PROXIMADB_PAX_VECTOR_SEGMENTS", "1");
+        std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rabitq");
+        std::env::set_var("PROXIMADB_PAX_BLOCK_CLUSTER", "1");
+        std::env::set_var("PROXIMADB_PAX_CENTROID_PRUNE", "1");
+        // Force pruning on multi-block segments (bypass the 100-block prod threshold)
+        // and keep a generous block fraction so recall stays sane on the coarse S1
+        // sign-bit clustering; CI ratchets the floor UP as clustering improves.
+        std::env::set_var("PROXIMADB_PAX_CENTROID_PRUNE_MIN_BLOCKS", "2");
+        if std::env::var("PROXIMADB_PAX_CENTROID_PRUNE_RATIO").is_err() {
+            std::env::set_var("PROXIMADB_PAX_CENTROID_PRUNE_RATIO", "0.5");
+        }
+    }
+
+    let base_path = match dataset_path("sift_base.fvecs") {
+        Some(p) if p.exists() => p,
+        _ => {
+            eprintln!(
+                "skip: PROXIMADB_SIFT_DATASET_DIR unset/missing — centroid-prune ratchet needs SIFT1M"
+            );
+            return;
+        }
+    };
+
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let subset_n: Option<usize> = std::env::var("PROXIMADB_SIFT_N")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0);
+    let max_queries: usize = std::env::var("PROXIMADB_SIFT_QUERIES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_QUERIES);
+    // Pruned recall floor: separate + conservative (pruning + coarse clustering
+    // trims recall vs the unpruned 0.90 baseline). CI measures and ratchets it UP.
+    let floor: f64 = std::env::var("PROXIMADB_SIFT_CENTROID_RECALL_FLOOR")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|f| (0.0..=1.0).contains(f))
+        .unwrap_or(0.70);
+
+    let temp_dir = TempDir::new().unwrap();
+    let collection = collection("sift_voe_centroid_prune", &temp_dir);
+    // Wire the directory cache — WITHOUT it, S2 emission is skipped and the read
+    // silently falls back to a full scan (the prune would never engage).
+    let engine = SstEngine::new().await.unwrap().with_directory_cache(Arc::new(
+        proximadb::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
+    ));
+
+    let base = read_vec_records_f32(&base_path, subset_n).expect("read sift_base.fvecs");
+    let n = base.len();
+    assert!(n >= TOP_K, "need at least {TOP_K} base vectors, got {n}");
+
+    let mut batch: Vec<VectorRecord> = Vec::with_capacity(BATCH_SIZE);
+    for (i, v) in base.iter().enumerate() {
+        batch.push(vector_record(i as u32, v.clone()));
+        if batch.len() == BATCH_SIZE {
+            let b = std::mem::take(&mut batch);
+            flush_batch(&engine, &collection, b).await;
+        }
+    }
+    if !batch.is_empty() {
+        flush_batch(&engine, &collection, batch).await;
+    }
+
+    let query_path = dataset_path("sift_query.fvecs");
+    let queries: Vec<Vec<f32>> = match query_path.as_ref().filter(|p| p.exists()) {
+        Some(p) => read_vec_records_f32(p, Some(max_queries)).expect("read sift_query.fvecs"),
+        None => base.iter().take(max_queries.min(n)).cloned().collect(),
+    };
+    let qcount = queries.len();
+    let gt_path = dataset_path("sift_groundtruth.ivecs");
+    let use_provided_gt = subset_n.is_none() && gt_path.as_ref().is_some_and(|p| p.exists());
+    let ground_truth: Vec<std::collections::HashSet<String>> = if use_provided_gt {
+        let gt = read_vec_records_u32(gt_path.as_ref().unwrap(), Some(qcount)).expect("read gt");
+        gt.into_iter()
+            .map(|row| row.into_iter().take(TOP_K).map(vid).collect())
+            .collect()
+    } else {
+        queries
+            .iter()
+            .map(|q| brute_force_topk(&base, q, TOP_K).into_iter().collect())
+            .collect()
+    };
+    drop(base);
+
+    // Run the whole search loop inside ONE io_trace scope so the centroid-prune
+    // counter accumulates across queries; the snapshot proves the prune engaged.
+    let (recall, measured, snap) = proximadb::observability::io_trace::scope(async {
+        let mut recall_sum = 0.0f64;
+        let mut measured = 0usize;
+        for (qi, query) in queries.iter().enumerate() {
+            let got = search_topk(&engine, &collection, query.clone()).await;
+            if got.is_empty() {
+                continue;
+            }
+            let got_ids: std::collections::HashSet<String> = got.into_iter().take(TOP_K).collect();
+            let overlap = got_ids.intersection(&ground_truth[qi]).count();
+            recall_sum += overlap as f64 / TOP_K as f64;
+            measured += 1;
+        }
+        let recall = if measured > 0 {
+            recall_sum / measured as f64
+        } else {
+            0.0
+        };
+        let snap = proximadb::observability::io_trace::snapshot().expect("io_trace scope active");
+        (recall, measured, snap)
+    })
+    .await;
+
+    assert!(measured > 0, "no queries succeeded — cannot report recall");
+    eprintln!(
+        "SIFT VOE centroid-prune recall@{TOP_K} = {recall:.4} over {measured} queries (N={n}, \
+         floor={floor}); centroid blocks total={} pruned={}",
+        snap.centroid_total_blocks, snap.centroid_pruned_blocks
+    );
+    // (a) The prune MUST have engaged — a silent full-scan fallback leaves this 0.
+    assert!(
+        snap.centroid_pruned_blocks > 0,
+        "centroid prune did NOT engage (centroid_pruned_blocks=0) — a full-scan fallback would \
+         make this recall test a false positive. Check with_directory_cache + \
+         PROXIMADB_PAX_BLOCK_CLUSTER emission + PROXIMADB_PAX_CENTROID_PRUNE_MIN_BLOCKS."
+    );
+    // (b) Recall must clear the (conservative, CI-ratcheted) floor.
+    assert!(
+        recall >= floor,
+        "SIFT VOE centroid-prune recall@{TOP_K} = {recall:.4} < {floor} floor (N={n}) — \
+         default-ON flip BLOCKED until the clustering/nprobe is tuned \
+         (PROXIMADB_PAX_CENTROID_PRUNE_RATIO / S4 IVF clustering)"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Loader unit tests — synthetic .fvecs/.ivecs round-trip (no dataset needed).
 // ---------------------------------------------------------------------------

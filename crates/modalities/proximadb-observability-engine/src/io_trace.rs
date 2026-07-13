@@ -142,6 +142,13 @@ pub struct IoTrace {
     /// promotion gate consumes.
     splits_total: AtomicU64,
     splits_pruned: AtomicU64,
+    /// PAX cascade centroid block-prune outcome (TD-RDSTRAT-5 S3): `centroid_pruned_blocks`
+    /// of `centroid_total_blocks` skipped by the VOE-directory centroid probe before
+    /// scanning. Distinct from `splits_*` (row-group runtime filter) so the ratios
+    /// don't cross-contaminate; the recall gate asserts this engaged
+    /// (`centroid_pruned_blocks > 0`) rather than silently falling back to a full scan.
+    centroid_total_blocks: AtomicU64,
+    centroid_pruned_blocks: AtomicU64,
     /// Runtime-filter wait outcomes (ADR-056 AQE-S11): how often the probe scan's
     /// `wait_complete()` rendezvous resolved with the filter arrived (pruning
     /// enabled) vs timed out (filterless, conservative), plus the wall ms spent
@@ -288,6 +295,15 @@ impl IoTrace {
     pub fn record_splits(&self, total: u64, pruned: u64) {
         self.splits_total.fetch_add(total, Ordering::Relaxed);
         self.splits_pruned.fetch_add(pruned, Ordering::Relaxed);
+    }
+
+    /// Record a PAX cascade centroid block-prune outcome (TD-RDSTRAT-5 S3): of
+    /// `total` blocks in the segment, `pruned` were skipped by the centroid probe.
+    pub fn record_centroid_prune(&self, total: u64, pruned: u64) {
+        self.centroid_total_blocks
+            .fetch_add(total, Ordering::Relaxed);
+        self.centroid_pruned_blocks
+            .fetch_add(pruned, Ordering::Relaxed);
     }
 
     /// Record a runtime-filter wait outcome (ADR-056 AQE-S11): `arrived` = the
@@ -445,6 +461,8 @@ impl IoTrace {
             logical_striped_gets: self.logical_striped_gets.load(Ordering::Relaxed),
             splits_total: self.splits_total.load(Ordering::Relaxed),
             splits_pruned: self.splits_pruned.load(Ordering::Relaxed),
+            centroid_total_blocks: self.centroid_total_blocks.load(Ordering::Relaxed),
+            centroid_pruned_blocks: self.centroid_pruned_blocks.load(Ordering::Relaxed),
             runtime_filter_arrived: self.runtime_filter_arrived.load(Ordering::Relaxed),
             runtime_filter_timed_out: self.runtime_filter_timed_out.load(Ordering::Relaxed),
             runtime_filter_wait_ms: self.runtime_filter_wait_ms.load(Ordering::Relaxed),
@@ -510,6 +528,13 @@ pub struct IoTraceSnapshot {
     /// Splits skipped before fetch — with `splits_total`, the skip ratio.
     #[serde(default)]
     pub splits_pruned: u64,
+    /// PAX cascade centroid block-prune (TD-RDSTRAT-5 S3): total blocks in the
+    /// segment and how many the centroid probe skipped. `centroid_pruned_blocks > 0`
+    /// proves the prune engaged (vs a silent full-scan fallback).
+    #[serde(default)]
+    pub centroid_total_blocks: u64,
+    #[serde(default)]
+    pub centroid_pruned_blocks: u64,
     /// Runtime-filter wait outcomes (ADR-056 AQE-S11): arrived vs timed-out +
     /// the wall ms spent waiting. `arrived / (arrived + timed_out)` is the
     /// per-workload signal the route cost model learns to tune the wait budget.
@@ -729,6 +754,13 @@ pub fn record_range_gets(gets: u64) {
 /// snapshot. Silently no-ops outside an active scope.
 pub fn record_splits(total: u64, pruned: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_splits(total, pruned));
+}
+
+/// Record a PAX cascade centroid block-prune outcome for the active query
+/// (TD-RDSTRAT-5 S3): of `total` blocks, `pruned` were skipped by the centroid
+/// probe. Silently no-ops outside an active scope.
+pub fn record_centroid_prune(total: u64, pruned: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_centroid_prune(total, pruned));
 }
 
 /// Record a runtime-filter wait outcome for the active query (ADR-056 AQE-S11).

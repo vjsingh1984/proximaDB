@@ -301,8 +301,17 @@ impl SstEngine {
         {
             return None;
         }
-        let prune = crate::core::search::BlockPruneConfig::default();
-        Some(select_blocks_by_centroid(query, &entries, metric, &prune))
+        let prune = crate::storage::engines::sst::block_cluster::centroid_prune_config();
+        let total = entries.len();
+        let selected = select_blocks_by_centroid(query, &entries, metric, &prune);
+        // Record the prune outcome so the recall gate can assert the probe engaged
+        // (centroid_pruned_blocks > 0) rather than silently falling back to a full
+        // scan. `total - selected` is how many blocks the centroid probe skipped.
+        crate::observability::io_trace::record_centroid_prune(
+            total as u64,
+            total.saturating_sub(selected.len()) as u64,
+        );
+        Some(selected)
     }
 
     #[allow(clippy::too_many_arguments)]
