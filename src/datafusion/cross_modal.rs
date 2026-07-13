@@ -31,7 +31,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use arrow_array::{Float32Array, Float64Array, Int32Array, Int64Array, RecordBatch, StringArray};
+use arrow_array::{Float64Array, Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableFunctionImpl};
@@ -53,27 +53,51 @@ use crate::services::timeseries_service::{TimeSeriesService, TsPoint};
 /// (each is O(V+E)) regardless of a user-supplied `max_depth`.
 const MAX_GRAPH_TRAVERSE_DEPTH: i64 = 64;
 
-/// The lean Arrow schema a vector-search source exposes for joins: `(id, score)`.
-/// `id` joins against a relational key; `score` is the similarity the SQL can rank
-/// or filter on.
+/// The Arrow schema a vector-search source exposes: `(id, score, metadata)`
+/// (TD-XMODAL-4 S1). `id` joins against a relational key; `score` is the similarity
+/// the SQL can rank/filter on (Float64 to match the pgwire `<->` operator path's
+/// Float8); `metadata` is the record's stored payload as a JSON string, so a single
+/// `SELECT * FROM vector_search(...)` is useful without a self-join.
 pub fn vector_matches_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
         Field::new("id", DataType::Utf8, false),
-        Field::new("score", DataType::Float32, false),
+        Field::new("score", DataType::Float64, false),
+        Field::new("metadata", DataType::Utf8, false),
     ]))
 }
 
-/// Convert vector-search results into an `(id, score)` [`RecordBatch`] that DataFusion
-/// can register as a table and JOIN against relational data on `id`. This is the
-/// bridge from the vector modality into the shared (DataFusion) query plane.
+/// Convert vector-search results into an `(id, score, metadata)` [`RecordBatch`]
+/// DataFusion can register as a table and JOIN against relational data on `id`.
+/// The bridge from the vector modality into the shared (DataFusion) query plane.
+///
+/// `metadata` is rendered as JSON. The result is the legacy v1 [`SearchVectorRecord`]
+/// (whose `metadata` is `SqlValue`-typed); TD-XMODAL-4 S1 converts each value to the
+/// **v2 canonical [`ProximaValue`]** (`sql_value_to_proxima`, serde-native) before
+/// serializing, so the payload is v2-typed (ADR-024) even though the underlying
+/// `search()` kernel is still v1 — the single-kernel unification onto
+/// `unified_search_native` is S2.
 pub fn vector_matches_to_batch(results: &[SearchVectorRecord]) -> Result<RecordBatch, ArrowError> {
+    use proximadb_records::conversions::sql_value_to_proxima;
     let ids: Vec<&str> = results.iter().map(|r| r.id.as_str()).collect();
-    let scores: Vec<f32> = results.iter().map(|r| r.score as f32).collect();
+    let scores: Vec<f64> = results.iter().map(|r| r.score).collect();
+    let metadata: Vec<String> = results
+        .iter()
+        .map(|r| {
+            // v1 SqlValue → v2 ProximaValue (inferred type) → JSON.
+            let v2: std::collections::HashMap<String, _> = r
+                .metadata
+                .iter()
+                .map(|(k, val)| (k.clone(), sql_value_to_proxima(val)))
+                .collect();
+            serde_json::to_string(&v2).unwrap_or_else(|_| "{}".to_string())
+        })
+        .collect();
     RecordBatch::try_new(
         vector_matches_schema(),
         vec![
             Arc::new(StringArray::from(ids)),
-            Arc::new(Float32Array::from(scores)),
+            Arc::new(Float64Array::from(scores)),
+            Arc::new(StringArray::from(metadata)),
         ],
     )
 }
@@ -1036,11 +1060,26 @@ mod tests {
     }
 
     #[test]
-    fn vector_matches_batch_has_id_score_schema() {
+    fn vector_matches_batch_has_id_score_metadata_schema() {
         let batch = vector_matches_to_batch(&[sv("a", 0.9), sv("b", 0.5)]).unwrap();
         assert_eq!(batch.num_rows(), 2);
+        // TD-XMODAL-4 S1: (id, score, metadata) — payload rides with id+score so a
+        // standalone `SELECT * FROM vector_search(...)` needs no self-join.
         assert_eq!(batch.schema().field(0).name(), "id");
         assert_eq!(batch.schema().field(1).name(), "score");
+        assert_eq!(
+            batch.schema().field(1).data_type(),
+            &DataType::Float64,
+            "score is Float64 to match the pgwire <-> operator path"
+        );
+        assert_eq!(batch.schema().field(2).name(), "metadata");
+        // Empty metadata (the sv helper) serializes to an empty JSON object.
+        let meta = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(meta.value(0), "{}");
     }
 
     /// The moat proof: vector-search results JOIN a relational table in ONE

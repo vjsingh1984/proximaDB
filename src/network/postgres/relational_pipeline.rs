@@ -2714,6 +2714,17 @@ fn set_expr_engages(body: &SetExpr) -> bool {
             // Aggregated forms (e.g. d09 GROUP BY) already engage via `has_group_by`.
             let has_json_extract = select.projection.iter().any(select_item_has_json_extract)
                 || select.selection.as_ref().is_some_and(expr_has_json_extract);
+            // TD-XMODAL-4 S1: a table-valued function in FROM (a `TableFactor::Table`
+            // carrying `args`, e.g. `vector_search('c','[..]',k)` / `timeseries_range`
+            // / `graph_traverse`) is a DataFusion UDTF — the legacy single-table path
+            // can't serve it, so engage the relational/OLAP route to reach DataFusion
+            // where the UDTFs are registered. This is what makes a STANDALONE
+            // `SELECT * FROM vector_search(...)` resolve over pgwire (before, only a
+            // JOIN engaged). Default-safe: a plain table has `args: None`.
+            let has_table_function = select
+                .from
+                .iter()
+                .any(|twj| matches!(&twj.relation, TableFactor::Table { args: Some(_), .. }));
             has_join
                 || has_group_by
                 || select.having.is_some()
@@ -2722,6 +2733,7 @@ fn set_expr_engages(body: &SetExpr) -> bool {
                 || has_projection_subquery
                 || has_derived
                 || has_json_extract
+                || has_table_function
         }
         _ => false,
     }
@@ -2927,6 +2939,30 @@ mod tests {
             [Statement::Query(query)] => query_engages_relational_engine(query),
             _ => panic!("expected a single SELECT statement"),
         }
+    }
+
+    /// TD-XMODAL-4 S1: a STANDALONE table-valued function in FROM (a DataFusion
+    /// UDTF like `vector_search`/`timeseries_range`/`graph_traverse`) must engage the
+    /// relational route so it reaches DataFusion where the UDTF is registered — this
+    /// is what makes `SELECT * FROM vector_search(...)` resolve over pgwire (before,
+    /// only a JOIN engaged; a lone UDTF FROM fell through to the legacy path).
+    #[test]
+    fn standalone_table_function_from_engages() {
+        assert!(
+            gate("SELECT * FROM vector_search('c', '[0.1,0.2,0.3]', 5)"),
+            "lone vector_search UDTF must engage the relational route"
+        );
+        assert!(
+            gate("SELECT id, score FROM vector_search('c', '[0.1]', 10) WHERE score > 0.5"),
+            "UDTF FROM engages even without a join"
+        );
+        assert!(
+            gate("SELECT * FROM timeseries_range('c', 0, 100)"),
+            "other UDTFs engage the same way"
+        );
+        // Default-safe: a plain single-table SELECT does NOT engage via this signal
+        // (it has `args: None`) — it stays on the hardened legacy OLTP path.
+        assert!(!gate("SELECT id, name FROM users WHERE id = 1"));
     }
 
     /// ADR-058 D5 / §9.A: the stats-trust derivation is the load-bearing security
