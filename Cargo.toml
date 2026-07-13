@@ -895,14 +895,17 @@ path = "tests/rust/mod.rs"
 # in src/lib.rs; these tests reference proximadb::cdc::*).
 [[test]]
 name = "cdc_e2e_test"
+path = "tests/cdc_e2e_test.rs"
 required-features = ["cdc-kafka"]
 
 [[test]]
 name = "cdc_integration_test"
+path = "tests/cdc_integration_test.rs"
 required-features = ["cdc-kafka"]
 
 [[test]]
 name = "cdc_rest_changefeed_e2e"
+path = "tests/cdc_rest_changefeed_e2e.rs"
 required-features = ["cdc-kafka"]
 
 # Benchmark profile - optimized but allows faster iteration than full release
