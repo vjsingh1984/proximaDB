@@ -18,7 +18,10 @@ use proximadb_storage_common::StorageEngineType;
 pub mod capabilities;
 pub use capabilities::*;
 pub mod path_resolver;
-pub use path_resolver::{CollectionPathResolver, StorageAssignment};
+pub use path_resolver::{
+    CollectionPathResolver, StorageAssignment, collection_data_path_typed,
+    typed_identity_from_storage_assignment,
+};
 
 /// Read access to collection metadata that storage needs at flush/compaction
 /// time (fetch the proto `Collection` for a name or UUID).
