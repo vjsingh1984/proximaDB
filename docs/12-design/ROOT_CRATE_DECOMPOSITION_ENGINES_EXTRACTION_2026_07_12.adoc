@@ -117,6 +117,17 @@ The Ca-based queue above ranks by **afferent** coupling (reroute cost), which is
 efferent coupling. The table below supersedes the Ca ordering for sequencing.
 ====
 
+[NOTE]
+====
+Update (post-recon, 2026-07-13): `viper/pipeline.rs` is **dead production code** —
+`ViperPipeline` and all its public types (`ViperPipelineConfig`, `CompactionEngine`,
+`VectorRecordProcessor`, …) have ZERO production callers (only a `mod.rs` re-export +
+its own `#[cfg(test)]` tests); `ViperEngine` implements its pipeline inline. So it is
+**deleted, not extracted** (4,006 LOC out of root compile — a bigger OOM win than
+extraction; per the "don't revive dead code in a move slice" principle). The table +
+sequence below are retained for the *remaining* leaves.
+====
+
 === Finding 1 — these leaves do NOT implement `UnifiedStorageFormat`
 
 Per-source verification (`impl ... for ...` blocks): `viper/pipeline.rs`,
@@ -155,7 +166,7 @@ Then change the `UnifiedStorageFormat` accessor from `-> &FilesystemFactory` to
 [cols="2,1,1,4,2",options="header"]
 |===
 | leaf | LOC | Ca | real efferent gates | verdict
-| `viper/pipeline.rs` | 3.7K | 1 | FilesystemFactory port + `CodebookStore`/`StorageQuantizationConfig` (verify `StorageQuantizationEnginePort` covers; else small port). proto(20)=free, quant engines(9)=ports-exist. | **cleanest first leaf** (post-FS-port)
+| `viper/pipeline.rs` | 3.7K | 1 | **DELETED — dead code** (0 production callers; `ViperEngine` uses an inline pipeline). ~4,006 LOC removed in lieu of extraction. | ~~cleanest first leaf~~ → deleted
 | `raptor/consolidated_reader.rs` | 4.2K | 3 | FS port + **hoist `TransactionCoordinator`** (root→`proximadb-storage-transaction`) + **hoist `CrossCacheOrchestrator`** (root→cache crate). search-types=free. | 2nd; needs 2 hoists
 | `raptor/writer.rs` | 5.8K | **0** | FS port + **new `AxisClusteringPort`** (`ReusableClusteringEngine` is port-compatible: 3 methods) + **hoist `LocalFileSystem`** (concrete; `FileSystem` trait exists). quant=ports, bloom=free. | Ca=0 but **heaviest**; Wave 2-3
 | `raptor/engine.rs`, `core/.../columnar_query_reader.rs` | 3.3K/3K | - | 36-37 `crate::storage::` deps each (heavy internal coupling) | last; move as engine cohort
