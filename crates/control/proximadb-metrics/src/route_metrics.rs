@@ -114,7 +114,7 @@ lazy_static! {
     );
 }
 
-/// Record one route-decision outcome. `source` is the [`crate::query::compute_scheduler::RouteSource`]
+/// Record one route-decision outcome. `source` is the RouteSource (crate::query::compute_scheduler, root — doc-link dropped)
 /// label string (`static` / `override_exploit` / `override_explore`).
 pub fn record_decision(backend_label: &str, shape_class: &str, source: &str) {
     ROUTE_DECISIONS_TOTAL

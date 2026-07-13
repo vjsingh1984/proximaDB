@@ -113,7 +113,7 @@ fn acquisition_duration_buckets() -> Vec<f64> {
 lazy_static! {
     /// DML lock acquisition attempts by outcome. The `outcome` label is one
     /// of `acquired` / `conflict` / `held` / `fenced`, matching
-    /// [`crate::cluster::partition_lease::LockOutcome`].
+    /// See `crate::cluster::partition_lease::LockOutcome` (root, doc-link dropped).
     pub static ref DML_LOCK_ACQUISITIONS_TOTAL: CounterVec = register_counter_vec_safe(
         "proximadb_dml_lock_acquisitions_total",
         "DML lock acquisition attempts by outcome",
