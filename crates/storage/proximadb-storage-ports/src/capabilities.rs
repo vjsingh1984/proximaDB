@@ -40,22 +40,22 @@ pub enum StorageEngineStrategy {
     /// NOVA engine - next-gen columnar with integrated quantization
     Nova,
 
-    /// SWIFT engine - hierarchical superblock architecture
+    /// SWIFT engine - hierarchical superblock architecture (`experimental-engines` gate; incomplete)
     Swift,
 
-    /// RAPTOR engine - experimental parallel tiered storage
+    /// RAPTOR engine - experimental parallel tiered storage (`experimental-engines` gate)
     Raptor,
 
-    /// Hybrid engine - combines row and column optimized paths
+    /// Hybrid - reserved, not implemented (the factory falls back to SST)
     Hybrid,
 
     /// TST engine - time-series optimized storage
     TimeSeries,
 
-    /// CEDAR engine - unified multimodal storage
+    /// CEDAR engine - document-oriented compatibility projection (Columnar Extensible Document Archive)
     Cedar,
 
-    /// CHRONO engine - temporal data storage
+    /// CHRONO engine - removed; retained for wire compatibility (the factory returns an error)
     Chrono,
 }
 

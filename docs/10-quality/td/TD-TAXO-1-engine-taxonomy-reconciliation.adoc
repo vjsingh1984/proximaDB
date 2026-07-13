@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open
+| Status | Mostly done (2026-07-13) — canonical matrix landed in `SUPPORTED_SURFACE.adoc` §"Storage Engine Matrix" (all 12 `src/storage/engines/` dirs + ORION + the `Hybrid` reserved variant, each with a tier: Supported/Beta/Experimental/Internal/Removed/Planned); enum doc comments aligned to engine headers (SWIFT/RAPTOR gates, `Hybrid` fallback, CEDAR compat-projection, CHRONO removed); SYSTEM_MAP authority note points at the matrix instead of re-enumerating. **Remaining:** relocate the legacy `titan` dir next to ORION under `src/graph/engines/`; decide proto-value retirement for `Chrono`/`Titan` at a wire-compat window; publish per-engine conformance ratchets before any VIPER/HELIX/NOVA promotion above Beta.
 | Severity | Medium (architecture-communication + routing correctness risk — "one engine taxonomy across read and write" is a stated invariant of the `ComputeScheduler` module, but the taxonomy's surfaces disagree)
 | Component | `crates/storage/proximadb-storage-ports/src/capabilities.rs` (`StorageEngineStrategy`), `src/storage/engines/` (engine module tree), `docs/SUPPORTED_SURFACE.adoc` (support tiers), design-doc engine inventories (SYSTEM_MAP, ADRs)
 | Relates | TD-DOCS-2 (status-of-record drift — this is the engine-inventory instance of the same class), root-crate decomposition Slice D (#906 consolidated 4 duplicate `StorageEngineType` defs; #910 hoisted capability descriptors — the enum is now canonical, its *content* is not yet reconciled)
