@@ -1366,6 +1366,28 @@ fn push_record(
     out.push(rec);
 }
 
+/// Set a ledger-required env default unless the caller explicitly set it
+/// (explicit env always wins). Ledger runs must exercise every routable
+/// engine permutation by default — the router is only as grounded as the
+/// paths the evidence actually exercised.
+fn default_env(key: &str, value: &str) {
+    if std::env::var_os(key).is_none() {
+        unsafe { std::env::set_var(key, value) };
+    }
+}
+
+/// Ledger-run env defaults: native-over-parquet PRIMARY route + vectorized
+/// modes ON (so Native samples land in the same olap/parquet classes as
+/// DataFusion's and the cost cells warm per engine), per-query wall budget ON
+/// (a pathological query becomes an ERR record, not a wedged sweep). The cost
+/// override (PROXIMADB_ROUTE_COST_OVERRIDE) is deliberately NOT defaulted —
+/// ledgers observe routing, they never flip it (ADR-058 D4).
+fn apply_ledger_env_defaults(timeout_key: &str) {
+    default_env("PROXIMADB_NATIVE_ROUTE", "1");
+    default_env("PROXIMADB_NATIVE_VECTORIZED", "1");
+    default_env(timeout_key, "300000");
+}
+
 /// The final ledger path (`TPC_PERF_LEDGER_OUT`, defaulted) — shared by the
 /// end-of-run write and the incremental partial sidecar.
 fn ledger_out_path() -> String {
@@ -1741,6 +1763,7 @@ async fn tpc_perf_ledger_inner() {
             None => queries,
         }
     };
+    apply_ledger_env_defaults("TPC_PERF_QUERY_TIMEOUT_MS");
     eprintln!("=== tpc-perf-ledger harness (TPC_PERF_SCALE={scale}) ===");
     // Fresh partial sidecar per run — stale lines from a prior run must not
     // mix into this run's crash-safe trail.
