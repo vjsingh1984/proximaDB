@@ -42,6 +42,33 @@ fn env_flag_on(var: &str) -> bool {
     }
 }
 
+/// TD-RDSTRAT-5 S3: the centroid probe-prune config, tunable via env so operators
+/// (and the recall gate) can set the `nprobe` aggressiveness and force pruning on
+/// small segments. Defaults to [`BlockPruneConfig::default`] (Sqrt mode, the
+/// production `MIN_BLOCKS_FOR_PRUNING`=100 threshold). Env overrides:
+///   * `PROXIMADB_PAX_CENTROID_PRUNE_MIN_BLOCKS` — bypass the 100-block threshold
+///     (e.g. `2` to prune small segments; the recall gate uses this).
+///   * `PROXIMADB_PAX_CENTROID_PRUNE_RATIO` — switch to Ratio mode keeping this
+///     fraction of blocks (0.0–1.0) instead of Sqrt.
+pub fn centroid_prune_config() -> crate::core::search::BlockPruneConfig {
+    use crate::core::search::{BlockPruneConfig, BlockPruneMode};
+    let mut cfg = BlockPruneConfig::default();
+    if let Some(mb) = std::env::var("PROXIMADB_PAX_CENTROID_PRUNE_MIN_BLOCKS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+    {
+        cfg.min_blocks_override = Some(mb);
+    }
+    if let Some(r) = std::env::var("PROXIMADB_PAX_CENTROID_PRUNE_RATIO")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+    {
+        cfg.mode = BlockPruneMode::Ratio;
+        cfg.ratio = r.clamp(0.0, 1.0);
+    }
+    cfg
+}
+
 /// The f32 vector of `record`'s embedding `idx`, if present and Fp32-typed (the
 /// canonical write-time embedding representation — quantization happens inside the
 /// block writer). Non-Fp32 variants return `None` (they don't contribute a key).
