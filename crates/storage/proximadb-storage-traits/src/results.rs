@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::storage::persistence::write_ahead_log::BatchId;
+use proximadb_kernel::CompactBatchId as BatchId;
 
 /// Unified flush result that accommodates different engine types.
 ///

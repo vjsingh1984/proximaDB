@@ -7,7 +7,12 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::proto::proximadb_v1::Collection;
+use proximadb_proto::proximadb_v1::Collection;
+// `BatchId` is the canonical alias for `CompactBatchId` (hoisted to the kernel
+// foundation crate). The alias matches the root's
+// `crate::storage::persistence::write_ahead_log::BatchId` re-export so the
+// field types stay identical for back-compat.
+use proximadb_kernel::CompactBatchId as BatchId;
 
 /// Flexible flush parameters that work for all storage engines.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -36,7 +41,7 @@ pub struct FlushParameters {
     pub trigger_compaction: bool,
 
     /// Batch IDs involved in this flush operation (for coordination)
-    pub batch_ids: Vec<crate::storage::persistence::write_ahead_log::BatchId>,
+    pub batch_ids: Vec<BatchId>,
 
     /// Collection configuration to avoid redundant lookups
     pub collection_config: Option<Collection>,

@@ -1330,28 +1330,6 @@ impl UnifiedStorageFormat for TimeSeriesEngine {
         <TimeSeriesEngine as StorageMetrics>::collect_engine_metrics(self).await
     }
 
-    fn get_filesystem_factory(&self) -> &FilesystemFactory {
-        // Deferred: Return actual filesystem factory
-        // For now, create a default one (note: this leaks memory but is acceptable for a stub)
-        use std::sync::OnceLock;
-        static DUMMY_FACTORY: OnceLock<FilesystemFactory> = OnceLock::new();
-        use futures::executor::block_on;
-
-        DUMMY_FACTORY.get_or_init(|| {
-            block_on(async {
-                FilesystemFactory::create(FilesystemConfig::default())
-                    .await
-                    .unwrap_or_else(|_| {
-                        // Stub implementation panic - indicates incomplete code
-                        #[allow(clippy::panic)]
-                        {
-                            panic!("Failed to create filesystem factory")
-                        }
-                    })
-            })
-        })
-    }
-
     async fn vector_by_id(
         &self,
         collection_id: &str,
@@ -1512,6 +1490,30 @@ impl UnifiedStorageFormat for TimeSeriesEngine {
         };
 
         Ok(Box::new(iterator))
+    }
+}
+
+impl crate::storage::traits::EngineFilesystemAccess for TimeSeriesEngine {
+    fn get_filesystem_factory(&self) -> &FilesystemFactory {
+        // Deferred: Return actual filesystem factory
+        // For now, create a default one (note: this leaks memory but is acceptable for a stub)
+        use std::sync::OnceLock;
+        static DUMMY_FACTORY: OnceLock<FilesystemFactory> = OnceLock::new();
+        use futures::executor::block_on;
+
+        DUMMY_FACTORY.get_or_init(|| {
+            block_on(async {
+                FilesystemFactory::create(FilesystemConfig::default())
+                    .await
+                    .unwrap_or_else(|_| {
+                        // Stub implementation panic - indicates incomplete code
+                        #[allow(clippy::panic)]
+                        {
+                            panic!("Failed to create filesystem factory")
+                        }
+                    })
+            })
+        })
     }
 }
 

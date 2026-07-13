@@ -86,12 +86,6 @@ impl UnifiedStorageFormat for MockStorageEngine {
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         Ok(Vec::new())
     }
-
-    fn get_filesystem_factory(
-        &self,
-    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-        unimplemented!("MockEngine does not provide a filesystem factory")
-    }
 }
 
 // =========================================================================
