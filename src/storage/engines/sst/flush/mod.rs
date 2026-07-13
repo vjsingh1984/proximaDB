@@ -318,7 +318,12 @@ impl SstEngine {
         // (`write_pax_segment_full` returns `PaxSegmentMeta`, not
         // `SstableWriteOutcome`). Kept wired so the directory hook revives
         // unchanged when that lands.
-        let write_outcome: Option<crate::storage::engines::sst::writer::SstableWriteOutcome> = None;
+        // TD-RDSTRAT-5 S2: set from the PAX write when block clustering produced
+        // per-block centroids, so the object-economy directory emission below fires
+        // (write-through of the vector zone-map). Stays `None` when clustering is
+        // off (empty centroids) ⇒ no emission — S2 is default-OFF via the S1 flag.
+        let mut write_outcome: Option<crate::storage::engines::sst::writer::SstableWriteOutcome> =
+            None;
 
         match block_format {
             BlockFormat::ArrowBlock => {
@@ -432,8 +437,13 @@ impl SstEngine {
                 )
                 .context("Failed to write PAX vector segment")?;
                 tracing::debug!(blocks = meta.block_count, "PAX segment write completed");
-                // write_outcome stays None — PAX doesn't expose SstableWriteOutcome yet
-                // (block-directory emission is the ProximaBlocks-only path, like Arrow).
+                // TD-RDSTRAT-5 S2: when block clustering produced per-block centroids,
+                // build an outcome from the segment metadata so the directory emission
+                // below fires with the real vector zone-map. Empty centroids (clustering
+                // off) ⇒ no outcome ⇒ no emission (default-OFF).
+                if !meta.block_centroids.is_empty() {
+                    write_outcome = Some(pax_write_outcome(&meta));
+                }
             }
         }
 
@@ -933,6 +943,102 @@ fn resolve_pax_rerank_quant(tags: &[String]) -> proximadb_block_format::VectorQu
             _ => proximadb_block_format::VectorQuant::Sq8,
         }
     })
+}
+
+/// TD-RDSTRAT-5 S2: build an [`SstableWriteOutcome`] from a freshly-written PAX
+/// segment's [`SegmentMeta`], so the Vector Object Economy directory emission can
+/// fire with real per-block centroids. The PAX writer lives in a lower crate and
+/// can't construct `IndexEntry` (defined here), so we assemble the entries at the
+/// flush seam from the metadata the writer already returned:
+///
+/// * per-block **offset** = cumulative sum of `block_stats[..i].block_size_bytes`
+///   (blocks are written contiguously from offset 0), **size** = that block's bytes;
+/// * per-block **centroid** = `block_centroids[i]` (the S1 vector zone-map);
+/// * **block_index_offset** = Σ block sizes (the segment index starts after the
+///   last block), **block_index_size** = `size_bytes − Σ − len(SEGMENT_MAGIC)`.
+///
+/// Only the fields the directory consumes are set; the rest default (PAX carries
+/// no key bloom / key ranges — those are the retired ProximaBlocks path's).
+fn pax_write_outcome(
+    meta: &proximadb_storage_common::pax_block::SegmentMeta,
+) -> crate::storage::engines::sst::writer::SstableWriteOutcome {
+    use crate::storage::engines::sst::{IndexEntry, VectorFormat};
+    let mut entries = Vec::with_capacity(meta.block_stats.len());
+    let mut offset = 0u64;
+    for (block_id, stats) in meta.block_stats.iter().enumerate() {
+        let centroid = meta
+            .block_centroids
+            .get(block_id)
+            .cloned()
+            .unwrap_or_default();
+        let vector_format = if centroid.is_empty() {
+            VectorFormat::Variable
+        } else {
+            VectorFormat::Fixed {
+                dimension: centroid.len(),
+            }
+        };
+        entries.push(IndexEntry {
+            offset,
+            size: stats.block_size_bytes,
+            block_id: block_id as u32,
+            block_centroid: centroid,
+            vector_format,
+            ..Default::default()
+        });
+        offset += stats.block_size_bytes as u64;
+    }
+    // `offset` is now Σ block sizes = where the segment index begins.
+    let block_index_offset = offset;
+    let magic = proximadb_storage_common::pax_block::SEGMENT_MAGIC.len() as u64;
+    let block_index_size = meta.size_bytes.saturating_sub(block_index_offset + magic) as u32;
+    crate::storage::engines::sst::writer::SstableWriteOutcome {
+        index_entries: entries,
+        block_index_offset,
+        block_index_size,
+        file_size_bytes: meta.size_bytes,
+        record_count: meta.row_count,
+    }
+}
+
+#[cfg(test)]
+mod pax_write_outcome_tests {
+    use super::pax_write_outcome;
+    use proximadb_block_format::BlockStats;
+    use proximadb_storage_common::pax_block::SegmentMeta;
+
+    fn stats(size: u32) -> BlockStats {
+        // `from_metas` with no column metas yields a BlockStats carrying just the
+        // row/size framing this helper reads (BlockStats has no Default).
+        BlockStats::from_metas(2, size, 0, 0, &[])
+    }
+
+    /// The outcome carries one IndexEntry per block with cumulative offsets, the
+    /// S1 centroids threaded through, and a self-consistent segment-index frame
+    /// (Σ sizes + index + 8-byte magic == file size).
+    #[test]
+    fn builds_entries_with_cumulative_offsets_and_centroids() {
+        let meta = SegmentMeta {
+            path: std::path::PathBuf::from("seg.pax"),
+            size_bytes: 100 + 8 + 12, // Σ(40+60) blocks + 12 index + 8 magic
+            block_count: 2,
+            row_count: 4,
+            block_stats: vec![stats(40), stats(60)],
+            block_centroids: vec![vec![1.0, 1.0], vec![2.0, 2.0]],
+        };
+        let out = pax_write_outcome(&meta);
+        assert_eq!(out.index_entries.len(), 2);
+        assert_eq!(out.index_entries[0].offset, 0);
+        assert_eq!(out.index_entries[0].size, 40);
+        assert_eq!(out.index_entries[1].offset, 40, "cumulative from block 0");
+        assert_eq!(out.index_entries[1].size, 60);
+        assert_eq!(out.index_entries[0].block_centroid, vec![1.0, 1.0]);
+        assert_eq!(out.index_entries[1].block_centroid, vec![2.0, 2.0]);
+        assert_eq!(out.block_index_offset, 100, "Σ block sizes");
+        assert_eq!(out.block_index_size, 12, "size − Σ − 8 magic");
+        assert_eq!(out.file_size_bytes, 120);
+        assert_eq!(out.record_count, 4);
+    }
 }
 
 #[cfg(test)]
