@@ -1,0 +1,73 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-XMODAL-4: unified vector-SQL routing — one canonical VectorSearch lowering for pgwire UDTF + pgvector operator, routed by the cost/geometry model
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Proposed** (design memo). Realizes the deferred *"frontend source-node path — lowering into the shared logical plane"* that link:../../12-design/adr/ADR-053-cross-modal-query-fabric.adoc[ADR-053] explicitly parks as **TD-XMODAL-4** ("the UDTF path makes it work today over the DataFusion ANSI route; the shared-plane lowering is a later optimisation"). This TD **files that id** and specifies the unification: make the existing `vector_search(...)` UDTF reachable over **pgwire**, lower the existing pgvector `<->`/`<=>`/`<#>` operator to the **same** canonical node, and route both through the **cost-based + geometry-shaped** router — with REST SQL/UQL converging on the same seam.
+| Severity | Medium-High (surface consistency + moat: one internal vector-search intent behind every SQL surface; removes the hardcoded pgwire `<->` bypass and the pgwire/UDTF reachability gap)
+| Component | pgwire (`src/network/postgres/protocol.rs` `execute_vector_search`, `relational_pipeline.rs`) ; router (`src/query/compute_scheduler.rs` `QueryShape`/`route_select_inner`) ; DataFusion UDTF (`src/datafusion/cross_modal.rs` `VectorSearchTableFunction`, `src/datafusion/mod.rs` `register_udtf`) ; vector engine (`SstEngine::search_vectors_unified`, `VectorOpsPort::unified_search_native`).
+| Governs / derives from | link:../../12-design/adr/ADR-053-cross-modal-query-fabric.adoc[ADR-053] (cross-modal query fabric — "no new DSL; reuse SQL + table functions") ; the reserved TD-XMODAL-4 forward-reference therein.
+| Relates | link:TD-RDSTRAT-4-centroid-block-clustering-and-segment-directory.adoc[TD-RDSTRAT-4] / link:TD-RDSTRAT-5-cache-first-voe-directory-activation-codesign.adoc[TD-RDSTRAT-5] (the vector-execution knobs — striped read, centroid prune — become router-tunable properties of the VectorSearch node) ; TD-EXEC (shape_class / geometry routing key) ; TD-076 (pgwire SQL parity) ; ADR-052/ADR-034 (cost model + io_trace the router costs from).
+|===
+
+== Finding (the pieces exist — unify + route them, don't rebuild)
+
+A pgwire/UDTF audit found the building blocks already present but **disconnected**:
+
+* **The `vector_search(collection, query, k)` UDTF is built** — `VectorSearchTableFunction` (`cross_modal.rs:154-223`) → `VectorSearchTableProvider` over `VectorOpsPort`, registered via `ctx.register_udtf("vector_search", …)` (`datafusion/mod.rs:203-207`). But it lives **only** in the DataFusion `SessionContext`, so it's reachable via the OLAP/parquet route + gRPC-federated — **NOT over pgwire** (pgwire builds a DataFusion context only when `parquet_backed=true`; native vector storage never gets there).
+* **The pgvector `<->`/`<=>`/`<#>` operators already work over pgwire** — but via a **hardcoded bypass** (`protocol.rs:1168` → `execute_vector_search()`, `:1848-1956`: regex-extract the vector literal + `LIMIT`, call `unified_search_native()`). It **skips the relational pipeline AND the router** — no plan, no cost, no shape.
+* **The router has no vector signal** — `QueryShape` (`compute_scheduler.rs:121-144`) is `(engages_relational × parquet_backed × cardinality × fanout)`; `route_select_inner` (`:323-348`) has no vector-search branch.
+
+So there is a hardcoded operator path, an unreachable UDTF, and a router blind to both. The fix is one canonical intent + router integration.
+
+== Design: one canonical `VectorSearch` node
+
+The load-bearing decision: **both syntaxes lower to the *same* logical node**, so the router costs one thing and the executor runs one thing.
+
+[source]
+----
+VectorSearch { collection, query_embedding, k, metric, filter?, projection?,
+               include_vectors, knobs(nprobe/prune/striped) }
+----
+
+* **UDTF** `SELECT * FROM vector_search('col', $q, 10)` → this node (reuse `VectorSearchTableFunction`).
+* **pgvector operator** `SELECT id, … FROM col ORDER BY embedding <-> $q LIMIT 10` → the relational lowering pattern-matches `ORDER BY <distance> LIMIT k` (`<->`→L2, `<=>`→Cosine, `<#>`→neg-dot) → the **same** node (replacing the hardcoded bypass).
+* **Result shape (decided):** `id + score + payload/metadata` columns (the stored projection), so a single pgwire query is useful without a self-join; `include_vectors` stays an opt-in arg.
+* **Router:** `QueryShape` gains a vector signal; `route_select_inner` dispatches the node to `search_vectors_unified` and **cost-chooses within** vector execution (exact brute-force vs RaBitQ ANN cascade; whole-vs-striped; centroid-prune `nprobe`) from the same measured trace/geometry model as everything else — this is where the RDSTRAT-4/5 knobs plug in.
+* **REST SQL/UQL convergence:** the REST `/api/v2/query` SQL/UQL path routes through the **same** parse→lower→route seam (no parallel code path), so all surfaces share one definition of "what a vector search means" (`vertical inside, standard outside`).
+
+== Slices (atomic; each router-integrated; parity-gated across surfaces)
+
+[cols="1,3,2", options="header"]
+|===
+| Slice | Deliverable | Gate
+
+| **S1 — canonical node + pgwire UDTF + operator lowering** (first PR, per decision)
+| Define the `VectorSearch` logical node. Make `vector_search(...)` reachable over pgwire (register the UDTF on the pgwire SQL path / route the call to the node). Lower the pgvector `<->`/`<=>`/`<#>` + `ORDER BY … LIMIT k` shape to the **same** node, replacing the hardcoded `execute_vector_search` bypass. Result = id+score+payload.
+| pgwire integration test: `vector_search(...)` AND `ORDER BY <-> LIMIT k` return the **same** top-k as the REST/gRPC vector search (cross-surface parity) for L2 + Cosine; recall unchanged (same engine).
+
+| **S2 — router shape + cost integration**
+| Extend `QueryShape` with a vector-search signal; add the `route_select_inner` branch dispatching the node to `search_vectors_unified`; cost-choose exact-vs-ANN and thread the RDSTRAT knobs (striped/prune/nprobe) from the trace/geometry model.
+| Router emits a well-formed decision for a vector query (observe-logged); no regression on relational routing; the node's knobs are cost-selected, not hardcoded.
+
+| **S3 — REST SQL/UQL onto the shared seam**
+| Route REST `/api/v2/query` SQL + UQL vector search through the same lowering + router (retire any parallel path).
+| A vector query issued via pgwire, REST-SQL, and UQL returns identical results (three-surface parity test).
+
+| **S4 — cleanup**
+| Remove the legacy hardcoded pgwire `<->` path once S1 supersedes it; document the unified surface in `SUPPORTED_SURFACE.adoc`.
+| No behaviour change vs S1; the bypass is gone; docs updated.
+|===
+
+== Reuse (do NOT duplicate)
+
+`VectorSearchTableFunction` / `VectorSearchTableProvider` (`cross_modal.rs`), `register_udtf` (`datafusion/mod.rs`), the `execute_vector_search` search kernel / `VectorOpsPort::unified_search_native` (`protocol.rs`), `SstEngine::search_vectors_unified`, and the `ComputeScheduler`/`route_cost_model`/`QueryShape` router already exist — S1–S4 wire them behind one node, they do not rebuild them. Distance-metric mapping follows pgvector semantics for ecosystem compatibility.
+
+== Constraints
+
+* **No new DSL** (ADR-053): SQL + table functions only.
+* **Surface parity is the gate**: the same vector query on any surface (pgwire UDTF, pgwire operator, REST-SQL, UQL, gRPC) must return identical results — the whole point of the unification.
+* **Default-safe**: the new lowering must not change relational routing; a query that isn't a vector search falls through unchanged (mixed-read-safe, like today's `try_run_select` returning `None`).
+* **Recall is unaffected by surface** — all paths route to the same engine; the RDSTRAT recall gates (TD-RDSTRAT-5) still govern the *execution* knobs the router selects.
