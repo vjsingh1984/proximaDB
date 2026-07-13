@@ -183,9 +183,8 @@ const CORE_BATTERY: &[&str] = &[
 ];
 
 /// Join / predicate-subquery shapes (deeper geometry, the v2 hoisted-branch
-/// terms). DataFusion-seam only: on the native route these fall through to the
-/// legacy single-table parser (TD-REL-LOWER-1) and error — extend to both seams
-/// when that lands.
+/// terms). Run on BOTH seams since the TD-REL-LOWER-1 fix (qualified ORDER BY
+/// keys over aliased joins no longer decline to the legacy single-table path).
 const JOIN_BATTERY: &[&str] = &[
     "SELECT o.o_orderstatus, sum(l.l_extendedprice) FROM orders o JOIN lineitem l ON o.o_orderkey = l.l_orderkey GROUP BY o.o_orderstatus ORDER BY o.o_orderstatus",
     "SELECT count(*) FROM orders WHERE o_orderkey IN (SELECT l_orderkey FROM lineitem WHERE l_quantity > 2.0)",
@@ -258,6 +257,7 @@ async fn calibration_body() {
     // the native planner's `plan_instrumented`.
     let before_native = total_samples(&geometry_samples());
     run_battery("native", CORE_BATTERY).await;
+    run_battery("native", JOIN_BATTERY).await;
     // The fold runs on the io_trace flush at query completion — already done by
     // the time the pgwire response returns, but yield once to be safe.
     sleep(Duration::from_millis(200)).await;

@@ -1877,7 +1877,21 @@ fn apply_order_by(
     let scope = Scope::from_schema(&plan.output_schema());
     let mut keys = Vec::with_capacity(exprs.len());
     for o in exprs {
-        let expr = lower_expr_sealed(&o.expr, &scope)?;
+        // ORDER BY resolves against the post-projection scope, which carries no
+        // table qualifiers (`Scope::from_schema` — the Project erased them). A
+        // qualified sort key (`ORDER BY t.col` / `alias.col`) that names a
+        // projected output column therefore resolves by its bare column name
+        // (ANSI: sort keys designate output columns). Without this fallback the
+        // whole query declines to the legacy single-table path (TD-REL-LOWER-1).
+        let expr = match (lower_expr_sealed(&o.expr, &scope), &o.expr) {
+            (Ok(e), _) => e,
+            (Err(FrontendError::ColumnNotFound(_)), SqlExpr::CompoundIdentifier(parts))
+                if !parts.is_empty() =>
+            {
+                Expr::column(scope.resolve_unqualified(&parts[parts.len() - 1].value)?)
+            }
+            (Err(e), _) => return Err(e),
+        };
         let descending = matches!(o.options.asc, Some(false));
         let nulls_first = match o.options.nulls_first {
             Some(b) => b,
@@ -3311,5 +3325,65 @@ mod tests {
             }
             other => panic!("expected strpos FuncCall, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod td_rel_lower_order_by {
+    use super::*;
+    fn catalog() -> InMemoryCatalog {
+        let mut c = InMemoryCatalog::new();
+        c.register(
+            "users",
+            RelationalSchema::new(vec![
+                ColumnInfo::new("id", ProximaType::Int64, false),
+                ColumnInfo::new("name", ProximaType::String, true),
+            ]),
+        );
+        c.register(
+            "orders",
+            RelationalSchema::new(vec![
+                ColumnInfo::new("oid", ProximaType::Int64, false),
+                ColumnInfo::new("uid", ProximaType::Int64, false),
+                ColumnInfo::new("total", ProximaType::Float64, false),
+            ]),
+        );
+        c
+    }
+
+    /// TD-REL-LOWER-1 root cause: a qualified ORDER BY key over an aliased
+    /// join declined (`ColumnNotFound("u.name")`) because the post-projection
+    /// scope carries no table qualifiers — sending the whole query down the
+    /// legacy single-table fallthrough. It must lower.
+    #[test]
+    fn order_by_qualified_key_over_aliased_join_lowers() {
+        for sql in [
+            "SELECT u.name, sum(o.total) FROM users u JOIN orders o ON u.id = o.uid GROUP BY u.name ORDER BY u.name",
+            "SELECT u.name, sum(o.total) FROM users u, orders o WHERE u.id = o.uid GROUP BY u.name ORDER BY u.name",
+            "SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.uid ORDER BY u.name",
+            "SELECT users.name FROM users ORDER BY users.name",
+        ] {
+            let plan = lower_sql(sql, &catalog())
+                .unwrap_or_else(|e| panic!("must lower, declined: {e:?}\n  {sql}"));
+            assert!(
+                matches!(plan, LogicalNode::Sort { .. }),
+                "outermost Sort for {sql}"
+            );
+        }
+    }
+
+    /// The fallback resolves by the BARE column name — a qualified key whose
+    /// column does not exist in the output still errors (never silently binds).
+    #[test]
+    fn order_by_qualified_key_missing_column_still_errors() {
+        let err = lower_sql(
+            "SELECT u.name FROM users u ORDER BY u.no_such_column",
+            &catalog(),
+        )
+        .expect_err("unknown sort column must decline");
+        assert!(
+            matches!(err, FrontendError::ColumnNotFound(_)),
+            "got {err:?}"
+        );
     }
 }
