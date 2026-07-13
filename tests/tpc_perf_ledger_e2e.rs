@@ -1320,7 +1320,50 @@ fn push_record(
             snapshot: IoTraceSnapshot::default(),
         },
     };
+    // Live progress + crash-safe partial ledger. The harness previously went
+    // silent between seeding and the final write, holding every record in
+    // memory — a wedged/killed run could neither name the culprit query nor
+    // keep any completed measurement. Now each record prints as it lands and
+    // appends to `<out>.partial.jsonl`, so a run that never completes still
+    // leaves the full trail up to the query it died on.
+    match &rec.error {
+        None => eprintln!(
+            "[{benchmark}] {query} {route}/{temperature} {} ms rows={}",
+            rec.wall_ms, rec.rows
+        ),
+        Some(e) => eprintln!(
+            "[{benchmark}] {query} {route}/{temperature} {} ms ERR: {e}",
+            rec.wall_ms
+        ),
+    }
+    append_partial_record(&ledger_out_path(), &rec);
     out.push(rec);
+}
+
+/// The final ledger path (`TPC_PERF_LEDGER_OUT`, defaulted) — shared by the
+/// end-of-run write and the incremental partial sidecar.
+fn ledger_out_path() -> String {
+    std::env::var("TPC_PERF_LEDGER_OUT")
+        .unwrap_or_else(|_| "target/tpc-perf-ledger/ledger.json".to_string())
+}
+
+/// Append one record to `<out>.partial.jsonl`. Best-effort by design: the
+/// sidecar is diagnostics, so an append failure must never fail the harness.
+fn append_partial_record<T: serde::Serialize>(out_path: &str, rec: &T) {
+    use std::io::Write as _;
+    let path = format!("{out_path}.partial.jsonl");
+    if let Some(dir) = std::path::Path::new(&path).parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let (Ok(line), Ok(mut f)) = (
+        serde_json::to_string(rec),
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path),
+    ) {
+        let _ = writeln!(f, "{line}");
+    }
 }
 
 /// ADR-059: query `xcatalog.table_routing` for each table's materialized-parquet
@@ -1673,6 +1716,9 @@ async fn tpc_perf_ledger_inner() {
         }
     };
     eprintln!("=== tpc-perf-ledger harness (TPC_PERF_SCALE={scale}) ===");
+    // Fresh partial sidecar per run — stale lines from a prior run must not
+    // mix into this run's crash-safe trail.
+    let _ = std::fs::remove_file(format!("{}.partial.jsonl", ledger_out_path()));
 
     let mut records = Vec::new();
 
@@ -1765,8 +1811,7 @@ async fn tpc_perf_ledger_inner() {
         records,
     };
 
-    let out_path = std::env::var("TPC_PERF_LEDGER_OUT")
-        .unwrap_or_else(|_| "target/tpc-perf-ledger/ledger.json".to_string());
+    let out_path = ledger_out_path();
     if let Some(dir) = std::path::Path::new(&out_path).parent() {
         std::fs::create_dir_all(dir).expect("create ledger dir");
     }
