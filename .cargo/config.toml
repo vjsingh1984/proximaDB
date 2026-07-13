@@ -50,6 +50,17 @@ nx     = "nextest run --profile default"
 nxlib  = "nextest run --lib --profile unit"
 nxint  = "nextest run --profile integration"
 
+# Perf evidence-ledger harnesses (TD-OLAP-4) — the CANONICAL invocations.
+# Release build (wall/compute numbers are only admissible from release) with
+# the in-process DuckDB baseline compiled in BY DEFAULT, so every ledger run
+# carries all engine permutations (native/DataFusion/DuckDB). The `duckdb`
+# cargo feature stays opt-in for library builds (bundled C++ is too heavy for
+# CI/dev defaults) — these aliases are where it is always on. Knobs via env:
+# TPC_PERF_SCALE / TPC_PERF_SKIP_NATIVE / TPC_PERF_QUERY_TIMEOUT_MS /
+# CLICKBENCH_PARQUET / CLICKBENCH_QUERY_TIMEOUT_MS / *_LEDGER_OUT.
+ledger-tpc        = "test --release --features duckdb --test tpc_perf_ledger_e2e -- --ignored --nocapture"
+ledger-clickbench = "test --release --features duckdb --test clickbench_ledger_e2e clickbench_ledger -- --ignored --nocapture"
+
 [target.aarch64-apple-darwin]
 # Apple Silicon build flags.
 # NOTE: `target-cpu=native` was removed here (2026-07). It broke two things on
