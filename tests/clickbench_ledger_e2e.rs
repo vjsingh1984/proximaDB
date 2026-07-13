@@ -436,10 +436,57 @@ async fn clickbench_ledger() {
     })));
 
     // ProximaDB (DataFusion route).
+    // Optional per-query wall budget (`CLICKBENCH_QUERY_TIMEOUT_MS`, unset/0 =
+    // off): a pathological query becomes an ERR record + a server-side cancel
+    // instead of wedging the sweep. The cancel keeps the connection usable —
+    // dropping the future alone would queue the next query behind this one.
+    let budget_ms: u64 = std::env::var("CLICKBENCH_QUERY_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     for (id, sql) in &queries {
         CAPTURE.lock().expect("capture lock").clear();
         let t0 = Instant::now();
-        let res = client.simple_query(sql).await;
+        let res = if budget_ms == 0 {
+            client.simple_query(sql).await
+        } else {
+            match tokio::time::timeout(Duration::from_millis(budget_ms), client.simple_query(sql))
+                .await
+            {
+                Ok(r) => r,
+                Err(_elapsed) => {
+                    let _ = client
+                        .cancel_token()
+                        .cancel_query(tokio_postgres::NoTls)
+                        .await;
+                    push_cb(
+                        &mut records,
+                        QueryRecord {
+                            query: (*id).into(),
+                            engine: "proximadb".into(),
+                            ok: false,
+                            rows: 0,
+                            wall_ms: t0.elapsed().as_millis(),
+                            bytes_read: None,
+                            range_gets: None,
+                            setup_ms: None,
+                            emit_ms: None,
+                            session_ms: None,
+                            compute_ms: None,
+                            open_ms: None,
+                            plan_ms: None,
+                            table_open_hits: None,
+                            route: None,
+                            compute_by_engine: None,
+                            error: Some(format!(
+                                "harness timeout after {budget_ms} ms (query cancelled)"
+                            )),
+                        },
+                    );
+                    continue;
+                }
+            }
+        };
         let wall_ms = t0.elapsed().as_millis();
         let snap = drain_capture().await;
         let (

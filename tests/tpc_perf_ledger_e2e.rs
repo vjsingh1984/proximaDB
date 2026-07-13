@@ -1265,7 +1265,33 @@ async fn measure(
 ) -> Result<(usize, u128, IoTraceSnapshot), (u128, String)> {
     CAPTURE.lock().expect("lock").clear();
     let t0 = Instant::now();
-    let res = client.simple_query(sql).await;
+    // Optional per-query wall budget (`TPC_PERF_QUERY_TIMEOUT_MS`, unset/0 =
+    // off): a pathological query becomes an ERR record + a server-side cancel
+    // instead of wedging the whole sweep behind one Volcano grind. The cancel
+    // matters — dropping the query future alone leaves the connection busy and
+    // the NEXT query would queue behind the still-running one.
+    let budget_ms: u64 = std::env::var("TPC_PERF_QUERY_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let res = if budget_ms == 0 {
+        client.simple_query(sql).await
+    } else {
+        match tokio::time::timeout(Duration::from_millis(budget_ms), client.simple_query(sql)).await
+        {
+            Ok(r) => r,
+            Err(_elapsed) => {
+                let _ = client
+                    .cancel_token()
+                    .cancel_query(tokio_postgres::NoTls)
+                    .await;
+                return Err((
+                    t0.elapsed().as_millis(),
+                    format!("harness timeout after {budget_ms} ms (query cancelled)"),
+                ));
+            }
+        }
+    };
     let wall_ms = t0.elapsed().as_millis();
     match res {
         Ok(msgs) => {
