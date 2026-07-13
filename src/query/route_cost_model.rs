@@ -877,8 +877,9 @@ impl RouteCostModel {
         // MEASURED plan geometry the trace carries (Slice 1). This makes the
         // estimator's accuracy a live, falsifiable series — divergence rate =
         // fraction of folds where the labels differ — not just an offline
-        // ledger analysis. Skipped when the trace has no measured geometry
-        // (e.g. the DataFusion route plans outside the native planner).
+        // ledger analysis. Both planner seams emit measured geometry (the
+        // native `plan_instrumented` and the DataFusion adapter's logical-plan
+        // walk); skipped only when the trace carries none (legacy paths).
         if snap.plan_depth > 0
             && let Some(estimated) = shape_class.split('/').find(|s| s.starts_with("geom="))
             && let Some(measured) = crate::query::compute_scheduler::GeometryClass::from_estimate(
