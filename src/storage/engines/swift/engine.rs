@@ -1870,6 +1870,7 @@ impl UnifiedStorageFormat for SwiftEngine {
     }
 }
 
+#[allow(deprecated)] // SwiftEngine is #[deprecated] (experimental); accessing its own field is intentional
 impl crate::storage::traits::EngineFilesystemAccess for SwiftEngine {
     fn get_filesystem_factory(
         &self,

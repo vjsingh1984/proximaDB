@@ -2869,6 +2869,7 @@ impl UnifiedStorageFormat for RaptorEngine {
     }
 }
 
+#[allow(deprecated)] // RaptorEngine is #[deprecated] (experimental); accessing its own field is intentional
 impl crate::storage::traits::EngineFilesystemAccess for RaptorEngine {
     fn get_filesystem_factory(
         &self,
