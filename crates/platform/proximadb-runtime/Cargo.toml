@@ -23,6 +23,11 @@ proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 proximadb-data-model = { path = "../../foundation/proximadb-data-model" }
 proximadb-records = { path = "../../foundation/proximadb-records" }
 proximadb-config = { path = "../../foundation/proximadb-config" }
+# TD-XMODAL-4 S2: the v2 native search result + filter types (foundation) so the
+# VectorOpsPort can expose `unified_search_native` — the single canonical vector
+# kernel shared by the pgvector `<->` operator and the `vector_search` UDTF.
+proximadb-search-types = { path = "../../foundation/proximadb-search-types" }
+proximadb-filter-expression = { path = "../../foundation/proximadb-filter-expression" }
 proximadb-proto.workspace = true
 serde = { workspace = true, features = ["derive"] }
 num_cpus = "1.16"

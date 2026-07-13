@@ -5668,6 +5668,34 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
         self.search_v1(request).await
     }
 
+    /// TD-XMODAL-4 S2: the single canonical native kernel for both the pgvector
+    /// `<->` operator and the `vector_search(...)` UDTF. **Fail-closed** tenant
+    /// scoping via the same `for_tenant_id` → `unified_search_native_with_tenant_context`
+    /// path (`validate_tenant_collection_access` + tenant-scoped `get_collection`)
+    /// the existing tenant-context callers use — so promoting this to the port does
+    /// NOT weaken isolation. `None`/empty tenant ⇒ single-tenant, no scoping change.
+    async fn unified_search_native(
+        &self,
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        k: usize,
+        filter: Option<proximadb_filter_expression::FilterExpression>,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        let tenant_ctx = tenant_id
+            .filter(|t| !t.is_empty())
+            .map(crate::storage::tenant::context::TenantContext::for_tenant_id);
+        self.unified_search_native_with_tenant_context(
+            collection_id,
+            query_vector,
+            k,
+            filter,
+            None,
+            tenant_ctx.as_ref(),
+        )
+        .await
+    }
+
     async fn batch_upsert(
         &self,
         request: crate::proto::proximadb_v1::VectorBatchRequest,
