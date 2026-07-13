@@ -299,14 +299,20 @@ pub struct QueryShape {
     /// TD-EXEC-2 Slice 3: bucketed plan-geometry estimate (depth band ×
     /// pipeline-breaker band) refining the cost-model class. `Unknown` default.
     pub geometry: GeometryClass,
-    /// TD-ROUTE-1: the plan contains a JOIN (multi-table FROM / explicit JOIN)
-    /// or a set-op body — operators the row-wise Volcano engine cannot execute.
-    /// This is an *eligibility* bit (ADR-058: eligibility precedes selection),
-    /// not a cost input: the cost-model override must never FLIP such a plan
-    /// onto `Native`; static routes are unaffected. It is a dedicated bit
-    /// because [`OperationClass`] cannot carry it — a `JOIN … GROUP BY`
-    /// classifies as `Grouped` (the FROM clause is never inspected there).
-    /// Computed at the pgwire boundary (`query_join_bearing`); `false` default.
+    /// TD-ROUTE-1: the plan contains a JOIN anywhere (top-level FROM, derived
+    /// table / nested join / CTE, or a subquery that lowers to a semi/anti/left
+    /// join) or a set-op body. The Native arm cannot serve these over Parquet —
+    /// Volcano has join executors but no external-parquet scan, and the
+    /// vectorized native-over-parquet path is single-scan-only — so a flipped
+    /// plan would be served by the DataFusion floor while the io_trace stamps
+    /// Native (poisoning the cost model's per-backend cells), and
+    /// `EXPLAIN ANALYZE` would execute a diverging plan. This is an
+    /// *eligibility* bit (ADR-058: eligibility precedes selection), not a cost
+    /// input: the cost-model override must never FLIP such a plan onto
+    /// `Native`; static routes are unaffected. It is a dedicated bit because
+    /// [`OperationClass`] cannot carry it — a `JOIN … GROUP BY` classifies as
+    /// `Grouped` (the FROM clause is never inspected there). Computed at the
+    /// pgwire boundary (`query_join_bearing`); `false` default.
     pub join_bearing: bool,
 }
 
@@ -597,10 +603,13 @@ impl ComputeScheduler {
         };
 
         // TD-ROUTE-1 capability gate (ADR-058: eligibility precedes selection):
-        // the row-wise Volcano engine has no join executor, so a join-bearing
-        // plan is never an eligible FLIP TARGET for Native — including via
-        // ancestor-fallback consults whose coarse class carries no join signal.
-        // Static routes are untouched; with the override OFF nothing changes.
+        // the Native arm cannot serve a join-bearing plan over Parquet (no
+        // external-parquet scan for Volcano; the vectorized native path is
+        // single-scan-only) — a flip would be served by the DataFusion floor
+        // while the io_trace stamps Native, poisoning the cost cells. So a
+        // join-bearing plan is never an eligible FLIP TARGET for Native —
+        // including via ancestor-fallback consults whose coarse class carries
+        // no join signal. Static routes are untouched; override OFF = no change.
         let flip_eligible =
             |b: &ComputeBackend| !matches!(b, ComputeBackend::Native) || !shape.join_bearing;
 
@@ -692,9 +701,12 @@ impl ComputeScheduler {
                 }
             }
 
-            // ADR-058 observability: disclose when *eligibility* (not cost)
-            // vetoed the flip — the warmed-cheapest candidate is Native but the
-            // plan is join-bearing, so the override deliberately did not fire.
+            // ADR-058 observability: disclose when *eligibility* removed Native
+            // from consideration — the warmed-cheapest candidate is Native but
+            // the plan is join-bearing. Phrased as ineligibility (not "a flip
+            // was suppressed"): the cost gates (min_samples/min_advantage/RTT)
+            // are not re-checked here, so a flip is not necessarily what the
+            // exploit path would have chosen.
             if shape.join_bearing
                 && let Some(best) = consult
                     .ranked()
@@ -704,8 +716,8 @@ impl ComputeScheduler {
                 && backend_label(&best.backend) != backend_label(&decision.backend)
             {
                 decision.reason = format!(
-                    "{} | cost-model flip to Native suppressed — join-bearing plan, Volcano has \
-                     no join executor (TD-ROUTE-1){cells_note}",
+                    "{} | cost-model: Native suppressed as flip target — join-bearing plan is \
+                     ineligible (no multi-table native-over-parquet scan; TD-ROUTE-1){cells_note}",
                     decision.reason
                 );
                 return finalize_route(decision, shape);
@@ -983,7 +995,8 @@ mod tests {
     fn override_never_flips_join_bearing_plan_to_native() {
         use crate::query::route_cost_model::RouteCostModel;
         // Same warmed model as the flip test — Native measured far cheaper —
-        // but the plan carries a JOIN, which Volcano cannot execute (TD-ROUTE-1).
+        // but the plan carries a JOIN, which the Native arm cannot serve over
+        // Parquet (TD-ROUTE-1: no multi-table native-over-parquet scan).
         let shape = QueryShape {
             engages_relational: true,
             parquet_backed: true,
@@ -1010,7 +1023,7 @@ mod tests {
         assert_eq!(
             d.backend,
             ComputeBackend::DataFusionLocal,
-            "a join-bearing plan must never be flipped onto Native (no join executor)"
+            "a join-bearing plan must never be flipped onto Native (no multi-table native-over-parquet scan)"
         );
         assert!(
             d.reason.contains("suppressed"),

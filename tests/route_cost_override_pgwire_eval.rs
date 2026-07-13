@@ -126,8 +126,31 @@ async fn query_rows(client: &tokio_postgres::Client, sql: &str) -> Result<Vec<St
     Ok(rows)
 }
 
-#[tokio::test]
-async fn override_on_preserves_materialized_query_results() {
+/// TD-ROUTE-2 harness pin: the pgwire parse→lower→plan→execute path overflows
+/// the default test-thread stack in the dev profile (pre-existing on develop —
+/// verified 2026-07-13; passes at 16 MiB). Until the recursion depth is
+/// bisected and fixed at the source, run the eval body on a dedicated 16 MiB
+/// thread with a current-thread runtime (same semantics as `#[tokio::test]`)
+/// so the TD-ROUTE-1 enable gate runs at stock settings. Remove this wrapper
+/// when TD-ROUTE-2's root fix lands.
+#[test]
+fn override_on_preserves_materialized_query_results() {
+    std::thread::Builder::new()
+        .name("route-override-eval-16m".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime")
+                .block_on(override_eval_body())
+        })
+        .expect("spawn eval thread")
+        .join()
+        .expect("eval thread panicked");
+}
+
+async fn override_eval_body() {
     let server = PgServer::start().await.expect("server start");
     let (client, conn) = tokio_postgres::connect(&server.conn_str(), tokio_postgres::NoTls)
         .await
@@ -246,16 +269,45 @@ async fn override_on_preserves_materialized_query_results() {
 
     // 6b. TD-ROUTE-1 capability gate (the former documented boundary): the
     //     `QueryShape::join_bearing` eligibility bit keeps join-bearing plans
-    //     off Native under the override, so the join MUST now execute (on
-    //     DataFusion) and match the baseline — a strict parity assert. This is
-    //     the enable-gate for the global override.
+    //     off Native under the override, so the join MUST now execute and
+    //     match the baseline — a strict parity assert. This is the enable-gate
+    //     for the global override. (Result parity alone also holds via the
+    //     #853 DataFusion floor, so 6c below asserts the DECISION level too.)
     let got = query_rows(&client, join_query).await.expect(
         "join under the override must not error — the TD-ROUTE-1 capability gate keeps \
-         join-bearing plans off Native/Volcano (which has no join executor)",
+         join-bearing plans off the Native arm (no multi-table native-over-parquet scan)",
     );
     assert_eq!(
         got, join_baseline,
         "join under the override diverged from the DataFusion baseline:\n  baseline={:?} override={:?}",
         join_baseline, got
+    );
+
+    // 6c. Decision-level gate assert (review follow-up of #923): with the
+    //     WARMED global model and the override ON, a join-bearing olap/parquet
+    //     shape must keep the static DataFusion route — eligibility, not cost,
+    //     decides. Without this, result parity alone would pass even with the
+    //     gate reverted (the DataFusion floor serves the query), hiding a
+    //     regression that still poisons Native's cost cells via the io_trace.
+    let decision = proximadb::query::compute_scheduler::ComputeScheduler::new()
+        .route_select_advised(
+            proximadb::query::compute_scheduler::QueryShape {
+                engages_relational: true,
+                parquet_backed: true,
+                join_bearing: true,
+                ..Default::default()
+            },
+            Some(&GLOBAL_ROUTE_COST_MODEL),
+        );
+    assert_eq!(
+        decision.backend,
+        ComputeBackend::DataFusionLocal,
+        "join-bearing olap/parquet shape flipped off DataFusion under the override: {}",
+        decision.reason
+    );
+    assert!(
+        !decision.reason.contains("OVERRIDE") && !decision.reason.contains("EXPLORE"),
+        "join-bearing shape must not carry an override/explore flip, got: {}",
+        decision.reason
     );
 }
