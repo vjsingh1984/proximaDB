@@ -2440,34 +2440,10 @@ fn query_engages_relational_engine(query: &SqlQuery) -> bool {
     set_expr_engages(&query.body)
 }
 
-/// A cheap, syntax-only cardinality hint from the parsed AST — the fallback
-/// when the footer-warmed [`crate::query::route_cost_model::classify_table_shapes`]
-/// stat is `Unknown` (native storage, or a cold Parquet table never yet scanned),
-/// so the cost-model shape-class still discriminates instead of collapsing to
-/// the coarse class. Returns [`CardinalityClass::Small`] only when the query
-/// shape GUARANTEES a tiny result, else `Unknown` (never over-claims). Pure AST
-/// walk — zero route-time I/O (co-design P5: I/O round-trips, not CPU, dominate;
-/// the route path must not probe storage).
 /// TD-OLAP-4 operation dimension: classify the SELECT's OLAP operation from the AST
 /// (syntax-only, zero route-time I/O). Feeds the cost-model shape-class so per-engine
 /// samples accumulate per operation — the geometry the shadow ledger showed engines
 /// win/lose on. Priority: grouped > string-heavy > metadata-elidable > scalar-agg.
-/// TD-ROUTE-1 eligibility signal (ADR-058: eligibility precedes selection):
-/// does the query contain a JOIN (multi-table FROM / explicit JOIN) or a set-op
-/// body? The row-wise Volcano engine has no join executor, so the cost-model
-/// override must never flip such a plan onto Native. [`query_operation_class`]
-/// cannot carry this — a `JOIN … GROUP BY` classifies as `Grouped` (the FROM
-/// clause is never inspected there) — hence a dedicated shape bit. Fail-closed:
-/// any body that is not a plain `SELECT` (set-ops etc.) counts as join-bearing.
-fn query_join_bearing(query: &SqlQuery) -> bool {
-    match query.body.as_ref() {
-        SetExpr::Select(select) => {
-            select.from.len() > 1 || select.from.iter().any(|t| !t.joins.is_empty())
-        }
-        _ => true,
-    }
-}
-
 fn query_operation_class(query: &SqlQuery) -> crate::query::compute_scheduler::OperationClass {
     use crate::query::compute_scheduler::OperationClass;
     let SetExpr::Select(select) = query.body.as_ref() else {
@@ -2498,6 +2474,68 @@ fn query_operation_class(query: &SqlQuery) -> crate::query::compute_scheduler::O
         return OperationClass::ScalarAggregate;
     }
     OperationClass::Other
+}
+
+/// TD-ROUTE-1 eligibility signal (ADR-058: eligibility precedes selection):
+/// does the plan anywhere contain a JOIN — top-level, inside a derived table /
+/// nested join / CTE, or implied by a subquery PATH B lowers to a
+/// semi/anti/left join? The Native arm cannot serve a join-bearing plan over
+/// Parquet: Volcano *does* have hash/nested-loop join executors, but no
+/// external-parquet scan is wired for it, and the vectorized
+/// native-over-parquet path is single-scan-only — a flipped plan would be
+/// served by the DataFusion floor while `finalize_route` stamps Native into
+/// the io_trace (poisoning the cost model's EWMA cells), and `EXPLAIN ANALYZE`
+/// would execute a diverging plan. [`query_operation_class`] cannot carry the
+/// signal — a `JOIN … GROUP BY` classifies as `Grouped` (the FROM clause is
+/// never inspected there) — hence a dedicated shape bit. Fail-closed: set-op /
+/// non-`SELECT` bodies count as join-bearing.
+fn query_join_bearing(query: &SqlQuery) -> bool {
+    // A CTE can carry the join the outer body then scans.
+    if let Some(with) = &query.with
+        && with
+            .cte_tables
+            .iter()
+            .any(|cte| query_join_bearing(&cte.query))
+    {
+        return true;
+    }
+    set_expr_join_bearing(query.body.as_ref())
+}
+
+fn set_expr_join_bearing(body: &SetExpr) -> bool {
+    match body {
+        SetExpr::Query(q) => query_join_bearing(q),
+        SetExpr::Select(select) => {
+            // Top-level: multi-table FROM (comma join) or explicit JOINs.
+            if select.from.len() > 1 || select.from.iter().any(|t| !t.joins.is_empty()) {
+                return true;
+            }
+            // A single FROM factor can still hide a join: a derived table
+            // (`FROM (SELECT … JOIN …) t`) or a nested join (`FROM (a JOIN b)`).
+            if select
+                .from
+                .iter()
+                .any(|t| table_factor_join_bearing(&t.relation))
+            {
+                return true;
+            }
+            // WHERE `IN`/`EXISTS` subqueries lower to Semi/Anti joins, and a
+            // projection scalar subquery is hoisted into a LEFT JOIN (PATH B) —
+            // join-bearing plans regardless of the FROM clause.
+            select.selection.as_ref().is_some_and(where_has_subquery)
+                || select.projection.iter().any(select_item_has_subquery)
+        }
+        // Set-ops / anything else: fail closed.
+        _ => true,
+    }
+}
+
+fn table_factor_join_bearing(relation: &TableFactor) -> bool {
+    match relation {
+        TableFactor::Derived { subquery, .. } => query_join_bearing(subquery),
+        TableFactor::NestedJoin { .. } => true,
+        _ => false,
+    }
 }
 
 /// Does the predicate use a string-matching construct (`LIKE`/`ILIKE`/`SIMILAR TO`
@@ -2537,6 +2575,14 @@ fn select_item_is_elidable_aggregate(item: &SelectItem) -> bool {
     }
 }
 
+/// A cheap, syntax-only cardinality hint from the parsed AST — the fallback
+/// when the footer-warmed [`crate::query::route_cost_model::classify_table_shapes`]
+/// stat is `Unknown` (native storage, or a cold Parquet table never yet scanned),
+/// so the cost-model shape-class still discriminates instead of collapsing to
+/// the coarse class. Returns [`CardinalityClass::Small`] only when the query
+/// shape GUARANTEES a tiny result, else `Unknown` (never over-claims). Pure AST
+/// walk — zero route-time I/O (co-design P5: I/O round-trips, not CPU, dominate;
+/// the route path must not probe storage).
 fn query_cardinality_hint(query: &SqlQuery) -> crate::query::compute_scheduler::CardinalityClass {
     use crate::query::compute_scheduler::CardinalityClass;
     // sqlparser 0.59 carries LIMIT on the Query as a `LimitClause` enum (standard
@@ -3325,6 +3371,44 @@ mod tests {
             panic!("expected query");
         };
         (**query).clone()
+    }
+
+    #[test]
+    fn join_bearing_detects_joins_at_every_nesting_level() {
+        // TD-ROUTE-1 follow-up (review of #923): the bit must see joins the
+        // top-level FROM walk misses, or the override poisons Native's cost
+        // cells (the DataFusion floor serves the query while the io_trace
+        // stamps Native) and EXPLAIN ANALYZE diverges.
+        let jb = |sql: &str| query_join_bearing(&parse_query(sql));
+
+        // Top-level: explicit JOIN and comma join.
+        assert!(jb("SELECT * FROM a JOIN b ON a.id = b.id"));
+        assert!(jb("SELECT * FROM a, b WHERE a.id = b.id"));
+        // Derived table hiding a join.
+        assert!(jb(
+            "SELECT count(*) FROM (SELECT a.id FROM a JOIN b ON a.id = b.id) t"
+        ));
+        // CTE carrying the join the body then scans.
+        assert!(jb(
+            "WITH x AS (SELECT a.id FROM a JOIN b ON a.id = b.id) SELECT * FROM x"
+        ));
+        // WHERE IN / EXISTS lower to semi/anti joins.
+        assert!(jb("SELECT * FROM a WHERE id IN (SELECT id FROM b)"));
+        assert!(jb(
+            "SELECT * FROM a WHERE EXISTS (SELECT 1 FROM b WHERE b.id = a.id)"
+        ));
+        // Projection scalar subquery hoists into a LEFT JOIN.
+        assert!(jb("SELECT id, (SELECT max(x) FROM b) FROM a"));
+        // Set-op body: fail closed.
+        assert!(jb("SELECT id FROM a UNION ALL SELECT id FROM b"));
+
+        // Join-free shapes stay eligible for a Native flip.
+        assert!(!jb("SELECT * FROM a WHERE id = 1"));
+        assert!(!jb("SELECT status, count(*) FROM a GROUP BY status"));
+        assert!(!jb(
+            "SELECT count(*) FROM (SELECT id FROM a WHERE id > 5) t"
+        ));
+        assert!(!jb("WITH x AS (SELECT id FROM a) SELECT * FROM x"));
     }
 
     #[test]
