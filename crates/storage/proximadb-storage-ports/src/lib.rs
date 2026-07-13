@@ -198,3 +198,32 @@ pub trait FilesystemPort: Send + Sync {
     /// Delete the file/dir at `url`.
     async fn delete(&self, url: &str) -> FsResult<()>;
 }
+
+/// Cache-kind for access-pattern tracking — the engine-facing subset of the root
+/// `CacheType` (the 5 variants engines actually track, measured across
+/// `src/storage/engines/`: VectorData, Metadata, DistanceTable, FilterBitmap,
+/// IndexStructure). Foundation-neutral so engine leaves can name it without
+/// depending on the root-local `CacheType`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CacheKind {
+    VectorData,
+    Metadata,
+    DistanceTable,
+    FilterBitmap,
+    IndexStructure,
+}
+
+/// Cache access-pattern tracking port — inverts the storage→root
+/// `CrossCacheOrchestrator` dependency for access tracking.
+///
+/// Engine leaves hold `Arc<dyn CacheAccessPatternPort>` instead of the root-local
+/// `CrossCacheOrchestrator` (a heavily-coupled global singleton), so engine modules
+/// can move to crates. The surface is exactly the one method engines use —
+/// `pattern_tracker().track_access_async(key, cache_type)` — measured across 12
+/// engine files. The concrete `CrossCacheOrchestrator` impls this in the root crate
+/// (downward edge); the composition root injects it. Non-blocking (the underlying
+/// tracker queues events for background processing).
+pub trait CacheAccessPatternPort: Send + Sync {
+    /// Record a cache access for pattern learning / predictive prefetching.
+    fn track_access(&self, key: String, cache_kind: CacheKind);
+}

@@ -271,7 +271,27 @@ impl CrossCacheOrchestrator {
     pub fn global() -> Option<Arc<CrossCacheOrchestrator>> {
         GLOBAL_ORCHESTRATOR.get().cloned()
     }
+}
 
+// CacheAccessPatternPort impl — Slice D port-inversion. Exposes the root-local
+// CrossCacheOrchestrator behind the CacheAccessPatternPort trait (defined in
+// proximadb-storage-ports) so engine leaves can depend on Arc<dyn CacheAccessPatternPort>
+// instead of this concrete global-singleton type. Pure delegation to the pattern
+// tracker; CacheKind maps 1:1 to the root CacheType (engine-facing subset).
+impl proximadb_storage_ports::CacheAccessPatternPort for CrossCacheOrchestrator {
+    fn track_access(&self, key: String, cache_kind: proximadb_storage_ports::CacheKind) {
+        let cache_type = match cache_kind {
+            proximadb_storage_ports::CacheKind::VectorData => CacheType::VectorData,
+            proximadb_storage_ports::CacheKind::Metadata => CacheType::Metadata,
+            proximadb_storage_ports::CacheKind::DistanceTable => CacheType::DistanceTable,
+            proximadb_storage_ports::CacheKind::FilterBitmap => CacheType::FilterBitmap,
+            proximadb_storage_ports::CacheKind::IndexStructure => CacheType::IndexStructure,
+        };
+        self.pattern_tracker().track_access_async(key, cache_type);
+    }
+}
+
+impl CrossCacheOrchestrator {
     /// Install the trace-driven cache observer (T2.2).
     ///
     /// This wires the io_trace substrate into the cache sizing loop: every completed

@@ -20,10 +20,10 @@ use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use proximadb_distance_kernel::engine::{DistanceMetric, SimilarityResult, UnifiedDistanceCompute};
 
-use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, types::ProximaScheme};
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
+use proximadb_storage_ports::{CacheAccessPatternPort, CacheKind};
 
 use super::common::{
     ColumnType, // For selective column reading
@@ -272,7 +272,7 @@ pub struct RaptorReader {
     _config: RaptorConfig,
 
     /// Unified cache orchestrator (replaces rowgroup_cache.rs)
-    cache: Arc<CrossCacheOrchestrator>,
+    cache: Arc<dyn CacheAccessPatternPort>,
 
     /// Unified distance computation (replaces simd_encoder.rs distance logic)
     distance_compute: Arc<UnifiedDistanceCompute>,
@@ -343,7 +343,7 @@ impl RaptorReader {
         base_path: String,
         collection_id: String,
         config: RaptorConfig,
-        cache: Arc<CrossCacheOrchestrator>,
+        cache: Arc<dyn CacheAccessPatternPort>,
         filesystem: Arc<dyn FileSystem>,
         transaction_coordinator: Arc<TransactionCoordinator>,
     ) -> Self {
@@ -379,8 +379,7 @@ impl RaptorReader {
                 // Use zero-copy filesystem with integrated caching
                 let cache_key = format!("{}:{}:raptor", file_path, rg_idx);
                 self.cache
-                    .pattern_tracker()
-                    .track_access_async(cache_key.clone(), CacheType::VectorData);
+                    .track_access(cache_key.clone(), CacheKind::VectorData);
 
                 // Try zero-copy cached read first
                 if let Ok(_cached_data) = self.filesystem.read(file_path).await {
@@ -475,8 +474,7 @@ impl RaptorReader {
 
             // DIRECT access to unified cache - no wrapper method
             self.cache
-                .pattern_tracker()
-                .track_access_async(_cache_key.clone(), CacheType::VectorData);
+                .track_access(_cache_key.clone(), CacheKind::VectorData);
 
             // Deferred: Implement proper caching with updated APIs
 
@@ -1130,8 +1128,7 @@ impl RaptorReader {
 
         // Track access pattern for predictive prefetching
         self.cache
-            .pattern_tracker()
-            .track_access_async(cache_key.clone(), CacheType::Metadata);
+            .track_access(cache_key.clone(), CacheKind::Metadata);
 
         // Stat the file first so we can validate the cache.
         let file_metadata = self.filesystem.metadata(file_path).await?;
