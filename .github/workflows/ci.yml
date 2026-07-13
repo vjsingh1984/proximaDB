@@ -1201,7 +1201,7 @@ jobs:
 
       # sccache complements rust-cache: caches individual rustc invocations
       # (content-addressed), so it hits even when the target/ artifact cache misses.
-      - uses: mozilla-actions/sccache-action@v0
+      - uses: mozilla-actions/sccache-action@v0.0.10
       - uses: actions/cache@v4
         with:
           path: /home/runner/.cache/sccache
@@ -1298,7 +1298,7 @@ jobs:
 
       # sccache complements rust-cache: caches individual rustc invocations
       # (content-addressed), so it hits even when the target/ artifact cache misses.
-      - uses: mozilla-actions/sccache-action@v0
+      - uses: mozilla-actions/sccache-action@v0.0.10
       - uses: actions/cache@v4
         with:
           path: /home/runner/.cache/sccache
@@ -1573,7 +1573,7 @@ jobs:
           prefix-key: "v1-rust-nightly-coverage"
       # sccache complements rust-cache: caches individual rustc invocations
       # (content-addressed), so it hits even when the target/ artifact cache misses.
-      - uses: mozilla-actions/sccache-action@v0
+      - uses: mozilla-actions/sccache-action@v0.0.10
       - uses: actions/cache@v4
         with:
           path: /home/runner/.cache/sccache
