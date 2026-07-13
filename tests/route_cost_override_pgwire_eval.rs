@@ -244,21 +244,18 @@ async fn override_on_preserves_materialized_query_results() {
         );
     }
 
-    // 6b. Documented boundary (TD-ROUTE-1): under the override the join either
-    //     still ERRORS (Native cannot execute it — the reason the *global*
-    //     override stays gated OFF) or, once the candidate set excludes Volcano
-    //     for joins, matches the DataFusion baseline. It must NEVER return a
-    //     different (silently wrong) answer.
-    match query_rows(&client, join_query).await {
-        Err(e) => eprintln!(
-            "✓ documented boundary: override flips the olap/parquet JOIN to Native/Volcano, which \
-             ERRORS ({e}). Enabling the global override requires excluding Volcano from the join \
-             candidate set (TD-ROUTE-1) — but it does NOT return a wrong answer."
-        ),
-        Ok(got) => assert_eq!(
-            got, join_baseline,
-            "override flipped the JOIN and returned a DIFFERENT answer than DataFusion (silently wrong):\n  baseline={:?} override={:?}",
-            join_baseline, got
-        ),
-    }
+    // 6b. TD-ROUTE-1 capability gate (the former documented boundary): the
+    //     `QueryShape::join_bearing` eligibility bit keeps join-bearing plans
+    //     off Native under the override, so the join MUST now execute (on
+    //     DataFusion) and match the baseline — a strict parity assert. This is
+    //     the enable-gate for the global override.
+    let got = query_rows(&client, join_query).await.expect(
+        "join under the override must not error — the TD-ROUTE-1 capability gate keeps \
+         join-bearing plans off Native/Volcano (which has no join executor)",
+    );
+    assert_eq!(
+        got, join_baseline,
+        "join under the override diverged from the DataFusion baseline:\n  baseline={:?} override={:?}",
+        join_baseline, got
+    );
 }

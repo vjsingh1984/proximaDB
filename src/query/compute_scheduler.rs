@@ -299,6 +299,15 @@ pub struct QueryShape {
     /// TD-EXEC-2 Slice 3: bucketed plan-geometry estimate (depth band ×
     /// pipeline-breaker band) refining the cost-model class. `Unknown` default.
     pub geometry: GeometryClass,
+    /// TD-ROUTE-1: the plan contains a JOIN (multi-table FROM / explicit JOIN)
+    /// or a set-op body — operators the row-wise Volcano engine cannot execute.
+    /// This is an *eligibility* bit (ADR-058: eligibility precedes selection),
+    /// not a cost input: the cost-model override must never FLIP such a plan
+    /// onto `Native`; static routes are unaffected. It is a dedicated bit
+    /// because [`OperationClass`] cannot carry it — a `JOIN … GROUP BY`
+    /// classifies as `Grouped` (the FROM clause is never inspected there).
+    /// Computed at the pgwire boundary (`query_join_bearing`); `false` default.
+    pub join_bearing: bool,
 }
 
 /// TD-OLAP-1 slice 2: PAX-native OLAP scan gate (inline — not imported from
@@ -587,6 +596,14 @@ impl ComputeScheduler {
             _ => String::new(),
         };
 
+        // TD-ROUTE-1 capability gate (ADR-058: eligibility precedes selection):
+        // the row-wise Volcano engine has no join executor, so a join-bearing
+        // plan is never an eligible FLIP TARGET for Native — including via
+        // ancestor-fallback consults whose coarse class carries no join signal.
+        // Static routes are untouched; with the override OFF nothing changes.
+        let flip_eligible =
+            |b: &ComputeBackend| !matches!(b, ComputeBackend::Native) || !shape.join_bearing;
+
         if model.override_active()
             && let Some(consult) = consult.as_ref()
         {
@@ -599,7 +616,8 @@ impl ComputeScheduler {
                 // last recompute; re-check against the frozen ranked samples (a
                 // target absent from `ranked` was never observed → still cold).
                 .filter(|t| {
-                    backend_label(t) != backend_label(&decision.backend)
+                    flip_eligible(t)
+                        && backend_label(t) != backend_label(&decision.backend)
                         && consult
                             .find(t)
                             .is_none_or(|c| c.samples < model.min_samples())
@@ -632,7 +650,7 @@ impl ComputeScheduler {
                     && let Some(within) = consult
                         .ranked()
                         .iter()
-                        .filter(|c| c.range_gets <= budget)
+                        .filter(|c| c.range_gets <= budget && flip_eligible(&c.backend))
                         .min_by(|a, b| {
                             a.score
                                 .partial_cmp(&b.score)
@@ -656,7 +674,7 @@ impl ComputeScheduler {
                 if let Some(challenger) = consult
                     .ranked()
                     .iter()
-                    .filter(|c| c.samples >= model.min_samples())
+                    .filter(|c| c.samples >= model.min_samples() && flip_eligible(&c.backend))
                     .find(|c| backend_label(&c.backend) != backend_label(&decision.backend))
                     .filter(|c| c.score < static_choice.score * (1.0 - model.min_advantage()))
                 {
@@ -672,6 +690,25 @@ impl ComputeScheduler {
                     decision.source = RouteSource::OverrideExploit;
                     return finalize_route(decision, shape);
                 }
+            }
+
+            // ADR-058 observability: disclose when *eligibility* (not cost)
+            // vetoed the flip — the warmed-cheapest candidate is Native but the
+            // plan is join-bearing, so the override deliberately did not fire.
+            if shape.join_bearing
+                && let Some(best) = consult
+                    .ranked()
+                    .iter()
+                    .find(|c| c.samples >= model.min_samples())
+                && matches!(best.backend, ComputeBackend::Native)
+                && backend_label(&best.backend) != backend_label(&decision.backend)
+            {
+                decision.reason = format!(
+                    "{} | cost-model flip to Native suppressed — join-bearing plan, Volcano has \
+                     no join executor (TD-ROUTE-1){cells_note}",
+                    decision.reason
+                );
+                return finalize_route(decision, shape);
             }
         }
 
@@ -940,6 +977,113 @@ mod tests {
         // Override fires: the route is flipped to the measured-cheaper engine.
         assert_eq!(d.backend, ComputeBackend::Native);
         assert!(d.reason.contains("OVERRIDE"));
+    }
+
+    #[test]
+    fn override_never_flips_join_bearing_plan_to_native() {
+        use crate::query::route_cost_model::RouteCostModel;
+        // Same warmed model as the flip test — Native measured far cheaper —
+        // but the plan carries a JOIN, which Volcano cannot execute (TD-ROUTE-1).
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            join_bearing: true,
+            ..Default::default()
+        }; // static => DataFusionLocal
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_recompute_every(1);
+        model.set_override_enabled(true);
+        for _ in 0..5 {
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::Native,
+                &io_snap(3, 16 << 20),
+            );
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(300, 16 << 20),
+            );
+        }
+        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        assert_eq!(
+            d.backend,
+            ComputeBackend::DataFusionLocal,
+            "a join-bearing plan must never be flipped onto Native (no join executor)"
+        );
+        assert!(
+            d.reason.contains("suppressed"),
+            "eligibility veto must be disclosed, got: {}",
+            d.reason
+        );
+    }
+
+    #[test]
+    fn exploration_skips_native_for_join_bearing_plan() {
+        use crate::query::route_cost_model::RouteCostModel;
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            join_bearing: true,
+            ..Default::default()
+        }; // static => DataFusionLocal
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_exploration_interval(1)
+            .with_recompute_every(1);
+        model.set_override_enabled(true);
+        // DataFusion warm, Native cold — exploration would normally pick Native.
+        for _ in 0..5 {
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(4, 8192),
+            );
+        }
+        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        assert_eq!(
+            d.backend,
+            ComputeBackend::DataFusionLocal,
+            "exploration must not route a join-bearing plan onto Native"
+        );
+        assert!(!d.reason.contains("EXPLORE"), "got: {}", d.reason);
+    }
+
+    #[test]
+    fn rtt_budget_flip_respects_join_eligibility() {
+        use crate::query::route_cost_model::RouteCostModel;
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            join_bearing: true,
+            ..Default::default()
+        }; // static => DataFusionLocal
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_recompute_every(1)
+            .with_rtt_budget(Some(10.0));
+        model.set_override_enabled(true);
+        // Static (DataFusion) blows the RTT budget; Native is within it — but
+        // the plan is join-bearing, so the hard gate must NOT flip to Native.
+        for _ in 0..5 {
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::Native,
+                &io_snap(3, 16 << 20),
+            );
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(300, 16 << 20),
+            );
+        }
+        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        assert_eq!(
+            d.backend,
+            ComputeBackend::DataFusionLocal,
+            "the RTT-budget hard gate must not flip a join-bearing plan onto Native"
+        );
     }
 
     #[test]

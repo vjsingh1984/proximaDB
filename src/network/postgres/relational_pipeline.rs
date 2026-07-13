@@ -459,6 +459,7 @@ pub async fn try_run_select(
             cardinality,
             operation_class,
             geometry,
+            join_bearing: query_join_bearing(query),
         },
         // C4: observe-mode advisory from the trace-driven cost model — augments
         // the reason for telemetry/EXPLAIN, never changes the backend.
@@ -1898,6 +1899,7 @@ pub fn classify_select_route(
                 engages_relational: engages,
                 parquet_backed: false,
                 cardinality: query_cardinality_hint(query),
+                join_bearing: query_join_bearing(query),
                 ..Default::default()
             },
             Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
@@ -2194,6 +2196,7 @@ async fn route_and_plan_select(
             engages_relational: engages,
             parquet_backed,
             cardinality: query_cardinality_hint(query),
+            join_bearing: query_join_bearing(query),
             ..Default::default()
         },
         Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
@@ -2449,6 +2452,22 @@ fn query_engages_relational_engine(query: &SqlQuery) -> bool {
 /// (syntax-only, zero route-time I/O). Feeds the cost-model shape-class so per-engine
 /// samples accumulate per operation — the geometry the shadow ledger showed engines
 /// win/lose on. Priority: grouped > string-heavy > metadata-elidable > scalar-agg.
+/// TD-ROUTE-1 eligibility signal (ADR-058: eligibility precedes selection):
+/// does the query contain a JOIN (multi-table FROM / explicit JOIN) or a set-op
+/// body? The row-wise Volcano engine has no join executor, so the cost-model
+/// override must never flip such a plan onto Native. [`query_operation_class`]
+/// cannot carry this — a `JOIN … GROUP BY` classifies as `Grouped` (the FROM
+/// clause is never inspected there) — hence a dedicated shape bit. Fail-closed:
+/// any body that is not a plain `SELECT` (set-ops etc.) counts as join-bearing.
+fn query_join_bearing(query: &SqlQuery) -> bool {
+    match query.body.as_ref() {
+        SetExpr::Select(select) => {
+            select.from.len() > 1 || select.from.iter().any(|t| !t.joins.is_empty())
+        }
+        _ => true,
+    }
+}
+
 fn query_operation_class(query: &SqlQuery) -> crate::query::compute_scheduler::OperationClass {
     use crate::query::compute_scheduler::OperationClass;
     let SetExpr::Select(select) = query.body.as_ref() else {
