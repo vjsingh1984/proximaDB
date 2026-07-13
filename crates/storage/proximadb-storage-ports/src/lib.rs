@@ -14,6 +14,7 @@
 use anyhow::Result;
 use proximadb_proto::proximadb_v1::Collection;
 use proximadb_storage_common::StorageEngineType;
+use proximadb_storage_filesystem_types::{FileOptions, FileSystem, FsResult};
 
 pub mod capabilities;
 pub use capabilities::*;
@@ -169,4 +170,31 @@ pub trait StorageQuantizationEnginePort: Send + Sync {
 
     /// Dequantize a vector back to approximate float values.
     async fn dequantize(&self, quantized: &QuantizedVector) -> Result<Vec<f32>>;
+}
+
+/// Filesystem access port — inverts the storage→root `FilesystemFactory` dependency.
+///
+/// Engine leaves hold `Arc<dyn FilesystemPort>` instead of the root-local
+/// `FilesystemFactory` concrete type, so engine modules (`viper/pipeline`,
+/// `raptor/*`, …) can move to crates. The surface is the routing + staging methods
+/// engines actually use — measured across `EngineFilesystemAccess`'s default
+/// methods, `trait_components::writer`, and the engine tests. The concrete
+/// `FilesystemFactory` impls this in the root crate (a downward edge —
+/// root→storage-ports is layering-allowed); the composition root injects it.
+///
+/// This unblocks the engine-leaf extraction (see
+/// `docs/12-design/ROOT_CRATE_DECOMPOSITION_ENGINES_EXTRACTION_2026_07_12.adoc`):
+/// leaves swap their `Arc<FilesystemFactory>` fields for `Arc<dyn FilesystemPort>`.
+#[async_trait::async_trait]
+pub trait FilesystemPort: Send + Sync {
+    /// Resolve the `FileSystem` for a URL's scheme (cached; routed by scheme).
+    fn get_filesystem(&self, url: &str) -> FsResult<std::sync::Arc<dyn FileSystem>>;
+    /// Recursively create the directory at `url`.
+    async fn create_dir_all(&self, url: &str) -> FsResult<()>;
+    /// Write `data` to `url`.
+    async fn write(&self, url: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()>;
+    /// Atomically move `from_url` → `to_url`.
+    async fn move_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()>;
+    /// Delete the file/dir at `url`.
+    async fn delete(&self, url: &str) -> FsResult<()>;
 }

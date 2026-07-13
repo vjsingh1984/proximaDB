@@ -8130,6 +8130,7 @@ dependencies = [
  "proximadb-quantization-model",
  "proximadb-records",
  "proximadb-storage-common",
+ "proximadb-storage-filesystem-types",
  "serde",
 ]
 
