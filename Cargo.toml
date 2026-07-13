@@ -656,7 +656,7 @@ tenant_access = []
 # server panics from unimplemented code paths. Enable for development/testing only.
 experimental-engines = []
 # Experimental SIMD path; not enabled by default
-simd-experimental = []
+simd-experimental = ["proximadb-codec/simd-experimental"]
 # TD-160 / ADR-027 / ADR-030: gate the PERF-CLASS I/O-trace *emission* (the
 # per-query structured `tracing` event in `io_trace::IoTrace::emit`). Default OFF
 # → zero perf-emission cost in normal operation. The cheap core counters
@@ -677,7 +677,7 @@ experimental-turboquant = [
     "proximadb-quantization-kernel/experimental-turboquant",
 ]
 # AVX512 intrinsics (requires nightly Rust, disabled by default for CI compatibility)
-avx512 = []
+avx512 = ["proximadb-codec/avx512"]
 standalone = []
 # Cluster mode - enables distributed consensus (Raft), replication, and health services
 # Used for multi-node deployments with leader election and data replication.
@@ -802,8 +802,8 @@ datafusion-integration = ["dep:datafusion", "dep:datafusion-common"]
 duckdb = ["dep:duckdb"]
 
 # Hardware acceleration features
-gpu = ["metal", "proximadb-hardware-caps/gpu", "proximadb-distance-kernel/gpu"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
-metal = ["dep:metal"]  # Enable Metal/MPS GPU support on macOS ARM64
+gpu = ["metal", "proximadb-codec/gpu", "proximadb-hardware-caps/gpu", "proximadb-distance-kernel/gpu"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
+metal = ["dep:metal", "proximadb-codec/metal"]  # Enable Metal/MPS GPU support on macOS ARM64
 # SIMD optimizations - ARM64 has NEON, not AVX
 simd = []  # Placeholder - would need ARM NEON implementation
 debug-filters = []  # Enable debug filtering for search operations

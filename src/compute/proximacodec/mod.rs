@@ -1,94 +1,69 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 
-//! ProximaCodec - Unified encoding/decoding for ProximaDB
+//! ProximaCodec — shim re-exporting the `proximadb-codec` horizontal crate.
 //!
-//! This module provides a clean, unified API for all encoding/decoding operations.
-//! It replaces the old ProximaEncoder/ProximaDecoder with a modern architecture:
+//! The ProximaCodec and all its sibling modules (codec, registry, wire_format,
+//! traits, batching, adaptive, simd, gpu, baseline, impls, analysis, strategy,
+//! types, simd_analysis) now live in the `proximadb-codec` crate
+//! (`crates/horizontal/proximadb-codec`). This root module keeps the historical
+//! `crate::compute::proximacodec::*` (and the re-export alias
+//! `crate::storage::engines::core::ops::proximacodec::*`) paths resolving for
+//! existing consumers during the root-crate decomposition (#127 shared blocker
+//! for engine extraction).
 //!
-//! - Single entry point: `ProximaCodec::global()`
-//! - Hardware-aware routing: GPU → SIMD → Baseline
-//! - Unified metrics integration
-//! - Versioned wire format
-//! - Platform-specific conditional compilation
-//!
-//! # Architecture
-//!
-//! ```text
-//! ┌─────────────────────────────────────────┐
-//! │     ProximaCodec (Public API)           │
-//! │  - Global singleton                     │
-//! │  - Hardware detection                   │
-//! │  - Metrics integration                  │
-//! └─────────────────────────────────────────┘
-//!           │
-//!     ┌─────┴──────┐
-//!     ▼            ▼
-//! WireFormat   Registry
-//!  (Headers)   (HW Routing)
-//!                  │
-//!     ┌────────────┼────────────┐
-//!     ▼            ▼            ▼
-//! Baseline      SIMD          GPU
-//! (always)   (conditional) (conditional)
-//! ```
-//!
-//! # Usage
-//!
-//! ```rust,ignore
-//! use proximadb::storage::engines::core::ops::proximacodec::{ProximaCodec, ProximaScheme};
-//!
-//! let codec = ProximaCodec::global();
-//!
-//! // Encode
-//! let values = vec![1.0f32, 2.0, 3.0];
-//! let encoded = codec.encode(&values, ProximaScheme::Delta { base: 0 })?;
-//!
-//! // Decode
-//! let decoded: Vec<f32> = codec.decode(&encoded)?;
-//! assert_eq!(values, decoded);
-//! ```
+//! New code should depend on `proximadb-codec` directly.
 
-pub mod adaptive;
-pub mod analysis;
-pub mod baseline;
-pub mod codec;
-pub mod gpu;
-pub mod registry;
-pub mod simd_analysis;
-pub mod strategy;
-pub mod traits;
-pub mod types;
-pub mod wire_format;
+// Re-export the entire crate surface at the module root.
+pub use proximadb_codec::*;
 
-// Hardware-accelerated implementations (SIMD + GPU)
-// simd/ directory - consolidated SIMD implementation.
-pub mod simd;
-// Optional experimental feature entrypoint forwards to the active SIMD module.
+// Submodule path aliases — consumers reference these as
+// `crate::compute::proximacodec::<sub>::...` (and via the ops re-export alias),
+// so republish each submodule namespace from the crate.
+pub mod adaptive {
+    pub use proximadb_codec::adaptive::*;
+}
+pub mod analysis {
+    pub use proximadb_codec::analysis::*;
+}
+pub mod baseline {
+    pub use proximadb_codec::baseline::*;
+}
+pub mod batching {
+    pub use proximadb_codec::batching::*;
+}
+pub mod codec {
+    pub use proximadb_codec::codec::*;
+}
+pub mod gpu {
+    pub use proximadb_codec::gpu::*;
+}
+pub mod impls {
+    pub use proximadb_codec::impls::*;
+}
+pub mod registry {
+    pub use proximadb_codec::registry::*;
+}
+pub mod simd {
+    pub use proximadb_codec::simd::*;
+}
+pub mod simd_analysis {
+    pub use proximadb_codec::simd_analysis::*;
+}
+pub mod strategy {
+    pub use proximadb_codec::strategy::*;
+}
+pub mod traits {
+    pub use proximadb_codec::traits::*;
+}
+pub mod types {
+    pub use proximadb_codec::types::*;
+}
+pub mod wire_format {
+    pub use proximadb_codec::wire_format::*;
+}
+// Optional experimental SIMD entrypoint (forwards to the active SIMD module).
 #[cfg(feature = "simd-experimental")]
-pub mod simd_experimental;
-
-// Hardware-aware batching framework (common across SIMD, GPU, Scalar)
-pub mod batching;
-
-// Re-export main types
-pub use codec::ProximaCodec;
-pub use registry::ImplementationRegistry;
-pub use strategy::{
-    AccessTemperature, AuthorityMode, BlockContext, CodecDecision, CodecParameters,
-    CodecSelectionStrategy, ColumnModality, CompressionProfile, CorrelationGroupId, DataAnalysis,
-    DataDomain, DictionaryScope, GraphLayoutHint, IntegerAnalysisStrategy, JsonLayoutHint,
-    LayoutHints, LossPolicy, MlEmbeddingStrategy, PhysicalOrdering, RandomAccessGranularity,
-    RejectedCodecCandidate, RejectionReason, SelectionContext, Sortedness, SparseDataStrategy,
-    StorageSpecialization, StrategyRegistry, TimeSeriesStrategy, VectorLayoutHint, WorkloadProfile,
-};
-pub use traits::{RawDecoder, RawEncoder};
-pub use types::{Decodable, Encodable, ProximaScheme, TypeId};
-pub use wire_format::{WIRE_FORMAT_VERSION, WireFormatManager, WireHeader};
-
-// Implementations
-pub mod impls;
-
-// Integration tests
-#[cfg(test)]
-mod tests;
+pub mod simd_experimental {
+    pub use proximadb_codec::simd_experimental::*;
+}
