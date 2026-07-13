@@ -2337,6 +2337,36 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn check_lease_for_write_with_manager_acquires_and_allows() {
+        // With a PartitionLeaseManager attached (the production wiring when the
+        // lease system is on), check_lease_for_write acquires the lease and
+        // allows the write when there is no contention — the manager-attached
+        // path the registry-only tests above do not cover.
+        use crate::cluster::partition_lease::{PartitionLeaseManager, PartitionLeaseStore};
+        use crate::cluster::primary_pod_registry::PrimaryPodRegistry;
+        use object_store::memory::InMemory;
+        use proximadb_object_store::ProximaObjectStore;
+
+        let backing: std::sync::Arc<dyn object_store::ObjectStore> =
+            std::sync::Arc::new(InMemory::new());
+        let store = PartitionLeaseStore::new(ProximaObjectStore::new(backing), "_operator/leases");
+        let registry = std::sync::Arc::new(PrimaryPodRegistry::new());
+        let manager = std::sync::Arc::new(PartitionLeaseManager::new(
+            std::sync::Arc::new(store),
+            registry.clone(),
+            "pod-self",
+            10_000,
+        ));
+        let ddl = lease_ddl()
+            .with_primary_pod_registry(registry)
+            .with_self_pod_id("pod-self".to_string())
+            .with_partition_lease_manager(manager);
+        ddl.check_lease_for_write(Some("tenant-a"), "coll-1")
+            .await
+            .expect("manager acquires the lease (no contention) => Allow");
+    }
+
     // External-location allowlist (Path Isolation, fail-closed). Serialized by
     // the shared env var; nextest's process-per-test isolation keeps these from
     // racing other tests.
