@@ -655,7 +655,7 @@ mod performance_comparison_tests {
         for chunk in vectors.chunks(1000) {
             let flush_params = FlushParameters {
                 collection_id: Some("test_collection".to_string()),
-                vector_records: chunk.iter().cloned().collect(),
+                vector_records: chunk.to_vec(),
                 force: true,
                 synchronous: true,
                 hints: HashMap::new(),
