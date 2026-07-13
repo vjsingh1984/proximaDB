@@ -32,6 +32,9 @@ proximadb-kernel.workspace = true
 # (Vec<StorageQuantizedData>, &QuantizedVector, UnifiedQuantizationLevel) — moved to
 # foundation by #842, so the port is facade-FREE (no DTO/adaptor layer).
 proximadb-quantization-model.workspace = true
+# Storage-tier: the FilesystemPort names FileSystem / FileOptions / FsResult from
+# this crate (the existing filesystem abstraction). Same-tier dep (storage→storage).
+proximadb-storage-filesystem-types.workspace = true
 
 [lints]
 workspace = true

@@ -1518,3 +1518,36 @@ mod inline_tests {
 
 #[cfg(test)]
 mod comprehensive_tests;
+
+// ============================================================================
+// FilesystemPort impl — Slice D port-inversion (gap 5/6 enabler)
+// ============================================================================
+// Exposes the root-local `FilesystemFactory` behind the `FilesystemPort` trait
+// (defined in `proximadb-storage-ports`) so engine leaves can depend on
+// `Arc<dyn FilesystemPort>` instead of this concrete type, enabling their
+// extraction to crates. Pure delegation to the inherent methods above; the
+// composition root injects `FilesystemFactory` (as `Arc<dyn FilesystemPort>`)
+// into engines. See `EngineFilesystemAccess` in `src/storage/traits/mod.rs` and
+// `ROOT_CRATE_DECOMPOSITION_ENGINES_EXTRACTION_2026_07_12.adoc`.
+#[async_trait::async_trait]
+impl proximadb_storage_ports::FilesystemPort for FilesystemFactory {
+    fn get_filesystem(&self, url: &str) -> FsResult<std::sync::Arc<dyn FileSystem>> {
+        FilesystemFactory::get_filesystem(self, url)
+    }
+
+    async fn create_dir_all(&self, url: &str) -> FsResult<()> {
+        FilesystemFactory::create_dir_all(self, url).await
+    }
+
+    async fn write(&self, url: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
+        FilesystemFactory::write(self, url, data, options).await
+    }
+
+    async fn move_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()> {
+        FilesystemFactory::move_atomic(self, from_url, to_url).await
+    }
+
+    async fn delete(&self, url: &str) -> FsResult<()> {
+        FilesystemFactory::delete(self, url).await
+    }
+}
