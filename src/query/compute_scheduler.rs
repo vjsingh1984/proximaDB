@@ -613,7 +613,11 @@ impl ComputeScheduler {
         let flip_eligible =
             |b: &ComputeBackend| !matches!(b, ComputeBackend::Native) || !shape.join_bearing;
 
-        if model.override_active()
+        // Per-class staged go-live (TD-EXEC-2 §3): the scope gate reads the
+        // DECISION class (the full refined key), so enabling an ancestor prefix
+        // enables all of its refinements — consistent with the hierarchical
+        // consult, even when an ancestor's cells served the recommendation.
+        if model.override_active_for(&class)
             && let Some(consult) = consult.as_ref()
         {
             // Exploration (warm-up) first: rate-limited flip to the baked
@@ -989,6 +993,59 @@ mod tests {
         // Override fires: the route is flipped to the measured-cheaper engine.
         assert_eq!(d.backend, ComputeBackend::Native);
         assert!(d.reason.contains("OVERRIDE"));
+    }
+
+    #[test]
+    fn class_scoped_override_gates_on_the_decision_class() {
+        use crate::query::compute_scheduler::{GeometryClass, OperationClass};
+        use crate::query::route_cost_model::{OverrideScope, RouteCostModel, shape_class};
+        // TD-EXEC-2 per-class staged go-live at the router: two shapes whose
+        // refined classes differ only in operation class; the scope enables one
+        // prefix. Warm identical Native-cheaper evidence under BOTH refined
+        // classes — the scoped-in shape flips, the scoped-out shape stays
+        // static (observe-mode advisory only).
+        let scoped_in = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            operation_class: OperationClass::ScalarAggregate,
+            geometry: GeometryClass::from_estimate(3, 1),
+            ..Default::default()
+        }; // static => DataFusionLocal
+        let scoped_out = QueryShape {
+            operation_class: OperationClass::Grouped,
+            ..scoped_in
+        };
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_recompute_every(1);
+        for shape in [scoped_in, scoped_out] {
+            let class = shape_class(&shape);
+            for _ in 0..5 {
+                model.observe(&class, &ComputeBackend::Native, &io_snap(3, 16 << 20));
+                model.observe(
+                    &class,
+                    &ComputeBackend::DataFusionLocal,
+                    &io_snap(300, 16 << 20),
+                );
+            }
+        }
+        model.set_override_scope(OverrideScope::Classes(vec![
+            "olap/parquet/op=agg".to_string(),
+        ]));
+        let d = ComputeScheduler::new().route_select_advised(scoped_in, Some(&model));
+        assert_eq!(d.backend, ComputeBackend::Native);
+        assert!(d.reason.contains("OVERRIDE"), "got: {}", d.reason);
+        let d = ComputeScheduler::new().route_select_advised(scoped_out, Some(&model));
+        assert_eq!(
+            d.backend,
+            ComputeBackend::DataFusionLocal,
+            "a class outside the override scope must keep its static route"
+        );
+        assert!(
+            !d.reason.contains("OVERRIDE") && !d.reason.contains("EXPLORE"),
+            "scoped-out class must stay observe-only, got: {}",
+            d.reason
+        );
     }
 
     #[test]
