@@ -107,3 +107,111 @@ for f in $(find src/catalog -name '*.rs'); do
   [ -n "$e" ] && echo "COUPLED [$e]: $f" || echo "clean: $f"
 done
 ----
+
+== Live status (cross-machine SOT — supersedes any operator-local memory)
+
+This section is the durable status of the catalog/metrics track. It is committed
+(in-repo), so it is available on every machine/session. The "Recommended
+sequence" above was the original plan; what actually landed is here.
+
+=== Merged to `develop` (all green; storage up-edge ratchet held at 197)
+
+Catalog → `proximadb-catalog`:
+* **Slice 1 (#892, `ac541f188`)** — 9 foundation-pure files: `corpus_version_fs_store`,
+  `internal/{mod,enforcement,information_schema,registry}`, `partition_pruning`,
+  `recall_probe`, `syscat_cache`, `syscat_warm`. Crate +deps (cache,
+  filter-expression, proto, chrono, prost) + a `pub mod proto` re-export. Root
+  `src/catalog/mod.rs` re-exports moved modules (`pub use proximadb_catalog::X;`).
+* **Slice 2 (#894, `dc18d516d`)** — `CatalogManager` + `TableOpLockRegistry`
+  (the central runtime) → crate `manager.rs`, behind a new
+  `CatalogFilesystemResolver` port. `CatalogManager` holds
+  `Option<Arc<dyn CatalogFilesystemResolver>>`; the object-store catalog branch
+  (`s3://`/`gs://`/`az://`) calls the port instead of root `FilesystemFactory`.
+  Root half = `LazyFilesystemResolver` (`src/catalog/filesystem_resolver.rs`)
+  wrapping `FilesystemFactory` in a `tokio::OnceCell` (lazy — factory created on
+  first object-store URL, never for local). Injected at the composition root
+  `shared_services.rs` (~line 513) via `set_filesystem_resolver`;
+  `CatalogManager::new()` stays argless (zero caller/test signature ripple).
+  Recon: `mod.rs` had only ONE real up-edge (`FilesystemFactory`); the
+  `cluster::partition_lease` ref was doc-only.
+* **Slice 3 (#900, `8b3c8d873`)** — `federation/{mod,external,federated_catalog}`
+  → crate. Rewrite: `crate::catalog::traits::Catalog` → `crate::Catalog` (crate
+  exposes `Catalog` at root, no `traits` shim).
+
+Metrics → NEW control crate `proximadb-metrics` (**#907, `f31940693`**):
+~25 foundation-pure files — collectors access/document/query/storage/system +
+`UnifiedMetricsCollector` + `MetricsCollector` trait + `MetricsSample` +
+`MetricsSummary`, `aggregator`, `exporters` (json/prometheus), `schema`,
+`*_metrics` types. Crate deps: catalog + foundation (kernel/proto/config/
+hardware) + chrono + extern (prometheus/lazy_static/dashmap/tokio/etc). Root
+`src/metrics/mod.rs` + `collectors/mod.rs` → re-export shims (re-export moved
+modules from crate; declare deferred modules; crate-root re-exports
+`pub use {schema::Alert, exporters::SystemMetrics, proximadb_config::MetricsConfig}`
+so cross-module `super::Type`/`crate::Type` refs resolve after the
+`crate::metrics::`→`crate::` sed).
+
+=== Next steps (by value/effort)
+
+. **Metrics storage-coupled set → behind a `MetricsStoragePort`** (big remaining
+  piece, observability-Slice-3-scale; ~10 storage up-edges). Deferred files:
+  collectors `engine`/`graph`/`filesystem`, `store`, `updater`, `query_service`,
+  `metering_writer`, `consumption_metrics`, `collection_pin_metrics`,
+  `tier_migration_metrics`, `tests/integration_tests`. Recon the port surface
+  (what metrics calls on storage: `FilesystemFactory`, `UnifiedStorageFormat`,
+  `cache::{CacheTier,CacheMetrics,CrossCacheOrchestrator}`,
+  `tiering::{MigrationResult,PerformanceTier}`, WAL, `collection_pinning`,
+  `path_resolver`, `background_flush_context`) like observability Slice 3 did.
+. **Catalog `iceberg_rest_service` + `segment_registry`** — BOTH blocked on the
+  SAME `ObjectStoreBridge` cycle (`proximadb_storage_common::object_store_bridge::
+  ObjectStoreBridge`; `storage-common → catalog` is a downward edge → catalog→
+  storage-common cycles). Unblock = hoist `ObjectStoreBridge` (+ its
+  `ProximaSchema` dep, foundation-clean — only uses `proximadb-data-model`) to a
+  foundation crate via the re-export-shim pattern (move + storage-common
+  re-exports → ~18 existing users unchanged). Then both files follow
+  `CatalogManager` into the crate.
+
+=== Gotchas (all verified)
+
+* `filesystem.rs` is storage-coupled: develop #906 (`StorageEngineType`
+  consolidation) added `crate::core::types::StorageEngineType` to it; the
+  canonical type lives in `proximadb-storage-common` (a STORAGE crate) →
+  metrics→storage-common would be a control→storage violation. Stays root.
+* `query_service.rs` is NOT foundation-pure: uses `super::store` (deferred).
+  Intra-dep greps that only look for `crate::<subsystem>::` MISS `super::<module>`
+  refs — ALWAYS also grep moved files for `super::<deferred-module>` and
+  `crate::<deferred-module>` before classifying clean vs coupled.
+* `eventlog_metrics.rs` is ORPHAN/dead (never declared in any `mod.rs`, never
+  referenced — same as `src/observability/graph_linking.rs`) with a latent
+  `.inc_by(count: u64)`-on-f64-counter bug (the other `*_metrics.rs` cast
+  `as f64`). Moving it surfaces the bug — leave it in root; don't revive dead
+  code in a move slice.
+* Root subdir `mod.rs` files can hold REAL code, not just declarations:
+  `src/metrics/collectors/mod.rs` defined `UnifiedMetricsCollector` + the
+  `MetricsCollector` trait. Move that code WITH the file (don't leave a
+  declarations-only stub); the file is "clean" iff the code is foundation-pure.
+* When a root re-export shim globs the crate (`pub use proximadb_metrics::*`),
+  it conflicts if root also keeps a same-named module (e.g. `collectors`, kept
+  for the deferred engine/graph). Don't glob then — explicitly re-export the
+  moved modules except the split ones.
+
+=== Workflow reminders
+
+* Worktree off `origin/develop` (`eval "$(scripts/worktree.sh new refactor/<topic>)"`);
+  export the sccache env it prints. `develop` is ACTIVE (parallel
+  engines/sst/exec PRs land constantly) — expect to rebase before merge;
+  `git rebase origin/develop` (rename detection usually auto-applies develop's
+  changes to moved files — verify the crate still compiles after).
+* Verify BEFORE push (don't waste a runner cycle): crate + root
+  `cargo clippy --lib --bins --tests -- -D warnings`; `cargo fmt --check`;
+  `python3 scripts/check_workspace_boundaries.py` (no findings) +
+  `--storage-up-edges` (must stay ≤197); run the relevant nextest suites.
+* PR→`develop` (NOT main); NO agent attribution (the
+  `check_no_agent_attribution.py` hook rejects `Co-Authored-By`/🤖); arm
+  `gh pr merge <n> --auto --squash --delete-branch`.
+* CI ~75min; `Rust Tests (unit)` is the long pole (~50min compile-bound; root
+  single-compile RSS 12.8GB) and occasionally gets CANCELLED by runner
+  reclamation — a flake, not a code bug; rerun `gh run rerun <run-id> --failed`.
+  Poll ~every 10 min to conserve API credits.
+* Martin metrics (code graph): `.victor/project.db` `graph_module_metric` is
+  now FIXED (`instability = Ce/(Ca+Ce)`); use it to confirm a leaf is Ca=0-5
+  before moving. Open readonly.
