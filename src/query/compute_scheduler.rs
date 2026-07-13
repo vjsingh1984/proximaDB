@@ -154,14 +154,122 @@ impl OperationClass {
     }
 }
 
+/// Bucketed estimated plan depth — half of the TD-EXEC-2 geometry tier.
+///
+/// Seed cutoffs: `Shallow` (≤ 6) covers the maximal single-table operator chain
+/// (scan→filter→aggregate→having→project→sort — the ClickBench posture native
+/// wins per TD-OLAP-15); `Mid` (7–12) a few joins; `Deep` (> 12) join trees /
+/// nested subqueries (the TPC-H posture DataFusion wins). The ledger records the
+/// *measured* `plan_depth` per query (TD-EXEC-2 Slice 1), so these bands are
+/// refittable from evidence, not asserted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DepthBand {
+    /// Estimated depth ≤ 6 — a single-table operator chain.
+    Shallow,
+    /// Estimated depth 7–12 — a handful of joins / one nesting level.
+    Mid,
+    /// Estimated depth > 12 — join trees, deep subquery nesting.
+    Deep,
+}
+
+impl DepthBand {
+    /// Bucket an estimated plan depth (operator count on the longest root→leaf path).
+    pub fn from_depth(depth: u32) -> Self {
+        match depth {
+            0..=6 => DepthBand::Shallow,
+            7..=12 => DepthBand::Mid,
+            _ => DepthBand::Deep,
+        }
+    }
+}
+
+/// Bucketed pipeline-breaker count (joins + sorts + aggregates — the ops
+/// `plan_geometry::OpKind::is_blocking` flags) — the other half of the geometry
+/// tier. Blocking count is the strongest engine discriminator TD-OLAP-15
+/// measured: zero/low = streaming scan shapes (native-competitive), high =
+/// join/agg-bound shapes (DataFusion's surface).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockingBand {
+    /// No pipeline breakers — pure scan/filter/project/limit, streams through.
+    Zero,
+    /// 1–2 breakers — a single aggregate and/or sort (scan-heavy analytics).
+    Low,
+    /// ≥ 3 breakers — join-bearing / multi-breaker plans.
+    High,
+}
+
+impl BlockingBand {
+    /// Bucket an estimated pipeline-breaker count.
+    pub fn from_count(count: u32) -> Self {
+        match count {
+            0 => BlockingBand::Zero,
+            1..=2 => BlockingBand::Low,
+            _ => BlockingBand::High,
+        }
+    }
+}
+
+/// TD-EXEC-2 Slice 3: the plan-geometry tier of the cost-model shape-class —
+/// bucketed estimated depth × pipeline-breaker bands, so the EWMA cost cells
+/// accumulate per shape⊕geometry class and `route_select_advised` compares
+/// engines on the geometry they measurably win/lose on (TD-OLAP-15). Estimated
+/// from the AST *before* lowering (the route decision precedes the physical
+/// plan); because `finalize_route` stamps this class into the io_trace, the
+/// consult key and the EWMA fold key are the same by construction. Default
+/// `Unknown` contributes no suffix — the coarse class and warmed cells are
+/// preserved (backward-compatible, like every other signal here).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum GeometryClass {
+    /// No geometry estimate available — class stays coarse.
+    #[default]
+    Unknown,
+    /// Bucketed estimate: depth band × blocking band.
+    Known {
+        /// Bucketed estimated plan depth.
+        depth: DepthBand,
+        /// Bucketed estimated pipeline-breaker count.
+        blocking: BlockingBand,
+    },
+}
+
+impl GeometryClass {
+    /// Bucket an estimated (depth, pipeline-breaker count) pair.
+    pub fn from_estimate(depth: u32, blocking: u32) -> Self {
+        GeometryClass::Known {
+            depth: DepthBand::from_depth(depth),
+            blocking: BlockingBand::from_count(blocking),
+        }
+    }
+
+    /// Stable shape-class suffix `geom=<depth-band>x<blocking-band>`, or `None`
+    /// when unknown (omitted from the key).
+    pub(crate) fn class_suffix(self) -> Option<&'static str> {
+        let GeometryClass::Known { depth, blocking } = self else {
+            return None;
+        };
+        Some(match (depth, blocking) {
+            (DepthBand::Shallow, BlockingBand::Zero) => "geom=sx0",
+            (DepthBand::Shallow, BlockingBand::Low) => "geom=sxlo",
+            (DepthBand::Shallow, BlockingBand::High) => "geom=sxhi",
+            (DepthBand::Mid, BlockingBand::Zero) => "geom=mx0",
+            (DepthBand::Mid, BlockingBand::Low) => "geom=mxlo",
+            (DepthBand::Mid, BlockingBand::High) => "geom=mxhi",
+            (DepthBand::Deep, BlockingBand::Zero) => "geom=dx0",
+            (DepthBand::Deep, BlockingBand::Low) => "geom=dxlo",
+            (DepthBand::Deep, BlockingBand::High) => "geom=dxhi",
+        })
+    }
+}
+
 /// Shape signals the scheduler routes on.
 ///
 /// P0 used only `engages_relational` — the join / `GROUP BY` / aggregate / set-op
 /// gate (the OLAP-shape signal). P1 added `parquet_backed`. C4 Phase-2b adds the
 /// §5.2 Phase-1 inputs — `cardinality` and `partition_fanout` — which refine the
 /// cost-model shape-class so routing and exploration discriminate beyond
-/// `olap/oltp × native/parquet`. TD-OLAP-4 adds `operation_class`. All default to
-/// `Unknown`, preserving the coarse class (and warmed cells).
+/// `olap/oltp × native/parquet`. TD-OLAP-4 adds `operation_class`; TD-EXEC-2
+/// Slice 3 adds `geometry`. All default to `Unknown`, preserving the coarse
+/// class (and warmed cells).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct QueryShape {
     /// The query lowers against the relational algebra engine for a reason the
@@ -183,6 +291,9 @@ pub struct QueryShape {
     /// TD-OLAP-4: the OLAP operation class (metadata-elidable / scalar-aggregate /
     /// grouped / string-heavy) — the geometry dimension the engines win/lose on.
     pub operation_class: OperationClass,
+    /// TD-EXEC-2 Slice 3: bucketed plan-geometry estimate (depth band ×
+    /// pipeline-breaker band) refining the cost-model class. `Unknown` default.
+    pub geometry: GeometryClass,
 }
 
 /// TD-OLAP-1 slice 2: PAX-native OLAP scan gate (inline — not imported from
@@ -446,9 +557,26 @@ impl ComputeScheduler {
         };
         let class = crate::query::route_cost_model::shape_class(&shape);
 
-        // Lock-free consult: a single ArcSwap load + HashMap get. `None` on a
-        // cold table (no baked entry) → keep the static route unchanged.
-        let consult = model.consult(&class);
+        // Lock-free hierarchical consult: the refined class first, then each
+        // coarser ancestor — so a key-refinement tier (geom/op/card) never
+        // orphans warmed cells (ADR-058 D3 density across generations). `None`
+        // at EVERY level → keep the static route unchanged, and count the miss
+        // (a hot class that keeps missing after warm-up means the key
+        // fragmented faster than cells warm).
+        let consulted = model.consult_with_fallback(&class);
+        if consulted.is_none() {
+            crate::metrics::route_metrics::record_consult_miss(&class);
+        }
+        let (consult, consult_class) = match consulted {
+            Some((rec, level)) => (Some(rec), Some(level)),
+            None => (None, None),
+        };
+        // Disclose when an ancestor's cells served the decision (refined cell
+        // still cold) — visible in EXPLAIN/telemetry, zero behavior change.
+        let cells_note = match consult_class.as_deref() {
+            Some(level) if level != class => format!(" [cells: {level}]"),
+            _ => String::new(),
+        };
 
         if model.override_active()
             && let Some(consult) = consult.as_ref()
@@ -473,7 +601,7 @@ impl ComputeScheduler {
             {
                 let prev = backend_label(&decision.backend);
                 decision.reason = format!(
-                    "{} | cost-model EXPLORE {prev}→{} (gathering cost history)",
+                    "{} | cost-model EXPLORE {prev}→{} (gathering cost history){cells_note}",
                     decision.reason,
                     backend_label(target)
                 );
@@ -505,7 +633,7 @@ impl ComputeScheduler {
                 {
                     let prev = backend_label(&decision.backend);
                     decision.reason = format!(
-                        "{} | cost-model OVERRIDE {prev}→{} (RTT budget {budget:.0} exceeded)",
+                        "{} | cost-model OVERRIDE {prev}→{} (RTT budget {budget:.0} exceeded){cells_note}",
                         decision.reason,
                         backend_label(&within.backend)
                     );
@@ -525,7 +653,7 @@ impl ComputeScheduler {
                 {
                     let prev = backend_label(&decision.backend);
                     decision.reason = format!(
-                        "{} | cost-model OVERRIDE {prev}→{} (score {:.1} vs {:.1})",
+                        "{} | cost-model OVERRIDE {prev}→{} (score {:.1} vs {:.1}){cells_note}",
                         decision.reason,
                         backend_label(&challenger.backend),
                         challenger.score,
@@ -555,7 +683,7 @@ impl ComputeScheduler {
                     rec.score
                 )
             };
-            decision.reason = format!("{} | {advisory}", decision.reason);
+            decision.reason = format!("{} | {advisory}{cells_note}", decision.reason);
         }
 
         finalize_route(decision, shape)
