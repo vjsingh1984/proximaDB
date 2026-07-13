@@ -1239,6 +1239,12 @@ struct Methodology {
 struct LedgerRecord {
     benchmark: String,
     query: String,
+    /// Harness sweep label (`native` / `datafusion` / `duckdb`). Serialized as
+    /// `sweep`: the flattened snapshot also carries a `route` key (the STAMPED
+    /// `(shape_class, backend)` tuple), and duplicate JSON keys made parsers
+    /// silently drop this label. `sweep` = which phase ran the query; `route`
+    /// = what the router actually stamped/served.
+    #[serde(rename = "sweep")]
     route: String,
     temperature: String,
     ok: bool,
