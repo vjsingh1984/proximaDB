@@ -34,7 +34,7 @@ pub enum StorageEngineStrategy {
     /// VIPER engine - columnar Parquet with advanced quantization
     Viper,
 
-    /// HELIX engine - time-series optimized storage
+    /// HELIX engine - spatial-locality vector storage (Hilbert-curve clustering, zone maps)
     Helix,
 
     /// NOVA engine - next-gen columnar with integrated quantization

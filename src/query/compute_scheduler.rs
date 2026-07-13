@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! Read-side compute routing — the `ComputeScheduler` (P0).
+//! Read-side compute routing — the `ComputeScheduler`.
 //!
 //! Implements the planner-boundary half of the multi-engine routing contract in
 //! `docs/12-design/DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc`
@@ -23,15 +23,20 @@
 //! * `authority_mode`: control-plane routing decision; no durable authority.
 //! * `policy_boundary`: exactly one engine chosen per query plan at the planner
 //!   boundary (pgwire today), never per row.
-//! * `freshness`: P0 always selects [`ComputeBackend::Native`] — the live
-//!   Volcano executor over WAL+`RecordStorage`, i.e. strong freshness. The
-//!   DataFusion/Polars destinations are declared but not yet wired (course
-//!   correction §4 audit); P1+ flip the OLAP arm once a live DataFusion read
-//!   path exists.
+//! * `freshness`: the static rule keeps strong freshness on
+//!   [`ComputeBackend::Native`] — the live Volcano executor over
+//!   WAL+`RecordStorage`. Only OLAP-shape queries over Parquet-backed tables
+//!   route to `DataFusionLocal` (P1, live behind the default-on
+//!   `datafusion-integration` feature).
 //!
-//! P0 is purely additive: the chosen backend is ALWAYS `Native`, so nothing
-//! about execution changes — the scheduler only makes the decision observable so
-//! later phases have a single, contract-bound place to evolve.
+//! Routing is three tiers behind this one seam: the static shape rule
+//! ([`ComputeScheduler::route_select`]), the trace-driven cost-model consult
+//! ([`ComputeScheduler::route_select_advised`] — observe-mode advisory on every
+//! pgwire relational `SELECT`), and the flag-gated live override
+//! (`PROXIMADB_ROUTE_COST_OVERRIDE`, default OFF — explore/exploit over
+//! freshness-safe candidates with the TD-170 round-trip hard gate; enablement
+//! gated by TD-ROUTE-1's capability-aware candidate fix). The rule engine grows
+//! without moving the seam.
 
 use crate::query::read_route::{
     CandidateReadRoute, ReadFreshnessSla, ReadPolicyBoundary, ReadSplitSummary, RoutedReadPlan,
@@ -345,18 +350,22 @@ fn access_method_for_backend(backend: &ComputeBackend) -> &'static str {
     }
 }
 
-/// Policy/heuristic read-route scheduler (course correction §5.2 Phase 1).
+/// Policy/heuristic read-route scheduler (course correction §5.2, P1 live).
 ///
-/// P0 ALWAYS returns [`ComputeBackend::Native`] (the live Volcano path) — purely
-/// additive, no behavior change — but classifies the workload so the decision is
-/// observable and P1 can flip the OLAP arm to `DataFusionLocal` in exactly one
-/// place. The rule engine grows (cardinality/partition/point-lookup, then the
-/// §5.2 Phase-2 `RLPlanner` learner) without moving this seam.
+/// The static rule routes OLAP-shape queries over Parquet-backed tables to
+/// [`ComputeBackend::DataFusionLocal`] and everything else to `Native` (the live
+/// Volcano path) in exactly one place ([`Self::route_select`]).
+/// [`Self::route_select_advised`] layers the trace-driven cost model on top:
+/// observe-mode advisory by default, with a flag-gated live override
+/// (`PROXIMADB_ROUTE_COST_OVERRIDE`, default OFF) that only flips between
+/// freshness-safe candidates. The rule engine grows
+/// (cardinality/partition/point-lookup, then the §5.2 Phase-2 `RLPlanner`
+/// learner) without moving this seam.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ComputeScheduler;
 
 impl ComputeScheduler {
-    /// Construct the (stateless, P0) scheduler.
+    /// Construct the (stateless) scheduler.
     pub fn new() -> Self {
         Self
     }
