@@ -37,7 +37,7 @@
 //! tunable. They are deliberately *not* calibrated dollar figures.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use arc_swap::ArcSwap;
@@ -61,13 +61,85 @@ pub fn install_route_cost_observer() {
             GLOBAL_ROUTE_COST_MODEL.observe_by_label(shape_class, backend_label, snap);
         },
     )));
-    // Flag-gated live override (default OFF). When PROXIMADB_ROUTE_COST_OVERRIDE
-    // is truthy, the warmed model may flip freshness-safe routes to the cheaper
-    // backend (slice 4); otherwise the model stays observe-only.
-    let on = std::env::var("PROXIMADB_ROUTE_COST_OVERRIDE")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    GLOBAL_ROUTE_COST_MODEL.set_override_enabled(on);
+    // Flag-gated live override (default OFF). PROXIMADB_ROUTE_COST_OVERRIDE is
+    // either the original global bool ("1"/"true" → every class) or, for the
+    // TD-EXEC-2 staged go-live, a comma-separated list of shape-class prefixes
+    // ("olap/parquet/op=agg,olap/parquet/op=cnt") enabling the override only
+    // where cells have been warmed and verified — everything else stays
+    // observe-only. Unparseable values fail safe to OFF.
+    let scope = std::env::var("PROXIMADB_ROUTE_COST_OVERRIDE")
+        .map(|v| OverrideScope::parse(&v))
+        .unwrap_or(OverrideScope::Off);
+    if scope != OverrideScope::Off {
+        tracing::info!("route cost model: live override enabled with scope {scope:?}");
+    }
+    GLOBAL_ROUTE_COST_MODEL.set_override_scope(scope);
+}
+
+// ── Override scope: global bool → per-shape-class staged go-live (D4) ───────
+
+/// Scope of the live route override — ADR-058 D4 kept the flip opt-in and
+/// per-deployment; TD-EXEC-2 §3 plans the go-live "per shape⊕geometry class,
+/// behind the shadow-compare + ratchet". This type carries that staging: a
+/// deployment can enable the override only for the classes whose cells it has
+/// warmed and verified (e.g. via `cargo ledger-tpc`), leaving every other class
+/// observe-only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OverrideScope {
+    /// Observe-only (the default): the model never changes a route.
+    Off,
+    /// Override enabled for every shape-class (the original global bool).
+    All,
+    /// Override enabled only for shape-classes matching one of these prefixes
+    /// on a `/` boundary — `olap/parquet/op=agg` covers all of its geometry
+    /// refinements (`olap/parquet/op=agg/geom=sx0`, …) but not the sibling
+    /// `olap/parquet/op=grp`.
+    Classes(Vec<String>),
+}
+
+impl OverrideScope {
+    /// Parse the `PROXIMADB_ROUTE_COST_OVERRIDE` value. `"1"`/`"true"` → [`Self::All`];
+    /// empty/`"0"`/`"false"` → [`Self::Off`]; otherwise a comma-separated list of
+    /// shape-class prefixes (tokens must contain `/` — the minimal well-formed
+    /// class key is `workload/base`). A value with no well-formed token fails
+    /// safe to [`Self::Off`] — a typo must never silently enable a global flip.
+    pub fn parse(raw: &str) -> Self {
+        let v = raw.trim();
+        if v.is_empty() || v == "0" || v.eq_ignore_ascii_case("false") {
+            return Self::Off;
+        }
+        if v == "1" || v.eq_ignore_ascii_case("true") {
+            return Self::All;
+        }
+        let classes: Vec<String> = v
+            .split(',')
+            .map(str::trim)
+            .filter(|t| t.contains('/'))
+            .map(str::to_string)
+            .collect();
+        if classes.is_empty() {
+            Self::Off
+        } else {
+            Self::Classes(classes)
+        }
+    }
+
+    /// Whether the override may fire for `shape_class` under this scope.
+    /// Prefix matching is on `/` boundaries, mirroring the hierarchical class
+    /// key (`consult_with_fallback`): enabling an ancestor enables all of its
+    /// refinements, never a lexical near-miss.
+    pub fn enables(&self, shape_class: &str) -> bool {
+        match self {
+            Self::Off => false,
+            Self::All => true,
+            Self::Classes(prefixes) => prefixes.iter().any(|p| {
+                shape_class == p.as_str()
+                    || shape_class
+                        .strip_prefix(p.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+            }),
+        }
+    }
 }
 
 // ── Persistence: let the measured cost history survive restarts ─────────────
@@ -671,8 +743,16 @@ pub trait RouteConsult {
             }
         }
     }
-    /// Whether live override is currently enabled (reads the live `AtomicBool`).
+    /// Whether live override is enabled for ANY class (reads the live scope).
     fn override_active(&self) -> bool;
+    /// Whether live override may fire for `shape_class` (per-class staged
+    /// go-live, TD-EXEC-2 §3). Defaults to the global answer so a test double
+    /// that only models the bool keeps working; the concrete model refines it
+    /// against its [`OverrideScope`].
+    fn override_active_for(&self, shape_class: &str) -> bool {
+        let _ = shape_class;
+        self.override_active()
+    }
     /// Advance and return the exploration rate-limit tick (pre-increment value).
     fn next_exploration_tick(&self) -> u64;
     /// Config surfaced for the consult's gate logic.
@@ -729,9 +809,10 @@ pub struct RouteCostModel {
     weights: CostWeights,
     /// Minimum samples before a backend's estimate is trusted enough to compare.
     min_samples: u64,
-    /// Live route override (flag-gated; default OFF → observe-only). Interior
-    /// mutability so the process-global model can be toggled at startup.
-    override_enabled: AtomicBool,
+    /// Live route override scope (flag-gated; default [`OverrideScope::Off`] →
+    /// observe-only). `ArcSwap` so the process-global model can be re-scoped at
+    /// startup while consults read it lock-free.
+    override_scope: ArcSwap<OverrideScope>,
     /// Minimum fractional cost advantage the recommended backend must beat the
     /// static choice by before a live override fires — guards against flapping
     /// on marginal/noisy differences.
@@ -783,7 +864,7 @@ impl RouteCostModel {
             alpha: 0.2,
             weights: CostWeights::default(),
             min_samples: 3,
-            override_enabled: AtomicBool::new(false),
+            override_scope: ArcSwap::from_pointee(OverrideScope::Off),
             min_advantage: 0.15,
             explore_tick: AtomicU64::new(0),
             exploration_interval: 16,
@@ -829,19 +910,38 @@ impl RouteCostModel {
         self
     }
 
-    /// Enable/disable live route override (flag-gated; default OFF). Enabling
-    /// forces a frozen-table recompute so the very first override consult reads
-    /// current history, not a possibly-stale debounced snapshot.
+    /// Enable/disable live route override for EVERY class (flag-gated; default
+    /// OFF). The original global-bool form, kept for tests and callers that
+    /// don't stage per-class; equivalent to [`Self::set_override_scope`] with
+    /// [`OverrideScope::All`] / [`OverrideScope::Off`].
     pub fn set_override_enabled(&self, on: bool) {
-        self.override_enabled.store(on, Ordering::Relaxed);
-        if on {
+        self.set_override_scope(if on {
+            OverrideScope::All
+        } else {
+            OverrideScope::Off
+        });
+    }
+
+    /// Set the live-override scope (TD-EXEC-2 per-shape-class staged go-live).
+    /// Enabling any scope forces a frozen-table recompute so the very first
+    /// override consult reads current history, not a possibly-stale debounced
+    /// snapshot.
+    pub fn set_override_scope(&self, scope: OverrideScope) {
+        let enabled = scope != OverrideScope::Off;
+        self.override_scope.store(Arc::new(scope));
+        if enabled {
             self.recompute_locked();
         }
     }
 
-    /// Whether live override is currently enabled.
+    /// Whether live override is enabled for ANY class (scope is not `Off`).
     pub fn override_active(&self) -> bool {
-        self.override_enabled.load(Ordering::Relaxed)
+        !matches!(**self.override_scope.load(), OverrideScope::Off)
+    }
+
+    /// Whether live override may fire for `shape_class` under the current scope.
+    pub fn override_active_for(&self, shape_class: &str) -> bool {
+        self.override_scope.load().enables(shape_class)
     }
 
     /// The §3 unified `Cost(q)` in neutral units: read (GETs + bandwidth) +
@@ -1008,7 +1108,7 @@ impl RouteCostModel {
         static_backend: &ComputeBackend,
         candidates: &[ComputeBackend],
     ) -> Option<RouteRecommendation> {
-        if !self.override_active() {
+        if !self.override_active_for(shape_class) {
             return None;
         }
         let static_cost = self.estimate(shape_class, static_backend)?;
@@ -1060,7 +1160,7 @@ impl RouteCostModel {
         shape_class: &str,
         candidates: &[ComputeBackend],
     ) -> Option<ComputeBackend> {
-        if !self.override_active() || candidates.len() < 2 {
+        if !self.override_active_for(shape_class) || candidates.len() < 2 {
             return None;
         }
         let (cand, samples) = candidates
@@ -1093,7 +1193,10 @@ impl RouteConsult for RouteCostModel {
         self.table.load().by_class.get(shape_class).cloned()
     }
     fn override_active(&self) -> bool {
-        self.override_enabled.load(Ordering::Relaxed)
+        RouteCostModel::override_active(self)
+    }
+    fn override_active_for(&self, shape_class: &str) -> bool {
+        RouteCostModel::override_active_for(self, shape_class)
     }
     fn next_exploration_tick(&self) -> u64 {
         self.explore_tick.fetch_add(1, Ordering::Relaxed)
@@ -1691,6 +1794,95 @@ mod tests {
             .recommend_override("olap/parquet", &ComputeBackend::Native, &cands)
             .expect("confident, enabled → override");
         assert_eq!(rec.backend, ComputeBackend::DataFusionLocal);
+    }
+
+    #[test]
+    fn override_scope_parses_global_class_list_and_garbage_forms() {
+        // Global bool forms (backward-compatible).
+        assert_eq!(OverrideScope::parse("1"), OverrideScope::All);
+        assert_eq!(OverrideScope::parse("true"), OverrideScope::All);
+        assert_eq!(OverrideScope::parse("TRUE"), OverrideScope::All);
+        assert_eq!(OverrideScope::parse(""), OverrideScope::Off);
+        assert_eq!(OverrideScope::parse("0"), OverrideScope::Off);
+        assert_eq!(OverrideScope::parse("false"), OverrideScope::Off);
+        // Per-class staged form: comma-separated class prefixes.
+        assert_eq!(
+            OverrideScope::parse("olap/parquet/op=agg, olap/parquet/op=cnt"),
+            OverrideScope::Classes(vec![
+                "olap/parquet/op=agg".to_string(),
+                "olap/parquet/op=cnt".to_string(),
+            ])
+        );
+        // Malformed tokens (no `/`) are dropped; all-malformed fails safe OFF —
+        // a typo must never silently become a global enable.
+        assert_eq!(OverrideScope::parse("yes"), OverrideScope::Off);
+        assert_eq!(OverrideScope::parse("olap,oltp"), OverrideScope::Off);
+        assert_eq!(
+            OverrideScope::parse("garbage, olap/parquet"),
+            OverrideScope::Classes(vec!["olap/parquet".to_string()])
+        );
+    }
+
+    #[test]
+    fn override_scope_enables_on_slash_boundaries_only() {
+        let scope = OverrideScope::Classes(vec!["olap/parquet/op=agg".to_string()]);
+        // Exact match and refinements are enabled…
+        assert!(scope.enables("olap/parquet/op=agg"));
+        assert!(scope.enables("olap/parquet/op=agg/geom=sx0"));
+        // …siblings, ancestors, and lexical near-misses are not.
+        assert!(!scope.enables("olap/parquet/op=grp"));
+        assert!(!scope.enables("olap/parquet"));
+        assert!(!scope.enables("olap/parquet/op=agg2"));
+        assert!(OverrideScope::All.enables("anything/at/all"));
+        assert!(!OverrideScope::Off.enables("olap/parquet"));
+    }
+
+    #[test]
+    fn class_scoped_override_flips_only_matching_classes() {
+        // TD-EXEC-2 per-class staged go-live: warm identical evidence under two
+        // classes; scope the override to one. Only that class may flip — the
+        // other stays observe-only, and exploration is scoped identically.
+        let m = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_exploration_interval(1);
+        let enabled_class = "olap/parquet/op=agg/geom=sx0";
+        let disabled_class = "olap/parquet/op=grp/geom=mxhi";
+        for class in [enabled_class, disabled_class] {
+            warm_class_df_cheaper(&m, class);
+        }
+        m.set_override_scope(OverrideScope::Classes(vec![
+            "olap/parquet/op=agg".to_string(),
+        ]));
+        assert!(m.override_active(), "a class scope counts as active");
+        let cands = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+        let rec = m
+            .recommend_override(enabled_class, &ComputeBackend::Native, &cands)
+            .expect("scoped-in class must flip");
+        assert_eq!(rec.backend, ComputeBackend::DataFusionLocal);
+        assert!(
+            m.recommend_override(disabled_class, &ComputeBackend::Native, &cands)
+                .is_none(),
+            "scoped-out class must stay observe-only"
+        );
+        // Exploration honors the same scope: cold candidate under the disabled
+        // class is never probed.
+        let cold_out = "olap/parquet/op=grp/geom=dxhi";
+        m.observe_by_label(cold_out, "Native(Volcano)", &snap(2, 4096, 1));
+        assert!(m.exploration_choice(cold_out, &cands).is_none());
+        let cold_in = "olap/parquet/op=agg/geom=dxhi";
+        m.observe_by_label(cold_in, "Native(Volcano)", &snap(2, 4096, 1));
+        assert_eq!(
+            m.exploration_choice(cold_in, &cands),
+            Some(ComputeBackend::DataFusionLocal)
+        );
+    }
+
+    /// Warm `class` so DataFusion is much cheaper than Native.
+    fn warm_class_df_cheaper(m: &RouteCostModel, class: &str) {
+        for _ in 0..5 {
+            m.observe_by_label(class, "DataFusionLocal", &snap(4, 16 << 20, 50));
+            m.observe_by_label(class, "Native(Volcano)", &snap(400, 16 << 20, 20));
+        }
     }
 
     #[test]
