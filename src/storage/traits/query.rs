@@ -190,29 +190,25 @@ pub struct QuantizationLevel {
 
 impl StorageQueryContext {
     /// Parse quantization config into ready-to-use format for progressive search.
+    ///
+    /// Note: this storage-traits layer only *parses* the supplied config. Smart
+    /// default generation (which depends on the vector modality crate) is owned
+    /// by the higher layer that constructs the collection config — see
+    /// `services/collection/manager.rs`, which populates `custom_levels` at
+    /// collection-create time via the smart-defaults generator. When a config
+    /// reaches here with no `custom_levels`, there are simply no progressive
+    /// levels configured (the consumer never second-guesses the producer).
     fn parse_quantization_config(
         quant_config: &crate::proto::proximadb_v1::QuantizationConfig,
-        dimension: usize,
+        _dimension: usize,
     ) -> Option<ParsedQuantizationConfig> {
         if !quant_config.enabled.unwrap_or(false) {
             return None;
         }
 
-        // Parse or generate progressive levels
-        let progressive_levels = if quant_config.custom_levels.is_empty() {
-            // Use smart defaults if no custom levels provided
-            if let Ok(smart_config) =
-                crate::compute::quantization::QuantizationSmartDefaults::generate_for_dimension(
-                    dimension,
-                )
-            {
-                Self::parse_proto_levels(&smart_config.custom_levels)
-            } else {
-                Vec::new()
-            }
-        } else {
-            Self::parse_proto_levels(&quant_config.custom_levels)
-        };
+        // Parse the progressive levels supplied by the config producer.
+        // Empty custom_levels ⇒ no progressive levels (no modality fallback here).
+        let progressive_levels = Self::parse_proto_levels(&quant_config.custom_levels);
 
         Some(ParsedQuantizationConfig {
             strategy: quant_config.strategy(),
