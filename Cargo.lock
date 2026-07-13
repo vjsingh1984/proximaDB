@@ -8088,6 +8088,7 @@ dependencies = [
  "proximadb-proto",
  "proximadb-quantization-model",
  "proximadb-storage-common",
+ "serde",
 ]
 
 [[package]]

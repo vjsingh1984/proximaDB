@@ -83,30 +83,13 @@ pub enum ScanStrategy {
     },
 }
 
-/// Scan capabilities derived from actual engine implementations
-#[derive(Debug, Clone, Default)]
-pub struct ScanCapabilities {
-    // From VIPER/NOVA (columnar engines)
-    pub supports_predicate_pushdown: bool,
-    pub supports_column_projection: bool,
-    pub supports_row_group_pruning: bool,
-    pub supports_parallel_column_evaluation: bool,
-
-    // From SST (hybrid columnar engine)
-    pub supports_bloom_filters: bool,
-    pub supports_block_cache: bool,
-    pub supports_range_scans: bool,
-    pub supports_index_scans: bool,
-
-    // From NOVA (progressive search)
-    pub supports_progressive_quantization: bool,
-    pub supports_zone_maps: bool,
-    pub supports_streaming: bool,
-
-    // From RAPTOR (tiered storage)
-    pub supports_tier_aware_scanning: bool,
-    pub supports_consolidated_reading: bool,
-}
+/// Scan capabilities derived from actual engine implementations (re-export).
+///
+/// `ScanCapabilities` has been hoisted to the `proximadb-storage-ports` crate
+/// alongside the rest of the engine-capability descriptor cluster. This thin
+/// re-export preserves the existing `crate::storage::scan_strategy::ScanCapabilities`
+/// path so every caller resolves unchanged.
+pub use proximadb_storage_ports::ScanCapabilities;
 
 /// Scan iterator following existing patterns
 #[async_trait]
