@@ -7050,8 +7050,14 @@ name = "proximadb-codec"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "metal",
+ "proximadb-config",
+ "proximadb-hardware-caps",
+ "proximadb-runtime-common",
+ "rayon",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
