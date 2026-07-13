@@ -474,6 +474,15 @@ pub struct DdlService {
     /// persists the definition so it is re-registered after a restart; absent
     /// for embedded/test paths (the in-process registration still happens).
     function_store: Option<Arc<dyn crate::services::FunctionStore>>,
+    /// Partition-lease manager for per-collection write authority. When present
+    /// (alongside a registry + pod id), collection/table-scoped DDL consults the
+    /// lease before executing so writes are split-brain-free. `None` ⇒ inert.
+    partition_lease_manager: Option<Arc<crate::cluster::partition_lease::PartitionLeaseManager>>,
+    /// Primary-pod registry for write routing; the in-memory fallback consulted
+    /// by the lease check (and the authority when no lease manager is attached).
+    primary_pod_registry: Option<Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>>,
+    /// This pod's identity for write-routing comparisons.
+    self_pod_id: Option<String>,
 }
 
 impl DdlService {
@@ -485,6 +494,9 @@ impl DdlService {
             rank_profile_store: None,
             rank_services: None,
             function_store: None,
+            partition_lease_manager: None,
+            primary_pod_registry: None,
+            self_pod_id: None,
         }
     }
 
@@ -525,6 +537,75 @@ impl DdlService {
         self
     }
 
+    /// Attach the partition-lease manager for per-collection write authority.
+    /// When the lease system is on (`PROXIMADB_PARTITION_LEASE_ON`), the
+    /// `SharedServices` composition root attaches this so collection/table-scoped
+    /// DDL consults the lease before executing. Inert by default.
+    pub fn with_partition_lease_manager(
+        mut self,
+        manager: Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
+    ) -> Self {
+        self.partition_lease_manager = Some(manager);
+        self
+    }
+
+    /// Attach the primary-pod registry used for write-routing decisions.
+    pub fn with_primary_pod_registry(
+        mut self,
+        registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+    ) -> Self {
+        self.primary_pod_registry = Some(registry);
+        self
+    }
+
+    /// Attach this pod's identity for write-routing comparisons.
+    pub fn with_self_pod_id(mut self, pod_id: String) -> Self {
+        self.self_pod_id = Some(pod_id);
+        self
+    }
+
+    /// Consult the write lease before a collection/table-scoped DDL.
+    ///
+    /// Returns `Ok(())` when the write is allowed, or when lease enforcement is
+    /// not wired (registry or pod-id is `None`). The lease manager is optional:
+    /// present ⇒ lease acquire/renew; absent ⇒ in-memory registry lookup only.
+    /// Returns `Err` naming the target pod when another pod holds authority.
+    ///
+    /// This is a latency / fast-fail optimization; the object-store generation
+    /// fence in `SystemCatalog` remains the correctness authority (ADR-032).
+    async fn check_lease_for_write(&self, tenant: Option<&str>, collection_id: &str) -> Result<()> {
+        use crate::cluster::primary_pod_registry::{
+            WriteRoutingDecision, consult_for_write_leased,
+        };
+        // Inert unless a registry + pod id are wired (the essentials for any
+        // routing decision). The lease manager is optional: present ⇒ lease
+        // acquire/renew; absent ⇒ in-memory registry lookup only.
+        let (registry, pod_id) = match (&self.primary_pod_registry, &self.self_pod_id) {
+            (Some(r), Some(p)) => (r, p),
+            _ => return Ok(()),
+        };
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let decision = consult_for_write_leased(
+            registry,
+            self.partition_lease_manager.as_deref(),
+            pod_id,
+            tenant.unwrap_or("default"),
+            collection_id,
+            now_ms,
+        )
+        .await
+        .map_err(|e| anyhow!("DDL lease check failed: {e}"))?;
+        match decision {
+            WriteRoutingDecision::Allow => Ok(()),
+            WriteRoutingDecision::Misrouted { target_pod } => Err(anyhow!(
+                "DDL misrouted: write for collection '{collection_id}' must go to pod '{target_pod}'"
+            )),
+        }
+    }
+
     /// Execute a DDL statement
     ///
     /// This is the main entry point for DDL operations. It dispatches to the appropriate
@@ -553,6 +634,7 @@ impl DdlService {
                 if_not_exists,
                 properties,
             } => {
+                self.check_lease_for_write(tenant, &table_name).await?;
                 self.create_table(
                     &table_name,
                     columns,
@@ -567,11 +649,17 @@ impl DdlService {
                 table_name,
                 if_exists,
                 purge,
-            } => self.drop_table(&table_name, if_exists, purge, tenant).await,
+            } => {
+                self.check_lease_for_write(tenant, &table_name).await?;
+                self.drop_table(&table_name, if_exists, purge, tenant).await
+            }
             DdlStatement::AlterTable {
                 table_name,
                 changes,
-            } => self.alter_table(&table_name, changes, tenant).await,
+            } => {
+                self.check_lease_for_write(tenant, &table_name).await?;
+                self.alter_table(&table_name, changes, tenant).await
+            }
             DdlStatement::MaterializeTable { name } => {
                 let materializer = self.materializer.as_ref().ok_or_else(|| {
                     anyhow!(
@@ -2197,6 +2285,56 @@ mod tests {
         let result = DdlResult::success("Operation completed");
         assert!(result.success);
         assert_eq!(result.affected_count, 1);
+    }
+
+    // --- DDL write-lease enforcement (check_lease_for_write, ADR-032) ---
+    // The lease manager is optional; these exercise the in-memory registry path
+    // (manager = None), which is the routing fallback consult_for_write_leased
+    // uses when no manager is attached.
+    fn lease_ddl() -> DdlService {
+        DdlService::new(std::sync::Arc::new(CatalogManager::new()))
+    }
+
+    #[tokio::test]
+    async fn check_lease_for_write_is_noop_when_not_wired() {
+        // No registry / pod id attached ⇒ inert; every DDL is allowed.
+        let ddl = lease_ddl();
+        ddl.check_lease_for_write(Some("tenant-a"), "coll-1")
+            .await
+            .expect("inert when lease not wired");
+    }
+
+    #[tokio::test]
+    async fn check_lease_for_write_allows_when_self_is_primary() {
+        use crate::cluster::primary_pod_registry::{AssignmentReason, PrimaryPodRegistry};
+        let registry = std::sync::Arc::new(PrimaryPodRegistry::new());
+        registry.assign("tenant-a", "coll-1", "pod-self", AssignmentReason::Create);
+        let ddl = lease_ddl()
+            .with_primary_pod_registry(registry)
+            .with_self_pod_id("pod-self".to_string());
+        ddl.check_lease_for_write(Some("tenant-a"), "coll-1")
+            .await
+            .expect("allowed when self holds the binding");
+    }
+
+    #[tokio::test]
+    async fn check_lease_for_write_rejects_misrouted_ddl() {
+        use crate::cluster::primary_pod_registry::{AssignmentReason, PrimaryPodRegistry};
+        let registry = std::sync::Arc::new(PrimaryPodRegistry::new());
+        registry.assign("tenant-a", "coll-1", "pod-other", AssignmentReason::Create);
+        let ddl = lease_ddl()
+            .with_primary_pod_registry(registry)
+            .with_self_pod_id("pod-self".to_string());
+        let err = ddl
+            .check_lease_for_write(Some("tenant-a"), "coll-1")
+            .await
+            .expect_err("misrouted DDL must be rejected");
+        let msg = format!("{err}");
+        assert!(msg.contains("misrouted"), "unexpected error: {msg}");
+        assert!(
+            msg.contains("pod-other"),
+            "error should name the target pod: {msg}"
+        );
     }
 
     // External-location allowlist (Path Isolation, fail-closed). Serialized by
