@@ -85,6 +85,7 @@ fn search_params(query: Vec<f32>, metric: DistanceMetric, force_exact: bool) -> 
         top_k: Some(TOP_K),
         distance_metric: Some(metric),
         block_prune: BlockPruneConfig {
+            radius_k: 0.0,
             force_exact,
             mode: BlockPruneMode::Sqrt,
             ratio: 0.2,

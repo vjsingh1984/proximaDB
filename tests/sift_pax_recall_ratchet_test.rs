@@ -199,6 +199,7 @@ async fn search_topk(engine: &SstEngine, collection: &Collection, query: Vec<f32
             top_k: Some(TOP_K),
             distance_metric: Some(DistanceMetric::Euclidean),
             block_prune: BlockPruneConfig {
+                radius_k: 0.0,
                 force_exact: false,
                 mode: BlockPruneMode::Ratio,
                 ratio: 1.0,
@@ -499,6 +500,150 @@ async fn sift_voe_centroid_prune_recall_at_10_ratchet() {
          default-ON flip BLOCKED until the clustering/nprobe is tuned \
          (PROXIMADB_PAX_CENTROID_PRUNE_RATIO / S4 IVF clustering)"
     );
+}
+
+/// LOCAL nprobe sweep — a MEASUREMENT, not a CI gate (`#[ignore]`; run with
+/// `--ignored`). Loads SIFT once, computes ground truth once, then measures pruned
+/// recall@10 across a set of keep-ratios so the whole recall-vs-blocks-pruned curve
+/// is traced in ONE run (load + brute-force GT dominate; the per-ratio re-search is
+/// cheap since only the read-side `PROXIMADB_PAX_CENTROID_PRUNE_RATIO` changes — the
+/// flushed segment + VOE directory are ratio-independent). Asserts nothing about
+/// recall; it prints a table for the flip-vs-IVF decision. `keep=1.0` keeps all
+/// blocks ⇒ ~unpruned baseline (a sanity anchor). Run:
+///   PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=100000 \
+///     cargo test --test sift_pax_recall_ratchet_test \
+///     sift_voe_centroid_prune_ratio_sweep -- --ignored --nocapture
+#[tokio::test]
+#[ignore = "local measurement; needs SIFT1M + long runtime (not a CI gate)"]
+async fn sift_voe_centroid_prune_ratio_sweep() {
+    unsafe {
+        std::env::set_var("PROXIMADB_PAX_VECTOR_SEGMENTS", "1");
+        std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rabitq");
+        std::env::set_var("PROXIMADB_PAX_BLOCK_CLUSTER", "1");
+        std::env::set_var("PROXIMADB_PAX_CENTROID_PRUNE", "1");
+        std::env::set_var("PROXIMADB_PAX_CENTROID_PRUNE_MIN_BLOCKS", "2");
+    }
+    let base_path = match dataset_path("sift_base.fvecs") {
+        Some(p) if p.exists() => p,
+        _ => {
+            eprintln!("skip: PROXIMADB_SIFT_DATASET_DIR unset/missing — sweep needs SIFT1M");
+            return;
+        }
+    };
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let subset_n: Option<usize> = std::env::var("PROXIMADB_SIFT_N")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0);
+    let max_queries: usize = std::env::var("PROXIMADB_SIFT_QUERIES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_QUERIES);
+
+    let temp_dir = TempDir::new().unwrap();
+    let collection = collection("sift_voe_prune_sweep", &temp_dir);
+    let engine = SstEngine::new().await.unwrap().with_directory_cache(Arc::new(
+        proximadb::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
+    ));
+
+    let base = read_vec_records_f32(&base_path, subset_n).expect("read sift_base.fvecs");
+    let n = base.len();
+    assert!(n >= TOP_K, "need at least {TOP_K} base vectors, got {n}");
+
+    // Flush ONCE — clustering + centroids are ratio-independent; only the read-side
+    // prune fraction varies across the sweep.
+    let mut batch: Vec<VectorRecord> = Vec::with_capacity(BATCH_SIZE);
+    for (i, v) in base.iter().enumerate() {
+        batch.push(vector_record(i as u32, v.clone()));
+        if batch.len() == BATCH_SIZE {
+            let b = std::mem::take(&mut batch);
+            flush_batch(&engine, &collection, b).await;
+        }
+    }
+    if !batch.is_empty() {
+        flush_batch(&engine, &collection, batch).await;
+    }
+
+    // Queries + ground truth: computed ONCE, shared across every ratio.
+    let query_path = dataset_path("sift_query.fvecs");
+    let queries: Vec<Vec<f32>> = match query_path.as_ref().filter(|p| p.exists()) {
+        Some(p) => read_vec_records_f32(p, Some(max_queries)).expect("read sift_query.fvecs"),
+        None => base.iter().take(max_queries.min(n)).cloned().collect(),
+    };
+    let qcount = queries.len();
+    let gt_path = dataset_path("sift_groundtruth.ivecs");
+    let use_provided_gt = subset_n.is_none() && gt_path.as_ref().is_some_and(|p| p.exists());
+    let ground_truth: Vec<std::collections::HashSet<String>> = if use_provided_gt {
+        let gt = read_vec_records_u32(gt_path.as_ref().unwrap(), Some(qcount)).expect("read gt");
+        gt.into_iter()
+            .map(|row| row.into_iter().take(TOP_K).map(vid).collect())
+            .collect()
+    } else {
+        queries
+            .iter()
+            .map(|q| brute_force_topk(&base, q, TOP_K).into_iter().collect())
+            .collect()
+    };
+    drop(base);
+
+    let ratios = [1.0f64, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3];
+    // Lever-3: radius weight k in the prune score d(q,c) − k·radius. k=0 = today's
+    // centroid-only ranking (baseline row); k>0 favours spread-out blocks.
+    let radius_ks = [0.0f64, 1.0, 2.0];
+    eprintln!(
+        "=== SIFT VOE centroid-prune nprobe × radius-k sweep (N={n}, {qcount} queries, top-{TOP_K}) ==="
+    );
+    eprintln!(
+        "{:>5}  {:>6}  {:>8}  {:>8}  {:>8}  {:>8}",
+        "k", "keep", "recall", "total", "pruned", "pruned%"
+    );
+    for k in radius_ks {
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_CENTROID_RADIUS_K", format!("{k}"));
+        }
+        for keep in ratios {
+            unsafe {
+                std::env::set_var("PROXIMADB_PAX_CENTROID_PRUNE_RATIO", format!("{keep}"));
+            }
+            // One io_trace scope per ratio so the centroid counters reset + accumulate
+            // over just this ratio's query loop.
+            let (recall, measured, snap) = proximadb::observability::io_trace::scope(async {
+                let mut recall_sum = 0.0f64;
+                let mut measured = 0usize;
+                for (qi, query) in queries.iter().enumerate() {
+                    let got = search_topk(&engine, &collection, query.clone()).await;
+                    if got.is_empty() {
+                        continue;
+                    }
+                    let got_ids: std::collections::HashSet<String> =
+                        got.into_iter().take(TOP_K).collect();
+                    recall_sum +=
+                        got_ids.intersection(&ground_truth[qi]).count() as f64 / TOP_K as f64;
+                    measured += 1;
+                }
+                let recall = if measured > 0 {
+                    recall_sum / measured as f64
+                } else {
+                    0.0
+                };
+                let snap =
+                    proximadb::observability::io_trace::snapshot().expect("io_trace scope active");
+                (recall, measured, snap)
+            })
+            .await;
+            let total = snap.centroid_total_blocks;
+            let pruned = snap.centroid_pruned_blocks;
+            let pct = if total > 0 {
+                100.0 * pruned as f64 / total as f64
+            } else {
+                0.0
+            };
+            eprintln!(
+                "{k:>5.1}  {keep:>6.2}  {recall:>8.4}  {total:>8}  {pruned:>8}  {pct:>7.1}%  (measured={measured})"
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

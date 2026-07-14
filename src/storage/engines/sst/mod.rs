@@ -732,6 +732,12 @@ pub struct IndexEntry {
     /// FP16 quantized centroid (50% storage reduction, <0.1% distance error)
     /// When present, this is used for block selection; block_centroid is kept for backward compatibility
     pub block_centroid_fp16: Option<Vec<u16>>,
+    /// TD-RDSTRAT-5 lever-3: block RMS radius (spread). Enables the distance
+    /// lower-bound prune score `d(q,centroid) − k·radius`. `#[serde(default)]` →
+    /// legacy entries (no radius) deserialize to `0.0` = today's centroid-only
+    /// ranking (mixed-read-safe).
+    #[serde(default)]
+    pub block_radius: f32,
 
     /// Minimum values for each metadata column in this block
     pub metadata_min_values: HashMap<String, serde_json::Value>,
@@ -1383,6 +1389,7 @@ impl IndexEntry {
             compressed,
             block_centroid,
             block_centroid_fp16,
+            block_radius: 0.0, // legacy SSTable header carries no radius (lever-3 is PAX-only)
             metadata_min_values,
             metadata_max_values,
             metadata_null_counts,
@@ -2065,6 +2072,7 @@ mod bplustree_tests {
     fn create_test_entries(count: usize) -> Vec<IndexEntry> {
         (0..count)
             .map(|i| IndexEntry {
+                block_radius: 0.0,
                 key: format!("key_{:05}", i),
                 last_key: None,
                 offset: i as u64 * 1000,

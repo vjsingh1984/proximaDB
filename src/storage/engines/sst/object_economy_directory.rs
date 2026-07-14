@@ -79,6 +79,12 @@ pub struct ObjectEconomyBlockEntry {
     pub record_count: u32,
     pub centroid_fp16: Option<Vec<u16>>,
     pub centroid_fp32: Option<Vec<f32>>,
+    /// TD-RDSTRAT-5 lever-3: block RMS radius (spread). `#[serde(default)]` →
+    /// legacy sidecars (no radius) deserialize to `0.0`, so the read-side prune
+    /// scores `d(q,c) − k·0 = d(q,c)` (today's centroid-only ranking) — a change
+    /// is mixed-read-safe until segments are re-flushed with the field.
+    #[serde(default)]
+    pub centroid_radius: f32,
     pub zorder_code: Option<SpatialCode>,
     pub metadata_min_values: serde_json::Map<String, serde_json::Value>,
     pub metadata_max_values: serde_json::Map<String, serde_json::Value>,
@@ -324,6 +330,7 @@ impl ObjectEconomyBlockEntry {
             } else {
                 Some(entry.block_centroid.clone())
             },
+            centroid_radius: entry.block_radius,
             zorder_code: entry.zorder_code.clone(),
             metadata_min_values: entry.metadata_min_values.clone().into_iter().collect(),
             metadata_max_values: entry.metadata_max_values.clone().into_iter().collect(),

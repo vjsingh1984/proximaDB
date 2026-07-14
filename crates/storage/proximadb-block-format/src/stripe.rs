@@ -368,6 +368,12 @@ pub struct SegmentMeta {
     /// pre-existing callers pay nothing). A block with no Fp32 embedding gets an
     /// empty centroid.
     pub block_centroids: Vec<Vec<f32>>,
+    /// TD-RDSTRAT-5 lever-3: per-block **RMS radius** (spread = √(mean‖x‖²−‖c‖²)),
+    /// 1:1 with `block_centroids` (`0.0` for a block with no Fp32 vector). Lets the
+    /// read-side prune rank blocks by the distance lower bound `d(q,c)−k·radius`
+    /// instead of raw centroid distance, so a spread-out block that could still
+    /// hold a near neighbour isn't wrongly pruned. Empty unless centroids opted in.
+    pub block_radii: Vec<f32>,
 }
 
 #[cfg(test)]
