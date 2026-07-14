@@ -9,6 +9,7 @@ pub mod cache_config;
 pub mod collection_path;
 pub mod column_projector;
 pub mod columnar_constants;
+pub mod compaction_override;
 pub mod deletion_vector;
 pub mod delta_simd;
 pub mod engine_constants;
@@ -82,6 +83,11 @@ pub use columnar_constants::{
     FIELD_SOURCE, FIELD_TIMESTAMP, FIELD_UPDATED_AT, FIELD_VECTOR_FP32, FIELD_VERSION,
     PARQUET_EXTENSION, QUANTIZATION_COLUMNS, QUANTIZATION_PARAMETER_COLUMNS,
     QUANTIZED_VECTOR_COLUMNS, REQUIRED_COLUMNS, TEMPORAL_COLUMNS, VIPER_FILE_EXTENSION,
+};
+pub use compaction_override::{
+    COMPACTION_L0_THRESHOLD_TAG_PREFIX, COMPACTION_TAG_PREFIX, GlobalCompactionGate,
+    L0_COMPACTION_ENABLED_ENV, global_compaction_gate, resolve_compaction_armed,
+    resolve_l0_threshold,
 };
 pub use delta_simd::{delta_decode_f32, delta_decode_i32_prefix_sum, delta_decode_i64_prefix_sum};
 pub use engine_constants::{

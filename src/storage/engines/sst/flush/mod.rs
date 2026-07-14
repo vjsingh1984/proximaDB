@@ -543,8 +543,17 @@ impl SstEngine {
 
         let final_file_path = format!("{}/{}", atomic_op.final_url, filename);
 
-        // Check if compaction should be triggered
-        let should_trigger_compaction = self.should_trigger_compaction(storage_url).await?;
+        // Check if compaction should be triggered (per-collection tag cascade,
+        // TD-WLP-2 — the global env stays the master kill-switch).
+        let collection_tags: &[String] = params
+            .collection_config
+            .as_ref()
+            .and_then(|c| c.config.as_ref())
+            .map(|cfg| cfg.tags.as_slice())
+            .unwrap_or(&[]);
+        let should_trigger_compaction = self
+            .should_trigger_compaction(storage_url, collection_tags)
+            .await?;
 
         // TD-112: index the just-flushed vectors into AXIS so post-flush search is
         // served by the ANN index rather than a brute-force segment scan.
@@ -595,36 +604,35 @@ impl SstEngine {
         })
     }
 
-    /// Whether L0→base compaction should be triggered after this flush (TD-114).
+    /// Whether L0→base compaction should be triggered after this flush (TD-114,
+    /// per-collection override TD-WLP-2 / ADR-061 D5).
     ///
-    /// Default-OFF: the trigger only arms when `PROXIMADB_L0_COMPACTION_ENABLED`
-    /// is set, so the live flush path is byte-for-byte unchanged unless an
-    /// operator opts in. When armed, it reuses the existing segment discovery to
-    /// count L0 segments and arms once the orchestrator threshold is reached.
-    /// Discovery errors are treated as "not yet" (best-effort, never fails flush).
-    async fn should_trigger_compaction(&self, storage_url: &str) -> Result<bool> {
-        if !l0_compaction_enabled() {
+    /// Default-OFF: absent a per-collection `compaction:on` tag the trigger only
+    /// arms when `PROXIMADB_L0_COMPACTION_ENABLED` is truthy, so the untagged
+    /// flush path is byte-for-byte unchanged. A tagged collection may arm (at
+    /// its own `l0_threshold:N`) while the global gate is unset; an explicitly
+    /// falsy global env is the master kill-switch nothing can override. When
+    /// armed, it reuses the existing segment discovery to count L0 segments and
+    /// arms once the effective threshold is reached. Discovery errors are
+    /// treated as "not yet" (best-effort, never fails flush).
+    async fn should_trigger_compaction(&self, storage_url: &str, tags: &[String]) -> Result<bool> {
+        if !proximadb_storage_common::resolve_compaction_armed(tags) {
             return Ok(false);
         }
+        let threshold =
+            proximadb_storage_common::resolve_l0_threshold(tags, L0_COMPACTION_THRESHOLD);
         let l0_count = self
             .discover_sstable_files(storage_url)
             .await
             .map(|files| files.len())
             .unwrap_or(0);
-        Ok(l0_count >= L0_COMPACTION_THRESHOLD)
+        Ok(l0_count >= threshold)
     }
 }
 
 /// L0 segment count at which compaction arms. Mirrors
 /// `OrchestratorCompactionConfig::level0_threshold` (default 5).
 const L0_COMPACTION_THRESHOLD: usize = 5;
-
-/// Reads the `PROXIMADB_L0_COMPACTION_ENABLED` opt-in flag (default OFF).
-fn l0_compaction_enabled() -> bool {
-    std::env::var("PROXIMADB_L0_COMPACTION_ENABLED")
-        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "yes"))
-        .unwrap_or(false)
-}
 
 /// Statistics from vector sorting operation
 // Using SortingStats from utils.rs instead of local SortStats
