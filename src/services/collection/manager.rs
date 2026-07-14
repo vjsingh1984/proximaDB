@@ -790,7 +790,9 @@ impl CollectionService {
         if let Some(ref mut storage_cfg) = enriched_config.storage_config {
             let resolved_compression = self.resolve_compression_config(
                 None, // No existing compression config to resolve from
-                config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
+                enriched_config
+                    .storage_engine
+                    .unwrap_or(StorageEngine::Sst as i32),
             );
             if let Some(compression_config) = resolved_compression {
                 storage_cfg.compression = Some(compression_config.algorithm);
@@ -1140,7 +1142,9 @@ impl CollectionService {
             storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
                 primary_path: tenant_base_location.clone(),
                 backup_paths: vec![],
-                engine: config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
+                engine: enriched_config
+                    .storage_engine
+                    .unwrap_or(StorageEngine::Sst as i32),
                 engine_config: std::collections::HashMap::new(),
                 base_location: tenant_base_location.clone(), // Tenant-prefixed path
                 assigned_at: chrono::Utc::now().timestamp_micros(),

@@ -83,6 +83,23 @@ SST and VIPER flush/read paths use the recovered
 `Collection.storage_assignment.base_location` and the unified filesystem. They do
 not need a local staging `data_directory` to recover a collection.
 
+=== HELIX filesystem routing
+
+The second live ADLS attempt exposed a local-filesystem escape in HELIX. Although
+HELIX owns a `FilesystemFactory`, its shared caching wrapper was constructed over
+`file://` and reused for collection flush, PCA model persistence, search, point reads,
+and recovery. A recovered object-store assignment was therefore handed to the local
+backend and failed with `Permission denied`.
+
+HELIX now resolves a caching filesystem from each collection's assigned data URL and
+threads that backend through flush, PCA model load/save, metadata discovery, search,
+point reads, full-record reads, compaction, strategy readers, and vector extraction.
+The extractor checks existence through `FileSystem`; it no longer applies
+`std::path::Path::exists` to object URLs and silently drops them. Auto-selection
+remains unchanged: HELIX is a supported production engine on object storage, not
+silently downgraded. The resolved engine is also persisted in `StorageAssignment`
+and used for compression defaults.
+
 === Local-filesystem escape audit
 
 * Graph collection metadata now resolves to
@@ -119,12 +136,14 @@ second instance recovers the table solely from object storage. This fails with t
 === Real process / real backend integration
 
 `apps/proximadb-server/tests/object_store_restart_recovery.rs` launches the production
-server binary three times against one unique `s3://` or `adls://` prefix:
+server binary three times against one unique `s3://` or `adls://` prefix and creates
+both SST and HELIX collections:
 
-. VM 1: create SST collection + insert records; SIGKILL.
-. VM 2 with empty local disk: recover catalog, replay WAL, and find the record; SIGINT
-  to materialize SST and reclaim flushed WAL.
-. VM 3 with another empty local disk: recover catalog and find the record from cold SST.
+. VM 1: create both collections + insert records; SIGKILL.
+. VM 2 with empty local disk: recover catalog, replay WAL, and find both records; SIGINT
+  to materialize SST/HELIX files and reclaim flushed WAL.
+. VM 3 with another empty local disk: recover catalog and find both records from cold
+  object-store files.
 
 Run:
 
@@ -155,3 +174,7 @@ Before marking this TD closed, attach:
 * 2026-07-14 — first live ADLS run recovered the catalog but exposed WAL replay before
   storage-engine registration; fixed startup ordering, duplicate replay, and
   fail-open recovery errors. A passing rerun remains the closure gate.
+* 2026-07-14 — live rerun fail-closed on auto-selected HELIX collections because its
+  caching filesystem remained bound to `file://`; routed HELIX operations through the
+  collection-assigned backend and corrected the persisted resolved engine. A passing
+  rerun remains the closure gate.
