@@ -241,8 +241,8 @@ for evidence/provenance, and event/history records for temporal state. The v1
 
 | Security runtime
 | Beta
-| JWT, API key, SSO hooks, mTLS identity, and CRL-backed revocation reload/freshness checks are present.
-| Security admin/status APIs and stronger online revocation policy are incomplete.
+| JWT, API key, SSO hooks, mTLS identity, and CRL-backed revocation reload/freshness checks are present. REST tenant identity is credential-bound by policy (TD-TENANT-1): a header that contradicts an authenticated tenant binding is always 403; the bare `X-Tenant-ID` header is governed by `HeaderTrustPolicy` (`open` default / `authenticated-only` in the multi-tenant strict preset / `gateway-only` for trusted-gateway delegation), overridable via `PROXIMADB_TENANT_HEADER_TRUST`. Rejections emit `proximadb::tenant_audit` warns.
+| Security admin/status APIs and stronger online revocation policy are incomplete. The header-trust policy gates the REST boundary only — pgwire/gRPC/Arrow Flight tenant extraction honoring the same policy is an open follow-up (TD-TENANT-1).
 
 | Hybrid retrieval
 | Beta

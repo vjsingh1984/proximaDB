@@ -135,12 +135,71 @@ pub enum TenantIdSource {
     System,
 }
 
+/// Trust policy for the **bare** `X-Tenant-ID` header — i.e. a request that
+/// asserts a tenant via header while carrying NO authenticated tenant binding
+/// (no JWT claim / API-key mapping). When a binding exists, the header must
+/// match it (403 otherwise) in every mode; `GatewayOnly` additionally lets an
+/// authenticated system/gateway principal delegate — select an acting tenant
+/// via the header (the trusted-gateway topology: the gateway authenticates
+/// with a service credential and stamps the end user's tenant per request).
+///
+/// Env override at server construction: `PROXIMADB_TENANT_HEADER_TRUST` =
+/// `open` | `authenticated-only` | `gateway-only` (see
+/// [`TenantExtractorConfig::apply_env_overrides`]). Unset ⇒ the config value
+/// (default-safe: `Open` preserves existing deployments).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HeaderTrustPolicy {
+    /// Accept the bare header verbatim. Correct for dev, single-tenant, and
+    /// network-isolated trusted-gateway topologies. The default.
+    #[default]
+    Open,
+    /// Reject (403 + audit log) any request that asserts a tenant via header
+    /// without an authenticated binding. Credential-derived tenants
+    /// (JWT/API-key) are unaffected. Default for
+    /// [`TenantExtractorConfig::multi_tenant`] strict mode.
+    AuthenticatedOnly,
+    /// Like `AuthenticatedOnly`, but an authenticated **system/gateway
+    /// principal** (its bound tenant is in
+    /// [`TenantExtractorConfig::system_tenants`]) may set `X-Tenant-ID` to act
+    /// on behalf of that tenant (delegation is audit-logged).
+    GatewayOnly,
+}
+
+impl std::fmt::Display for HeaderTrustPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Open => write!(f, "open"),
+            Self::AuthenticatedOnly => write!(f, "authenticated-only"),
+            Self::GatewayOnly => write!(f, "gateway-only"),
+        }
+    }
+}
+
+impl std::str::FromStr for HeaderTrustPolicy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+            "open" => Ok(Self::Open),
+            "authenticated-only" | "authenticated-match" => Ok(Self::AuthenticatedOnly),
+            "gateway-only" => Ok(Self::GatewayOnly),
+            other => Err(format!(
+                "invalid tenant header-trust policy '{other}' \
+                 (expected open | authenticated-only | gateway-only)"
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TenantExtractionError {
     HeaderAuthenticatedMismatch {
         requested: String,
         authenticated: String,
     },
+    /// The bare header was rejected by a non-`Open` [`HeaderTrustPolicy`]:
+    /// the request asserted a tenant without any authenticated binding.
+    UnauthenticatedHeaderRejected { requested: String },
 }
 
 impl std::fmt::Display for TenantIdSource {
@@ -166,6 +225,10 @@ pub struct TenantExtractorConfig {
     pub validate_tenant: bool,
     /// System tenant IDs that bypass normal validation
     pub system_tenants: Vec<String>,
+    /// Trust policy for the bare `X-Tenant-ID` header (see
+    /// [`HeaderTrustPolicy`]). Default `Open` — default-safe for existing
+    /// deployments; `multi_tenant()` strict mode uses `AuthenticatedOnly`.
+    pub header_trust: HeaderTrustPolicy,
 }
 
 impl Default for TenantExtractorConfig {
@@ -176,6 +239,7 @@ impl Default for TenantExtractorConfig {
             require_tenant: false,  // Allow single-tenant mode by default
             validate_tenant: false, // Disable validation by default (enable in production)
             system_tenants: vec!["system".to_string(), "admin".to_string()],
+            header_trust: HeaderTrustPolicy::Open,
         }
     }
 }
@@ -198,6 +262,7 @@ impl TenantExtractorConfig {
             require_tenant: false,
             validate_tenant: false,
             system_tenants: vec!["system".to_string()],
+            header_trust: HeaderTrustPolicy::Open,
         }
     }
 
@@ -208,6 +273,11 @@ impl TenantExtractorConfig {
             require_tenant: true,
             validate_tenant: true,
             system_tenants: vec!["system".to_string(), "admin".to_string()],
+            // Strict mode: a tenant asserted via bare header without an
+            // authenticated binding is a masquerade vector, not an identity.
+            // Relax per-deployment with PROXIMADB_TENANT_HEADER_TRUST=open
+            // (trusted-gateway topologies should prefer gateway-only).
+            header_trust: HeaderTrustPolicy::AuthenticatedOnly,
         }
     }
 
@@ -226,6 +296,42 @@ impl TenantExtractorConfig {
     /// Builder: Validate tenant exists
     pub fn validate_tenant(mut self, validate: bool) -> Self {
         self.validate_tenant = validate;
+        self
+    }
+
+    /// Builder: Set the bare-header trust policy.
+    pub fn with_header_trust(mut self, policy: HeaderTrustPolicy) -> Self {
+        self.header_trust = policy;
+        self
+    }
+
+    /// Apply deployment env overrides. Called at server construction (NOT in
+    /// constructors, so tests and embedded uses stay hermetic). Currently:
+    /// `PROXIMADB_TENANT_HEADER_TRUST` = `open` | `authenticated-only` |
+    /// `gateway-only` overrides `header_trust`; an unparseable value is
+    /// rejected loudly rather than silently weakening the policy.
+    pub fn apply_env_overrides(mut self) -> Self {
+        if let Ok(raw) = std::env::var("PROXIMADB_TENANT_HEADER_TRUST") {
+            match raw.parse::<HeaderTrustPolicy>() {
+                Ok(policy) => {
+                    tracing::info!(
+                        %policy,
+                        "tenant header-trust policy set from PROXIMADB_TENANT_HEADER_TRUST"
+                    );
+                    self.header_trust = policy;
+                }
+                Err(e) => {
+                    // Fail-closed: an operator explicitly set a policy we can't
+                    // parse — tighten to AuthenticatedOnly instead of silently
+                    // running Open.
+                    warn!(
+                        error = %e,
+                        "invalid PROXIMADB_TENANT_HEADER_TRUST; tightening to authenticated-only"
+                    );
+                    self.header_trust = HeaderTrustPolicy::AuthenticatedOnly;
+                }
+            }
+        }
         self
     }
 }
@@ -281,6 +387,20 @@ impl TenantExtractor {
             if let Some(requested) = requested_tenant
                 && requested != authenticated_tenant
             {
+                // GatewayOnly delegation: an authenticated system/gateway
+                // principal may act on behalf of the header tenant (the
+                // trusted-gateway topology — the gateway authenticates with a
+                // service credential and stamps the end user's tenant).
+                if self.config.header_trust == HeaderTrustPolicy::GatewayOnly
+                    && self.config.system_tenants.contains(&authenticated_tenant)
+                {
+                    debug!(
+                        gateway = %authenticated_tenant,
+                        acting_tenant = %requested,
+                        "gateway principal delegated tenant via X-Tenant-ID"
+                    );
+                    return Ok(Some((requested, TenantIdSource::Header)));
+                }
                 return Err(TenantExtractionError::HeaderAuthenticatedMismatch {
                     requested,
                     authenticated: authenticated_tenant,
@@ -293,11 +413,21 @@ impl TenantExtractor {
             return Ok(Some((authenticated_tenant, source)));
         }
 
-        // Explicit tenant headers are accepted only when there is no
-        // authenticated tenant binding to compare against.
+        // Bare header — no authenticated tenant binding to compare against.
+        // Whether it is an identity or a masquerade vector is the deployment's
+        // header-trust policy call (see `HeaderTrustPolicy`).
         if let Some(tenant_id) = requested_tenant {
-            debug!("Extracted tenant_id from header: {}", tenant_id);
-            return Ok(Some((tenant_id, TenantIdSource::Header)));
+            return match self.config.header_trust {
+                HeaderTrustPolicy::Open => {
+                    debug!("Extracted tenant_id from header: {}", tenant_id);
+                    Ok(Some((tenant_id, TenantIdSource::Header)))
+                }
+                HeaderTrustPolicy::AuthenticatedOnly | HeaderTrustPolicy::GatewayOnly => {
+                    Err(TenantExtractionError::UnauthenticatedHeaderRejected {
+                        requested: tenant_id,
+                    })
+                }
+            };
         }
 
         // Priority 3: Default tenant (if configured)
@@ -451,14 +581,43 @@ pub async fn tenant_middleware(
         Err(TenantExtractionError::HeaderAuthenticatedMismatch {
             requested,
             authenticated,
-        }) => (
-            StatusCode::FORBIDDEN,
-            format!(
-                "Tenant '{}' does not match authenticated tenant '{}'",
-                requested, authenticated
-            ),
-        )
-            .into_response(),
+        }) => {
+            // Audit trail: a credentialed principal asserted a DIFFERENT
+            // tenant via header — the masquerade signature.
+            warn!(
+                target: "proximadb::tenant_audit",
+                requested = %requested,
+                authenticated = %authenticated,
+                source = %TenantIdSource::Header,
+                "rejected X-Tenant-ID: does not match authenticated tenant binding"
+            );
+            (
+                StatusCode::FORBIDDEN,
+                format!(
+                    "Tenant '{}' does not match authenticated tenant '{}'",
+                    requested, authenticated
+                ),
+            )
+                .into_response()
+        }
+        Err(TenantExtractionError::UnauthenticatedHeaderRejected { requested }) => {
+            warn!(
+                target: "proximadb::tenant_audit",
+                requested = %requested,
+                source = %TenantIdSource::Header,
+                policy = %extractor.config.header_trust,
+                "rejected bare X-Tenant-ID without authenticated tenant binding"
+            );
+            (
+                StatusCode::FORBIDDEN,
+                format!(
+                    "Tenant '{}' asserted via X-Tenant-ID without authenticated credentials; \
+                     this deployment requires a tenant-bound credential (JWT or API key)",
+                    requested
+                ),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -597,5 +756,261 @@ mod tests {
         assert_eq!(TenantIdSource::ApiKey.to_string(), "api_key");
         assert_eq!(TenantIdSource::Default.to_string(), "default");
         assert_eq!(TenantIdSource::System.to_string(), "system");
+    }
+
+    // ── HeaderTrustPolicy (bare X-Tenant-ID hardening) ──────────────────────
+
+    /// Build a request with an optional bare X-Tenant-ID header and an
+    /// optional authenticated tenant binding (UnifiedUserContext extension,
+    /// as the auth middleware would inject it).
+    fn trust_request(header: Option<&str>, authenticated: Option<&str>) -> Request {
+        let mut builder = axum::http::Request::builder().uri("/api/v2/anything");
+        if let Some(tenant) = header {
+            builder = builder.header(X_TENANT_ID, tenant);
+        }
+        let mut req = builder.body(axum::body::Body::empty()).expect("request");
+        if let Some(tenant) = authenticated {
+            let mut ctx = crate::security::UnifiedUserContext::anonymous();
+            ctx.tenant_id = Some(tenant.to_string());
+            ctx.auth_method = crate::security::UnifiedAuthMethod::JWT;
+            req.extensions_mut().insert(ctx);
+        }
+        req
+    }
+
+    fn extractor(policy: HeaderTrustPolicy) -> TenantExtractor {
+        TenantExtractor::with_config(TenantExtractorConfig {
+            header_trust: policy,
+            ..TenantExtractorConfig::default()
+        })
+    }
+
+    #[test]
+    fn open_accepts_bare_header() {
+        let result = extractor(HeaderTrustPolicy::Open)
+            .extract_tenant_id(&trust_request(Some("demo1"), None))
+            .expect("open mode accepts bare header");
+        assert_eq!(result, Some(("demo1".to_string(), TenantIdSource::Header)));
+    }
+
+    #[test]
+    fn authenticated_only_rejects_bare_header() {
+        let err = extractor(HeaderTrustPolicy::AuthenticatedOnly)
+            .extract_tenant_id(&trust_request(Some("demo1"), None))
+            .expect_err("bare header must be rejected without a credential binding");
+        assert_eq!(
+            err,
+            TenantExtractionError::UnauthenticatedHeaderRejected {
+                requested: "demo1".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn gateway_only_rejects_bare_header() {
+        let err = extractor(HeaderTrustPolicy::GatewayOnly)
+            .extract_tenant_id(&trust_request(Some("demo1"), None))
+            .expect_err("bare header must be rejected without a credential binding");
+        assert!(matches!(
+            err,
+            TenantExtractionError::UnauthenticatedHeaderRejected { .. }
+        ));
+    }
+
+    #[test]
+    fn credential_derived_tenant_flows_in_every_mode() {
+        for policy in [
+            HeaderTrustPolicy::Open,
+            HeaderTrustPolicy::AuthenticatedOnly,
+            HeaderTrustPolicy::GatewayOnly,
+        ] {
+            let result = extractor(policy)
+                .extract_tenant_id(&trust_request(None, Some("acme")))
+                .expect("credential-derived tenant is always accepted");
+            assert_eq!(
+                result,
+                Some(("acme".to_string(), TenantIdSource::JwtClaim)),
+                "policy {policy}"
+            );
+        }
+    }
+
+    #[test]
+    fn matching_header_and_binding_resolve_to_binding() {
+        let result = extractor(HeaderTrustPolicy::AuthenticatedOnly)
+            .extract_tenant_id(&trust_request(Some("acme"), Some("acme")))
+            .expect("matching header+binding is fine");
+        assert_eq!(result, Some(("acme".to_string(), TenantIdSource::JwtClaim)));
+    }
+
+    #[test]
+    fn spoofed_header_with_credential_rejected_in_every_mode_for_non_gateway() {
+        for policy in [
+            HeaderTrustPolicy::Open,
+            HeaderTrustPolicy::AuthenticatedOnly,
+            HeaderTrustPolicy::GatewayOnly,
+        ] {
+            let err = extractor(policy)
+                .extract_tenant_id(&trust_request(Some("victim"), Some("acme")))
+                .expect_err("header != binding is the masquerade signature");
+            assert_eq!(
+                err,
+                TenantExtractionError::HeaderAuthenticatedMismatch {
+                    requested: "victim".to_string(),
+                    authenticated: "acme".to_string(),
+                },
+                "policy {policy}"
+            );
+        }
+    }
+
+    #[test]
+    fn gateway_only_lets_system_principal_delegate_tenant() {
+        // The gateway authenticates with a service credential bound to the
+        // "system" tenant (in system_tenants) and stamps the end user's
+        // tenant via X-Tenant-ID.
+        let result = extractor(HeaderTrustPolicy::GatewayOnly)
+            .extract_tenant_id(&trust_request(Some("demo1"), Some("system")))
+            .expect("gateway delegation must be allowed");
+        assert_eq!(result, Some(("demo1".to_string(), TenantIdSource::Header)));
+    }
+
+    #[test]
+    fn non_gateway_modes_do_not_allow_system_delegation() {
+        // Delegation is a GatewayOnly capability — Open/AuthenticatedOnly keep
+        // the strict header==binding contract even for system principals.
+        for policy in [
+            HeaderTrustPolicy::Open,
+            HeaderTrustPolicy::AuthenticatedOnly,
+        ] {
+            let err = extractor(policy)
+                .extract_tenant_id(&trust_request(Some("demo1"), Some("system")))
+                .expect_err("delegation requires gateway-only mode");
+            assert!(
+                matches!(
+                    err,
+                    TenantExtractionError::HeaderAuthenticatedMismatch { .. }
+                ),
+                "policy {policy}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_header_no_credential_falls_back_to_default_in_every_mode() {
+        for policy in [
+            HeaderTrustPolicy::Open,
+            HeaderTrustPolicy::AuthenticatedOnly,
+            HeaderTrustPolicy::GatewayOnly,
+        ] {
+            let result = extractor(policy)
+                .extract_tenant_id(&trust_request(None, None))
+                .expect("default fallback is not affected by header trust");
+            assert_eq!(
+                result,
+                Some((
+                    proximadb_tenant::DEFAULT_TENANT.to_string(),
+                    TenantIdSource::Default
+                )),
+                "policy {policy}"
+            );
+        }
+    }
+
+    #[test]
+    fn header_trust_policy_parses_and_displays() {
+        use std::str::FromStr;
+        assert_eq!(
+            HeaderTrustPolicy::from_str("open").unwrap(),
+            HeaderTrustPolicy::Open
+        );
+        assert_eq!(
+            HeaderTrustPolicy::from_str("authenticated-only").unwrap(),
+            HeaderTrustPolicy::AuthenticatedOnly
+        );
+        assert_eq!(
+            HeaderTrustPolicy::from_str("AUTHENTICATED_MATCH").unwrap(),
+            HeaderTrustPolicy::AuthenticatedOnly
+        );
+        assert_eq!(
+            HeaderTrustPolicy::from_str("gateway-only").unwrap(),
+            HeaderTrustPolicy::GatewayOnly
+        );
+        assert!(HeaderTrustPolicy::from_str("everything-goes").is_err());
+        assert_eq!(HeaderTrustPolicy::default(), HeaderTrustPolicy::Open);
+        assert_eq!(
+            HeaderTrustPolicy::AuthenticatedOnly.to_string(),
+            "authenticated-only"
+        );
+    }
+
+    /// End-to-end through the axum layer: the policy maps to real HTTP
+    /// statuses (403 for a rejected bare header, 200 for the default-tenant
+    /// fallback and for gateway delegation).
+    #[tokio::test]
+    async fn middleware_maps_header_trust_to_http_statuses() {
+        use axum::{Router, routing::get};
+        use tower::ServiceExt;
+
+        let app = |policy: HeaderTrustPolicy| {
+            Router::new().route("/probe", get(|| async { "ok" })).layer(
+                axum::middleware::from_fn_with_state(extractor(policy), tenant_middleware),
+            )
+        };
+
+        // Bare header under authenticated-only → 403.
+        let denied = app(HeaderTrustPolicy::AuthenticatedOnly)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/probe")
+                    .header(X_TENANT_ID, "demo1")
+                    .body(axum::body::Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+
+        // No header → default-tenant fallback still flows (200).
+        let allowed = app(HeaderTrustPolicy::AuthenticatedOnly)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/probe")
+                    .body(axum::body::Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(allowed.status(), StatusCode::OK);
+
+        // Bare header under open → 200 (legacy behavior preserved).
+        let open = app(HeaderTrustPolicy::Open)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/probe")
+                    .header(X_TENANT_ID, "demo1")
+                    .body(axum::body::Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(open.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn multi_tenant_strict_mode_defaults_to_authenticated_only() {
+        assert_eq!(
+            TenantExtractorConfig::multi_tenant().header_trust,
+            HeaderTrustPolicy::AuthenticatedOnly
+        );
+        // Default + single_tenant stay Open (default-safe for existing deployments).
+        assert_eq!(
+            TenantExtractorConfig::default().header_trust,
+            HeaderTrustPolicy::Open
+        );
+        assert_eq!(
+            TenantExtractorConfig::single_tenant("t").header_trust,
+            HeaderTrustPolicy::Open
+        );
     }
 }
