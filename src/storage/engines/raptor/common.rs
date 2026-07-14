@@ -5,7 +5,6 @@ use proximadb_compression::CompressionAlgorithm;
 /// This eliminates duplication between reader, writer, compaction, and other modules
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 // Re-export ProximaScheme for use in RAPTOR modules
 pub use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
@@ -1181,94 +1180,6 @@ impl InterCentroidMatrix {
         self.decompress_single_distance_at_index(linear_index)
     }
 
-    /// Hardware-optimized batch decompression using unified quantization module
-    /// Automatically detects and uses best SIMD instructions available
-    pub fn get_distances_batch_optimized(&self, pairs: &[(usize, usize)]) -> Vec<f32> {
-        use crate::compute::QuantizedVector;
-        use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-        use proximadb_hardware_caps::get_hardware_capabilities;
-        use proximadb_quantization_model::UnifiedQuantizationLevel;
-
-        let hw = get_hardware_capabilities();
-
-        // Create required components for StorageQuantizationEngine
-        use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
-        use crate::compute::quantization::storage_engine::StorageQuantizationConfig;
-        use proximadb_distance_kernel::DistanceMetric;
-        use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
-
-        use crate::compute::quantization::quantization_engine::InMemoryCodebookStore;
-        let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
-            Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine)),
-            Arc::new(InMemoryCodebookStore::new()),
-        ));
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
-        let config = StorageQuantizationConfig::default();
-
-        let _quant_engine =
-            StorageQuantizationEngine::new(unified_engine, distance_compute, config);
-
-        // Prepare quantized values
-        let mut quantized_values = Vec::with_capacity(pairs.len());
-        for &(ci, cj) in pairs {
-            if ci == cj {
-                quantized_values.push(0u16); // Diagonal
-            } else {
-                let (i, j) = if ci < cj { (ci, cj) } else { (cj, ci) };
-                let n = self.num_centroids as usize;
-                let total_before = i * (2 * n - i - 1) / 2;
-                let linear_idx = total_before + (j - i - 1);
-                let byte_offset = linear_idx * 2;
-
-                let quantized = u16::from_le_bytes([
-                    self.compressed_data[byte_offset],
-                    self.compressed_data[byte_offset + 1],
-                ]);
-                quantized_values.push(quantized);
-            }
-        }
-
-        // Create quantized vector wrapper for unified engine processing
-        use proximadb_quantization_model::QuantizationMetadata;
-        let _quantized_vector = QuantizedVector {
-            data: quantized_values
-                .iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect(),
-            quantization_level: UnifiedQuantizationLevel::Int8,
-            metadata: QuantizationMetadata {
-                scale: Some(self.compression_metadata.scale_factor),
-                offset: Some(0.0),
-                norm: None,
-                codebook_id: None,
-            },
-        };
-
-        // Convert u16 values to f32 using unified quantization engine
-        // The engine will automatically use optimal SIMD based on hardware
-        let mut results = Vec::with_capacity(pairs.len());
-
-        // Process in batches for optimal SIMD utilization
-        let batch_size = if hw.has_avx512() {
-            16
-        } else if hw.cpu.features.avx2_support {
-            8
-        } else {
-            4
-        };
-
-        for chunk in quantized_values.chunks(batch_size) {
-            // Dequantize: d = min + q / scale_factor
-            for &quantized_u16 in chunk {
-                let dequantized = self.compression_metadata.min_distance
-                    + quantized_u16 as f32 / self.compression_metadata.scale_factor;
-                results.push(dequantized);
-            }
-        }
-
-        results
-    }
-
     /// Create new InterCentroidMatrix from full distance matrix
     /// Extracts and compresses only the upper triangle for optimal storage
     pub fn from_full_matrix(distances: &[Vec<f32>]) -> Self {
@@ -1571,67 +1482,6 @@ impl VectorCentroidMatrix {
                 } else {
                     Err(anyhow::anyhow!("Sparse data not available"))
                 }
-            }
-        }
-    }
-
-    /// Hardware-optimized batch distance retrieval using unified modules
-    pub fn get_distances_batch_optimized(&self, queries: &[(usize, usize)]) -> Vec<f32> {
-        use proximadb_hardware_caps::get_hardware_capabilities;
-
-        match self.storage_strategy {
-            VectorCentroidStorageStrategy::Full => {
-                // Use unified quantization engine for full matrix
-                let hw = get_hardware_capabilities();
-                let mut results = Vec::with_capacity(queries.len());
-
-                // Gather quantized values
-                let mut quantized_values = Vec::with_capacity(queries.len());
-                for &(vec_idx, cent_idx) in queries {
-                    let linear_idx = vec_idx * self.num_centroids as usize + cent_idx;
-                    let byte_offset = linear_idx * 2;
-
-                    if byte_offset + 2 <= self.compressed_data.len() {
-                        let quantized = u16::from_le_bytes([
-                            self.compressed_data[byte_offset],
-                            self.compressed_data[byte_offset + 1],
-                        ]);
-                        quantized_values.push(quantized);
-                    } else {
-                        quantized_values.push(0); // Out of bounds
-                    }
-                }
-
-                // Dequantize using hardware-optimized batch processing
-                let range = self.compression_metadata.global_max_distance
-                    - self.compression_metadata.global_min_distance;
-                let scale_factor = if range > 0.0 { 65535.0 / range } else { 1.0 };
-                let scale_recip = 1.0 / scale_factor;
-                let batch_size = if hw.has_avx512() {
-                    16
-                } else if hw.cpu.features.avx2_support {
-                    8
-                } else {
-                    4
-                };
-
-                for chunk in quantized_values.chunks(batch_size) {
-                    for &quantized_u16 in chunk {
-                        results.push(
-                            quantized_u16 as f32 * scale_recip
-                                + self.compression_metadata.global_min_distance,
-                        );
-                    }
-                }
-
-                results
-            }
-            _ => {
-                // Fall back to scalar for hierarchical/sparse strategies
-                queries
-                    .iter()
-                    .map(|&(v, c)| self.get_distance(v, c).unwrap_or(f32::INFINITY))
-                    .collect()
             }
         }
     }
