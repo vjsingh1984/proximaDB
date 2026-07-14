@@ -4,7 +4,7 @@
 
 [cols="1,3"]
 |===
-|Status|Core resolved (v2 gRPC scoped + auto-provision); REST-v2 store-split follow-on open
+|Status|In progress — v2 gRPC core resolved; pgwire/REST-v1 and entity follow-ons open
 |Priority|LOW
 |Scope|FEAT
 |Date|2026-07-05

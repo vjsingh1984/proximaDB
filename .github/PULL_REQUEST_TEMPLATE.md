@@ -13,6 +13,26 @@
 - [ ] Refactoring (no functional changes)
 - [ ] CI/CD improvement
 
+### Move / Decomposition Inventory
+
+<!-- Required when files or modules move. A move PR should contain only path/import
+changes. If behavior also changes, list every behavior change explicitly here or
+split it into a separate PR. -->
+
+- [ ] No files/modules moved
+- [ ] Pure move only (path/import changes; `git diff --find-renames` reviewed)
+- [ ] Move plus behavior change; complete behavioral inventory below
+
+Behavioral inventory (routing, defaults, cfg gates, service wiring, errors, persistence):
+
+- None
+
+Feature configurations exercised for a move:
+
+- [ ] Default
+- [ ] `--no-default-features`
+- [ ] `experimental-engines`
+
 ### Changes
 
 <!-- List the key changes made in this PR -->
