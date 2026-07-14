@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open — spec filed 2026-07-14 (ADR-061). Not started.
+| Status | Implemented 2026-07-14 — `StorageProfile` + `resolve_storage_profile` in `crates/storage/proximadb-storage-common/src/storage_profile.rs` (TDD gate `test_resolve_storage_profile_tag_env_default_cascade` green). One spec deviation: the resolver takes the collection's tag list (`&[String]`), not `&CollectionConfig`, so it adds no v1-proto reference (TD-123 ratchet) — parity with `pax_rerank_quant_tag`; tag extraction happens at the call site. Inert as specced: nothing consumes it yet.
 | Priority | P1 — the foundation every other WLP slice consumes; ships first, inert.
 | Severity | Low — pure definition; nothing consumes the resolver yet, so no behaviour change.
 | Component | `src/storage/engines/sst/flush/mod.rs` (the `resolve_*` cascade, ~770–895); a small enum module (co-located, or `crates/storage/proximadb-storage-common/src`)
