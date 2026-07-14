@@ -1,0 +1,51 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-WLP-5: Churn read path — in-memory mutable index + ORION graph + oid fusion
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open — spec filed 2026-07-14 (ADR-061). Not started. Depends on TD-WLP-1.
+| Priority | P1b — the code-RAG payoff; the churn-profile projection.
+| Severity | High — freshness + authority invariant under high update churn; adds a bounded memory surface.
+| Component | `src/index/axis/` (mutable ANN index selection); `src/graph/engines/orion/` (epoch-fresh CSR fusion hook); read-path profile branch in `src/storage/engines/sst/search/`
+| Governs | link:../../12-design/adr/ADR-061-per-collection-workload-profiles.adoc[ADR-061] (D4)
+| Relates to | ADR-044 (stable symbol OID / oid fusion), ORION (Beta in-memory CSR projection), TD-133 (opt-in cross-modal txn), the read-side dead-filter invariants (is_dead/valid_to_ns)
+| Pillar | PERF (immediate freshness on a bounded set), REL (WAL authority preserved), OE (memory guard)
+|===
+
+toc::[]
+
+== Why
+
+Agent-driven code-RAG is update-heavy point mutation on a bounded, hot, freshness-critical working
+set — a poor fit for LSM tombstone/compaction. ADR-061 D4 keeps canonical records + WAL as
+authority but serves reads from an in-memory mutable projection so a re-embedded symbol is
+immediately visible, with ORION providing match-then-traverse.
+
+== Scope
+
+* For `Churn` collections, route search to the in-memory mutable ANN index (the AXIS mutable path)
+  sized to the bounded working set, fused with ORION's epoch-fresh CSR via `oid`-keyed correlation
+  (ADR-044), so a re-embedded symbol is visible pre-flush.
+* Durability stays WAL; the index is rebuilt on recovery. Compaction-clustering pinned OFF.
+* Enforce the bounded-working-set assumption with a per-collection memory guard + metric.
+* Correctness under churn already holds via the read-side dead-filter (`is_dead`/`valid_to_ns`);
+  this slice adds *freshness of the mutable projection*, not new durability.
+
+== TDD gate
+
+Integration test `tests/storage_wlp_churn_freshness.rs` (storage-integration CI job):
+
+* `test_churn_reembedded_symbol_immediately_visible`: insert a vector → query returns it; update
+  (re-embed) the SAME `oid`; query BEFORE any flush returns the NEW embedding's neighbours
+  (freshness); restart + WAL replay reconstructs identical state (authority invariant).
+* `test_append_collection_unaffected_by_churn_path`: an `AppendBulk` collection in the same process
+  still uses the durable path (mixed-read safety).
+
+== Gating / descope
+
+Branch keyed on the resolved profile; `AppendBulk` default untouched (asserted). Gated by
+`workload_profile:churn`. **Descope:** reuse the existing unflushed-WAL freshness path (already
+partially present) and defer ORION fusion to a follow-up if scope balloons; do not introduce a new
+in-memory memtable structure.

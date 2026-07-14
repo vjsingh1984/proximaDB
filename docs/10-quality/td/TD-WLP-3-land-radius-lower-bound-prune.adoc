@@ -1,0 +1,48 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-WLP-3: Land the lever-3 radius lower-bound centroid prune (default radius_k=0.0)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open — spec filed 2026-07-14 (ADR-061). Implementation exists on branch `feat/rdstrat5-nprobe-sweep` (radius scoring + block_radii + nprobe×radius-k sweep); this TD tracks landing it.
+| Priority | P1 — the read accelerator ADR-061 D3/D7 depend on; independently shippable (default-OFF).
+| Severity | Medium — read-path prune scoring; must reproduce exact legacy recall at radius_k=0.
+| Component | `crates/foundation/proximadb-search-types/src/search_params.rs` (`BlockPruneConfig.radius_k`); `crates/storage/proximadb-storage-common/src/pax_block.rs` (`block_radii` RMS-spread emission); `src/storage/engines/sst/readers/block_pruning.rs` (`d(q,c)−k·radius` scoring); `object_economy_directory.rs` + `IndexEntry` (radius carry, `#[serde(default)]`)
+| Governs | link:../../12-design/adr/ADR-061-per-collection-workload-profiles.adoc[ADR-061] (D7)
+| Relates to | TD-RDSTRAT-4/5 (clustering + centroid prune), the SIFT nprobe×radius-k sweep, ADR-046 (mixed-read via serde-default)
+| Pillar | PERF (recall at fixed keep-ratio → fewer block GETs)
+|===
+
+toc::[]
+
+== Why
+
+The centroid prune ranks blocks by raw centroid distance, which ignores block spread and drops
+recall (measured 0.99→0.81 as blocks are pruned). Ranking by the distance lower bound
+`d(q, centroid) − k·radius` keeps spread-out blocks that could still hold a near neighbour, raising
+recall at a fixed keep-ratio. Because clustering is not shipped/rolled-out, the field additions are
+mixed-read-safe by serde-default (and self-healing via the rebuildable VOE directory).
+
+== Scope
+
+* Land from `feat/rdstrat5-nprobe-sweep`: `BlockPruneConfig.radius_k` (default `0.0`), one-pass RMS
+  `block_radii` emission in the PAX writer (`Σ‖x‖²` accumulator → `√(mean‖x‖²−‖c‖²)`), the
+  `d(q,c)−k·radius` scoring in `select_blocks_by_centroid`, and the radius carry through
+  `SegmentMeta` → `IndexEntry` → VOE `ObjectEconomyBlockEntry` (all `#[serde(default)]`).
+* Env knob `PROXIMADB_PAX_CENTROID_RADIUS_K` (default `0.0` = legacy, cosine-safe).
+* Land only `radius_k` + `block_radii`; treat the RDSTRAT-5 recall-gate and prune-URL-match fixes as
+  separate prerequisite merges (branch-drift risk, ADR-061 risks §3).
+
+== TDD gate
+
+Recall/behaviour ratchet (extend `tests/sift_pax_recall_ratchet_test.rs`; qa-gate):
+
+* nprobe×radius-k sweep: recall at a fixed keep-ratio is **≥** the `radius_k=0` baseline for the
+  calibrated L2 point (monotone non-regression).
+* `radius_k=0.0` reproduces the **exact** legacy recall (byte-for-byte gate) — proves default safety.
+
+== Gating
+
+`radius_k` defaults `0.0` → identical to today; opt-in per search / profile (`AppendBulk` may set an
+L2 value in TD-WLP-6). Cosine leaves it `0.0` (radius and cosine-distance are not unit-comparable).

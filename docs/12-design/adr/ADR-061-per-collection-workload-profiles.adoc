@@ -1,0 +1,195 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= ADR-061: Per-collection workload profiles — storage-projection strategy is a first-class collection attribute; records stay authority
+
+:status: Proposed
+:date: 2026-07-14
+:deciders: architecture
+:relates-to: ADR-044 (stable symbol OID), ADR-045/046 (PAX durable-core / LSN-coherent merge-read), ADR-052/058/059 (analytics execution routing), ADR-053 (cross-modal fabric), TD-133 (CrossModelTransactionCoordinator), TD-RDSTRAT-4/5 (clustering + centroid prune), TD-WLP-1..6 (implementation slices)
+:supersedes: none
+
+== Status
+
+**Proposed** (2026-07-14). Decision points D1–D7 below; implementation tracked by TD-WLP-1..6.
+Ships incrementally, every slice default-OFF and mixed-read-safe — absent the opt-in tag, behaviour
+is byte-for-byte today's.
+
+== Context
+
+ProximaDB's vector storage assumes a single physical paradigm — LSM-structured, clustered PAX
+segments reorganised at compaction — and applies it to every collection. A measured design review
+(2026-07-14: a SIFT1M centroid-prune nprobe sweep at N=100000, plus a source review of the
+PAX/SST, Vector Object Economy directory, and ORION graph paths) showed this fits one shape and
+mis-fits another:
+
+* **Append-heavy / bulk** (support case notes, bulk vector load): append-mostly, WORM-ish,
+  moderate churn. LSM is the right tool; the lever that matters is read-side prune quality, which
+  is a function of **clustering geometry**.
+* **Agent-driven, update-heavy, graph-coupled code-RAG** (symbols whose embeddings are constantly
+  re-embedded as an agent refactors; retrieval is match-then-graph-traverse): update-heavy point
+  mutation on a **bounded, hot, freshness-critical** working set. LSM here pays tombstone / write /
+  space amplification concentrated on exactly the hot keys, and its data-≫-RAM tiering is machinery
+  without a purpose.
+
+Two grounded findings frame the decision:
+
+1. **The prune weakness is clustering geometry, and clustering runs at compaction — which is
+   currently dark.** The sweep measured pruned recall@10 falling 0.9891 → 0.8087 as blocks are
+   pruned; finer granularity (N=20000 vs N=100000) barely moved it, so the cause is *weak clusters*
+   (sort-by-sign-bit MVP), not nprobe granularity. Clustering is (re)applied at compaction — the
+   compactor already re-runs `write_pax_segment_full` (`src/storage/engines/sst/compaction.rs`) —
+   but compaction is **global and default-OFF** (`PROXIMADB_L0_COMPACTION_ENABLED`,
+   `src/storage/engines/sst/flush/mod.rs`). So the append path needs compaction armed per-collection
+   and its clustering upgraded (fp32-PCA / IVF, not sign bits).
+
+2. **ORION is a Beta in-memory CSR *projection*, not an authority.** Canonical `ProximaRecord` +
+   WAL is the durable authority for graph and vector data; ORION's adjacency and the vector indexes
+   are rebuildable, mutable, epoch-fresh projections over it. So the code-RAG answer is **not** "make
+   ORION the graph-primary authority" nor "add a new engine" — it is to keep records as authority and
+   change only the *read-acceleration projection*.
+
+The durable-authority contract is already correct for both shapes and must not change. What is
+missing is a way for a collection to declare *which projection strategy* serves it.
+
+== Decision
+
+Introduce **`StorageProfile`** as a first-class per-collection attribute selecting the
+read-acceleration projection strategy. It is deliberately **distinct** from the existing
+`CatalogWorkloadProfile` (Oltp/Olap/Vector/Graph…, which routes *query shape → engine* in
+`ComputeScheduler`): `StorageProfile` selects a *storage projection*, not a query route.
+
+[cols="1,2,1,2", options="header"]
+|===
+| Profile | Read-acceleration projection | Freshness | Clustering
+| `AppendBulk` (`append` / `bulk`) | Durable clustered PAX-LSM segments + VOE directory | flush + delta-merge | fp32-PCA IVF/Hilbert **at compaction**
+| `Churn` (code-RAG) | In-memory mutable ANN index (AXIS) + ORION graph + `oid` fusion | immediate (epoch-gated) | none — memory-resident; no compaction-cluster staleness
+|===
+
+=== D1 — `StorageProfile` is a per-collection attribute via the existing tag cascade
+
+A `workload_profile:append|bulk|churn` tag on `CollectionConfig.tags`, resolved by a new
+`resolve_storage_profile()` that mirrors `resolve_pax_vector_quant`
+(`src/storage/engines/sst/flush/mod.rs`): **tag > env `PROXIMADB_STORAGE_PROFILE` > default
+`append`**. No proto/DDL surface change and no new create-time storage engine. `append` and `bulk`
+resolve to the same `AppendBulk` durable strategy (they differ only in flush-sizing defaults);
+`churn` selects the mutable-projection strategy.
+
+=== D2 — Authority is invariant across profiles (the load-bearing safety decision)
+
+Canonical `ProximaRecord` + WAL remain the **sole durable authority** for both profiles. The vector
+index and ORION CSR are rebuildable projections, never authority. Node vectors stay separate
+`ProximaRecord` embedding cells (not graph-node properties); there is no default atomic
+node+vector+edge transaction — `CrossModelTransactionCoordinator` (TD-133) stays opt-in. **Profiles
+differ only in the read-acceleration projection; never in the durability or recovery contract.**
+This is what keeps the change safe: a profile can never lose data, only change how reads are served.
+
+=== D3 — `AppendBulk`: clustered PAX-LSM with model training at compaction
+
+L0 flush uses a cheap, model-free **Hilbert-on-raw** ordering (no PCA model needed — cold-start
+safe). At **compaction**, train a PCA + IVF (k-means) model and re-cluster via the already-wired
+`write_pax_segment_full` path, populating the VOE directory's per-block centroids and its currently
+unused `pca_model_ref` (`src/storage/engines/sst/object_economy_directory.rs`). Clustering is
+computed on **fp32 (PCA-projected fp32), not on the quantized codes** — it is a write-time,
+low-cardinality decision where precision is cheap and directly buys read-side I/O; RaBitQ/SQ8 remain
+read-time per-vector cascade codes (never the clustering driver). One PCA projection serves the
+Hilbert score, the IVF assignment, and the stored centroid.
+
+=== D4 — `Churn`: in-memory mutable index + ORION graph + `oid` fusion
+
+`Churn` collections serve reads from an in-memory mutable ANN index (the AXIS mutable path,
+`src/index/axis/`) sized to the bounded working set, fused with ORION's epoch-fresh CSR traversal
+via `oid`-keyed correlation (ADR-044). A re-embedded symbol is immediately visible **pre-flush**;
+durability is still WAL, and the index is rebuilt on recovery. Compaction-clustering is pinned OFF
+for `Churn` (churn invalidates a model faster than it pays off). The bounded-working-set assumption
+is enforced with a memory guard/metric.
+
+=== D5 — Per-collection compaction override lifts the global gate
+
+Add a per-collection compaction override resolved through the same cascade, mirroring how
+`CollectionWalConfig` already makes *flush* thresholds per-collection
+(`src/storage/persistence/write_ahead_log/config.rs`). Today compaction is global + default-OFF
+(`L0_COMPACTION_THRESHOLD = 5`; `OrchestratorCompactionConfig` in
+`src/storage/common/compaction_orchestrator.rs`). `AppendBulk` collections may **arm** compaction
+(to get re-clustering) while the global default stays OFF and `Churn` stays OFF. The global env
+remains the master kill-switch.
+
+=== D6 — Profile selects a read-path projection, not a query route
+
+`StorageProfile` influences which projection the storage read path consults; it does **not** add a
+`ComputeScheduler` engine branch (routing stays on `engages_relational` / `parquet_backed`). Keeping
+the two orthogonal — and the names distinct — prevents accidental changes to OLAP/OLTP routing.
+
+=== D7 — The radius lower-bound prune is the `AppendBulk` read accelerator
+
+Fold in the measured lever: rank blocks by the distance lower bound `d(q, centroid) − k·radius`
+(`BlockPruneConfig.radius_k` + per-block `block_radii`,
+`crates/foundation/proximadb-search-types/src/search_params.rs`), default `radius_k = 0.0`
+(legacy, cosine-safe). `AppendBulk` may set a calibrated L2 value. This is the concrete read-side
+payoff that D3's clustering unlocks — it keeps spread-out blocks that a centre-only rank would
+wrongly prune.
+
+== First principles / rationale
+
+* **Co-design against the trace, not the component.** For a serverless-on-object-store DB the
+  dominant cost is I/O round-trips + egress, not CPU. The append path optimises the *first driver*
+  (a tiny cached directory of centroids + radii + zone-maps) so few blocks are read; the churn path
+  optimises *freshness on a bounded set* where the round-trip funnel is irrelevant because the
+  working set is memory-resident.
+* **Vertical inside, standard outside.** WORM immutability is forced by object storage; we are at
+  liberty to re-cluster/re-tier *inside* the segment at compaction. That licence is exactly what D3
+  spends. But leveled-LSM compaction is workload-specific machinery, not universal — D4 declines it
+  where the working set fits memory and mutation dominates.
+* **Cluster in the geometry you prune in.** The read-side block prune scores fp32 centroid distance;
+  clustering must therefore be fp32 (PCA), or clusters compact in code-space are not compact in
+  prune-space (D3). The sweep is the evidence: sign-bit (≈1-bit code) clustering measured 0.81.
+
+== Consequences
+
+*Positive.*
+
+* Each workload shape gets the right projection without forking the durability contract or the
+  create-time engine.
+* The dark compaction re-cluster path (`write_pax_segment_full`) gets a **safe, per-collection**
+  trigger — it lights up only where it pays.
+* Zero-risk default: absent a `workload_profile:` tag → `AppendBulk` → today's behaviour (compaction
+  still globally OFF). No migration, no format flag day.
+
+*Negative / cost.*
+
+* Two read-path projection strategies to maintain; the `Churn` memory-resident index adds an OOM
+  surface bounded by the working-set assumption (guarded + metered).
+* `AppendBulk` model staleness between compactions (mitigated: the Hilbert bootstrap keeps L0 usable
+  with no model).
+* A latent footgun: conflating `StorageProfile` with `CatalogWorkloadProfile` (mitigated by D6 +
+  distinct naming).
+
+== Alternatives considered
+
+* **A1 — a new storage engine per profile at create-time.** Rejected: heavyweight, breaks the
+  migration surface, duplicates the LSM, and couples the decision to create-time when the projection
+  is a read-path concern.
+* **A2 — make ORION the graph-primary authority for `Churn`.** Rejected: violates D2; ORION is Beta
+  and explicitly a rebuildable projection with no default atomic node+vector+edge transaction.
+* **A3 — cluster on quantized codes (RaBitQ/SQ8/PQ).** Rejected: higher cardinality, precision loss,
+  and no read-I/O win over fp32; the sign-bit MVP is precisely this failure, measured at 0.81.
+* **A4 — auto-infer the profile from the query/write mix in v1.** Deferred, not built:
+  `infer_workload_profile` (`ddl/mod.rs`) can layer on later. v1 uses an explicit, predictable tag,
+  matching the existing cascade convention.
+
+== Verification / ratchets
+
+Each TD-WLP slice ships its TDD gate:
+
+* Profile resolution — unit test of the tag>env>default cascade (TD-WLP-1).
+* Compaction arming — integration test that an `AppendBulk` collection arms compaction while the
+  global gate is OFF (TD-WLP-2).
+* Radius prune — recall ratchet: recall at a fixed keep-ratio ≥ the `radius_k=0` baseline, and
+  `radius_k=0.0` reproduces exact legacy recall (TD-WLP-3).
+* Compaction clustering — integration test: post-compaction centroids + `pca_model_ref` populated,
+  intra-block coherence improves vs the L0 bootstrap; `Churn` does not train (TD-WLP-4).
+* Churn freshness — integration test: a re-embedded symbol is immediately visible pre-flush, and WAL
+  replay reconstructs identical state; an `AppendBulk` collection in the same process is unaffected
+  (TD-WLP-5).
+
+The global recall ratchet (`tests/sift_pax_recall_ratchet_test.rs`) must not regress on the default
+(untagged) path at any slice.
