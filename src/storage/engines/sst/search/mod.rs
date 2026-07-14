@@ -239,6 +239,96 @@ impl SstEngine {
     /// **Metric gate.** Serves only Euclidean collections — the cascade's rerank is
     /// L2-validated (recall 0.932 @ N=100k). Other metrics stay on the generic scan
     /// until the cascade is metric-generalized + re-validated (follow-up).
+    /// TD-RDSTRAT-5 S3: the block indices to scan for `sstable_path`, from the
+    /// Vector Object Economy directory's per-block centroids (loaded cache-first).
+    /// Returns `None` — "scan every block" (unchanged) — whenever the prune can't
+    /// apply: no directory cache, the directory is missing/stale/corrupt, this file
+    /// isn't in the directory, or it carries no centroids (unclustered). So the
+    /// caller degrades safely to the full scan. `Some(indices)` are the survivors of
+    /// [`select_blocks_by_centroid`] over the file's block centroids.
+    async fn voe_centroid_selected_blocks(
+        &self,
+        collection_id: &str,
+        collection_root: &str,
+        sstable_path: &str,
+        query: &[f32],
+        metric: DistanceMetric,
+    ) -> Option<Vec<usize>> {
+        use crate::storage::engines::sst::IndexEntry;
+        use crate::storage::engines::sst::object_economy_directory::load_directory_for;
+        use crate::storage::engines::sst::readers::block_pruning::select_blocks_by_centroid;
+        use proximadb_catalog::CatalogAuthorityMode;
+
+        let cache = self.directory_cache_ref()?;
+        let fs = self.filesystem().get_filesystem(sstable_path).ok()?;
+        let handle = cache.handle_for(collection_id);
+        let (cid, root) = (collection_id.to_string(), collection_root.to_string());
+        let entry = handle
+            .get_or_load(move || async move {
+                load_directory_for(
+                    fs.as_ref(),
+                    &cid,
+                    &root,
+                    0,
+                    CatalogAuthorityMode::RebuildableProjection,
+                )
+                .await
+            })
+            .await;
+        if entry.status.is_degraded() {
+            return None; // missing / stale / corrupt → full scan (mixed-read-safe)
+        }
+        // Match the directory file entry by FILENAME BASENAME, not the full URL:
+        // the emit side records `object_url = "{atomic_op.final_url}/{filename}"`
+        // (flush emission) while the read side gets `sstable_path = entry.url` from
+        // `fs.list` (discover_sstable_files) — the two URLs are built by different
+        // code paths, so scheme/normalization can differ and an exact `==` is
+        // fragile. Filenames are unique within a per-collection directory, so the
+        // basename is the stable join key. (The prune's actual dark-out was the
+        // sidecar never being written on local fs — the emit ENOENTed until the
+        // `oedir/` parent create_dir_all fix in object_economy_directory::store;
+        // this basename match hardens the read against URL drift regardless.)
+        fn basename(u: &str) -> &str {
+            u.rsplit('/').next().unwrap_or(u)
+        }
+        let want = basename(sstable_path);
+        let file = entry
+            .directory
+            .files
+            .iter()
+            .find(|f| basename(&f.object_url) == want)?;
+        // Adapt the directory's per-block centroids → `IndexEntry` (only the
+        // centroid fields matter to the pruner) and reuse the existing prune.
+        let entries: Vec<IndexEntry> = file
+            .blocks
+            .iter()
+            .map(|b| IndexEntry {
+                block_centroid: b.centroid_fp32.clone().unwrap_or_default(),
+                block_centroid_fp16: b.centroid_fp16.clone(),
+                ..Default::default()
+            })
+            .collect();
+        // No usable centroids (unclustered segment) ⇒ don't prune.
+        if entries
+            .iter()
+            .all(|e| e.block_centroid.is_empty() && e.block_centroid_fp16.is_none())
+        {
+            return None;
+        }
+        let prune = crate::storage::engines::sst::block_cluster::centroid_prune_config();
+        let total = entries.len();
+        let selected = select_blocks_by_centroid(query, &entries, metric, &prune);
+        // Record the prune outcome so the recall gate can assert the probe engaged
+        // (centroid_pruned_blocks > 0) rather than silently falling back to a full
+        // scan. `total - selected` is how many blocks the centroid probe skipped.
+        crate::observability::io_trace::record_centroid_prune(
+            total as u64,
+            total.saturating_sub(selected.len()) as u64,
+        );
+        Some(selected)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     async fn try_pax_cascade(
         &self,
         sstable_path: &str,
@@ -246,9 +336,15 @@ impl SstEngine {
         filter_expression: Option<&FilterExpression>,
         k: usize,
         distance_metric: DistanceMetric,
+        collection_id: &str,
+        collection_root: &str,
     ) -> anyhow::Result<Option<Vec<OptimizedSearchRecord>>> {
+        use crate::storage::engines::core::coalesce_strategy::{
+            choose_whole_vs_striped, is_cloud_path, read_strategy_chooser_enabled,
+        };
         use crate::storage::engines::sst::segment_format::{
-            MetaPrune, pax_field_to_col, rabitq_search_segment,
+            MetaPrune, pax_field_to_col, rabitq_search_segment, rabitq_search_segment_ranged,
+            segment_index_summary, striped_read_enabled,
         };
         use proximadb_block_format::RankMetric;
         // Map the query metric to a cascade rank metric. Dot/max-IP and exotic
@@ -261,24 +357,118 @@ impl SstEngine {
         }) else {
             return Ok(None);
         };
-        // Read the segment bytes once; the generic-scan branch uses the sstable
-        // reader instead, so this read is exclusive to the cascade (no double-read).
         let fs = self
             .filesystem()
             .get_filesystem(sstable_path)
             .map_err(|e| anyhow::anyhow!("opening PAX segment {sstable_path}: {e}"))?;
-        let bytes = fs
-            .read(sstable_path)
-            .await
-            .map_err(|e| anyhow::anyhow!("reading PAX segment {sstable_path}: {e}"))?;
         let pool = Self::pax_rabitq_pool_for_top_k(k);
-        let prune = filter_expression.map(|filter| MetaPrune {
-            filter,
-            field_to_col: &pax_field_to_col,
-        });
-        let Some(hits) = rabitq_search_segment(&bytes, query_vector, k, pool, rank_metric, prune)?
-        else {
-            return Ok(None); // not PAX / no RaBitQ → caller falls back
+
+        // Decide whole vs selective (striped) read (ADR-057 / TD-RDSTRAT-3). Only
+        // unfiltered queries are eligible for the striped path (metadata pruning
+        // over the ranged reader is a follow-up). Precedence:
+        //   S2 chooser (PROXIMADB_READ_STRATEGY_CHOOSER) — cost-driven, tier-aware:
+        //     estimate the striped vs whole cost from the tail index (one small read)
+        //     and pick via `choose_whole_vs_striped`; the choice is observe-logged.
+        //   else S1b flag (PROXIMADB_PAX_STRIPED_READ) — raw opt-in.
+        // Both default OFF ⇒ whole read. The striped read is byte-identical, so this
+        // only changes cost; any `None` falls through to the whole read (mixed-read-safe).
+        let use_striped = filter_expression.is_none()
+            && if read_strategy_chooser_enabled() {
+                match segment_index_summary(fs.as_ref(), sstable_path).await? {
+                    Some((n_blocks, total_block_bytes, whole_bytes)) => {
+                        // Striped cost estimate (chooser INPUT, not a hardcoded
+                        // selectivity threshold — the flip gate uses real io_trace):
+                        // Stage-1 codes ≈ 1/6 of the block bytes, Stage-2 SQ8 rerank
+                        // ≈ pool·dim, and ~4 coalesced GETs/block + the index GET.
+                        let dim = query_vector.len() as u64;
+                        let striped_bytes_est = total_block_bytes / 6 + pool as u64 * dim;
+                        let striped_gets_est = 1 + 4 * n_blocks;
+                        let is_cloud = is_cloud_path(sstable_path);
+                        let pick_striped = choose_whole_vs_striped(
+                            is_cloud,
+                            whole_bytes,
+                            striped_gets_est,
+                            striped_bytes_est,
+                        );
+                        tracing::debug!(
+                            target: "rdstrat",
+                            pick_striped,
+                            is_cloud,
+                            n_blocks,
+                            whole_bytes,
+                            striped_bytes_est,
+                            striped_gets_est,
+                            "TD-RDSTRAT-3 S2 cascade read-strategy choice (observe)"
+                        );
+                        pick_striped
+                    }
+                    None => false, // index unreadable → whole
+                }
+            } else {
+                striped_read_enabled()
+            };
+
+        // TD-RDSTRAT-5 S3 (default-OFF): centroid probe-prune. When enabled and the
+        // VOE directory yields a block selection for this file, scan ONLY those
+        // blocks via the ranged reader (forces the ranged path). `None` ⇒ no prune
+        // ⇒ the existing whole/striped logic below (mixed-read-safe fallback).
+        let selected_blocks: Option<Vec<usize>> = if filter_expression.is_none()
+            && crate::storage::engines::sst::block_cluster::centroid_prune_enabled()
+        {
+            self.voe_centroid_selected_blocks(
+                collection_id,
+                collection_root,
+                sstable_path,
+                query_vector,
+                distance_metric,
+            )
+            .await
+        } else {
+            None
+        };
+
+        let hits = 'hits: {
+            if let Some(sel) = selected_blocks.as_deref()
+                && let Some(hits) = rabitq_search_segment_ranged(
+                    fs.as_ref(),
+                    sstable_path,
+                    query_vector,
+                    k,
+                    pool,
+                    rank_metric,
+                    Some(sel),
+                )
+                .await?
+            {
+                break 'hits hits;
+            }
+            if use_striped
+                && let Some(hits) = rabitq_search_segment_ranged(
+                    fs.as_ref(),
+                    sstable_path,
+                    query_vector,
+                    k,
+                    pool,
+                    rank_metric,
+                    None,
+                )
+                .await?
+            {
+                break 'hits hits;
+            }
+            // Whole-segment read (default, striped-declined, or filtered).
+            let bytes = fs
+                .read(sstable_path)
+                .await
+                .map_err(|e| anyhow::anyhow!("reading PAX segment {sstable_path}: {e}"))?;
+            let prune = filter_expression.map(|filter| MetaPrune {
+                filter,
+                field_to_col: &pax_field_to_col,
+            });
+            match rabitq_search_segment(&bytes, query_vector, k, pool, rank_metric, prune)? {
+                Some(hits) => hits,
+                None => return Ok(None), // not PAX / no RaBitQ → caller falls back
+            }
         };
         let records = hits
             .into_iter()
@@ -1011,6 +1201,8 @@ impl SstEngine {
                         filter_expression,
                         k,
                         distance_metric,
+                        collection_id,
+                        storage_url,
                     )
                     .await
                 {

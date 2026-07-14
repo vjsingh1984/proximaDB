@@ -5668,6 +5668,34 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
         self.search_v1(request).await
     }
 
+    /// TD-XMODAL-4 S2: the single canonical native kernel for both the pgvector
+    /// `<->` operator and the `vector_search(...)` UDTF. **Fail-closed** tenant
+    /// scoping via the same `for_tenant_id` → `unified_search_native_with_tenant_context`
+    /// path (`validate_tenant_collection_access` + tenant-scoped `get_collection`)
+    /// the existing tenant-context callers use — so promoting this to the port does
+    /// NOT weaken isolation. `None`/empty tenant ⇒ single-tenant, no scoping change.
+    async fn unified_search_native(
+        &self,
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        k: usize,
+        filter: Option<proximadb_filter_expression::FilterExpression>,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        let tenant_ctx = tenant_id
+            .filter(|t| !t.is_empty())
+            .map(crate::storage::tenant::context::TenantContext::for_tenant_id);
+        self.unified_search_native_with_tenant_context(
+            collection_id,
+            query_vector,
+            k,
+            filter,
+            None,
+            tenant_ctx.as_ref(),
+        )
+        .await
+    }
+
     async fn batch_upsert(
         &self,
         request: crate::proto::proximadb_v1::VectorBatchRequest,
@@ -5705,7 +5733,7 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
         &self,
         collection_id: &str,
         filters: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
-        _tenant_id: Option<&str>,
+        tenant_id: Option<&str>,
     ) -> anyhow::Result<std::collections::HashSet<String>> {
         use std::collections::HashSet;
 
@@ -5725,12 +5753,18 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
 
         // Read the authoritative record set — WAL memtable plus flushed storage —
         // and keep the ids whose property tree satisfies the filter under the
-        // single canonical evaluator. Tenant scope is not threaded here (the
-        // hybrid boundary carries no `TenantContext`, mirroring the vector leg's
-        // `search(req, None)`); correctness holds because this set only ever
-        // *narrows* the BM25 candidates and never widens them.
+        // single canonical evaluator. The caller's tenant identity (threaded
+        // from the REST boundary through `HybridPort`, #949) scopes the
+        // listing: in multi-tenant mode the record listing REQUIRES a tenant
+        // context, so the former `None` made every filtered hybrid query fail
+        // closed to an empty allowed-set and drop all BM25 candidates. The
+        // fail-closed direction is preserved (errors still empty the set at
+        // the caller); this set only ever *narrows* the BM25 candidates.
+        let tenant_ctx = tenant_id
+            .filter(|t| !t.is_empty())
+            .map(crate::storage::tenant::context::TenantContext::for_tenant_id);
         let records = self
-            .list_all_records_with_tenant_context(&resolved, None)
+            .list_all_records_with_tenant_context(&resolved, tenant_ctx.as_ref())
             .await?;
 
         let matching = records

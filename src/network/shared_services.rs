@@ -511,6 +511,13 @@ impl SharedServices {
         }
 
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
+        // Inject the object-store filesystem resolver (root half of the
+        // CatalogFilesystemResolver port-inversion). Lazily creates a
+        // FilesystemFactory only if an s3://gs://az:// catalog URL is used;
+        // local `file://` setups never touch it.
+        catalog_manager
+            .set_filesystem_resolver(Arc::new(crate::catalog::LazyFilesystemResolver::new()))
+            .await;
 
         // SharedServices owns metadata configuration logic
         info!(
@@ -2136,8 +2143,20 @@ impl SharedServices {
         // adapter.execute_sql) and the RecordOpsService (REST write path), so DDL
         // writes over either surface address the same catalog state and execute
         // tenant-scoped.
-        let ddl_service =
-            std::sync::Arc::new(crate::services::DdlService::new(catalog_manager.clone()));
+        // Wire the write-lease authority into DDL so collection/table-scoped DDL
+        // fast-fails misrouted writes (ADR-032): the primary-pod registry + pod id
+        // for in-memory routing, and — when the lease system is on — the SAME
+        // PartitionLeaseManager the DML write-gate uses (`lease_manager_for_writes`),
+        // so DDL and DML share one ownership view.
+        let mut ddl = crate::services::DdlService::new(catalog_manager.clone())
+            .with_primary_pod_registry(primary_pod_registry.clone())
+            .with_self_pod_id(crate::cluster::primary_pod_registry::resolve_self_pod_id(
+                None,
+            ));
+        if let Some(manager) = &lease_manager_for_writes {
+            ddl = ddl.with_partition_lease_manager(manager.clone());
+        }
+        let ddl_service = std::sync::Arc::new(ddl);
         // Wire QueryFacadeAdapter onto the runtime handler for unified SQL routing.
         // This enables SQL queries to flow through the facade when the
         // unified-facade-routing feature is enabled. The adapter carries the

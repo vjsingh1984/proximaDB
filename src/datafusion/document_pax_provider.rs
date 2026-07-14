@@ -816,6 +816,143 @@ mod tests {
         );
     }
 
+    /// A `DocumentScanPort` serving a fixed record set through the EXACT transform the production
+    /// `DocumentServiceScan` applies after `query_documents` (dead-filter, canonical document
+    /// rebuild, `proxima_tree_to_json_map` → JSON string) — the MemTable-path A/B twin of
+    /// `FakeRoute::unflushed_records` over the same `Vec<ProximaRecord>`.
+    struct RecordSetScan {
+        records: Vec<ProximaRecord>,
+    }
+
+    #[async_trait]
+    impl crate::datafusion::cross_modal::DocumentScanPort for RecordSetScan {
+        async fn scan(
+            &self,
+            _tenant: &str,
+            _collection: &str,
+        ) -> anyhow::Result<Vec<(String, String)>> {
+            let now_ns = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as i64)
+                .unwrap_or(0);
+            Ok(self
+                .records
+                .iter()
+                .filter(|r| !is_record_dead(r.valid_to_ns, now_ns))
+                .filter_map(
+                    crate::storage::document::canonical_adapter::proxima_record_to_legacy_document,
+                )
+                .map(|doc| {
+                    let json = serde_json::Value::Object(
+                        crate::core::search::sql_value_filter::proxima_tree_to_json_map(&doc.props)
+                            .into_iter()
+                            .collect(),
+                    );
+                    (doc.id, serde_json::to_string(&json).unwrap_or_default())
+                })
+                .collect())
+        }
+    }
+
+    /// Collect the full `(id, props)` projection of a provider, in id order.
+    async fn id_props(provider: Arc<dyn TableProvider>) -> Vec<(String, String)> {
+        let ctx = SessionContext::new();
+        ctx.register_table("documents", provider).unwrap();
+        let batches = ctx
+            .sql("SELECT id, props FROM documents ORDER BY id")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let mut out = Vec::new();
+        for b in &batches {
+            let ids = b
+                .column(0)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("id column");
+            let props = b
+                .column(1)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("props column");
+            for i in 0..b.num_rows() {
+                out.push((ids.value(i).to_string(), props.value(i).to_string()));
+            }
+        }
+        out
+    }
+
+    /// A/B parity gate — the pushdown provider's `(id, props)` output is byte-identical to the
+    /// existing MemTable path (`DocumentTableProvider` over a `DocumentScanPort`, ADR-055
+    /// P-DFSource) on the SAME record set, running the same
+    /// `SELECT id, props FROM documents ORDER BY id` through BOTH providers end-to-end. This is
+    /// the literal side-by-side proof of the "results identical to the MemTable path" claim, not
+    /// shared-transform inference — including agreement on what is EXCLUDED (TTL-expired,
+    /// tombstoned).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pushdown_output_is_byte_identical_to_memtable_path() {
+        let records = vec![
+            doc(
+                "d1",
+                "docs",
+                &[
+                    ("region", ProximaValue::String("US".into())),
+                    ("amount", ProximaValue::Int64(100)),
+                    ("active", ProximaValue::Boolean(true)),
+                ],
+                10,
+                None,
+            ),
+            doc(
+                "d2",
+                "docs",
+                &[
+                    ("region", ProximaValue::String("EU".into())),
+                    ("score", ProximaValue::Float64(2.5)),
+                ],
+                20,
+                None,
+            ),
+            doc(
+                "d3",
+                "docs",
+                &[("note", ProximaValue::String("unicode ✓ \"quoted\"".into()))],
+                30,
+                None,
+            ),
+            // Both paths must also agree on exclusions: TTL-expired + tombstone.
+            doc(
+                "expired",
+                "docs",
+                &[("region", ProximaValue::String("US".into()))],
+                10,
+                Some(1),
+            ),
+            tombstone("gone", 40),
+        ];
+
+        let pushdown = provider_with(records.clone()).await;
+        let memtable = crate::datafusion::cross_modal::DocumentTableProvider::new(
+            Arc::new(RecordSetScan { records }),
+            proximadb_tenant::DEFAULT_TENANT,
+            "docs",
+        );
+
+        let a = id_props(Arc::new(pushdown)).await;
+        let b = id_props(Arc::new(memtable)).await;
+        assert_eq!(
+            a.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            vec!["d1", "d2", "d3"],
+            "live rows only, in id order"
+        );
+        assert_eq!(
+            a, b,
+            "pushdown (id, props) must be byte-identical to the MemTable path"
+        );
+    }
+
     /// Gate 4 — the measured pushdown byte gate (ADR-052 invariant 4). A real multi-block PAX
     /// segment with a shredded `amount` column is scanned through the provider under
     /// `PROXIMADB_DF_PAX_RANGED`; a selective `amount >= N` predicate must (a) issue ranged GETs

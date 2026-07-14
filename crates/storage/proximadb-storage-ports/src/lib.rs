@@ -14,6 +14,17 @@
 use anyhow::Result;
 use proximadb_proto::proximadb_v1::Collection;
 use proximadb_storage_common::StorageEngineType;
+use proximadb_storage_filesystem_types::{FileOptions, FileSystem, FsResult};
+
+pub mod capabilities;
+pub use capabilities::*;
+pub mod scan_strategy;
+pub use scan_strategy::{ScanCostEstimate, ScanIterator, ScanStatistics, ScanStrategy};
+pub mod path_resolver;
+pub use path_resolver::{
+    CollectionPathResolver, StorageAssignment, collection_data_path_typed,
+    typed_identity_from_storage_assignment,
+};
 
 /// Read access to collection metadata that storage needs at flush/compaction
 /// time (fetch the proto `Collection` for a name or UUID).
@@ -159,4 +170,60 @@ pub trait StorageQuantizationEnginePort: Send + Sync {
 
     /// Dequantize a vector back to approximate float values.
     async fn dequantize(&self, quantized: &QuantizedVector) -> Result<Vec<f32>>;
+}
+
+/// Filesystem access port — inverts the storage→root `FilesystemFactory` dependency.
+///
+/// Engine leaves hold `Arc<dyn FilesystemPort>` instead of the root-local
+/// `FilesystemFactory` concrete type, so engine modules (`viper/pipeline`,
+/// `raptor/*`, …) can move to crates. The surface is the routing + staging methods
+/// engines actually use — measured across `EngineFilesystemAccess`'s default
+/// methods, `trait_components::writer`, and the engine tests. The concrete
+/// `FilesystemFactory` impls this in the root crate (a downward edge —
+/// root→storage-ports is layering-allowed); the composition root injects it.
+///
+/// This unblocks the engine-leaf extraction (see
+/// `docs/12-design/ROOT_CRATE_DECOMPOSITION_ENGINES_EXTRACTION_2026_07_12.adoc`):
+/// leaves swap their `Arc<FilesystemFactory>` fields for `Arc<dyn FilesystemPort>`.
+#[async_trait::async_trait]
+pub trait FilesystemPort: Send + Sync {
+    /// Resolve the `FileSystem` for a URL's scheme (cached; routed by scheme).
+    fn get_filesystem(&self, url: &str) -> FsResult<std::sync::Arc<dyn FileSystem>>;
+    /// Recursively create the directory at `url`.
+    async fn create_dir_all(&self, url: &str) -> FsResult<()>;
+    /// Write `data` to `url`.
+    async fn write(&self, url: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()>;
+    /// Atomically move `from_url` → `to_url`.
+    async fn move_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()>;
+    /// Delete the file/dir at `url`.
+    async fn delete(&self, url: &str) -> FsResult<()>;
+}
+
+/// Cache-kind for access-pattern tracking — the engine-facing subset of the root
+/// `CacheType` (the 5 variants engines actually track, measured across
+/// `src/storage/engines/`: VectorData, Metadata, DistanceTable, FilterBitmap,
+/// IndexStructure). Foundation-neutral so engine leaves can name it without
+/// depending on the root-local `CacheType`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CacheKind {
+    VectorData,
+    Metadata,
+    DistanceTable,
+    FilterBitmap,
+    IndexStructure,
+}
+
+/// Cache access-pattern tracking port — inverts the storage→root
+/// `CrossCacheOrchestrator` dependency for access tracking.
+///
+/// Engine leaves hold `Arc<dyn CacheAccessPatternPort>` instead of the root-local
+/// `CrossCacheOrchestrator` (a heavily-coupled global singleton), so engine modules
+/// can move to crates. The surface is exactly the one method engines use —
+/// `pattern_tracker().track_access_async(key, cache_type)` — measured across 12
+/// engine files. The concrete `CrossCacheOrchestrator` impls this in the root crate
+/// (downward edge); the composition root injects it. Non-blocking (the underlying
+/// tracker queues events for background processing).
+pub trait CacheAccessPatternPort: Send + Sync {
+    /// Record a cache access for pattern learning / predictive prefetching.
+    fn track_access(&self, key: String, cache_kind: CacheKind);
 }

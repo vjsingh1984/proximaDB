@@ -161,12 +161,6 @@ mod tests {
                 .push("search_vectors_unified".to_string());
             Ok(Vec::new())
         }
-
-        fn get_filesystem_factory(
-            &self,
-        ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-            unimplemented!("Mock filesystem factory not needed for integration tests")
-        }
     }
 
     async fn create_test_metrics_components()

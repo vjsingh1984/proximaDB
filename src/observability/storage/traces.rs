@@ -12,37 +12,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Result;
 use proximadb_observability::trace_data_to_proxima_record;
 use proximadb_records::ProximaRecord;
-use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::proto::proximadb_v1::{
     SpanKind, SpanStatus, SpanStatusCode, SqlValue, TraceData as ProtoTraceData, sql_value,
 };
 
-/// Trace span for distributed tracing
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TraceSpan {
-    /// Trace ID
-    pub trace_id: String,
-    /// Span ID
-    pub span_id: String,
-    /// Parent span ID (empty for root span)
-    pub parent_span_id: String,
-    /// Operation name
-    pub name: String,
-    /// Service name
-    pub service_name: String,
-    /// Start time in nanoseconds
-    pub start_time_ns: i64,
-    /// End time in nanoseconds
-    pub end_time_ns: i64,
-    /// Span attributes
-    pub attributes: HashMap<String, String>,
-    /// Status code (0 = OK, non-zero = error)
-    pub status: i32,
-    /// Status message
-    pub status_message: String,
-}
+/// Trace span for distributed tracing.
+///
+/// Moved to `proximadb_observability_engine::model` so the
+/// `ObservabilityStoragePort` contract can name it without an upward edge.
+pub use crate::observability::TraceSpan;
 
 /// Trace storage service
 pub struct TraceStorage {
@@ -400,24 +380,8 @@ impl TraceStorage {
     }
 }
 
-/// Summary of a trace
-#[derive(Debug, Clone)]
-pub struct TraceSummary {
-    /// Trace ID
-    pub trace_id: String,
-    /// Start time
-    pub start_time_ns: i64,
-    /// Total duration
-    pub duration_ns: i64,
-    /// Number of spans
-    pub span_count: usize,
-    /// Services involved
-    pub services: Vec<String>,
-    /// Root service name
-    pub root_service: String,
-    /// Root operation name
-    pub root_operation: String,
-}
+/// Summary of a trace — moved to `proximadb_observability_engine::model`.
+pub use crate::observability::TraceSummary;
 
 /// Service dependency edge
 #[derive(Debug, Clone)]

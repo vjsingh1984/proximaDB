@@ -516,10 +516,6 @@ mod tests {
             }
             Ok(self.results.clone())
         }
-
-        fn get_filesystem_factory(&self) -> &FilesystemFactory {
-            &self.filesystem_factory
-        }
     }
 
     struct MockGraphEngine {

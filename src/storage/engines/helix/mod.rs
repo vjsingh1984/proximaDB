@@ -2268,10 +2268,6 @@ impl UnifiedStorageFormat for HelixEngine {
         Ok(all)
     }
 
-    fn get_filesystem_factory(&self) -> &FilesystemFactory {
-        &self.filesystem_factory
-    }
-
     /// Engine-level RLS predicate (Tier 1 multi-tenant safety hardening).
     ///
     /// Mirrors the SST implementation at `src/storage/engines/sst/trait_impl.rs:303`.
@@ -2302,6 +2298,12 @@ impl UnifiedStorageFormat for HelixEngine {
             required_tenant_id: tenant_id.map(str::to_string),
             required_principal: principal.map(str::to_string),
         })
+    }
+}
+
+impl crate::storage::traits::EngineFilesystemAccess for HelixEngine {
+    fn get_filesystem_factory(&self) -> &FilesystemFactory {
+        &self.filesystem_factory
     }
 }
 

@@ -234,7 +234,7 @@ fn fp16_recall_at_10_meets_lld_q13_cosine_gate() {
 
     let q13_gate = RecallSlo::lld_defaults().cosine.at_10;
     assert!(
-        row.mean_recall >= q13_gate as f32,
+        row.mean_recall >= q13_gate,
         "fp16 mean recall@{TOP_K} = {} fell below LLD §Q13 cosine gate {} \
          (this is the LLD's go/no-go threshold for shipping fp16)",
         row.mean_recall,

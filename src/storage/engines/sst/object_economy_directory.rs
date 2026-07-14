@@ -432,6 +432,22 @@ impl<'a> VectorObjectEconomyDirectoryStore<'a> {
     pub async fn store(&self, directory: &VectorObjectEconomyDirectory) -> Result<()> {
         let bytes = directory.serialize()?;
         let path = self.path();
+        // Ensure the `oedir/` parent exists before writing. Object stores have no
+        // real directories so this is a no-op there; on a LOCAL filesystem the
+        // write ENOENTs without it — which silently degraded the sidecar to
+        // "missing", dropping the centroid probe-prune to a full scan
+        // (`centroid_pruned_blocks=0`, caught by the SIFT recall gate). Mirrors the
+        // `.pax`/Arrow flush write paths, which create the parent dir first.
+        if let Some(parent) = path.rfind('/').map(|i| &path[..i])
+            && let Err(err) = self.fs.create_dir_all(parent).await
+        {
+            // Non-fatal: surface as a warn and let the write below report the real
+            // failure if the parent is genuinely unwritable.
+            tracing::warn!(
+                "object-economy directory: create_dir_all({parent}) failed ({err}); \
+                 sidecar write may follow"
+            );
+        }
         self.fs
             .write(&path, &bytes, None)
             .await

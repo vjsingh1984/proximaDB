@@ -35,6 +35,24 @@ pub struct FramedTableWalAppender {
     path: PathBuf,
     next_sequence: AtomicU64,
     append_lock: Mutex<()>,
+    /// TD-OLAP-17: per-collection high-water sequence_number, bumped atomically
+    /// under `append_lock` on every append, AND seeded from the recovered entries
+    /// on `open` (so read-only-after-restart tables fast-path immediately). Lets
+    /// `read_changes_since` skip the O(WAL) scan when a collection hasn't advanced
+    /// past a reader's `since_lsn` (the DF table-OPEN floor). Sync lock
+    /// (parking_lot) so the sync trait method `collection_max_sequence_for` can
+    /// read it without `.await`. Never regresses (worst case = scan).
+    collection_max: parking_lot::Mutex<std::collections::HashMap<String, u64>>,
+}
+
+/// Extract the `collection_id` a canonical operation targets, if any (the
+/// shared WAL tags every entry; non-record ops carry none).
+fn collection_id_of(op: &CanonicalOperation) -> Option<&str> {
+    match op {
+        CanonicalOperation::RecordUpsert { collection_id, .. }
+        | CanonicalOperation::RecordDelete { collection_id, .. } => Some(collection_id.as_str()),
+        _ => None,
+    }
 }
 
 impl FramedTableWalAppender {
@@ -56,6 +74,7 @@ impl FramedTableWalAppender {
             path,
             next_sequence: AtomicU64::new(recovery.last_sequence),
             append_lock: Mutex::new(()),
+            collection_max: parking_lot::Mutex::new(recovery.collection_max),
         })
     }
 
@@ -146,7 +165,28 @@ impl TableWalAppender for FramedTableWalAppender {
         self.next_sequence
             .store(base_sequence + entries.len() as u64, Ordering::SeqCst);
 
+        // TD-OLAP-17: bump the per-collection high-water so `read_changes_since`
+        // can skip the O(WAL) scan for collections that haven't advanced past a
+        // reader's `since_lsn`. Still under `append_lock` (held above) and after
+        // `sync_data`, so a reader that observes this high-water is guaranteed the
+        // entry is durable.
+        {
+            let mut maxes = self.collection_max.lock();
+            for entry in &entries {
+                if let Some(c) = collection_id_of(&entry.operation) {
+                    let cur = maxes.entry(c.to_string()).or_insert(0);
+                    if entry.sequence_number > *cur {
+                        *cur = entry.sequence_number;
+                    }
+                }
+            }
+        }
+
         Ok(entries)
+    }
+
+    fn collection_max_sequence_for(&self, collection_id: &str) -> Option<u64> {
+        self.collection_max.lock().get(collection_id).copied()
     }
 }
 
@@ -161,6 +201,8 @@ impl TableWalAppender for FramedTableWalAppender {
 pub struct MemoryTableWalAppender {
     next_sequence: AtomicU64,
     entries: Mutex<Vec<CanonicalWalEntry>>,
+    /// TD-OLAP-17 per-collection high-water (see `FramedTableWalAppender`).
+    collection_max: parking_lot::Mutex<std::collections::HashMap<String, u64>>,
 }
 
 impl MemoryTableWalAppender {
@@ -169,6 +211,7 @@ impl MemoryTableWalAppender {
         Self {
             next_sequence: AtomicU64::new(0),
             entries: Mutex::new(Vec::new()),
+            collection_max: parking_lot::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -206,13 +249,41 @@ impl TableWalAppender for MemoryTableWalAppender {
         self.next_sequence
             .store(base + entries.len() as u64, Ordering::SeqCst);
         self.entries.lock().await.extend(entries.clone());
+        // TD-OLAP-17: bump the per-collection high-water (see FramedTableWalAppender).
+        {
+            let mut maxes = self.collection_max.lock();
+            for entry in &entries {
+                if let Some(c) = collection_id_of(&entry.operation) {
+                    let cur = maxes.entry(c.to_string()).or_insert(0);
+                    if entry.sequence_number > *cur {
+                        *cur = entry.sequence_number;
+                    }
+                }
+            }
+        }
         Ok(entries)
+    }
+
+    /// TD-OLAP-17: surface the in-memory entries through the trait so
+    /// `read_changes_since` (the CDC feed + OLAP delta merge) works on the
+    /// `opt_config = None` boot path that uses this appender. Without this
+    /// override the trait default returned empty, so the change-feed was silently
+    /// empty for in-memory WALs.
+    async fn read_all_entries(&self) -> Result<Vec<CanonicalWalEntry>> {
+        Ok(self.entries().await)
+    }
+
+    fn collection_max_sequence_for(&self, collection_id: &str) -> Option<u64> {
+        self.collection_max.lock().get(collection_id).copied()
     }
 }
 
 #[derive(Debug)]
 struct WalRecoveryState {
     last_sequence: u64,
+    /// TD-OLAP-17 recovery rebuild: per-collection high-water seeded from the
+    /// recovered entries, so read-only-after-restart tables fast-path immediately.
+    collection_max: std::collections::HashMap<String, u64>,
     valid_len: u64,
     file_len: u64,
 }
@@ -223,6 +294,7 @@ async fn recover_wal_state(path: &Path) -> Result<WalRecoveryState> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Ok(WalRecoveryState {
                 last_sequence: 0,
+                collection_max: std::collections::HashMap::new(),
                 valid_len: 0,
                 file_len: 0,
             });
@@ -239,9 +311,24 @@ async fn recover_wal_state(path: &Path) -> Result<WalRecoveryState> {
         .map(|entry| entry.sequence_number)
         .max()
         .unwrap_or(0);
+    // TD-OLAP-17 recovery rebuild: seed the per-collection high-water from the
+    // recovered entries so a read-mostly table fast-paths immediately after a
+    // restart, without waiting for the next write to repopulate it. No extra I/O
+    // — `scan_wal_bytes` already parsed every entry for `last_sequence`.
+    let mut collection_max: std::collections::HashMap<String, u64> =
+        std::collections::HashMap::new();
+    for entry in &scan.entries {
+        if let Some(c) = collection_id_of(&entry.operation) {
+            let cur = collection_max.entry(c.to_string()).or_insert(0);
+            if entry.sequence_number > *cur {
+                *cur = entry.sequence_number;
+            }
+        }
+    }
 
     Ok(WalRecoveryState {
         last_sequence,
+        collection_max,
         valid_len: scan.valid_len as u64,
         file_len: bytes.len() as u64,
     })
@@ -605,6 +692,39 @@ mod tests {
                     .chain()
                     .any(|cause| cause.to_string().contains("checksum mismatch"))
         );
+
+        Ok(())
+    }
+
+    /// TD-OLAP-17 recovery rebuild: reopening a WAL (process restart) must
+    /// re-seed the per-collection high-water from the recovered entries, so a
+    /// read-mostly table fast-paths immediately instead of scanning every query
+    /// until the next write repopulates it.
+    #[tokio::test]
+    async fn framed_table_wal_rebuilds_collection_high_water_on_open() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let wal_path = dir.path().join("highwater.wal");
+
+        // Append for two collections, then drop the appender (simulate process exit).
+        {
+            let appender = FramedTableWalAppender::open(&wal_path).await?;
+            appender
+                .append_operations(vec![upsert_operation("orders", "o1")], None)
+                .await?;
+            appender
+                .append_operations(vec![upsert_operation("orders", "o2")], None)
+                .await?;
+            appender
+                .append_operations(vec![upsert_operation("lineitems", "l1")], None)
+                .await?;
+        }
+
+        // Reopen = restart. The high-water is rebuilt from the recovered WAL:
+        // orders → seq 2, lineitems → seq 3 (the global counter assigned 1,2,3).
+        let reopened = FramedTableWalAppender::open(&wal_path).await?;
+        assert_eq!(reopened.collection_max_sequence_for("orders"), Some(2));
+        assert_eq!(reopened.collection_max_sequence_for("lineitems"), Some(3));
+        assert_eq!(reopened.collection_max_sequence_for("never-written"), None);
 
         Ok(())
     }

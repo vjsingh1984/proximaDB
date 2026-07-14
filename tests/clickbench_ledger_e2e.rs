@@ -330,6 +330,75 @@ async fn drain_capture() -> Option<IoTraceSnapshot> {
     None
 }
 
+/// Set a ledger-required env default unless the caller explicitly set it
+/// (explicit env always wins). Ledger runs must exercise every routable
+/// engine permutation by default — the router is only as grounded as the
+/// paths the evidence actually exercised.
+fn default_env(key: &str, value: &str) {
+    if std::env::var_os(key).is_none() {
+        unsafe { std::env::set_var(key, value) };
+    }
+}
+
+/// Ledger-run env defaults: native-over-parquet PRIMARY route + vectorized
+/// modes ON (so Native samples land in the same olap/parquet classes as
+/// DataFusion's and the cost cells warm per engine), per-query wall budget ON
+/// (a pathological query becomes an ERR record, not a wedged sweep). The cost
+/// override (PROXIMADB_ROUTE_COST_OVERRIDE) is deliberately NOT defaulted —
+/// ledgers observe routing, they never flip it (ADR-058 D4).
+fn apply_ledger_env_defaults(timeout_key: &str) {
+    default_env("PROXIMADB_NATIVE_ROUTE", "1");
+    default_env("PROXIMADB_NATIVE_VECTORIZED", "1");
+    default_env(timeout_key, "300000");
+}
+
+/// The final ledger path (`CLICKBENCH_LEDGER_OUT`, defaulted) — shared by the
+/// end-of-run write and the incremental partial sidecar.
+fn ledger_out_path() -> String {
+    std::env::var("CLICKBENCH_LEDGER_OUT")
+        .unwrap_or_else(|_| "target/clickbench-ledger/ledger.json".to_string())
+}
+
+/// Record one query result: live progress line, crash-safe append to
+/// `<out>.partial.jsonl`, then collect. The harness previously went silent
+/// between load and the final write, holding every record in memory — a
+/// wedged/killed run could neither name the culprit query nor keep any
+/// completed measurement. Now a run that never completes still leaves the
+/// full trail up to the query it died on.
+fn push_cb(records: &mut Vec<QueryRecord>, rec: QueryRecord) {
+    match &rec.error {
+        None => eprintln!(
+            "[clickbench/{}] {} {} ms rows={}",
+            rec.engine, rec.query, rec.wall_ms, rec.rows
+        ),
+        Some(e) => eprintln!(
+            "[clickbench/{}] {} {} ms ERR: {e}",
+            rec.engine, rec.query, rec.wall_ms
+        ),
+    }
+    append_partial_record(&ledger_out_path(), &rec);
+    records.push(rec);
+}
+
+/// Append one record to `<out>.partial.jsonl`. Best-effort by design: the
+/// sidecar is diagnostics, so an append failure must never fail the harness.
+fn append_partial_record<T: serde::Serialize>(out_path: &str, rec: &T) {
+    use std::io::Write as _;
+    let path = format!("{out_path}.partial.jsonl");
+    if let Some(dir) = std::path::Path::new(&path).parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let (Ok(line), Ok(mut f)) = (
+        serde_json::to_string(rec),
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path),
+    ) {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 /// Rewrite `FROM hits` to a DuckDB `read_parquet(...)` over the same object.
 /// Only used by the CLI fallback (when the `duckdb` feature is OFF); the
 /// in-process engine registers a `hits` view, so no rewrite is needed.
@@ -366,6 +435,10 @@ async fn clickbench_ledger() {
         .unwrap_or_else(|| "file:///".to_string());
     unsafe { std::env::set_var("PROXIMADB_EXTERNAL_TABLE_ROOTS", &dir) };
 
+    apply_ledger_env_defaults("CLICKBENCH_QUERY_TIMEOUT_MS");
+    // Fresh partial sidecar per run — stale lines from a prior run must not
+    // mix into this run's crash-safe trail.
+    let _ = std::fs::remove_file(format!("{}.partial.jsonl", ledger_out_path()));
     let server = PgServer::start().await.expect("server start");
     let client = connect(&server).await;
     client.simple_query("DROP TABLE IF EXISTS hits").await.ok();
@@ -386,10 +459,57 @@ async fn clickbench_ledger() {
     })));
 
     // ProximaDB (DataFusion route).
+    // Optional per-query wall budget (`CLICKBENCH_QUERY_TIMEOUT_MS`, unset/0 =
+    // off): a pathological query becomes an ERR record + a server-side cancel
+    // instead of wedging the sweep. The cancel keeps the connection usable —
+    // dropping the future alone would queue the next query behind this one.
+    let budget_ms: u64 = std::env::var("CLICKBENCH_QUERY_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     for (id, sql) in &queries {
         CAPTURE.lock().expect("capture lock").clear();
         let t0 = Instant::now();
-        let res = client.simple_query(sql).await;
+        let res = if budget_ms == 0 {
+            client.simple_query(sql).await
+        } else {
+            match tokio::time::timeout(Duration::from_millis(budget_ms), client.simple_query(sql))
+                .await
+            {
+                Ok(r) => r,
+                Err(_elapsed) => {
+                    let _ = client
+                        .cancel_token()
+                        .cancel_query(tokio_postgres::NoTls)
+                        .await;
+                    push_cb(
+                        &mut records,
+                        QueryRecord {
+                            query: (*id).into(),
+                            engine: "proximadb".into(),
+                            ok: false,
+                            rows: 0,
+                            wall_ms: t0.elapsed().as_millis(),
+                            bytes_read: None,
+                            range_gets: None,
+                            setup_ms: None,
+                            emit_ms: None,
+                            session_ms: None,
+                            compute_ms: None,
+                            open_ms: None,
+                            plan_ms: None,
+                            table_open_hits: None,
+                            route: None,
+                            compute_by_engine: None,
+                            error: Some(format!(
+                                "harness timeout after {budget_ms} ms (query cancelled)"
+                            )),
+                        },
+                    );
+                    continue;
+                }
+            }
+        };
         let wall_ms = t0.elapsed().as_millis();
         let snap = drain_capture().await;
         let (
@@ -429,11 +549,36 @@ async fn clickbench_ledger() {
                     .iter()
                     .filter(|m| matches!(m, SimpleQueryMessage::Row(_)))
                     .count();
-                records.push(QueryRecord {
+                push_cb(
+                    &mut records,
+                    QueryRecord {
+                        query: (*id).into(),
+                        engine: "proximadb".into(),
+                        ok: true,
+                        rows,
+                        wall_ms,
+                        bytes_read,
+                        range_gets,
+                        setup_ms,
+                        emit_ms,
+                        session_ms,
+                        compute_ms,
+                        open_ms,
+                        plan_ms,
+                        table_open_hits,
+                        route,
+                        compute_by_engine,
+                        error: None,
+                    },
+                );
+            }
+            Err(e) => push_cb(
+                &mut records,
+                QueryRecord {
                     query: (*id).into(),
                     engine: "proximadb".into(),
-                    ok: true,
-                    rows,
+                    ok: false,
+                    rows: 0,
                     wall_ms,
                     bytes_read,
                     range_gets,
@@ -446,32 +591,13 @@ async fn clickbench_ledger() {
                     table_open_hits,
                     route,
                     compute_by_engine,
-                    error: None,
-                });
-            }
-            Err(e) => records.push(QueryRecord {
-                query: (*id).into(),
-                engine: "proximadb".into(),
-                ok: false,
-                rows: 0,
-                wall_ms,
-                bytes_read,
-                range_gets,
-                setup_ms,
-                emit_ms,
-                session_ms,
-                compute_ms,
-                open_ms,
-                plan_ms,
-                table_open_hits,
-                route,
-                compute_by_engine,
-                error: Some(
-                    e.as_db_error()
-                        .map(|d| d.message().to_string())
-                        .unwrap_or_else(|| e.to_string()),
-                ),
-            }),
+                    error: Some(
+                        e.as_db_error()
+                            .map(|d| d.message().to_string())
+                            .unwrap_or_else(|| e.to_string()),
+                    ),
+                },
+            ),
         }
     }
     io_trace::set_billing_observer(None);
@@ -520,25 +646,28 @@ async fn clickbench_ledger() {
                 Ok(r) => (true, r.rows.len(), None),
                 Err(e) => (false, 0, Some(e.to_string())),
             };
-            records.push(QueryRecord {
-                query: (*id).into(),
-                engine: "duckdb".into(),
-                ok,
-                rows,
-                wall_ms,
-                bytes_read: None,
-                range_gets: None,
-                setup_ms: None,
-                emit_ms: None,
-                session_ms: None,
-                compute_ms,
-                open_ms: None,
-                plan_ms: None,
-                table_open_hits: None,
-                route: Some("DuckDbCompat".into()),
-                compute_by_engine,
-                error,
-            });
+            push_cb(
+                &mut records,
+                QueryRecord {
+                    query: (*id).into(),
+                    engine: "duckdb".into(),
+                    ok,
+                    rows,
+                    wall_ms,
+                    bytes_read: None,
+                    range_gets: None,
+                    setup_ms: None,
+                    emit_ms: None,
+                    session_ms: None,
+                    compute_ms,
+                    open_ms: None,
+                    plan_ms: None,
+                    table_open_hits: None,
+                    route: Some("DuckDbCompat".into()),
+                    compute_by_engine,
+                    error,
+                },
+            );
         }
         io_trace::set_billing_observer(None);
     }
@@ -555,29 +684,32 @@ async fn clickbench_ledger() {
                 .output();
             let wall_ms = t0.elapsed().as_millis();
             let ok = out.as_ref().map(|o| o.status.success()).unwrap_or(false);
-            records.push(QueryRecord {
-                query: (*id).into(),
-                engine: "duckdb".into(),
-                ok,
-                rows: 0,
-                wall_ms,
-                bytes_read: None,
-                range_gets: None,
-                setup_ms: None,
-                emit_ms: None,
-                session_ms: None,
-                compute_ms: None,
-                open_ms: None,
-                plan_ms: None,
-                table_open_hits: None,
-                route: None,
-                compute_by_engine: None,
-                error: (!ok).then(|| {
-                    out.as_ref()
-                        .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
-                        .unwrap_or_else(|_| "duckdb spawn failed".to_string())
-                }),
-            });
+            push_cb(
+                &mut records,
+                QueryRecord {
+                    query: (*id).into(),
+                    engine: "duckdb".into(),
+                    ok,
+                    rows: 0,
+                    wall_ms,
+                    bytes_read: None,
+                    range_gets: None,
+                    setup_ms: None,
+                    emit_ms: None,
+                    session_ms: None,
+                    compute_ms: None,
+                    open_ms: None,
+                    plan_ms: None,
+                    table_open_hits: None,
+                    route: None,
+                    compute_by_engine: None,
+                    error: (!ok).then(|| {
+                        out.as_ref()
+                            .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
+                            .unwrap_or_else(|_| "duckdb spawn failed".to_string())
+                    }),
+                },
+            );
         }
     }
 
@@ -599,8 +731,7 @@ async fn clickbench_ledger() {
         );
     }
 
-    let out_path = std::env::var("CLICKBENCH_LEDGER_OUT")
-        .unwrap_or_else(|_| "target/clickbench-ledger/ledger.json".to_string());
+    let out_path = ledger_out_path();
     if let Some(d) = std::path::Path::new(&out_path).parent() {
         std::fs::create_dir_all(d).expect("ledger dir");
     }

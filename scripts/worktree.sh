@@ -164,7 +164,15 @@ cmd_clean() {
   while read -r dir; do
     [ "$dir" = "$(repo_main)" ] && continue
     local br; br="$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo)"
-    [ -n "$br" ] || continue
+    # A detached worktree reports the literal string "HEAD", which
+    # branch_in_develop resolves against the MAIN checkout (= the develop
+    # branch) — so it always looks "merged" and the worktree gets deleted even
+    # when its commit is not in develop. Skip detached worktrees (mirroring
+    # cmd_doctor); reattach to a branch or remove explicitly via `worktree.sh rm`.
+    if [ -z "$br" ] || [ "$br" = "HEAD" ]; then
+      [ "$br" = "HEAD" ] && printf 'skip (detached HEAD — reattach or `worktree.sh rm`): %s\n' "$dir" >&2
+      continue
+    fi
     branch_in_develop "$br" || continue
     if [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]; then
       printf 'skip (dirty): %s (%s)\n' "$dir" "$br" >&2; continue

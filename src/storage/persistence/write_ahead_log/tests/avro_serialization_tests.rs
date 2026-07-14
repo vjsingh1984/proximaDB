@@ -524,12 +524,6 @@ mod integration_tests {
         ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
             Ok(vec![])
         }
-
-        fn get_filesystem_factory(
-            &self,
-        ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-            panic!("Mock engine doesn't have filesystem factory")
-        }
     }
 
     #[tokio::test]

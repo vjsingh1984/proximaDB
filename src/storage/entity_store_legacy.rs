@@ -1371,11 +1371,6 @@ mod tests {
         ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
             Ok(vec![])
         }
-        fn get_filesystem_factory(
-            &self,
-        ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-            &self.filesystem_factory
-        }
     }
 
     #[tokio::test]

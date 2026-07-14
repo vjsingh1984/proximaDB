@@ -5,6 +5,7 @@
 //! transport, or binding implementations.
 
 pub mod base62;
+pub mod batch_id;
 pub mod checksum;
 pub mod config_error;
 pub mod encoding;
@@ -16,10 +17,12 @@ pub mod metadata_error;
 pub mod request_limits;
 pub mod score_types;
 pub mod service_error;
+pub mod stable_id;
 pub mod stream_error;
 pub mod uuid;
 
 pub use base62::*;
+pub use batch_id::CompactBatchId;
 pub use checksum::*;
 pub use config_error::ConfigError;
 pub use encoding::*;
@@ -31,5 +34,9 @@ pub use metadata_error::MetadataError;
 pub use request_limits::RequestLimits;
 pub use score_types::{PhaseId, ScoreComponent, ScoreVector};
 pub use service_error::ServiceError;
+pub use stable_id::{
+    AccountId, CollectionId, CollectionIdentity, ColumnId, IndexId, NamespaceId, SegmentId,
+    ToPathSegment, WorkspaceId,
+};
 pub use stream_error::{StreamError, StreamResult};
 pub use uuid::*;

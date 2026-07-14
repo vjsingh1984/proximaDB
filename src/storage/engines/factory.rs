@@ -133,7 +133,7 @@ pub fn global_capability_registry() -> &'static CapabilityRegistry {
 /// It ensures that the capability registry has up-to-date information about
 /// what each engine supports.
 fn register_engine_capabilities(engine: &Arc<dyn UnifiedStorageFormat>) {
-    let caps = engine.capabilities();
+    let caps = crate::storage::traits::engine_capabilities(engine.as_ref());
     let engine_name = engine.format_name();
     global_capability_registry().register_capabilities(engine_name, caps);
     info!("✅ Registered capabilities for engine: {}", engine_name);

@@ -242,6 +242,7 @@ impl DataFusionLocalEngine {
             }
         };
         crate::observability::io_trace::record_plan_ms(plan_start.elapsed().as_millis() as u64);
+        record_logical_plan_geometry(df.logical_plan());
         let df = match context.controls.max_rows {
             Some(max_rows) => {
                 let fetch = match context.controls.row_limit_mode {
@@ -633,6 +634,139 @@ mod tests {
 /// suppress-set is a rebuildable projection of the canonical WAL (ADR-020), so no
 /// new durable state is introduced. MemTable-backed (whole base in memory) —
 /// acceptable for the opt-in foundation; a streaming provider is future work.
+/// TD-EXEC-2 Slice-3 follow-up: measured plan geometry for the DataFusion
+/// route. `plan_instrumented` (the native-planner seam) never runs here, which
+/// left the estimate-vs-measured calibration audit dark on the dominant OLAP
+/// route — the geometry ledger fields were always zero for DataFusion-served
+/// queries (measured: 0/170 rows with `plan_depth > 0` on the 2026-07-13
+/// DataFusion sweep). Measure the served LOGICAL plan — the apples-to-apples
+/// equivalent of the native Volcano physical plan (same semantic operator
+/// vocabulary; the DataFusion *physical* plan would inflate depth/fan-out with
+/// repartition/coalesce nodes the AST estimator never models) — and emit the
+/// same neutral io_trace scalars the native seam emits.
+fn record_logical_plan_geometry(plan: &datafusion::logical_expr::LogicalPlan) {
+    let (depth, nodes, leaves, fanout, blocking, ops) = measure_logical_geometry(plan);
+    let ops_ref: Vec<(&str, u64)> = ops.iter().map(|(k, v)| (*k, *v)).collect();
+    crate::observability::io_trace::record_plan_geometry(
+        depth, nodes, leaves, fanout, blocking, &ops_ref,
+    );
+}
+
+/// Iterative geometry walk over a DataFusion `LogicalPlan` — never recursion,
+/// per TD-EXEC-2 (a recursive walk would overflow on the deep plan it is
+/// measuring). Op labels use the native `plan_geometry::OpKind` vocabulary so
+/// per-op ledger analysis reads across engines, and *blocking* counts exactly
+/// the ops `OpKind::is_blocking` counts (join + sort + aggregate) so the
+/// geometry bands stay comparable — `window` is labeled but deliberately not
+/// counted as blocking (the native vocabulary has no window op).
+#[allow(clippy::type_complexity)]
+fn measure_logical_geometry(
+    plan: &datafusion::logical_expr::LogicalPlan,
+) -> (u64, u64, u64, u64, u64, Vec<(&'static str, u64)>) {
+    let (depth, nodes, leaves, fanout, blocking, ops) = measure_logical_geometry_inner(plan);
+    (
+        depth,
+        nodes,
+        leaves,
+        fanout,
+        blocking,
+        ops.into_iter().collect(),
+    )
+}
+
+#[allow(clippy::type_complexity)]
+fn measure_logical_geometry_inner(
+    plan: &datafusion::logical_expr::LogicalPlan,
+) -> (
+    u64,
+    u64,
+    u64,
+    u64,
+    u64,
+    std::collections::BTreeMap<&'static str, u64>,
+) {
+    use datafusion::logical_expr::{Expr as DfExpr, LogicalPlan as Lp};
+    use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
+    let mut max_depth = 0u64;
+    let mut nodes = 0u64;
+    let mut leaves = 0u64;
+    let mut max_fanout = 0u64;
+    let mut blocking = 0u64;
+    let mut ops: std::collections::BTreeMap<&'static str, u64> = std::collections::BTreeMap::new();
+    // Expression-embedded subquery plans (scalar / EXISTS / IN) with the depth
+    // of the node that carries them. They are NOT tree inputs — `inputs()`
+    // never yields them — so a plain child walk under-measures exactly the
+    // shapes the estimator counts as hoisted branches (observed: Q4/Q17/Q20/
+    // Q22/q32 audited as estimator over-estimates until this walk landed).
+    let mut sub_plans: Vec<(std::sync::Arc<Lp>, u64)> = Vec::new();
+    let mut work: Vec<(&Lp, u64)> = vec![(plan, 1)];
+    while let Some((node, depth)) = work.pop() {
+        nodes += 1;
+        max_depth = max_depth.max(depth);
+        let (label, is_blocking) = match node {
+            Lp::TableScan(_) => ("scan", false),
+            Lp::Filter(_) => ("filter", false),
+            Lp::Projection(_) => ("project", false),
+            Lp::Aggregate(_) => ("aggregate", true),
+            Lp::Sort(_) => ("sort", true),
+            Lp::Join(_) => ("join", true),
+            Lp::Limit(_) => ("limit", false),
+            Lp::Distinct(_) => ("distinct", false),
+            Lp::Union(_) => ("union", false),
+            Lp::Values(_) | Lp::EmptyRelation(_) => ("values", false),
+            Lp::Window(_) => ("window", false),
+            _ => ("other", false),
+        };
+        *ops.entry(label).or_insert(0) += 1;
+        if is_blocking {
+            blocking += 1;
+        }
+        for expr in node.expressions() {
+            let _ = expr.apply(|e| {
+                match e {
+                    DfExpr::ScalarSubquery(sq) => {
+                        sub_plans.push((std::sync::Arc::clone(&sq.subquery), depth));
+                    }
+                    DfExpr::Exists(ex) => {
+                        sub_plans.push((std::sync::Arc::clone(&ex.subquery.subquery), depth));
+                    }
+                    DfExpr::InSubquery(is) => {
+                        sub_plans.push((std::sync::Arc::clone(&is.subquery.subquery), depth));
+                    }
+                    _ => {}
+                }
+                Ok(TreeNodeRecursion::Continue)
+            });
+        }
+        let inputs = node.inputs();
+        max_fanout = max_fanout.max(inputs.len() as u64);
+        if inputs.is_empty() {
+            leaves += 1;
+        }
+        for child in inputs {
+            work.push((child, depth + 1));
+        }
+    }
+    // Fold each subquery branch: its ops are real work, its deepest path may
+    // exceed the outer chain, and decorrelation lowers the branch to a join —
+    // count that breaker so the measurement matches what executes (and the
+    // estimator's hoisted-branch semantics). Function-level recursion here is
+    // bounded by SQL subquery NESTING, which sqlparser's recursion limit caps
+    // at parse time — unlike chain depth, it cannot be adversarially deep.
+    for (sub, parent_depth) in sub_plans {
+        let (sd, sn, sl, sf, sb, sops) = measure_logical_geometry_inner(&sub);
+        max_depth = max_depth.max(parent_depth + 1 + sd);
+        nodes += sn;
+        leaves += sl;
+        max_fanout = max_fanout.max(sf);
+        blocking += sb + 1; // the decorrelated join
+        for (k, v) in sops {
+            *ops.entry(k).or_insert(0) += v;
+        }
+    }
+    (max_depth, nodes, leaves, max_fanout, blocking, ops)
+}
+
 #[cfg(feature = "datafusion-integration")]
 async fn register_merged_olap_table(
     ctx: &datafusion::prelude::SessionContext,
@@ -903,4 +1037,83 @@ fn arrow_cell_to_proxima(
             Err(_) => ProximaValue::Null,
         }
     })
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::measure_logical_geometry;
+    use datafusion::logical_expr::{LogicalPlanBuilder, col, lit};
+
+    #[test]
+    fn logical_geometry_measures_chain_depth_and_blocking() {
+        // values → filter → sort → limit: depth 4, one leaf, one breaker (sort).
+        let plan = LogicalPlanBuilder::values(vec![vec![lit(1i64)]])
+            .expect("values")
+            .filter(lit(true))
+            .expect("filter")
+            .sort(vec![col("column1").sort(true, false)])
+            .expect("sort")
+            .limit(0, Some(10))
+            .expect("limit")
+            .build()
+            .expect("build");
+        let (depth, nodes, leaves, fanout, blocking, ops) = measure_logical_geometry(&plan);
+        assert_eq!(depth, 4);
+        assert_eq!(nodes, 4);
+        assert_eq!(leaves, 1);
+        assert_eq!(fanout, 1);
+        assert_eq!(blocking, 1, "sort is the only breaker in the chain");
+        let get = |k: &str| ops.iter().find(|(l, _)| *l == k).map(|(_, n)| *n);
+        assert_eq!(get("values"), Some(1));
+        assert_eq!(get("filter"), Some(1));
+        assert_eq!(get("sort"), Some(1));
+        assert_eq!(get("limit"), Some(1));
+    }
+
+    #[test]
+    fn logical_geometry_measures_expression_subquery_branches() {
+        use datafusion::logical_expr::exists;
+        use std::sync::Arc;
+        // Subquery branch: values → filter (depth 2, 2 nodes, 0 breakers).
+        let sub = LogicalPlanBuilder::values(vec![vec![lit(1i64)]])
+            .expect("values")
+            .filter(lit(true))
+            .expect("filter")
+            .build()
+            .expect("build");
+        // Outer: filter(EXISTS(sub)) is the root (depth 1), values below it
+        // (depth 2); the branch hangs off the filter node.
+        let plan = LogicalPlanBuilder::values(vec![vec![lit(2i64)]])
+            .expect("values")
+            .filter(exists(Arc::new(sub)))
+            .expect("filter")
+            .build()
+            .expect("build");
+        let (depth, nodes, leaves, _fanout, blocking, ops) = measure_logical_geometry(&plan);
+        // Outer tree: filter(1) + values(2). Branch folds beneath the filter:
+        // parent_depth(1) + 1 + sub_depth(2) = 4.
+        assert_eq!(depth, 4, "deepest path runs through the subquery branch");
+        assert_eq!(nodes, 4, "outer 2 + branch 2");
+        assert_eq!(leaves, 2, "one leaf per side");
+        assert_eq!(blocking, 1, "the decorrelated join is a breaker");
+        let get = |k: &str| ops.iter().find(|(l, _)| *l == k).map(|(_, n)| *n);
+        assert_eq!(get("filter"), Some(2), "both filters counted");
+        assert_eq!(get("values"), Some(2));
+    }
+
+    #[test]
+    fn logical_geometry_counts_union_fanout() {
+        let side = || LogicalPlanBuilder::values(vec![vec![lit(1i64)]]).expect("values");
+        let plan = side()
+            .union(side().build().expect("build"))
+            .expect("union")
+            .build()
+            .expect("build");
+        let (depth, nodes, leaves, fanout, blocking, _) = measure_logical_geometry(&plan);
+        assert_eq!(depth, 2);
+        assert_eq!(nodes, 3);
+        assert_eq!(leaves, 2);
+        assert_eq!(fanout, 2);
+        assert_eq!(blocking, 0, "union streams; not a breaker in OpKind terms");
+    }
 }

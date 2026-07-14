@@ -171,6 +171,19 @@ pub fn write_pax_segment_full(
     f32_tier: bool,
     target_block: Option<usize>,
 ) -> Result<SegmentMeta> {
+    // TD-RDSTRAT-5 S1 (default-OFF): reorder records by their sign-code so
+    // spatially-close vectors co-locate into the same block, and compute each
+    // block's centroid for the Vector Object Economy directory. Reordering is
+    // result-preserving (the reader ranks/dedups by distance + OID). When the
+    // flag is off, records write in insertion order and no centroids are computed
+    // — zero behaviour/cost change.
+    let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
+    let order = if cluster {
+        crate::storage::engines::sst::block_cluster::cluster_order(records, 0)
+    } else {
+        None
+    };
+
     let mut writer = PaxSegmentWriter::new(
         path,
         BlockMode::Pax,
@@ -182,9 +195,19 @@ pub fn write_pax_segment_full(
     )
     .with_quant(quant)
     .with_f32_tier(f32_tier)
-    .with_rerank_quant(rerank_quant);
-    for record in records {
-        writer.add_record(record)?;
+    .with_rerank_quant(rerank_quant)
+    .with_block_centroids(cluster);
+    match &order {
+        Some(perm) => {
+            for &i in perm {
+                writer.add_record(&records[i])?;
+            }
+        }
+        None => {
+            for record in records {
+                writer.add_record(record)?;
+            }
+        }
     }
     writer.finish()
 }
@@ -471,6 +494,249 @@ pub fn rabitq_search_segment(
     });
     hits.truncate(k);
     Ok(Some(hits))
+}
+
+/// Whether the cost-driven selective (striped) read is engaged (ADR-057 /
+/// TD-RDSTRAT-3 Slice C). Default OFF — the whole-segment read stays the default
+/// until the observe→flip gate; `PROXIMADB_PAX_STRIPED_READ=1` opts in.
+pub fn striped_read_enabled() -> bool {
+    matches!(
+        std::env::var("PROXIMADB_PAX_STRIPED_READ")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "true" | "on" | "yes")
+    )
+}
+
+/// Bounds-checked slice of a block-relative metadata `range` from a buffer that
+/// begins at block-relative `base` (fail-closed on a corrupt footer, no panic).
+fn slice_at<'a>(buf: &'a [u8], base: u64, range: &std::ops::Range<u64>) -> Result<&'a [u8]> {
+    let (s, e) = (range.start.checked_sub(base), range.end.checked_sub(base));
+    match (s, e) {
+        (Some(s), Some(e)) if s <= e && (e as usize) <= buf.len() => {
+            Ok(&buf[s as usize..e as usize])
+        }
+        _ => anyhow::bail!("striped read: metadata range {range:?} outside buffer (base {base})"),
+    }
+}
+
+/// **Selective (striped) cascade** over a PAX segment on the engine's own
+/// filesystem (ADR-057 / TD-RDSTRAT-3 Slice C): the ranged analogue of
+/// [`rabitq_search_segment`]. Reads ONLY the tail segment index + per surviving
+/// block the RaBitQ codes stripe (Stage-1 rank) + the SQ8 candidate-rerank stripe
+/// (Stage-2) + the OID stripe — never the whole segment — via `fs.read_range`,
+/// composing the `BlockLayout` ranged primitives. Returns the SAME top-`k`
+/// `CascadeHit`s as the whole-segment cascade for the default SQ8 config (parity
+/// gated in tests); `Ok(None)` when the tail index can't be located from a bounded
+/// suffix or no block is RaBitQ-coded, so the caller falls back to the whole read
+/// (mixed-read-safe). Physical bytes/GETs are recorded by the fs layer, so the
+/// striped read's real cost is observable in `io_trace`. Metadata pruning (filtered
+/// queries) is a follow-up — the caller routes only unfiltered queries here.
+pub async fn rabitq_search_segment_ranged(
+    fs: &dyn proximadb_storage_filesystem_types::FileSystem,
+    path: &str,
+    query: &[f32],
+    k: usize,
+    pool: usize,
+    metric: RankMetric,
+    // TD-RDSTRAT-5 S3: when `Some`, scan ONLY these block indices (the centroid
+    // probe-prune survivors). `None` scans every block (unchanged behaviour). An
+    // index out of range is simply never matched (no panic).
+    selected: Option<&[usize]>,
+) -> Result<Option<Vec<CascadeHit>>> {
+    use proximadb_block_format::BlockFooter;
+    use proximadb_block_format::ranged::{BlockLayout, footer_tail_range, metadata_ranges};
+    use proximadb_storage_common::pax_block::SegmentIndex;
+
+    let size = fs
+        .metadata(path)
+        .await
+        .map_err(|e| anyhow::anyhow!("striped read stat {path}: {e}"))?
+        .size;
+    if size < SEGMENT_MAGIC.len() as u64 {
+        return Ok(None);
+    }
+
+    // Locate the tail segment index from a bounded suffix (grown ×8 on miss); if it
+    // still doesn't fit at full size, decline → caller reads the whole segment.
+    let mut suffix_len = (64 * 1024u64).min(size);
+    let index = loop {
+        let suffix = fs
+            .read_range(path, size - suffix_len, suffix_len)
+            .await
+            .map_err(|e| anyhow::anyhow!("striped read suffix {path}: {e}"))?;
+        if !suffix.ends_with(SEGMENT_MAGIC) {
+            return Ok(None); // not a PAX segment
+        }
+        let before_magic = &suffix[..suffix.len() - SEGMENT_MAGIC.len()];
+        match SegmentIndex::locate(before_magic) {
+            Ok(idx) => break idx,
+            Err(_) if suffix_len < size => suffix_len = (suffix_len * 8).min(size),
+            Err(_) => return Ok(None),
+        }
+    };
+
+    let pool = pool.max(k);
+    let mut any_rabitq = false;
+    let mut hits: Vec<CascadeHit> = Vec::new();
+    for (block_idx, entry) in index.blocks.iter().enumerate() {
+        // S3 centroid prune: skip blocks the probe-prune didn't select.
+        if let Some(sel) = selected
+            && !sel.contains(&block_idx)
+        {
+            continue;
+        }
+        let (off, bsz) = (entry.offset, entry.size as u64);
+        if off + bsz > size {
+            anyhow::bail!("striped read: block [{off}..+{bsz}] past segment {size}");
+        }
+
+        // Footer (last 32 B) → metadata extent (one ranged read) → BlockLayout.
+        let fr = footer_tail_range(bsz)?;
+        let footer_bytes = fs
+            .read_range(path, off + fr.start, fr.end - fr.start)
+            .await?;
+        let footer = BlockFooter::from_bytes(&footer_bytes)?;
+        let mr = metadata_ranges(&footer, bsz);
+        let footer_start = bsz - proximadb_block_format::BLOCK_FOOTER_SIZE as u64;
+        let mut meta_start = mr.col_meta.start;
+        if let Some(r) = &mr.vparam {
+            meta_start = meta_start.min(r.start);
+        }
+        if let Some(r) = &mr.rgdir {
+            meta_start = meta_start.min(r.start);
+        }
+        let meta_buf = if footer_start > meta_start {
+            fs.read_range(path, off + meta_start, footer_start - meta_start)
+                .await?
+        } else {
+            Vec::new()
+        };
+        let col_meta = slice_at(&meta_buf, meta_start, &mr.col_meta)?;
+        let vparam = match &mr.vparam {
+            Some(r) => Some(slice_at(&meta_buf, meta_start, r)?),
+            None => None,
+        };
+        let rgdir = match &mr.rgdir {
+            Some(r) => Some(slice_at(&meta_buf, meta_start, r)?),
+            None => None,
+        };
+        let layout = BlockLayout::assemble(footer, col_meta, vparam, rgdir)?;
+
+        // Stage 1: fetch ONLY the codes stripe, rank.
+        let Some(cr) = layout.column_stripe_range(col_id::EMBED_BASE) else {
+            continue;
+        };
+        let codes = fs
+            .read_range(path, off + cr.start, cr.end - cr.start)
+            .await?;
+        let Some(cand) = layout.rabitq_rank(query, pool, metric, &codes) else {
+            continue; // not RaBitQ-coded
+        };
+        any_rabitq = true;
+        if cand.is_empty() {
+            continue;
+        }
+
+        // Stage 2: fetch the SQ8 rerank stripe, rerank ONLY the candidate rows.
+        let scored: Vec<(usize, f32)> = match layout.column_stripe_range(col_id::RERANK_BASE) {
+            Some(rr) => {
+                let rer = fs
+                    .read_range(path, off + rr.start, rr.end - rr.start)
+                    .await?;
+                layout
+                    .rerank_candidate_rows(col_id::RERANK_BASE, query, &cand, metric, &rer)
+                    .unwrap_or_else(|| {
+                        cand.iter()
+                            .enumerate()
+                            .map(|(rank, &row)| (row, rank as f32))
+                            .collect()
+                    })
+            }
+            None => cand
+                .iter()
+                .enumerate()
+                .map(|(rank, &row)| (row, rank as f32))
+                .collect(),
+        };
+        let topk: Vec<(usize, f32)> = scored.into_iter().take(k).collect();
+
+        // Fetch the OID stripe once for this block, attach ids.
+        let oids = match layout.column_stripe_range(col_id::OID) {
+            Some(o) => {
+                let ob = fs.read_range(path, off + o.start, o.end - o.start).await?;
+                layout.decode_str_column(col_id::OID, &ob)
+            }
+            None => None,
+        };
+        for (row, dist) in topk {
+            let oid = oids
+                .as_ref()
+                .and_then(|o| o.get(row).cloned().flatten())
+                .unwrap_or_default();
+            hits.push(CascadeHit {
+                oid,
+                distance: dist,
+                vector: None,
+            });
+        }
+    }
+
+    if !any_rabitq {
+        return Ok(None);
+    }
+    hits.sort_by(|a, b| {
+        a.distance
+            .partial_cmp(&b.distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    hits.truncate(k);
+    Ok(Some(hits))
+}
+
+/// Cheap cost inputs for the S2 read-strategy chooser, read from the tail segment
+/// index alone (one small ranged read — no per-block metadata, no stripe bytes):
+/// `(n_blocks, total_block_bytes, segment_size)`. Returns `None` when the index
+/// can't be located from a bounded suffix (caller then defaults to the whole read).
+/// `total_block_bytes` (Σ block sizes) is the whole-read byte cost; the striped read
+/// touches only a fraction (codes + candidate rerank), estimated by the caller.
+pub async fn segment_index_summary(
+    fs: &dyn proximadb_storage_filesystem_types::FileSystem,
+    path: &str,
+) -> Result<Option<(u64, u64, u64)>> {
+    use proximadb_storage_common::pax_block::SegmentIndex;
+
+    let size = fs
+        .metadata(path)
+        .await
+        .map_err(|e| anyhow::anyhow!("index-summary stat {path}: {e}"))?
+        .size;
+    if size < SEGMENT_MAGIC.len() as u64 {
+        return Ok(None);
+    }
+    let mut suffix_len = (64 * 1024u64).min(size);
+    loop {
+        let suffix = fs
+            .read_range(path, size - suffix_len, suffix_len)
+            .await
+            .map_err(|e| anyhow::anyhow!("index-summary suffix {path}: {e}"))?;
+        if !suffix.ends_with(SEGMENT_MAGIC) {
+            return Ok(None);
+        }
+        let before_magic = &suffix[..suffix.len() - SEGMENT_MAGIC.len()];
+        match SegmentIndex::locate(before_magic) {
+            Ok(idx) => {
+                let n_blocks = idx.blocks.len() as u64;
+                let total_block_bytes: u64 = idx.blocks.iter().map(|b| b.size as u64).sum();
+                return Ok(Some((n_blocks, total_block_bytes, size)));
+            }
+            Err(_) if suffix_len < size => suffix_len = (suffix_len * 8).min(size),
+            Err(_) => return Ok(None),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1261,6 +1527,224 @@ mod tests {
         assert!(
             pruned.0.iter().any(|h| h.oid == "v290"),
             "pruning must keep blocks that can match (v290 lives in a surviving block)"
+        );
+    }
+
+    /// TD-RDSTRAT-3 S1b Slice C integration parity: the selective (striped)
+    /// `rabitq_search_segment_ranged` — reading a real multi-block RaBitQ segment
+    /// from disk via `LocalFileSystem::read_range` — must return **byte-identical**
+    /// top-k `(oid, distance)` to the whole-segment `rabitq_search_segment` for the
+    /// default SQ8 config (L2 + Cosine). This is the S1b integration gate; the SIFT1M
+    /// recall ratchet is the CI-time gate.
+    #[tokio::test]
+    async fn ranged_cascade_matches_whole_segment() {
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        let (dim, n) = (64usize, 400usize);
+        let corpus: Vec<Vec<f32>> = (0..n)
+            .map(|i| {
+                (0..dim)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec(&format!("r{i}"), 1000 + i as i64, v.clone()))
+            .collect();
+        // Small target block ⇒ a multi-block segment (exercises the ranged index walk).
+        write_pax_segment_full(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+        )
+        .unwrap();
+        let path_str = path.to_str().unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+
+        let query = corpus[137].clone();
+        for metric in [RankMetric::L2, RankMetric::Cosine] {
+            let whole = rabitq_search_segment(&bytes, &query, 10, 100, metric, None)
+                .unwrap()
+                .expect("whole cascade hits");
+            let ranged = rabitq_search_segment_ranged(&fs, path_str, &query, 10, 100, metric, None)
+                .await
+                .unwrap()
+                .expect("ranged cascade hits");
+            let w: Vec<(String, f32)> = whole.iter().map(|h| (h.oid.clone(), h.distance)).collect();
+            let r: Vec<(String, f32)> =
+                ranged.iter().map(|h| (h.oid.clone(), h.distance)).collect();
+            assert_eq!(
+                r, w,
+                "striped read must byte-identically match the whole segment ({metric:?})"
+            );
+        }
+    }
+
+    /// TD-RDSTRAT-5 S3: the block filter on the ranged reader. Selecting ALL block
+    /// indices is byte-identical to `None` (parity); a strict subset scans only
+    /// those blocks (fewer/equal hits); the empty set scans nothing (`None`).
+    #[tokio::test]
+    async fn ranged_block_filter_selects_only_chosen_blocks() {
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        let (dim, n) = (64usize, 400usize);
+        let corpus: Vec<Vec<f32>> = (0..n)
+            .map(|i| {
+                (0..dim)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec(&format!("r{i}"), 1000 + i as i64, v.clone()))
+            .collect();
+        write_pax_segment_full(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+        )
+        .unwrap();
+        let path_str = path.to_str().unwrap();
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let query = corpus[137].clone();
+        let (n_blocks, _, _) = segment_index_summary(&fs, path_str)
+            .await
+            .unwrap()
+            .expect("summary");
+        assert!(
+            n_blocks >= 2,
+            "need a multi-block segment to exercise the filter"
+        );
+        let key = |h: &[CascadeHit]| {
+            h.iter()
+                .map(|x| (x.oid.clone(), x.distance))
+                .collect::<Vec<_>>()
+        };
+
+        let none =
+            rabitq_search_segment_ranged(&fs, path_str, &query, 10, 100, RankMetric::L2, None)
+                .await
+                .unwrap()
+                .expect("hits");
+        let all_sel: Vec<usize> = (0..n_blocks as usize).collect();
+        let all = rabitq_search_segment_ranged(
+            &fs,
+            path_str,
+            &query,
+            10,
+            100,
+            RankMetric::L2,
+            Some(&all_sel),
+        )
+        .await
+        .unwrap()
+        .expect("hits");
+        assert_eq!(
+            key(&none),
+            key(&all),
+            "selecting all blocks == None (parity)"
+        );
+
+        let b0 = rabitq_search_segment_ranged(
+            &fs,
+            path_str,
+            &query,
+            10,
+            100,
+            RankMetric::L2,
+            Some(&[0]),
+        )
+        .await
+        .unwrap()
+        .expect("block 0 hits");
+        assert!(!b0.is_empty(), "block 0 carries RaBitQ candidates");
+        assert!(
+            b0.len() <= none.len(),
+            "a strict subset scans fewer-or-equal blocks"
+        );
+
+        let empty =
+            rabitq_search_segment_ranged(&fs, path_str, &query, 10, 100, RankMetric::L2, Some(&[]))
+                .await
+                .unwrap();
+        assert!(
+            empty.is_none_or(|h| h.is_empty()),
+            "empty selection scans no blocks ⇒ no hits"
+        );
+    }
+
+    /// TD-RDSTRAT-3 S2: `segment_index_summary` reads the cost inputs from the tail
+    /// index alone — block count + Σ block sizes + segment size — for a real
+    /// multi-block segment, without touching stripe bytes.
+    #[tokio::test]
+    async fn segment_index_summary_reads_cost_inputs_from_tail() {
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        let records: Vec<ProximaRecord> = (0..400)
+            .map(|i| {
+                rec(
+                    &format!("r{i}"),
+                    1000 + i as i64,
+                    (0..64)
+                        .map(|d| ((i * 131 + d * 17) % 251) as f32 * 0.01)
+                        .collect(),
+                )
+            })
+            .collect();
+        write_pax_segment_full(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+        )
+        .unwrap();
+        let file_size = std::fs::metadata(&path).unwrap().len();
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+
+        let (n_blocks, total_block_bytes, seg_size) =
+            segment_index_summary(&fs, path.to_str().unwrap())
+                .await
+                .unwrap()
+                .expect("index summary for a RaBitQ segment");
+        assert!(
+            n_blocks >= 2,
+            "small block threshold ⇒ multi-block, got {n_blocks}"
+        );
+        assert_eq!(seg_size, file_size, "segment size = file size");
+        // Σ block bytes < segment size (the index + magic are the remainder).
+        assert!(
+            total_block_bytes > 0 && total_block_bytes < seg_size,
+            "Σ block bytes {total_block_bytes} must be in (0, {seg_size})"
         );
     }
 }

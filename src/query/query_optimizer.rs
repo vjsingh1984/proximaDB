@@ -267,16 +267,14 @@ pub enum FilterLogic {
     Not,
 }
 
-/// Hints to guide the filter optimizer for better execution plans
-#[derive(Debug, Clone, Default)]
-pub struct FilterOptimizationHints {
-    /// Expected fraction of rows that will pass the filter (0.0 to 1.0)
-    pub expected_selectivity: Option<f64>,
-    /// Name of the preferred index to use for this filter
-    pub preferred_index: Option<String>,
-    /// Whether parallel execution is permitted
-    pub allow_parallel: bool,
-}
+/// Hints to guide the filter optimizer for better execution plans (re-export).
+///
+/// `FilterOptimizationHints` has been hoisted to the `proximadb-search-types`
+/// crate as part of the `UnifiedSearchParams` cluster (root-crate
+/// decomposition, gap 1). This thin re-export preserves the existing
+/// `crate::query::query_optimizer::FilterOptimizationHints` path so every
+/// caller resolves unchanged.
+pub use proximadb_search_types::search_params::FilterOptimizationHints;
 
 // ================================================================================
 // UNIFIED EXECUTION PLAN (Combines both search and filter plans)

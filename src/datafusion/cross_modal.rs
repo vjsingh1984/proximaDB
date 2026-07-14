@@ -31,7 +31,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use arrow_array::{Float32Array, Float64Array, Int32Array, Int64Array, RecordBatch, StringArray};
+use arrow_array::{Float64Array, Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableFunctionImpl};
@@ -46,34 +46,53 @@ use proximadb_query::graph_runtime::{
     execute_supported_graph_query_with_start_nodes, graph_query_row_id,
 };
 
-use crate::proto::proximadb_v1::{SearchQuery, SearchVectorRecord, VectorSearchRequest};
+// TD-XMODAL-4 S2: only the test mocks' (v1) `search()` impls reference these proto
+// types now — the production UDTF scan uses the v2 `unified_search_native` kernel.
+#[cfg(test)]
+use crate::proto::proximadb_v1::{SearchVectorRecord, VectorSearchRequest};
 use crate::services::timeseries_service::{TimeSeriesService, TsPoint};
 
 /// Hard cap on `graph_traverse` depth — bounds the number of `*k..k` traversal passes
 /// (each is O(V+E)) regardless of a user-supplied `max_depth`.
 const MAX_GRAPH_TRAVERSE_DEPTH: i64 = 64;
 
-/// The lean Arrow schema a vector-search source exposes for joins: `(id, score)`.
-/// `id` joins against a relational key; `score` is the similarity the SQL can rank
-/// or filter on.
+/// The Arrow schema a vector-search source exposes: `(id, score, metadata)`
+/// (TD-XMODAL-4 S1). `id` joins against a relational key; `score` is the similarity
+/// the SQL can rank/filter on (Float64 to match the pgwire `<->` operator path's
+/// Float8); `metadata` is the record's stored payload as a JSON string, so a single
+/// `SELECT * FROM vector_search(...)` is useful without a self-join.
 pub fn vector_matches_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
         Field::new("id", DataType::Utf8, false),
-        Field::new("score", DataType::Float32, false),
+        Field::new("score", DataType::Float64, false),
+        Field::new("metadata", DataType::Utf8, false),
     ]))
 }
 
-/// Convert vector-search results into an `(id, score)` [`RecordBatch`] that DataFusion
-/// can register as a table and JOIN against relational data on `id`. This is the
-/// bridge from the vector modality into the shared (DataFusion) query plane.
-pub fn vector_matches_to_batch(results: &[SearchVectorRecord]) -> Result<RecordBatch, ArrowError> {
+/// Convert vector-search results into an `(id, score, metadata)` [`RecordBatch`]
+/// DataFusion can register as a table and JOIN against relational data on `id`.
+/// The bridge from the vector modality into the shared (DataFusion) query plane.
+///
+/// `metadata` is rendered as JSON. TD-XMODAL-4 S2: the input is now the **v2
+/// canonical [`OptimizedSearchRecord`]** (whose `metadata` is already
+/// `ProximaValue`-typed, serde-native) — both the pgvector `<->` operator and this
+/// UDTF flow through the one `unified_search_native` kernel, so no `SqlValue`
+/// conversion is needed.
+pub fn vector_matches_to_batch(
+    results: &[crate::core::search::results::OptimizedSearchRecord],
+) -> Result<RecordBatch, ArrowError> {
     let ids: Vec<&str> = results.iter().map(|r| r.id.as_str()).collect();
-    let scores: Vec<f32> = results.iter().map(|r| r.score as f32).collect();
+    let scores: Vec<f64> = results.iter().map(|r| r.score as f64).collect();
+    let metadata: Vec<String> = results
+        .iter()
+        .map(|r| serde_json::to_string(&r.metadata).unwrap_or_else(|_| "{}".to_string()))
+        .collect();
     RecordBatch::try_new(
         vector_matches_schema(),
         vec![
             Arc::new(StringArray::from(ids)),
-            Arc::new(Float32Array::from(scores)),
+            Arc::new(Float64Array::from(scores)),
+            Arc::new(StringArray::from(metadata)),
         ],
     )
 }
@@ -139,22 +158,22 @@ impl TableProvider for VectorSearchTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DFResult<Arc<dyn ExecutionPlan>> {
-        // Run the live similarity search and bridge the matches into the plane.
-        let request = VectorSearchRequest {
-            collection_id: self.collection_id.clone(),
-            queries: vec![SearchQuery {
-                vector: self.query_vector.clone(),
-                ..Default::default()
-            }],
-            top_k: self.top_k,
-            ..Default::default()
-        };
-        let response = self
+        // TD-XMODAL-4 S2: run the live similarity search through the ONE canonical
+        // native kernel `VectorOpsPort::unified_search_native` (the same kernel the
+        // pgvector `<->` operator uses) — fail-closed tenant-scoped by the impl —
+        // and bridge the v2 `OptimizedSearchRecord`s into the plane. Metadata-filter
+        // pushdown from the SQL `filters` is a follow-up (S3); pass `None` for now.
+        let results = self
             .vector_ops
-            .search(request, self.tenant_id.as_deref())
+            .unified_search_native(
+                &self.collection_id,
+                self.query_vector.clone(),
+                self.top_k as usize,
+                None,
+                self.tenant_id.as_deref(),
+            )
             .await
             .map_err(|e| DataFusionError::Execution(format!("vector search: {e}")))?;
-        let results = response.results.map(|sr| sr.results).unwrap_or_default();
         let batch = vector_matches_to_batch(&results).map_err(DataFusionError::from)?;
         // Delegate to a `MemTable` so projection/filter/limit are honored uniformly.
         let mem = MemTable::try_new(vector_matches_schema(), vec![vec![batch]])?;
@@ -1027,8 +1046,8 @@ mod tests {
     use datafusion::datasource::MemTable;
     use datafusion::prelude::SessionContext;
 
-    fn sv(id: &str, score: f64) -> SearchVectorRecord {
-        SearchVectorRecord {
+    fn ov(id: &str, score: f32) -> crate::core::search::results::OptimizedSearchRecord {
+        crate::core::search::results::OptimizedSearchRecord {
             id: id.to_string(),
             score,
             ..Default::default()
@@ -1036,11 +1055,26 @@ mod tests {
     }
 
     #[test]
-    fn vector_matches_batch_has_id_score_schema() {
-        let batch = vector_matches_to_batch(&[sv("a", 0.9), sv("b", 0.5)]).unwrap();
+    fn vector_matches_batch_has_id_score_metadata_schema() {
+        let batch = vector_matches_to_batch(&[ov("a", 0.9), ov("b", 0.5)]).unwrap();
         assert_eq!(batch.num_rows(), 2);
+        // TD-XMODAL-4 S1: (id, score, metadata) — payload rides with id+score so a
+        // standalone `SELECT * FROM vector_search(...)` needs no self-join.
         assert_eq!(batch.schema().field(0).name(), "id");
         assert_eq!(batch.schema().field(1).name(), "score");
+        assert_eq!(
+            batch.schema().field(1).data_type(),
+            &DataType::Float64,
+            "score is Float64 to match the pgwire <-> operator path"
+        );
+        assert_eq!(batch.schema().field(2).name(), "metadata");
+        // Empty metadata (the sv helper) serializes to an empty JSON object.
+        let meta = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(meta.value(0), "{}");
     }
 
     /// The moat proof: vector-search results JOIN a relational table in ONE
@@ -1051,7 +1085,7 @@ mod tests {
 
         // Vector modality → joinable table (would come from the live VectorOpsPort
         // in the next slice; here we feed a fixed result set through the bridge).
-        let matches = vector_matches_to_batch(&[sv("a", 0.95), sv("b", 0.80), sv("c", 0.70)])
+        let matches = vector_matches_to_batch(&[ov("a", 0.95), ov("b", 0.80), ov("c", 0.70)])
             .expect("matches batch");
         ctx.register_table(
             "vmatches",
@@ -1124,6 +1158,28 @@ mod tests {
                 }),
                 ..Default::default()
             })
+        }
+        // TD-XMODAL-4 S2: the provider now scans via this kernel — return the fixed
+        // matches as v2 OptimizedSearchRecords.
+        async fn unified_search_native(
+            &self,
+            _collection_id: &str,
+            _query_vector: Vec<f32>,
+            _k: usize,
+            _filter: Option<proximadb_filter_expression::FilterExpression>,
+            _tenant_id: Option<&str>,
+        ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+            Ok(self
+                .matches
+                .iter()
+                .map(
+                    |(id, score)| crate::core::search::results::OptimizedSearchRecord {
+                        id: id.clone(),
+                        score: *score as f32,
+                        ..Default::default()
+                    },
+                )
+                .collect())
         }
         async fn batch_upsert(
             &self,
@@ -1702,6 +1758,22 @@ mod tests {
                 }),
                 ..Default::default()
             })
+        }
+        // TD-XMODAL-4 S2: the UDTF now forwards the tenant through THIS kernel —
+        // record it here (proves tenant forwarding on the unified path, TD-XMODAL-6).
+        async fn unified_search_native(
+            &self,
+            _collection_id: &str,
+            _query_vector: Vec<f32>,
+            _k: usize,
+            _filter: Option<proximadb_filter_expression::FilterExpression>,
+            tenant_id: Option<&str>,
+        ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+            self.seen
+                .lock()
+                .unwrap()
+                .push(tenant_id.map(str::to_string));
+            Ok(vec![])
         }
         async fn batch_upsert(
             &self,

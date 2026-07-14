@@ -378,10 +378,10 @@ fn bytes_matching(dir: &Path, needle: &str) -> u64 {
                 Ok(ft) if ft.is_dir() => walk(&path, needle, acc),
                 Ok(ft) if ft.is_file() => {
                     let hay = path.to_string_lossy();
-                    if needle.is_empty() || hay.contains(needle) {
-                        if let Ok(md) = entry.metadata() {
-                            *acc += md.len();
-                        }
+                    if (needle.is_empty() || hay.contains(needle))
+                        && let Ok(md) = entry.metadata()
+                    {
+                        *acc += md.len();
                     }
                 }
                 _ => {}
@@ -406,12 +406,11 @@ fn document_wal_files(dir: &Path) -> Vec<PathBuf> {
             match entry.file_type() {
                 Ok(ft) if ft.is_dir() => walk(&path, out),
                 Ok(ft) if ft.is_file() => {
-                    if path.to_string_lossy().contains("document_wal") {
-                        if let Ok(md) = entry.metadata() {
-                            if md.len() > 0 {
-                                out.push(path);
-                            }
-                        }
+                    if path.to_string_lossy().contains("document_wal")
+                        && let Ok(md) = entry.metadata()
+                        && md.len() > 0
+                    {
+                        out.push(path);
                     }
                 }
                 _ => {}

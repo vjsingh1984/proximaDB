@@ -3,6 +3,9 @@
 :toclevels: 2
 :icons: font
 :last-updated: 2026-06-17
+// status-as-of: 2026-06-17
+// The status-as-of tag above is checked by scripts/check_status_as_of.py (wired into
+// `make work-commit-check`): re-verify the support tiers against HEAD, then bump it.
 
 [.lead]
 Canonical product support contract for the ProximaDB working tree. This document separates customer-safe defaults from beta and experimental surfaces.
@@ -238,13 +241,13 @@ for evidence/provenance, and event/history records for temporal state. The v1
 
 | Security runtime
 | Beta
-| JWT, API key, SSO hooks, mTLS identity, and CRL-backed revocation reload/freshness checks are present.
-| Security admin/status APIs and stronger online revocation policy are incomplete.
+| JWT, API key, SSO hooks, mTLS identity, and CRL-backed revocation reload/freshness checks are present. REST tenant identity is credential-bound by policy (TD-TENANT-1): a header that contradicts an authenticated tenant binding is always 403; the bare `X-Tenant-ID` header is governed by `HeaderTrustPolicy` (`open` default / `authenticated-only` in the multi-tenant strict preset / `gateway-only` for trusted-gateway delegation), overridable via `PROXIMADB_TENANT_HEADER_TRUST`. Rejections emit `proximadb::tenant_audit` warns.
+| Security admin/status APIs and stronger online revocation policy are incomplete. The header-trust policy gates the REST boundary only — pgwire/gRPC/Arrow Flight tenant extraction honoring the same policy is an open follow-up (TD-TENANT-1).
 
 | Hybrid retrieval
 | Beta
 | tantivy BM25 integration, RRF/weighted fusion, and canonical REST `/api/v2/collections/{id}/search` hybrid path (TD-008 resolved). REST `/api/v2/graphs/{graph_id}/fusion-search` is the first vector+graph instance of the shared cross-modal fusion seam (TD-137). The former `/api/v1/hybrid/search` facade is a deprecated compat alias only. Request `filters` are enforced on both dense/BM25 legs: the vector candidates are filtered server-side, and the text candidates are gated to that filtered id set so a scoped filter cannot leak through the text leg.
-| Backend integration improved; REST v1 hybrid alias is a deprecated compatibility surface (see Canonical API Surface above) and gRPC path parity is still in progress. v1 `GraphService.ExecuteHybridQuery` remains deferred; use the v2 REST fusion route for vector-seed -> graph-expand experiments. A BM25-only match that passes the filter but falls outside the vector leg's `top_k` (or a hybrid request with no query vector) is dropped rather than risk a leak — safe, but it can under-return; keeping that tail needs a resolving metadata fetch (follow-up). Wider Projection Fusion remains a shared planner contract until runtime implementation, explain output, and benchmarks are complete.
+| Backend integration improved; REST v1 hybrid alias is a deprecated compatibility surface (see Canonical API Surface above) and gRPC path parity is still in progress. v1 `GraphService.ExecuteHybridQuery` remains deferred; use the v2 REST fusion route for vector-seed -> graph-expand experiments. A BM25-only match that passes the filter but falls outside the vector leg's `top_k` (or a hybrid request with no query vector) is dropped rather than risk a leak — safe, but it can under-return; keeping that tail needs a resolving metadata fetch (follow-up). Wider Projection Fusion remains a shared planner contract until runtime implementation, explain output, and benchmarks are complete. The in-process BM25 full-text index behind `/api/v2/hybrid/search` is fed ONLY by explicit `POST /api/v2/hybrid/index` calls: `POST /api/v2/collections/{id}/documents` ingest does NOT feed it (by design — the BM25 index is an in-memory, explicitly-managed sidecar, not a durable index over the record store). Clients that want document text searchable through the hybrid text leg must call `/api/v2/hybrid/index` per ingest batch (issue #951 clarification).
 
 | PULSAR and QUASAR graph engine names
 | Retired / Not supported
@@ -260,6 +263,96 @@ for evidence/provenance, and event/history records for temporal state. The v1
 | Beta
 | TST engine complete (ASOF joins, downsampling, OHLC; TD-009). Event sourcing engine complete (append-only WAL, temporal queries; TD-010).
 | Product packaging, API parity, and production validation at scale still in progress.
+|===
+
+== Storage Engine Matrix (canonical inventory)
+
+// section verified against HEAD 2026-07-13 (TD-TAXO-1)
+Canonical inventory of every engine under `src/storage/engines/` (TD-TAXO-1). Design docs and
+diagrams link here instead of re-enumerating; an engine module header's self-claim
+("production-ready" etc.) does **not** confer a tier — this table does (per the Authority
+Hierarchy above). The tier caps what may be claimed when naming the engine; the capability rows
+in the Current Matrix stay authoritative for API-level claims. `StorageEngineStrategy` lives in
+`crates/storage/proximadb-storage-ports/src/capabilities.rs`; construction is
+`src/storage/engines/factory.rs`.
+
+|===
+| Engine | Tier | Purpose & wiring | Constraints / notes
+
+| SST
+| Supported
+| Default engine (`StorageEngineStrategy::Sst`, factory `create_sst`). Hybrid columnar OLTP/LSM over PAX blocks; serves the Supported vector surface.
+| The safe default for adoption and examples.
+
+| VIPER
+| Beta
+| `Viper` variant, factory-reachable, ungated. Columnar Parquet with advanced quantization; analytics-leaning.
+| Selectable per collection; no per-engine conformance ratchet published yet — do not market above Beta by name.
+
+| HELIX
+| Beta
+| `Helix` variant, factory-reachable, ungated. Spatial-locality vector storage (Hilbert-curve clustering, zone maps).
+| Same Beta cap as VIPER; see also TD-HELIX-1.
+
+| NOVA
+| Beta
+| `Nova` variant, factory-reachable, ungated. Columnar analytics engine with hierarchical statistics and integrated quantization.
+| Same Beta cap as VIPER/HELIX.
+
+| TST (TimeSeries)
+| Beta
+| `TimeSeries` variant, factory `create_tst`. Time-partitioned columnar: ASOF joins, downsampling, OHLC (TD-009).
+| Tier follows the "Time-series and event foundations" row above.
+
+| CEDAR
+| Beta
+| `Cedar` variant, factory-reachable. Document-oriented **compatibility projection** (Columnar Extensible Document Archive) over canonical `ProximaRecord` durable truth.
+| Not a separate durable authority; tier follows the Document row above.
+
+| SWIFT
+| Experimental
+| `Swift` variant; factory gated behind the `experimental-engines` feature. Hierarchical superblock architecture.
+| Marked incomplete in its own header (30+ deferred items); slated for removal in v1.0 unless completed. Do not market.
+
+| RAPTOR
+| Experimental
+| `Raptor` variant; factory gated behind `experimental-engines`. Row-aligned tiered tensor storage research.
+| Same removal caveat as SWIFT. Do not market.
+
+| EVENTLOG
+| Beta (infrastructure)
+| No enum variant; not factory-creatable. Append-only event-sourcing log (TD-010) behind the event foundations row.
+| Infrastructure, not a selectable collection engine.
+
+| SEQUOIA
+| Internal
+| No enum variant; direct instantiation only (not factory-reachable). Relational row-store storing typed rows against catalog schema (Phase 1).
+| In development; becomes selectable only when it earns a variant + factory route + tier row.
+
+| UNIVERSAL
+| — (not an engine)
+| No variant. Shared distance-compute subsystem (PQ/INT8 kernels, progressive refinement) used by the engines.
+| Listed to keep the inventory exhaustive; never present as an engine.
+
+| CHRONO
+| Removed
+| `Chrono` variant and proto value retained for wire compatibility only; the factory returns an error ("use SST, VIPER, HELIX, or NOVA").
+| Do not reference in new code or docs except as removed.
+
+| TITAN
+| — (graph modality)
+| Graph engine (see ORION row above for the graph tier); the legacy dir under `src/storage/engines/` is not a vector storage strategy — the storage factory falls back to SST with a warning.
+| Candidate for relocation next to ORION; tracked in TD-TAXO-1.
+
+| Hybrid (variant)
+| Planned
+| `Hybrid` enum variant reserved; not implemented — factory falls back to SST with a warning.
+| Do not market as implemented.
+
+| ORION
+| Beta
+| Graph modality engine (`src/graph/engines/orion`), default and recommended for graph workloads; rebuildable CSR projection over canonical records.
+| Tier and scope per the "ORION graph operations" row above; not part of `StorageEngineStrategy`.
 |===
 
 == Not Supported in v0.2

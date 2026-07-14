@@ -1,0 +1,73 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-TENANT-1: credential-bound tenant identity — X-Tenant-ID header-trust policy
+:icons: font
+
+**Status:** Phase 1 shipped (REST boundary). Follow-ups open (see below).
+**Origin:** anvaiops live-UAT debugging (issues #949/#950, PR #956) — the fix
+review raised the question: the engine honors a bare `X-Tenant-ID` header, so
+any client that can reach the port can masquerade as any tenant unless a
+well-behaved gateway fronts the engine. A tenant-isolation guarantee that
+depends on network topology is a topology assumption, not a guarantee.
+
+== Decision
+
+Open-core split follows the cache-tier precedent: **mechanism in OSS, policy in
+the control plane.** ProximaDB enforces *that* tenant identity is
+credential-bound; the commercial layer (AnvaiOps) owns *which* tenants exist,
+credential→tenant mapping UX, provisioning, and entitlements. No enforcement
+lives outside the engine.
+
+== Phase 1 (shipped with this TD)
+
+`HeaderTrustPolicy` on `TenantExtractorConfig`
+(`src/network/middleware/tenant.rs`), governing the **bare** header — a request
+asserting a tenant with no authenticated binding (no JWT claim / API-key
+mapping). When a binding exists, header≠binding is already rejected with 403
+in every mode (pre-existing behavior, now audit-logged).
+
+|===
+| Mode | Bare header | Gateway delegation
+
+| `open` (default; `Default`/`single_tenant` presets)
+| accepted verbatim
+| n/a (header==identity)
+
+| `authenticated-only` (default for the `multi_tenant()` strict preset)
+| 403 + `proximadb::tenant_audit` warn
+| no — header must equal the credential's tenant
+
+| `gateway-only`
+| 403 + audit warn
+| yes — an authenticated principal whose bound tenant is in `system_tenants`
+  may set `X-Tenant-ID` to act on behalf of that tenant (delegation is
+  audit-logged)
+|===
+
+Env override at server construction (never in constructors — tests stay
+hermetic): `PROXIMADB_TENANT_HEADER_TRUST=open|authenticated-only|gateway-only`.
+An unparseable value tightens to `authenticated-only` (fail-closed) rather than
+silently running `open`. Unset ⇒ config value; default-safe, no flag-day.
+
+== Follow-ups (open)
+
+1. **Non-REST surfaces.** The policy currently gates the REST tenant
+   middleware only. pgwire, gRPC, and Arrow Flight extract tenant identity
+   through their own paths and must honor the same policy (one shared
+   resolution primitive in `proximadb-tenant`, not three re-implementations).
+2. **config.toml surface.** Expose `header_trust` under `[security.tenant]`
+   (today: preset + env override). Belongs with the TD-CAT-3
+   `TenantDeploymentMode` plumbing.
+3. **Stable-id resolution at the boundary (ADR-031).** The middleware resolves
+   a tenant *string*; catalog/storage keying should map it to the tenant's
+   stable `u64` id (per-type `IdAllocator`,
+   `crates/control/proximadb-catalog/src/id_allocator.rs`) so logical names
+   stay per-tenant aliases — `(tenant stable-id, namespace stable-id, logical
+   name) → table stable-id`, never a global name lookup. PR #956 already
+   routes /documents auto-create through `create_table → mint_stable_identity`;
+   audit remaining DDL paths for bare catalog writes.
+4. **Gateway principal marker.** `gateway-only` keys on
+   `system_tenants` membership of the *bound tenant*. A first-class operator/
+   service-principal marker on `UnifiedUserContext` (role-based) would be
+   cleaner than tenant-name membership once the two-tier operator/account
+   model (Phase 5) lands.

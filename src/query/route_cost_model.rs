@@ -37,7 +37,7 @@
 //! tunable. They are deliberately *not* calibrated dollar figures.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use arc_swap::ArcSwap;
@@ -61,13 +61,85 @@ pub fn install_route_cost_observer() {
             GLOBAL_ROUTE_COST_MODEL.observe_by_label(shape_class, backend_label, snap);
         },
     )));
-    // Flag-gated live override (default OFF). When PROXIMADB_ROUTE_COST_OVERRIDE
-    // is truthy, the warmed model may flip freshness-safe routes to the cheaper
-    // backend (slice 4); otherwise the model stays observe-only.
-    let on = std::env::var("PROXIMADB_ROUTE_COST_OVERRIDE")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    GLOBAL_ROUTE_COST_MODEL.set_override_enabled(on);
+    // Flag-gated live override (default OFF). PROXIMADB_ROUTE_COST_OVERRIDE is
+    // either the original global bool ("1"/"true" → every class) or, for the
+    // TD-EXEC-2 staged go-live, a comma-separated list of shape-class prefixes
+    // ("olap/parquet/op=agg,olap/parquet/op=cnt") enabling the override only
+    // where cells have been warmed and verified — everything else stays
+    // observe-only. Unparseable values fail safe to OFF.
+    let scope = std::env::var("PROXIMADB_ROUTE_COST_OVERRIDE")
+        .map(|v| OverrideScope::parse(&v))
+        .unwrap_or(OverrideScope::Off);
+    if scope != OverrideScope::Off {
+        tracing::info!("route cost model: live override enabled with scope {scope:?}");
+    }
+    GLOBAL_ROUTE_COST_MODEL.set_override_scope(scope);
+}
+
+// ── Override scope: global bool → per-shape-class staged go-live (D4) ───────
+
+/// Scope of the live route override — ADR-058 D4 kept the flip opt-in and
+/// per-deployment; TD-EXEC-2 §3 plans the go-live "per shape⊕geometry class,
+/// behind the shadow-compare + ratchet". This type carries that staging: a
+/// deployment can enable the override only for the classes whose cells it has
+/// warmed and verified (e.g. via `cargo ledger-tpc`), leaving every other class
+/// observe-only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OverrideScope {
+    /// Observe-only (the default): the model never changes a route.
+    Off,
+    /// Override enabled for every shape-class (the original global bool).
+    All,
+    /// Override enabled only for shape-classes matching one of these prefixes
+    /// on a `/` boundary — `olap/parquet/op=agg` covers all of its geometry
+    /// refinements (`olap/parquet/op=agg/geom=sx0`, …) but not the sibling
+    /// `olap/parquet/op=grp`.
+    Classes(Vec<String>),
+}
+
+impl OverrideScope {
+    /// Parse the `PROXIMADB_ROUTE_COST_OVERRIDE` value. `"1"`/`"true"` → [`Self::All`];
+    /// empty/`"0"`/`"false"` → [`Self::Off`]; otherwise a comma-separated list of
+    /// shape-class prefixes (tokens must contain `/` — the minimal well-formed
+    /// class key is `workload/base`). A value with no well-formed token fails
+    /// safe to [`Self::Off`] — a typo must never silently enable a global flip.
+    pub fn parse(raw: &str) -> Self {
+        let v = raw.trim();
+        if v.is_empty() || v == "0" || v.eq_ignore_ascii_case("false") {
+            return Self::Off;
+        }
+        if v == "1" || v.eq_ignore_ascii_case("true") {
+            return Self::All;
+        }
+        let classes: Vec<String> = v
+            .split(',')
+            .map(str::trim)
+            .filter(|t| t.contains('/'))
+            .map(str::to_string)
+            .collect();
+        if classes.is_empty() {
+            Self::Off
+        } else {
+            Self::Classes(classes)
+        }
+    }
+
+    /// Whether the override may fire for `shape_class` under this scope.
+    /// Prefix matching is on `/` boundaries, mirroring the hierarchical class
+    /// key (`consult_with_fallback`): enabling an ancestor enables all of its
+    /// refinements, never a lexical near-miss.
+    pub fn enables(&self, shape_class: &str) -> bool {
+        match self {
+            Self::Off => false,
+            Self::All => true,
+            Self::Classes(prefixes) => prefixes.iter().any(|p| {
+                shape_class == p.as_str()
+                    || shape_class
+                        .strip_prefix(p.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+            }),
+        }
+    }
 }
 
 // ── Persistence: let the measured cost history survive restarts ─────────────
@@ -347,10 +419,12 @@ pub fn final_cost(base_score: f64, tenant_id: Option<&str>) -> f64 {
 /// Stable shape-class key the model aggregates under. The coarse base mirrors the
 /// scheduler's binary signals (`engages_relational` × `parquet_backed`); C4
 /// Phase-2b refines it with the §5.2 Phase-1 inputs — cardinality and partition
-/// fan-out — but only when they are *known*. An `Unknown` signal contributes no
-/// suffix, so a planner that cannot estimate them yields exactly the original
-/// 2-part key (`olap/parquet`, `oltp/native`, …) — backward-compatible with
-/// warmed cells and existing EXPLAIN output.
+/// fan-out — TD-OLAP-4 with the operation class, and TD-EXEC-2 Slice 3 with the
+/// plan-geometry tier (`geom=<depth-band>x<blocking-band>`) — but only when they
+/// are *known*. An `Unknown` signal contributes no suffix, so a planner that
+/// cannot estimate them yields exactly the original 2-part key (`olap/parquet`,
+/// `oltp/native`, …) — backward-compatible with warmed cells and existing
+/// EXPLAIN output.
 pub fn shape_class(shape: &QueryShape) -> String {
     let workload = if shape.engages_relational {
         "olap"
@@ -367,6 +441,7 @@ pub fn shape_class(shape: &QueryShape) -> String {
         shape.cardinality.class_suffix(),
         shape.partition_fanout.class_suffix(),
         shape.operation_class.class_suffix(),
+        shape.geometry.class_suffix(),
     ]
     .into_iter()
     .flatten()
@@ -644,8 +719,40 @@ pub trait RouteConsult {
     /// Lock-free consult for one shape-class. `None` when the class has no baked
     /// entry (cold start — the caller keeps the static route).
     fn consult(&self, shape_class: &str) -> Option<ClassRecommendation>;
-    /// Whether live override is currently enabled (reads the live `AtomicBool`).
+    /// Hierarchical consult (TD-EXEC-2 Slice 3): the refined class first, then
+    /// each progressively coarser ancestor (one `/suffix` stripped at a time)
+    /// down to the 2-part `workload/base` key. Returns the recommendation and
+    /// the class level that served it. Refining the key must never orphan
+    /// warmed learning: a query keyed `olap/parquet/geom=mxhi` is served by the
+    /// warmed `olap/parquet` cells until its own refined cell warms via the
+    /// stamped fold — so the frozen table stays effectively *dense* across
+    /// key-refinement generations (ADR-058 D3), instead of every new tier
+    /// resetting the model. A bounded handful of hash gets against the same
+    /// frozen table — still lock-free, still consult-O(1).
+    fn consult_with_fallback(&self, shape_class: &str) -> Option<(ClassRecommendation, String)> {
+        let mut level = shape_class;
+        loop {
+            if let Some(rec) = self.consult(level) {
+                return Some((rec, level.to_string()));
+            }
+            match level.rfind('/') {
+                // Strip the last `/suffix`; the 2-part `workload/base` key is
+                // the floor (its prefix has no further `/`).
+                Some(idx) if level[..idx].contains('/') => level = &level[..idx],
+                _ => return None,
+            }
+        }
+    }
+    /// Whether live override is enabled for ANY class (reads the live scope).
     fn override_active(&self) -> bool;
+    /// Whether live override may fire for `shape_class` (per-class staged
+    /// go-live, TD-EXEC-2 §3). Defaults to the global answer so a test double
+    /// that only models the bool keeps working; the concrete model refines it
+    /// against its [`OverrideScope`].
+    fn override_active_for(&self, shape_class: &str) -> bool {
+        let _ = shape_class;
+        self.override_active()
+    }
     /// Advance and return the exploration rate-limit tick (pre-increment value).
     fn next_exploration_tick(&self) -> u64;
     /// Config surfaced for the consult's gate logic.
@@ -673,18 +780,46 @@ fn parse_backend_label(label: &str) -> Option<ComputeBackend> {
     }
 }
 
-/// The freshness-safe backend SET for a shape-class, derived from its prefix —
-/// reproduces `compute_scheduler::override_candidates` without a [`QueryShape`].
-/// Only `olap/parquet` has two freshness-compatible engines (Native's
+/// The freshness-safe backend SET for a shape-class, derived from its prefix.
+/// Only `olap/parquet` has multiple freshness-compatible engines (Native's
 /// strong-freshness scan and DataFusion's base-snapshot scan both correctly
 /// answer an analytic query); every other class keeps its single static
 /// backend, so a baked override can never flip a query onto an engine that
 /// would serve it incorrectly.
+///
+/// NOTE (TD-ROUTE-1): freshness-safety is baked here, but *capability*
+/// eligibility is NOT — the class string carries no join signal (a
+/// `JOIN … GROUP BY` classes as `op=grp`), so join-bearing plans are kept off
+/// Native at decision time in `ComputeScheduler::route_select_advised` via
+/// `QueryShape::join_bearing`, which also covers ancestor-fallback consults.
+/// DuckDB's residual freshness term — it cannot run the ADR-025 post-snapshot
+/// WAL delta merge — is likewise a dispatch-time gate (the pipeline only
+/// executes DuckDB when no referenced table carries a pending delta; the
+/// DataFusion floor serves otherwise and the route is re-stamped).
 fn freshness_safe_backends_from_class(shape_class: &str) -> Vec<ComputeBackend> {
     if shape_class.starts_with("olap/parquet") {
-        vec![ComputeBackend::Native, ComputeBackend::DataFusionLocal]
+        let mut safe = vec![ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+        if duckdb_route_candidate() {
+            safe.push(ComputeBackend::DuckDbCompat);
+        }
+        safe
     } else {
         vec![ComputeBackend::Native]
+    }
+}
+
+/// Whether `DuckDbCompat` participates as a cost-model candidate: compiled in
+/// (`--features duckdb`) AND route-enabled (`PROXIMADB_DUCKDB_ROUTE`, default
+/// OFF per ADR-059 §6 / ADR-054 progressive-cutover). Without both, the
+/// frozen table never ranks or explores DuckDB, so no flip can target it.
+fn duckdb_route_candidate() -> bool {
+    #[cfg(feature = "duckdb")]
+    {
+        crate::query::execution::duckdb_engine::duckdb_route_enabled()
+    }
+    #[cfg(not(feature = "duckdb"))]
+    {
+        false
     }
 }
 
@@ -697,9 +832,10 @@ pub struct RouteCostModel {
     weights: CostWeights,
     /// Minimum samples before a backend's estimate is trusted enough to compare.
     min_samples: u64,
-    /// Live route override (flag-gated; default OFF → observe-only). Interior
-    /// mutability so the process-global model can be toggled at startup.
-    override_enabled: AtomicBool,
+    /// Live route override scope (flag-gated; default [`OverrideScope::Off`] →
+    /// observe-only). `ArcSwap` so the process-global model can be re-scoped at
+    /// startup while consults read it lock-free.
+    override_scope: ArcSwap<OverrideScope>,
     /// Minimum fractional cost advantage the recommended backend must beat the
     /// static choice by before a live override fires — guards against flapping
     /// on marginal/noisy differences.
@@ -751,7 +887,7 @@ impl RouteCostModel {
             alpha: 0.2,
             weights: CostWeights::default(),
             min_samples: 3,
-            override_enabled: AtomicBool::new(false),
+            override_scope: ArcSwap::from_pointee(OverrideScope::Off),
             min_advantage: 0.15,
             explore_tick: AtomicU64::new(0),
             exploration_interval: 16,
@@ -797,19 +933,38 @@ impl RouteCostModel {
         self
     }
 
-    /// Enable/disable live route override (flag-gated; default OFF). Enabling
-    /// forces a frozen-table recompute so the very first override consult reads
-    /// current history, not a possibly-stale debounced snapshot.
+    /// Enable/disable live route override for EVERY class (flag-gated; default
+    /// OFF). The original global-bool form, kept for tests and callers that
+    /// don't stage per-class; equivalent to [`Self::set_override_scope`] with
+    /// [`OverrideScope::All`] / [`OverrideScope::Off`].
     pub fn set_override_enabled(&self, on: bool) {
-        self.override_enabled.store(on, Ordering::Relaxed);
-        if on {
+        self.set_override_scope(if on {
+            OverrideScope::All
+        } else {
+            OverrideScope::Off
+        });
+    }
+
+    /// Set the live-override scope (TD-EXEC-2 per-shape-class staged go-live).
+    /// Enabling any scope forces a frozen-table recompute so the very first
+    /// override consult reads current history, not a possibly-stale debounced
+    /// snapshot.
+    pub fn set_override_scope(&self, scope: OverrideScope) {
+        let enabled = scope != OverrideScope::Off;
+        self.override_scope.store(Arc::new(scope));
+        if enabled {
             self.recompute_locked();
         }
     }
 
-    /// Whether live override is currently enabled.
+    /// Whether live override is enabled for ANY class (scope is not `Off`).
     pub fn override_active(&self) -> bool {
-        self.override_enabled.load(Ordering::Relaxed)
+        !matches!(**self.override_scope.load(), OverrideScope::Off)
+    }
+
+    /// Whether live override may fire for `shape_class` under the current scope.
+    pub fn override_active_for(&self, shape_class: &str) -> bool {
+        self.override_scope.load().enables(shape_class)
     }
 
     /// The §3 unified `Cost(q)` in neutral units: read (GETs + bandwidth) +
@@ -839,6 +994,28 @@ impl RouteCostModel {
     /// the form the io_trace ingestion observer uses, since io_trace stamps a
     /// neutral label, not a `ComputeBackend` (no layer-up dependency).
     pub fn observe_by_label(&self, shape_class: &str, backend_label: &str, snap: &IoTraceSnapshot) {
+        // TD-EXEC-2 Slice 3 calibration loop, closed at the observe→ingest seam
+        // (off the query path): the `geom=` band the route was KEYED on (an AST
+        // estimate stamped into the class at decision time) vs the band of the
+        // MEASURED plan geometry the trace carries (Slice 1). This makes the
+        // estimator's accuracy a live, falsifiable series — divergence rate =
+        // fraction of folds where the labels differ — not just an offline
+        // ledger analysis. Both planner seams emit measured geometry (the
+        // native `plan_instrumented` and the DataFusion adapter's logical-plan
+        // walk); skipped only when the trace carries none (legacy paths).
+        if snap.plan_depth > 0
+            && let Some(estimated) = shape_class.split('/').find(|s| s.starts_with("geom="))
+            && let Some(measured) = crate::query::compute_scheduler::GeometryClass::from_estimate(
+                snap.plan_depth as u32,
+                snap.plan_blocking as u32,
+            )
+            .class_suffix()
+        {
+            crate::metrics::route_metrics::record_geometry_estimate(
+                estimated.trim_start_matches("geom="),
+                measured.trim_start_matches("geom="),
+            );
+        }
         let key = (shape_class.to_string(), backend_label.to_string());
         {
             let mut cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
@@ -954,7 +1131,7 @@ impl RouteCostModel {
         static_backend: &ComputeBackend,
         candidates: &[ComputeBackend],
     ) -> Option<RouteRecommendation> {
-        if !self.override_active() {
+        if !self.override_active_for(shape_class) {
             return None;
         }
         let static_cost = self.estimate(shape_class, static_backend)?;
@@ -1006,7 +1183,7 @@ impl RouteCostModel {
         shape_class: &str,
         candidates: &[ComputeBackend],
     ) -> Option<ComputeBackend> {
-        if !self.override_active() || candidates.len() < 2 {
+        if !self.override_active_for(shape_class) || candidates.len() < 2 {
             return None;
         }
         let (cand, samples) = candidates
@@ -1039,7 +1216,10 @@ impl RouteConsult for RouteCostModel {
         self.table.load().by_class.get(shape_class).cloned()
     }
     fn override_active(&self) -> bool {
-        self.override_enabled.load(Ordering::Relaxed)
+        RouteCostModel::override_active(self)
+    }
+    fn override_active_for(&self, shape_class: &str) -> bool {
+        RouteCostModel::override_active_for(self, shape_class)
     }
     fn next_exploration_tick(&self) -> u64 {
         self.explore_tick.fetch_add(1, Ordering::Relaxed)
@@ -1251,6 +1431,8 @@ mod tests {
             partition_fanout: PartitionFanout::Many,
             pax_backed: false,
             operation_class: Default::default(),
+            geometry: Default::default(),
+            join_bearing: false,
         });
         assert_eq!(class, "olap/parquet/card=l/part=m");
         // A partially-known shape only appends the known suffix.
@@ -1261,6 +1443,158 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(partial, "oltp/native/card=s");
+    }
+
+    #[test]
+    fn shape_class_appends_geometry_tier_when_known() {
+        use crate::query::compute_scheduler::GeometryClass;
+        // TD-EXEC-2 Slice 3: a known geometry estimate appends the geom tier
+        // after every other suffix, so cells warm per shape⊕geometry class.
+        let class = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            geometry: GeometryClass::from_estimate(8, 4),
+            ..Default::default()
+        });
+        assert_eq!(class, "olap/parquet/geom=mxhi");
+        // Unknown geometry contributes nothing — warmed cells stay valid.
+        let coarse = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            ..Default::default()
+        });
+        assert_eq!(coarse, "olap/parquet");
+        // The tier composes with the other refinements in stable order.
+        let full = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            cardinality: crate::query::compute_scheduler::CardinalityClass::Large,
+            operation_class: crate::query::compute_scheduler::OperationClass::Grouped,
+            geometry: GeometryClass::from_estimate(3, 1),
+            ..Default::default()
+        });
+        assert_eq!(full, "olap/parquet/card=l/op=grp/geom=sxlo");
+    }
+
+    #[test]
+    fn geometry_bands_bucket_at_the_documented_cutoffs() {
+        use crate::query::compute_scheduler::{BlockingBand, DepthBand, GeometryClass};
+        // Depth: ≤6 shallow, 7–12 mid, >12 deep. Blocking: 0 / 1–2 / ≥3.
+        assert_eq!(
+            GeometryClass::from_estimate(6, 0),
+            GeometryClass::Known {
+                depth: DepthBand::Shallow,
+                blocking: BlockingBand::Zero,
+            }
+        );
+        assert_eq!(
+            GeometryClass::from_estimate(7, 2),
+            GeometryClass::Known {
+                depth: DepthBand::Mid,
+                blocking: BlockingBand::Low,
+            }
+        );
+        assert_eq!(
+            GeometryClass::from_estimate(13, 3),
+            GeometryClass::Known {
+                depth: DepthBand::Deep,
+                blocking: BlockingBand::High,
+            }
+        );
+    }
+
+    #[test]
+    fn consult_falls_back_to_the_warmed_ancestor_class() {
+        // TD-EXEC-2 Slice 3 / ADR-058 D3: refining the key must not orphan
+        // warmed learning. Warm only the coarse base class; a query keyed with
+        // the geometry tier must still be served — by the ancestor's cells —
+        // and report which level served it.
+        let m = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_recompute_every(1);
+        m.observe(
+            "olap/parquet",
+            &ComputeBackend::DataFusionLocal,
+            &snap(4, 4096, 2),
+        );
+        // Refined key has no cell of its own → ancestor serves.
+        let (rec, level) = m
+            .consult_with_fallback("olap/parquet/card=l/geom=mxhi")
+            .expect("ancestor cells must serve the refined class");
+        assert_eq!(level, "olap/parquet");
+        assert!(!rec.ranked().is_empty());
+        // Direct (non-fallback) consult still misses the refined key.
+        assert!(m.consult("olap/parquet/card=l/geom=mxhi").is_none());
+        // Once the refined class warms, it is preferred over the ancestor.
+        m.observe(
+            "olap/parquet/card=l/geom=mxhi",
+            &ComputeBackend::Native,
+            &snap(2, 1024, 1),
+        );
+        let (_, level) = m
+            .consult_with_fallback("olap/parquet/card=l/geom=mxhi")
+            .expect("refined cells must now serve");
+        assert_eq!(level, "olap/parquet/card=l/geom=mxhi");
+        // A class with no warmed ancestor at any level misses entirely.
+        assert!(m.consult_with_fallback("oltp/native/geom=sx0").is_none());
+    }
+
+    #[test]
+    fn observe_emits_the_geometry_calibration_sample() {
+        // The observe→ingest seam compares the `geom=` band the class was keyed
+        // on against the measured plan geometry in the trace. mxhi estimated;
+        // depth 3 / blocking 1 measured → sxlo (a divergence sample).
+        let before = crate::metrics::route_metrics::ROUTE_GEOMETRY_ESTIMATE_TOTAL
+            .with_label_values(&["mxhi", "sxlo"])
+            .get();
+        let mut s = snap(2, 1024, 1);
+        s.plan_depth = 3;
+        s.plan_blocking = 1;
+        let m = RouteCostModel::new();
+        m.observe_by_label("olap/parquet/geom=mxhi", "Native", &s);
+        let after = crate::metrics::route_metrics::ROUTE_GEOMETRY_ESTIMATE_TOTAL
+            .with_label_values(&["mxhi", "sxlo"])
+            .get();
+        assert_eq!(after - before, 1.0);
+        // No measured geometry (plan_depth 0) → no sample.
+        let before = crate::metrics::route_metrics::ROUTE_GEOMETRY_ESTIMATE_TOTAL
+            .with_label_values(&["mxhi", "sxlo"])
+            .get();
+        m.observe_by_label("olap/parquet/geom=mxhi", "Native", &snap(2, 1024, 1));
+        let after = crate::metrics::route_metrics::ROUTE_GEOMETRY_ESTIMATE_TOTAL
+            .with_label_values(&["mxhi", "sxlo"])
+            .get();
+        assert_eq!(after - before, 0.0);
+    }
+
+    #[test]
+    fn cells_warm_independently_per_geometry_class() {
+        use crate::query::compute_scheduler::GeometryClass;
+        // Two shapes identical except for the geometry band must fold into
+        // DIFFERENT cells — the whole point of the tier (TD-EXEC-2 Slice 3).
+        let scan_heavy = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            geometry: GeometryClass::from_estimate(3, 1),
+            ..Default::default()
+        });
+        let join_heavy = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            geometry: GeometryClass::from_estimate(9, 4),
+            ..Default::default()
+        });
+        assert_ne!(scan_heavy, join_heavy);
+        let m = RouteCostModel::new();
+        m.observe(&scan_heavy, &ComputeBackend::Native, &snap(10, 1024, 5));
+        assert!(
+            m.estimate(&scan_heavy, &ComputeBackend::Native).is_some(),
+            "observed class must have a cell"
+        );
+        assert!(
+            m.estimate(&join_heavy, &ComputeBackend::Native).is_none(),
+            "sibling geometry class must stay cold — no cross-band bleed"
+        );
     }
 
     #[test]
@@ -1483,6 +1817,95 @@ mod tests {
             .recommend_override("olap/parquet", &ComputeBackend::Native, &cands)
             .expect("confident, enabled → override");
         assert_eq!(rec.backend, ComputeBackend::DataFusionLocal);
+    }
+
+    #[test]
+    fn override_scope_parses_global_class_list_and_garbage_forms() {
+        // Global bool forms (backward-compatible).
+        assert_eq!(OverrideScope::parse("1"), OverrideScope::All);
+        assert_eq!(OverrideScope::parse("true"), OverrideScope::All);
+        assert_eq!(OverrideScope::parse("TRUE"), OverrideScope::All);
+        assert_eq!(OverrideScope::parse(""), OverrideScope::Off);
+        assert_eq!(OverrideScope::parse("0"), OverrideScope::Off);
+        assert_eq!(OverrideScope::parse("false"), OverrideScope::Off);
+        // Per-class staged form: comma-separated class prefixes.
+        assert_eq!(
+            OverrideScope::parse("olap/parquet/op=agg, olap/parquet/op=cnt"),
+            OverrideScope::Classes(vec![
+                "olap/parquet/op=agg".to_string(),
+                "olap/parquet/op=cnt".to_string(),
+            ])
+        );
+        // Malformed tokens (no `/`) are dropped; all-malformed fails safe OFF —
+        // a typo must never silently become a global enable.
+        assert_eq!(OverrideScope::parse("yes"), OverrideScope::Off);
+        assert_eq!(OverrideScope::parse("olap,oltp"), OverrideScope::Off);
+        assert_eq!(
+            OverrideScope::parse("garbage, olap/parquet"),
+            OverrideScope::Classes(vec!["olap/parquet".to_string()])
+        );
+    }
+
+    #[test]
+    fn override_scope_enables_on_slash_boundaries_only() {
+        let scope = OverrideScope::Classes(vec!["olap/parquet/op=agg".to_string()]);
+        // Exact match and refinements are enabled…
+        assert!(scope.enables("olap/parquet/op=agg"));
+        assert!(scope.enables("olap/parquet/op=agg/geom=sx0"));
+        // …siblings, ancestors, and lexical near-misses are not.
+        assert!(!scope.enables("olap/parquet/op=grp"));
+        assert!(!scope.enables("olap/parquet"));
+        assert!(!scope.enables("olap/parquet/op=agg2"));
+        assert!(OverrideScope::All.enables("anything/at/all"));
+        assert!(!OverrideScope::Off.enables("olap/parquet"));
+    }
+
+    #[test]
+    fn class_scoped_override_flips_only_matching_classes() {
+        // TD-EXEC-2 per-class staged go-live: warm identical evidence under two
+        // classes; scope the override to one. Only that class may flip — the
+        // other stays observe-only, and exploration is scoped identically.
+        let m = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_exploration_interval(1);
+        let enabled_class = "olap/parquet/op=agg/geom=sx0";
+        let disabled_class = "olap/parquet/op=grp/geom=mxhi";
+        for class in [enabled_class, disabled_class] {
+            warm_class_df_cheaper(&m, class);
+        }
+        m.set_override_scope(OverrideScope::Classes(vec![
+            "olap/parquet/op=agg".to_string(),
+        ]));
+        assert!(m.override_active(), "a class scope counts as active");
+        let cands = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+        let rec = m
+            .recommend_override(enabled_class, &ComputeBackend::Native, &cands)
+            .expect("scoped-in class must flip");
+        assert_eq!(rec.backend, ComputeBackend::DataFusionLocal);
+        assert!(
+            m.recommend_override(disabled_class, &ComputeBackend::Native, &cands)
+                .is_none(),
+            "scoped-out class must stay observe-only"
+        );
+        // Exploration honors the same scope: cold candidate under the disabled
+        // class is never probed.
+        let cold_out = "olap/parquet/op=grp/geom=dxhi";
+        m.observe_by_label(cold_out, "Native(Volcano)", &snap(2, 4096, 1));
+        assert!(m.exploration_choice(cold_out, &cands).is_none());
+        let cold_in = "olap/parquet/op=agg/geom=dxhi";
+        m.observe_by_label(cold_in, "Native(Volcano)", &snap(2, 4096, 1));
+        assert_eq!(
+            m.exploration_choice(cold_in, &cands),
+            Some(ComputeBackend::DataFusionLocal)
+        );
+    }
+
+    /// Warm `class` so DataFusion is much cheaper than Native.
+    fn warm_class_df_cheaper(m: &RouteCostModel, class: &str) {
+        for _ in 0..5 {
+            m.observe_by_label(class, "DataFusionLocal", &snap(4, 16 << 20, 50));
+            m.observe_by_label(class, "Native(Volcano)", &snap(400, 16 << 20, 20));
+        }
     }
 
     #[test]
@@ -1771,6 +2194,61 @@ mod tests {
         );
     }
 
+    /// ADR-059: with the `duckdb` feature compiled AND `PROXIMADB_DUCKDB_ROUTE`
+    /// set, DuckDbCompat joins the olap/parquet freshness-safe set — its cells
+    /// rank and it can be explored/flipped to. (nextest process-per-test
+    /// isolation makes the env-before-first-call OnceLock read deterministic.)
+    #[cfg(feature = "duckdb")]
+    #[test]
+    fn duckdb_joins_the_olap_parquet_safe_set_when_route_enabled() {
+        unsafe { std::env::set_var("PROXIMADB_DUCKDB_ROUTE", "1") };
+        let m = RouteCostModel::new().with_min_samples(1);
+        m.observe_by_label("olap/parquet", "DuckDbCompat", &snap(2, 1 << 20, 1));
+        m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(200, 1 << 20, 9));
+        m.recompute();
+        let consult = m.consult("olap/parquet").expect("baked");
+        assert!(
+            consult
+                .ranked()
+                .iter()
+                .any(|c| backend_label(&c.backend) == "DuckDbCompat"),
+            "DuckDbCompat must rank as a freshness-safe candidate"
+        );
+        // Cheapest-first: DuckDB (2 GETs) beats DataFusion (200 GETs) here.
+        assert_eq!(backend_label(&consult.ranked()[0].backend), "DuckDbCompat");
+        // OLTP classes never gain DuckDB regardless of the gate.
+        m.observe_by_label("oltp/native", "DuckDbCompat", &snap(2, 1 << 20, 1));
+        m.recompute();
+        let oltp = m.consult("oltp/native").expect("baked");
+        assert!(
+            !oltp
+                .ranked()
+                .iter()
+                .any(|c| backend_label(&c.backend) == "DuckDbCompat")
+        );
+    }
+
+    /// Structural safety for builds WITHOUT the duckdb feature: persisted or
+    /// stray DuckDbCompat cells (e.g. a cost-model file written by a
+    /// duckdb-enabled deployment) are dropped from the ranked set, so no flip
+    /// can ever target an engine this build cannot execute.
+    #[cfg(not(feature = "duckdb"))]
+    #[test]
+    fn duckdb_cells_are_dropped_when_feature_absent() {
+        let m = RouteCostModel::new().with_min_samples(1);
+        m.observe_by_label("olap/parquet", "DuckDbCompat", &snap(2, 1 << 20, 1));
+        m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(200, 1 << 20, 9));
+        m.recompute();
+        let consult = m.consult("olap/parquet").expect("baked");
+        assert!(
+            !consult
+                .ranked()
+                .iter()
+                .any(|c| backend_label(&c.backend) == "DuckDbCompat"),
+            "a build without the duckdb feature must never rank DuckDbCompat"
+        );
+    }
+
     #[test]
     fn recompute_skips_unknown_backend_labels() {
         let m = RouteCostModel::new().with_min_samples(1);
@@ -1873,6 +2351,8 @@ mod tests {
             partition_fanout: PartitionFanout::Many,
             pax_backed: false,
             operation_class: Default::default(),
+            geometry: Default::default(),
+            join_bearing: false,
         });
         let small = shape_class(&QueryShape {
             engages_relational: true,
@@ -1881,6 +2361,8 @@ mod tests {
             partition_fanout: PartitionFanout::Single,
             pax_backed: false,
             operation_class: Default::default(),
+            geometry: Default::default(),
+            join_bearing: false,
         });
         assert_ne!(big, coarse);
         assert_ne!(small, coarse);
@@ -1909,6 +2391,8 @@ mod tests {
             partition_fanout: PartitionFanout::Many,
             pax_backed: false,
             operation_class: Default::default(),
+            geometry: Default::default(),
+            join_bearing: false,
         };
         let class = shape_class(&big);
         // Observe Native as confidently cheaper than DataFusion for THIS fine
@@ -1930,6 +2414,45 @@ mod tests {
         assert!(
             decision.reason.contains("OVERRIDE"),
             "expected override reason, got: {}",
+            decision.reason
+        );
+    }
+
+    #[test]
+    fn ancestor_cells_serve_a_geometry_refined_route() {
+        // TD-EXEC-2 Slice 3 continuity: a query whose class carries the NEW
+        // geometry tier is still served by cells warmed under the pre-tier key
+        // (hierarchical consult), the override flips on that ancestor evidence,
+        // and the decision discloses which level served it. Without this, every
+        // key refinement would reset all learning (ADR-058 D3 violation).
+        use crate::query::compute_scheduler::{ComputeScheduler, GeometryClass, QueryShape};
+        let m = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_min_advantage(0.1)
+            .with_recompute_every(1);
+        m.set_override_enabled(true);
+        // Warm ONLY the coarse pre-tier class.
+        for _ in 0..3 {
+            m.observe("olap/parquet", &ComputeBackend::Native, &snap(2, 8192, 1));
+            m.observe(
+                "olap/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &snap(40, 1 << 20, 8),
+            );
+        }
+        let refined = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            geometry: GeometryClass::from_estimate(9, 4),
+            ..Default::default()
+        };
+        assert_eq!(shape_class(&refined), "olap/parquet/geom=mxhi");
+        let decision = ComputeScheduler::new().route_select_advised(refined, Some(&m));
+        assert_eq!(decision.backend, ComputeBackend::Native);
+        assert!(
+            decision.reason.contains("OVERRIDE")
+                && decision.reason.contains("[cells: olap/parquet]"),
+            "expected ancestor-served override, got: {}",
             decision.reason
         );
     }

@@ -4,8 +4,8 @@
 
 [cols="1,3"]
 |===
-|Status|In progress — **Reader ranged read (Layer 1 + Layer 2) LANDED; documents adapter now IMPLEMENTED**
-(the correct storage-inclusive merge — `DocumentPaxPushdownProvider`, see "Design (implemented)" below).
+|Status|Done — adapter landed in #868 (a9410ed83); all gates (read-after-write, dead/tombstone,
+dedup-freshest, shredded-typed, measured byte gate) pass.
 Owning
 the reader (rather than waiting on the OLAP workstream) is done. **Layer 1** — `PaxSplitReader`
 fetches a segment via ranged reads: locate the index from a tail suffix → **Stage A** prunes whole

@@ -6794,6 +6794,7 @@ dependencies = [
  "proximadb-index-types",
  "proximadb-kernel",
  "proximadb-mcp",
+ "proximadb-metrics",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
  "proximadb-object-store",
@@ -6816,6 +6817,8 @@ dependencies = [
  "proximadb-rank-features",
  "proximadb-rank-onnx",
  "proximadb-rank-profile",
+ "proximadb-raptor-common",
+ "proximadb-raptor-engine",
  "proximadb-records",
  "proximadb-relational-algebra",
  "proximadb-relational-engine",
@@ -6839,6 +6842,7 @@ dependencies = [
  "proximadb-storage-ports",
  "proximadb-storage-strategy",
  "proximadb-storage-tenant",
+ "proximadb-storage-traits",
  "proximadb-storage-transaction",
  "proximadb-telemetry",
  "proximadb-tenant",
@@ -7008,15 +7012,26 @@ name = "proximadb-catalog"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "arrow-array",
  "arrow-schema",
  "async-trait",
  "aws-config",
  "aws-sdk-glue",
+ "chrono",
  "dashmap",
+ "futures",
+ "object_store",
  "parking_lot",
+ "prost",
+ "proximadb-block-format",
+ "proximadb-cache",
  "proximadb-compression-types",
  "proximadb-data-model",
  "proximadb-distance-types",
+ "proximadb-filter-expression",
+ "proximadb-iceberg-engine",
+ "proximadb-kernel",
+ "proximadb-proto",
  "proximadb-quantization-types",
  "proximadb-records",
  "proximadb-storage-filesystem-types",
@@ -7037,8 +7052,14 @@ name = "proximadb-codec"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "metal",
+ "proximadb-config",
+ "proximadb-hardware-caps",
+ "proximadb-runtime-common",
+ "rayon",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -7378,6 +7399,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-metrics"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dashmap",
+ "lazy_static",
+ "prometheus",
+ "proximadb-catalog",
+ "proximadb-config",
+ "proximadb-hardware",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "proximadb-migrate"
 version = "0.2.0"
 dependencies = [
@@ -7465,6 +7508,7 @@ dependencies = [
  "futures",
  "hex",
  "lettre",
+ "num_cpus",
  "object_store",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -7716,6 +7760,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-raptor-common"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "proximadb-bloom",
+ "proximadb-codec",
+ "proximadb-compression",
+ "proximadb-compression-types",
+ "proximadb-hardware-caps",
+ "proximadb-proto",
+ "serde",
+]
+
+[[package]]
+name = "proximadb-raptor-engine"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "arrow-array",
+ "arrow-ipc",
+ "arrow-schema",
+ "async-trait",
+ "bincode",
+ "chrono",
+ "dashmap",
+ "proximadb-codec",
+ "proximadb-compression",
+ "proximadb-distance-kernel",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "proximadb-raptor-common",
+ "proximadb-search-types",
+ "proximadb-storage-filesystem-types",
+ "proximadb-storage-ports",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "proximadb-recall-bench"
 version = "0.2.0"
 dependencies = [
@@ -7847,11 +7932,13 @@ dependencies = [
  "num_cpus",
  "proximadb-config",
  "proximadb-data-model",
+ "proximadb-filter-expression",
  "proximadb-graph-query",
  "proximadb-hardware",
  "proximadb-kernel",
  "proximadb-proto",
  "proximadb-records",
+ "proximadb-search-types",
  "serde",
  "serde_json",
  "sysinfo",
@@ -7902,6 +7989,7 @@ dependencies = [
  "proximadb-filter-expression",
  "proximadb-kernel",
  "proximadb-proto",
+ "proximadb-quantization-model",
  "proximadb-records",
  "serde",
  "serde_json",
@@ -8079,9 +8167,14 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "proximadb-filter-expression",
+ "proximadb-kernel",
  "proximadb-proto",
  "proximadb-quantization-model",
+ "proximadb-records",
  "proximadb-storage-common",
+ "proximadb-storage-filesystem-types",
+ "serde",
 ]
 
 [[package]]
@@ -8106,6 +8199,29 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-storage-traits"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "proximadb-data-model",
+ "proximadb-distance-kernel",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "proximadb-quantization-types",
+ "proximadb-records",
+ "proximadb-search-types",
+ "proximadb-storage-common",
+ "proximadb-storage-ports",
+ "proximadb-tenant",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -8135,11 +8251,13 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "proximadb-proto",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

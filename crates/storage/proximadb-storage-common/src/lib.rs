@@ -26,7 +26,14 @@ pub mod id_index;
 pub mod metadata_collector;
 pub mod mmap_file;
 pub mod native_metadata;
-pub mod object_store_bridge;
+/// Re-export shim — the canonical `ObjectStoreBridge` contract now lives in
+/// `proximadb-catalog` (the cross-layer contract crate this crate already
+/// depends on), so catalog-side services can consume it without a
+/// `catalog -> storage-common` cycle. All historical
+/// `proximadb_storage_common::object_store_bridge::*` paths keep working.
+pub mod object_store_bridge {
+    pub use proximadb_catalog::object_store_bridge::*;
+}
 pub mod observability_cardinality;
 pub mod observability_partitioning;
 pub mod observability_rollups;
@@ -41,6 +48,7 @@ pub mod smart_io_metrics;
 pub mod spatial_encoding;
 pub mod storage_error;
 pub mod storage_path;
+pub mod storage_profile;
 pub mod swift_id_index;
 pub mod tenant_performance;
 pub mod tiering_policy;
@@ -139,6 +147,9 @@ pub use smart_io_metrics::{FileIoMetrics, IoMetrics, IoMetricsSnapshot};
 pub use spatial_encoding::{CodeType, SpatialCode, U512};
 pub use storage_error::{ErrorContext, StorageError, StorageErrorKind};
 pub use storage_path::StoragePath;
+pub use storage_profile::{
+    STORAGE_PROFILE_ENV, STORAGE_PROFILE_TAG_PREFIX, StorageProfile, resolve_storage_profile,
+};
 pub use swift_id_index::{
     BPlusNode, BlockLocation, IdIndex, IndexStats as SwiftIndexStats, RecordLocation,
     TwoLevelIdIndex,

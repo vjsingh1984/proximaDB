@@ -44,7 +44,7 @@ use proximadb_block_format::{
     BlockCompression, BlockMode, BlockStats, BlockZoneSource, ColumnMeta, FlatRow, PaxBlockReader,
     PaxBlockWriter, RowGroupBlock, VectorQuant, col_id, header::fnv1a_hash,
 };
-use proximadb_records::ProximaRecord;
+use proximadb_records::{EmbeddingValues, ProximaRecord};
 use serde::{Deserialize, Serialize};
 
 use crate::engine_constants::{DEFAULT_TARGET_BLOCK_SIZE_BYTES, MAX_TARGET_BLOCK_SIZE_BYTES};
@@ -473,18 +473,12 @@ impl SegmentIndex {
 
 // ── Segment metadata (returned from finish()) ──────────────────────────────────
 
-/// Per-segment statistics returned when a segment is finalised.
-///
-/// Maps directly to Iceberg `DataFile` fields for manifest generation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SegmentMeta {
-    pub path: PathBuf,
-    pub size_bytes: u64,
-    pub block_count: u32,
-    pub row_count: u64,
-    /// Per-block statistics for Iceberg manifest data-file descriptors.
-    pub block_stats: Vec<BlockStats>,
-}
+// `SegmentMeta` now lives in `proximadb-block-format` (next to the per-block
+// `BlockStats` it aggregates) so segment-level consumers below the storage
+// layer — e.g. the catalog's segment registry — can reach it without a
+// `catalog -> storage-common` cycle. Re-exported here so the historical
+// `proximadb_storage_common::pax_block::SegmentMeta` path keeps working.
+pub use proximadb_block_format::SegmentMeta;
 
 // ── Writer ────────────────────────────────────────────────────────────────────
 
@@ -516,6 +510,17 @@ pub struct PaxSegmentWriter {
     block_stats: Vec<BlockStats>,
     file_buf: Vec<u8>,
     row_count: u64,
+
+    /// TD-RDSTRAT-5 S1: when true, accumulate each block's centroid (mean of its
+    /// embedding-0 f32 vectors) into `block_centroids` as blocks flush. Off by
+    /// default — zero cost for callers that don't opt in.
+    compute_centroids: bool,
+    /// Running sum of the current (not-yet-flushed) block's embedding-0 vectors.
+    cur_centroid_sum: Vec<f64>,
+    /// Count of vectors summed into `cur_centroid_sum` for the current block.
+    cur_centroid_n: u64,
+    /// Finalised per-block centroids, one per flushed block (emission order).
+    block_centroids: Vec<Vec<f32>>,
 }
 
 impl PaxSegmentWriter {
@@ -562,7 +567,22 @@ impl PaxSegmentWriter {
             block_stats: Vec::new(),
             file_buf: Vec::new(),
             row_count: 0,
+            compute_centroids: false,
+            cur_centroid_sum: Vec::new(),
+            cur_centroid_n: 0,
+            block_centroids: Vec::new(),
         }
+    }
+
+    /// TD-RDSTRAT-5 S1: opt in to per-block **centroid** computation. When on, the
+    /// writer accumulates each block's embedding-0 f32 mean and returns them in
+    /// [`SegmentMeta::block_centroids`] — the vector zone-map the Vector Object
+    /// Economy directory prunes on. Default OFF (zero cost otherwise). Builder
+    /// form mirroring [`with_quant`]; no block-writer rebuild needed (centroids
+    /// are accumulated in the segment writer, orthogonal to block encoding).
+    pub fn with_block_centroids(mut self, enabled: bool) -> Self {
+        self.compute_centroids = enabled;
+        self
     }
 
     /// Set the vector quantization strategy for this segment (P3 Phase D). Builder form
@@ -626,6 +646,9 @@ impl PaxSegmentWriter {
     pub fn add_record(&mut self, record: &ProximaRecord) -> Result<()> {
         self.current_writer.add_record(record)?;
         self.row_count += 1;
+        if self.compute_centroids {
+            self.accumulate_centroid(record);
+        }
 
         // Rough size estimate: each record contributes ~1 KB in the worst case.
         // We flush based on row count as a proxy when threshold is not hit yet.
@@ -634,6 +657,50 @@ impl PaxSegmentWriter {
             self.flush_current_block()?;
         }
         Ok(())
+    }
+
+    /// TD-RDSTRAT-5 S1: fold `record`'s embedding-0 f32 vector into the current
+    /// block's running centroid sum. Only the canonical Fp32 write-time
+    /// representation contributes; other variants are skipped (the block's
+    /// centroid is the mean over its Fp32 rows).
+    fn accumulate_centroid(&mut self, record: &ProximaRecord) {
+        let Some(EmbeddingValues::Fp32(v)) = record.embeddings.first().map(|e| &e.values) else {
+            return;
+        };
+        if v.is_empty() {
+            return;
+        }
+        if self.cur_centroid_sum.is_empty() {
+            self.cur_centroid_sum = vec![0f64; v.len()];
+        }
+        if self.cur_centroid_sum.len() == v.len() {
+            for (s, &x) in self.cur_centroid_sum.iter_mut().zip(v) {
+                *s += x as f64;
+            }
+            self.cur_centroid_n += 1;
+        }
+    }
+
+    /// Finalise the current block's centroid (mean = sum / n) into
+    /// `block_centroids` and reset the accumulator. Pushes an empty centroid when
+    /// the block carried no Fp32 vector, so `block_centroids` stays 1:1 with
+    /// blocks. No-op unless centroid computation was opted in.
+    fn finalize_block_centroid(&mut self) {
+        if !self.compute_centroids {
+            return;
+        }
+        let centroid = if self.cur_centroid_n > 0 {
+            let n = self.cur_centroid_n as f64;
+            self.cur_centroid_sum
+                .iter()
+                .map(|&s| (s / n) as f32)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        self.block_centroids.push(centroid);
+        self.cur_centroid_sum.clear();
+        self.cur_centroid_n = 0;
     }
 
     /// Force-flush any buffered records as the final (possibly partial) block.
@@ -672,6 +739,8 @@ impl PaxSegmentWriter {
         });
         self.file_buf.extend_from_slice(&block_bytes);
         self.block_stats.push(stats);
+        // Finalise this block's centroid (1:1 with the index entry just pushed).
+        self.finalize_block_centroid();
 
         // Reset writer for the next block (preserving the segment's quant + f32-tier +
         // rerank + shred-spec strategy — see `fresh_block_writer`).
@@ -710,6 +779,7 @@ impl PaxSegmentWriter {
             block_count: self.index.blocks.len() as u32,
             row_count: self.row_count,
             block_stats: self.block_stats,
+            block_centroids: self.block_centroids,
         })
     }
 
@@ -738,6 +808,7 @@ impl PaxSegmentWriter {
             block_count: self.index.blocks.len() as u32,
             row_count: self.row_count,
             block_stats: self.block_stats,
+            block_centroids: self.block_centroids,
         })
     }
 }
@@ -999,6 +1070,146 @@ mod tests {
             updated_at_ns: ts,
             ..Default::default()
         }
+    }
+
+    /// TD-RDSTRAT-5 S1: with `with_block_centroids(true)`, the segment writer
+    /// returns one centroid per block = the exact mean of that block's embedding-0
+    /// f32 vectors. Block-cutting is by current-block row count (`row_count*1024 >=
+    /// threshold`), so `threshold = 2*1024` puts exactly 2 rows per block.
+    #[test]
+    fn block_centroids_are_exact_per_block_means() {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        let rec = |oid: &str, v: Vec<f32>| {
+            let dim = v.len() as u32;
+            let mut r = ProximaRecord {
+                oid: oid.into(),
+                tenant_id: "t".into(),
+                created_at_ns: 1,
+                updated_at_ns: 1,
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim,
+                values: EmbeddingValues::Fp32(v),
+                ..Default::default()
+            });
+            r
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        let mut w = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            Some(2 * 1024), // 2 rows/block
+        )
+        .with_quant(VectorQuant::RawF32)
+        .with_block_centroids(true);
+        for r in [
+            rec("a", vec![0.0, 0.0]),
+            rec("b", vec![2.0, 2.0]),
+            rec("c", vec![10.0, 10.0]),
+            rec("d", vec![12.0, 12.0]),
+        ] {
+            w.add_record(&r).unwrap();
+        }
+        let meta = w.finish().unwrap();
+        assert_eq!(meta.block_count, 2, "2 rows/block ⇒ 2 blocks");
+        assert_eq!(
+            meta.block_centroids.len(),
+            meta.block_count as usize,
+            "one centroid per block"
+        );
+        assert_eq!(
+            meta.block_centroids[0],
+            vec![1.0, 1.0],
+            "mean of [0,0],[2,2]"
+        );
+        assert_eq!(
+            meta.block_centroids[1],
+            vec![11.0, 11.0],
+            "mean of [10,10],[12,12]"
+        );
+    }
+
+    /// TD-RDSTRAT-5 S1: exact per-block means at a realistic **16-dim** width
+    /// (2-byte sign-key territory) — 4 rows, 2 rows/block ⇒ 2 blocks, each
+    /// centroid the elementwise mean of its block's 16-dim vectors.
+    #[test]
+    fn block_centroids_16dim_exact_means() {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        let dim = 16usize;
+        let rec = |oid: &str, fill: f32| {
+            let mut r = ProximaRecord {
+                oid: oid.into(),
+                tenant_id: "t".into(),
+                created_at_ns: 1,
+                updated_at_ns: 1,
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: dim as u32,
+                values: EmbeddingValues::Fp32(vec![fill; dim]),
+                ..Default::default()
+            });
+            r
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        let mut w = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            Some(2 * 1024), // 2 rows/block
+        )
+        .with_quant(VectorQuant::RawF32)
+        .with_block_centroids(true);
+        // block 0: fills 0 & 4 → mean 2; block 1: fills 10 & 20 → mean 15.
+        for r in [rec("a", 0.0), rec("b", 4.0), rec("c", 10.0), rec("d", 20.0)] {
+            w.add_record(&r).unwrap();
+        }
+        let meta = w.finish().unwrap();
+        assert_eq!(meta.block_count, 2);
+        assert_eq!(meta.block_centroids.len(), 2);
+        assert_eq!(meta.block_centroids[0], vec![2.0f32; dim]);
+        assert_eq!(meta.block_centroids[1], vec![15.0f32; dim]);
+    }
+
+    /// Default off: a writer built WITHOUT `with_block_centroids` returns no
+    /// centroids (zero cost for pre-existing callers).
+    #[test]
+    fn block_centroids_empty_when_not_opted_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        let mut r = make_record("a", "t", 1);
+        r.embeddings.push(EmbeddingCell {
+            modality: "dense".into(),
+            dim: 2,
+            values: EmbeddingValues::Fp32(vec![1.0, 2.0]),
+            ..Default::default()
+        });
+        let mut w = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            None,
+        )
+        .with_quant(VectorQuant::RawF32);
+        w.add_record(&r).unwrap();
+        let meta = w.finish().unwrap();
+        assert!(meta.block_centroids.is_empty());
     }
 
     #[test]

@@ -51,6 +51,7 @@ members = [
     "crates/foundation/proximadb-relational-types",
     "crates/foundation/proximadb-functions",
     "crates/control/proximadb-catalog",
+    "crates/control/proximadb-metrics",
     "crates/horizontal/proximadb-codec",
     "crates/horizontal/proximadb-compression",
     "crates/horizontal/proximadb-embedded-common",
@@ -77,8 +78,11 @@ members = [
     "crates/modalities/proximadb-rank-expr",
     "crates/modalities/proximadb-rank-profile",
     "crates/modalities/proximadb-rank-onnx",
+    "crates/storage/proximadb-raptor-common",
+    "crates/storage/proximadb-raptor-engine",
     "crates/storage/proximadb-storage-common",
     "crates/storage/proximadb-storage-ports",
+    "crates/storage/proximadb-storage-traits",
     "crates/storage/proximadb-storage-encryption",
     "crates/storage/proximadb-block-format",
     "crates/storage/proximadb-object-store",
@@ -192,6 +196,7 @@ proximadb-relational-executor = { path = "crates/query/proximadb-relational-exec
 proximadb-relational-frontend = { path = "crates/query/proximadb-relational-frontend" }
 proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+proximadb-metrics = { path = "crates/control/proximadb-metrics" }
 arc-swap = "1.7"
 dashmap = "6.1.0"
 moka = { version = "0.12", features = ["future"] }
@@ -238,8 +243,10 @@ proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
 proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
+proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }
 proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
+proximadb-iceberg-engine = { path = "crates/storage/proximadb-iceberg-engine" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
 proximadb-storage-operations = { path = "crates/storage/proximadb-storage-operations" }
 proximadb-storage-optimization = { path = "crates/storage/proximadb-storage-optimization" }
@@ -247,6 +254,7 @@ proximadb-storage-filesystem-types = { path = "crates/storage/proximadb-storage-
 proximadb-storage-strategy = { path = "crates/storage/proximadb-storage-strategy" }
 proximadb-storage-tenant = { path = "crates/storage/proximadb-storage-tenant" }
 proximadb-storage-transaction = { path = "crates/storage/proximadb-storage-transaction" }
+proximadb-query-capability = { path = "crates/query/proximadb-query-capability" }
 crc32fast = "1.4"
 rmp-serde = "1.1"
 tonic-prost = "0.14"
@@ -324,6 +332,7 @@ proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-quantization-model = { path = "crates/foundation/proximadb-quantization-model" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+proximadb-metrics = { path = "crates/control/proximadb-metrics" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
 proximadb-mcp = { path = "crates/platform/proximadb-mcp" }
@@ -337,6 +346,7 @@ proximadb-security = { path = "crates/horizontal/proximadb-security" }
 proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
+proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }
 proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-object-store = { path = "crates/storage/proximadb-object-store" }
@@ -591,6 +601,8 @@ jni = { version = "0.21", optional = true }
 # Node.js bindings via NAPI-RS
 napi = { version = "2.14", features = ["napi9"], optional = true }
 napi-derive = { version = "2.14", optional = true }
+proximadb-raptor-common = { version = "0.2.0", path = "crates/storage/proximadb-raptor-common" }
+proximadb-raptor-engine = { version = "0.2.0", path = "crates/storage/proximadb-raptor-engine" }
 
 # GPU acceleration dependencies (platform-specific)
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
@@ -647,9 +659,9 @@ ai_endpoints = []
 tenant_access = []
 # Experimental storage engines (RAPTOR, SWIFT); disabled by default to prevent
 # server panics from unimplemented code paths. Enable for development/testing only.
-experimental-engines = []
+experimental-engines = ["proximadb-raptor-engine/experimental-engines"]
 # Experimental SIMD path; not enabled by default
-simd-experimental = []
+simd-experimental = ["proximadb-codec/simd-experimental"]
 # TD-160 / ADR-027 / ADR-030: gate the PERF-CLASS I/O-trace *emission* (the
 # per-query structured `tracing` event in `io_trace::IoTrace::emit`). Default OFF
 # → zero perf-emission cost in normal operation. The cheap core counters
@@ -670,7 +682,7 @@ experimental-turboquant = [
     "proximadb-quantization-kernel/experimental-turboquant",
 ]
 # AVX512 intrinsics (requires nightly Rust, disabled by default for CI compatibility)
-avx512 = []
+avx512 = ["proximadb-codec/avx512"]
 standalone = []
 # Cluster mode - enables distributed consensus (Raft), replication, and health services
 # Used for multi-node deployments with leader election and data replication.
@@ -795,8 +807,8 @@ datafusion-integration = ["dep:datafusion", "dep:datafusion-common"]
 duckdb = ["dep:duckdb"]
 
 # Hardware acceleration features
-gpu = ["metal", "proximadb-hardware-caps/gpu", "proximadb-distance-kernel/gpu"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
-metal = ["dep:metal"]  # Enable Metal/MPS GPU support on macOS ARM64
+gpu = ["metal", "proximadb-codec/gpu", "proximadb-hardware-caps/gpu", "proximadb-distance-kernel/gpu"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
+metal = ["dep:metal", "proximadb-codec/metal"]  # Enable Metal/MPS GPU support on macOS ARM64
 # SIMD optimizations - ARM64 has NEON, not AVX
 simd = []  # Placeholder - would need ARM NEON implementation
 debug-filters = []  # Enable debug filtering for search operations

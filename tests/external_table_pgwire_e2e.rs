@@ -208,8 +208,7 @@ async fn external_location_outside_allowlist_is_rejected() {
              WITH (format='parquet', external_location='file:///etc/', authority='external')",
         )
         .await
-        .err()
-        .expect("CREATE must be rejected when the location is outside the allowlist");
+        .expect_err("CREATE must be rejected when the location is outside the allowlist");
     // tokio-postgres' Display is the terse "db error"; the real message is on
     // the DbError cause.
     let msg = err

@@ -53,7 +53,7 @@ fn cluster_key_resolution_and_sort_order() {
         }
         r
     };
-    let mut records = vec![rec(Some(30)), rec(None), rec(Some(10)), rec(Some(20))];
+    let mut records = [rec(Some(30)), rec(None), rec(Some(10)), rec(Some(20))];
     records.sort_by_cached_key(|r| cluster_sort_key(r, "created"));
     let keys: Vec<Option<i32>> = records
         .iter()
@@ -63,6 +63,119 @@ fn cluster_key_resolution_and_sort_order() {
         })
         .collect();
     assert_eq!(keys, vec![Some(10), Some(20), Some(30), None], "NULLs last");
+}
+
+/// TD-OLAP-2 (A2): `publish_ndv_statistics` (the materialize write-boundary
+/// hook) folds `ProximaRecord`s into per-column HLL sketches and publishes them
+/// to the ADR-037 registry keyed by table name; `statistics_from_splits` (the
+/// DF reader's `statistics()`) then overlays `distinct_count = Inexact(ndv)`
+/// from that registry. This proves the FULL A2 chain — the mechanism that lets
+/// DataFusion's `EnforceDistribution` pick a partitioned (multi-core) join
+/// build instead of the single-partition fallback when `distinct_count` is
+/// `Absent` (the measured 100-700× gap vs DuckDB). Unlike
+/// `schema_inference::statistics_from_splits_overlays_registry_ndv` (which
+/// populates the registry by hand with json literals), this exercises the real
+/// `ProximaValue`→json conversion + schema-driven column iteration that the
+/// materialize path uses. Empty splits isolate the overlay (the footer-stats
+/// block is skipped, but the registry overlay at schema_inference.rs:218 fires
+/// regardless of split coverage).
+#[test]
+fn publish_ndv_statistics_feeds_distinct_count_overlay() {
+    use crate::core::statistics::statistics_registry;
+    use crate::datafusion::schema_inference::statistics_from_splits;
+    use datafusion_common::stats::Precision;
+
+    fn col(name: &str, ty: ProximaType) -> CatalogColumn {
+        CatalogColumn {
+            id: 0,
+            object_id: None,
+            name: name.to_string(),
+            data_type: ty,
+            nullable: true,
+            default_value: None,
+            comment: None,
+            properties: Default::default(),
+            is_deleted: false,
+            original_id: None,
+        }
+    }
+    let table = "ndv_publish_test_tbl";
+    let schema = CatalogTableSchema {
+        name: table.to_string(),
+        columns: vec![
+            col("id", ProximaType::Int64),
+            col("flag", ProximaType::String),
+            col("created", ProximaType::Date),
+        ],
+        ..Default::default()
+    };
+    // 100 rows: id NDV=100, flag NDV=2 (A/B alternating), created NDV=10 (cyclic).
+    let mut records = Vec::new();
+    for i in 0..100i64 {
+        let mut r = ProximaRecord::default();
+        r.props.insert(
+            "id".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Int64(i)),
+        );
+        r.props.insert(
+            "flag".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String(
+                if i % 2 == 0 { "A" } else { "B" }.to_string(),
+            )),
+        );
+        r.props.insert(
+            "created".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Date((i % 10) as i32)),
+        );
+        records.push(r);
+    }
+
+    publish_ndv_statistics(table, &schema, &records);
+
+    // Write side: the registry envelope carries per-column distinct_estimate.
+    let env = statistics_registry()
+        .envelope(table)
+        .expect("summary published by materialize");
+    assert_eq!(env.record_count, 100);
+    let ndv = |name: &str| {
+        env.fields
+            .iter()
+            .find(|f| f.name == name)
+            .and_then(|f| f.distinct_estimate)
+            .unwrap_or_else(|| panic!("field {name} has distinct_estimate"))
+    };
+    // HLL standard error ~2%; allow a band.
+    assert!((ndv("id") as i64 - 100).abs() <= 5, "id ndv {}", ndv("id"));
+    assert!(ndv("flag") <= 3, "flag ndv {}", ndv("flag"));
+    assert!(
+        (ndv("created") as i64 - 10).abs() <= 2,
+        "created ndv {}",
+        ndv("created")
+    );
+
+    // Read side: `statistics_from_splits` overlays distinct_count from the
+    // registry — the exact seam the DF reader's `statistics()` calls.
+    let arrow = schema.to_arrow_schema();
+    let stats = statistics_from_splits(
+        &[],
+        arrow.as_ref(),
+        Some(table),
+        false,
+        proximadb_data_model::StatsTrust::Trusted,
+    );
+    let col_ndv = |name: &str| {
+        let idx = arrow.index_of(name).unwrap();
+        match stats.column_statistics[idx].distinct_count {
+            Precision::Inexact(n) => n,
+            ref other => panic!("distinct_count for {name} not Inexact: {other:?}"),
+        }
+    };
+    assert!((col_ndv("id") as i64 - 100).abs() <= 5);
+    assert!(col_ndv("flag") <= 3);
+    assert!((col_ndv("created") as i64 - 10).abs() <= 2);
+
+    // Cleanup the process-global registry so this test is order-independent.
+    statistics_registry().remove(table);
 }
 
 #[test]

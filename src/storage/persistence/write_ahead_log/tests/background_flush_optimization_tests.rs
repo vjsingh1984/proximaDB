@@ -135,12 +135,6 @@ mod tests {
         ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
             Ok(Vec::new())
         }
-
-        fn get_filesystem_factory(
-            &self,
-        ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-            unimplemented!("Mock filesystem factory not needed for tests")
-        }
     }
 
     fn create_test_context(
