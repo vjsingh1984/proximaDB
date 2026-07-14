@@ -351,6 +351,10 @@ impl FileSystem for UnifiedCachingFilesystem {
         self.underlying_fs.append(path, data).await
     }
 
+    fn supports_append(&self) -> bool {
+        self.underlying_fs.supports_append()
+    }
+
     async fn delete(&self, path: &str) -> FsResult<()> {
         let cache_key = self.cache_key(path);
 

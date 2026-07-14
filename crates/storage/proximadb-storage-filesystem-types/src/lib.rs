@@ -543,6 +543,15 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// Append to file
     async fn append(&self, path: &str, data: &[u8]) -> FsResult<()>;
 
+    /// Whether this backend provides a native, durable append operation.
+    ///
+    /// Object stores intentionally leave this false. Callers whose on-disk
+    /// format requires append must reject the backend during construction,
+    /// before accepting data, rather than discovering the mismatch on flush.
+    fn supports_append(&self) -> bool {
+        false
+    }
+
     /// Delete file or directory
     async fn delete(&self, path: &str) -> FsResult<()>;
 

@@ -2300,7 +2300,7 @@ impl UnifiedStorageFormat for RaptorEngine {
             self.config.clone(),
             collection_id.to_string(),
             collection_dimension as usize,
-            make_raptor_filesystem().await?,
+            self.filesystem.clone(),
             make_raptor_quantization_engine(&self.config).await?,
             make_raptor_axis_clustering(&self.config),
         )

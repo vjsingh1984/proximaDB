@@ -160,13 +160,23 @@ The bug class has two shapes:
   remaining refinements are tracked in TD-CAT-4. The catalog pointer is
   last-writer-wins (single-writer warehouse model) until CAS lands.
 
-| **RAPTOR/SWIFT writers use `FileSystem::append`**
-| Experimental engines (feature-gated `experimental-engines`, default-OFF) append to
-  segment files; object-store backends reject append. Same full-buffer-overwrite or
-  multipart strategy as the WAL fix when these engines graduate.
+| **RAPTOR writer format still requires append**
+| Contained: `FileSystem::supports_append` makes the backend capability explicit and
+  `RaptorWriter` rejects incompatible injected backends during construction. RAPTOR
+  remains feature-gated/default-OFF. A full-buffer-overwrite or multipart format is
+  still required before RAPTOR can support object stores.
 
-| **`queue_fs_adapter.rs` uses `append`**
-| Audit whether its queue paths can be object-store-configured; guard or convert.
+| **Queue root format still requires append**
+| Contained: `FactoryQueueFs::new` now rejects a root whose resolved backend does not
+  advertise durable append. Object-store archive targets remain independent, but an
+  object-store queue root is unsupported until the queue segment format becomes
+  immutable/replace-based.
+
+| **Filesystem trait retains the `append` method**
+| `supports_append` prevents capability-blind constructors, but the method remains on
+  the shared trait for local/HDFS compatibility. New append-dependent formats must
+  check the capability at construction; removing/splitting the method is a later
+  workspace-wide API migration.
 
 | **Alerting persistence object-store port**
 | `AlertPersistence` is a port; add an object-store-backed impl (layering: the
@@ -188,6 +198,11 @@ The bug class has two shapes:
   bases share); `join_storage_url` matrix over bare/file/s3/adls/abfs/gcs bases
   asserting **no `file://<scheme>://` and no `<scheme>://<scheme>://` ever**; audit
   logger scheme dispatch.
+* Construction ratchets: queue roots and RAPTOR writers reject a backend without
+  `supports_append`; object-store backends retain the default `false`, while local and
+  HDFS advertise `true`.
+* WAL reopen ratchet: current-format `wal_NNNNNNNN.log` frames are scanned on writer
+  construction and the next `sequence_number` resumes at `max + 1`.
 * Guard: `tests/objstore_url_construction_test.rs::no_strip_and_reprepend_pattern_in_src`
   greps `src/` for `.replace("file://"` outside an allowlist — the pattern that caused
   this class is now build-enforced dead.

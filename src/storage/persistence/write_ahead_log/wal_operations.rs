@@ -459,7 +459,7 @@ impl UnifiedWALWriter {
 
         // Discover existing WAL files to resume from max sequence number and
         // the highest existing segment index.
-        let mut max_seq: u64 = 0;
+        let mut next_seq: u64 = 0;
         let mut segment_count: u64 = 0;
         // TD-066 (d): track the HIGHEST existing segment index, not just the
         // count. After an LSN-bounded prefix truncation the surviving segments
@@ -484,9 +484,25 @@ impl UnifiedWALWriter {
                     if parts.len() >= 4
                         && let Ok(seq) = parts[3].parse::<u64>()
                     {
-                        max_seq = max_seq.max(seq);
+                        next_seq = next_seq.max(seq.saturating_add(1));
                     }
                 }
+            }
+        }
+
+        // The current `wal_{segment}.log` filename carries no sequence range.
+        // Recover the allocator from frame contents; otherwise every reopen
+        // restarts at zero and duplicates sequence numbers within one WAL.
+        if max_segment_index.is_some() {
+            let reader = UnifiedWALReader::new(base_url.clone()).await?;
+            if let Some(last_seq) = reader
+                .read_all()
+                .await?
+                .into_iter()
+                .map(|entry| entry.sequence_number)
+                .max()
+            {
+                next_seq = next_seq.max(last_seq.saturating_add(1));
             }
         }
 
@@ -498,7 +514,7 @@ impl UnifiedWALWriter {
                 "WAL recovery: found {} segments (next index {}), resuming from sequence {}",
                 segment_count,
                 segment_counter,
-                max_seq
+                next_seq
             );
         } else {
             tracing::debug!("WAL writer initialized fresh for path: {}", base_path);
@@ -510,7 +526,7 @@ impl UnifiedWALWriter {
             // re-prepend `file://` — on an object-store base that yields
             // invalid `file://s3://…` URLs (TD-OBJSTORE-1, #960).
             base_path: base_url,
-            sequence_number: std::sync::atomic::AtomicU64::new(max_seq),
+            sequence_number: std::sync::atomic::AtomicU64::new(next_seq),
             filesystem,
             current_segment_path: None,
             current_segment_data: Vec::new(),
@@ -1234,6 +1250,34 @@ mod tests {
             1,
             "new append must open a fresh segment past the max"
         );
+    }
+
+    #[tokio::test]
+    async fn writer_reopen_resumes_sequence_after_current_format_segments() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().to_str().unwrap().to_string();
+
+        let mut writer = UnifiedWALWriter::new(path.clone()).await.unwrap();
+        assert_eq!(writer.append(node_op("g", "a")).await.unwrap(), 0);
+        assert_eq!(writer.append(node_op("g", "b")).await.unwrap(), 1);
+        writer.flush().await.unwrap();
+        drop(writer);
+
+        let mut reopened = UnifiedWALWriter::new(path.clone()).await.unwrap();
+        assert_eq!(
+            reopened.append(node_op("g", "c")).await.unwrap(),
+            2,
+            "the current wal_NNNNNNNN.log format must restore the next sequence"
+        );
+        reopened.flush().await.unwrap();
+
+        let entries = UnifiedWALReader::new(path)
+            .await
+            .unwrap()
+            .read_all()
+            .await
+            .unwrap();
+        assert_eq!(seqs(&entries), vec![0, 1, 2]);
     }
 
     /// A stale/missing checkpoint marker must never delete live frames: truncate
