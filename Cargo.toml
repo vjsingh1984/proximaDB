@@ -78,6 +78,7 @@ members = [
     "crates/modalities/proximadb-rank-expr",
     "crates/modalities/proximadb-rank-profile",
     "crates/modalities/proximadb-rank-onnx",
+    "crates/storage/proximadb-engine-core",
     "crates/storage/proximadb-raptor-common",
     "crates/storage/proximadb-raptor-engine",
     "crates/storage/proximadb-storage-common",
@@ -603,6 +604,7 @@ napi = { version = "2.14", features = ["napi9"], optional = true }
 napi-derive = { version = "2.14", optional = true }
 proximadb-raptor-common = { version = "0.2.0", path = "crates/storage/proximadb-raptor-common" }
 proximadb-raptor-engine = { version = "0.2.0", path = "crates/storage/proximadb-raptor-engine" }
+proximadb-engine-core = { version = "0.2.0", path = "crates/storage/proximadb-engine-core" }
 
 # GPU acceleration dependencies (platform-specific)
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
