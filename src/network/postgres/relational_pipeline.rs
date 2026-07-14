@@ -450,17 +450,18 @@ pub async fn try_run_select(
     // accumulate per shape⊕geometry (the dimension TD-OLAP-15 measured engines
     // win/lose on).
     let geometry = query_geometry_class(query);
+    let shape = crate::query::compute_scheduler::QueryShape {
+        engages_relational: true,
+        parquet_backed,
+        pax_backed: false,
+        partition_fanout,
+        cardinality,
+        operation_class,
+        geometry,
+        join_bearing: query_join_bearing(query),
+    };
     let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
-        crate::query::compute_scheduler::QueryShape {
-            engages_relational: true,
-            parquet_backed,
-            pax_backed: false,
-            partition_fanout,
-            cardinality,
-            operation_class,
-            geometry,
-            join_bearing: query_join_bearing(query),
-        },
+        shape,
         // C4: observe-mode advisory from the trace-driven cost model — augments
         // the reason for telemetry/EXPLAIN, never changes the backend.
         Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
@@ -492,6 +493,7 @@ pub async fn try_run_select(
             decision.backend,
             crate::query::table_write_plan::ComputeBackend::DataFusionLocal
                 | crate::query::table_write_plan::ComputeBackend::Native
+                | crate::query::table_write_plan::ComputeBackend::DuckDbCompat
         )
     {
         // TD-OLAP-4 "favor native by operation": for the operation classes native
@@ -574,6 +576,108 @@ pub async fn try_run_select(
                     .map(|tr| (t.table_name.clone(), *tr))
             })
             .collect();
+        // ADR-059 rollout step 2: DuckDB-Local as PRIMARY for the join/agg-shaped
+        // parquet OLAP route — the shapes with the measured 100–700× DataFusion
+        // join-plan gap (TD-OLAP-15/TD-OLAP-2). DataFusion remains the correctness
+        // floor: any DuckDB error falls through to the DataFusion execution below.
+        // Trigger (default-OFF): the PROXIMADB_DUCKDB_ROUTE master switch, OR a
+        // warmed cost-model override/exploration that advised DuckDbCompat (the
+        // #946 per-class staged enable). Eligibility (ADR-058: precedes selection):
+        // join-bearing or grouped shape, AND every referenced table's ADR-025
+        // post-snapshot WAL delta is EMPTY — DuckDB reads bare parquet and cannot
+        // reconcile a delta, so it serves only when base parquet == current state
+        // (the delta-merging DataFusion floor serves everything else; errors from
+        // the delta probe fail closed to the floor). The probe is the TD-OLAP-17
+        // per-collection high-water check DataFusion itself pays at table open, so
+        // the common no-writes case costs no scan. The io_trace route is
+        // re-stamped to the engine that actually served ("last write wins" by
+        // design), so cost cells never mis-attribute.
+        #[cfg(feature = "duckdb")]
+        {
+            let duckdb_advised = matches!(
+                decision.backend,
+                crate::query::table_write_plan::ComputeBackend::DuckDbCompat
+            ) && matches!(
+                decision.source,
+                crate::query::compute_scheduler::RouteSource::OverrideExploit
+                    | crate::query::compute_scheduler::RouteSource::OverrideExplore
+            );
+            let duckdb_eligible_shape = shape.join_bearing
+                || matches!(
+                    operation_class,
+                    crate::query::compute_scheduler::OperationClass::Grouped
+                );
+            let duckdb_delta_clean =
+                if (crate::query::execution::duckdb_engine::duckdb_route_enabled()
+                    || duckdb_advised)
+                    && duckdb_eligible_shape
+                {
+                    use crate::query::execution::olap_delta_merge::OlapDeltaSource;
+                    let mut clean = true;
+                    for (tkey, params) in &olap_delta_tables {
+                        match dml
+                            .changed_oids_since(tkey, params.snapshot_lsn, tenant)
+                            .await
+                        {
+                            Ok(oids) if oids.is_empty() => {}
+                            _ => {
+                                clean = false;
+                                break;
+                            }
+                        }
+                    }
+                    clean
+                } else {
+                    false
+                };
+            if duckdb_delta_clean {
+                let duck_context = QueryExecutionContext {
+                    parquet_tables: parquet_tables.clone(),
+                    parquet_table_trust: parquet_table_trust.clone(),
+                    tenant_id: tenant.map(str::to_string),
+                    controls: controls.clone(),
+                    ..Default::default()
+                };
+                crate::observability::io_trace::record_setup_ms(
+                    setup_start.elapsed().as_millis() as u64
+                );
+                match execute_sql_with_backend(
+                    crate::query::table_write_plan::ComputeBackend::DuckDbCompat,
+                    sql,
+                    duck_context,
+                )
+                .await
+                {
+                    Ok(result) => {
+                        crate::observability::io_trace::record_route(
+                            &crate::query::route_cost_model::shape_class(&shape),
+                            "DuckDbCompat",
+                        );
+                        tracing::debug!(
+                            target: "proximadb::compute_route",
+                            "duckdb-local served as PRIMARY (join/agg parquet shape); \
+                             DataFusion floor bypassed"
+                        );
+                        if let Some((skey, lsn)) = &cache_ctx {
+                            populate_olap_result_cache(
+                                result_cache,
+                                skey,
+                                *lsn,
+                                result.clone(),
+                                &tables,
+                            );
+                        }
+                        return Some(Ok(result));
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            target: "proximadb::compute_route",
+                            "duckdb-local PRIMARY declined ({e}); DataFusion floor serves"
+                        );
+                    }
+                }
+            }
+        }
         let context = QueryExecutionContext {
             parquet_tables,
             parquet_table_trust,
@@ -611,6 +715,21 @@ pub async fn try_run_select(
         // for the native-primary attempt above), but `execute_sql_with_backend` only
         // serves `DataFusionLocal`; anything else errors `UnsupportedBackend`.
         let floor_backend = crate::query::table_write_plan::ComputeBackend::DataFusionLocal;
+        // Fold-attribution correctness: the decision stamp may carry an advised
+        // Native/DuckDbCompat backend whose PRIMARY attempt declined above — the
+        // floor is about to serve, so re-stamp the route to DataFusion ("last
+        // write wins"). Without this, a gap-missed flip poisons the advised
+        // engine's cost cells with DataFusion's measured quantities (the
+        // TD-ROUTE-1 §review failure mode).
+        if !matches!(
+            decision.backend,
+            crate::query::table_write_plan::ComputeBackend::DataFusionLocal
+        ) {
+            crate::observability::io_trace::record_route(
+                &crate::query::route_cost_model::shape_class(&shape),
+                &crate::query::compute_scheduler::backend_label(&floor_backend),
+            );
+        }
         let engine_result = execute_sql_with_backend(floor_backend.clone(), sql, context).await;
         crate::observability::io_trace::record_compute_ms(
             &crate::query::compute_scheduler::backend_label(&floor_backend),
