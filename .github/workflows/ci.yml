@@ -78,7 +78,10 @@ jobs:
       #     The heaviest, pre-promotion gate.
       # `test_tier` is true for base develop, qa, or main (and pushes to qa/main);
       # `extensive` is true only for base main (and pushes to main).
+      # `medium_tier` is true for base qa or main (and pushes to qa/main) — i.e.
+      # develop->qa and qa->main, but NOT feat->develop.
       test_tier: ${{ github.base_ref == 'develop' || github.base_ref == 'qa' || github.base_ref == 'main' || github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/main' }}
+      medium_tier: ${{ github.base_ref == 'qa' || github.base_ref == 'main' || github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/main' }}
       extensive: ${{ github.base_ref == 'main' || github.ref == 'refs/heads/main' }}
       rust: ${{ steps.filter.outputs.rust }}
       # Comprehensive code-path superset gating the always-required rust-compile
@@ -1234,6 +1237,11 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
 
       - name: Build All Binaries
+        # feat->develop (medium_tier=false): skip the release leg's ~30m compile —
+        # the dev build + clippy + test-compile already cover correctness, and the
+        # release binary artifact is only consumed at qa->main (integration-test,
+        # extensive). dev always runs; release runs at develop->qa+ (medium_tier).
+        if: matrix.profile == 'dev' || needs.changes.outputs.medium_tier == 'true'
         # TD-079 retired the root-crate lint debt 2026-05-28 — no
         # `-A warnings` override needed. Cargo build doesn't fail on
         # warnings by default; the rust-clippy job is the authoritative
@@ -1245,7 +1253,7 @@ jobs:
             -p proximadb-migrate
 
       - name: Upload Server Binary
-        if: matrix.profile == 'release'
+        if: matrix.profile == 'release' && needs.changes.outputs.medium_tier == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: proximadb-server-linux-x64
