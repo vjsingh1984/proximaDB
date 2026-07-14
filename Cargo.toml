@@ -36,6 +36,7 @@ members = [
     "crates/foundation/proximadb-hardware",
     "crates/foundation/proximadb-hardware-caps",
     "crates/foundation/proximadb-distance-kernel",
+    "crates/foundation/proximadb-clustering-kernel",
     "crates/foundation/proximadb-memory-pool",
     "crates/foundation/proximadb-kernel",
     "crates/foundation/proximadb-bloom",
@@ -172,6 +173,7 @@ proximadb-compression-types = { path = "crates/foundation/proximadb-compression-
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
 proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
+proximadb-clustering-kernel = { path = "crates/foundation/proximadb-clustering-kernel" }
 proximadb-memory-pool = { path = "crates/foundation/proximadb-memory-pool" }
 proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
 proximadb-bloom = { path = "crates/foundation/proximadb-bloom" }
@@ -314,6 +316,7 @@ proximadb-compression-types = { path = "crates/foundation/proximadb-compression-
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
 proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
+proximadb-clustering-kernel = { path = "crates/foundation/proximadb-clustering-kernel" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-graph-model = { path = "crates/foundation/proximadb-graph-model" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
