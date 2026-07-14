@@ -1044,6 +1044,9 @@ impl MultiServer {
                 Some(services.rank_profile_store.clone()),
                 Some(services.discovery_service.clone()),
                 Some(services.external_collection_service.clone()),
+                crate::network::middleware::tenant::TenantExtractorConfig::from_deployment_mode(
+                    self.tenant_deployment_mode.clone(),
+                ),
                 self.config.admin_ui_enabled,
             );
 

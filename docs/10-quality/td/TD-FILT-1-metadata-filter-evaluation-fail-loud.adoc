@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | In Progress — slice 1 (typed `FilterEvalError` + `evaluate_filter_resolved_strict` / `evaluate_filter_proxima_strict` on the canonical v2 seam) landed 2026-07-07. Slice 2a now wires the strict evaluator into the live hybrid metadata-gating path behind `PROXIMADB_FILTER_FAIL_LOUD` (default-off), so unresolved v2 metadata fields can fail the query instead of silently narrowing results. Re-scoped from a v1 `MetadataValue` target the same day (see below).
+| Status | In Progress — slice 1 (typed `FilterEvalError` + `evaluate_filter_resolved_strict` / `evaluate_filter_proxima_strict` on the canonical v2 seam) landed 2026-07-07. The live hybrid and progressive-search v2 gates now default to the strict evaluator; explicit false-valued compatibility flags temporarily restore the legacy behavior. Lower-level bool-only storage predicates remain to be migrated. Re-scoped from a v1 `MetadataValue` target the same day (see below).
 | Severity | High (silent correctness loss in results — records whose filter field is absent, or a non-scalar leaf, are silently dropped from every non-null comparison with no error)
 | Component | Canonical v2 filter seam: `crates/foundation/proximadb-search-types/src/sql_value_filter.rs` — `evaluate_filter_resolved` (the shared spine, line ~315), `evaluate_filter_proxima` (ProximaTree/ProximaValue adapter, line ~350), `evaluate_filter` (SqlValue adapter).
 | Governs | link:../../12-design/adr/ADR-024-single-canonical-data-type-and-schema.adoc[ADR-024] (single canonical `ProximaValue`/`ProximaRecord` type) + link:../../12-design/adr/ADR-043-unified-relational-expression-evaluation.adoc[ADR-043] (fail-loud predicate evaluation). v2-canonical: only the `ProximaValue`/`ProximaTree` path is extended; the v1 `MetadataValue`/`VectorRecord` path is *not* (see "Re-scope note").
@@ -62,23 +62,23 @@ there is no per-comparison "type mismatch" to surface here. The silent drop on t
   `evaluate_filter_resolved_strict<F>(expr, resolve) -> Result<bool, FilterEvalError>` plus the
   `evaluate_filter_proxima_strict` / `evaluate_filter_strict` adapters. A value comparison against
   an unresolved field returns `Err(MissingField)` instead of silently `false`; `IsNull`/`IsNotNull`
-  keep SQL absence semantics (`Ok`, not an error). The legacy `evaluate_filter*` are **untouched**
-  (zero behavior change) — strict is opt-in.
-* **Slice 2a (landed):** `src/services/operations/vectors/legacy.rs` routes hybrid metadata
-  candidate gating through `evaluate_filter_proxima_strict` when
-  `PROXIMADB_FILTER_FAIL_LOUD` is set. Default-off keeps existing behavior; flag-on propagates
-  `MissingField` as a query error.
+  keep SQL absence semantics (`Ok`, not an error). The legacy `evaluate_filter*` are **untouched**;
+  callers choose strict or legacy evaluation. The canonical v2 callers in Slice 2a now choose
+  strict by default.
+* **Slice 2a (landed):** `src/services/operations/vectors/legacy.rs` and the progressive-search
+  pipeline route v2 metadata gating through `evaluate_filter_proxima_strict` by default.
+  `PROXIMADB_FILTER_FAIL_LOUD=false` and `PROXIMADB_FILTER_STRICT=false` are temporary
+  compatibility escapes; `MissingField` otherwise propagates as a query error.
 * **Slice 2b (remaining):** migrate lower-level vector/storage predicates once their interfaces
   can return `Result` instead of bare `bool`. Do not fake fail-loud semantics by logging and
   returning `false`.
 * **Slice 3 (cleanup):** delete the dead v1 `TypeSafeFilterEvaluator` under v1 sunset (TD-123).
 
-== Why default-off / behavior-preserving
+== Default posture
 
-Making the live `evaluate_filter*` fail-loud by default would change query *results* (rows silently
-dropped today would instead error the query). Correct end-state, but must be gated
-(ADR-052 observe→ingest→act) so it is an explicit opt-in. Slice 1 only added a fail-loud path;
-slice 2a enables it on one live service seam only when `PROXIMADB_FILTER_FAIL_LOUD` is set.
+The supported v2 surface fails loudly because returning a plausible partial result violates
+ADR-043. The explicit false-valued environment settings are rollback controls, not the shipping
+posture; lower-level predicates remain tracked until their interfaces can propagate `Result`.
 
 == How to apply / verify
 

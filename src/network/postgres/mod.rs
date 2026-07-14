@@ -343,7 +343,8 @@ impl PostgresServer {
             document_service,
             graph_service,
             observability_service,
-        );
+        )
+        .with_session_manager(session_manager.clone());
         let mut protocol = if let Some(direct_write_services) = direct_write_services {
             protocol
                 .with_direct_catalog_manager(catalog_manager, direct_write_services.canonical_store)

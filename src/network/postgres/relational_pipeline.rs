@@ -25,9 +25,10 @@
 //!   the new path end-to-end via psql.
 
 use crate::query::execution::{
-    ExecutionControls, ExecutionPipelineResult, NativeVolcanoEngine, QueryExecutionContext,
-    execute_sql_with_backend, normalize_table_key,
+    ExecutionControls, ExecutionPipelineResult, NativeVolcanoEngine, normalize_table_key,
 };
+#[cfg(feature = "datafusion-integration")]
+use crate::query::execution::{QueryExecutionContext, execute_sql_with_backend};
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use proximadb_data_model::{ProximaType, ProximaValue, StatsTrust};
@@ -852,6 +853,12 @@ async fn execute_physical<F: ReaderFactory>(
     factory: &F,
     controls: ExecutionControls,
 ) -> Result<ExecutionPipelineResult, String> {
+    if plan_has_raw_cross_join(&physical) {
+        return Err(
+            "0A000: native execution declined an unnormalized cross join; use an explicit equi-join or a vectorized backend"
+                .to_string(),
+        );
+    }
     // ADR-030 / TD-158: feed the per-query I/O trace the native engine's compute
     // time so the always-on billing observer can emit KRU(tenant, "native") at
     // scope close. `record_compute_ms` no-ops outside an `io_trace` scope.
@@ -874,9 +881,42 @@ async fn execute_physical_metered<F: ReaderFactory>(
     physical: PhysicalPlan,
     factory: &F,
 ) -> Result<(ExecutionPipelineResult, Vec<NodeMetric>), String> {
+    if plan_has_raw_cross_join(&physical) {
+        return Err(
+            "0A000: native execution declined an unnormalized cross join; use an explicit equi-join or a vectorized backend"
+                .to_string(),
+        );
+    }
     NativeVolcanoEngine::execute_physical_metered(physical, factory, ExecutionControls::default())
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Availability boundary for TD-REL-LOWER-2: after planner normalization,
+/// Volcano must never enumerate a raw cross product. Equi predicates should
+/// already have become inner/hash joins; remaining CROSS nodes fail loudly.
+fn plan_has_raw_cross_join(plan: &PhysicalPlan) -> bool {
+    match plan {
+        PhysicalPlan::Join {
+            left, right, kind, ..
+        } => {
+            *kind == proximadb_relational_algebra::JoinKind::Cross
+                || plan_has_raw_cross_join(left)
+                || plan_has_raw_cross_join(right)
+        }
+        PhysicalPlan::Filter { input, .. }
+        | PhysicalPlan::Project { input, .. }
+        | PhysicalPlan::Aggregate { input, .. }
+        | PhysicalPlan::Sort { input, .. }
+        | PhysicalPlan::Limit { input, .. }
+        | PhysicalPlan::Distinct { input, .. }
+        | PhysicalPlan::AssertMaxOneRow { input } => plan_has_raw_cross_join(input),
+        PhysicalPlan::Union { inputs, .. } => inputs.iter().any(plan_has_raw_cross_join),
+        PhysicalPlan::SetOp { left, right, .. } => {
+            plan_has_raw_cross_join(left) || plan_has_raw_cross_join(right)
+        }
+        PhysicalPlan::Scan { .. } | PhysicalPlan::Values { .. } => false,
+    }
 }
 
 /// Lower + plan a SELECT over an already-prepared `SnapshotCatalog` to a Volcano
@@ -2462,6 +2502,31 @@ mod route_explain_tests {
     use super::*;
 
     #[test]
+    fn native_containment_rejects_any_remaining_cross_join() {
+        let values = || PhysicalPlan::Values {
+            rows: Vec::new(),
+            output_schema: RelationalSchema::new(Vec::new()),
+        };
+        let raw_cross = PhysicalPlan::Join {
+            left: Box::new(values()),
+            right: Box::new(values()),
+            kind: proximadb_relational_algebra::JoinKind::Cross,
+            on: None,
+            strategy: proximadb_relational_algebra::JoinStrategy::NestedLoop,
+        };
+        assert!(plan_has_raw_cross_join(&raw_cross));
+
+        let inner = PhysicalPlan::Join {
+            left: Box::new(values()),
+            right: Box::new(values()),
+            kind: proximadb_relational_algebra::JoinKind::Inner,
+            on: None,
+            strategy: proximadb_relational_algebra::JoinStrategy::NestedLoop,
+        };
+        assert!(!plan_has_raw_cross_join(&inner));
+    }
+
+    #[test]
     fn olap_select_explains_as_olap() {
         let expl = explain_select_route("SELECT service, count(*) FROM events GROUP BY service")
             .expect("routable");
@@ -2609,6 +2674,12 @@ fn query_operation_class(query: &SqlQuery) -> crate::query::compute_scheduler::O
 /// never inspected there) — hence a dedicated shape bit. Fail-closed: set-op /
 /// non-`SELECT` bodies count as join-bearing.
 fn query_join_bearing(query: &SqlQuery) -> bool {
+    // Generic expression traversal covers scalar/IN/EXISTS subqueries in
+    // projection, WHERE, HAVING, GROUP BY, ORDER BY, and other query clauses.
+    // Each such subquery is hoisted or lowered to a join-shaped plan.
+    if ast_has_subquery(query) {
+        return true;
+    }
     // A CTE can carry the join the outer body then scans.
     if let Some(with) = &query.with
         && with
@@ -2619,6 +2690,24 @@ fn query_join_bearing(query: &SqlQuery) -> bool {
         return true;
     }
     set_expr_join_bearing(query.body.as_ref())
+}
+
+fn ast_has_subquery<V: sqlparser::ast::Visit>(node: &V) -> bool {
+    use std::ops::ControlFlow;
+
+    matches!(
+        sqlparser::ast::visit_expressions(node, |expr| {
+            if matches!(
+                expr,
+                SqlExpr::InSubquery { .. } | SqlExpr::Exists { .. } | SqlExpr::Subquery(_)
+            ) {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        }),
+        ControlFlow::Break(())
+    )
 }
 
 fn set_expr_join_bearing(body: &SetExpr) -> bool {
@@ -3653,12 +3742,22 @@ mod tests {
         ));
         // Projection scalar subquery hoists into a LEFT JOIN.
         assert!(jb("SELECT id, (SELECT max(x) FROM b) FROM a"));
+        // Subqueries outside SELECT/WHERE are still hoisted into join-shaped
+        // plans and must not remain eligible for Native cost overrides.
+        assert!(jb(
+            "SELECT a.id FROM a GROUP BY a.id, (SELECT max(id) FROM b)"
+        ));
+        assert!(jb("SELECT count(*) FROM a HAVING EXISTS (SELECT 1 FROM b)"));
+        assert!(jb("SELECT id FROM a ORDER BY (SELECT max(id) FROM b)"));
         // Set-op body: fail closed.
         assert!(jb("SELECT id FROM a UNION ALL SELECT id FROM b"));
 
         // Join-free shapes stay eligible for a Native flip.
         assert!(!jb("SELECT * FROM a WHERE id = 1"));
         assert!(!jb("SELECT status, count(*) FROM a GROUP BY status"));
+        assert!(!jb(
+            "SELECT status, count(*) FROM a GROUP BY status HAVING count(*) > 1 ORDER BY status"
+        ));
         assert!(!jb(
             "SELECT count(*) FROM (SELECT id FROM a WHERE id > 5) t"
         ));

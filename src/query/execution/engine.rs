@@ -320,7 +320,8 @@ impl NativeVolcanoEngine {
                 let mut ref_exec = build_executor(
                     physical.clone(),
                     factory,
-                    &VolcanoExecutionContext::default(),
+                    &VolcanoExecutionContext::default()
+                        .with_cancellation_flag(controls.cancellation_flag.clone()),
                 )
                 .map_err(|e| ExecutionError::Execution(format!("shadow build_executor: {e}")))?;
                 ref_exec
@@ -345,8 +346,10 @@ impl NativeVolcanoEngine {
         }
         // TD-EXEC-2 Slice 1 (observe-only): measure the build recursion's stack
         // high-water mark alongside the plan-lowering probe at the plan seam.
+        let volcano_context = VolcanoExecutionContext::default()
+            .with_cancellation_flag(controls.cancellation_flag.clone());
         let (built, build_hwm) = proximadb_relational_planner::stack_probe::probe(|| {
-            build_executor(physical, factory, &VolcanoExecutionContext::default())
+            build_executor(physical, factory, &volcano_context)
         });
         if build_hwm > 0 {
             crate::observability::io_trace::record_stack_hwm(build_hwm);
@@ -387,8 +390,10 @@ impl NativeVolcanoEngine {
         let physical = cap_plan(physical, &controls);
         // TD-EXEC-2 Slice 1 (observe-only): measure the build recursion's stack
         // high-water mark alongside the plan-lowering probe at the plan seam.
+        let volcano_context = VolcanoExecutionContext::default()
+            .with_cancellation_flag(controls.cancellation_flag.clone());
         let (built, build_hwm) = proximadb_relational_planner::stack_probe::probe(|| {
-            build_executor(physical, factory, &VolcanoExecutionContext::default())
+            build_executor(physical, factory, &volcano_context)
         });
         if build_hwm > 0 {
             crate::observability::io_trace::record_stack_hwm(build_hwm);
@@ -453,7 +458,8 @@ impl NativeVolcanoEngine {
             let mut exec = build_executor(
                 physical,
                 factory,
-                &VolcanoExecutionContext::with_metrics(metrics.clone()),
+                &VolcanoExecutionContext::with_metrics(metrics.clone())
+                    .with_cancellation_flag(controls.cancellation_flag.clone()),
             )
             .map_err(|e| ExecutionError::Execution(format!("build_executor: {e}")))?;
             controls.check_cancelled()?;

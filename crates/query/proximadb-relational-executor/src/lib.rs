@@ -36,6 +36,7 @@ use proximadb_relational_planner::{
 use proximadb_relational_reader::{ReadSnapshot, ReaderError, RelationalReader, ScanContext};
 use proximadb_relational_types::{BinaryOp, Expr, ExprError, RelationalRow, RelationalSchema};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use thiserror::Error;
@@ -67,6 +68,9 @@ pub enum ExecError {
     #[error("scalar subquery returned more than one row")]
     ScalarSubqueryCardinality,
 
+    #[error("query execution was cancelled")]
+    Cancelled,
+
     #[error("internal executor error: {0}")]
     Internal(String),
 }
@@ -85,6 +89,9 @@ pub struct ExecutionContext {
     /// [`MeteredExec`] that records actual rows + inclusive time. `None` on the
     /// normal execution path → no wrapping, zero overhead.
     pub metrics: Option<Arc<ExecMetrics>>,
+    /// Cooperative request cancellation, checked by executor wrappers at a
+    /// bounded stride inside operator pull loops.
+    pub cancellation_flag: Option<Arc<AtomicBool>>,
 }
 
 impl ExecutionContext {
@@ -92,6 +99,7 @@ impl ExecutionContext {
         Self {
             snapshot,
             metrics: None,
+            cancellation_flag: None,
         }
     }
 
@@ -100,7 +108,13 @@ impl ExecutionContext {
         Self {
             snapshot: ReadSnapshot::latest(),
             metrics: Some(metrics),
+            cancellation_flag: None,
         }
+    }
+
+    pub fn with_cancellation_flag(mut self, flag: Option<Arc<AtomicBool>>) -> Self {
+        self.cancellation_flag = flag;
+        self
     }
 }
 
@@ -377,10 +391,67 @@ fn build_executor_inner<F: ReaderFactory>(
         }
     };
     let _ = (DistinctStrategy::Hash, SortStrategy::InMemory); // silence "imported but only matched in path"
-    Ok(match metric {
+    let node: Box<dyn ExecNode> = match metric {
         Some((metrics, idx)) => Box::new(MeteredExec::new(node, idx, metrics)),
         None => node,
+    };
+    Ok(match &ctx.cancellation_flag {
+        Some(flag) => Box::new(CancellationExec::new(node, flag.clone())),
+        None => node,
     })
+}
+
+/// Cooperative cancellation wrapper installed around every operator. The
+/// stride bounds atomic overhead while ensuring loops inside a parent operator
+/// re-enter a wrapped child and observe cancellation promptly.
+struct CancellationExec {
+    child: Box<dyn ExecNode>,
+    flag: Arc<AtomicBool>,
+    pulls: u32,
+}
+
+impl CancellationExec {
+    const CHECK_MASK: u32 = 4095;
+
+    fn new(child: Box<dyn ExecNode>, flag: Arc<AtomicBool>) -> Self {
+        Self {
+            child,
+            flag,
+            pulls: 0,
+        }
+    }
+
+    fn check(&mut self) -> Result<(), ExecError> {
+        let should_check = self.pulls & Self::CHECK_MASK == 0;
+        self.pulls = self.pulls.wrapping_add(1);
+        if should_check && self.flag.load(Ordering::Relaxed) {
+            Err(ExecError::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[async_trait]
+impl ExecNode for CancellationExec {
+    fn schema(&self) -> &RelationalSchema {
+        self.child.schema()
+    }
+
+    async fn open(&mut self) -> Result<(), ExecError> {
+        self.pulls = 0;
+        self.check()?;
+        self.child.open().await
+    }
+
+    async fn next_row(&mut self) -> Result<Option<RelationalRow>, ExecError> {
+        self.check()?;
+        self.child.next_row().await
+    }
+
+    async fn close(&mut self) -> Result<(), ExecError> {
+        self.child.close().await
+    }
 }
 
 /// Operator keyword for a physical-plan node — matches the planner's
@@ -3794,6 +3865,41 @@ mod tests {
         exec.open().await.unwrap();
         let rows = collect(&mut *exec).await.unwrap();
         assert_eq!(rows.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn executor_wrapper_observes_mid_scan_cancellation() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let schema = RelationalSchema::new(vec![ColumnInfo::new("x", ProximaType::Int64, false)]);
+        let rows = (0..5000)
+            .map(|value| vec![Expr::literal(ProximaValue::Int64(value))])
+            .collect();
+        let plan = PhysicalPlan::Values {
+            rows,
+            output_schema: schema,
+        };
+        let f = factory_with_users();
+        let ctx = ExecutionContext::default().with_cancellation_flag(Some(flag.clone()));
+        let mut exec = build_executor(plan, &f, &ctx).unwrap();
+        exec.open().await.unwrap();
+        assert!(exec.next_row().await.unwrap().is_some());
+
+        flag.store(true, Ordering::Relaxed);
+        let mut cancelled = false;
+        for _ in 0..5000 {
+            match exec.next_row().await {
+                Err(ExecError::Cancelled) => {
+                    cancelled = true;
+                    break;
+                }
+                Ok(Some(_)) => {}
+                other => panic!("expected cancellation before exhaustion, got {other:?}"),
+            }
+        }
+        assert!(
+            cancelled,
+            "cancellation must be observed within the pull stride"
+        );
     }
 
     // ----- Aggregate accumulators (direct unit) -----------------------

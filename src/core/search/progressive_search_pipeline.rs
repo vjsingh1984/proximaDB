@@ -841,17 +841,19 @@ impl Default for PipelineConfig {
     }
 }
 
-/// TD-FILT-1 slice 2: when set (`1`/`true`/`on`/`yes`), metadata filtering on the progressive-search
-/// path runs fail-loud — an unresolved filter field errors the query instead of silently dropping
-/// the record. Default off (today's silent behavior). Mirrors the `PROXIMADB_*` env convention.
+/// TD-FILT-1: metadata filtering is fail-loud by default. Operators can temporarily
+/// restore legacy silent-drop behavior with an explicit false value while migrating
+/// affected queries.
 fn filter_strict_enabled() -> bool {
-    match std::env::var("PROXIMADB_FILTER_STRICT") {
-        Ok(v) => matches!(
-            v.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "on" | "yes"
-        ),
-        Err(_) => false,
-    }
+    let value = std::env::var("PROXIMADB_FILTER_STRICT").ok();
+    filter_strict_for_value(value.as_deref())
+}
+
+fn filter_strict_for_value(value: Option<&str>) -> bool {
+    !matches!(
+        value.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("0" | "false" | "off" | "no")
+    )
 }
 
 /// Filter `records` by `filter` against each record's `props` (`ProximaTree`). `strict` selects
@@ -989,6 +991,15 @@ mod tests {
             ),
             "strict mode surfaces the unresolved field instead of silently dropping"
         );
+    }
+
+    #[test]
+    fn progressive_filter_is_strict_by_default() {
+        assert!(filter_strict_for_value(None));
+        assert!(filter_strict_for_value(Some("true")));
+        for value in ["0", "false", "OFF", " no "] {
+            assert!(!filter_strict_for_value(Some(value)), "value={value}");
+        }
     }
 
     #[test]

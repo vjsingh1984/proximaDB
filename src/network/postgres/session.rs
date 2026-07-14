@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use anyhow::Result;
 use tokio::sync::RwLock;
@@ -43,6 +43,7 @@ impl SessionManager {
             id: format!("pg-{}-{}", process_id, session_num),
             process_id,
             secret_key: rand::random(),
+            cancellation_flag: Arc::new(AtomicBool::new(false)),
             user: String::new(),
             database: String::new(),
             client_addr: addr,
@@ -80,6 +81,20 @@ impl SessionManager {
     /// Get active session count
     pub async fn session_count(&self) -> usize {
         self.sessions.read().await.len()
+    }
+
+    /// Set the cooperative cancellation flag for the backend identified by a
+    /// PostgreSQL CancelRequest `(process_id, secret_key)` pair.
+    pub async fn cancel_query(&self, process_id: u32, secret_key: u32) -> bool {
+        let sessions = self.sessions.read().await;
+        for session in sessions.values() {
+            let session = session.read().await;
+            if session.process_id == process_id && session.secret_key == secret_key {
+                session.cancellation_flag.store(true, Ordering::Relaxed);
+                return true;
+            }
+        }
+        false
     }
 
     /// Cleanup idle sessions
@@ -123,6 +138,9 @@ pub struct Session {
     pub process_id: u32,
     /// Secret key for cancellation
     pub secret_key: u32,
+    /// Request-scoped cooperative cancellation signal shared with the protocol
+    /// handler and the manager's CancelRequest lookup.
+    pub cancellation_flag: Arc<AtomicBool>,
     /// Connected user
     pub user: String,
     /// Connected database
@@ -267,6 +285,7 @@ mod tests {
             id: "test".to_string(),
             process_id: 1,
             secret_key: 123,
+            cancellation_flag: Arc::new(AtomicBool::new(false)),
             user: String::new(),
             database: String::new(),
             client_addr: "127.0.0.1:5432".parse().unwrap(),
@@ -296,6 +315,7 @@ mod tests {
             id: "test".to_string(),
             process_id: 1,
             secret_key: 123,
+            cancellation_flag: Arc::new(AtomicBool::new(false)),
             user: String::new(),
             database: String::new(),
             client_addr: "127.0.0.1:5432".parse().unwrap(),
@@ -305,6 +325,28 @@ mod tests {
             created_at: std::time::Instant::now(),
             last_activity: std::time::Instant::now(),
         }
+    }
+
+    #[tokio::test]
+    async fn cancel_query_requires_matching_backend_secret() {
+        let manager = SessionManager::new();
+        let session = manager
+            .create_session("127.0.0.1:12345".parse().unwrap())
+            .await
+            .unwrap();
+
+        assert!(
+            !manager
+                .cancel_query(session.process_id, session.secret_key ^ 1)
+                .await
+        );
+        assert!(!session.cancellation_flag.load(Ordering::Relaxed));
+        assert!(
+            manager
+                .cancel_query(session.process_id, session.secret_key)
+                .await
+        );
+        assert!(session.cancellation_flag.load(Ordering::Relaxed));
     }
 
     #[test]
