@@ -278,11 +278,25 @@ impl SstEngine {
         if entry.status.is_degraded() {
             return None; // missing / stale / corrupt → full scan (mixed-read-safe)
         }
+        // Match the directory file entry by FILENAME BASENAME, not the full URL:
+        // the emit side records `object_url = "{atomic_op.final_url}/{filename}"`
+        // (flush emission) while the read side gets `sstable_path = entry.url` from
+        // `fs.list` (discover_sstable_files) — the two URLs are built by different
+        // code paths, so scheme/normalization can differ and an exact `==` is
+        // fragile. Filenames are unique within a per-collection directory, so the
+        // basename is the stable join key. (The prune's actual dark-out was the
+        // sidecar never being written on local fs — the emit ENOENTed until the
+        // `oedir/` parent create_dir_all fix in object_economy_directory::store;
+        // this basename match hardens the read against URL drift regardless.)
+        fn basename(u: &str) -> &str {
+            u.rsplit('/').next().unwrap_or(u)
+        }
+        let want = basename(sstable_path);
         let file = entry
             .directory
             .files
             .iter()
-            .find(|f| f.object_url == sstable_path)?;
+            .find(|f| basename(&f.object_url) == want)?;
         // Adapt the directory's per-block centroids → `IndexEntry` (only the
         // centroid fields matter to the pruner) and reuse the existing prune.
         let entries: Vec<IndexEntry> = file
