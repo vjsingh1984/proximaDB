@@ -1,0 +1,43 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-EXEC-CANCEL-1: Volcano ignores pgwire query-cancel mid-execution — a wedged query queues every subsequent query on the session
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open — filed 2026-07-14, root-caused live during the post-#953 ledger native sweep.
+| Priority | P1 for operability — one pathological query makes a pgwire session (and anything serialized behind it) unresponsive to both cancel and follow-on queries; the grind burns CPU unboundedly.
+| Component | `src/query/execution` (Volcano executor operator loops), pgwire cancel handling → `ExecutionControls::cancellation_flag`.
+| Evidence | Ledger native sweep 2026-07-14: with a 60 s harness budget + `tokio_postgres` `cancel_query` on timeout, sweep throughput degraded to ~11 min/record (6 records in 65 min) — each cancelled cross-join grind (TD-REL-LOWER-2) kept running server-side, and the session's next `simple_query` queued behind it, compounding. The harness's own comment anticipates exactly this ("the cancel matters — dropping the query future alone leaves the connection busy"); the cancel is *sent* but has no effect on a running Volcano plan.
+|===
+
+== The finding
+
+`ExecutionControls` carries a `cancellation_flag: Option<Arc<AtomicBool>>` with
+`check_cancelled()` "checked by engines at stable boundaries" — but the Volcano execution loops
+for the expensive operators (cross-join/nested-loop pair enumeration at minimum; likely
+scan/aggregate loops too) never call it, and/or the pgwire cancel-request path never sets the
+flag for the in-flight query. Net: a PostgreSQL wire *CancelRequest* — standard client behavior
+(`Ctrl-C` in psql, driver timeouts) — is accepted and ignored. Combined with TD-REL-LOWER-2's
+un-normalized cross products, one bad comma-join renders the session unusable and the CPU pegged
+for minutes to hours.
+
+== Direction
+
+1. **Wire the flag:** the pgwire backend's cancel-request handler must set the active query's
+   `cancellation_flag` (keyed by backend PID/secret per the PG protocol — the plumbing the
+   `cancel_token` client half already speaks).
+2. **Check it where it matters:** cross-join / nested-loop inner loops, scan row loops, and
+   aggregate build loops call `controls.check_cancelled()` on a coarse stride (e.g. every 4–16 k
+   rows — cheap relaxed atomic load, no measurable per-row cost), surfacing
+   `ExecutionError::Cancelled` → pgwire `57014 query_canceled`.
+3. **Gate:** an integration test that starts a deliberately-long native query, sends
+   `cancel_query`, and asserts (a) the client gets `57014` within a bounded window, (b) a
+   follow-on query on the same session answers promptly. The perf-ledger harness then keeps its
+   budget discipline for free.
+
+== Non-goals
+
+Cooperative cancellation for DataFusion/DuckDB arms (DataFusion streams already yield; DuckDB
+in-process cancellation is its own follow-up); fixing the cross-product plan itself
+(TD-REL-LOWER-2).
