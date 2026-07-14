@@ -38,7 +38,22 @@ struct CacheStats {
 
 impl DiskCacheManager {
     pub fn new(cache_dir: PathBuf, max_size_gb: usize) -> Self {
-        let _ = std::fs::create_dir_all(&cache_dir);
+        // The disk cache is local by design. A URL-shaped cache_dir
+        // (s3://, adls://, …) would silently create a literal `s3:`
+        // directory — surface it loudly instead (TD-OBJSTORE-1, #960).
+        if cache_dir.to_string_lossy().contains("://") {
+            tracing::error!(
+                "DiskCacheManager cache_dir must be a local directory, got URL-shaped '{}'; \
+                 disk cache will be non-functional",
+                cache_dir.display()
+            );
+        } else if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+            tracing::error!(
+                "DiskCacheManager failed to create cache_dir '{}': {e}; \
+                 disk cache will be non-functional",
+                cache_dir.display()
+            );
+        }
         Self {
             cache_dir,
             max_size_bytes: max_size_gb * 1024 * 1024 * 1024,

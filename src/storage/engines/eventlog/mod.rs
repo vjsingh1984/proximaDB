@@ -59,7 +59,6 @@ use chrono::{DateTime, Utc};
 use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
@@ -111,8 +110,12 @@ pub struct Event {
 /// Event log configuration
 #[derive(Debug, Clone)]
 pub struct EventLogConfig {
-    /// Base directory for event storage
-    pub base_dir: PathBuf,
+    /// Base location for event storage: a local directory (`/data/auditlog`)
+    /// or a scheme-qualified object-store URL (`s3://…`, `adls://…`) —
+    /// a `String`, not a `PathBuf`, so object-store URLs survive joins
+    /// verbatim (TD-OBJSTORE-1, #960). All I/O routes through the injected
+    /// `FileSystem`.
+    pub base_dir: String,
 
     /// Snapshot interval (number of events after which to snapshot)
     pub snapshot_interval: EventSequence,
@@ -130,7 +133,7 @@ pub struct EventLogConfig {
 impl Default for EventLogConfig {
     fn default() -> Self {
         Self {
-            base_dir: PathBuf::from("/tmp/proximadb/eventlog"),
+            base_dir: "/tmp/proximadb/eventlog".to_string(),
             snapshot_interval: 1000,
             enable_compression: true,
             retention_days: 365 * 7, // 7 years for financial data
@@ -188,19 +191,26 @@ pub struct EventLogEngine {
 impl EventLogEngine {
     /// Create a new event log engine
     pub fn new(config: EventLogConfig, filesystem: Arc<UnifiedCachingFilesystem>) -> Result<Self> {
-        info!("Creating event log engine at {:?}", config.base_dir);
+        info!("Creating event log engine at {}", config.base_dir);
 
-        // Create base directory
-        std::fs::create_dir_all(&config.base_dir).map_err(|e| {
-            ProximaDBError::Internal(format!("Failed to create eventlog dir: {}", e))
-        })?;
+        // Create the base directory only for local bases; an object-store
+        // base (s3://, adls://, …) has no directories — objects materialize
+        // under flat keys on first write (TD-OBJSTORE-1, #960).
+        if !config.base_dir.contains("://") {
+            std::fs::create_dir_all(&config.base_dir).map_err(|e| {
+                ProximaDBError::Internal(format!("Failed to create eventlog dir: {}", e))
+            })?;
+        }
 
         // Initialize sequence counter
         let sequence_counter = Arc::new(RwLock::new(0));
 
         // Initialize components
         let event_index = Arc::new(EventIndex::new(config.base_dir.clone())?);
-        let snapshot_manager = Arc::new(SnapshotManager::new(config.base_dir.clone())?);
+        let snapshot_manager = Arc::new(SnapshotManager::new(
+            config.base_dir.clone(),
+            filesystem.clone() as Arc<dyn FileSystem>,
+        )?);
         let temporal_engine = Arc::new(TemporalQueryEngine::new(
             event_index.clone(),
             snapshot_manager.clone(),
@@ -249,19 +259,10 @@ impl EventLogEngine {
         let serialized = serde_json::to_vec(&event)
             .map_err(|e| ProximaDBError::Internal(format!("Event serialization failed: {}", e)))?;
 
-        // Persist to storage (append-only)
+        // Persist to storage (append-only). Parent directories come from the
+        // `create_dirs` option — never from a direct `tokio::fs` call, which
+        // would break object-store bases (TD-OBJSTORE-1, #960).
         let event_path = self.get_event_path(sequence);
-
-        // Create partition directory if it doesn't exist
-        if let Some(partition_dir) = event_path.parent() {
-            tokio::fs::create_dir_all(partition_dir)
-                .await
-                .map_err(|e| {
-                    ProximaDBError::Internal(format!("Failed to create partition dir: {}", e))
-                })?;
-        }
-
-        // Write with create_dirs option to ensure parent directories exist
         let options = crate::storage::persistence::filesystem::FileOptions {
             create_dirs: true,
             overwrite: true,
@@ -269,7 +270,7 @@ impl EventLogEngine {
         };
         FileSystem::write(
             self.filesystem.as_ref(),
-            &event_path.to_string_lossy(),
+            &event_path,
             &serialized,
             Some(options),
         )
@@ -341,8 +342,7 @@ impl EventLogEngine {
         let mut events = Vec::new();
         for sequence in sequences {
             let event_path = self.get_event_path(sequence);
-            let data =
-                FileSystem::read(self.filesystem.as_ref(), &event_path.to_string_lossy()).await?;
+            let data = FileSystem::read(self.filesystem.as_ref(), &event_path).await?;
 
             let event: Event = serde_json::from_slice(&data).map_err(|e| {
                 ProximaDBError::Internal(format!("Event deserialization failed: {}", e))
@@ -377,8 +377,7 @@ impl EventLogEngine {
         let mut events = Vec::new();
         for sequence in sequences {
             let event_path = self.get_event_path(sequence);
-            let data =
-                FileSystem::read(self.filesystem.as_ref(), &event_path.to_string_lossy()).await?;
+            let data = FileSystem::read(self.filesystem.as_ref(), &event_path).await?;
             let event: Event = serde_json::from_slice(&data).map_err(|e| {
                 ProximaDBError::Internal(format!("Event deserialization failed: {}", e))
             })?;
@@ -506,14 +505,17 @@ impl EventLogEngine {
         Ok(())
     }
 
-    /// Get storage path for an event
-    fn get_event_path(&self, sequence: EventSequence) -> PathBuf {
+    /// Get storage path for an event. String-joined (never `PathBuf::join`)
+    /// so an object-store base URL survives verbatim on every platform.
+    fn get_event_path(&self, sequence: EventSequence) -> String {
         // Partition events by sequence (1000 events per partition)
         let partition = sequence / 1000;
-        self.config
-            .base_dir
-            .join(format!("partition_{:05}", partition))
-            .join(format!("event_{:010}.bin", sequence))
+        format!(
+            "{}/partition_{:05}/event_{:010}.bin",
+            self.config.base_dir.trim_end_matches('/'),
+            partition,
+            sequence
+        )
     }
 }
 
@@ -524,7 +526,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_event_log_creation() {
-        let base_dir = PathBuf::from("/tmp/test_eventlog_creation");
+        let base_dir = String::from("/tmp/test_eventlog_creation");
         // Create base directory first
         std::fs::create_dir_all(&base_dir).expect("Failed to create test eventlog directory");
 
@@ -554,7 +556,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_append_event() {
-        let base_dir = PathBuf::from("/tmp/test_eventlog_append");
+        let base_dir = String::from("/tmp/test_eventlog_append");
         // Create base directory first
         std::fs::create_dir_all(&base_dir)
             .expect("Failed to create test eventlog append directory");
@@ -601,7 +603,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_events_by_entity_prefix() {
-        let base_dir = PathBuf::from("/tmp/test_eventlog_prefix");
+        let base_dir = String::from("/tmp/test_eventlog_prefix");
         std::fs::create_dir_all(&base_dir).expect("create dir");
         let config = EventLogConfig {
             base_dir,
@@ -684,7 +686,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_regulatory_compliance() {
-        let base_dir = PathBuf::from("/tmp/test_eventlog_reg");
+        let base_dir = String::from("/tmp/test_eventlog_reg");
         // Create base directory first
         std::fs::create_dir_all(&base_dir)
             .expect("Failed to create test eventlog regulatory directory");
@@ -729,7 +731,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_immutable_audit_trail() {
-        let base_dir = PathBuf::from("/tmp/test_eventlog_immutable");
+        let base_dir = String::from("/tmp/test_eventlog_immutable");
         // Create base directory first
         std::fs::create_dir_all(&base_dir)
             .expect("Failed to create test eventlog immutable directory");

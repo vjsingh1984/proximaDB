@@ -1,0 +1,182 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-OBJSTORE-1: Object-store durability end-to-end — path-construction bug class + local-fs escapes
+:toc: macro
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **In progress** — batch 1 (this PR) fixes the full path-construction class + the WAL/eventlog/audit local-fs escapes; deferred items enumerated below. Updated each deploy/test cycle with anvaiops until all modalities are proven on a live object store.
+| Severity | Critical — with `storage.metadata_url = adls://…` (or `s3://`, `gcs://`) the server constructs invalid `file://adls://…` URLs and/or drives `std::fs`/`tokio::fs` at object-store URLs; metrics, document WAL, audit/event-log, and timeseries subsystems fail at startup or silently write to wrong local paths. Blocks the ADR-0028 anvaiops object-store deployment (issue #960).
+| Component | `src/network/shared_services.rs` (subsystem path wiring), `src/storage/persistence/write_ahead_log/wal_operations.rs` (unified WAL), `src/storage/engines/eventlog/*` (audit event log), `src/audit/*` (security audit storage), `crates/control/proximadb-catalog/src/delta.rs`, defensive: disk caches + tantivy log index.
+| Tracked-by | https://github.com/vjsingh1984/proximaDB/issues/960[#960]; deploy consumer: anvaiops ADR-0028.
+| Pillar | REL, COST (durability on VM loss; object-store at-rest tiering per ADR-036)
+|===
+
+toc::[]
+
+== Context
+
+anvaiops deploys ProximaDB on a single VM with `storage.metadata_url` pointed at an
+object store (`adls://…` via the VM's system-assigned managed identity — secret-less,
+IMDS, azure_blob precedence option 5). The Azure `FileSystem` registers and routes
+correctly (`adls`/`abfs`/`az`/`azure` all alias the flat **Blob** endpoint, HNS-off,
+per ADR-036); what broke at runtime is *path construction between the config and the
+filesystem layer*, plus a set of subsystems that bypass the filesystem abstraction
+entirely.
+
+The bug class has two shapes:
+
+1. **Strip-and-re-prepend**: `metadata_url.replace("file://", "")` followed by
+   `format!("file://{}…")` or `PathBuf::from(...)` — yields invalid
+   `file://adls://…` URLs or literal local `adls:` directories.
+2. **Local-fs on config-derived durable paths**: `std::fs`/`tokio::fs` on values that
+   may carry an object-store scheme (`create_dir_all`, `write`, `read`, `remove_file`).
+
+== Failure inventory — batch 1 (this PR)
+
+[cols="3,3,2,1", options="header"]
+|===
+| Failure | Root cause | Fix | Status
+
+| `shared_services.rs` metrics path (was :1668) — `file://adls://…/metrics`
+| strip-and-re-prepend on `metadata_url`
+| scheme-preserving `join_storage_url()` helper, used at ALL metadata_url join sites
+| ✅ Fixed
+
+| `shared_services.rs` document WAL base (was :1707)
+| `replace("file://","")` strips scheme context; WAL then re-prepends `file://`
+| `join_storage_url` + WAL writer normalization (below)
+| ✅ Fixed
+
+| `shared_services.rs` observability WAL base (was :1733) — NOT in the original audit
+| same
+| same
+| ✅ Fixed
+
+| `shared_services.rs` audit/event-log base (was :1756) — `PathBuf::from(url + "/auditlog")`
+| strip + `PathBuf` on a URL
+| `join_storage_url`; `EventLogConfig::base_dir` is now `String`
+| ✅ Fixed
+
+| `shared_services.rs` timeseries base (was :1784)
+| strip + `PathBuf` on a URL
+| explicit local fallback + loud `warn!` (TST engine is local-native; see Deferred)
+| ⚠️ Fixed (fail-safe local; durability deferred)
+
+| `shared_services.rs` multimodel observability store base (was :1924) — NOT in the original audit
+| strip
+| `join_storage_url` (config value is label-only; underlying I/O is the WAL above)
+| ✅ Fixed
+
+| `UnifiedWALWriter`/`UnifiedWALReader` hardcode `file://` on every segment path
+  (`wal_operations.rs` :588/:605-610/:702/:743-744) — NOT in the original audit; would have
+  broken document/observability WALs even with correct bases
+| segment paths joined from raw base then unconditionally prefixed `file://`
+| base normalized to a scheme-qualified URL once in `new()`; all prefixes removed
+| ✅ Fixed
+
+| Object-store backends reject `FileSystem::append` (azure/s3/gcs: "block blobs do not
+  support append") — WAL flush would fail at first write even with correct URLs
+| WAL flush used `append` + `sync_file`
+| non-`file://` bases buffer the whole segment (bounded by `max_segment_size`) and
+  overwrite the segment object per flush; identical byte layout, recovery unchanged
+| ✅ Fixed
+
+| Eventlog engine `std::fs::create_dir_all` on `base_dir` (mod.rs, index.rs, snapshot.rs)
+| local-fs on config-derived path
+| guarded to local-only bases; object-store bases are flat keyspaces (no mkdir)
+| ✅ Fixed
+
+| Eventlog `SnapshotManager` all I/O via `tokio::fs` (write/read/remove_file)
+| bypassed the injected filesystem
+| routes through injected `Arc<dyn FileSystem>`; `base_dir`/paths are `String`
+| ✅ Fixed
+
+| Eventlog snapshot cleanup never deleted files (truncate-before-slice) — latent bug found during fix
+| `entity_snapshots.truncate(keep)` then slicing `[keep..]` of the truncated vec (empty)
+| `split_off(keep)` first, then delete via filesystem
+| ✅ Fixed
+
+| `FileAuditStorage` (src/audit/storage.rs) all-`tokio::fs`; also **overwrote** its log
+  file on every event (`tokio::fs::write`), losing prior audit events — latent bug
+| local-fs impl + wrong write mode
+| append via `OpenOptions`; scheme guard rejects object-store URLs fail-fast; new
+  `ObjectStoreAuditStorage` (one JSONL object per event via `FilesystemFactory`);
+  `AuditLogger` dispatches by scheme; `S3` backend variant wired to it
+| ✅ Fixed
+
+| Delta catalog `parse_storage_url` scheme allowlist missed `adls://`/`azure://`/`gcs://`
+  → literal local `adls:` directory
+| scheme enumeration instead of generic `contains("://")`
+| generic non-file scheme check + loud warn on local-cache staging
+| ✅ Fixed
+
+| Disk caches (`unified_cache_config.rs` validate, runtime-common `DiskCacheManager`)
+  and tantivy log index would `create_dir_all` a URL-shaped path
+| legitimately-local components lacked scheme validation
+| fail-fast validation (config error / loud tracing::error / bail)
+| ✅ Fixed (defensive)
+
+| `FileAlertPersistence` (observability-engine alerting) `tokio::fs` on caller path
+| local-fs impl (currently unwired — no production constructor)
+| constructor now rejects URL-shaped paths fail-fast
+| ✅ Guarded (object-store port impl deferred)
+|===
+
+== Deferred (documented limitations — next cycles)
+
+[cols="3,3", options="header"]
+|===
+| Item | Notes
+
+| **Timeseries (TST engine) on object store**
+| Engine is local-`PathBuf`-native (per-tenant WAL/partitions/segments). On an
+  object-store `metadata_url` the service now falls back to a LOCAL, NON-DURABLE dir
+  with a loud warn instead of mangling the URL. Durable path: route TST segment I/O
+  through the filesystem abstraction, or flush-to-object-store tiering.
+
+| **Delta catalog metadata on object store**
+| `DeltaCatalog` stages metadata in `$TMPDIR/proximadb_delta_cache` for cloud URLs
+  (now loudly warned). Durable path: write `_delta_catalog.json` + delta logs through
+  `FilesystemFactory`. Note the default catalog path in production is not delta-backed.
+
+| **RAPTOR/SWIFT writers use `FileSystem::append`**
+| Experimental engines (feature-gated `experimental-engines`, default-OFF) append to
+  segment files; object-store backends reject append. Same full-buffer-overwrite or
+  multipart strategy as the WAL fix when these engines graduate.
+
+| **`queue_fs_adapter.rs` uses `append`**
+| Audit whether its queue paths can be object-store-configured; guard or convert.
+
+| **Alerting persistence object-store port**
+| `AlertPersistence` is a port; add an object-store-backed impl (layering: the
+  modality crate cannot see root `FilesystemFactory`; inject from the composition
+  root) when alerting persistence is wired into the server.
+
+| **Per-event audit objects vs. batching**
+| `ObjectStoreAuditStorage` writes one small object per event (correct, simple).
+  If audit volume grows, batch by time window to cut PUT counts (KRU/KOU cost).
+|===
+
+== Verification
+
+* Unit: eventlog index/snapshot creation with `adls://`/`s3://` bases never touches
+  `std::fs` (asserts no literal `s3:`/`adls:` dirs); snapshot path joins preserve
+  scheme; WAL segment URL construction has no double scheme.
+* Integration (`tests/objstore_url_construction_test.rs`): WAL writer+reader round-trip
+  over a `file://` scheme-qualified base (the normalized-URL path all object-store
+  bases share); `join_storage_url` matrix over bare/file/s3/adls/abfs/gcs bases
+  asserting **no `file://<scheme>://` and no `<scheme>://<scheme>://` ever**; audit
+  logger scheme dispatch.
+* Guard: `tests/objstore_url_construction_test.rs::no_strip_and_reprepend_pattern_in_src`
+  greps `src/` for `.replace("file://"` outside an allowlist — the pattern that caused
+  this class is now build-enforced dead.
+* Live: anvaiops redeploys the pinned `-full` image digest with `adls://` config and
+  runs vector/document/graph/hybrid/observability modality tests; failures feed back
+  into this TD.
+
+== History
+
+* 2026-07-14 — batch 1 filed + fixed (this PR); folds in #932 (cdc `[[test]]` explicit
+  paths) to unblock the develop image publish. Refs #960.

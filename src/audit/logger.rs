@@ -215,20 +215,31 @@ impl AuditLogger {
     ) -> Result<Arc<dyn AuditStorage + Send + Sync>> {
         match &config.storage_backend {
             AuditStorageBackend::File { directory } => {
-                let storage = super::storage::FileAuditStorage::new(directory.clone()).await?;
-                Ok(Arc::new(storage))
+                // Dispatch by scheme: object-store URLs (s3://, adls://,
+                // abfs://, gcs://, …) route through the FilesystemFactory;
+                // bare paths and file:// stay on the local backend
+                // (TD-OBJSTORE-1, #960).
+                if directory.contains("://") && !directory.starts_with("file://") {
+                    let storage =
+                        super::storage::ObjectStoreAuditStorage::new(directory.clone()).await?;
+                    Ok(Arc::new(storage))
+                } else {
+                    let storage = super::storage::FileAuditStorage::new(directory.clone()).await?;
+                    Ok(Arc::new(storage))
+                }
             }
             AuditStorageBackend::Database { connection_string } => {
                 let storage =
                     super::storage::DatabaseAuditStorage::new(connection_string.clone()).await?;
                 Ok(Arc::new(storage))
             }
-            AuditStorageBackend::S3 {
-                bucket: _,
-                region: _,
-            } => {
-                // Placeholder for S3 storage implementation
-                Err(anyhow!("S3 audit storage not yet implemented"))
+            AuditStorageBackend::S3 { bucket, region: _ } => {
+                // Route through the same object-store implementation as
+                // scheme-qualified File directories (TD-OBJSTORE-1, #960).
+                let storage =
+                    super::storage::ObjectStoreAuditStorage::new(format!("s3://{bucket}/audit"))
+                        .await?;
+                Ok(Arc::new(storage))
             }
             AuditStorageBackend::Combined {
                 primary: _,

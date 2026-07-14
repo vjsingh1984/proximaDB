@@ -25,13 +25,12 @@ use proximadb::storage::persistence::filesystem::{
     UnifiedCachingFilesystem, local::LocalFileSystem,
 };
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Test basic event append and read
 #[tokio::test]
 async fn test_eventlog_append_and_read() {
-    let base_dir = PathBuf::from("/tmp/test_eventlog_append_read");
+    let base_dir = String::from("/tmp/test_eventlog_append_read");
     std::fs::create_dir_all(&base_dir).expect("Failed to create test directory");
 
     let config = EventLogConfig {
@@ -102,7 +101,7 @@ async fn test_eventlog_append_and_read() {
 /// Test immutable audit trail
 #[tokio::test]
 async fn test_eventlog_immutable_audit_trail() {
-    let base_dir = PathBuf::from("/tmp/test_eventlog_immutable");
+    let base_dir = String::from("/tmp/test_eventlog_immutable");
     std::fs::create_dir_all(&base_dir).expect("Failed to create test directory");
 
     let config = EventLogConfig {
@@ -179,7 +178,7 @@ async fn test_eventlog_immutable_audit_trail() {
 /// Test MiFID II regulatory compliance
 #[tokio::test]
 async fn test_eventlog_mifid2_compliance() {
-    let base_dir = PathBuf::from("/tmp/test_eventlog_mifid2");
+    let base_dir = String::from("/tmp/test_eventlog_mifid2");
     std::fs::create_dir_all(&base_dir).expect("Failed to create test directory");
 
     let config = EventLogConfig {
@@ -250,7 +249,7 @@ async fn test_eventlog_mifid2_compliance() {
 /// Test temporal queries - point-in-time reconstruction
 #[tokio::test]
 async fn test_eventlog_temporal_queries() {
-    let base_dir = PathBuf::from("/tmp/test_eventlog_temporal");
+    let base_dir = String::from("/tmp/test_eventlog_temporal");
     std::fs::create_dir_all(&base_dir).expect("Failed to create test directory");
 
     let config = EventLogConfig {
@@ -355,7 +354,7 @@ async fn test_eventlog_temporal_queries() {
 /// Test snapshot creation and loading
 #[tokio::test]
 async fn test_eventlog_snapshots() {
-    let base_dir = PathBuf::from("/tmp/test_eventlog_snapshots");
+    let base_dir = String::from("/tmp/test_eventlog_snapshots");
     std::fs::create_dir_all(&base_dir).expect("Failed to create test directory");
 
     let config = EventLogConfig {
@@ -407,7 +406,7 @@ async fn test_eventlog_snapshots() {
 /// Test event replay
 #[tokio::test]
 async fn test_eventlog_replay() {
-    let base_dir = PathBuf::from("/tmp/test_eventlog_replay");
+    let base_dir = String::from("/tmp/test_eventlog_replay");
     std::fs::create_dir_all(&base_dir).expect("Failed to create test directory");
 
     let config = EventLogConfig {
@@ -483,7 +482,7 @@ async fn test_eventlog_replay() {
 /// Test high-volume event ingestion (simulating ibkrtrading 119MB/day)
 #[tokio::test]
 async fn test_eventlog_high_volume_ingestion() {
-    let base_dir = PathBuf::from("/tmp/test_eventlog_volume");
+    let base_dir = String::from("/tmp/test_eventlog_volume");
     std::fs::create_dir_all(&base_dir).expect("Failed to create test directory");
 
     let config = EventLogConfig {
