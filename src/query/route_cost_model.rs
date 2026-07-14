@@ -781,7 +781,7 @@ fn parse_backend_label(label: &str) -> Option<ComputeBackend> {
 }
 
 /// The freshness-safe backend SET for a shape-class, derived from its prefix.
-/// Only `olap/parquet` has two freshness-compatible engines (Native's
+/// Only `olap/parquet` has multiple freshness-compatible engines (Native's
 /// strong-freshness scan and DataFusion's base-snapshot scan both correctly
 /// answer an analytic query); every other class keeps its single static
 /// backend, so a baked override can never flip a query onto an engine that
@@ -792,11 +792,34 @@ fn parse_backend_label(label: &str) -> Option<ComputeBackend> {
 /// `JOIN … GROUP BY` classes as `op=grp`), so join-bearing plans are kept off
 /// Native at decision time in `ComputeScheduler::route_select_advised` via
 /// `QueryShape::join_bearing`, which also covers ancestor-fallback consults.
+/// DuckDB's residual freshness term — it cannot run the ADR-025 post-snapshot
+/// WAL delta merge — is likewise a dispatch-time gate (the pipeline only
+/// executes DuckDB when no referenced table carries a pending delta; the
+/// DataFusion floor serves otherwise and the route is re-stamped).
 fn freshness_safe_backends_from_class(shape_class: &str) -> Vec<ComputeBackend> {
     if shape_class.starts_with("olap/parquet") {
-        vec![ComputeBackend::Native, ComputeBackend::DataFusionLocal]
+        let mut safe = vec![ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+        if duckdb_route_candidate() {
+            safe.push(ComputeBackend::DuckDbCompat);
+        }
+        safe
     } else {
         vec![ComputeBackend::Native]
+    }
+}
+
+/// Whether `DuckDbCompat` participates as a cost-model candidate: compiled in
+/// (`--features duckdb`) AND route-enabled (`PROXIMADB_DUCKDB_ROUTE`, default
+/// OFF per ADR-059 §6 / ADR-054 progressive-cutover). Without both, the
+/// frozen table never ranks or explores DuckDB, so no flip can target it.
+fn duckdb_route_candidate() -> bool {
+    #[cfg(feature = "duckdb")]
+    {
+        crate::query::execution::duckdb_engine::duckdb_route_enabled()
+    }
+    #[cfg(not(feature = "duckdb"))]
+    {
+        false
     }
 }
 
@@ -2168,6 +2191,61 @@ mod tests {
             oltp_parquet.explore_target(),
             None,
             "single safe candidate → no explore"
+        );
+    }
+
+    /// ADR-059: with the `duckdb` feature compiled AND `PROXIMADB_DUCKDB_ROUTE`
+    /// set, DuckDbCompat joins the olap/parquet freshness-safe set — its cells
+    /// rank and it can be explored/flipped to. (nextest process-per-test
+    /// isolation makes the env-before-first-call OnceLock read deterministic.)
+    #[cfg(feature = "duckdb")]
+    #[test]
+    fn duckdb_joins_the_olap_parquet_safe_set_when_route_enabled() {
+        unsafe { std::env::set_var("PROXIMADB_DUCKDB_ROUTE", "1") };
+        let m = RouteCostModel::new().with_min_samples(1);
+        m.observe_by_label("olap/parquet", "DuckDbCompat", &snap(2, 1 << 20, 1));
+        m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(200, 1 << 20, 9));
+        m.recompute();
+        let consult = m.consult("olap/parquet").expect("baked");
+        assert!(
+            consult
+                .ranked()
+                .iter()
+                .any(|c| backend_label(&c.backend) == "DuckDbCompat"),
+            "DuckDbCompat must rank as a freshness-safe candidate"
+        );
+        // Cheapest-first: DuckDB (2 GETs) beats DataFusion (200 GETs) here.
+        assert_eq!(backend_label(&consult.ranked()[0].backend), "DuckDbCompat");
+        // OLTP classes never gain DuckDB regardless of the gate.
+        m.observe_by_label("oltp/native", "DuckDbCompat", &snap(2, 1 << 20, 1));
+        m.recompute();
+        let oltp = m.consult("oltp/native").expect("baked");
+        assert!(
+            !oltp
+                .ranked()
+                .iter()
+                .any(|c| backend_label(&c.backend) == "DuckDbCompat")
+        );
+    }
+
+    /// Structural safety for builds WITHOUT the duckdb feature: persisted or
+    /// stray DuckDbCompat cells (e.g. a cost-model file written by a
+    /// duckdb-enabled deployment) are dropped from the ranked set, so no flip
+    /// can ever target an engine this build cannot execute.
+    #[cfg(not(feature = "duckdb"))]
+    #[test]
+    fn duckdb_cells_are_dropped_when_feature_absent() {
+        let m = RouteCostModel::new().with_min_samples(1);
+        m.observe_by_label("olap/parquet", "DuckDbCompat", &snap(2, 1 << 20, 1));
+        m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(200, 1 << 20, 9));
+        m.recompute();
+        let consult = m.consult("olap/parquet").expect("baked");
+        assert!(
+            !consult
+                .ranked()
+                .iter()
+                .any(|c| backend_label(&c.backend) == "DuckDbCompat"),
+            "a build without the duckdb feature must never rank DuckDbCompat"
         );
     }
 
