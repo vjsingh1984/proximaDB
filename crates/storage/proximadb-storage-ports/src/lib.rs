@@ -12,6 +12,7 @@
 //! foundation proto types the contracts unavoidably name.
 
 use anyhow::Result;
+use proximadb_distance_kernel::DistanceMetric;
 use proximadb_proto::proximadb_v1::Collection;
 use proximadb_storage_common::StorageEngineType;
 use proximadb_storage_filesystem_types::{FileOptions, FileSystem, FsResult};
@@ -226,4 +227,40 @@ pub enum CacheKind {
 pub trait CacheAccessPatternPort: Send + Sync {
     /// Record a cache access for pattern learning / predictive prefetching.
     fn track_access(&self, key: String, cache_kind: CacheKind);
+}
+
+/// AXIS clustering port — inverts the raptor→root `AxisClusteringEngine`
+/// dependency for the clustering surface RAPTOR's writer needs (k-means
+/// clustering, centroid-distance matrix, component-boosted assignment). The
+/// surface is exactly `ReusableClusteringEngine`'s 3 methods (sync,
+/// primitive-typed + `DistanceMetric`). Engine leaves hold `Arc<dyn
+/// AxisClusteringPort>` instead of the root-local `AxisClusteringEngine`; the
+/// concrete engine impls this in the root (downward edge). Enables the raptor
+/// `writer` extraction.
+pub trait AxisClusteringPort: Send + Sync {
+    /// k-means clustering (k-means++ init) -> (centroids, cluster assignments).
+    fn cluster_vectors_simple(
+        &self,
+        vectors: &[Vec<f32>],
+        k: usize,
+        distance_metric: DistanceMetric,
+        max_iterations: usize,
+    ) -> Result<(Vec<Vec<f32>>, Vec<usize>)>;
+
+    /// Centroid-to-centroid distance matrix (k*k).
+    fn calculate_centroid_distance_matrix(
+        &self,
+        centroids: &[Vec<f32>],
+        distance_metric: DistanceMetric,
+    ) -> Result<Vec<Vec<f32>>>;
+
+    /// Assign vectors to clusters with component boosting -> (cluster_id, boosted_distance).
+    fn assign_vectors_with_component_boosting(
+        &self,
+        vectors: &[Vec<f32>],
+        centroids: &[Vec<f32>],
+        centroid_distances: &[Vec<f32>],
+        distance_metric: DistanceMetric,
+        boosting_weights: &[f32],
+    ) -> Result<Vec<(usize, f32)>>;
 }

@@ -66,7 +66,6 @@ use super::common::{
     RowGroupBloomFilter, RowGroupNeighbor,
 };
 use super::matrix_builder::MatrixBuilder;
-use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::proto::proximadb_v1::VectorRecord;
 use proximadb_distance_kernel::DistanceMetric;
 use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
@@ -78,11 +77,9 @@ use crate::storage::engines::core::ops::proximacodec::{
 };
 use crate::storage::persistence::filesystem::FileSystem;
 
-// Import AXIS clustering for reuse
-use crate::index::axis::clustering::{
-    AxisClusteringEngine, ClusteringAlgorithm, ClusteringConfig as AxisClusteringConfig,
-    KMeansConfig, KMeansInit, ReusableClusteringEngine,
-};
+// AXIS clustering + quantization are injected via DI ports (Slice D) — the
+// concrete engines are constructed at the composition root (engine.rs).
+use proximadb_storage_ports::{AxisClusteringPort, StorageQuantizationEnginePort};
 
 use super::config::CompressionCodec as RaptorCompressionCodec;
 use super::constants;
@@ -137,7 +134,7 @@ pub struct RaptorWriter {
     /// Standard compression engine for vector data
     compression: Arc<StandardCompression>,
     /// Quantization engine for reducing memory footprint
-    quantization_engine: Arc<StorageQuantizationEngine>,
+    quantization_engine: Arc<dyn StorageQuantizationEnginePort>,
     /// Memory pool for efficient vector allocation
     #[allow(dead_code)]
     memory_pool: Arc<VectorMemoryPool>,
@@ -287,7 +284,7 @@ struct IvfClusteringBuilder {
     #[allow(dead_code)]
     hardware: Arc<HardwareCapabilities>,
     /// AXIS clustering engine for reusable k-means implementation
-    axis_clustering: Arc<AxisClusteringEngine>,
+    axis_clustering: Arc<dyn AxisClusteringPort>,
     /// Pre-computed centroids for k clusters
     centroids: Vec<Centroid>,
     /// Boosting parameters
@@ -360,26 +357,11 @@ struct Centroid {
 // This avoids duplication and keeps related data together
 
 impl IvfClusteringBuilder {
-    fn new(target_rowgroup_size: usize, hardware: Arc<HardwareCapabilities>) -> Self {
-        // Create AXIS clustering configuration for RAPTOR
-        let axis_clustering_config = AxisClusteringConfig {
-            algorithm: ClusteringAlgorithm::KMeans(KMeansConfig {
-                k: constants::clustering::DEFAULT_CLUSTER_COUNT,
-                max_iterations: constants::clustering::KMEANS_MAX_ITERATIONS,
-                tolerance: constants::clustering::KMEANS_TOLERANCE as f32,
-                n_init: constants::clustering::KMEANS_INIT_ATTEMPTS,
-                init_method: KMeansInit::KMeansPlusPlus,
-            }),
-            min_vectors_for_clustering: target_rowgroup_size,
-            max_clusters: constants::clustering::MAX_CLUSTER_COUNT,
-            distance_metric: DistanceMetric::Euclidean,
-            adaptive_cluster_count: true,
-            recompute_threshold: 10000,
-            enable_incremental: false, // Disable for RAPTOR use case
-        };
-
-        let axis_clustering = Arc::new(AxisClusteringEngine::new(axis_clustering_config));
-
+    fn new(
+        target_rowgroup_size: usize,
+        hardware: Arc<HardwareCapabilities>,
+        axis_clustering: Arc<dyn AxisClusteringPort>,
+    ) -> Self {
         Self {
             nodes: Vec::new(),
             id_to_node: HashMap::new(),
@@ -2384,6 +2366,31 @@ impl MetadataEncoding {
     }
 }
 
+/// Build a minimal `AxisClusteringEngine` behind the `AxisClusteringPort` for the
+/// isolated unit tests below — they construct `IvfClusteringBuilder` directly,
+/// without the composition root (engine.rs) that normally injects the engine.
+#[cfg(test)]
+fn make_test_axis_clustering() -> Arc<dyn AxisClusteringPort> {
+    use crate::index::axis::clustering::{
+        AxisClusteringEngine, ClusteringAlgorithm, ClusteringConfig, KMeansConfig, KMeansInit,
+    };
+    Arc::new(AxisClusteringEngine::new(ClusteringConfig {
+        algorithm: ClusteringAlgorithm::KMeans(KMeansConfig {
+            k: 3,
+            max_iterations: 10,
+            tolerance: 0.01,
+            n_init: 1,
+            init_method: KMeansInit::KMeansPlusPlus,
+        }),
+        min_vectors_for_clustering: 3,
+        max_clusters: 10,
+        distance_metric: DistanceMetric::Euclidean,
+        adaptive_cluster_count: false,
+        recompute_threshold: 100,
+        enable_incremental: false,
+    }))
+}
+
 #[cfg(test)]
 mod minimal_hnsw_tests {
     use super::*;
@@ -2392,7 +2399,7 @@ mod minimal_hnsw_tests {
     fn test_distance_aware_clustering() {
         // Create a minimal HNSW builder
         let hw_caps = proximadb_hardware_caps::get_hardware_capabilities();
-        let mut builder = IvfClusteringBuilder::new(3, hw_caps); // Small row groups for testing
+        let mut builder = IvfClusteringBuilder::new(3, hw_caps, make_test_axis_clustering()); // Small row groups for testing
 
         // Add nodes with predefined edges and distances
         // Node 0 connects to 1 (distance 0.1) and 2 (distance 0.8)
@@ -2507,7 +2514,7 @@ mod minimal_hnsw_tests {
 #[test]
 fn test_uniqueness_guarantee() {
     let hw_caps = proximadb_hardware_caps::get_hardware_capabilities();
-    let mut builder = IvfClusteringBuilder::new(5, hw_caps);
+    let mut builder = IvfClusteringBuilder::new(5, hw_caps, make_test_axis_clustering());
 
     // Add 10 nodes
     for i in 0..10 {
@@ -2574,14 +2581,14 @@ impl RaptorWriter {
         config: RaptorConfig,
         collection_id: String,
         dimension: usize,
+        // Injected collaborators (Slice D port-inversion): the composition root
+        // (engine.rs) constructs the concrete engines + filesystem and injects
+        // them, so this module depends only on the port traits — enabling its
+        // extraction to a crate.
+        filesystem: Arc<dyn FileSystem>,
+        quantization_engine: Arc<dyn StorageQuantizationEnginePort>,
+        axis_clustering: Arc<dyn AxisClusteringPort>,
     ) -> Result<Self> {
-        // Initialize filesystem using local filesystem
-        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
-        let local_config = LocalConfig::default();
-        let local_fs = LocalFileSystem::new(local_config).await?;
-        let filesystem: Arc<dyn crate::storage::persistence::filesystem::FileSystem> =
-            Arc::new(local_fs);
-
         // Initialize hardware capabilities
         let hardware = get_hardware_capabilities();
 
@@ -2600,39 +2607,10 @@ impl RaptorWriter {
             proximadb_distance_kernel::DistanceMetric::Cosine,
         ));
 
-        // Initialize codebook store for quantization
-        let codebook_store: Arc<
-            dyn crate::compute::quantization::quantization_engine::CodebookStore,
-        > = Arc::new(
-            crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
-        );
-
-        // Initialize unified quantization engine
-        let unified_quantization = Arc::new(
-            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
-                distance_compute.clone(),
-                codebook_store,
-            ),
-        );
-
-        // Initialize storage quantization engine config
-        // Uses default INT8 quantization (fast, no training required)
-        // PQ can be explicitly enabled in collection config when needed
-        let quant_config =
-            crate::compute::quantization::storage_engine::StorageQuantizationConfig {
-                enable_hardware_acceleration: config.enable_simd,
-                distance_metric: proximadb_distance_kernel::DistanceMetric::Cosine,
-                ..Default::default() // INT8 by default, PQ requires explicit config
-            };
-
-        // Initialize quantization engine
-        let quantization_engine = Arc::new(StorageQuantizationEngine::new(
-            unified_quantization,
-            distance_compute.clone(),
-            quant_config,
-        ));
-
-        // Distance compute already initialized above
+        // Quantization engine is injected (see fn params above) — the concrete
+        // codebook store / unified quant / storage quant chain is assembled at
+        // the composition root (engine.rs). The distance_compute initialized
+        // above is this writer's own field.
 
         // Initialize memory pool with default configuration
         let memory_pool = Arc::new(VectorMemoryPool::new());
@@ -2711,7 +2689,11 @@ impl RaptorWriter {
                 id_hashes: Vec::new(),
                 row_offsets: Vec::new(),
             },
-            ivf_builder: IvfClusteringBuilder::new(rowgroup_size, get_hardware_capabilities()),
+            ivf_builder: IvfClusteringBuilder::new(
+                rowgroup_size,
+                get_hardware_capabilities(),
+                axis_clustering,
+            ),
             column_projections: ColumnProjectionsBuilder {
                 metadata_columns: HashMap::new(),
                 filter_bitmaps: HashMap::new(),
