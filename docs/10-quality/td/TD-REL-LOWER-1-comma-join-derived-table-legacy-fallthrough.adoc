@@ -74,8 +74,17 @@ Bisected and fixed the dominant decline class plus the two hardening directions:
 
 Remaining (why this stays Open): full TPC-H native-route coverage — residual per-query lowering
 declines (e.g. CASE/EXTRACT/INTERVAL frontend gaps) now fail loudly with the 0A000 message; fix
-incrementally per the pgwire mandate and re-run the ledger native sweep to re-measure the ERR
-taxonomy.
+incrementally per the pgwire mandate.
+
+**Re-measured taxonomy (2026-07-14 native sweep, SF 0.01, post-#953):** the mangled-error class
+collapsed from 72 ledger ERRs to 3 single-table queries (TPC-H Q1/Q4/Q6 — declines the
+multi-table 0A000 guard cannot see; date/interval frontend gaps). TPC-H: **14/22 now lower and
+execute** (Q9–Q22 — then grind the un-normalized cross product, filed as TD-REL-LOWER-2), 3
+comma-join + 2 derived-table clean 0A000 declines (Q2/Q3/Q5, Q7/Q8). TPC-DS: **24 native passes**,
+15 clean 0A000 declines, 8 cross-product grinders, 2 `rebind_columns` internal planner errors on
+alias-named sort keys (q3/q52 — pre-existing pushdown bug newly reachable, filed as
+TD-REL-LOWER-3). Follow-up guard candidate: extend the specific-error treatment to single-table
+relational declines so Q1/Q4/Q6 stop mangling.
 
 == Non-goals
 

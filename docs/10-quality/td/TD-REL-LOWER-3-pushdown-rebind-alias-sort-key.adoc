@@ -1,0 +1,49 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-REL-LOWER-3: Projection-pushdown rebind fails on alias-named ORDER BY keys (`rebind_columns: column not in narrowed schema`)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open — filed 2026-07-14 from the post-#953 ledger native sweep (SF 0.01 release).
+| Priority | P2 — hard error on valid ANSI SQL (`[XX000] plan: internal planner error`), scope currently 2 TPC-DS queries; pre-existing planner bug newly *reachable* (pre-#953 these queries declined earlier, at lowering).
+| Component | `crates/query/proximadb-relational-planner` — `push_projections_inner` / `rebind_columns` (name-keyed ordinal rebind).
+| Evidence | TPC-DS q3 and q52 on the native route, both: `plan: internal planner error: rebind_columns: column `brand_id` not in narrowed schema`. Shape: comma-join + `GROUP BY` + projection alias used as an ORDER BY key (`select … item.i_brand_id brand_id … order by d_year, sum_agg desc, brand_id`).
+|===
+
+== The finding
+
+`push_projections` narrows Scans to upstream-referenced columns, then rebinds every
+`Expr::Column` ordinal *by name* against the (narrowed) input schema on the walk back up. For the
+q3/q52 shape, a Sort key named by a **projection alias** (`brand_id`, aliasing
+`item.i_brand_id`) fails the name lookup during that rebind — the schema it is rebound against
+carries the *pre-alias* column names, so the pushdown errors out and the query fails with an
+internal-planner error rather than executing.
+
+Lowering is not at fault: the frontend resolves the alias correctly against the Project's output
+schema (this is the ordinary alias path, not the #953 qualified-key fallback). The inconsistency
+is inside the pushdown pass: somewhere between the Sort arm (rebinds keys against
+`new_input.output_schema()`) and the narrowing decisions below it, the schema the Sort keys are
+rebound against does not expose the Project's alias names. The doc comment on
+`push_projections_inner` already concedes the pass "skips join subtrees" because `ColumnRef`
+carries no disambiguation — this is the adjacent gap on the alias axis.
+
+== Direction
+
+1. **Failing unit test first** (planner crate): hand-build (or lower, if the frontend dev-dep is
+   acceptable) the minimal plan — `Sort(keys=[alias]) over Project([col AS alias]) over
+   Aggregate over CrossJoin/Scan` — assert `push_projections` succeeds and the sort key's rebound
+   ordinal points at the alias output slot.
+2. Fix candidates, in preference order: (a) make the Sort/Limit/Distinct arms rebind against the
+   *actual* child output schema **after** its own rewrite (alias names intact at the Project
+   boundary); (b) teach `rebind_columns` to fall back to ordinal-preserving identity when the
+   name is absent but the ordinal is in range *and* the schema width is unchanged; (c) skip
+   narrowing across Project-over-Aggregate boundaries the way join subtrees are skipped
+   (conservative, loses narrowing).
+3. **Gate:** q3 + q52 flip from `internal planner error` to `ok` native samples in the ledger
+   sweep; no pushdown-narrowing regression on the existing planner tests.
+
+== Non-goals
+
+The cross-product perf of the same queries (TD-REL-LOWER-2); join-subtree rebind disambiguation
+(the documented Phase-3 restriction stands).
