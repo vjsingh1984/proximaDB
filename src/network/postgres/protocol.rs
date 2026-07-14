@@ -99,6 +99,13 @@ pub struct PostgresProtocol {
     /// result set, flushed to the meter (direction=result) at CommandComplete /
     /// PortalSuspended. Zero on the free path / non-row commands.
     result_bytes_pending: u64,
+    /// TD-TENANT-1: the deployment's bare tenant-assertion trust policy. On
+    /// pgwire there is NO authenticated binding (trust auth), so a startup
+    /// `database` (== tenant/catalog, TD-064) or `SET proximadb.write.tenant_id`
+    /// naming a non-default tenant is a bare assertion by definition — strict
+    /// policies reject it at the assertion point (SQLSTATE 28000) through the
+    /// same shared primitive REST/gRPC/Arrow Flight use. Default `Open`.
+    tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
 }
 
 /// Slice 6.3 gate-input bundle. Distinct type per surface for module
@@ -409,6 +416,7 @@ impl PostgresProtocol {
             rate_limiter: None,
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
+            tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
         }
     }
 
@@ -457,6 +465,7 @@ impl PostgresProtocol {
             rate_limiter: None,
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
+            tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
         }
     }
 
@@ -502,6 +511,7 @@ impl PostgresProtocol {
             rate_limiter: None,
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
+            tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
         }
     }
 
@@ -521,6 +531,40 @@ impl PostgresProtocol {
             self_pod_id,
         });
         self
+    }
+
+    /// TD-TENANT-1: set the deployment's bare tenant-assertion trust policy —
+    /// the same `HeaderTrustPolicy` REST/gRPC/Arrow Flight enforce.
+    pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
+        self.tenant_header_trust = policy;
+        self
+    }
+
+    /// TD-TENANT-1: gate a pgwire tenant assertion (startup `database` or the
+    /// tenant session var) through the shared trust primitive. pgwire has no
+    /// authenticated binding (trust auth), so the binding is always `None`;
+    /// the ONE canonical default tenant does not count as an assertion.
+    /// Returns the audit-logged error message to send when rejected.
+    fn check_pgwire_tenant_assertion(&self, asserted: &str) -> std::result::Result<(), String> {
+        use proximadb_tenant::identity_trust::resolve_tenant_assertion;
+
+        let asserted = asserted.trim();
+        if asserted.is_empty() || asserted == proximadb_tenant::DEFAULT_TENANT {
+            return Ok(());
+        }
+        match resolve_tenant_assertion(Some(asserted), None, self.tenant_header_trust) {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                warn!(
+                    target: "proximadb::tenant_audit",
+                    surface = "pgwire",
+                    policy = %self.tenant_header_trust,
+                    %error,
+                    "rejected bare pgwire tenant assertion"
+                );
+                Err(error.to_string())
+            }
+        }
     }
 
     /// Attach catalog-backed DDL/DML services to an existing protocol handler.
@@ -708,6 +752,17 @@ impl PostgresProtocol {
         let param_len = length - 8;
         let params = self.read_bytes(param_len).await?;
         let params = self.parse_startup_params(&params)?;
+
+        // TD-TENANT-1: the startup `database` doubles as the tenant/catalog
+        // (TD-064) and pgwire runs trust auth — the assertion is bare by
+        // definition. Under a strict policy, reject the connection at the
+        // handshake (SQLSTATE 28000) instead of granting the asserted tenant.
+        if let Some(database) = params.get("database")
+            && let Err(message) = self.check_pgwire_tenant_assertion(database)
+        {
+            self.send_error("FATAL", "28000", &message).await?;
+            return Err(anyhow!("pgwire tenant assertion rejected: {message}"));
+        }
 
         // Store parameters in session
         {
@@ -944,6 +999,19 @@ impl PostgresProtocol {
 
     async fn execute_set_parameter(&mut self, query: &str) -> Result<()> {
         let (name, value) = Self::parse_set_parameter(query)?;
+        // TD-TENANT-1: the tenant session vars are the second pgwire
+        // assertion entry point (after the startup `database`). Gate them
+        // through the same policy — an ERROR, not a silent no-op, so the
+        // client knows the assertion did not take effect.
+        let normalized_name = name.trim().to_ascii_lowercase();
+        if matches!(
+            normalized_name.as_str(),
+            "proximadb.write.tenant_id" | "proximadb.write_tenant_id"
+        ) && let Err(message) = self.check_pgwire_tenant_assertion(&value)
+        {
+            self.send_error("ERROR", "28000", &message).await?;
+            return Ok(());
+        }
         {
             let mut session = self.session.write().await;
             session.set_parameter(&name, &value);

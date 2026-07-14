@@ -608,6 +608,28 @@ impl ProximaDB {
             );
         }
 
+        // TD-TENANT-1: resolve the deployment-effective bare tenant-assertion
+        // trust policy ONCE (env > [security.tenant] header_trust > deployment-
+        // mode preset) and thread it into every network surface via MultiServer.
+        let (tenant_header_trust, trust_warning) = proximadb_tenant::HeaderTrustPolicy::effective(
+            match &tenant_deployment_mode {
+                proximadb_tenant::TenantDeploymentMode::MultiTenant => {
+                    proximadb_tenant::HeaderTrustPolicy::AuthenticatedOnly
+                }
+                proximadb_tenant::TenantDeploymentMode::SingleTenant { .. } => {
+                    proximadb_tenant::HeaderTrustPolicy::Open
+                }
+            },
+            config
+                .security
+                .as_ref()
+                .and_then(|security| security.tenant.header_trust),
+        );
+        if let Some(warning) = trust_warning {
+            tracing::warn!("{warning}");
+        }
+        tracing::info!(policy = %tenant_header_trust, "🔐 tenant header-trust policy (TD-TENANT-1)");
+
         let multi_server = network::MultiServer::new_with_queue_client(
             multi_config,
             shared_services,
@@ -616,7 +638,8 @@ impl ProximaDB {
             tenant_deployment_mode,
             llm_engine,
             queue_client.clone(),
-        );
+        )
+        .with_tenant_header_trust(tenant_header_trust);
         tracing::debug!("✅ ProximaDB::new - MultiServer created");
 
         // Phase 2H wiring (drainer half): spawn the drainer only when

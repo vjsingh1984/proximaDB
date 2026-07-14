@@ -38,6 +38,22 @@ pub struct SecurityConfig {
     /// Key store configuration
     #[serde(default)]
     pub key_store: KeyStoreConfig,
+    /// Tenant-identity trust configuration (`[security.tenant]`, TD-TENANT-1).
+    #[serde(default)]
+    pub tenant: TenantTrustConfig,
+}
+
+/// `[security.tenant]` — tenant-identity trust knobs (TD-TENANT-1).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TenantTrustConfig {
+    /// Bare tenant-assertion trust policy for every network surface (REST
+    /// `X-Tenant-ID`, gRPC / Arrow Flight `x-tenant-id` metadata, pgwire
+    /// startup `database` / tenant session vars): `"open"` |
+    /// `"authenticated-only"` | `"gateway-only"`. Unset ⇒ the deployment-mode
+    /// preset (`open`; `authenticated-only` under multi-tenant strict mode).
+    /// The `PROXIMADB_TENANT_HEADER_TRUST` env override wins over both.
+    #[serde(default)]
+    pub header_trust: Option<proximadb_tenant::HeaderTrustPolicy>,
 }
 
 /// Security mode for different deployment scenarios
@@ -626,6 +642,7 @@ mod tests {
             },
             encryption: EncryptionConfig::default(),
             key_store: KeyStoreConfig::default(),
+            tenant: Default::default(),
         }
     }
 

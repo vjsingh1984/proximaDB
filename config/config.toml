@@ -283,6 +283,14 @@ collection_affinity = true
 enabled = false  # Enable for production
 mode = "development"  # development | production | enterprise
 
+# [security.tenant]  # TD-TENANT-1: tenant-identity trust
+# Bare tenant-assertion trust policy applied to EVERY network surface
+# (REST X-Tenant-ID, gRPC/Arrow Flight x-tenant-id metadata, pgwire startup
+# database / tenant session vars). Unset => deployment-mode preset
+# ("open"; "authenticated-only" under multi-tenant strict mode). The
+# PROXIMADB_TENANT_HEADER_TRUST env var overrides both.
+# header_trust = "open"  # open | authenticated-only | gateway-only
+
 [security.authentication]
 enabled = false
 methods = ["api_key"]

@@ -125,6 +125,7 @@ fn auth_config_with_dev_key() -> SecurityConfig {
         },
         encryption: EncryptionConfig::default(),
         key_store: KeyStoreConfig::default(),
+        tenant: Default::default(),
     }
 }
 

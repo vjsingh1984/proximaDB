@@ -1128,6 +1128,7 @@ mod tests {
             },
             encryption: crate::security::EncryptionConfig::default(),
             key_store: crate::security::KeyStoreConfig::default(),
+            tenant: Default::default(),
         }
     }
 
@@ -1176,6 +1177,7 @@ mod tests {
             },
             encryption: crate::security::EncryptionConfig::default(),
             key_store: crate::security::KeyStoreConfig::default(),
+            tenant: Default::default(),
         }
     }
 
