@@ -1,0 +1,41 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-WLP-6: Profile-aware search-param defaults + observability + docs close-out
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open — spec filed 2026-07-14 (ADR-061). Not started. Depends on TD-WLP-3 + TD-WLP-4.
+| Priority | P2 — the calibration + observability closing slice.
+| Severity | Low/Medium — defaults + trace wiring; no new durability surface.
+| Component | `src/storage/engines/sst/search/` (per-profile default `BlockPruneConfig`); `crates/modalities/proximadb-observability-engine/src` (emit resolved profile in io_trace); `docs/12-design/adr/README.adoc` + `TD-WLP-*` cross-links
+| Governs | link:../../12-design/adr/ADR-061-per-collection-workload-profiles.adoc[ADR-061] (D6/D7)
+| Relates to | TD-WLP-3 (radius_k calibration), TD-158 (io_trace substrate), the status-as-of docs guard
+| Pillar | OE (observability + operability), PERF (calibrated defaults)
+|===
+
+toc::[]
+
+== Why
+
+Once the mechanisms exist (WLP-1..5), a collection's profile should imply sensible prune defaults
+and be observable in the query trace, and the ADR/TD set should be cross-linked and indexed.
+
+== Scope
+
+* Map `StorageProfile` → default `BlockPruneConfig`: `AppendBulk` applies the calibrated L2
+  `radius_k` / nprobe; `Churn` leaves `radius_k=0.0` (irrelevant — memory-resident path).
+* Emit the resolved `StorageProfile` into the io_trace so a query's projection strategy is
+  observable per-tenant.
+* Close-out docs: ADR-061 README row (added by the docs PR), TD-WLP cross-links, status bumps.
+
+== TDD gate
+
+* Unit `test_append_profile_applies_calibrated_prune_defaults`: `AppendBulk` yields the L2 `radius_k`
+  default; `Churn` yields `0.0`.
+* Behaviour ratchet: re-run the TD-WLP-3 sweep under the profile-default path — no recall regression
+  vs explicit config.
+
+== Gating
+
+`AppendBulk` gets calibrated defaults; every other/untagged collection stays legacy. Ratchet-gated.
