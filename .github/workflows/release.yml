@@ -692,11 +692,11 @@ jobs:
             if find artifacts -name "$binary" -type f | grep -q .; then
               echo "  [OK] $binary"
               FOUND_ARTIFACTS="$FOUND_ARTIFACTS\n  - $binary"
-              ((BINARY_COUNT++))
+              BINARY_COUNT=$((BINARY_COUNT+1))
             else
               echo "  [MISSING] $binary"
               MISSING_ARTIFACTS="$MISSING_ARTIFACTS\n  - $binary"
-              ((BINARY_MISSING++))
+              BINARY_MISSING=$((BINARY_MISSING+1))
               VALIDATION_PASSED=false
             fi
           done
@@ -712,7 +712,7 @@ jobs:
             CHECKSUM="${binary}.sha256"
             if find artifacts -name "$CHECKSUM" -type f | grep -q .; then
               echo "  [OK] $CHECKSUM"
-              ((CHECKSUM_COUNT++))
+              CHECKSUM_COUNT=$((CHECKSUM_COUNT+1))
             else
               echo "  [MISSING] $CHECKSUM"
               # Checksums are important but not blocking
@@ -736,33 +736,19 @@ jobs:
           # Expected minimums (main wheels, not embedded)
           # Linux x86_64: 5 Python versions (3.8-3.12)
           # Others: 4 Python versions (3.9-3.12)
-          echo "  Linux x86_64 wheels: $LINUX_X64_WHEELS (expected >= 5)"
-          echo "  Linux aarch64 wheels: $LINUX_ARM64_WHEELS (expected >= 4)"
-          echo "  macOS x86_64 wheels: $MACOS_X64_WHEELS (expected >= 4)"
-          echo "  macOS arm64 wheels: $MACOS_ARM64_WHEELS (expected >= 4)"
-          echo "  Windows x64 wheels: $WINDOWS_WHEELS (expected >= 4)"
+          echo "  Linux x86_64 wheels: $LINUX_X64_WHEELS (informational)"
+          echo "  Linux aarch64 wheels: $LINUX_ARM64_WHEELS (informational)"
+          echo "  macOS x86_64 wheels: $MACOS_X64_WHEELS (informational)"
+          echo "  macOS arm64 wheels: $MACOS_ARM64_WHEELS (informational)"
+          echo "  Windows x64 wheels: $WINDOWS_WHEELS (informational)"
           echo ""
 
-          # Check minimum wheel counts (combined main + embedded)
+          # Wheel counts are informational only: this workflow's build-wheels
+          # matrix is disabled (the main package is pure Python and its wheels
+          # publish via release-python.yml), so per-platform compiled-wheel
+          # minimums are unsatisfiable here and must not block the release.
           if [ "$LINUX_X64_WHEELS" -lt 5 ]; then
-            echo "  [WARNING] Fewer than expected Linux x86_64 wheels"
-            VALIDATION_PASSED=false
-          fi
-          if [ "$LINUX_ARM64_WHEELS" -lt 4 ]; then
-            echo "  [WARNING] Fewer than expected Linux aarch64 wheels"
-            VALIDATION_PASSED=false
-          fi
-          if [ "$MACOS_X64_WHEELS" -lt 4 ]; then
-            echo "  [WARNING] Fewer than expected macOS x86_64 wheels"
-            VALIDATION_PASSED=false
-          fi
-          if [ "$MACOS_ARM64_WHEELS" -lt 4 ]; then
-            echo "  [WARNING] Fewer than expected macOS arm64 wheels"
-            VALIDATION_PASSED=false
-          fi
-          if [ "$WINDOWS_WHEELS" -lt 4 ]; then
-            echo "  [WARNING] Fewer than expected Windows x64 wheels"
-            VALIDATION_PASSED=false
+            echo "  [INFO] No/few Linux x86_64 wheels (expected: wheels ship via release-python.yml)"
           fi
 
           TOTAL_WHEELS=$((LINUX_X64_WHEELS + LINUX_ARM64_WHEELS + MACOS_X64_WHEELS + MACOS_ARM64_WHEELS + WINDOWS_WHEELS))
@@ -1095,6 +1081,7 @@ jobs:
           path: sdist
 
       - name: Consolidate Packages
+        id: consolidate
         run: |
           mkdir -p publish
           cp dist/*.whl publish/ 2>/dev/null || true
@@ -1109,7 +1096,14 @@ jobs:
           echo "Embedded package contents:"
           ls -la publish-embedded/
 
+          # pypa/gh-action-pypi-publish hard-fails on an empty packages-dir;
+          # emit outputs so the publish steps can skip instead (wheel builds
+          # are disabled here and the embedded sdist build is commented out).
+          echo "main_has_files=$([ -n "$(ls -A publish)" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "embedded_has_files=$([ -n "$(ls -A publish-embedded)" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
       - name: Publish Main Package to PyPI
+        if: steps.consolidate.outputs.main_has_files == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: publish/
@@ -1117,6 +1111,7 @@ jobs:
           verbose: true
 
       - name: Publish Embedded Package to PyPI
+        if: steps.consolidate.outputs.embedded_has_files == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: publish-embedded/
