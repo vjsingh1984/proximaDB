@@ -214,6 +214,10 @@ impl FileSystem for EncryptedFilesystem {
         self.write(path, &existing, None).await
     }
 
+    fn supports_append(&self) -> bool {
+        self.underlying.supports_append()
+    }
+
     async fn delete(&self, path: &str) -> FsResult<()> {
         let actual_path = self.actual_path(path);
         let mut deleted = false;

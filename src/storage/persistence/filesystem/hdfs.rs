@@ -526,6 +526,10 @@ impl FileSystem for HdfsFileSystem {
         self.client.append_file(&normalized_path, data).await
     }
 
+    fn supports_append(&self) -> bool {
+        true
+    }
+
     async fn delete(&self, path: &str) -> FsResult<()> {
         tracing::debug!("🗑️ HDFS delete: {}", path);
         let normalized_path = self.normalize_path(path);

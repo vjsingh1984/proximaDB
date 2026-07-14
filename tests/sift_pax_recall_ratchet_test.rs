@@ -30,6 +30,7 @@
 //!                                CI floor); unset → full 1M + provided GT
 //!   PROXIMADB_SIFT_QUERIES       cap the query count (default 1000)
 //!   PROXIMADB_SIFT_RECALL_FLOOR  ratchet threshold (default 0.90)
+//!   PROXIMADB_RECALL_DATASET_REQUIRED fail instead of skip when corpus is absent
 //!
 //! nextest isolates each test in its own process, so the PAX env vars set here
 //! don't leak. `set_var` is `unsafe` (edition 2024).
@@ -43,9 +44,11 @@ use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::traits::{
     FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
 };
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::TempDir;
 
 const DIMENSION: usize = 128;
@@ -119,6 +122,12 @@ fn dataset_path(filename: &str) -> Option<PathBuf> {
     })
 }
 
+fn dataset_required() -> bool {
+    std::env::var("PROXIMADB_RECALL_DATASET_REQUIRED")
+        .ok()
+        .is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "on"))
+}
+
 /// Squared L2 distance (order-preserving — fine for ranking).
 fn l2_sq(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum()
@@ -131,8 +140,47 @@ fn brute_force_topk(base: &[Vec<f32>], query: &[f32], k: usize) -> Vec<String> {
         .enumerate()
         .map(|(i, v)| (i, l2_sq(query, v)))
         .collect();
-    sims.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-    sims.iter().take(k).map(|(i, _)| format!("v{i}")).collect()
+    if sims.len() > k {
+        sims.select_nth_unstable_by(k, |a, b| a.1.total_cmp(&b.1));
+        sims.truncate(k);
+    }
+    sims.into_iter().map(|(i, _)| format!("v{i}")).collect()
+}
+
+/// Build exact top-k sets for a prefix subset without doing a full sort per
+/// query. SIFT's provided top-100 row is still exact after filtering to ids in
+/// the subset whenever it contains at least `TOP_K` such ids. The remaining
+/// rows fall back to a parallel brute-force linear selection.
+fn exact_ground_truth(
+    base: &[Vec<f32>],
+    queries: &[Vec<f32>],
+    gt_path: Option<&Path>,
+) -> (Vec<std::collections::HashSet<String>>, usize) {
+    let provided = gt_path
+        .filter(|path| path.exists())
+        .map(|path| read_vec_records_u32(path, Some(queries.len())).expect("read gt"))
+        .unwrap_or_default();
+    let fallback_count = AtomicUsize::new(0);
+    let result = queries
+        .par_iter()
+        .enumerate()
+        .map(|(qi, query)| {
+            if let Some(row) = provided.get(qi) {
+                let filtered: Vec<u32> = row
+                    .iter()
+                    .copied()
+                    .filter(|id| (*id as usize) < base.len())
+                    .take(TOP_K)
+                    .collect();
+                if filtered.len() == TOP_K {
+                    return filtered.into_iter().map(vid).collect();
+                }
+            }
+            fallback_count.fetch_add(1, Ordering::Relaxed);
+            brute_force_topk(base, query, TOP_K).into_iter().collect()
+        })
+        .collect();
+    (result, fallback_count.load(Ordering::Relaxed))
 }
 
 fn vid(i: u32) -> String {
@@ -240,6 +288,10 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
     let base_path = match dataset_path("sift_base.fvecs") {
         Some(p) => p,
         None => {
+            assert!(
+                !dataset_required(),
+                "PROXIMADB_SIFT_DATASET_DIR is required by this recall gate"
+            );
             eprintln!(
                 "skip: PROXIMADB_SIFT_DATASET_DIR unset — SIFT1M ratchet needs the TEXMEX corpus"
             );
@@ -247,6 +299,10 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
         }
     };
     if !base_path.exists() {
+        assert!(
+            !dataset_required(),
+            "required SIFT dataset is missing: {base_path:?}"
+        );
         eprintln!("skip: {base_path:?} not found — download SIFT1M (.fvecs) to enable");
         return;
     }
@@ -297,6 +353,12 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
 
     // --- Load queries -----------------------------------------------------------------
     let query_path = dataset_path("sift_query.fvecs");
+    if dataset_required() {
+        assert!(
+            query_path.as_ref().is_some_and(|path| path.exists()),
+            "required SIFT query corpus is missing: {query_path:?}"
+        );
+    }
     let queries: Vec<Vec<f32>> = match query_path.as_ref().filter(|p| p.exists()) {
         Some(p) => read_vec_records_f32(p, Some(max_queries)).expect("read sift_query.fvecs"),
         None => {
@@ -307,22 +369,19 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
     };
     let qcount = queries.len();
 
-    // --- Ground truth: provided (.ivecs) for full 1M, brute-force for subsets ---------
+    // --- Ground truth: filtered provided top-100 plus exact subset fallback ------------
     let gt_path = dataset_path("sift_groundtruth.ivecs");
-    let use_provided_gt = subset_n.is_none() && gt_path.as_ref().is_some_and(|p| p.exists());
-    let ground_truth: Vec<std::collections::HashSet<String>> = if use_provided_gt {
-        eprintln!("using provided sift_groundtruth.ivecs (full 1M)");
-        let gt = read_vec_records_u32(gt_path.as_ref().unwrap(), Some(qcount)).expect("read gt");
-        gt.into_iter()
-            .map(|row| row.into_iter().take(TOP_K).map(vid).collect())
-            .collect()
-    } else {
-        eprintln!("computing brute-force L2 ground truth over the {n}-vector subset");
-        queries
-            .iter()
-            .map(|q| brute_force_topk(&base, q, TOP_K).into_iter().collect())
-            .collect()
-    };
+    if dataset_required() {
+        assert!(
+            gt_path.as_ref().is_some_and(|path| path.exists()),
+            "required SIFT ground-truth corpus is missing: {gt_path:?}"
+        );
+    }
+    let (ground_truth, brute_force_rows) = exact_ground_truth(&base, &queries, gt_path.as_deref());
+    eprintln!(
+        "ground truth rows={qcount}: provided/filterable={}, brute-force={brute_force_rows}",
+        qcount - brute_force_rows
+    );
     // base no longer needed for GT in the provided-GT path; drop to free memory
     // before the query loop on the 1M run.
     drop(base);
@@ -345,12 +404,8 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
     assert!(measured > 0, "no queries succeeded — cannot report recall");
     let recall = recall_sum / measured as f64;
     eprintln!(
-        "SIFT PAX cascade recall@{TOP_K} = {recall:.4} over {measured} queries (N={n}, floor={floor}); {}",
-        if use_provided_gt {
-            "provided-GT"
-        } else {
-            "brute-force-GT"
-        }
+        "SIFT PAX cascade recall@{TOP_K} = {recall:.4} over {measured} queries \
+         (N={n}, floor={floor}, brute-force-GT rows={brute_force_rows})",
     );
     assert!(
         recall >= floor,
@@ -385,6 +440,10 @@ async fn sift_voe_centroid_prune_recall_at_10_ratchet() {
     let base_path = match dataset_path("sift_base.fvecs") {
         Some(p) if p.exists() => p,
         _ => {
+            assert!(
+                !dataset_required(),
+                "SIFT1M corpus is required by the VOE promotion gate"
+            );
             eprintln!(
                 "skip: PROXIMADB_SIFT_DATASET_DIR unset/missing — centroid-prune ratchet needs SIFT1M"
             );
@@ -402,13 +461,19 @@ async fn sift_voe_centroid_prune_recall_at_10_ratchet() {
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|n| *n > 0)
         .unwrap_or(DEFAULT_QUERIES);
-    // Pruned recall floor: separate + conservative (pruning + coarse clustering
-    // trims recall vs the unpruned 0.90 baseline). CI measures and ratchets it UP.
+    // Keep an absolute floor as a secondary sanity check. The promotion decision
+    // is the same-run differential below; an absolute 0.70 floor allowed severe
+    // regressions whenever the unpruned path happened to be much better.
     let floor: f64 = std::env::var("PROXIMADB_SIFT_CENTROID_RECALL_FLOOR")
         .ok()
         .and_then(|v| v.parse::<f64>().ok())
         .filter(|f| (0.0..=1.0).contains(f))
-        .unwrap_or(0.70);
+        .unwrap_or(0.90);
+    let max_recall_drop: f64 = std::env::var("PROXIMADB_SIFT_CENTROID_MAX_RECALL_DROP")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|f| (0.0..=1.0).contains(f))
+        .unwrap_or(0.0);
 
     let temp_dir = TempDir::new().unwrap();
     let collection = collection("sift_voe_centroid_prune", &temp_dir);
@@ -435,27 +500,58 @@ async fn sift_voe_centroid_prune_recall_at_10_ratchet() {
     }
 
     let query_path = dataset_path("sift_query.fvecs");
+    if dataset_required() {
+        assert!(
+            query_path.as_ref().is_some_and(|path| path.exists()),
+            "required SIFT query corpus is missing: {query_path:?}"
+        );
+    }
     let queries: Vec<Vec<f32>> = match query_path.as_ref().filter(|p| p.exists()) {
         Some(p) => read_vec_records_f32(p, Some(max_queries)).expect("read sift_query.fvecs"),
         None => base.iter().take(max_queries.min(n)).cloned().collect(),
     };
     let qcount = queries.len();
     let gt_path = dataset_path("sift_groundtruth.ivecs");
-    let use_provided_gt = subset_n.is_none() && gt_path.as_ref().is_some_and(|p| p.exists());
-    let ground_truth: Vec<std::collections::HashSet<String>> = if use_provided_gt {
-        let gt = read_vec_records_u32(gt_path.as_ref().unwrap(), Some(qcount)).expect("read gt");
-        gt.into_iter()
-            .map(|row| row.into_iter().take(TOP_K).map(vid).collect())
-            .collect()
-    } else {
-        queries
-            .iter()
-            .map(|q| brute_force_topk(&base, q, TOP_K).into_iter().collect())
-            .collect()
-    };
+    if dataset_required() {
+        assert!(
+            gt_path.as_ref().is_some_and(|path| path.exists()),
+            "required SIFT ground-truth corpus is missing: {gt_path:?}"
+        );
+    }
+    let (ground_truth, brute_force_rows) = exact_ground_truth(&base, &queries, gt_path.as_deref());
+    eprintln!(
+        "VOE ground truth rows={qcount}: provided/filterable={}, brute-force={brute_force_rows}",
+        qcount - brute_force_rows
+    );
     drop(base);
 
-    // Run the whole search loop inside ONE io_trace scope so the centroid-prune
+    // Measure the unpruned production path on the exact same flushed segments,
+    // query set, and ground truth. This makes the gate a differential rather
+    // than an absolute floor that can pass despite a large recall loss.
+    unsafe {
+        std::env::remove_var("PROXIMADB_PAX_CENTROID_PRUNE");
+    }
+    let mut baseline_sum = 0.0f64;
+    let mut baseline_measured = 0usize;
+    for (qi, query) in queries.iter().enumerate() {
+        let got = search_topk(&engine, &collection, query.clone()).await;
+        if got.is_empty() {
+            continue;
+        }
+        let got_ids: std::collections::HashSet<String> = got.into_iter().take(TOP_K).collect();
+        baseline_sum += got_ids.intersection(&ground_truth[qi]).count() as f64 / TOP_K as f64;
+        baseline_measured += 1;
+    }
+    assert!(
+        baseline_measured > 0,
+        "unpruned baseline returned no results"
+    );
+    let baseline_recall = baseline_sum / baseline_measured as f64;
+    unsafe {
+        std::env::set_var("PROXIMADB_PAX_CENTROID_PRUNE", "1");
+    }
+
+    // Run the pruned search loop inside ONE io_trace scope so the centroid-prune
     // counter accumulates across queries; the snapshot proves the prune engaged.
     let (recall, measured, snap) = proximadb::observability::io_trace::scope(async {
         let mut recall_sum = 0.0f64;
@@ -482,8 +578,9 @@ async fn sift_voe_centroid_prune_recall_at_10_ratchet() {
 
     assert!(measured > 0, "no queries succeeded — cannot report recall");
     eprintln!(
-        "SIFT VOE centroid-prune recall@{TOP_K} = {recall:.4} over {measured} queries (N={n}, \
-         floor={floor}); centroid blocks total={} pruned={}",
+        "SIFT VOE recall@{TOP_K}: unpruned={baseline_recall:.4}, pruned={recall:.4} over \
+         {measured} queries (N={n}, floor={floor}, max_drop={max_recall_drop}); centroid \
+         blocks total={} pruned={}",
         snap.centroid_total_blocks, snap.centroid_pruned_blocks
     );
     // (a) The prune MUST have engaged — a silent full-scan fallback leaves this 0.
@@ -499,6 +596,12 @@ async fn sift_voe_centroid_prune_recall_at_10_ratchet() {
         "SIFT VOE centroid-prune recall@{TOP_K} = {recall:.4} < {floor} floor (N={n}) — \
          default-ON flip BLOCKED until the clustering/nprobe is tuned \
          (PROXIMADB_PAX_CENTROID_PRUNE_RATIO / S4 IVF clustering)"
+    );
+    assert!(
+        recall + max_recall_drop >= baseline_recall,
+        "SIFT VOE centroid-prune recall regressed from same-run unpruned \
+         {baseline_recall:.4} to {recall:.4} (allowed drop {max_recall_drop:.4}, N={n}) — \
+         default-ON flip remains blocked"
     );
 }
 

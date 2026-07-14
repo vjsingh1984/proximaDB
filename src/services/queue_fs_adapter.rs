@@ -51,16 +51,34 @@ pub struct FactoryQueueFs {
 }
 
 impl FactoryQueueFs {
+    fn require_append_capability(
+        root_url: &str,
+        filesystem_type: &str,
+        supports_append: bool,
+    ) -> QueueResult<()> {
+        if !supports_append {
+            return Err(QueueError::Persistence(format!(
+                "queue root {root_url} uses backend {filesystem_type} without durable append support"
+            )));
+        }
+        Ok(())
+    }
+
     // Returns `Arc<dyn QueueFs>` directly because every caller stores the
     // adapter behind a trait object; exposing the concrete type would force
     // every call site to add a redundant `.as_queue_fs()` cast.
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(factory: Arc<FilesystemFactory>, root_url: impl Into<String>) -> Arc<dyn QueueFs> {
+    pub fn new(
+        factory: Arc<FilesystemFactory>,
+        root_url: impl Into<String>,
+    ) -> QueueResult<Arc<dyn QueueFs>> {
         let mut root_url: String = root_url.into();
         while root_url.ends_with('/') {
             root_url.pop();
         }
-        Arc::new(Self { factory, root_url })
+        let fs = factory.get_filesystem(&root_url).map_err(Self::map_err)?;
+        Self::require_append_capability(&root_url, fs.filesystem_type(), fs.supports_append())?;
+        Ok(Arc::new(Self { factory, root_url }))
     }
 
     /// Translate a queue-supplied `&Path` to a URL the factory accepts.
@@ -203,5 +221,13 @@ mod tests {
             normalize("s3://bucket/queue///".to_string()),
             "s3://bucket/queue"
         );
+    }
+
+    #[test]
+    fn constructor_capability_check_rejects_non_append_backend() {
+        let err = FactoryQueueFs::require_append_capability("s3://bucket/queue", "s3", false)
+            .expect_err("object-store queue roots must fail before accepting data");
+        assert!(err.to_string().contains("without durable append support"));
+        FactoryQueueFs::require_append_capability("file:///queue", "local", true).unwrap();
     }
 }

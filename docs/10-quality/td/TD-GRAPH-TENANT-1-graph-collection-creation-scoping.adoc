@@ -4,7 +4,7 @@
 
 [cols="1,3"]
 |===
-|Status|Core resolved (lazy auto-provision); follow-ons open
+|Status|In progress — lazy auto-provision core resolved; create/list scoping follow-ons open
 |Priority|MED
 |Scope|FEAT
 |Date|2026-07-05
