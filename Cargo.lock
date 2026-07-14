@@ -6779,6 +6779,7 @@ dependencies = [
  "proximadb-document-query",
  "proximadb-embedded-common",
  "proximadb-embedding",
+ "proximadb-engine-core",
  "proximadb-execution-contracts",
  "proximadb-filter-expression",
  "proximadb-functions",
@@ -7201,6 +7202,14 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "proximadb-engine-core"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "proximadb-storage-common",
 ]
 
 [[package]]

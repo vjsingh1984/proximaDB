@@ -1,0 +1,21 @@
+[package]
+name = "proximadb-engine-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Shared engine-core ops + formats hoisted out of the root crate (root-crate decomposition, engines extraction). First occupant: the simd_decode ops subtree."
+
+[lib]
+name = "proximadb_engine_core"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+proximadb-storage-common.workspace = true
+
+[lints]
+workspace = true
