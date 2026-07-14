@@ -7766,6 +7766,7 @@ dependencies = [
  "proximadb-bloom",
  "proximadb-codec",
  "proximadb-compression",
+ "proximadb-compression-types",
  "proximadb-hardware-caps",
  "proximadb-proto",
  "serde",
