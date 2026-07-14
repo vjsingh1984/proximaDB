@@ -1240,6 +1240,27 @@ impl PostgresProtocol {
                 return self.execute_vector_search(query).await;
             }
 
+            // TD-REL-LOWER-1: the legacy path below is SINGLE-TABLE only — its
+            // `FROM <token>` extraction misparses a multi-table FROM
+            // (`customer,` / `(select` become "table names") and then fails
+            // with a misleading "Table/Column does not exist". If the
+            // relational pipeline declined a multi-table query, say so
+            // specifically instead of dispatching it here.
+            if let Some(shape) = Self::legacy_unsupported_from_shape(&upper) {
+                return self
+                    .send_error(
+                        "ERROR",
+                        "0A000",
+                        &format!(
+                            "SELECT with {shape} in FROM is not supported on the legacy \
+                             single-table path; the relational engine declined to lower this \
+                             query (TD-REL-LOWER-1). Run the server with \
+                             RUST_LOG=proximadb=debug to see the decline reason."
+                        ),
+                    )
+                    .await;
+            }
+
             // Check if this is a simple table query
             if let Some(table_name) = self.extract_table_name(&upper) {
                 // Detect store type from table name or query content
@@ -1954,6 +1975,32 @@ impl PostgresProtocol {
     }
 
     /// Extract table name from query
+    /// TD-REL-LOWER-1: detect a multi-table / derived-table FROM in an
+    /// (uppercased) SELECT the relational pipeline has already declined, so the
+    /// legacy single-table path can reject it with a specific error instead of
+    /// misparsing `customer,` or `(select` as a table name. Inspects only the
+    /// FROM clause segment (up to the next clause keyword), so commas in the
+    /// projection, WHERE `IN (…)` lists, or ORDER BY never false-positive.
+    fn legacy_unsupported_from_shape(upper: &str) -> Option<&'static str> {
+        let from_pos = upper.find("FROM ")?;
+        let after = &upper[from_pos + 5..];
+        let clause_end = [" WHERE ", " GROUP ", " ORDER ", " HAVING ", " LIMIT ", ";"]
+            .iter()
+            .filter_map(|kw| after.find(kw))
+            .min()
+            .unwrap_or(after.len());
+        let from_clause = after[..clause_end].trim();
+        if from_clause.starts_with('(') {
+            Some("a derived table (subquery)")
+        } else if from_clause.contains(',') {
+            Some("a comma-separated table list")
+        } else if from_clause.contains(" JOIN ") {
+            Some("a JOIN")
+        } else {
+            None
+        }
+    }
+
     fn extract_table_name(&self, query: &str) -> Option<String> {
         // Simple extraction: look for FROM <table>
         let from_pos = query.find("FROM ")?;

@@ -1277,3 +1277,44 @@ fn pgwire_gate_scopes_per_tenant_collection_pair() {
         PgwireGateOutcome::Misrouted { .. }
     ));
 }
+
+/// TD-REL-LOWER-1: the legacy single-table SELECT path must recognize a
+/// multi-table / derived-table FROM (which the relational pipeline declined)
+/// and reject it specifically — never misparse `customer,` / `(select` as a
+/// table name.
+#[test]
+fn legacy_from_shape_guard_flags_multi_table_selects() {
+    let flagged = [
+        // Comma-joins (TPC-H form) — with and without WHERE.
+        "SELECT * FROM CUSTOMER, ORDERS WHERE C_CUSTKEY = O_CUSTKEY",
+        "SELECT COUNT(*) FROM ORDERS, LINEITEM",
+        // Explicit JOINs.
+        "SELECT * FROM ORDERS O JOIN LINEITEM L ON O.O_ORDERKEY = L.L_ORDERKEY WHERE 1=1",
+        "SELECT * FROM A LEFT JOIN B ON A.X = B.X",
+        // Derived table.
+        "SELECT AVG(S) FROM (SELECT SUM(T) AS S FROM ORDERS GROUP BY K) D",
+    ];
+    for q in flagged {
+        assert!(
+            PostgresProtocol::legacy_unsupported_from_shape(q).is_some(),
+            "must flag: {q}"
+        );
+    }
+    let clean = [
+        // Single-table shapes — including commas in the projection, an IN list
+        // in WHERE, and a multi-key ORDER BY (commas OUTSIDE the FROM clause).
+        "SELECT A, B, C FROM ORDERS WHERE K IN (1, 2, 3)",
+        "SELECT A FROM ORDERS ORDER BY A, B",
+        "SELECT COUNT(*) FROM ORDERS GROUP BY K, J",
+        "SELECT A FROM ORDERS O WHERE O.K = 1",
+        // No FROM at all.
+        "SELECT 1",
+    ];
+    for q in clean {
+        assert_eq!(
+            PostgresProtocol::legacy_unsupported_from_shape(q),
+            None,
+            "must not flag: {q}"
+        );
+    }
+}
