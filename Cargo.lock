@@ -6817,6 +6817,7 @@ dependencies = [
  "proximadb-rank-features",
  "proximadb-rank-onnx",
  "proximadb-rank-profile",
+ "proximadb-raptor-common",
  "proximadb-records",
  "proximadb-relational-algebra",
  "proximadb-relational-engine",
@@ -7755,6 +7756,19 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-raptor-common"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "proximadb-bloom",
+ "proximadb-codec",
+ "proximadb-compression",
+ "proximadb-hardware-caps",
+ "proximadb-proto",
+ "serde",
 ]
 
 [[package]]
