@@ -1002,19 +1002,29 @@ impl RestServer {
 
     /// Start the REST server without TLS (plaintext)
     async fn start_plaintext(self) -> anyhow::Result<()> {
-        // Portless ("embedded") mode: serve over a Unix-domain socket.
+        // Portless ("embedded") mode: serve over a Unix-domain socket (unix-only).
         if let Some(uds_path) = self.uds_path.clone() {
-            tracing::info!(
-                "Starting REST server (plaintext) on unix:{}",
-                uds_path.display()
-            );
-            Self::log_endpoints(&self.bind_addr, false);
-            // axum 0.8 serves any `Listener`; tokio's UnixListener qualifies.
-            let listener = crate::network::uds::bind_unix_listener(&uds_path).map_err(|e| {
-                anyhow::anyhow!("REST UDS bind failed at {}: {}", uds_path.display(), e)
-            })?;
-            axum::serve(listener, self.router.into_make_service()).await?;
-            return Ok(());
+            #[cfg(unix)]
+            {
+                tracing::info!(
+                    "Starting REST server (plaintext) on unix:{}",
+                    uds_path.display()
+                );
+                Self::log_endpoints(&self.bind_addr, false);
+                // axum 0.8 serves any `Listener`; tokio's UnixListener qualifies.
+                let listener = crate::network::uds::bind_unix_listener(&uds_path).map_err(|e| {
+                    anyhow::anyhow!("REST UDS bind failed at {}: {}", uds_path.display(), e)
+                })?;
+                axum::serve(listener, self.router.into_make_service()).await?;
+                return Ok(());
+            }
+            #[cfg(not(unix))]
+            {
+                anyhow::bail!(
+                    "REST UDS (unix:{}) is not supported on this platform; use TCP",
+                    uds_path.display()
+                );
+            }
         }
 
         tracing::info!("Starting REST server (plaintext) on {}", self.bind_addr);
