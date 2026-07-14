@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use anyhow::{Context, Result, anyhow};
 use bytes::{Buf, BufMut, BytesMut};
@@ -19,7 +20,7 @@ use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use super::session::Session;
+use super::session::{Session, SessionManager};
 use super::translator::QueryTranslator;
 use super::types::{FieldDescription, PgType};
 use crate::catalog::CatalogManager;
@@ -47,6 +48,9 @@ pub struct PostgresProtocol {
     stream: TcpStream,
     /// Session state
     session: Arc<RwLock<Session>>,
+    /// Shared registry used to resolve PostgreSQL CancelRequest backend keys.
+    session_manager: Option<Arc<SessionManager>>,
+    cancel_request_processed: bool,
     /// Collection service
     collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     /// Vector operations service for search
@@ -398,6 +402,8 @@ impl PostgresProtocol {
         Self {
             stream,
             session: Arc::new(RwLock::new(session)),
+            session_manager: None,
+            cancel_request_processed: false,
             collection_port,
             vector_ops,
             translator: QueryTranslator::new(),
@@ -418,6 +424,11 @@ impl PostgresProtocol {
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
         }
+    }
+
+    pub fn with_session_manager(mut self, manager: Arc<SessionManager>) -> Self {
+        self.session_manager = Some(manager);
+        self
     }
 
     /// Attach a shared per-IP rate limiter (and this connection's peer IP) so the
@@ -447,6 +458,8 @@ impl PostgresProtocol {
         Self {
             stream,
             session: Arc::new(RwLock::new(session)),
+            session_manager: None,
+            cancel_request_processed: false,
             collection_port,
             vector_ops,
             translator: QueryTranslator::new(),
@@ -493,6 +506,8 @@ impl PostgresProtocol {
         Self {
             stream,
             session: Arc::new(RwLock::new(session)),
+            session_manager: None,
+            cancel_request_processed: false,
             collection_port,
             vector_ops,
             translator: QueryTranslator::new(),
@@ -677,6 +692,9 @@ impl PostgresProtocol {
     pub async fn run(&mut self) -> Result<()> {
         // Handle startup
         self.handle_startup().await?;
+        if self.cancel_request_processed {
+            return Ok(());
+        }
 
         // Main loop
         loop {
@@ -744,8 +762,18 @@ impl PostgresProtocol {
 
         // Check for cancel request
         if version == 80877102 {
-            // Cancel request - not implemented
-            return Err(anyhow!("Cancel request not supported"));
+            if length != 16 {
+                return Err(anyhow!("Invalid cancel request length"));
+            }
+            let process_id = self.read_i32().await? as u32;
+            let secret_key = self.read_i32().await? as u32;
+            let cancelled = match &self.session_manager {
+                Some(manager) => manager.cancel_query(process_id, secret_key).await,
+                None => false,
+            };
+            debug!(process_id, cancelled, "Processed PostgreSQL CancelRequest");
+            self.cancel_request_processed = true;
+            return Ok(());
         }
 
         // Read startup parameters
@@ -1081,8 +1109,11 @@ impl PostgresProtocol {
     async fn execute_query_with_controls(
         &mut self,
         query: &str,
-        controls: ExecutionControls,
+        mut controls: ExecutionControls,
     ) -> Result<()> {
+        let cancellation_flag = self.session.read().await.cancellation_flag.clone();
+        cancellation_flag.store(false, Ordering::Relaxed);
+        controls.cancellation_flag = Some(cancellation_flag);
         // E0 rate-limiting: reject over-quota queries up front with a pgwire
         // error, using the SAME converged RateLimitState check REST uses (no
         // duplicate limiter). No-op when unset/disabled.
@@ -1296,7 +1327,7 @@ impl PostgresProtocol {
             {
                 return match result {
                     Ok(pr) => self.emit_pipeline_result(pr).await,
-                    Err(msg) => self.send_error("ERROR", "XX000", &msg).await,
+                    Err(msg) => self.send_relational_error(&msg).await,
                 };
             }
             if let Some((column, value)) = Self::extract_simple_constant_select(query) {
@@ -4907,13 +4938,22 @@ impl PostgresProtocol {
             // same scope in the next slice (kept out here to avoid restructuring
             // the borrow in this `&&` let-chain).
             if query.trim_start().to_uppercase().starts_with("SELECT")
-                && let Some(result) = self
-                    .try_run_relational_select_pipeline(query, ExecutionControls::default())
+                && let Some(result) = {
+                    let cancellation_flag = self.session.read().await.cancellation_flag.clone();
+                    cancellation_flag.store(false, Ordering::Relaxed);
+                    self.try_run_relational_select_pipeline(
+                        query,
+                        ExecutionControls {
+                            cancellation_flag: Some(cancellation_flag),
+                            ..Default::default()
+                        },
+                    )
                     .await
+                }
             {
                 let result = match result {
                     Ok(result) => result,
-                    Err(msg) => return self.send_error("ERROR", "XX000", &msg).await,
+                    Err(msg) => return self.send_relational_error(&msg).await,
                 };
                 if let Some(portal) = self.portals.get_mut(portal_name) {
                     portal.execution_state = Some(PortalExecutionState {
@@ -4996,6 +5036,17 @@ impl PostgresProtocol {
             max_rows: Some(max_rows as usize),
             row_limit_mode: RowLimitMode::Truncate,
             ..Default::default()
+        }
+    }
+
+    async fn send_relational_error(&mut self, message: &str) -> Result<()> {
+        if message.contains("query execution was cancelled") {
+            self.send_error("ERROR", "57014", "canceling statement due to user request")
+                .await
+        } else if let Some(message) = message.strip_prefix("0A000: ") {
+            self.send_error("ERROR", "0A000", message).await
+        } else {
+            self.send_error("ERROR", "XX000", message).await
         }
     }
 

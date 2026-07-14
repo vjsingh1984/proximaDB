@@ -2788,6 +2788,17 @@ impl WriteAheadLogManager {
         }
     }
 
+    /// Return the raw physical unflushed delta for cross-source reconciliation.
+    /// Tombstones, TTL-expired rows, and superseded versions are retained.
+    pub async fn get_collection_vectors_raw(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        wal_behavior.get_collection_vectors_raw(collection_id).await
+    }
+
     /// Paginated, deduped, time-ordered scan of a collection's unflushed records
     /// (TD-099(3d) push-down). See
     /// [`WALBehaviorWrapper::stream_unflushed_records`]. `after` is the raw

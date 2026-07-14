@@ -106,20 +106,16 @@ predicate function resolves (new `Expr::collect_func_names`), returning a loud
   `json_extract_text` → anchored single-engine (DataFusion correct). Accurate. Ratchet
   8 → 9. Also fixes the latent "no function works in a pushed-down native WHERE" bug.
 
-**PR5 — remaining two (open):**
+**PR5 — final two (resolved):**
 
-* **d06** (`(doc->>'price')::int > 8`) — the cast-wrapped predicate takes a path that
-  bypasses `DmlTableReader::open`'s pre-validation, so it still silently returns 0 rows
-  on native (DataFusion correct). Route that path through the same validate/evaluate
-  fix (or evaluate it through `builtins()` so the cast-of-json predicate errors loud).
-* **d11** (`(doc->>'in_stock')::boolean = true`) — DataFusion drops the `::boolean`
-  cast in frontend lowering, so the analyzer sees `Utf8 = Boolean` and fails coercion
-  (`src/datafusion/logical_lowering.rs:429` is correct; the gap is upstream in
-  `proximadb-relational-frontend` not emitting the `Expr::Cast { ty: Boolean }`).
+* **d06** (`(doc->>'price')::int > 8`) — unified cast evaluation removed the
+  cast-wrapped predicate bypass.
+* **d11** (`(doc->>'in_stock')::boolean = true`) — frontend lowering now preserves
+  the Boolean cast and both engines evaluate the typed comparison consistently.
 
-Each fix removes its ids from `KNOWN_BAD_TD183` and raises `DOC_ACCURACY_RATCHET`
-toward 11; the known-bad guards fail the moment a query becomes correct, forcing the
-bump.
+`KNOWN_BAD_TD183` is empty and `DOC_ACCURACY_RATCHET = 11`. There are no open
+TD-183 query ids; any future regression reopens the ratchet rather than this resolved
+implementation plan.
 
 The secondary native d09 `rebind_columns` planner error
 (`proximadb-relational-planner/src/lib.rs:1735`) is independent and out of scope.

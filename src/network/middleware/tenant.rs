@@ -136,6 +136,8 @@ pub enum TenantIdSource {
     JwtClaim,
     /// Derived from API key mapping
     ApiKey,
+    /// Selected by an authenticated system/gateway principal.
+    GatewayDelegation,
     /// Default tenant (single-tenant mode or fallback)
     Default,
     /// System/internal request
@@ -160,6 +162,7 @@ impl std::fmt::Display for TenantIdSource {
             Self::Header => write!(f, "header"),
             Self::JwtClaim => write!(f, "jwt"),
             Self::ApiKey => write!(f, "api_key"),
+            Self::GatewayDelegation => write!(f, "gateway_delegation"),
             Self::Default => write!(f, "default"),
             Self::System => write!(f, "system"),
         }
@@ -351,16 +354,18 @@ impl TenantExtractor {
             self.config.header_trust,
         )? {
             ResolvedTenantAssertion::Asserted(tenant_id) => {
-                if let Some((binding, _)) = &authenticated {
+                let source = if let Some((binding, _)) = &authenticated {
                     debug!(
                         gateway = %binding.tenant_id,
                         acting_tenant = %tenant_id,
                         "gateway principal delegated tenant via X-Tenant-ID"
                     );
+                    TenantIdSource::GatewayDelegation
                 } else {
                     debug!("Extracted tenant_id from header: {}", tenant_id);
-                }
-                Ok(Some((tenant_id, TenantIdSource::Header)))
+                    TenantIdSource::Header
+                };
+                Ok(Some((tenant_id, source)))
             }
             ResolvedTenantAssertion::Credential(tenant_id) => {
                 debug!("Extracted tenant_id from authenticated context: {tenant_id}");
@@ -429,7 +434,7 @@ impl TenantExtractor {
     }
 
     /// Validate tenant exists and is active
-    fn validate_tenant(&self, tenant_id: &str) -> bool {
+    fn validate_tenant(&self, tenant_id: &str, source: TenantIdSource) -> bool {
         // System tenants bypass validation
         if self.config.system_tenants.contains(&tenant_id.to_string()) {
             return true;
@@ -456,9 +461,21 @@ impl TenantExtractor {
                     false
                 }
             }
-        } else {
-            // No manager configured, allow all
+        } else if matches!(
+            source,
+            TenantIdSource::JwtClaim | TenantIdSource::ApiKey | TenantIdSource::GatewayDelegation
+        ) {
+            // Without a local tenant catalog, only a credential-bound tenant
+            // identity remains authoritative. A bare header/default must not
+            // become trusted merely because validation infrastructure is absent.
             true
+        } else {
+            warn!(
+                tenant_id,
+                source = %source,
+                "Tenant validation requested but no TenantManager is configured"
+            );
+            false
         }
     }
 }
@@ -490,7 +507,7 @@ pub async fn tenant_middleware(
             }
 
             // Validate tenant if configured
-            if !extractor.validate_tenant(&tenant_id) {
+            if !extractor.validate_tenant(&tenant_id, source) {
                 return (
                     StatusCode::FORBIDDEN,
                     format!("Tenant '{}' is not valid or not active", tenant_id),
@@ -699,6 +716,11 @@ mod tests {
         assert!(config.default_tenant.is_none());
         assert!(config.require_tenant);
         assert!(config.validate_tenant);
+        assert_eq!(
+            config.header_trust,
+            HeaderTrustPolicy::AuthenticatedOnly,
+            "multi-tenant deployments must reject unbound tenant headers"
+        );
     }
 
     #[test]
@@ -723,6 +745,10 @@ mod tests {
         assert_eq!(TenantIdSource::Header.to_string(), "header");
         assert_eq!(TenantIdSource::JwtClaim.to_string(), "jwt");
         assert_eq!(TenantIdSource::ApiKey.to_string(), "api_key");
+        assert_eq!(
+            TenantIdSource::GatewayDelegation.to_string(),
+            "gateway_delegation"
+        );
         assert_eq!(TenantIdSource::Default.to_string(), "default");
         assert_eq!(TenantIdSource::System.to_string(), "system");
     }
@@ -760,6 +786,17 @@ mod tests {
             .extract_tenant_id(&trust_request(Some("demo1"), None))
             .expect("open mode accepts bare header");
         assert_eq!(result, Some(("demo1".to_string(), TenantIdSource::Header)));
+    }
+
+    #[test]
+    fn strict_validation_without_manager_accepts_only_credential_bound_identity() {
+        let extractor = TenantExtractor::with_config(TenantExtractorConfig::multi_tenant());
+
+        assert!(extractor.validate_tenant("acme", TenantIdSource::JwtClaim));
+        assert!(extractor.validate_tenant("acme", TenantIdSource::ApiKey));
+        assert!(extractor.validate_tenant("acme", TenantIdSource::GatewayDelegation));
+        assert!(!extractor.validate_tenant("acme", TenantIdSource::Header));
+        assert!(!extractor.validate_tenant("acme", TenantIdSource::Default));
     }
 
     #[test]
@@ -841,7 +878,10 @@ mod tests {
         let result = extractor(HeaderTrustPolicy::GatewayOnly)
             .extract_tenant_id(&trust_request(Some("demo1"), Some("system")))
             .expect("gateway delegation must be allowed");
-        assert_eq!(result, Some(("demo1".to_string(), TenantIdSource::Header)));
+        assert_eq!(
+            result,
+            Some(("demo1".to_string(), TenantIdSource::GatewayDelegation))
+        );
     }
 
     /// TD-TENANT-1 follow-up: the first-class principal marker. A credential
@@ -860,7 +900,10 @@ mod tests {
         let result = extractor(HeaderTrustPolicy::GatewayOnly)
             .extract_tenant_id(&req)
             .expect("gateway-role principal must be allowed to delegate");
-        assert_eq!(result, Some(("demo1".to_string(), TenantIdSource::Header)));
+        assert_eq!(
+            result,
+            Some(("demo1".to_string(), TenantIdSource::GatewayDelegation))
+        );
 
         // Same principal WITHOUT the marker → mismatch.
         let mut req = trust_request(Some("demo1"), None);
