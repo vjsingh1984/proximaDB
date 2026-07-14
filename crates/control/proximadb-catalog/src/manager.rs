@@ -158,10 +158,42 @@ impl CatalogManager {
 
     /// Inject the object-store filesystem resolver (root composition root
     /// wraps `FilesystemFactory` behind [`CatalogFilesystemResolver`]).
-    /// Required only if `create_native_catalog` is called with an `s3://`,
-    /// `gs://`, or `az://` URL; local `file://` setups leave it `None`.
+    /// Required only if `create_native_catalog` / `create_delta_catalog` is
+    /// called with an object-store URL; local `file://` setups leave it `None`.
     pub async fn set_filesystem_resolver(&self, resolver: Arc<dyn CatalogFilesystemResolver>) {
         *self.fs_resolver.write().await = Some(resolver);
+    }
+
+    /// Resolve the injected `FileSystem` for an object-store catalog URL, or
+    /// `None` for local paths (`file://`, bare paths) and `memory://` (which
+    /// keeps its pre-existing non-resolver behavior).
+    ///
+    /// ANY other scheme is an object store — never enumerate schemes here:
+    /// the old `s3://|gs://|az://` allowlist let the documented aliases
+    /// (`adls://`, `abfs://`, `azure://`, `gcs://`) fall through to the
+    /// local-path branch and silently stage catalog metadata in a temp cache
+    /// (TD-OBJSTORE-1, #960).
+    async fn resolve_object_store_fs(
+        &self,
+        storage_url: &str,
+    ) -> Result<Option<Arc<dyn FileSystem>>> {
+        let is_object_store = storage_url.contains("://")
+            && !storage_url.starts_with("file://")
+            && !storage_url.starts_with("memory://");
+        if !is_object_store {
+            return Ok(None);
+        }
+        let resolver = self.fs_resolver.read().await;
+        let resolver = resolver.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "object-store catalog URL '{storage_url}' requires a filesystem \
+                 resolver -- call CatalogManager::set_filesystem_resolver at startup"
+            )
+        })?;
+        let fs = resolver.get_filesystem(storage_url).await.map_err(|e| {
+            anyhow::anyhow!("no filesystem backend for catalog url '{storage_url}': {e}")
+        })?;
+        Ok(Some(fs))
     }
 
     /// TD-110 S1: per-table, non-reentrant in-process DML operation locks.
@@ -207,30 +239,16 @@ impl CatalogManager {
             ..Default::default()
         };
 
-        // TD-CAT-1b (S0): object-store catalog URLs (s3://, gs://, az://) persist
-        // durably by routing all catalog I/O through an injected `FileSystem`
-        // backend resolved from the configured backends. `file://` (and bare
-        // local paths) keep the local-`tokio::fs` path (`fs = None`) so the
-        // on-disk layout and existing tests are byte-identical — the object-store
-        // branch only *relaxes* `NativeCatalog::parse_storage_url`'s fail-closed
-        // bail, it does not change the local path. A cloud scheme whose backend
-        // feature isn't compiled in surfaces a clear `UnsupportedScheme` error
+        // TD-CAT-1b (S0): object-store catalog URLs persist durably by routing
+        // all catalog I/O through an injected `FileSystem` backend resolved
+        // from the configured backends. `file://` (and bare local paths) keep
+        // the local-`tokio::fs` path (`fs = None`) so the on-disk layout and
+        // existing tests are byte-identical — the object-store branch only
+        // *relaxes* `NativeCatalog::parse_storage_url`'s fail-closed bail, it
+        // does not change the local path. A cloud scheme whose backend feature
+        // isn't compiled in surfaces a clear `UnsupportedScheme` error
         // (still strictly safer than silently caching the catalog under /tmp).
-        let is_object_store = storage_url.starts_with("s3://")
-            || storage_url.starts_with("gs://")
-            || storage_url.starts_with("az://");
-
-        let catalog = if is_object_store {
-            let resolver = self.fs_resolver.read().await;
-            let resolver = resolver.as_ref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "object-store catalog URL '{storage_url}' requires a filesystem \
-                     resolver -- call CatalogManager::set_filesystem_resolver at startup"
-                )
-            })?;
-            let fs = resolver.get_filesystem(storage_url).await.map_err(|e| {
-                anyhow::anyhow!("no filesystem backend for catalog url '{storage_url}': {e}")
-            })?;
+        let catalog = if let Some(fs) = self.resolve_object_store_fs(storage_url).await? {
             crate::native::NativeCatalog::new_with_filesystem(
                 name.to_string(),
                 config,
@@ -489,8 +507,17 @@ impl CatalogManager {
             ..Default::default()
         };
 
-        let catalog =
-            crate::delta::DeltaCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        // Object-store URLs route all catalog I/O through the injected
+        // `FileSystem` (durable); local paths keep the tokio::fs layout
+        // (TD-OBJSTORE-1, #960).
+        let filesystem = self.resolve_object_store_fs(storage_url).await?;
+        let catalog = crate::delta::DeltaCatalog::new_with_filesystem(
+            name.to_string(),
+            config,
+            self.cache.clone(),
+            filesystem,
+        )
+        .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;

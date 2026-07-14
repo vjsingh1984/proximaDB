@@ -122,6 +122,25 @@ The bug class has two shapes:
 | local-fs impl (currently unwired — no production constructor)
 | constructor now rejects URL-shaped paths fail-fast
 | ✅ Guarded (object-store port impl deferred)
+
+| **SystemCatalog durable path never engaged on Azure/GCS aliases** (batch 2) —
+  `shared_services` `is_objstore` allowlisted `s3://\|gs://\|az://\|memory://`; and
+  `store_for_url` forwarded `adls://`/`gcs://` to the upstream `object_store`
+  parser, which doesn't know those aliases — catalog metadata silently landed in
+  `NativeCatalog`'s temp cache
+| scheme-enumeration anti-pattern (same class as delta.rs `parse_storage_url`)
+| scheme-generic predicate in `shared_services`; alias normalization
+  (`adls://`→`az://`, `gcs://`→`gs://`) centralized in
+  `proximadb-object-store::store_for_url`; `CatalogManager::resolve_object_store_fs`
+  shared by native + delta creation
+| ✅ Fixed (batch 2)
+
+| **Delta catalog metadata staged in `$TMPDIR`** (batch 2)
+| `DeltaCatalog` used `tokio::fs` exclusively; cloud URLs downgraded to a local cache
+| `new_with_filesystem` routes catalog JSON + delta logs through the injected
+  `FileSystem` (scheme-qualified URLs); round-trip + reopen-durability test.
+  Follow-ups (CAS, rename relocation, log checkpoints): TD-CAT-4
+| ✅ Fixed (batch 2; follow-ups TD-CAT-4)
 |===
 
 == Deferred (documented limitations — next cycles)
@@ -136,10 +155,10 @@ The bug class has two shapes:
   with a loud warn instead of mangling the URL. Durable path: route TST segment I/O
   through the filesystem abstraction, or flush-to-object-store tiering.
 
-| **Delta catalog metadata on object store**
-| `DeltaCatalog` stages metadata in `$TMPDIR/proximadb_delta_cache` for cloud URLs
-  (now loudly warned). Durable path: write `_delta_catalog.json` + delta logs through
-  `FilesystemFactory`. Note the default catalog path in production is not delta-backed.
+| **Delta catalog multi-writer CAS + rename relocation + log checkpoints**
+| Core object-store durability LANDED in batch 2 (see inventory above); the
+  remaining refinements are tracked in TD-CAT-4. The catalog pointer is
+  last-writer-wins (single-writer warehouse model) until CAS lands.
 
 | **RAPTOR/SWIFT writers use `FileSystem::append`**
 | Experimental engines (feature-gated `experimental-engines`, default-OFF) append to
@@ -178,5 +197,11 @@ The bug class has two shapes:
 
 == History
 
-* 2026-07-14 — batch 1 filed + fixed (this PR); folds in #932 (cdc `[[test]]` explicit
+* 2026-07-14 — batch 1 filed + fixed (PR #966); folds in #932 (cdc `[[test]]` explicit
   paths) to unblock the develop image publish. Refs #960.
+* 2026-07-14 — batch 2 (catalog): SystemCatalog durable path now engages on ALL
+  object-store schemes (`is_objstore` scheme-generic; `adls://`/`gcs://` alias
+  normalization in `store_for_url`); DeltaCatalog persists through the injected
+  `FileSystem` (TD-CAT-4 follow-ups). Design review vs Polaris/Horizon/Nessie/
+  Delta: `docs/12-design/CATALOG_OBJECT_STORE_DESIGN_REVIEW_2026_07_14.adoc`;
+  cache eviction finding: TD-CAT-5.

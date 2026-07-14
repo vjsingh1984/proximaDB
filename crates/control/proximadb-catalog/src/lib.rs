@@ -70,6 +70,8 @@ pub mod iceberg;
 pub mod iceberg_rest_service;
 pub mod id_allocator;
 pub mod native;
+#[cfg(test)]
+pub(crate) mod testfs;
 // The canonical object-storage bridge contract (moved down from
 // `proximadb-storage-common`, which re-exports it at the old path). Lives in
 // this cross-layer contract crate so catalog services (Iceberg REST manifest
