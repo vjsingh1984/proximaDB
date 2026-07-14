@@ -401,6 +401,28 @@ fn build_executor_inner<F: ReaderFactory>(
     })
 }
 
+/// Runtime-agnostic single yield: returns `Pending` once (waking itself so it
+/// is re-polled immediately) then `Ready`, handing control back to the async
+/// scheduler exactly like `tokio::task::yield_now` — without coupling this leaf
+/// executor crate to a specific runtime (tokio is only a dev-dependency here).
+struct YieldOnce(bool);
+
+impl std::future::Future for YieldOnce {
+    type Output = ();
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<()> {
+        if self.0 {
+            std::task::Poll::Ready(())
+        } else {
+            self.0 = true;
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    }
+}
+
 /// Cooperative cancellation wrapper installed around every operator. The
 /// stride bounds atomic overhead while ensuring loops inside a parent operator
 /// re-enter a wrapped child and observe cancellation promptly.
@@ -421,13 +443,16 @@ impl CancellationExec {
         }
     }
 
-    fn check(&mut self) -> Result<(), ExecError> {
-        let should_check = self.pulls & Self::CHECK_MASK == 0;
+    /// Poll the cancellation flag on a stride boundary. Returns `Ok(true)` when
+    /// this call landed on the stride (the caller then yields — see `next_row`),
+    /// `Ok(false)` off-stride, `Err(Cancelled)` when the flag is set on-stride.
+    fn check(&mut self) -> Result<bool, ExecError> {
+        let on_stride = self.pulls & Self::CHECK_MASK == 0;
         self.pulls = self.pulls.wrapping_add(1);
-        if should_check && self.flag.load(Ordering::Relaxed) {
+        if on_stride && self.flag.load(Ordering::Relaxed) {
             Err(ExecError::Cancelled)
         } else {
-            Ok(())
+            Ok(on_stride)
         }
     }
 }
@@ -445,7 +470,17 @@ impl ExecNode for CancellationExec {
     }
 
     async fn next_row(&mut self) -> Result<Option<RelationalRow>, ExecError> {
-        self.check()?;
+        if self.check()? {
+            // On the stride: yield so the scheduler can run the task that SETS
+            // the flag. The native operators are synchronous CPU with no real
+            // `.await` points, so a grinding query holds its worker thread and
+            // the out-of-band cancel handler never runs — then the poll above
+            // could never observe a cancellation. Yielding makes long native
+            // scans cooperative; without it, cancellation is inert end-to-end
+            // (measured: an equi-join blow-up is never cancelled). This is the
+            // load-bearing half of TD-EXEC-CANCEL-1.
+            YieldOnce(false).await;
+        }
         self.child.next_row().await
     }
 
