@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tracing::warn;
 use tracing::{debug, info};
 
-use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
+use proximadb_codec::types::ProximaScheme;
 use proximadb_distance_kernel::engine::{DistanceMetric, UnifiedDistanceCompute};
 use proximadb_hardware_caps::HardwareCapabilities;
 
@@ -27,7 +27,7 @@ use crate::compute::gpu::distance::GpuDistanceCompute;
 #[cfg(feature = "gpu")]
 use proximadb_hardware_caps::GpuBackend;
 
-use super::common::{
+use proximadb_raptor_common::{
     CompressionType, DeltaEntry, HierarchicalData, InterCentroidCompressionMetadata,
     InterCentroidMatrix, P2Matrix, SparseData, SparseEntry, VectorCentroidCompressionMetadata,
     VectorCentroidMatrix, VectorCentroidStorageStrategy,
@@ -232,10 +232,10 @@ impl MatrixBuilder {
 
         // Convert internal DistanceMetric to proto DistanceMetric for GPU API
         let proto_metric = match self.distance_metric {
-            DistanceMetric::Euclidean => crate::proto::proximadb_v1::DistanceMetric::Euclidean,
-            DistanceMetric::Cosine => crate::proto::proximadb_v1::DistanceMetric::Cosine,
-            DistanceMetric::DotProduct => crate::proto::proximadb_v1::DistanceMetric::DotProduct,
-            DistanceMetric::Manhattan => crate::proto::proximadb_v1::DistanceMetric::Manhattan,
+            DistanceMetric::Euclidean => proximadb_proto::proximadb_v1::DistanceMetric::Euclidean,
+            DistanceMetric::Cosine => proximadb_proto::proximadb_v1::DistanceMetric::Cosine,
+            DistanceMetric::DotProduct => proximadb_proto::proximadb_v1::DistanceMetric::DotProduct,
+            DistanceMetric::Manhattan => proximadb_proto::proximadb_v1::DistanceMetric::Manhattan,
             _ => {
                 return Err(anyhow::anyhow!(
                     "Unsupported metric for GPU P² matrix: {:?}",
@@ -725,7 +725,7 @@ mod tests {
 
     #[test]
     fn test_p2_matrix_building() {
-        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
+        let _ = proximadb_hardware_caps::get_hardware_capabilities(); // OnceLock auto-init
 
         let hardware = proximadb_hardware_caps::get_hardware_capabilities();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
@@ -746,7 +746,7 @@ mod tests {
 
     #[test]
     fn test_k2_matrix_building() {
-        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
+        let _ = proximadb_hardware_caps::get_hardware_capabilities(); // OnceLock auto-init
 
         let hardware = proximadb_hardware_caps::get_hardware_capabilities();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
@@ -763,7 +763,7 @@ mod tests {
 
     #[test]
     fn test_adaptive_pxk_coverage() {
-        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
+        let _ = proximadb_hardware_caps::get_hardware_capabilities(); // OnceLock auto-init
 
         // Test coverage formula for different k and d values
         // Formula: exp(-2 * ln(k/d + 1)) produces HIGH values for LOW k/d ratios
@@ -791,7 +791,7 @@ mod tests {
     // ========== NEW TESTS ==========
 
     fn create_builder(metric: DistanceMetric) -> MatrixBuilder {
-        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
+        let _ = proximadb_hardware_caps::get_hardware_capabilities(); // OnceLock auto-init
         let hardware = proximadb_hardware_caps::get_hardware_capabilities();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(metric));
         MatrixBuilder::new(distance_compute, hardware, metric)
