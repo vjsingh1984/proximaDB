@@ -35,6 +35,9 @@ proximadb-quantization-model.workspace = true
 # Storage-tier: the FilesystemPort names FileSystem / FileOptions / FsResult from
 # this crate (the existing filesystem abstraction). Same-tier dep (storage→storage).
 proximadb-storage-filesystem-types.workspace = true
+# Foundation-tier: the AxisClusteringPort names DistanceMetric (the clustering
+# methods take it as a param). Foundation dep (storage→foundation).
+proximadb-distance-kernel.workspace = true
 
 [lints]
 workspace = true
