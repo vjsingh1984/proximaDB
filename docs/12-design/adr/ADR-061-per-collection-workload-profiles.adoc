@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 = ADR-061: Per-collection workload profiles — storage-projection strategy is a first-class collection attribute; records stay authority
 
-:status: Proposed
+:status: Accepted (2026-07-14)
 :date: 2026-07-14
 :deciders: architecture
 :relates-to: ADR-044 (stable symbol OID), ADR-045/046 (PAX durable-core / LSN-coherent merge-read), ADR-052/058/059 (analytics execution routing), ADR-053 (cross-modal fabric), TD-133 (CrossModelTransactionCoordinator), TD-RDSTRAT-4/5 (clustering + centroid prune), TD-WLP-1..6 (implementation slices)
@@ -10,9 +10,9 @@
 
 == Status
 
-**Proposed** (2026-07-14). Decision points D1–D7 below; implementation tracked by TD-WLP-1..6.
-Ships incrementally, every slice default-OFF and mixed-read-safe — absent the opt-in tag, behaviour
-is byte-for-byte today's.
+**Accepted** (2026-07-14). Decision points D1–D7 below; implementation tracked by TD-WLP-1..6 and
+driven in the ProximaDB implementation session on handoff. Ships incrementally, every slice
+default-OFF and mixed-read-safe — absent the opt-in tag, behaviour is byte-for-byte today's.
 
 == Context
 

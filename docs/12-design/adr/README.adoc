@@ -236,7 +236,7 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 
 | link:ADR-061-per-collection-workload-profiles.adoc[ADR-061]
 | Per-collection workload profiles — storage-projection strategy is a first-class collection attribute; records stay authority
-| Proposed
+| Accepted (2026-07-14)
 | Introduces `StorageProfile {AppendBulk, Churn}` as a per-collection attribute (via the `workload_profile:` tag cascade, tag>env>default, distinct from `CatalogWorkloadProfile`) selecting the *read-acceleration projection*, never the durability contract. **D1** profile via tag cascade; **D2** canonical `ProximaRecord`+WAL stays sole authority for both profiles (vector index + ORION CSR are rebuildable projections — the load-bearing safety decision); **D3** `AppendBulk` = durable clustered PAX-LSM, Hilbert-on-raw bootstrap at L0 → train PCA/IVF + re-cluster at compaction on fp32-PCA (not codes); **D4** `Churn` (agent code-RAG) = in-memory mutable AXIS index + ORION epoch-fresh graph + `oid` fusion, immediate freshness, no compaction-cluster staleness; **D5** per-collection compaction override lifts the global default-OFF gate (mirrors `CollectionWalConfig`); **D6** profile selects a read-path projection, not a `ComputeScheduler` engine route; **D7** the `d(q,c)−k·radius` lower-bound prune (default 0.0) is the `AppendBulk` read accelerator. Grounded in a measured SIFT sweep (pruned recall 0.99→0.81 = weak clustering geometry) + review showing ORION is a Beta projection not authority. Rejected: new per-profile engine (A1), ORION-as-authority (A2), cluster-on-codes (A3), auto-infer-in-v1 (A4). Implemented by TD-WLP-1..6, each default-OFF + mixed-read-safe.
 |===
 
