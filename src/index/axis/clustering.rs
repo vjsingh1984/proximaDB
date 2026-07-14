@@ -954,6 +954,60 @@ impl ReusableClusteringEngine for AxisClusteringEngine {
     }
 }
 
+// AxisClusteringPort impl — Slice D port-inversion. Exposes the root-local
+// AxisClusteringEngine behind the AxisClusteringPort trait (defined in
+// proximadb-storage-ports) so raptor engine leaves (writer / IvfClusteringBuilder)
+// can depend on `Arc<dyn AxisClusteringPort>` instead of this concrete type,
+// enabling their extraction to crates. Pure delegation to the
+// ReusableClusteringEngine methods above; the composition root injects the engine.
+impl proximadb_storage_ports::AxisClusteringPort for AxisClusteringEngine {
+    fn cluster_vectors_simple(
+        &self,
+        vectors: &[Vec<f32>],
+        k: usize,
+        distance_metric: DistanceMetric,
+        max_iterations: usize,
+    ) -> Result<(Vec<Vec<f32>>, Vec<usize>)> {
+        ReusableClusteringEngine::cluster_vectors_simple(
+            self,
+            vectors,
+            k,
+            distance_metric,
+            max_iterations,
+        )
+    }
+
+    fn calculate_centroid_distance_matrix(
+        &self,
+        centroids: &[Vec<f32>],
+        distance_metric: DistanceMetric,
+    ) -> Result<Vec<Vec<f32>>> {
+        ReusableClusteringEngine::calculate_centroid_distance_matrix(
+            self,
+            centroids,
+            distance_metric,
+        )
+    }
+
+    fn assign_vectors_with_component_boosting(
+        &self,
+        vectors: &[Vec<f32>],
+        centroids: &[Vec<f32>],
+        centroid_distances: &[Vec<f32>],
+        distance_metric: DistanceMetric,
+        boosting_weights: &[f32],
+    ) -> Result<Vec<(usize, f32)>> {
+        ReusableClusteringEngine::assign_vectors_with_component_boosting(
+            self,
+            vectors,
+            centroids,
+            centroid_distances,
+            distance_metric,
+            boosting_weights,
+        )
+    }
+}
+
 /// Helper methods for simplified clustering
 impl AxisClusteringEngine {
     /// Simplified K-Means++ initialization without full AXIS overhead
