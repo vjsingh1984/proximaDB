@@ -185,15 +185,21 @@ impl StorageEngine {
     pub async fn start(&mut self) -> crate::storage::Result<()> {
         tracing::info!("🚀 STORAGE_ENGINE: Starting storage engine");
 
-        // Replay WAL to recover state
-        tracing::info!("📊 STORAGE_ENGINE: About to call recover_from_wal()");
-        self.recover_from_wal().await?;
-        tracing::info!("✅ STORAGE_ENGINE: WAL recovery completed, moving to load_collections()");
-
-        // Initialize existing collections
+        // Load the durable catalog before WAL replay. Recovery flushes each WAL
+        // batch through the collection's assigned storage engine, so those
+        // engines must be registered first (especially after a cold restart,
+        // when the catalog itself has just been restored from object storage).
         tracing::info!("📊 STORAGE_ENGINE: About to call load_collections()");
         self.load_collections().await?;
-        tracing::info!("✅ STORAGE_ENGINE: Collections loaded, starting compaction workers");
+        tracing::info!("✅ STORAGE_ENGINE: Collections loaded");
+
+        tracing::info!("📊 STORAGE_ENGINE: About to call register_collections_for_recovery()");
+        self.register_collections_for_recovery().await?;
+        tracing::info!("✅ STORAGE_ENGINE: Recovery engines registered");
+
+        tracing::info!("📊 STORAGE_ENGINE: About to call recover_from_wal()");
+        self.recover_from_wal().await?;
+        tracing::info!("✅ STORAGE_ENGINE: WAL recovery completed, starting compaction workers");
 
         // Start compaction workers
         // We need to replace the compaction manager to start workers
@@ -442,6 +448,7 @@ impl StorageEngine {
 
         // Recover each collection
         let mut total_vectors_recovered = 0u64;
+        let mut recovery_failures = Vec::new();
         for collection in collections {
             tracing::debug!("Recovering collection: {}", collection.id);
 
@@ -458,9 +465,17 @@ impl StorageEngine {
                         "⚠️  STORAGE_ENGINE: Failed to recover collection {}: {}",
                         collection.id, e
                     );
-                    // Continue with other collections even if one fails
+                    recovery_failures.push(format!("{}: {}", collection.id, e));
                 }
             }
+        }
+
+        if !recovery_failures.is_empty() {
+            return Err(crate::storage::StorageError::WalError(format!(
+                "WAL recovery failed for {} collection(s): {}",
+                recovery_failures.len(),
+                recovery_failures.join("; ")
+            )));
         }
 
         info!(
@@ -490,16 +505,20 @@ impl StorageEngine {
         info!("📋 Found {} collections to register", collections.len());
 
         // Get recovery manager from WAL
-        let recovery_manager = match self.write_ahead_log_manager.get_recovery_manager().await {
-            Ok(rm) => rm,
-            Err(e) => {
-                warn!("⚠️ Failed to get recovery manager: {}", e);
-                return Ok(()); // Continue even if we can't get recovery manager
-            }
-        };
+        let recovery_manager = self
+            .write_ahead_log_manager
+            .get_recovery_manager()
+            .await
+            .map_err(|e| {
+                crate::storage::StorageError::WalError(format!(
+                    "Failed to get recovery manager before registration: {}",
+                    e
+                ))
+            })?;
 
         // Store collection count before iterating
         let collection_count = collections.len();
+        let mut registration_failures = Vec::new();
 
         // Register each collection's storage engine
         for collection in &collections {
@@ -535,6 +554,7 @@ impl StorageEngine {
                             "⚠️ Failed to register engine for collection {}: {}",
                             collection.id, e
                         );
+                        registration_failures.push(format!("{}: {}", collection.id, e));
                     } else {
                         info!(
                             "✅ Registered {} engine for collection {} (from {})",
@@ -553,8 +573,17 @@ impl StorageEngine {
                         "⚠️ Failed to create engine for collection {}: {}",
                         collection.id, e
                     );
+                    registration_failures.push(format!("{}: {}", collection.id, e));
                 }
             }
+        }
+
+        if !registration_failures.is_empty() {
+            return Err(crate::storage::StorageError::WalError(format!(
+                "Storage-engine registration failed for {} collection(s): {}",
+                registration_failures.len(),
+                registration_failures.join("; ")
+            )));
         }
 
         info!(

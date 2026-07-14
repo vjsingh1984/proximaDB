@@ -1,4 +1,8 @@
-# ProximaDB Cloud-Optimized Configuration (S3, GCS, Azure)
+# ProximaDB Cloud-Optimized tuning overlay (S3, GCS, Azure)
+#
+# For a complete durable object-store layout (catalog + WAL + SST/VIPER), use
+# `config/cloud-object-store.toml`. This file intentionally contains only block
+# and row-group tuning and must not be used as a standalone deployment config.
 #
 # Goal: Minimize I/O operations and leverage high throughput.
 # Strategy: Use larger block and page sizes to amortize first-byte latency.

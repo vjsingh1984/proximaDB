@@ -8043,10 +8043,14 @@ dependencies = [
  "clap",
  "proximadb",
  "proximadb-embedding",
+ "reqwest 0.11.27",
+ "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
