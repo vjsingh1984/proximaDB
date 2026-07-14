@@ -114,6 +114,7 @@ async fn search(
             top_k: Some(TOP_K),
             distance_metric: Some(metric),
             block_prune: BlockPruneConfig {
+                radius_k: 0.0,
                 force_exact: true, // exact scan — exercise the distance compute path
                 mode: BlockPruneMode::Ratio,
                 ratio: 1.0,

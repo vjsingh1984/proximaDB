@@ -331,7 +331,12 @@ impl SystemCatalog {
                 .commits_since_snapshot
                 .fetch_add(applied, Ordering::SeqCst)
                 + applied;
-            if n >= cfg.threshold {
+            // For an object-store catalog the local WAL is only a staging log:
+            // a VM/pod replacement starts with a fresh local data_dir, so the
+            // snapshot is the ONLY catalog artifact that survives. Publish it
+            // before acknowledging every DDL. Local catalogs retain the normal
+            // threshold because their WAL itself is durable.
+            if cfg.store.requires_snapshot_on_commit() || n >= cfg.threshold {
                 self.checkpoint_locked(cfg).await?;
                 self.commits_since_snapshot.store(0, Ordering::SeqCst);
             }
@@ -1232,13 +1237,17 @@ mod tests {
             cat.checkpoint().await?;
             assert_eq!(wal_entry_count(dir.path()).await, 0);
 
-            // A post-snapshot DDL lands only on the local WAL tail.
+            // A post-snapshot DDL on an object-store catalog is acknowledged only
+            // after it publishes its own snapshot (TD-OBJSTORE-2: the local WAL is
+            // a staging log that does not survive VM/pod replacement, so the
+            // snapshot must carry every committed DDL). That publish compacts the
+            // local WAL tail back to empty — the DDL now lives in the snapshot.
             cat.create_table(
                 &TableIdentifier::new(nslevels(&["s"]), "t3"),
                 vec_schema("t3"),
             )
             .await?;
-            assert_eq!(wal_entry_count(dir.path()).await, 1);
+            assert_eq!(wal_entry_count(dir.path()).await, 0);
         }
 
         // Reopen with a new store handle over the SAME backing object store and
@@ -1257,6 +1266,67 @@ mod tests {
                 "table {t} must survive object-store snapshot + WAL tail + reopen"
             );
         }
+        Ok(())
+    }
+
+    /// TD-OBJSTORE-2 regression: one collection-sized DDL batch must survive a
+    /// restart onto a fresh local volume without an explicit checkpoint. Before
+    /// this fix the default threshold (1,000 mutations) left these mutations
+    /// only in the local catalog WAL, so a VM replacement recovered an empty
+    /// catalog even though the data WAL was durable in object storage.
+    #[tokio::test]
+    async fn object_store_commit_survives_fresh_local_wal_without_checkpoint() -> Result<()> {
+        use crate::services::catalog_snapshot_store::ObjectStoreSnapshotStore;
+        use proximadb_object_store::ProximaObjectStore;
+
+        let first_vm = tempfile::tempdir()?;
+        let replacement_vm = tempfile::tempdir()?;
+        let backing: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+        let key = "_operator/catalog/_manifests/";
+
+        {
+            let store = Arc::new(ObjectStoreSnapshotStore::new(
+                ProximaObjectStore::new(backing.clone()),
+                "memory:///",
+                key,
+            ));
+            let cat = SystemCatalog::open_with_snapshot_store(
+                "default",
+                first_vm.path().join("catalog.wal"),
+                store,
+            )
+            .await?;
+            cat.create_namespace(&nslevels(&["default"]), HashMap::new())
+                .await?;
+            cat.create_table(
+                &TableIdentifier::new(nslevels(&["default"]), "durable_collection"),
+                vec_schema("durable_collection"),
+            )
+            .await?;
+            // No checkpoint and no graceful shutdown: model abrupt VM loss.
+        }
+
+        let store = Arc::new(ObjectStoreSnapshotStore::new(
+            ProximaObjectStore::new(backing),
+            "memory:///",
+            key,
+        ));
+        let reopened = SystemCatalog::open_with_snapshot_store(
+            "default",
+            replacement_vm.path().join("catalog.wal"),
+            store,
+        )
+        .await?;
+        assert!(
+            reopened
+                .table_exists(&TableIdentifier::new(
+                    nslevels(&["default"]),
+                    "durable_collection"
+                ))
+                .await?,
+            "catalog DDL must be present when the replacement VM has no local WAL"
+        );
         Ok(())
     }
 
@@ -1499,10 +1569,18 @@ mod tests {
         Ok(())
     }
 
-    /// A **superseded** owner steps down: when a newer-generation pod has taken
-    /// the catalog over, a sinval poll on the old owner reloads the newer
-    /// snapshot, **discards** its own now-doomed unpublished writes, and flips to
-    /// read-only (no lost update — the fence + step-down converge to one writer).
+    /// A **superseded** owner steps down on its next sinval poll: when a
+    /// newer-generation pod has taken the catalog over, an old owner that has
+    /// not written since the takeover learns of it lazily, reloads the newer
+    /// snapshot, and flips to read-only (no lost update — the fence + step-down
+    /// converge to one writer).
+    ///
+    /// With object-store snapshot-on-commit (TD-OBJSTORE-2) every DDL publishes,
+    /// so a superseded owner fences on its *next write* rather than via a later
+    /// poll — there is no "unpublished local write" window to exercise here.
+    /// The poll path is therefore driven by an owner that has been silent since
+    /// the takeover. (The write-time fence + discard of a doomed write is
+    /// covered by `fenced_checkpoint_steps_down_and_reloads`.)
     #[tokio::test]
     async fn superseded_owner_steps_down_via_poll() -> Result<()> {
         let dir = tempfile::tempdir()?;
@@ -1524,10 +1602,9 @@ mod tests {
         pod_b.create_table(&tid("t2"), vec_schema("t2")).await?;
         pod_b.checkpoint().await?;
 
-        // Pod A writes t3 locally — unaware it has been superseded; it is visible
-        // on A until the next poll.
-        pod_a.create_table(&tid("t3"), vec_schema("t3")).await?;
-        assert!(pod_a.table_exists(&tid("t3")).await?);
+        // Pod A has not written since the takeover, so no checkpoint-time fence
+        // has fired yet — it still believes it owns the catalog.
+        assert!(!pod_a.is_read_only());
 
         // Sinval poll on A: a higher generation owns the catalog → step down.
         match pod_a.reload_if_stale().await? {
@@ -1545,13 +1622,9 @@ mod tests {
             pod_a.is_read_only(),
             "superseded owner must step down to read-only"
         );
-        // A converges to B's snapshot: sees t1 + t2, and its doomed t3 is gone.
+        // A converges to B's snapshot: sees t1 + t2.
         assert!(pod_a.table_exists(&tid("t1")).await?);
         assert!(pod_a.table_exists(&tid("t2")).await?);
-        assert!(
-            !pod_a.table_exists(&tid("t3")).await?,
-            "the superseded pod's unpublished write must be discarded (no lost update)"
-        );
         // A can no longer write.
         assert!(
             pod_a

@@ -121,6 +121,12 @@ pub struct MultiServer {
     /// producer instead of falling back to inline embed. None when
     /// `PROXIMADB_QUEUE_ROOT` is unset.
     queue_client: Option<Arc<proximadb_queue::QueueClient>>,
+    /// TD-TENANT-1: the deployment-effective bare tenant-assertion trust
+    /// policy (env > `[security.tenant] header_trust` > deployment-mode
+    /// preset, resolved once in `database.rs`), threaded into EVERY network
+    /// surface: REST tenant middleware, gRPC auth layer, Arrow Flight
+    /// service, and pgwire protocol.
+    tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
 }
 
 impl MultiServer {
@@ -261,7 +267,17 @@ impl MultiServer {
             server_handles: Arc::new(Mutex::new(Vec::new())),
             llm_engine,
             queue_client,
+            tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
         }
+    }
+
+    /// TD-TENANT-1: set the deployment-effective bare tenant-assertion trust
+    /// policy (resolve once via `HeaderTrustPolicy::effective` from the
+    /// deployment-mode preset + `[security.tenant] header_trust` + env, then
+    /// pass here). Threaded into every network surface at start.
+    pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
+        self.tenant_header_trust = policy;
+        self
     }
 
     async fn build_direct_pgwire_write_services(
@@ -501,9 +517,10 @@ impl MultiServer {
             };
             let mut server_builder =
                 server_builder.layer(tower::util::option_layer(if self.rest_auth_enabled {
-                    self.security_coordinator
-                        .clone()
-                        .map(crate::network::grpc::auth::GrpcAuthLayer::new)
+                    self.security_coordinator.clone().map(|sc| {
+                        crate::network::grpc::auth::GrpcAuthLayer::new(sc)
+                            .with_header_trust(self.tenant_header_trust)
+                    })
                 } else {
                     None
                 }));
@@ -679,6 +696,7 @@ impl MultiServer {
             let primary_pod_registry = services.primary_pod_registry.clone();
             let self_pod_id = services.self_pod_id.clone();
             let api_handlers = services.api_handlers.clone();
+            let tenant_header_trust = self.tenant_header_trust;
 
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
@@ -689,7 +707,8 @@ impl MultiServer {
                     arrow_vector_ops,
                     arrow_collection,
                     arrow_graph,
-                );
+                )
+                .with_tenant_header_trust(tenant_header_trust);
                 match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
@@ -735,6 +754,7 @@ impl MultiServer {
             let security_coordinator = self.security_coordinator.clone();
             let rest_auth_enabled = self.rest_auth_enabled;
             let tenant_deployment_mode = self.tenant_deployment_mode.clone();
+            let tenant_header_trust = self.tenant_header_trust;
             let data_dir = self.config.data_dir.clone();
             let query_adapter = Some(services.query_adapter());
             let graph_execution_service = services.graph_execution_service.clone();
@@ -773,6 +793,10 @@ impl MultiServer {
                     crate::network::middleware::tenant::TenantExtractorConfig::from_deployment_mode(
                         tenant_deployment_mode,
                     );
+                // TD-TENANT-1: the deployment-effective policy (config/env
+                // resolved once in database.rs) overrides the mode preset;
+                // server.rs re-applies the env override idempotently.
+                rest_security.tenant.header_trust = tenant_header_trust;
                 rest_security.auth.enabled = auth_enabled;
 
                 // Pass port objects so document/graph/observability routes use
@@ -856,6 +880,7 @@ impl MultiServer {
                     )
                 });
 
+            let tenant_header_trust = self.tenant_header_trust;
             let postgres_handle = tokio::spawn(async move {
                 use crate::network::postgres::PostgresServer;
                 let mut server = PostgresServer::new(
@@ -874,6 +899,7 @@ impl MultiServer {
                     server.with_rank_pipeline(rank_services, rank_profile_store, function_store);
                 server = server.with_primary_pod_gate(primary_pod_registry, self_pod_id);
                 server = server.with_warehouse_materialization(warehouse_root_url);
+                server = server.with_tenant_header_trust(tenant_header_trust);
                 if let Some(limiter) = pgwire_rate_limiter {
                     server = server.with_rate_limiter(limiter);
                 }
@@ -1018,6 +1044,9 @@ impl MultiServer {
                 Some(services.rank_profile_store.clone()),
                 Some(services.discovery_service.clone()),
                 Some(services.external_collection_service.clone()),
+                crate::network::middleware::tenant::TenantExtractorConfig::from_deployment_mode(
+                    self.tenant_deployment_mode.clone(),
+                ),
                 self.config.admin_ui_enabled,
             );
 
@@ -1058,6 +1087,7 @@ impl MultiServer {
                 } else {
                     None
                 })
+                .with_tenant_header_trust(self.tenant_header_trust)
                 .with_catalog_manager(Some(services.catalog_manager.clone()));
             let flight_server =
                 arrow_flight::flight_service_server::FlightServiceServer::new(flight_service)
@@ -1066,9 +1096,10 @@ impl MultiServer {
 
             let mut server_builder = tonic::transport::Server::builder().layer(
                 tower::util::option_layer(if self.rest_auth_enabled {
-                    self.security_coordinator
-                        .clone()
-                        .map(crate::network::grpc::auth::GrpcAuthLayer::new)
+                    self.security_coordinator.clone().map(|sc| {
+                        crate::network::grpc::auth::GrpcAuthLayer::new(sc)
+                            .with_header_trust(self.tenant_header_trust)
+                    })
                 } else {
                     None
                 }),
@@ -1154,6 +1185,7 @@ impl MultiServer {
             let services = self.shared_services.clone();
             let direct_write_services = self.build_direct_pgwire_write_services().await?;
             let warehouse_root_url = format!("file://{}/warehouse", self.config.data_dir.display());
+            let tenant_header_trust = self.tenant_header_trust;
             let postgres_handle = tokio::spawn(async move {
                 use crate::network::postgres::PostgresServer;
 
@@ -1183,6 +1215,7 @@ impl MultiServer {
                     services.self_pod_id.clone(),
                 );
                 server = server.with_warehouse_materialization(warehouse_root_url);
+                server = server.with_tenant_header_trust(tenant_header_trust);
 
                 if let Err(e) = server.start().await {
                     tracing::error!("❌ PostgreSQL Server error: {}", e);
@@ -1400,9 +1433,10 @@ impl MultiServer {
             };
             let mut server_builder =
                 server_builder.layer(tower::util::option_layer(if self.rest_auth_enabled {
-                    self.security_coordinator
-                        .clone()
-                        .map(crate::network::grpc::auth::GrpcAuthLayer::new)
+                    self.security_coordinator.clone().map(|sc| {
+                        crate::network::grpc::auth::GrpcAuthLayer::new(sc)
+                            .with_header_trust(self.tenant_header_trust)
+                    })
                 } else {
                     None
                 }));
@@ -1515,6 +1549,7 @@ impl MultiServer {
             let primary_pod_registry = services.primary_pod_registry.clone();
             let self_pod_id = services.self_pod_id.clone();
             let api_handlers = services.api_handlers.clone();
+            let tenant_header_trust = self.tenant_header_trust;
 
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
@@ -1525,7 +1560,8 @@ impl MultiServer {
                     arrow_vector_ops,
                     arrow_collection,
                     arrow_graph,
-                );
+                )
+                .with_tenant_header_trust(tenant_header_trust);
                 match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
@@ -1560,6 +1596,7 @@ impl MultiServer {
             let security_coordinator = self.security_coordinator.clone();
             let rest_auth_enabled = self.rest_auth_enabled;
             let tenant_deployment_mode = self.tenant_deployment_mode.clone();
+            let tenant_header_trust = self.tenant_header_trust;
             let data_dir = self.config.data_dir.clone();
             let query_adapter = Some(services.query_adapter());
             let graph_execution_service = services.graph_execution_service.clone();
@@ -1593,6 +1630,10 @@ impl MultiServer {
                     crate::network::middleware::tenant::TenantExtractorConfig::from_deployment_mode(
                         tenant_deployment_mode,
                     );
+                // TD-TENANT-1: the deployment-effective policy (config/env
+                // resolved once in database.rs) overrides the mode preset;
+                // server.rs re-applies the env override idempotently.
+                rest_security.tenant.header_trust = tenant_header_trust;
                 rest_security.auth.enabled = auth_enabled;
 
                 let rest_ports = RestServerPorts {

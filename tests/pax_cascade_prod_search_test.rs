@@ -94,6 +94,7 @@ async fn search(
             top_k: Some(TOP_K),
             distance_metric: Some(DistanceMetric::Euclidean),
             block_prune: BlockPruneConfig {
+                radius_k: 0.0,
                 force_exact,
                 mode: BlockPruneMode::Ratio,
                 ratio: 1.0,

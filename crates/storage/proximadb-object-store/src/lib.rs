@@ -108,7 +108,20 @@ fn url_err(url: &str, e: impl std::fmt::Display) -> StorageError {
 /// (`AWS_ROLE_ARN` / `AWS_WEB_IDENTITY_TOKEN_FILE`), authenticate ADLS/S3 with no static key —
 /// matching the `FileSystem` Azure backend's posture. `file://`/`memory://` ignore the options.
 pub fn store_for_url(url: &str) -> Result<(Arc<dyn ObjectStore>, Path), StorageError> {
-    let parsed = Url::parse(url).map_err(|e| url_err(url, e))?;
+    // ProximaDB scheme aliases (ADR-036: every Azure spelling resolves to the
+    // SAME flat Blob backend; `gcs://` is a documented GCS alias). The upstream
+    // `object_store` URL parser only recognises `az`/`adl`/`azure`/`abfs[s]`
+    // and `gs` — an unnormalized `adls://`/`gcs://` URL errors as an
+    // unsupported scheme, which silently demoted catalog durability on Azure
+    // deployments (TD-OBJSTORE-1, #960).
+    let url = if let Some(rest) = url.strip_prefix("adls://") {
+        format!("az://{rest}")
+    } else if let Some(rest) = url.strip_prefix("gcs://") {
+        format!("gs://{rest}")
+    } else {
+        url.to_string()
+    };
+    let parsed = Url::parse(&url).map_err(|e| url_err(&url, e))?;
     let env_opts = std::env::vars().map(|(k, v)| (k.to_ascii_lowercase(), v));
     let (store, path) = object_store::parse_url_opts(&parsed, env_opts)
         .map_err(|e| os_err(&format!("parse_url({url})"), e))?;
@@ -344,6 +357,33 @@ impl ProximaObjectStore {
 
 #[cfg(test)]
 mod tests {
+    /// TD-OBJSTORE-1 (#960): the documented `adls://`/`gcs://` aliases must
+    /// normalize to schemes the upstream `object_store` URL parser knows
+    /// (`az://`, `gs://`). Under the matching cloud feature they open a store;
+    /// without it they fail with the parser/builder error for the NORMALIZED
+    /// scheme — never `Unknown url scheme "adls"`.
+    #[test]
+    fn adls_and_gcs_aliases_normalize_before_parse() {
+        for (alias, canonical) in [
+            ("adls://container/prefix/x", "az"),
+            ("gcs://bucket/prefix/x", "gs"),
+        ] {
+            match store_for_url(alias) {
+                // Cloud feature compiled in: the alias opens a store.
+                Ok(_) => {}
+                // Feature off: the error must be about the canonical scheme's
+                // backend, not an unrecognized alias.
+                Err(e) => {
+                    let msg = e.to_string();
+                    assert!(
+                        !msg.contains("adls") && !msg.contains("gcs"),
+                        "alias {alias} leaked through unnormalized (canonical {canonical}): {msg}"
+                    );
+                }
+            }
+        }
+    }
+
     use super::*;
 
     #[tokio::test]

@@ -598,6 +598,74 @@ mod tests {
         }
     }
 
+    /// Test adapter whose unflushed half is the production memtable raw-read
+    /// contract, rather than a fixed vector returned by `FakeRoute`.
+    struct WalMemtableRoute {
+        base: String,
+        memtable: Arc<crate::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable>,
+    }
+
+    #[async_trait]
+    impl RecordRoutePort for WalMemtableRoute {
+        async fn insert_records(
+            &self,
+            _c: &str,
+            _r: Vec<ProximaRecord>,
+            _t: Option<&str>,
+        ) -> anyhow::Result<usize> {
+            unreachable!("read-only test route")
+        }
+        async fn get_record(
+            &self,
+            _c: &str,
+            _r: &str,
+            _t: Option<&str>,
+        ) -> anyhow::Result<Option<ProximaRecord>> {
+            unreachable!("read-only test route")
+        }
+        async fn scan_records(
+            &self,
+            _c: &str,
+            _l: usize,
+            _t: Option<&str>,
+        ) -> anyhow::Result<Vec<ProximaRecord>> {
+            unreachable!("read-only test route")
+        }
+        async fn delete_records(
+            &self,
+            _c: &str,
+            _r: Vec<String>,
+            _t: Option<&str>,
+        ) -> anyhow::Result<usize> {
+            unreachable!("read-only test route")
+        }
+        async fn collection_exists(&self, _c: &str, _t: Option<&str>) -> bool {
+            true
+        }
+        async fn ensure_collection(
+            &self,
+            _c: &str,
+            _d: u32,
+            _t: Option<&str>,
+            _p: &[String],
+        ) -> anyhow::Result<()> {
+            unreachable!("read-only test route")
+        }
+        async fn pax_scan_inputs(&self, _c: &str, _t: Option<&str>) -> Option<PaxScanInputs> {
+            Some(PaxScanInputs {
+                base_path: self.base.clone(),
+                columns: Vec::new(),
+            })
+        }
+        async fn unflushed_records(
+            &self,
+            collection: &str,
+            _t: Option<&str>,
+        ) -> anyhow::Result<Vec<ProximaRecord>> {
+            Ok(self.memtable.get_collection_vectors_raw(collection).await?)
+        }
+    }
+
     /// Build a document `ProximaRecord` the way the converged write path does: labeled `document`,
     /// `oid = local_id = id`, props carrying the reserved collection key + the user fields.
     fn doc(
@@ -737,6 +805,79 @@ mod tests {
         assert_eq!(
             ids(p, "SELECT id FROM documents ORDER BY id").await,
             vec!["live"]
+        );
+    }
+
+    /// Invariant 16d production-delta ratchet: a live PAX row followed by an
+    /// unflushed WAL tombstone must not resurrect through `documents()`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn flushed_live_plus_raw_memtable_delete_returns_zero_rows() {
+        use proximadb_block_format::{BlockCompression, BlockMode};
+        use proximadb_storage_common::pax_block::PaxSegmentWriter;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let segments = dir.path().join("segments");
+        std::fs::create_dir_all(&segments).expect("segments dir");
+        let mut writer = PaxSegmentWriter::new(
+            segments.join("data.pax"),
+            BlockMode::Pax,
+            BlockCompression::None,
+            "docs",
+            0,
+            1,
+            None,
+        );
+        writer
+            .add_record(&doc(
+                "d1",
+                "docs",
+                &[("region", ProximaValue::String("US".into()))],
+                10,
+                None,
+            ))
+            .expect("write flushed document");
+        writer.finish().expect("finish PAX segment");
+
+        let memtable = Arc::new(
+            crate::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable::new(),
+        );
+        memtable
+            .add_wal_batch(
+                "docs",
+                crate::storage::memtable::specialized::wal_behavior::WALVectorBatch {
+                    batch_id: crate::storage::persistence::write_ahead_log::BatchId::new(),
+                    vector_records: Arc::new(vec![tombstone("d1", 20)]),
+                    timestamp: std::time::SystemTime::now(),
+                    total_size_bytes: 0,
+                    is_flushed: false,
+                    metadata_bloom_filter: None,
+                },
+            )
+            .await
+            .expect("append tombstone to memtable");
+
+        let base = format!("file://{}/", dir.path().display());
+        let route: Arc<dyn RecordRoutePort> = Arc::new(WalMemtableRoute {
+            base: base.clone(),
+            memtable,
+        });
+        let ff = crate::storage::persistence::filesystem::FilesystemFactory::create_default_arc()
+            .await
+            .expect("filesystem factory");
+        let provider = DocumentPaxPushdownProvider::new(
+            route,
+            ff,
+            None,
+            "docs",
+            PaxScanInputs {
+                base_path: base,
+                columns: Vec::new(),
+            },
+        );
+
+        assert!(
+            ids(provider, "SELECT id FROM documents").await.is_empty(),
+            "an unflushed tombstone must suppress the flushed live copy"
         );
     }
 

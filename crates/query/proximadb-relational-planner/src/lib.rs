@@ -1072,8 +1072,13 @@ pub fn push_predicates<R: CapabilityResolver>(plan: PhysicalPlan, resolver: &R) 
                     let left_width = left.output_schema().columns.len();
                     let mut left_bucket: Vec<Expr> = Vec::new();
                     let mut right_bucket: Vec<Expr> = Vec::new();
+                    let mut implicit_join_bucket: Vec<Expr> = Vec::new();
                     let mut residual: Vec<Expr> = Vec::new();
                     for conj in flatten_and(&predicate).into_iter().cloned() {
+                        if kind == JoinKind::Cross && is_cross_side_equality(&conj, left_width) {
+                            implicit_join_bucket.push(conj);
+                            continue;
+                        }
                         let mut ords = Vec::new();
                         collect_column_ordinals(&conj, &mut ords);
                         if ords.is_empty() {
@@ -1107,6 +1112,17 @@ pub fn push_predicates<R: CapabilityResolver>(plan: PhysicalPlan, resolver: &R) 
                         )),
                         None => right,
                     };
+                    let (kind, on, strategy) =
+                        if kind == JoinKind::Cross && !implicit_join_bucket.is_empty() {
+                            let on = combine_all(implicit_join_bucket);
+                            (
+                                JoinKind::Inner,
+                                on.clone(),
+                                pick_join_strategy(JoinKind::Inner, on.as_ref()),
+                            )
+                        } else {
+                            (kind, on, strategy)
+                        };
                     let joined = PhysicalPlan::Join {
                         left: new_left,
                         right: new_right,
@@ -1491,6 +1507,24 @@ fn flatten_and_into<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
         }
         other => out.push(other),
     }
+}
+
+/// Whether `expr` is a column equality spanning the two inputs of a
+/// left++right combined schema. These are the safe join keys that normalize
+/// ANSI comma joins from `Cross + Filter` to an inner equi-join.
+fn is_cross_side_equality(expr: &Expr, left_width: usize) -> bool {
+    let Expr::BinaryOp {
+        op: BinaryOp::Eq,
+        left,
+        right,
+    } = expr
+    else {
+        return false;
+    };
+    let (Expr::Column(left), Expr::Column(right)) = (left.as_ref(), right.as_ref()) else {
+        return false;
+    };
+    (left.ordinal < left_width) != (right.ordinal < left_width)
 }
 
 fn expression_references_columns(expr: &Expr) -> bool {
@@ -3299,6 +3333,82 @@ mod tests {
             matches!(result, PhysicalPlan::Filter { .. }),
             "cross-side conjunct cannot be pushed to one child"
         );
+    }
+
+    #[test]
+    fn comma_join_filter_normalizes_to_hash_join_with_residual() {
+        let join_key = Expr::bin(
+            BinaryOp::Eq,
+            col_at(0, "id", ProximaType::Int64),
+            col_at(4, "user_id", ProximaType::Int64),
+        );
+        let residual = Expr::bin(
+            BinaryOp::Gt,
+            col_at(5, "total", ProximaType::Float64),
+            Expr::literal(ProximaValue::Float64(10.0)),
+        );
+        let physical = PhysicalPlan::Filter {
+            input: Box::new(PhysicalPlan::Join {
+                left: Box::new(lower_to_physical(users_scan())),
+                right: Box::new(lower_to_physical(orders_scan())),
+                kind: JoinKind::Cross,
+                on: None,
+                strategy: JoinStrategy::NestedLoop,
+            }),
+            predicate: Expr::bin(BinaryOp::And, join_key, residual),
+        };
+
+        let result = push_predicates(physical, &cap_full(Vec::new()));
+        let PhysicalPlan::Join {
+            kind,
+            on,
+            strategy,
+            right,
+            ..
+        } = result
+        else {
+            panic!("expected normalized join with right residual pushed");
+        };
+        assert_eq!(kind, JoinKind::Inner);
+        assert!(on.is_some(), "cross-side equality becomes the ON key");
+        assert!(matches!(strategy, JoinStrategy::Hash { .. }));
+        assert!(matches!(
+            *right,
+            PhysicalPlan::Scan {
+                predicate: Some(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn cross_join_without_equality_is_not_misrewritten() {
+        let physical = PhysicalPlan::Filter {
+            input: Box::new(PhysicalPlan::Join {
+                left: Box::new(lower_to_physical(users_scan())),
+                right: Box::new(lower_to_physical(orders_scan())),
+                kind: JoinKind::Cross,
+                on: None,
+                strategy: JoinStrategy::NestedLoop,
+            }),
+            predicate: Expr::bin(
+                BinaryOp::Gt,
+                col_at(0, "id", ProximaType::Int64),
+                col_at(4, "user_id", ProximaType::Int64),
+            ),
+        };
+
+        let result = push_predicates(physical, &cap_full(Vec::new()));
+        let PhysicalPlan::Filter { input, .. } = result else {
+            panic!("non-equi predicate must remain residual");
+        };
+        assert!(matches!(
+            *input,
+            PhysicalPlan::Join {
+                kind: JoinKind::Cross,
+                ..
+            }
+        ));
     }
 
     #[test]

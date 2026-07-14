@@ -608,6 +608,28 @@ impl ProximaDB {
             );
         }
 
+        // TD-TENANT-1: resolve the deployment-effective bare tenant-assertion
+        // trust policy ONCE (env > [security.tenant] header_trust > deployment-
+        // mode preset) and thread it into every network surface via MultiServer.
+        let (tenant_header_trust, trust_warning) = proximadb_tenant::HeaderTrustPolicy::effective(
+            match &tenant_deployment_mode {
+                proximadb_tenant::TenantDeploymentMode::MultiTenant => {
+                    proximadb_tenant::HeaderTrustPolicy::AuthenticatedOnly
+                }
+                proximadb_tenant::TenantDeploymentMode::SingleTenant { .. } => {
+                    proximadb_tenant::HeaderTrustPolicy::Open
+                }
+            },
+            config
+                .security
+                .as_ref()
+                .and_then(|security| security.tenant.header_trust),
+        );
+        if let Some(warning) = trust_warning {
+            tracing::warn!("{warning}");
+        }
+        tracing::info!(policy = %tenant_header_trust, "🔐 tenant header-trust policy (TD-TENANT-1)");
+
         let multi_server = network::MultiServer::new_with_queue_client(
             multi_config,
             shared_services,
@@ -616,7 +638,8 @@ impl ProximaDB {
             tenant_deployment_mode,
             llm_engine,
             queue_client.clone(),
-        );
+        )
+        .with_tenant_header_trust(tenant_header_trust);
         tracing::debug!("✅ ProximaDB::new - MultiServer created");
 
         // Phase 2H wiring (drainer half): spawn the drainer only when
@@ -699,9 +722,10 @@ impl ProximaDB {
     pub async fn start(&mut self) -> anyhow::Result<()> {
         tracing::info!("🚀 ProximaDB::start - Starting database services...");
 
-        // Step 1: Start storage engine (recovers collections from metadata)
+        // Step 1: Start the storage engine. It restores the catalog, registers
+        // collection storage engines, and replays WAL in that dependency order.
         tracing::info!(
-            "📦 ProximaDB::start - Step 1: Starting storage engine for collection recovery..."
+            "📦 ProximaDB::start - Step 1: Starting storage engine and durable recovery..."
         );
         {
             let mut storage = self.storage.write().await;
@@ -710,32 +734,11 @@ impl ProximaDB {
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to start storage engine: {}", e))?;
         }
-        tracing::info!(
-            "✅ ProximaDB::start - Storage engine started, collections recovered from metadata_info"
-        );
+        tracing::info!("✅ ProximaDB::start - Storage engine started, catalog and WAL recovered");
 
-        // Step 2: Recover vectors from WAL (persisted data)
+        // Step 2: Recover graphs from snapshots + WAL
         tracing::info!(
-            "📦 ProximaDB::start - Step 2: Recovering vectors from WAL (persisted data)..."
-        );
-        {
-            let storage = self.storage.read().await;
-            match storage.recover_from_wal().await {
-                Ok(()) => {
-                    tracing::info!("✅ ProximaDB::start - Vectors recovered from WAL successfully");
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "⚠️  ProximaDB::start - WAL recovery failed (continuing anyway): {}",
-                        e
-                    );
-                }
-            }
-        }
-
-        // Step 3: Recover graphs from snapshots + WAL
-        tracing::info!(
-            "🌳 ProximaDB::start - Step 3: Recovering graphs from persistent storage..."
+            "🌳 ProximaDB::start - Step 2: Recovering graphs from persistent storage..."
         );
         if let Some(ref multi_server) = self.multi_server {
             match multi_server
@@ -756,16 +759,16 @@ impl ProximaDB {
             }
         }
 
-        // Step 4: Recover assignments from collection metadata
+        // Step 3: Recover assignments from collection metadata
         tracing::info!(
-            "🗺️ ProximaDB::start - Step 4: Recovering assignments from collection metadata..."
+            "🗺️ ProximaDB::start - Step 3: Recovering assignments from collection metadata..."
         );
         tracing::info!(
             "✅ ProximaDB::start - Assignment recovery completed (or skipped if no service)"
         );
 
-        // Step 5: Recover vectors from write buffer (in-memory data)
-        tracing::info!("🔄 ProximaDB::start - Step 5: Recovering vectors from write buffer...");
+        // Step 4: Recover vectors from write buffer (in-memory data)
+        tracing::info!("🔄 ProximaDB::start - Step 4: Recovering vectors from write buffer...");
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services
@@ -776,13 +779,13 @@ impl ProximaDB {
                 })?;
         }
 
-        // Step 6: Initialize RL Query Planner (if enabled)
-        tracing::info!("🎯 ProximaDB::start - Step 6: Initializing RL Query Planner...");
+        // Step 5: Initialize RL Query Planner (if enabled)
+        tracing::info!("🎯 ProximaDB::start - Step 5: Initializing RL Query Planner...");
         self.init_rl_planner().await?;
 
-        // Step 7: Start multi-server (HTTP and gRPC on separate ports)
+        // Step 6: Start multi-server (HTTP and gRPC on separate ports)
         tracing::info!(
-            "🌐 ProximaDB::start - Step 7: Starting multi-server (gRPC:5679 + REST:5678)..."
+            "🌐 ProximaDB::start - Step 6: Starting multi-server (gRPC:5679 + REST:5678)..."
         );
         if let Some(ref mut multi_server) = self.multi_server {
             multi_server

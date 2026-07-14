@@ -96,6 +96,7 @@ async fn search_topk(engine: &SstEngine, coll: &Collection, query: Vec<f32>) -> 
             // BLOCK prune under test is driven separately by the PROXIMADB_PAX_
             // CENTROID_PRUNE env inside try_pax_cascade.
             block_prune: BlockPruneConfig {
+                radius_k: 0.0,
                 force_exact: false,
                 mode: BlockPruneMode::Ratio,
                 ratio: 1.0,

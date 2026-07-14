@@ -87,7 +87,15 @@ use crate::storage::engines::sst::SstEngine;
 const FILTER_FAIL_LOUD_ENV: &str = "PROXIMADB_FILTER_FAIL_LOUD";
 
 fn filter_fail_loud_enabled() -> bool {
-    std::env::var_os(FILTER_FAIL_LOUD_ENV).is_some()
+    let value = std::env::var(FILTER_FAIL_LOUD_ENV).ok();
+    filter_fail_loud_for_value(value.as_deref())
+}
+
+fn filter_fail_loud_for_value(value: Option<&str>) -> bool {
+    !matches!(
+        value.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("0" | "false" | "off" | "no")
+    )
 }
 
 fn evaluate_v2_filter_for_record(
@@ -767,7 +775,7 @@ impl VectorOperationsService {
 
         let mut records = self
             .wal_manager
-            .get_collection_vectors(collection_id)
+            .get_collection_vectors_raw(collection_id)
             .await?;
         if let Some(tenant_context) = tenant_context {
             records.retain(|record| {
@@ -4428,7 +4436,7 @@ mod tenant_tests {
     }
 
     #[test]
-    fn filter_fail_loud_gate_preserves_default_and_errors_when_enabled() {
+    fn filter_fail_loud_mode_errors_on_unresolved_fields() {
         use crate::core::search::{ComparisonOperator, FilterExpression};
 
         let filter = FilterExpression::Comparison {
@@ -4453,6 +4461,16 @@ mod tenant_tests {
                 .contains("metadata filter evaluation failed")
         );
         assert!(err.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn v2_filter_fail_loud_is_default_with_explicit_rollback_values() {
+        assert!(filter_fail_loud_for_value(None));
+        assert!(filter_fail_loud_for_value(Some("true")));
+        assert!(filter_fail_loud_for_value(Some("unexpected")));
+        for value in ["0", "false", "OFF", " no "] {
+            assert!(!filter_fail_loud_for_value(Some(value)), "value={value}");
+        }
     }
 
     #[test]

@@ -419,3 +419,16 @@ pub mod rbac_context;
 pub use rbac_context::{
     RbacTenantContext, UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext,
 };
+
+// ============================================================================
+// Tenant-assertion trust (TD-TENANT-1): the ONE shared primitive every
+// network surface (REST, gRPC, Arrow Flight, pgwire) uses to reconcile an
+// asserted tenant against an authenticated binding under the deployment
+// HeaderTrustPolicy, plus the ADR-031 stable-id resolver port.
+// ============================================================================
+pub mod identity_trust;
+pub use identity_trust::{
+    AuthenticatedTenantBinding, GATEWAY_ROLE, HeaderTrustPolicy, OPERATOR_ROLE,
+    ResolvedTenantAssertion, TenantAssertionError, TenantStableIdResolver,
+    resolve_tenant_assertion,
+};

@@ -1,8 +1,10 @@
 #[cfg(feature = "datafusion-integration")]
+use crate::query::execution::engine::RowLimitMode;
+#[cfg(feature = "datafusion-integration")]
 use crate::query::execution::engine::normalize_table_key;
 use crate::query::execution::engine::{
     ExecutionEngine, ExecutionError, ExecutionPipelineResult, ExecutionStreamResult,
-    QueryExecutionContext, RowLimitMode,
+    QueryExecutionContext,
 };
 use async_trait::async_trait;
 #[cfg(feature = "datafusion-integration")]
@@ -644,6 +646,7 @@ mod tests {
 /// vocabulary; the DataFusion *physical* plan would inflate depth/fan-out with
 /// repartition/coalesce nodes the AST estimator never models) — and emit the
 /// same neutral io_trace scalars the native seam emits.
+#[cfg(feature = "datafusion-integration")]
 fn record_logical_plan_geometry(plan: &datafusion::logical_expr::LogicalPlan) {
     let (depth, nodes, leaves, fanout, blocking, ops) = measure_logical_geometry(plan);
     let ops_ref: Vec<(&str, u64)> = ops.iter().map(|(k, v)| (*k, *v)).collect();
@@ -660,6 +663,7 @@ fn record_logical_plan_geometry(plan: &datafusion::logical_expr::LogicalPlan) {
 /// geometry bands stay comparable — `window` is labeled but deliberately not
 /// counted as blocking (the native vocabulary has no window op).
 #[allow(clippy::type_complexity)]
+#[cfg(feature = "datafusion-integration")]
 fn measure_logical_geometry(
     plan: &datafusion::logical_expr::LogicalPlan,
 ) -> (u64, u64, u64, u64, u64, Vec<(&'static str, u64)>) {
@@ -675,6 +679,7 @@ fn measure_logical_geometry(
 }
 
 #[allow(clippy::type_complexity)]
+#[cfg(feature = "datafusion-integration")]
 fn measure_logical_geometry_inner(
     plan: &datafusion::logical_expr::LogicalPlan,
 ) -> (

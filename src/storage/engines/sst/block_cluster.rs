@@ -50,6 +50,8 @@ fn env_flag_on(var: &str) -> bool {
 ///     (e.g. `2` to prune small segments; the recall gate uses this).
 ///   * `PROXIMADB_PAX_CENTROID_PRUNE_RATIO` — switch to Ratio mode keeping this
 ///     fraction of blocks (0.0–1.0) instead of Sqrt.
+///   * `PROXIMADB_PAX_CENTROID_RADIUS_K` — lever-3 radius weight `k` in the prune
+///     score `d(q,centroid) − k·radius` (default `0.0` = raw centroid distance).
 pub fn centroid_prune_config() -> crate::core::search::BlockPruneConfig {
     use crate::core::search::{BlockPruneConfig, BlockPruneMode};
     let mut cfg = BlockPruneConfig::default();
@@ -65,6 +67,12 @@ pub fn centroid_prune_config() -> crate::core::search::BlockPruneConfig {
     {
         cfg.mode = BlockPruneMode::Ratio;
         cfg.ratio = r.clamp(0.0, 1.0);
+    }
+    if let Some(k) = std::env::var("PROXIMADB_PAX_CENTROID_RADIUS_K")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+    {
+        cfg.radius_k = k.max(0.0);
     }
     cfg
 }

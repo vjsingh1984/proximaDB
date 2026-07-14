@@ -137,6 +137,10 @@ pub struct ProximaFlightService {
     vector_operations_service: Arc<crate::services::VectorOperationsService>,
     collection_service: Arc<crate::services::CollectionService>,
     security_coordinator: Option<Arc<SecurityCoordinator>>,
+    /// TD-TENANT-1: the deployment's bare `x-tenant-id` trust policy,
+    /// enforced through the ONE shared primitive in
+    /// `authenticated_flight_context`. Default `Open` (legacy behavior).
+    tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
     catalog_manager: Option<Arc<CatalogManager>>,
     /// R-7c.4b: when present, the `rank_features_export` Flight action
     /// drives the multi-phase ranking pipeline through this singleton.
@@ -238,6 +242,7 @@ impl ProximaFlightService {
             vector_operations_service,
             collection_service,
             security_coordinator: None,
+            tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
             catalog_manager: None,
             rank_services: None,
             primary_pod_gate: None,
@@ -321,6 +326,14 @@ impl ProximaFlightService {
         security_coordinator: Option<Arc<SecurityCoordinator>>,
     ) -> Self {
         self.security_coordinator = security_coordinator;
+        self
+    }
+
+    /// Set the deployment's bare `x-tenant-id` trust policy (TD-TENANT-1) —
+    /// the same policy the REST middleware, gRPC auth layer, and pgwire
+    /// resolve seams enforce through the shared primitive.
+    pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
+        self.tenant_header_trust = policy;
         self
     }
 
@@ -534,10 +547,36 @@ impl ProximaFlightService {
         metadata: &tonic::metadata::MetadataMap,
         peer_certs: Option<Arc<Vec<tonic::transport::CertificateDer<'static>>>>,
     ) -> std::result::Result<AuthenticatedFlightContext, TonicStatus> {
+        use proximadb_tenant::identity_trust::{
+            AuthenticatedTenantBinding, ResolvedTenantAssertion, resolve_tenant_assertion,
+        };
+
         let requested_tenant_id = Self::tenant_id_from_metadata(metadata);
         let Some(security_coordinator) = &self.security_coordinator else {
+            // No auth wired: the assertion is bare by definition — the
+            // deployment policy decides (TD-TENANT-1). `Open` preserves the
+            // legacy behavior; strict policies reject the assertion.
+            let tenant_id = match resolve_tenant_assertion(
+                requested_tenant_id.as_deref(),
+                None,
+                self.tenant_header_trust,
+            ) {
+                Ok(ResolvedTenantAssertion::Asserted(tenant)) => Some(tenant),
+                Ok(ResolvedTenantAssertion::Credential(_)) => unreachable!("no binding provided"),
+                Ok(ResolvedTenantAssertion::NoTenant) => None,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "proximadb::tenant_audit",
+                        surface = "arrow_flight",
+                        policy = %self.tenant_header_trust,
+                        %error,
+                        "rejected bare x-tenant-id without authenticated tenant binding"
+                    );
+                    return Err(TonicStatus::permission_denied(error.to_string()));
+                }
+            };
             return Ok(AuthenticatedFlightContext {
-                tenant_id: requested_tenant_id,
+                tenant_id,
                 capability: None,
             });
         };
@@ -551,15 +590,35 @@ impl ProximaFlightService {
             .map_err(|e| TonicStatus::unauthenticated(format!("Authentication failed: {}", e)))?;
 
         let capability = DataPlaneCapability::from_user_context(&user_context);
-        let tenant_id = match (requested_tenant_id, user_context.tenant_id) {
-            (Some(requested), Some(authenticated)) if requested != authenticated => {
-                return Err(TonicStatus::permission_denied(format!(
-                    "Tenant '{}' does not match authenticated tenant '{}'",
-                    requested, authenticated
-                )));
+        // TD-TENANT-1: the ONE shared reconciliation primitive (same call
+        // REST / gRPC / pgwire make) replaces the hand-rolled mismatch match.
+        let binding = user_context
+            .tenant_id
+            .as_ref()
+            .map(|tenant_id| AuthenticatedTenantBinding {
+                tenant_id: tenant_id.clone(),
+                is_gateway_principal: user_context.is_gateway_principal(),
+            });
+        let tenant_id = match resolve_tenant_assertion(
+            requested_tenant_id.as_deref(),
+            binding.as_ref(),
+            self.tenant_header_trust,
+        ) {
+            Ok(
+                ResolvedTenantAssertion::Asserted(tenant)
+                | ResolvedTenantAssertion::Credential(tenant),
+            ) => Some(tenant),
+            Ok(ResolvedTenantAssertion::NoTenant) => None,
+            Err(error) => {
+                tracing::warn!(
+                    target: "proximadb::tenant_audit",
+                    surface = "arrow_flight",
+                    policy = %self.tenant_header_trust,
+                    %error,
+                    "rejected x-tenant-id under tenant trust policy"
+                );
+                return Err(TonicStatus::permission_denied(error.to_string()));
             }
-            (Some(requested), _) => Some(requested),
-            (None, authenticated) => authenticated,
         };
         Ok(AuthenticatedFlightContext {
             tenant_id,

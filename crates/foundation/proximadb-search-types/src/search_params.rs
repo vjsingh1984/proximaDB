@@ -382,6 +382,13 @@ pub struct BlockPruneConfig {
     /// None = use production default (100 blocks).
     #[serde(default)]
     pub min_blocks_override: Option<usize>,
+    /// TD-RDSTRAT-5 lever-3: weight `k` on the per-block radius in the prune score
+    /// `d(query, centroid) − k·radius` (a distance lower bound). `0.0` = rank by
+    /// raw centroid distance (legacy). `> 0` favours spread-out blocks that could
+    /// still hold a near neighbour, raising recall at a fixed keep-ratio. Calibrated
+    /// for L2/Euclidean (radius and distance share units); leave `0.0` for cosine.
+    #[serde(default)]
+    pub radius_k: f32,
 }
 
 impl Default for BlockPruneConfig {
@@ -393,6 +400,7 @@ impl Default for BlockPruneConfig {
             min_keep: 1,
             max_keep: 0,
             min_blocks_override: None,
+            radius_k: 0.0,
         }
     }
 }
