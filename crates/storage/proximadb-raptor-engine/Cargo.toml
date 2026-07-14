@@ -35,9 +35,21 @@ proximadb-codec.workspace = true
 proximadb-compression.workspace = true
 proximadb-distance-kernel.workspace = true
 proximadb-kernel.workspace = true
+# Writer deps: hardware caps + memory pool + bloom filter (was crate::core::bloom).
+proximadb-hardware-caps.workspace = true
+proximadb-runtime-common.workspace = true
+proximadb-bloom.workspace = true
+# Writer encodes records via prost::Message.
+prost.workspace = true
 
 [features]
 experimental-engines = []
+# NOTE: GPU-accelerated P^2 matrix building (Metal MPS, formerly `gpu` feature)
+# was root-coupled (`crate::compute::gpu`) and does NOT run from this crate. The
+# `#[cfg(feature = "gpu")]` blocks in `matrix_builder.rs` are dormant here (always
+# false); they are retained for a future gpu-compute crate/port restoration. The
+# resulting `unexpected_cfgs` lint is silenced crate-wide in lib.rs. See
+# ROOT_CRATE_DECOMPOSITION_ENGINES_EXTRACTION doc.
 
 [lints]
 workspace = true

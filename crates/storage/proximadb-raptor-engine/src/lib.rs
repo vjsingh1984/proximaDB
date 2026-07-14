@@ -1,3 +1,16 @@
+//! RAPTOR engine crate — consolidated reader (inlined below) + writer +
+//! matrix builder, hoisted out of the root crate (root-crate decomposition,
+//! engines extraction). Root re-exports the public surface via thin shims.
+
+// The `gpu` cfg in `matrix_builder.rs` is dormant (GPU matrix-building was
+// root-coupled and cannot run from this crate); the blocks are retained pending
+// a gpu-compute crate/port. Silence the `unexpected_cfgs` lint crate-wide.
+#![allow(unexpected_cfgs)]
+
+pub mod matrix_builder;
+pub mod writer;
+pub use writer::RaptorWriter;
+
 use anyhow::{Context, Result};
 use arrow_array::{Array, RecordBatch};
 use chrono::{DateTime, Utc};
