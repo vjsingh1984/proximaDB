@@ -505,7 +505,11 @@ impl UnifiedWALWriter {
         }
 
         Ok(Self {
-            base_path,
+            // Store the SCHEME-QUALIFIED url, never the bare path: every
+            // segment path is joined from this, and no site below may
+            // re-prepend `file://` — on an object-store base that yields
+            // invalid `file://s3://…` URLs (TD-OBJSTORE-1, #960).
+            base_path: base_url,
             sequence_number: std::sync::atomic::AtomicU64::new(max_seq),
             filesystem,
             current_segment_path: None,
@@ -585,17 +589,39 @@ impl UnifiedWALWriter {
         if let Some(ref path) = self.current_segment_path
             && !self.current_segment_data.is_empty()
         {
-            let url = format!("file://{}", path);
+            // `path` is already scheme-qualified (joined from the normalized
+            // base_path by `open_new_segment`).
+            let url = path.clone();
             let fs = self.filesystem.get_filesystem(&url)?;
 
-            // WAL segments are append-only. Avoid read-modify-write here:
-            // cached reads can lag behind recent writes, and rewriting the
-            // segment risks dropping entries that were already durable.
-            fs.append(&url, &self.current_segment_data).await?;
-            fs.sync_file(&url).await?;
+            if self.base_path.starts_with("file://") {
+                // Local: WAL segments are append-only. Avoid
+                // read-modify-write here: cached reads can lag behind recent
+                // writes, and rewriting the segment risks dropping entries
+                // that were already durable.
+                fs.append(&url, &self.current_segment_data).await?;
+                fs.sync_file(&url).await?;
 
-            // Clear buffer after successful write
-            self.current_segment_data.clear();
+                // Clear buffer after successful write
+                self.current_segment_data.clear();
+            } else {
+                // Object store (s3://, adls://, …): block/immutable blobs
+                // reject append, so the buffer holds the WHOLE segment
+                // (bounded by max_segment_size and cleared on rotation) and
+                // each flush overwrites the segment object with the full
+                // contents. The byte layout is identical to the appended
+                // local segment, so recovery reads both the same way
+                // (TD-OBJSTORE-1, #960).
+                let options = crate::storage::persistence::filesystem::FileOptions {
+                    create_dirs: true,
+                    overwrite: true,
+                    ..Default::default()
+                };
+                fs.write(&url, &self.current_segment_data, Some(options))
+                    .await?;
+                // Buffer intentionally NOT cleared: it is the durable
+                // segment image until rotation.
+            }
         }
         Ok(())
     }
@@ -606,8 +632,9 @@ impl UnifiedWALWriter {
         self.current_segment_path = Some(filename.clone());
         self.current_segment_data.clear();
 
-        // Ensure the file exists
-        let url = format!("file://{}", filename);
+        // Ensure the file exists. `filename` is already scheme-qualified
+        // (base_path is normalized in `new`).
+        let url = filename;
         let fs = self.filesystem.get_filesystem(&url)?;
         if !fs.exists(&url).await? {
             // Create empty file
@@ -699,7 +726,7 @@ impl UnifiedWALWriter {
         // first. The marker's segment and everything above it are kept.
         let mut reclaimed = 0u64;
         for seg in indices.into_iter().filter(|&s| s < marker_segment) {
-            let url = format!("file://{}/wal_{:08}.log", self.base_path, seg);
+            let url = format!("{}/wal_{:08}.log", base_url, seg);
             fs.delete(&url).await?;
             reclaimed += 1;
             tracing::debug!(segment = seg, lsn, "TD-066 (d): reclaimed WAL segment");
@@ -732,16 +759,25 @@ impl UnifiedWALReader {
                 .map_err(|e| anyhow::anyhow!("Failed to create filesystem: {}", e))?,
         );
 
+        // Normalize to a scheme-qualified url once, mirroring the writer:
+        // object-store bases (s3://, adls://, …) pass through untouched
+        // (TD-OBJSTORE-1, #960).
+        let base_url = if base_path.contains("://") {
+            base_path
+        } else {
+            format!("file://{}", base_path)
+        };
+
         Ok(Self {
-            base_path,
+            base_path: base_url,
             filesystem,
         })
     }
 
     /// Read all WAL entries from a segment
     pub async fn read_segment(&self, segment_number: u32) -> anyhow::Result<Vec<UnifiedWALEntry>> {
-        let filename = format!("{}/wal_{:08}.log", self.base_path, segment_number);
-        let url = format!("file://{}", filename);
+        // base_path is scheme-qualified (normalized in `new`).
+        let url = format!("{}/wal_{:08}.log", self.base_path, segment_number);
         let fs = self.filesystem.get_filesystem(&url)?;
 
         if !fs.exists(&url).await? {
