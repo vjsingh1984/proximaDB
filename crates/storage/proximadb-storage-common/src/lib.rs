@@ -48,6 +48,7 @@ pub mod smart_io_metrics;
 pub mod spatial_encoding;
 pub mod storage_error;
 pub mod storage_path;
+pub mod storage_profile;
 pub mod swift_id_index;
 pub mod tenant_performance;
 pub mod tiering_policy;
@@ -146,6 +147,9 @@ pub use smart_io_metrics::{FileIoMetrics, IoMetrics, IoMetricsSnapshot};
 pub use spatial_encoding::{CodeType, SpatialCode, U512};
 pub use storage_error::{ErrorContext, StorageError, StorageErrorKind};
 pub use storage_path::StoragePath;
+pub use storage_profile::{
+    STORAGE_PROFILE_ENV, STORAGE_PROFILE_TAG_PREFIX, StorageProfile, resolve_storage_profile,
+};
 pub use swift_id_index::{
     BPlusNode, BlockLocation, IdIndex, IndexStats as SwiftIndexStats, RecordLocation,
     TwoLevelIdIndex,
