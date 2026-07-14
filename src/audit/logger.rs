@@ -1048,7 +1048,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_audit_logger_creation_s3_not_implemented() {
+    async fn test_audit_logger_creation_s3_routes_to_object_store() {
+        // S3 audit now routes through ObjectStoreAuditStorage
+        // (TD-OBJSTORE-1, #960) — it is no longer a hardcoded
+        // "not yet implemented" stub. Behavior is feature-dependent:
+        // a build with the aws feature routes the scheme successfully
+        // (Ok); a build without it fails fast at construction with a
+        // routing error (get_filesystem rejects the unsupported scheme).
+        // Either outcome is correct; what must NOT recur is the old
+        // placeholder error.
         let config = AuditConfig {
             enable_audit_logging: true,
             storage_backend: AuditStorageBackend::S3 {
@@ -1063,14 +1071,21 @@ mod tests {
             compliance_frameworks: vec![],
         };
 
-        let result = AuditLogger::new(config).await;
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("not yet implemented")
-        );
+        match AuditLogger::new(config).await {
+            Ok(_) => {} // aws feature present: scheme routed successfully
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    !msg.contains("not yet implemented"),
+                    "S3 audit is implemented via ObjectStoreAuditStorage now; \
+                     unexpected placeholder error: {msg}"
+                );
+                assert!(
+                    msg.contains("not routable"),
+                    "expected a fail-fast routing error without the aws feature, got: {msg}"
+                );
+            }
+        }
     }
 
     #[tokio::test]
