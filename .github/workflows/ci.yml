@@ -22,7 +22,14 @@ concurrency:
   # Dedup push+PR of the same branch into one group; cancel superseded runs
   # on feature/PR branches, but let protected-branch validation finish.
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: ${{ github.ref_name != 'main' && github.ref_name != 'develop' }}
+  # Exempt promotion surfaces (push to qa; PRs targeting qa or main) in addition
+  # to main/develop pushes. A develop->qa promotion PR with head=develop lands in
+  # the SAME group as develop pushes, so with cancel-in-progress:true every
+  # feat->develop synchronize killed the in-flight promotion run before its
+  # checks could finish — the promotion never completed during develop churn.
+  # qa-gate.yml already sets cancel-in-progress:false for this reason; mirror it
+  # here. Feature PRs (base=develop) still cancel superseded runs as before.
+  cancel-in-progress: ${{ !(github.event_name == 'pull_request' && contains(fromJson('["qa", "main"]'), github.base_ref)) && !contains(fromJson('["main", "develop", "qa"]'), github.ref_name) }}
 
 env:
   CARGO_TERM_COLOR: always
