@@ -305,6 +305,7 @@ impl SstEngine {
             .map(|b| IndexEntry {
                 block_centroid: b.centroid_fp32.clone().unwrap_or_default(),
                 block_centroid_fp16: b.centroid_fp16.clone(),
+                block_radius: b.centroid_radius,
                 ..Default::default()
             })
             .collect();

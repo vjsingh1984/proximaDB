@@ -153,6 +153,7 @@ mod helix_prune_debug {
         // Test 2: Approximate mode with Sqrt pruning (default)
         eprintln!("\n--- Test 2: Approximate Mode (Sqrt Pruning) ---");
         let approx_prune = BlockPruneConfig {
+            radius_k: 0.0,
             force_exact: false,
             mode: BlockPruneMode::Sqrt,
             min_keep: 1,
@@ -185,6 +186,7 @@ mod helix_prune_debug {
         // Test 3: Approximate mode with higher ratio
         eprintln!("\n--- Test 3: Approximate Mode (Ratio=0.8 Pruning) ---");
         let high_ratio_prune = BlockPruneConfig {
+            radius_k: 0.0,
             force_exact: false,
             mode: BlockPruneMode::Ratio,
             min_keep: 1,
@@ -489,6 +491,7 @@ mod helix_prune_debug {
             (
                 "Sqrt (default)",
                 BlockPruneConfig {
+                    radius_k: 0.0,
                     force_exact: false,
                     mode: BlockPruneMode::Sqrt,
                     min_keep: 1,
@@ -500,6 +503,7 @@ mod helix_prune_debug {
             (
                 "Sqrt min_keep=4",
                 BlockPruneConfig {
+                    radius_k: 0.0,
                     force_exact: false,
                     mode: BlockPruneMode::Sqrt,
                     min_keep: 4,
@@ -511,6 +515,7 @@ mod helix_prune_debug {
             (
                 "Ratio 50%",
                 BlockPruneConfig {
+                    radius_k: 0.0,
                     force_exact: false,
                     mode: BlockPruneMode::Ratio,
                     min_keep: 1,
@@ -522,6 +527,7 @@ mod helix_prune_debug {
             (
                 "Ratio 80%",
                 BlockPruneConfig {
+                    radius_k: 0.0,
                     force_exact: false,
                     mode: BlockPruneMode::Ratio,
                     min_keep: 1,
@@ -533,6 +539,7 @@ mod helix_prune_debug {
             (
                 "Force Exact",
                 BlockPruneConfig {
+                    radius_k: 0.0,
                     force_exact: true,
                     mode: BlockPruneMode::Sqrt,
                     min_keep: 1,

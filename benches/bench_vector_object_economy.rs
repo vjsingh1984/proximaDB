@@ -435,6 +435,7 @@ fn synthetic_delta_with_tombstones(
 fn synthetic_directory(block_count: usize) -> VectorObjectEconomyDirectory {
     let blocks: Vec<ObjectEconomyBlockEntry> = (0..block_count)
         .map(|i| ObjectEconomyBlockEntry {
+            centroid_radius: 0.0,
             block_id: i as u32,
             offset: i as u64 * 4096,
             serialized_len: 4096,

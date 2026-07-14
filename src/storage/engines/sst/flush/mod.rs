@@ -986,11 +986,15 @@ fn pax_write_outcome(
                 dimension: centroid.len(),
             }
         };
+        // Lever-3: per-block RMS radius (0.0 when the writer didn't compute
+        // centroids, or for a Fp32-less block) — 1:1 with block_centroids.
+        let block_radius = meta.block_radii.get(block_id).copied().unwrap_or(0.0);
         entries.push(IndexEntry {
             offset,
             size: stats.block_size_bytes,
             block_id: block_id as u32,
             block_centroid: centroid,
+            block_radius,
             vector_format,
             ..Default::default()
         });
@@ -1033,6 +1037,7 @@ mod pax_write_outcome_tests {
             row_count: 4,
             block_stats: vec![stats(40), stats(60)],
             block_centroids: vec![vec![1.0, 1.0], vec![2.0, 2.0]],
+            block_radii: vec![0.5, 1.5],
         };
         let out = pax_write_outcome(&meta);
         assert_eq!(out.index_entries.len(), 2);
@@ -1042,6 +1047,9 @@ mod pax_write_outcome_tests {
         assert_eq!(out.index_entries[1].size, 60);
         assert_eq!(out.index_entries[0].block_centroid, vec![1.0, 1.0]);
         assert_eq!(out.index_entries[1].block_centroid, vec![2.0, 2.0]);
+        // TD-WLP-3: the per-block RMS radius is carried 1:1 into the entries.
+        assert_eq!(out.index_entries[0].block_radius, 0.5);
+        assert_eq!(out.index_entries[1].block_radius, 1.5);
         assert_eq!(out.block_index_offset, 100, "Σ block sizes");
         assert_eq!(out.block_index_size, 12, "size − Σ − 8 magic");
         assert_eq!(out.file_size_bytes, 120);

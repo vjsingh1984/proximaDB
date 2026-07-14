@@ -519,8 +519,17 @@ pub struct PaxSegmentWriter {
     cur_centroid_sum: Vec<f64>,
     /// Count of vectors summed into `cur_centroid_sum` for the current block.
     cur_centroid_n: u64,
+    /// TD-RDSTRAT-5 lever-3: running sum of ‖x‖² over the current block's
+    /// embedding-0 vectors. With `cur_centroid_sum` this yields the block's RMS
+    /// spread in ONE pass: `radius² = mean(‖x‖²) − ‖centroid‖²` (trace of the
+    /// covariance). The read-side prune ranks blocks by the distance lower bound
+    /// `d(q,centroid) − k·radius`, so spread-aware blocks aren't wrongly pruned.
+    cur_centroid_sumsq: f64,
     /// Finalised per-block centroids, one per flushed block (emission order).
     block_centroids: Vec<Vec<f32>>,
+    /// Finalised per-block RMS radius (spread), 1:1 with `block_centroids`
+    /// (`0.0` for a block with no Fp32 vector). Empty unless centroids opted in.
+    block_radii: Vec<f32>,
 }
 
 impl PaxSegmentWriter {
@@ -570,7 +579,9 @@ impl PaxSegmentWriter {
             compute_centroids: false,
             cur_centroid_sum: Vec::new(),
             cur_centroid_n: 0,
+            cur_centroid_sumsq: 0.0,
             block_centroids: Vec::new(),
+            block_radii: Vec::new(),
         }
     }
 
@@ -674,9 +685,13 @@ impl PaxSegmentWriter {
             self.cur_centroid_sum = vec![0f64; v.len()];
         }
         if self.cur_centroid_sum.len() == v.len() {
+            let mut norm_sq = 0f64;
             for (s, &x) in self.cur_centroid_sum.iter_mut().zip(v) {
-                *s += x as f64;
+                let x = x as f64;
+                *s += x;
+                norm_sq += x * x;
             }
+            self.cur_centroid_sumsq += norm_sq;
             self.cur_centroid_n += 1;
         }
     }
@@ -689,18 +704,30 @@ impl PaxSegmentWriter {
         if !self.compute_centroids {
             return;
         }
-        let centroid = if self.cur_centroid_n > 0 {
+        let (centroid, radius) = if self.cur_centroid_n > 0 {
             let n = self.cur_centroid_n as f64;
-            self.cur_centroid_sum
+            let centroid: Vec<f32> = self
+                .cur_centroid_sum
                 .iter()
                 .map(|&s| (s / n) as f32)
-                .collect()
+                .collect();
+            // RMS spread in one pass: radius² = mean(‖x‖²) − ‖centroid‖². Clamp at
+            // 0 to absorb float error when all rows are identical.
+            let centroid_norm_sq: f64 = self
+                .cur_centroid_sum
+                .iter()
+                .map(|&s| (s / n) * (s / n))
+                .sum();
+            let var = (self.cur_centroid_sumsq / n - centroid_norm_sq).max(0.0);
+            (centroid, var.sqrt() as f32)
         } else {
-            Vec::new()
+            (Vec::new(), 0.0)
         };
         self.block_centroids.push(centroid);
+        self.block_radii.push(radius);
         self.cur_centroid_sum.clear();
         self.cur_centroid_n = 0;
+        self.cur_centroid_sumsq = 0.0;
     }
 
     /// Force-flush any buffered records as the final (possibly partial) block.
@@ -780,6 +807,7 @@ impl PaxSegmentWriter {
             row_count: self.row_count,
             block_stats: self.block_stats,
             block_centroids: self.block_centroids,
+            block_radii: self.block_radii,
         })
     }
 
@@ -809,6 +837,7 @@ impl PaxSegmentWriter {
             row_count: self.row_count,
             block_stats: self.block_stats,
             block_centroids: self.block_centroids,
+            block_radii: self.block_radii,
         })
     }
 }
@@ -1133,6 +1162,91 @@ mod tests {
             meta.block_centroids[1],
             vec![11.0, 11.0],
             "mean of [10,10],[12,12]"
+        );
+    }
+
+    /// TD-WLP-3 (TD-RDSTRAT-5 lever-3): the writer emits one RMS radius per
+    /// block, 1:1 with `block_centroids`, computed in ONE pass as
+    /// `radius² = mean(‖x‖²) − ‖centroid‖²`. Block [0,0],[2,2]: centroid
+    /// [1,1], mean‖x‖² = (0+8)/2 = 4, ‖c‖² = 2 ⇒ radius = √2 (both blocks by
+    /// symmetry). A block of identical rows must clamp to exactly 0.0.
+    #[test]
+    fn block_radii_are_exact_rms_spread() {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        let rec = |oid: &str, v: Vec<f32>| {
+            let dim = v.len() as u32;
+            let mut r = ProximaRecord {
+                oid: oid.into(),
+                tenant_id: "t".into(),
+                created_at_ns: 1,
+                updated_at_ns: 1,
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim,
+                values: EmbeddingValues::Fp32(v),
+                ..Default::default()
+            });
+            r
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg_radii.pax");
+        let mut w = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            Some(2 * 1024), // 2 rows/block
+        )
+        .with_quant(VectorQuant::RawF32)
+        .with_block_centroids(true);
+        for r in [
+            rec("a", vec![0.0, 0.0]),
+            rec("b", vec![2.0, 2.0]),
+            rec("c", vec![7.0, 7.0]), // identical pair: zero spread
+            rec("d", vec![7.0, 7.0]),
+        ] {
+            w.add_record(&r).unwrap();
+        }
+        let meta = w.finish().unwrap();
+        assert_eq!(meta.block_count, 2, "2 rows/block ⇒ 2 blocks");
+        assert_eq!(
+            meta.block_radii.len(),
+            meta.block_count as usize,
+            "one radius per block, 1:1 with block_centroids"
+        );
+        let expected = 2f32.sqrt();
+        assert!(
+            (meta.block_radii[0] - expected).abs() < 1e-6,
+            "RMS spread of [0,0],[2,2] must be √2, got {}",
+            meta.block_radii[0]
+        );
+        assert_eq!(
+            meta.block_radii[1], 0.0,
+            "a block of identical rows must clamp to exactly 0.0"
+        );
+
+        // Not opted in ⇒ no radii (parity with block_centroids).
+        let path2 = dir.path().join("seg_no_radii.pax");
+        let mut w2 = PaxSegmentWriter::new(
+            &path2,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            Some(2 * 1024),
+        )
+        .with_quant(VectorQuant::RawF32);
+        w2.add_record(&rec("a", vec![0.0, 0.0])).unwrap();
+        w2.add_record(&rec("b", vec![2.0, 2.0])).unwrap();
+        let meta2 = w2.finish().unwrap();
+        assert!(
+            meta2.block_radii.is_empty(),
+            "radii must be empty unless centroids are opted in"
         );
     }
 

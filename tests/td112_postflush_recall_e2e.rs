@@ -142,6 +142,7 @@ async fn search(engine: &SstEngine, collection: &Collection, query: Vec<f32>) ->
         // scan that bypasses AXIS entirely — so the rebuild never runs.
         search_mode: SearchMode::Approximate { nprobe: None },
         block_prune: BlockPruneConfig {
+            radius_k: 0.0,
             force_exact: false,
             mode: BlockPruneMode::Ratio,
             ratio: 1.0,
