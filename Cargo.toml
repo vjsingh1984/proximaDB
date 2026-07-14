@@ -79,6 +79,7 @@ members = [
     "crates/modalities/proximadb-rank-profile",
     "crates/modalities/proximadb-rank-onnx",
     "crates/storage/proximadb-raptor-common",
+    "crates/storage/proximadb-raptor-engine",
     "crates/storage/proximadb-storage-common",
     "crates/storage/proximadb-storage-ports",
     "crates/storage/proximadb-storage-traits",
@@ -601,6 +602,7 @@ jni = { version = "0.21", optional = true }
 napi = { version = "2.14", features = ["napi9"], optional = true }
 napi-derive = { version = "2.14", optional = true }
 proximadb-raptor-common = { version = "0.2.0", path = "crates/storage/proximadb-raptor-common" }
+proximadb-raptor-engine = { version = "0.2.0", path = "crates/storage/proximadb-raptor-engine" }
 
 # GPU acceleration dependencies (platform-specific)
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
@@ -657,7 +659,7 @@ ai_endpoints = []
 tenant_access = []
 # Experimental storage engines (RAPTOR, SWIFT); disabled by default to prevent
 # server panics from unimplemented code paths. Enable for development/testing only.
-experimental-engines = []
+experimental-engines = ["proximadb-raptor-engine/experimental-engines"]
 # Experimental SIMD path; not enabled by default
 simd-experimental = ["proximadb-codec/simd-experimental"]
 # TD-160 / ADR-027 / ADR-030: gate the PERF-CLASS I/O-trace *emission* (the

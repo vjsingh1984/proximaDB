@@ -6818,6 +6818,7 @@ dependencies = [
  "proximadb-rank-onnx",
  "proximadb-rank-profile",
  "proximadb-raptor-common",
+ "proximadb-raptor-engine",
  "proximadb-records",
  "proximadb-relational-algebra",
  "proximadb-relational-engine",
@@ -7770,6 +7771,33 @@ dependencies = [
  "proximadb-hardware-caps",
  "proximadb-proto",
  "serde",
+]
+
+[[package]]
+name = "proximadb-raptor-engine"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "arrow-array",
+ "arrow-ipc",
+ "arrow-schema",
+ "async-trait",
+ "bincode",
+ "chrono",
+ "dashmap",
+ "proximadb-codec",
+ "proximadb-compression",
+ "proximadb-distance-kernel",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "proximadb-raptor-common",
+ "proximadb-search-types",
+ "proximadb-storage-filesystem-types",
+ "proximadb-storage-ports",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

@@ -10,13 +10,11 @@ use tracing::debug;
 
 use crate::core::types::StorageEngineType;
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
-use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use crate::storage::trait_components::extractor::{
     ExtractedVector, ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionMode,
     ExtractionRequest, ExtractionResult, ExtractionStats, VectorExtractor,
 };
-use crate::storage::transaction_coordinator::TransactionCoordinator;
 
 use super::RaptorConfig;
 use super::consolidated_reader::{RaptorReader, ScanStrategy};
@@ -85,28 +83,9 @@ impl VectorExtractor for RaptorExtractor {
         let mut total_bytes_read = 0usize;
         let mut files_processed = 0usize;
 
-        // Create filesystem factory for this extraction operation
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create_default()
-                .await
-                .map_err(|e| ExtractionError::IoError(e.to_string()))?,
-        );
-
         // Create shared dependencies for RaptorReader
         let cache = Arc::new(CrossCacheOrchestrator::new(1000));
         let config = RaptorConfig::default();
-
-        // Create transaction coordinator
-        let transaction_coordinator = Arc::new(
-            TransactionCoordinator::new(filesystem_factory.clone(), None)
-                .await
-                .map_err(|e| {
-                    ExtractionError::EngineError(format!(
-                        "Failed to create transaction coordinator: {}",
-                        e
-                    ))
-                })?,
-        );
 
         for file_path in &existing_files {
             debug!("[RAPTOR Extractor] Processing file: {}", file_path);
@@ -118,7 +97,6 @@ impl VectorExtractor for RaptorExtractor {
                 config.clone(),
                 cache.clone(),
                 self.filesystem.clone(),
-                transaction_coordinator.clone(),
             );
 
             // Use full scan strategy for extraction

@@ -1,7 +1,7 @@
 use super::compare_sql_values;
 use super::*;
-use crate::proto::proximadb_v1::SqlValue;
-use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
+use proximadb_proto::proximadb_v1::SqlValue;
+use proximadb_proto::proximadb_v1::sql_value::Value as SqlVal;
 
 #[test]
 fn test_compare_sql_values_numbers() {
@@ -55,7 +55,7 @@ fn test_compare_sql_values_cross_numeric_types() {
 
 #[test]
 fn test_predicate_eq_within_range() {
-    use super::super::common::{ColumnEncoding, ColumnStats};
+    use proximadb_raptor_common::{ColumnEncoding, ColumnStats};
 
     let min = SqlValue {
         value: Some(SqlVal::NumberValue(1.0)),
