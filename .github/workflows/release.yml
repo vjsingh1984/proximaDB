@@ -436,9 +436,9 @@ jobs:
 
           tar -xzf binary/proximadb-*.tar.gz -C rpm_build/usr/bin --strip-components=1
           cp config/config.toml rpm_build/etc/proximadb/
-          cp packaging/systemd/proximadb.service rpm_build/usr/lib/systemd/system/
-          cp packaging/scripts/postinstall.sh rpm_build/tmp/postinstall.sh
-          cp packaging/scripts/preremove.sh rpm_build/tmp/preremove.sh
+          cp deploy/packaging/systemd/proximadb.service rpm_build/usr/lib/systemd/system/
+          cp deploy/packaging/scripts/postinstall.sh rpm_build/tmp/postinstall.sh
+          cp deploy/packaging/scripts/preremove.sh rpm_build/tmp/preremove.sh
 
           fpm -s dir -t rpm \
             -n proximadb \
@@ -492,9 +492,9 @@ jobs:
 
           tar -xzf binary/proximadb-*.tar.gz -C deb_build/usr/bin --strip-components=1
           cp config/config.toml deb_build/etc/proximadb/
-          cp packaging/systemd/proximadb.service deb_build/lib/systemd/system/
-          cp packaging/scripts/postinstall.sh deb_build/tmp/postinstall.sh
-          cp packaging/scripts/preremove.sh deb_build/tmp/preremove.sh
+          cp deploy/packaging/systemd/proximadb.service deb_build/lib/systemd/system/
+          cp deploy/packaging/scripts/postinstall.sh deb_build/tmp/postinstall.sh
+          cp deploy/packaging/scripts/preremove.sh deb_build/tmp/preremove.sh
 
           # Build DEB with systemd support
           # Note: --deb-systemd flag removed - using manual scripts instead
@@ -556,7 +556,7 @@ jobs:
       - name: Build MSI
         run: |
           $VERSION = "${{ needs.prepare.outputs.version }}"
-          wix build -d "Version=$VERSION" -o "proximadb-$VERSION-x64.msi" packaging\wix\proximadb.wxs
+          wix build -d "Version=$VERSION" -o "proximadb-$VERSION-x64.msi" deploy\packaging\wix\proximadb.wxs
 
       - name: Upload MSI Artifact
         uses: actions/upload-artifact@v4
