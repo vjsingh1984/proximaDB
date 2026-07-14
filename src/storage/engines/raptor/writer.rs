@@ -2589,6 +2589,14 @@ impl RaptorWriter {
         quantization_engine: Arc<dyn StorageQuantizationEnginePort>,
         axis_clustering: Arc<dyn AxisClusteringPort>,
     ) -> Result<Self> {
+        if !filesystem.supports_append() {
+            anyhow::bail!(
+                "RAPTOR requires durable append, but backend {} for {} does not support it",
+                filesystem.filesystem_type(),
+                file_path
+            );
+        }
+
         // Initialize hardware capabilities
         let hardware = get_hardware_capabilities();
 

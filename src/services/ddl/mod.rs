@@ -549,6 +549,20 @@ impl DdlService {
         self
     }
 
+    /// Wire the complete write-lease authority onto an already-assembled DDL
+    /// service. Pgwire builds rank/materializer decorators per connection, so a
+    /// mutating setter avoids rebuilding the service and dropping those handles.
+    pub fn set_write_lease_authority(
+        &mut self,
+        manager: Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
+        registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+        self_pod_id: String,
+    ) {
+        self.partition_lease_manager = Some(manager);
+        self.primary_pod_registry = Some(registry);
+        self.self_pod_id = Some(self_pod_id);
+    }
+
     /// Attach the primary-pod registry used for write-routing decisions.
     pub fn with_primary_pod_registry(
         mut self,
@@ -571,8 +585,11 @@ impl DdlService {
     /// present ⇒ lease acquire/renew; absent ⇒ in-memory registry lookup only.
     /// Returns `Err` naming the target pod when another pod holds authority.
     ///
-    /// This is a latency / fast-fail optimization; the object-store generation
-    /// fence in `SystemCatalog` remains the correctness authority (ADR-032).
+    /// `SystemCatalog` generation-fences catalog snapshot publication, but it
+    /// does not fence external side effects such as a Parquet MATERIALIZE write.
+    /// The renewable partition lease is therefore the authority for these
+    /// table-scoped operations; the post-operation check detects displacement
+    /// before success/catalog-cache publication.
     async fn check_lease_for_write(&self, tenant: Option<&str>, collection_id: &str) -> Result<()> {
         use crate::cluster::primary_pod_registry::{
             WriteRoutingDecision, consult_for_write_leased,
@@ -661,6 +678,7 @@ impl DdlService {
                 self.alter_table(&table_name, changes, tenant).await
             }
             DdlStatement::MaterializeTable { name } => {
+                self.check_lease_for_write(tenant, &name).await?;
                 let materializer = self.materializer.as_ref().ok_or_else(|| {
                     anyhow!(
                         "ALTER TABLE … MATERIALIZE requires a configured warehouse object \
@@ -668,9 +686,13 @@ impl DdlService {
                     )
                 })?;
                 let location = materializer.materialize(&name, tenant).await?;
+                // MATERIALIZE can outlive a lease TTL. Revalidate before
+                // publishing success so a displaced pod cannot bless stale work.
+                self.check_lease_for_write(tenant, &name).await?;
                 // TD-OLAP-4: a re-MATERIALIZE republishes the base at this
                 // location, so any cached table-OPEN discovery (schema/splits/
                 // sizes) for it is now stale — drop it so reads re-discover.
+                #[cfg(feature = "datafusion-integration")]
                 crate::datafusion::engine_adapters::table_open_cache::invalidate_location(
                     &location,
                 );
@@ -685,23 +707,31 @@ impl DdlService {
                 index_type,
                 if_not_exists,
             } => {
-                self.create_index(
-                    &index_name,
-                    &table_name,
-                    columns,
-                    index_type,
-                    if_not_exists,
-                    tenant,
-                )
-                .await
+                self.check_lease_for_write(tenant, &table_name).await?;
+                let result = self
+                    .create_index(
+                        &index_name,
+                        &table_name,
+                        columns,
+                        index_type,
+                        if_not_exists,
+                        tenant,
+                    )
+                    .await?;
+                self.check_lease_for_write(tenant, &table_name).await?;
+                Ok(result)
             }
             DdlStatement::DropIndex {
                 index_name,
                 table_name,
                 if_exists,
             } => {
-                self.drop_index(&index_name, &table_name, if_exists, tenant)
-                    .await
+                self.check_lease_for_write(tenant, &table_name).await?;
+                let result = self
+                    .drop_index(&index_name, &table_name, if_exists, tenant)
+                    .await?;
+                self.check_lease_for_write(tenant, &table_name).await?;
+                Ok(result)
             }
             DdlStatement::CreateNamespace {
                 namespace,
@@ -2335,6 +2365,103 @@ mod tests {
             msg.contains("pod-other"),
             "error should name the target pod: {msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn materialize_and_index_arms_all_apply_the_lease_gate() {
+        use crate::cluster::primary_pod_registry::{AssignmentReason, PrimaryPodRegistry};
+        let registry = std::sync::Arc::new(PrimaryPodRegistry::new());
+        registry.assign("tenant-a", "coll-1", "pod-other", AssignmentReason::Create);
+        let ddl = lease_ddl()
+            .with_primary_pod_registry(registry)
+            .with_self_pod_id("pod-self".to_string());
+
+        let statements = [
+            DdlStatement::MaterializeTable {
+                name: "coll-1".to_string(),
+            },
+            DdlStatement::CreateIndex {
+                index_name: "idx".to_string(),
+                table_name: "coll-1".to_string(),
+                columns: vec!["id".to_string()],
+                index_type: IndexType::BTree,
+                if_not_exists: false,
+            },
+            DdlStatement::DropIndex {
+                index_name: "idx".to_string(),
+                table_name: "coll-1".to_string(),
+                if_exists: false,
+            },
+        ];
+
+        for statement in statements {
+            let err = ddl
+                .execute_scoped(statement, Some("tenant-a"))
+                .await
+                .expect_err("every table-scoped arm must reject a foreign lease");
+            assert!(err.to_string().contains("pod-other"), "{err}");
+        }
+    }
+
+    struct LeaseTakeoverMaterializer {
+        contender: std::sync::Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
+    }
+
+    #[async_trait::async_trait]
+    impl TableMaterializer for LeaseTakeoverMaterializer {
+        async fn materialize(&self, table_name: &str, tenant: Option<&str>) -> Result<String> {
+            let future_ms = chrono::Utc::now().timestamp_millis() + 100;
+            assert!(
+                self.contender
+                    .acquire(tenant.unwrap_or("default"), table_name, future_ms)
+                    .await?,
+                "the second pod should acquire after the first lease expires"
+            );
+            Ok("file:///tmp/materialized".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn materialize_revalidates_after_lease_expiry_and_takeover() {
+        use crate::cluster::partition_lease::{PartitionLeaseManager, PartitionLeaseStore};
+        use crate::cluster::primary_pod_registry::PrimaryPodRegistry;
+        use object_store::memory::InMemory;
+        use proximadb_object_store::ProximaObjectStore;
+
+        let backing: std::sync::Arc<dyn object_store::ObjectStore> =
+            std::sync::Arc::new(InMemory::new());
+        let store = std::sync::Arc::new(PartitionLeaseStore::new(
+            ProximaObjectStore::new(backing),
+            "_operator/leases",
+        ));
+        let registry_a = std::sync::Arc::new(PrimaryPodRegistry::new());
+        let registry_b = std::sync::Arc::new(PrimaryPodRegistry::new());
+        let manager_a = std::sync::Arc::new(PartitionLeaseManager::new(
+            store.clone(),
+            registry_a.clone(),
+            "pod-a",
+            10,
+        ));
+        let manager_b =
+            std::sync::Arc::new(PartitionLeaseManager::new(store, registry_b, "pod-b", 10));
+        let ddl = lease_ddl()
+            .with_primary_pod_registry(registry_a)
+            .with_self_pod_id("pod-a".to_string())
+            .with_partition_lease_manager(manager_a)
+            .with_materializer(std::sync::Arc::new(LeaseTakeoverMaterializer {
+                contender: manager_b,
+            }));
+
+        let err = ddl
+            .execute_scoped(
+                DdlStatement::MaterializeTable {
+                    name: "coll-1".to_string(),
+                },
+                Some("tenant-a"),
+            )
+            .await
+            .expect_err("post-operation lease validation must detect takeover");
+        assert!(err.to_string().contains("pod-b"), "{err}");
     }
 
     #[tokio::test]

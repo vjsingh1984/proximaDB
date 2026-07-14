@@ -582,6 +582,24 @@ impl PostgresProtocol {
         }
     }
 
+    /// Attach the durable partition-lease authority to this connection's DDL
+    /// service after rank/materializer decoration has finished.
+    pub fn with_ddl_lease_manager(
+        mut self,
+        manager: Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
+        registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+        self_pod_id: String,
+    ) -> Self {
+        if let Some(ddl) = self.ddl_service.as_mut().and_then(Arc::get_mut) {
+            ddl.set_write_lease_authority(manager, registry, self_pod_id);
+        } else {
+            tracing::error!(
+                "pgwire DDL lease authority could not be attached to the per-connection service"
+            );
+        }
+        self
+    }
+
     /// Attach catalog-backed DDL/DML services to an existing protocol handler.
     pub fn with_catalog_manager(mut self, catalog_manager: Arc<CatalogManager>) -> Self {
         self.ddl_service = Some(Arc::new(DdlService::new(catalog_manager.clone())));

@@ -578,6 +578,10 @@ impl FileSystem for LocalFileSystem {
         Ok(())
     }
 
+    fn supports_append(&self) -> bool {
+        true
+    }
+
     async fn delete(&self, path: &str) -> FsResult<()> {
         let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);

@@ -859,6 +859,7 @@ impl MultiServer {
             // pair the REST / gRPC v2 / Arrow Flight surfaces hold.
             let primary_pod_registry = services.primary_pod_registry.clone();
             let self_pod_id = services.self_pod_id.clone();
+            let partition_lease_manager = services.partition_lease_manager.clone();
             // Warehouse object-store root for `ALTER TABLE … MATERIALIZE`, derived from
             // the server data dir the same way document/observability roots are.
             let warehouse_root_url = format!("file://{}/warehouse", self.config.data_dir.display());
@@ -898,6 +899,7 @@ impl MultiServer {
                 server =
                     server.with_rank_pipeline(rank_services, rank_profile_store, function_store);
                 server = server.with_primary_pod_gate(primary_pod_registry, self_pod_id);
+                server = server.with_partition_lease_manager(partition_lease_manager);
                 server = server.with_warehouse_materialization(warehouse_root_url);
                 server = server.with_tenant_header_trust(tenant_header_trust);
                 if let Some(limiter) = pgwire_rate_limiter {
@@ -1214,6 +1216,8 @@ impl MultiServer {
                     services.primary_pod_registry.clone(),
                     services.self_pod_id.clone(),
                 );
+                server =
+                    server.with_partition_lease_manager(services.partition_lease_manager.clone());
                 server = server.with_warehouse_materialization(warehouse_root_url);
                 server = server.with_tenant_header_trust(tenant_header_trust);
 
