@@ -46,6 +46,13 @@ object-store catalog -> Collection.storage_assignment.base_location
 No catalog row means recovery cannot safely infer a collection's engine, dimension,
 tenant, or storage layout from WAL bytes alone.
 
+The first live ADLS proof exposed a second dependency-order defect after the catalog
+became durable: `StorageEngine::start()` replayed WAL before registering the recovered
+collections' storage engines. Recovery found the catalog rows and WAL segments, but
+could not flush them (`No storage engine registered for collection`). A redundant
+second replay in `ProximaDB::start()` repeated the failure while startup still became
+healthy because per-collection replay errors were only warnings.
+
 == Fix
 
 === Catalog durability
@@ -88,10 +95,13 @@ not need a local staging `data_directory` to recover a collection.
 
 == Recovery invariant
 
-Boot sets the recovered catalog as the global WAL/recovery authority before creating
-the storage engine. `StorageEngine::recover_from_wal()` lists catalog collections and
-calls `recover_collection(id)` for each. Once the object-store snapshot restores the
-catalog row, the pre-existing WAL segments are reattached to that id and replayed.
+Boot sets the recovered catalog as the global WAL/recovery authority before starting
+the storage engine. Startup then loads catalog collections, registers each assigned
+storage engine with the WAL recovery manager, and only then calls
+`recover_collection(id)` for every catalog collection. Once the object-store snapshot
+restores the catalog row, the pre-existing WAL segments are reattached to that id and
+replayed exactly once. Any collection registration or replay failure now fails startup
+instead of exposing a healthy endpoint with missing data.
 
 The recovery code deliberately does not invent collections from WAL segment names;
 doing so would bypass schema, engine, tenant, and authorization metadata.
@@ -142,3 +152,6 @@ Before marking this TD closed, attach:
 * 2026-07-14 — filed after the post-#966 VM restart recovered zero collections.
 * 2026-07-14 — implemented per-commit object-store catalog publication, cloud layout
   overlay, graph/discovery filesystem routing, and the three-process recovery proof.
+* 2026-07-14 — first live ADLS run recovered the catalog but exposed WAL replay before
+  storage-engine registration; fixed startup ordering, duplicate replay, and
+  fail-open recovery errors. A passing rerun remains the closure gate.
