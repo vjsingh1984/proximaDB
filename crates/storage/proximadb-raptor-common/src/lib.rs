@@ -8,6 +8,9 @@ use std::collections::HashMap;
 // Re-export ProximaScheme for use in RAPTOR modules
 pub use proximadb_codec::ProximaScheme;
 
+pub mod config;
+pub mod constants;
+
 // ====== Core RowGroup Structure (unified from rowgroup.rs and compaction.rs) ======
 
 /// Primary RowGroup structure used throughout RAPTOR

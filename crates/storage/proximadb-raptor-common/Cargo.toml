@@ -20,6 +20,7 @@ proximadb-proto.workspace = true
 proximadb-bloom.workspace = true
 proximadb-codec.workspace = true
 proximadb-compression.workspace = true
+proximadb-compression-types.workspace = true
 proximadb-hardware-caps.workspace = true
 
 [lints]
