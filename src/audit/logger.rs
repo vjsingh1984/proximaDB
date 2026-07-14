@@ -1048,15 +1048,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_audit_logger_creation_s3_routes_to_object_store() {
-        // S3 audit now routes through ObjectStoreAuditStorage
-        // (TD-OBJSTORE-1, #960) — it is no longer a hardcoded
-        // "not yet implemented" stub. Behavior is feature-dependent:
-        // a build with the aws feature routes the scheme successfully
-        // (Ok); a build without it fails fast at construction with a
-        // routing error (get_filesystem rejects the unsupported scheme).
-        // Either outcome is correct; what must NOT recur is the old
-        // placeholder error.
+    async fn test_audit_logger_creation_s3_backend() {
+        // TD-OBJSTORE-1 (#960): the S3 backend now routes through
+        // ObjectStoreAuditStorage. With the `aws` feature the s3:// scheme
+        // registers and creation succeeds (credentials are resolved lazily
+        // on first I/O); without it, creation fail-fasts on the
+        // unroutable scheme instead of the old "not yet implemented".
         let config = AuditConfig {
             enable_audit_logging: true,
             storage_backend: AuditStorageBackend::S3 {
@@ -1071,21 +1068,21 @@ mod tests {
             compliance_frameworks: vec![],
         };
 
-        match AuditLogger::new(config).await {
-            Ok(_) => {} // aws feature present: scheme routed successfully
-            Err(e) => {
-                let msg = e.to_string();
-                assert!(
-                    !msg.contains("not yet implemented"),
-                    "S3 audit is implemented via ObjectStoreAuditStorage now; \
-                     unexpected placeholder error: {msg}"
-                );
-                assert!(
-                    msg.contains("not routable"),
-                    "expected a fail-fast routing error without the aws feature, got: {msg}"
-                );
-            }
-        }
+        let result = AuditLogger::new(config).await;
+        #[cfg(feature = "aws")]
+        assert!(
+            result.is_ok(),
+            "S3 audit backend must initialize lazily with the aws feature: {:?}",
+            result.err().map(|e| e.to_string())
+        );
+        #[cfg(not(feature = "aws"))]
+        assert!(
+            result
+                .err()
+                .map(|e| e.to_string())
+                .is_some_and(|msg| msg.contains("not routable")),
+            "S3 audit backend must fail-fast on the unroutable scheme without the aws feature"
+        );
     }
 
     #[tokio::test]
