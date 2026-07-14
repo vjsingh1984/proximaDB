@@ -556,8 +556,11 @@ impl RestServer {
             None
         };
 
-        // Tenant extraction layer for multi-tenant isolation
-        let tenant_extractor = TenantExtractor::with_config(security_config.tenant.clone());
+        // Tenant extraction layer for multi-tenant isolation.
+        // Env overrides (PROXIMADB_TENANT_HEADER_TRUST) are applied here — at
+        // server construction, never inside constructors — so tests stay hermetic.
+        let tenant_extractor =
+            TenantExtractor::with_config(security_config.tenant.clone().apply_env_overrides());
         let tenant_layer = middleware::from_fn_with_state(tenant_extractor, tenant_middleware);
 
         // Log security configuration
@@ -859,7 +862,9 @@ impl RestServer {
         // multi-port path applies the same layer in `create_router`; the
         // unified path must apply it too (it is NOT wrapped by the caller).
         // Default config resolves to the single "default" tenant in dev.
-        let tenant_extractor = TenantExtractor::with_config(TenantExtractorConfig::default());
+        // PROXIMADB_TENANT_HEADER_TRUST overrides the bare-header trust policy.
+        let tenant_extractor =
+            TenantExtractor::with_config(TenantExtractorConfig::default().apply_env_overrides());
         let tenant_layer = middleware::from_fn_with_state(tenant_extractor, tenant_middleware);
 
         // Auth layer — convergent with the multi-port `start_with_security`

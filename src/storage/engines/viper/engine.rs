@@ -3027,12 +3027,6 @@ impl UnifiedStorageFormat for ViperEngine {
         reader.read_all_records(0, None).await
     }
 
-    fn get_filesystem_factory(
-        &self,
-    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-        &self.filesystem_factory
-    }
-
     /// Convenient compact_collection method for CompactionCoordinator integration
     /// Returns enhanced result with vector tracking for AXIS integration
     /// Compact a specific collection - returns standard CompactionResult
@@ -3098,6 +3092,14 @@ impl UnifiedStorageFormat for ViperEngine {
         })
     }
 } // End of impl UnifiedStorageFormat for ViperEngine
+
+impl crate::storage::traits::EngineFilesystemAccess for ViperEngine {
+    fn get_filesystem_factory(
+        &self,
+    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
+        &self.filesystem_factory
+    }
+}
 
 /// Implementation of UniversallyOptimized trait for VIPER engine
 #[async_trait::async_trait]

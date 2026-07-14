@@ -2072,12 +2072,6 @@ mod executor_tests {
             {
                 Ok(vec![])
             }
-            fn get_filesystem_factory(
-                &self,
-            ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-                // Deferred: Placeholder for test - FilesystemFactory::new is async
-                unimplemented!("Test method - requires async FilesystemFactory::new")
-            }
         }
         let engine = Arc::new(NoopEngine) as Arc<dyn crate::storage::traits::UnifiedStorageFormat>;
         let store = Arc::new(ProximaEntityStore::new(

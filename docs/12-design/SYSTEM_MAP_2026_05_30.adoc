@@ -4,10 +4,13 @@
 :icons: font
 :source-highlighter: rouge
 :sectnums:
-:last-updated: 2026-07-07
+:last-updated: 2026-07-12
+// status-as-of: 2026-07-12
+// The status-as-of tag above is checked by scripts/check_status_as_of.py (wired into
+// `make work-commit-check`): re-verify the "Current state" sections against HEAD, then bump it.
 
 Status: Apex reference index (active baseline) +
-Date: 2026-07-07 (filename `SYSTEM_MAP_2026_05_30` is the original; content tracks current HEAD) +
+Date: 2026-07-12 (filename `SYSTEM_MAP_2026_05_30` is the original; content tracks current HEAD) +
 Cost spine: the multi-engine routing + cache policy shown here is co-optimized against the *measured
 per-query I/O trace* across the five physical dimensions — see
 `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` (the unified cost objective the `ComputeScheduler`
@@ -151,7 +154,10 @@ shaping, not executor construction.
 boundary that bypasses tenant context or raw-builds paths is architectural debt. ADR-032/TD-CAT-2
 make catalog metadata the remaining high-risk tenant-prefix gap.
 * Support level comes from link:../SUPPORTED_SURFACE.adoc[docs/SUPPORTED_SURFACE.adoc], not from the
-existence of modules, feature flags, or demos.
+existence of modules, feature flags, or demos. The storage-engine names in the diagrams below are
+illustrative; the canonical per-engine inventory + tiers (including gated, internal, removed, and
+fallback engines) is SUPPORTED_SURFACE §"Storage Engine Matrix" (TD-TAXO-1) — do not re-enumerate
+engines in design docs.
 
 === ASCII architecture snapshot
 
@@ -494,7 +500,12 @@ frontend/algebra/planner/executor crates, DML routing, `ComputeScheduler`, DataF
 vocabulary, read-side `RoutedReadPlan`, and query-layer execution seams exist. pgwire dispatches
 through `execute_sql_with_backend` rather than constructing DataFusion directly. Native physical
 plans execute through `NativeVolcanoEngine`; DataFusion is fenced as a swappable physical backend
-behind ADR-039 and primarily serves parquet-backed / interop paths. Full PostgreSQL parity, complete
+behind ADR-039 and primarily serves parquet-backed / interop paths. Read routing is trace-taught
+(co-design C4): every pgwire relational `SELECT` consults `route_select_advised` against the global
+`RouteCostModel` (EWMA over per-query io_trace snapshots; observer wired at startup, persisted
+across restarts) — observe-mode advisory by default, with a landed but flag-gated live override
+(`PROXIMADB_ROUTE_COST_OVERRIDE`, default OFF; explore/exploit over freshness-safe candidates plus
+the TD-170 round-trip hard gate, enablement gated by TD-ROUTE-1). Full PostgreSQL parity, complete
 constraints, MVCC/index state, HTAP delta union, accuracy ratchets, and distributed consistency gates
 remain TD-076/TD-110/TD-115/ADR-040 work.
 | MVP-ready as a scoped SQL/pgwire compatibility surface, not as a PostgreSQL replacement. Keep

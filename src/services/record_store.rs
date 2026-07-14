@@ -143,6 +143,19 @@ pub trait TableWalAppender: Send + Sync {
     async fn read_all_entries(&self) -> Result<Vec<CanonicalWalEntry>> {
         Ok(Vec::new())
     }
+
+    /// Highest sequence_number assigned to an entry for `collection_id`, when the
+    /// appender tracks per-collection watermarks. `None` (default) = unknown ⇒ the
+    /// caller must scan. Used by the TD-OLAP-17 fast-path in `read_changes_since`:
+    /// if the collection's high-water has not advanced past a reader's `since_lsn`,
+    /// no entry can satisfy `sequence_number > since_lsn` ⇒ empty, skipping the
+    /// O(WAL-size) `read_all_entries` materialization that the OLAP delta merge
+    /// otherwise pays per table, per query (the measured DF table-OPEN floor —
+    /// TD-OLAP-17). The shared canonical WAL is tagged per entry, so the watermark
+    /// is per-collection, not global.
+    fn collection_max_sequence_for(&self, _collection_id: &str) -> Option<u64> {
+        None
+    }
 }
 
 /// Physical writer route selected from xCatalog table metadata.
@@ -1784,6 +1797,14 @@ impl TableRecordStore for DirectWalTableRecordStore {
         collection_id: &str,
         since_lsn: u64,
     ) -> Result<Vec<ChangeRow>> {
+        // TD-OLAP-17 fast-path: skip the O(WAL) scan when the collection's
+        // high-water hasn't advanced past `since_lsn` (no entry can satisfy
+        // `sequence_number > since_lsn`). `None` ⇒ appender doesn't track ⇒ scan.
+        if let Some(max) = self.wal_appender.collection_max_sequence_for(collection_id)
+            && max <= since_lsn
+        {
+            return Ok(Vec::new());
+        }
         let entries = self.wal_appender.read_all_entries().await?;
         let mut out: Vec<ChangeRow> = entries
             .iter()
@@ -1804,6 +1825,14 @@ impl TableRecordStore for DirectWalTableRecordStore {
         tenant: Option<&str>,
         since_lsn: u64,
     ) -> Result<Vec<ChangeRow>> {
+        // TD-OLAP-17 fast-path (tenant-agnostic): the collection high-water is a
+        // sufficient condition for emptiness across ALL tenants — if no entry for
+        // this collection exceeds `since_lsn`, the tenant filter cannot add any.
+        if let Some(max) = self.wal_appender.collection_max_sequence_for(collection_id)
+            && max <= since_lsn
+        {
+            return Ok(Vec::new());
+        }
         let entries = self.wal_appender.read_all_entries().await?;
         let want = tenant.filter(|t| !t.is_empty());
         let mut out: Vec<ChangeRow> = entries
@@ -2868,6 +2897,52 @@ mod tests {
             }
             other => panic!("expected upsert WAL entry, got {other:?}"),
         }
+    }
+
+    /// TD-OLAP-17: `read_changes_since` skips the O(WAL) `read_all_entries` scan
+    /// when the appender's per-collection high-water has not advanced past
+    /// `since_lsn`. This is the fast-path that removes the DF table-OPEN floor
+    /// (the per-table-per-query `changed_oids_since` scan). `MemoryTableWalAppender`
+    /// tracks the high-water on append; `RecordingWalAppender` inherits the default
+    /// (`None` ⇒ scan), so this test uses the memory appender.
+    #[tokio::test]
+    async fn read_changes_since_skips_scan_via_collection_high_water() {
+        use crate::services::canonical_wal::MemoryTableWalAppender;
+
+        let wal = Arc::new(MemoryTableWalAppender::new());
+        let upsert = |coll: &str| CanonicalOperation::RecordUpsert {
+            collection_id: coll.to_string(),
+            record: Box::new(ProximaRecord::default()),
+            projections: vec![],
+        };
+        // t1 → seq 1, 2 (high-water 2); t2 → seq 3 (high-water 3).
+        wal.append_operations(vec![upsert("t1")], None)
+            .await
+            .unwrap();
+        wal.append_operations(vec![upsert("t1")], None)
+            .await
+            .unwrap();
+        wal.append_operations(vec![upsert("t2")], None)
+            .await
+            .unwrap();
+
+        let store = DirectWalTableRecordStore::new_partitioned(wal);
+
+        // Fast-path: high-water (2) <= since_lsn 2 ⇒ empty, no scan.
+        assert!(store.read_changes_since("t1", 2).await.unwrap().is_empty());
+        // Scan: high-water (2) > since_lsn 1 ⇒ the seq-2 entry.
+        assert_eq!(store.read_changes_since("t1", 1).await.unwrap().len(), 1);
+        // Fast-path for t2.
+        assert!(store.read_changes_since("t2", 3).await.unwrap().is_empty());
+        assert_eq!(store.read_changes_since("t2", 2).await.unwrap().len(), 1);
+        // Unknown collection ⇒ no high-water ⇒ scan ⇒ empty.
+        assert!(
+            store
+                .read_changes_since("never-written", 0)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]

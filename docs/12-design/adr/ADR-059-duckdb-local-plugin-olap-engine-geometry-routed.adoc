@@ -73,9 +73,36 @@ Per the co-design mandate (name the dominant dimensional cost term):
 
 == 6. Rollout (announced here; implemented in follow-up PRs)
 
-1. **Wire `DuckDbLocalEngine`** — `impl ExecutionEngine`; register ProximaDB parquet via DuckDB's object-store reader; wire the `DuckDbCompat` arm in `execute_sql_with_backend`. Default-OFF (env gate) + ledger-gated promotion (ADR-054 progressive-cutover discipline).
-2. **Geometry routing** — ADR-058 router selects `DuckDbCompat` for join-heavy parquet OLAP (eligibility: parquet-backed + join/agg shape; DF the fallback). The cost model (ADR-058 D3/D4) learns per-shape-per-engine.
+1. **Wire `DuckDbLocalEngine`** — `impl ExecutionEngine`; register ProximaDB parquet via DuckDB's object-store reader; wire the `DuckDbCompat` arm in `execute_sql_with_backend`. Default-OFF (env gate) + ledger-gated promotion (ADR-054 progressive-cutover discipline). *(LANDED 2026-07-11, #872 — engine + `execute_sql_with_backend` arm behind `--features duckdb`.)*
+2. **Geometry routing** — ADR-058 router selects `DuckDbCompat` for join-heavy parquet OLAP (eligibility: parquet-backed + join/agg shape; DF the fallback). The cost model (ADR-058 D3/D4) learns per-shape-per-engine. *(LANDED 2026-07-14: `PROXIMADB_DUCKDB_ROUTE` (default OFF) gates a DuckDB PRIMARY attempt for join-bearing/grouped parquet shapes with DataFusion the correctness floor; eligibility additionally requires every referenced table's ADR-025 post-snapshot delta be EMPTY (TD-OLAP-17 high-water probe, fail-closed) since DuckDB reads bare parquet; `DuckDbCompat` joins the `olap/parquet` freshness-safe cost-model candidate set when compiled + route-enabled, so cells warm through the router and the #946 per-class override can flip to it; the io_trace route is re-stamped to the engine that actually served, so cost cells never mis-attribute floor-served queries. Enable gate: `tests/duckdb_route_pgwire_e2e.rs` — result parity + attribution.)*
 3. **Trust gate (ADR-058 D5/§9.A)** — DuckDB reads the same parquet; the `StatsTrust` gate applies (external parquet → DuckDB scans, doesn't trust footer for elision — though DuckDB's own elision is its internal concern; the gate is at ProximaDB's parquet-registration boundary).
 4. *(Converges)* native-modes for load-bearing shapes (ADR-054) — DuckDB remains for the shapes native doesn't own.
 
 Each step default-safe + ledger-gated, mixed-read-safe, behind the ADR-054 progressive-cutover discipline.
+
+== 7. Routed evidence + promotion verdict (2026-07-14 ledger runs)
+
+Measured through the REAL pgwire route (step-2 wiring), SF 0.01 full-suite + SF 0.1 scoped
+(Q3/Q5/Q8/Q9/Q10), release, `PROXIMADB_DUCKDB_ROUTE=1` vs stock:
+
+* **The wiring is sound.** 142/170 pgwire-sweep records served by `DuckDbCompat` with **zero
+  row-count mismatches** vs the stock DataFusion baseline (SF 0.01) and exact parity on all five
+  SF 0.1 queries. Eligibility behaved (scalar/metadata shapes kept DataFusion); the delta-clean
+  probe added no visible overhead (routed-DuckDB ≤ DuckDB-direct walls); cost cells warmed under
+  the correct backend label via the io_trace re-stamp.
+* **The motivating gap is GONE on the probed shapes.** TD-OLAP-15's 100–700× DataFusion join-plan
+  collapse (Q8 17 233 ms at SF 0.1) no longer reproduces: stock DataFusion now answers Q5/Q8/Q9
+  in ~24 ms at SF 0.1 — the D5 "fallback-path investment" (TD-OLAP-2 NDV via #886 + stats-fed
+  planning #660) landed and fixed the CBO's join plans. DuckDB-direct is comparable (~20–36 ms)
+  with a cold-start outlier (Q3 first-run ~1.3 s: fresh in-memory DB + view registration per
+  query — the stateless-engine cost).
+* **Promotion verdict: stay opt-in default-OFF.** On current evidence DataFusion ≥ DuckDB across
+  both scales probed, so there is no measured win to promote — and that is the routing framework
+  working, not a failure: the cost model, warmed through this route, correctly learns DataFusion
+  as the cheaper arm at these scales. Re-evaluate on shapes/scales where DuckDB's optimizer
+  advantage re-emerges (larger SF, wider joins, window/ROLLUP surfaces DataFusion lacks) — the
+  route, eligibility gates, and per-class staged enable (#946) are ready when it does.
+* Residual observation: a set of CTE-shaped TPC-DS queries (q1, q9, q14a, q23a, q24a, q33, …)
+  execute correctly but carry NO route stamp — they are served by a pre-router path, so the cost
+  model never sees them. Worth a follow-up when CTE lowering lands on the shared route.
+

@@ -1,0 +1,52 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-WLP-4: AppendBulk clustering + PCA/IVF model training at compaction (Hilbert bootstrap)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open — spec filed 2026-07-14 (ADR-061). Not started. Depends on TD-WLP-1 + TD-WLP-2.
+| Priority | P1b — the append-path recall payoff; double-gated (compaction armed + profile=AppendBulk).
+| Severity | High — the clustering geometry that read-side prune quality depends on.
+| Component | `src/storage/engines/sst/compaction.rs` (re-cluster call sites ~1221/1350); `src/storage/engines/sst/object_economy_directory.rs` (`pca_model_ref` + centroids ~46/135); `src/storage/engines/sst/block_cluster.rs` / `spatial_clustering.rs` (Hilbert bootstrap); `kmeans_clustering` hoist target (new foundation crate)
+| Governs | link:../../12-design/adr/ADR-061-per-collection-workload-profiles.adoc[ADR-061] (D3)
+| Relates to | TD-RDSTRAT-4/5 (S4 IVF), TD-WLP-3 (the radius prune this feeds), `kmeans_clustering` in `crates/modalities/proximadb-quantization-kernel` (reuse, don't reimplement — must hoist for layering)
+| Pillar | PERF (recall + coalescing from compact clusters), COST (fewer block GETs)
+|===
+
+toc::[]
+
+== Why
+
+Clustering runs at compaction and today is sign-bit sort-by-code — too coarse (measured pruned
+recall 0.81). ADR-061 D3 upgrades it: bootstrap Hilbert-on-raw at L0 (no model, cold-start safe),
+then train a PCA + IVF model and re-cluster at compaction on **fp32-PCA** (not codes). One PCA
+projection serves the Hilbert score, the IVF assignment, and the stored centroid.
+
+== Scope
+
+* At compaction for `AppendBulk` collections: train PCA + IVF (k-means) on PCA-projected fp32 and
+  re-cluster via the existing `write_pax_segment_full` path; populate the VOE directory's per-block
+  centroids + `pca_model_ref`.
+* L0 flush stays Hilbert-on-raw (no model). `Churn` pins this OFF.
+* **Prerequisite: hoist `kmeans_clustering` from `crates/modalities/proximadb-quantization-kernel`
+  to a foundation crate** — storage/compaction must not depend on a modality kernel (layering
+  guard). Reuse it; do not reimplement Lloyd.
+* Order IVF cells by their centroid's Hilbert code so same-region blocks are physically contiguous
+  (coalescing-friendly).
+
+== TDD gate
+
+Integration test `tests/sst_compaction_reclustering_test.rs` (storage-integration CI job):
+
+* `test_append_compaction_trains_model_and_reclusters`: post-compaction segment has non-empty
+  per-block centroids + a populated `pca_model_ref`; intra-block coherence (avg centroid→member
+  distance) improves vs the L0 Hilbert baseline; a `Churn`-tagged collection compacted does NOT
+  train a model (centroids remain bootstrap-only).
+* read-consistency across the atomic segment-swap during re-cluster (ADR-046 LSN-coherence).
+
+== Gating / descope
+
+Fires only when TD-WLP-2 compaction is armed AND profile=`AppendBulk`; global default OFF. **Descope
+(WLP-4a):** ship Hilbert-only re-cluster at compaction (still lights the dark path + improves
+coherence) if the `kmeans_clustering` hoist ripples; defer PCA/IVF training to WLP-4b.

@@ -20,8 +20,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use object_store::path::Path;
 use proximadb_block_format::{
     BLOCK_FOOTER_SIZE, BlockFooter, BlockZoneSource, FlatRow, PaxBlockReader, PruneResult,
-    evaluate_block,
+    RankMetric, evaluate_block,
     ranged::{BlockLayout, metadata_ranges},
+    record::col_id,
 };
 use proximadb_cache::{CacheKey, CacheKind, TenantCache};
 use proximadb_filter_expression::FilterExpression;
@@ -44,6 +45,15 @@ const INITIAL_SUFFIX: u64 = 64 * 1024;
 
 fn fs_err(ctx: &str, e: impl std::fmt::Display) -> StorageError {
     StorageError::Corruption(format!("ranged segment {ctx}: {e}"))
+}
+
+/// The RaBitQ-coarse fallback order (candidate rank as distance) used when a block
+/// has no rerank column — mirrors the whole-segment cascade's fallback.
+fn coarse_order(cand: &[usize]) -> Vec<(usize, f32)> {
+    cand.iter()
+        .enumerate()
+        .map(|(rank, &row)| (row, rank as f32))
+        .collect()
 }
 
 /// Slice a block-relative metadata `range` out of a buffer that begins at block-relative
@@ -112,6 +122,17 @@ pub struct SegmentReadStats {
     /// deferred until the reader issues these concurrently — today it awaits
     /// them serially, so depth is 1.)
     pub range_gets: u64,
+}
+
+/// One hit from the ranged RaBitQ cascade — the storage-common analogue of the SST
+/// engine's `CascadeHit` (the root crate maps this into it). `vector` is populated
+/// only when an exact-f32 tier is present (a follow-up; `None` for the default SQ8
+/// config).
+#[derive(Debug, Clone)]
+pub struct RangedCascadeHit {
+    pub oid: String,
+    pub distance: f32,
+    pub vector: Option<Vec<f32>>,
 }
 
 impl<'b> RangedSegmentReader<'b> {
@@ -371,6 +392,91 @@ impl<'b> RangedSegmentReader<'b> {
         Ok(out)
     }
 
+    /// Ranged RaBitQ cascade over the segment (ADR-057 / TD-RDSTRAT-3 S1b): per
+    /// block, range-read ONLY the RaBitQ codes stripe (Stage-1 rank) + the SQ8
+    /// rerank stripe (Stage-2 rerank via the shared primitive) + the OID stripe for
+    /// the winners — never the whole segment. Block hits merge into a global
+    /// top-`k` (nearest-first), byte-identically to the whole-segment
+    /// `rabitq_search_segment` for the default SQ8 config.
+    ///
+    /// Returns `Ok(None)` when no block carries RaBitQ codes (the caller then falls
+    /// back to a whole-segment materialize-and-score), matching the whole-segment
+    /// cascade's contract. Targets the default config; the exact-f32-tier rerank +
+    /// `include_vectors` are a follow-up (`vector` is always `None` here).
+    pub async fn rabitq_search(
+        &self,
+        query: &[f32],
+        k: usize,
+        pool: usize,
+        metric: RankMetric,
+    ) -> Result<Option<Vec<RangedCascadeHit>>, StorageError> {
+        let pool = pool.max(k);
+        let mut any_rabitq = false;
+        let mut hits: Vec<RangedCascadeHit> = Vec::new();
+
+        for entry in &self.index.blocks {
+            let (off, bsz) = (entry.offset, entry.size as u64);
+            let layout = self.block_layout(off, bsz).await?;
+
+            // Stage 1: fetch ONLY the RaBitQ codes stripe, rank candidates.
+            let Some(cr) = layout.column_stripe_range(col_id::EMBED_BASE) else {
+                continue;
+            };
+            let codes = self.fetch(off + cr.start, cr.end - cr.start).await?;
+            let Some(cand) = layout.rabitq_rank(query, pool, metric, &codes) else {
+                continue; // EMBED_BASE not RaBitQ-coded — skip (mixed-read-safe)
+            };
+            any_rabitq = true;
+            if cand.is_empty() {
+                continue;
+            }
+
+            // Stage 2: fetch the SQ8 rerank stripe, rerank ONLY the candidate rows.
+            // Fall back to the RaBitQ-coarse order when the rerank column is absent.
+            let scored: Vec<(usize, f32)> = match layout.column_stripe_range(col_id::RERANK_BASE) {
+                Some(rr) => {
+                    let rer = self.fetch(off + rr.start, rr.end - rr.start).await?;
+                    layout
+                        .rerank_candidate_rows(col_id::RERANK_BASE, query, &cand, metric, &rer)
+                        .unwrap_or_else(|| coarse_order(&cand))
+                }
+                None => coarse_order(&cand),
+            };
+            let topk: Vec<(usize, f32)> = scored.into_iter().take(k).collect();
+
+            // Attach ids: fetch the OID stripe once for this block.
+            let oids = match layout.column_stripe_range(col_id::OID) {
+                Some(orr) => {
+                    let ob = self.fetch(off + orr.start, orr.end - orr.start).await?;
+                    layout.decode_str_column(col_id::OID, &ob)
+                }
+                None => None,
+            };
+            for (row, dist) in topk {
+                let oid = oids
+                    .as_ref()
+                    .and_then(|o| o.get(row).cloned().flatten())
+                    .unwrap_or_default();
+                hits.push(RangedCascadeHit {
+                    oid,
+                    distance: dist,
+                    vector: None,
+                });
+            }
+        }
+
+        if !any_rabitq {
+            return Ok(None);
+        }
+        hits.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        hits.truncate(k);
+        Ok(Some(hits))
+    }
+
     /// Reconstruct full records, **skipping whole blocks** the filter provably
     /// excludes (predicate pushdown). For each block only the footer/metadata is
     /// range-read first; a block that survives [`evaluate_block`] has its body
@@ -624,6 +730,78 @@ mod tests {
         }
         let meta = w.finish_v1().unwrap();
         std::fs::read(&meta.path).unwrap()
+    }
+
+    /// Build a multi-block **RaBitQ** PAX segment (EMBED_BASE codes + SQ8 rerank),
+    /// returning the corpus so a test can query with a known vector.
+    fn build_rabitq_segment(n: usize, dim: usize) -> (Vec<Vec<f32>>, Vec<u8>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        let corpus: Vec<Vec<f32>> = (0..n)
+            .map(|i| {
+                (0..dim)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let mut w = PaxSegmentWriter::new(
+            &path,
+            proximadb_block_format::BlockMode::Pax,
+            proximadb_block_format::BlockCompression::None,
+            "c",
+            0,
+            1,
+            Some(16 * 1024),
+        )
+        .with_quant(proximadb_block_format::VectorQuant::RaBitQ);
+        for (i, v) in corpus.iter().enumerate() {
+            w.add_record(&rec(&format!("r{i}"), 1000 + i as i64, v.clone()))
+                .unwrap();
+        }
+        let meta = w.finish().unwrap();
+        (corpus, std::fs::read(&meta.path).unwrap())
+    }
+
+    /// TD-RDSTRAT-3 S1b Slice B: the ranged RaBitQ cascade returns a correct, sorted
+    /// top-k with valid ids — reading only codes + candidate rerank + OID stripes
+    /// per block (never the whole segment). An exact-query match must appear in the
+    /// top-k (the SQ8 rerank resolves it to ~0 distance).
+    #[tokio::test]
+    async fn ranged_rabitq_search_returns_sane_topk() {
+        let (corpus, bytes) = build_rabitq_segment(400, 64);
+        let bridge = InMemoryRangeBridge {
+            bytes,
+            ranged_bytes: AtomicU64::new(0),
+            single_calls: AtomicU64::new(0),
+            batched_calls: AtomicU64::new(0),
+        };
+        let reader = RangedSegmentReader::open(&bridge, Path::from("seg.pax"), Some("t"))
+            .await
+            .unwrap();
+        assert!(reader.block_count() >= 2, "want a multi-block segment");
+
+        let target = 137usize;
+        let query = corpus[target].clone();
+        let hits = reader
+            .rabitq_search(&query, 10, 100, RankMetric::L2)
+            .await
+            .unwrap()
+            .expect("RaBitQ segment must return hits");
+
+        assert_eq!(hits.len(), 10, "top-k count");
+        assert!(
+            hits.windows(2).all(|w| w[0].distance <= w[1].distance),
+            "hits must be sorted nearest-first"
+        );
+        assert!(
+            hits.iter().all(|h| !h.oid.is_empty()),
+            "every hit has an id"
+        );
+        assert!(
+            hits.iter().any(|h| h.oid == format!("r{target}")),
+            "exact-query match r{target} missing from top-10: {:?}",
+            hits.iter().map(|h| h.oid.clone()).collect::<Vec<_>>()
+        );
     }
 
     /// End-to-end: filter pushdown + footer cache + correctness on one path.

@@ -779,8 +779,7 @@ fn gen_tpcds(scale: f64) -> Vec<String> {
         "t_time_sk, t_time, t_hour, t_minute, t_meal_time",
         (0..86_400u64)
             .step_by(60)
-            .enumerate()
-            .map(|(_, secs)| {
+            .map(|secs| {
                 let hour = secs / 3600;
                 let minute = (secs % 3600) / 60;
                 let meal = if (8..10).contains(&hour) {
@@ -849,7 +848,7 @@ fn gen_tpcds(scale: f64) -> Vec<String> {
             let qty = 1 + rng.below(100);
             let price = 1 + rng.below(100);
             let wcost = rng.money(80);
-            let list_price = (price + 10) as u64; // list > sales
+            let list_price = price + 10; // list > sales
             let ext_sales = qty * price;
             let ext_wcost = qty * (wcost.parse::<f64>().unwrap_or(0.0) as u64 + 1);
             let ext_list = qty * list_price;
@@ -1240,6 +1239,12 @@ struct Methodology {
 struct LedgerRecord {
     benchmark: String,
     query: String,
+    /// Harness sweep label (`native` / `datafusion` / `duckdb`). Serialized as
+    /// `sweep`: the flattened snapshot also carries a `route` key (the STAMPED
+    /// `(shape_class, backend)` tuple), and duplicate JSON keys made parsers
+    /// silently drop this label. `sweep` = which phase ran the query; `route`
+    /// = what the router actually stamped/served.
+    #[serde(rename = "sweep")]
     route: String,
     temperature: String,
     ok: bool,
@@ -1266,7 +1271,33 @@ async fn measure(
 ) -> Result<(usize, u128, IoTraceSnapshot), (u128, String)> {
     CAPTURE.lock().expect("lock").clear();
     let t0 = Instant::now();
-    let res = client.simple_query(sql).await;
+    // Optional per-query wall budget (`TPC_PERF_QUERY_TIMEOUT_MS`, unset/0 =
+    // off): a pathological query becomes an ERR record + a server-side cancel
+    // instead of wedging the whole sweep behind one Volcano grind. The cancel
+    // matters — dropping the query future alone leaves the connection busy and
+    // the NEXT query would queue behind the still-running one.
+    let budget_ms: u64 = std::env::var("TPC_PERF_QUERY_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let res = if budget_ms == 0 {
+        client.simple_query(sql).await
+    } else {
+        match tokio::time::timeout(Duration::from_millis(budget_ms), client.simple_query(sql)).await
+        {
+            Ok(r) => r,
+            Err(_elapsed) => {
+                let _ = client
+                    .cancel_token()
+                    .cancel_query(tokio_postgres::NoTls)
+                    .await;
+                return Err((
+                    t0.elapsed().as_millis(),
+                    format!("harness timeout after {budget_ms} ms (query cancelled)"),
+                ));
+            }
+        }
+    };
     let wall_ms = t0.elapsed().as_millis();
     match res {
         Ok(msgs) => {
@@ -1321,7 +1352,72 @@ fn push_record(
             snapshot: IoTraceSnapshot::default(),
         },
     };
+    // Live progress + crash-safe partial ledger. The harness previously went
+    // silent between seeding and the final write, holding every record in
+    // memory — a wedged/killed run could neither name the culprit query nor
+    // keep any completed measurement. Now each record prints as it lands and
+    // appends to `<out>.partial.jsonl`, so a run that never completes still
+    // leaves the full trail up to the query it died on.
+    match &rec.error {
+        None => eprintln!(
+            "[{benchmark}] {query} {route}/{temperature} {} ms rows={}",
+            rec.wall_ms, rec.rows
+        ),
+        Some(e) => eprintln!(
+            "[{benchmark}] {query} {route}/{temperature} {} ms ERR: {e}",
+            rec.wall_ms
+        ),
+    }
+    append_partial_record(&ledger_out_path(), &rec);
     out.push(rec);
+}
+
+/// Set a ledger-required env default unless the caller explicitly set it
+/// (explicit env always wins). Ledger runs must exercise every routable
+/// engine permutation by default — the router is only as grounded as the
+/// paths the evidence actually exercised.
+fn default_env(key: &str, value: &str) {
+    if std::env::var_os(key).is_none() {
+        unsafe { std::env::set_var(key, value) };
+    }
+}
+
+/// Ledger-run env defaults: native-over-parquet PRIMARY route + vectorized
+/// modes ON (so Native samples land in the same olap/parquet classes as
+/// DataFusion's and the cost cells warm per engine), per-query wall budget ON
+/// (a pathological query becomes an ERR record, not a wedged sweep). The cost
+/// override (PROXIMADB_ROUTE_COST_OVERRIDE) is deliberately NOT defaulted —
+/// ledgers observe routing, they never flip it (ADR-058 D4).
+fn apply_ledger_env_defaults(timeout_key: &str) {
+    default_env("PROXIMADB_NATIVE_ROUTE", "1");
+    default_env("PROXIMADB_NATIVE_VECTORIZED", "1");
+    default_env(timeout_key, "300000");
+}
+
+/// The final ledger path (`TPC_PERF_LEDGER_OUT`, defaulted) — shared by the
+/// end-of-run write and the incremental partial sidecar.
+fn ledger_out_path() -> String {
+    std::env::var("TPC_PERF_LEDGER_OUT")
+        .unwrap_or_else(|_| "target/tpc-perf-ledger/ledger.json".to_string())
+}
+
+/// Append one record to `<out>.partial.jsonl`. Best-effort by design: the
+/// sidecar is diagnostics, so an append failure must never fail the harness.
+fn append_partial_record<T: serde::Serialize>(out_path: &str, rec: &T) {
+    use std::io::Write as _;
+    let path = format!("{out_path}.partial.jsonl");
+    if let Some(dir) = std::path::Path::new(&path).parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let (Ok(line), Ok(mut f)) = (
+        serde_json::to_string(rec),
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path),
+    ) {
+        let _ = writeln!(f, "{line}");
+    }
 }
 
 /// ADR-059: query `xcatalog.table_routing` for each table's materialized-parquet
@@ -1481,15 +1577,15 @@ fn run_duckdb_baseline(
         .arg(&db_path)
         .stdin(Stdio::from(loader_file))
         .output();
-    if let Ok(o) = &load_output {
-        if !o.status.success() {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            eprintln!(
-                "[{benchmark}] · DuckDB load FAILED: {}",
-                stderr.lines().next().unwrap_or("?")
-            );
-            return; // don't run queries against a failed load
-        }
+    if let Ok(o) = &load_output
+        && !o.status.success()
+    {
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        eprintln!(
+            "[{benchmark}] · DuckDB load FAILED: {}",
+            stderr.lines().next().unwrap_or("?")
+        );
+        return; // don't run queries against a failed load
     }
 
     // Verify: confirm data actually loaded (COUNT on the first table).
@@ -1571,11 +1667,20 @@ async fn run_benchmark(
     );
 
     // Native/Volcano route (pre-MATERIALIZE).
-    for (id, sql) in &queries {
-        for temperature in ["first", "repeat"] {
-            let r = measure(client, sql).await;
-            push_record(out, benchmark, id, "native", temperature, r);
+    // `TPC_PERF_SKIP_NATIVE=1` skips this route — useful when iterating on the
+    // DataFusion (post-MATERIALIZE) or DuckDB routes in isolation, since the
+    // row-at-a-time Volcano path is the slow floor (pathological on
+    // subquery-heavy shapes like TPC-H Q2). Default: run it (full comparison).
+    let skip_native = std::env::var("TPC_PERF_SKIP_NATIVE").is_ok();
+    if !skip_native {
+        for (id, sql) in &queries {
+            for temperature in ["first", "repeat"] {
+                let r = measure(client, sql).await;
+                push_record(out, benchmark, id, "native", temperature, r);
+            }
         }
+    } else {
+        eprintln!("[{benchmark}] · skipping native/Volcano route (TPC_PERF_SKIP_NATIVE)");
     }
 
     // Flip to parquet-backed → DataFusion route.
@@ -1664,7 +1769,11 @@ async fn tpc_perf_ledger_inner() {
             None => queries,
         }
     };
+    apply_ledger_env_defaults("TPC_PERF_QUERY_TIMEOUT_MS");
     eprintln!("=== tpc-perf-ledger harness (TPC_PERF_SCALE={scale}) ===");
+    // Fresh partial sidecar per run — stale lines from a prior run must not
+    // mix into this run's crash-safe trail.
+    let _ = std::fs::remove_file(format!("{}.partial.jsonl", ledger_out_path()));
 
     let mut records = Vec::new();
 
@@ -1757,8 +1866,7 @@ async fn tpc_perf_ledger_inner() {
         records,
     };
 
-    let out_path = std::env::var("TPC_PERF_LEDGER_OUT")
-        .unwrap_or_else(|_| "target/tpc-perf-ledger/ledger.json".to_string());
+    let out_path = ledger_out_path();
     if let Some(dir) = std::path::Path::new(&out_path).parent() {
         std::fs::create_dir_all(dir).expect("create ledger dir");
     }
@@ -1793,8 +1901,15 @@ async fn tpc_perf_ledger_inner() {
             );
         }
         // Dynamic: TPC-DS query count grows with coverage (#855); TPC-H is the
-        // fixed 22. Both routes × both temperatures must be measured per query.
+        // fixed 22. Both routes × both temperatures must be measured per query
+        // (unless `TPC_PERF_SKIP_NATIVE` drops the Volcano route for focused
+        // DF/DuckDB iteration — then only the datafusion route is expected).
         let n_queries = 22 + tpcds_queries().len();
+        let n_routes = if std::env::var("TPC_PERF_SKIP_NATIVE").is_ok() {
+            1 // datafusion only
+        } else {
+            2 // native + datafusion
+        };
         let baseline = ledger
             .records
             .iter()
@@ -1802,7 +1917,7 @@ async fn tpc_perf_ledger_inner() {
             .count();
         assert_eq!(
             baseline,
-            n_queries * 2 /* native + datafusion */ * 2, /* first + repeat */
+            n_queries * n_routes * 2, /* first + repeat */
             "native+datafusion baseline incomplete (expected one record per query x route x temperature)"
         );
     }

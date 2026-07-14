@@ -75,8 +75,13 @@ pattern when promoting).
 == Ledger JSON shape
 
 `{ methodology: {engine_version, git_sha, scale, storage_regime, datagen,
-temperature_semantics, routes}, records: [{benchmark, query, route,
+temperature_semantics, routes}, records: [{benchmark, query, sweep,
 temperature, ok, error?, rows, wall_ms, ...IoTraceSnapshot}] }`
+
+`sweep` is the harness phase label (`native` / `datafusion` / `duckdb`); the
+flattened snapshot's `route` is the stamped `(shape_class, backend)` the router
+actually served (renamed from a colliding `route` label field 2026-07-13 —
+duplicate JSON keys made parsers drop the label).
 
 The `IoTraceSnapshot` fields are flattened per record: `get_ops`, `bytes_read`,
 `range_gets`, `splits_total`/`splits_pruned` (TD-OLAP-3 skip ratio — the

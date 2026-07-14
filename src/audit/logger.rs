@@ -215,20 +215,31 @@ impl AuditLogger {
     ) -> Result<Arc<dyn AuditStorage + Send + Sync>> {
         match &config.storage_backend {
             AuditStorageBackend::File { directory } => {
-                let storage = super::storage::FileAuditStorage::new(directory.clone()).await?;
-                Ok(Arc::new(storage))
+                // Dispatch by scheme: object-store URLs (s3://, adls://,
+                // abfs://, gcs://, …) route through the FilesystemFactory;
+                // bare paths and file:// stay on the local backend
+                // (TD-OBJSTORE-1, #960).
+                if directory.contains("://") && !directory.starts_with("file://") {
+                    let storage =
+                        super::storage::ObjectStoreAuditStorage::new(directory.clone()).await?;
+                    Ok(Arc::new(storage))
+                } else {
+                    let storage = super::storage::FileAuditStorage::new(directory.clone()).await?;
+                    Ok(Arc::new(storage))
+                }
             }
             AuditStorageBackend::Database { connection_string } => {
                 let storage =
                     super::storage::DatabaseAuditStorage::new(connection_string.clone()).await?;
                 Ok(Arc::new(storage))
             }
-            AuditStorageBackend::S3 {
-                bucket: _,
-                region: _,
-            } => {
-                // Placeholder for S3 storage implementation
-                Err(anyhow!("S3 audit storage not yet implemented"))
+            AuditStorageBackend::S3 { bucket, region: _ } => {
+                // Route through the same object-store implementation as
+                // scheme-qualified File directories (TD-OBJSTORE-1, #960).
+                let storage =
+                    super::storage::ObjectStoreAuditStorage::new(format!("s3://{bucket}/audit"))
+                        .await?;
+                Ok(Arc::new(storage))
             }
             AuditStorageBackend::Combined {
                 primary: _,
@@ -1037,7 +1048,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_audit_logger_creation_s3_not_implemented() {
+    async fn test_audit_logger_creation_s3_backend() {
+        // TD-OBJSTORE-1 (#960): the S3 backend now routes through
+        // ObjectStoreAuditStorage. With the `aws` feature the s3:// scheme
+        // registers and creation succeeds (credentials are resolved lazily
+        // on first I/O); without it, creation fail-fasts on the
+        // unroutable scheme instead of the old "not yet implemented".
         let config = AuditConfig {
             enable_audit_logging: true,
             storage_backend: AuditStorageBackend::S3 {
@@ -1053,12 +1069,19 @@ mod tests {
         };
 
         let result = AuditLogger::new(config).await;
-        assert!(result.is_err());
+        #[cfg(feature = "aws")]
+        assert!(
+            result.is_ok(),
+            "S3 audit backend must initialize lazily with the aws feature: {:?}",
+            result.err().map(|e| e.to_string())
+        );
+        #[cfg(not(feature = "aws"))]
         assert!(
             result
-                .unwrap_err()
-                .to_string()
-                .contains("not yet implemented")
+                .err()
+                .map(|e| e.to_string())
+                .is_some_and(|msg| msg.contains("not routable")),
+            "S3 audit backend must fail-fast on the unroutable scheme without the aws feature"
         );
     }
 

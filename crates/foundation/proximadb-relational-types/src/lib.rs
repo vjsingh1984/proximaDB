@@ -464,14 +464,15 @@ impl Expr {
                         ProximaType::Boolean
                     }
                 } else if op.is_arithmetic() {
-                    // For now: same-type arithmetic. Implicit
-                    // promotion is a Phase 3 add-on.
                     if lt == rt {
                         lt
+                    } else if numeric_type(&lt) && numeric_type(&rt) {
+                        // Mixed numeric arithmetic widens both sides to f64 at
+                        // evaluation (`eval_arithmetic`, TPC-H Q19) — the plan
+                        // schema must agree.
+                        ProximaType::Float64
                     } else {
-                        // Best-effort: prefer the "wider" of the two
-                        // for display; the type checker rejects this
-                        // at planning time.
+                        // Best-effort for display; evaluation errors loudly.
                         lt
                     }
                 } else {
@@ -1033,11 +1034,22 @@ fn eval_arithmetic(
             }
             _ => unreachable!(),
         })),
-        _ => Err(ExprError::OperatorNotDefined {
-            op: op.as_str().into(),
-            left: proxima_value_type(l).unwrap_or(ProximaType::Boolean),
-            right: proxima_value_type(r).unwrap_or(ProximaType::Boolean),
-        }),
+        _ => {
+            // Mixed numeric operands (TPC-H Q19: `1 - l_discount`, Int64 vs
+            // Float64): widen both sides to f64 and retry — the same SQL
+            // promotion `values_equal`/`compare_ord` already apply, with the
+            // same documented precision caveat for very large i64. Terminates:
+            // the retry hits the (Float64, Float64) arm above. Non-numeric
+            // operands still error loudly.
+            if let (Some(lf), Some(rf)) = (try_to_f64(l), try_to_f64(r)) {
+                return eval_arithmetic(op, &Float64(lf), &Float64(rf));
+            }
+            Err(ExprError::OperatorNotDefined {
+                op: op.as_str().into(),
+                left: proxima_value_type(l).unwrap_or(ProximaType::Boolean),
+                right: proxima_value_type(r).unwrap_or(ProximaType::Boolean),
+            })
+        }
     }
 }
 
@@ -1141,6 +1153,25 @@ fn compare_ord(l: &ProximaValue, r: &ProximaValue) -> Result<std::cmp::Ordering,
 /// to support SQL's implicit cross-type numeric comparisons
 /// (e.g. `int_col > 25` where `25` parses as Int64 and the column
 /// is Int32). Returns `None` for non-numeric values.
+/// True for the numeric `ProximaType`s that widen to f64 in mixed-type
+/// arithmetic/comparison (the `try_to_f64` value-level counterpart).
+fn numeric_type(t: &ProximaType) -> bool {
+    matches!(
+        t,
+        ProximaType::Int8
+            | ProximaType::Int16
+            | ProximaType::Int32
+            | ProximaType::Int64
+            | ProximaType::UInt8
+            | ProximaType::UInt16
+            | ProximaType::UInt32
+            | ProximaType::UInt64
+            | ProximaType::Float16
+            | ProximaType::Float32
+            | ProximaType::Float64
+    )
+}
+
 fn try_to_f64(v: &ProximaValue) -> Option<f64> {
     use ProximaValue as V;
     match v {
@@ -1976,6 +2007,59 @@ mod tests {
         assert_eq!(
             Expr::unary(UnaryOp::Not, Expr::literal(ProximaValue::Boolean(true))).result_type(),
             ProximaType::Boolean
+        );
+    }
+
+    /// TD-REL-LOWER-1 / TPC-H Q19: mixed numeric arithmetic (`1 - l_discount`,
+    /// Int64 vs Float64) widens both sides to f64 — the same promotion
+    /// comparisons already apply — instead of `OperatorNotDefined`.
+    #[test]
+    fn mixed_numeric_arithmetic_widens_to_f64() {
+        let cases = [
+            (
+                BinaryOp::Minus,
+                ProximaValue::Int64(1),
+                ProximaValue::Float64(0.06),
+                0.94,
+            ),
+            (
+                BinaryOp::Mul,
+                ProximaValue::Float64(2.5),
+                ProximaValue::Int32(4),
+                10.0,
+            ),
+            (
+                BinaryOp::Plus,
+                ProximaValue::Int64(3),
+                ProximaValue::Float32(0.5),
+                3.5,
+            ),
+        ];
+        for (op, l, r, want) in cases {
+            let got = eval_binary(op, &l, &r).expect("mixed numeric arithmetic must evaluate");
+            let ProximaValue::Float64(v) = got else {
+                panic!("expected Float64, got {got:?}");
+            };
+            assert!((v - want).abs() < 1e-9, "{op:?}: got {v}, want {want}");
+        }
+        // Non-numeric mixes still error loudly.
+        assert!(
+            eval_binary(
+                BinaryOp::Minus,
+                &ProximaValue::String("a".into()),
+                &ProximaValue::Int64(1)
+            )
+            .is_err()
+        );
+        // And the static result type agrees with the widened evaluation.
+        assert_eq!(
+            Expr::bin(
+                BinaryOp::Minus,
+                Expr::literal(ProximaValue::Int64(1)),
+                Expr::literal(ProximaValue::Float64(0.06))
+            )
+            .result_type(),
+            ProximaType::Float64
         );
     }
 

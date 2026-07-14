@@ -13,7 +13,7 @@
 #            Used by the develop early-detection job so a tier regression is caught
 #            on the introducing feat→develop PR.
 #   --all  : (default) also run cold_graph_record_store_round_trips_on_real_azure,
-#            which compiles the full main crate and runs under CARGO_BUILD_JOBS=1.
+#            which compiles the full main crate and runs under CARGO_BUILD_JOBS=2.
 #
 # Requires: docker, cargo, aws CLI (MinIO bucket), az CLI (Azurite container),
 # curl (fake-gcs bucket). On GitHub ubuntu-latest all are preinstalled.
@@ -93,11 +93,13 @@ cargo test -p proximadb-object-store --features aws,azure,gcp -- --ignored --noc
   put_with_tier_against_fake_gcs
 
 if [ "$SCOPE" = "all" ]; then
-  # Compiles the full main `proximadb` crate (~8400-test binary). CARGO_BUILD_JOBS=1
-  # serializes crate compilation so the 16GB hosted runner is NOT OOM-killed mid-link
-  # — the exact failure that made the qa-gate job red ("runner received a shutdown
-  # signal"). Same mitigation as ci.yml's rust-test unit job (see its comment).
-  CARGO_BUILD_JOBS=1 cargo test -p proximadb --features azure -- --ignored --nocapture \
+  # Compiles the full main `proximadb` crate (~8400-test binary). CARGO_BUILD_JOBS=2
+  # caps compile parallelism low enough to keep the 16GB hosted runner off the OOM
+  # cliff (the "runner received a shutdown signal" failure that jobs=1 was added to
+  # dodge), while halving the serialized ~35-40m compile that grew past the 60m job
+  # budget and got cancelled mid-build. 2 (not the .cargo/config.toml default of 3)
+  # is the deliberate middle ground: faster than 1, safer than 3 on a 16GB runner.
+  CARGO_BUILD_JOBS=2 cargo test -p proximadb --features azure -- --ignored --nocapture \
     cold_graph_record_store_round_trips_on_real_azure
 fi
 

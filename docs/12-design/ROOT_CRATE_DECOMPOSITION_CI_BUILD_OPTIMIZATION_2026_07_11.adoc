@@ -88,6 +88,23 @@ Ce = efferent; both high ⇄ can't be carved into separate crates without severi
 extract storage's cohesive pieces (engines, persistence, WAL, formats) into crates that build in
 parallel.
 
+[NOTE]
+====
+**Refinement (2026-07-12, fresh `graph_module_metric`):** the cycle table above
+is the *worst* files, but `src/storage/engines` **as a whole is leaf-like**
+(`instability = 0.74`; 188,097 symbols = 22% of `src/`), and most of its bulk sits
+in **clean leaves (Ca = 0–5)** — e.g. `raptor/writer.rs` (5.4K, Ca=0),
+`viper/pipeline.rs` (3.1K, Ca=1), `raptor/engine.rs` (2.9K, Ca=0),
+`core/.../columnar_query_reader.rs` (3.1K, Ca=5). These extract **before** the
+full port-inversion (the cycle-hub files like `raptor/common.rs` Ca=126 still
+need Slice-D). So the cycle inversion is a prerequisite for the engine *cores*,
+not for the whole track. Track + queue:
+link:ROOT_CRATE_DECOMPOSITION_ENGINES_EXTRACTION_2026_07_12.adoc[engines-extraction].
+This is the **definitive OOM lever** — engines + rest-of-storage (34% of `src/`)
+is the only subsystem large enough to bring the root single-compile RSS (12.8 GiB)
+under the ~8 GiB needed for `CARGO_BUILD_JOBS=2`.
+====
+
 == Lever 2 — stabilize the build-cascade hubs (cheaper incremental CI)
 
 These modules have the highest afferent coupling (Ca = # dependents). Every PR that touches one

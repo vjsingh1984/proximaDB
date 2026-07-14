@@ -23,12 +23,19 @@ pub trait HybridPort: Send + Sync {
     /// or gRPC `ProximaFusionService.FusionSearch`. Removal + caller migration is
     /// phased (TD-143 did this for the gRPC v1 surface). Note-only (no `since`):
     /// clippy `deprecated_semver` denies a non-semver `since`.
+    ///
+    /// `tenant_id` is the request tenant identity extracted at the network
+    /// boundary (`X-Tenant-ID` middleware). Implementations thread it to the
+    /// metadata-filter gate so the allowed id-set resolves under the caller's
+    /// tenant instead of failing closed to empty (#949). `None` preserves the
+    /// legacy tenantless behavior.
     #[deprecated(
         note = "v1 hybrid_search (legacy 12-strategy HybridFusionEngine) is deprecated; use the v2 fusion seam (FusionService). See TD-138."
     )]
     async fn hybrid_search(
         &self,
         request: HybridFusionSearchRequest,
+        tenant_id: Option<String>,
     ) -> Result<HybridFusionSearchResponse>;
 
     async fn list_fusion_strategies(

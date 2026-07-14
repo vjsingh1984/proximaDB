@@ -99,6 +99,9 @@ impl RLPlannerIntegration {
             StorageEngineType::SWIFT => StorageEngine::Swift,
             StorageEngineType::NOVA => StorageEngine::Nova,
             StorageEngineType::RAPTOR => StorageEngine::Raptor,
+            // TST (and any unmapped engine) maps to SST capabilities as the
+            // safest baseline, consistent with the planner's SST default.
+            _ => StorageEngine::Sst,
         }
     }
 
@@ -434,6 +437,9 @@ impl RLPlannerIntegration {
             StorageEngineType::SWIFT => ProgressiveEngineType::SWIFT,
             StorageEngineType::NOVA => ProgressiveEngineType::NOVA,
             StorageEngineType::RAPTOR => ProgressiveEngineType::RAPTOR,
+            // TST (and any engine without a progressive-quantization path)
+            // falls back to SST, the planner's default.
+            _ => ProgressiveEngineType::SST,
         }
     }
 }

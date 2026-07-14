@@ -6,6 +6,10 @@
 //! Contains the reference implementations for all encoding schemes.
 //! Used as fallback when SIMD/GPU is unavailable and as ground truth for tests.
 
+pub mod decoder;
+pub mod encoder;
 pub mod functions;
 
+pub use decoder::BaselineDecoder;
+pub use encoder::BaselineEncoder;
 pub use functions::*;

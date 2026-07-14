@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Extension, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -19,7 +19,7 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::rest::errors::{RestError, RestResult};
-use crate::rest::state::RestAppState;
+use crate::rest::state::{RestAppState, TenantContext};
 
 // ── Hybrid-search state ───────────────────────────────────────────────────────
 
@@ -156,6 +156,7 @@ pub fn sql_value_to_json(v: &SqlValue) -> serde_json::Value {
 #[allow(deprecated)] // delegates to the deprecated v1 HybridPort::hybrid_search (TD-138 phase 1)
 pub async fn hybrid_search(
     State(state): State<HybridRestState>,
+    tenant: Option<Extension<TenantContext>>,
     Json(request): Json<HybridSearchRestRequest>,
 ) -> RestResult<Json<serde_json::Value>> {
     if request.collection.is_empty() {
@@ -184,7 +185,18 @@ pub async fn hybrid_search(
 
     let proto_request = build_hybrid_fusion_request(request)?;
 
-    match state.hybrid_port.hybrid_search(proto_request).await {
+    // Tenant identity comes from the tenant middleware (X-Tenant-ID / JWT /
+    // default-tenant layer). Threading it through the port lets the BM25
+    // metadata-filter gate resolve the allowed id-set under the caller's
+    // tenant instead of failing closed to an empty set on tenant-stamped
+    // collections (#949).
+    let tenant_id = tenant.map(|Extension(t)| t.tenant_id);
+
+    match state
+        .hybrid_port
+        .hybrid_search(proto_request, tenant_id)
+        .await
+    {
         Ok(resp) => {
             let results: Vec<serde_json::Value> = resp
                 .results
@@ -566,6 +578,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingHybridPort {
         last_request: Mutex<Option<HybridFusionSearchRequest>>,
+        last_tenant: Mutex<Option<String>>,
     }
 
     #[async_trait::async_trait]
@@ -573,8 +586,10 @@ mod tests {
         async fn hybrid_search(
             &self,
             request: HybridFusionSearchRequest,
+            tenant_id: Option<String>,
         ) -> anyhow::Result<proximadb_proto::v1::HybridFusionSearchResponse> {
             *self.last_request.lock().unwrap() = Some(request);
+            *self.last_tenant.lock().unwrap() = tenant_id;
             Ok(proximadb_proto::v1::HybridFusionSearchResponse {
                 results_count: 1,
                 fusion_strategy: FusionStrategy::WeightedLinear as i32,
@@ -602,6 +617,7 @@ mod tests {
 
         let response = hybrid_search(
             State(state),
+            Some(Extension(TenantContext::new("demo1"))),
             Json(HybridSearchRestRequest {
                 collection: "docs".to_string(),
                 vector: Some(vec![0.1, 0.2]),
@@ -620,6 +636,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.0["total"], serde_json::json!(1));
+        assert_eq!(
+            port.last_tenant.lock().unwrap().as_deref(),
+            Some("demo1"),
+            "handler must forward the middleware tenant to the port (#949)"
+        );
         let captured = port
             .last_request
             .lock()

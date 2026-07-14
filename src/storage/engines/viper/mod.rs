@@ -227,9 +227,7 @@
 pub mod eventlog_flush;
 pub mod extraction;
 pub mod factory;
-pub mod pipeline;
-pub mod pipeline_tests;
-pub mod readers; // Pipeline tests module
+pub mod readers;
 // Quantization now handled by unified compute module
 pub mod progressive_stages;
 pub mod utilities; // ISP-compliant progressive search stages
@@ -258,8 +256,6 @@ mod tests;
 // Re-export main VIPER types
 pub use factory::ViperFactory;
 
-// Clustering exports moved to AXIS
-pub use pipeline::ViperPipeline;
 // Quantization now handled by unified compute module
 pub use utilities::ViperUtilities;
 

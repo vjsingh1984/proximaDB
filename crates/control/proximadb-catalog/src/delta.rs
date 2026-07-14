@@ -258,13 +258,22 @@ impl DeltaCatalog {
     fn parse_storage_url(url: &str) -> Result<PathBuf> {
         if let Some(path) = url.strip_prefix("file://") {
             Ok(PathBuf::from(path))
-        } else if url.starts_with("s3://")
-            || url.starts_with("gs://")
-            || url.starts_with("az://")
-            || url.starts_with("abfs://")
-        {
-            // For cloud storage, use local cache directory
+        } else if url.contains("://") {
+            // ANY non-file scheme (s3://, gs://, gcs://, az://, azure://,
+            // adls://, abfs://, …) — never enumerate schemes here: an
+            // unlisted alias used to fall through to "local path" and
+            // create a literal `adls:` directory (TD-OBJSTORE-1, #960).
+            //
+            // The delta catalog does not yet write its metadata to the
+            // object store: it stages into a LOCAL cache directory, which
+            // is NOT durable across VM loss (TD-OBJSTORE-1 deferred item).
             let cache_dir = std::env::temp_dir().join("proximadb_delta_cache");
+            tracing::warn!(
+                "DeltaCatalog storage_url '{}' is an object store; catalog metadata is staged \
+                 in LOCAL, NON-DURABLE {} (TD-OBJSTORE-1)",
+                url,
+                cache_dir.display()
+            );
             Ok(cache_dir)
         } else {
             // Assume local path

@@ -22,6 +22,9 @@ pub fn get_paths(engine: StorageEngineType) -> Vec<OptimizationPath> {
         StorageEngineType::SWIFT => swift_paths::paths(),
         StorageEngineType::NOVA => nova_paths::paths(),
         StorageEngineType::RAPTOR => raptor_paths::paths(),
+        // TST (and any engine without a dedicated path set) reuses the SST
+        // optimization paths as the safest baseline.
+        _ => sst_paths::paths(),
     }
 }
 

@@ -27,7 +27,7 @@ use anyhow::{Context, Result};
 use tokio::sync::{Mutex, RwLock};
 use tracing::info;
 
-use self::traces::TraceSpan;
+use self::traces::{TraceSpan, TraceSummary};
 use crate::proto::proximadb_v1::{LogEntry, MetricSample, ObservabilityNamespaceConfig};
 use crate::storage::persistence::write_ahead_log::wal_operations::{
     ObservabilityOperation, UnifiedWALOperation, UnifiedWALReader, UnifiedWALWriter,
@@ -436,23 +436,95 @@ impl ObservabilityStorage {
     }
 }
 
-/// Storage statistics
-///
+/// Storage statistics — the `ObservabilityStorageStats` value type is defined
+/// in `proximadb_observability_engine::model` (so the storage port can name it
+/// without an upward edge); re-imported here.
+pub use crate::observability::ObservabilityStorageStats;
+
 /// Backwards-compat alias for [`ObservabilityStorageStats`].
 pub type StorageStats = ObservabilityStorageStats;
 
-/// Provides statistics about a namespace's storage usage,
-/// including counts of logs, metric series, and traces.
-#[derive(Debug, Clone)]
-pub struct ObservabilityStorageStats {
-    /// Number of log entries
-    pub log_count: u64,
-    /// Number of metric series
-    pub metric_series_count: u64,
-    /// Number of traces
-    pub trace_count: u64,
-    /// Total storage bytes
-    pub total_bytes: u64,
+/// Dependency-inversion: the observability facade (in the engine crate) holds
+/// `Arc<dyn ObservabilityStoragePort>`; this concrete WAL-backed storage impls
+/// it by delegating to the existing inherent methods. The composition root
+/// injects the concrete storage (coerced to the port) into the facade.
+#[async_trait::async_trait]
+impl crate::observability::ObservabilityStoragePort for ObservabilityStorage {
+    async fn create_namespace(
+        &self,
+        name: &str,
+        config: &ObservabilityNamespaceConfig,
+    ) -> Result<()> {
+        self.create_namespace(name, config).await
+    }
+
+    async fn delete_namespace(&self, name: &str) -> Result<()> {
+        self.delete_namespace(name).await
+    }
+
+    async fn write_log(&self, namespace: &str, log: &LogEntry) -> Result<()> {
+        self.write_log(namespace, log).await
+    }
+
+    async fn write_metric(&self, namespace: &str, metric: &MetricSample) -> Result<()> {
+        self.write_metric(namespace, metric).await
+    }
+
+    async fn write_span(&self, namespace: &str, span: &TraceSpan) -> Result<()> {
+        self.write_span(namespace, span).await
+    }
+
+    async fn query_trace(&self, namespace: &str, trace_id: &str) -> Result<Vec<TraceSpan>> {
+        self.query_trace(namespace, trace_id).await
+    }
+
+    async fn query_traces_by_time(
+        &self,
+        namespace: &str,
+        start_ns: i64,
+        end_ns: i64,
+        limit: usize,
+    ) -> Result<Vec<TraceSummary>> {
+        self.query_traces_by_time(namespace, start_ns, end_ns, limit)
+            .await
+    }
+
+    async fn stats(&self, namespace: &str) -> Result<ObservabilityStorageStats> {
+        self.stats(namespace).await
+    }
+
+    async fn query_traces_by_service(
+        &self,
+        namespace: &str,
+        service: &str,
+        start_ns: i64,
+        end_ns: i64,
+        limit: usize,
+    ) -> Result<Vec<TraceSummary>> {
+        self.query_traces_by_service(namespace, service, start_ns, end_ns, limit)
+            .await
+    }
+
+    async fn query_logs(
+        &self,
+        namespace: &str,
+        start_ns: i64,
+        end_ns: i64,
+        limit: usize,
+    ) -> Result<Vec<LogEntry>> {
+        self.query_logs(namespace, start_ns, end_ns, limit).await
+    }
+
+    async fn query_metrics(
+        &self,
+        namespace: &str,
+        metric_name: &str,
+        start_ns: i64,
+        end_ns: i64,
+    ) -> Result<Vec<MetricSample>> {
+        self.query_metrics(namespace, metric_name, start_ns, end_ns)
+            .await
+    }
 }
 
 #[cfg(test)]

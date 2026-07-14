@@ -23,7 +23,6 @@ use crate::storage::engines::eventlog::{EntityId, Event, EventSequence, EventTyp
 use chrono::{DateTime, Utc};
 use proximadb_kernel::error::ProximaDBError;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::debug;
@@ -33,8 +32,9 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 /// Event index for fast lookups
 #[allow(dead_code)]
 pub struct EventIndex {
-    /// Base directory for index storage
-    base_dir: PathBuf,
+    /// Base location for index storage (local path or object-store URL).
+    /// The index itself is purely in-memory; this is retained for diagnostics.
+    base_dir: String,
 
     /// Entity index: entity_id -> Vec<sequence>
     entity_index: Arc<RwLock<HashMap<EntityId, Vec<EventSequence>>>>,
@@ -51,12 +51,17 @@ pub struct EventIndex {
 
 impl EventIndex {
     /// Create a new event index
-    pub fn new(base_dir: PathBuf) -> Result<Self> {
-        debug!("Creating event index at {:?}", base_dir);
+    pub fn new(base_dir: String) -> Result<Self> {
+        debug!("Creating event index at {}", base_dir);
 
-        // Create index directory
-        std::fs::create_dir_all(&base_dir)
-            .map_err(|e| ProximaDBError::Internal(format!("Failed to create index dir: {}", e)))?;
+        // The index is in-memory; only create a directory for local bases.
+        // Object-store URLs (s3://, adls://, …) need no directory and must
+        // never reach std::fs (TD-OBJSTORE-1, #960).
+        if !base_dir.contains("://") {
+            std::fs::create_dir_all(&base_dir).map_err(|e| {
+                ProximaDBError::Internal(format!("Failed to create index dir: {}", e))
+            })?;
+        }
 
         Ok(Self {
             base_dir,
@@ -291,14 +296,23 @@ mod tests {
 
     #[test]
     fn test_index_creation() {
-        let base_dir = PathBuf::from("/tmp/test_event_index");
+        let base_dir = "/tmp/test_event_index".to_string();
         let index = EventIndex::new(base_dir.clone()).unwrap();
         assert_eq!(index.base_dir, base_dir);
     }
 
+    #[test]
+    fn test_index_creation_object_store_url_skips_local_mkdir() {
+        // An object-store base must never hit std::fs — creation succeeds
+        // without touching the local filesystem (TD-OBJSTORE-1, #960).
+        let index = EventIndex::new("adls://container/data/auditlog".to_string()).unwrap();
+        assert_eq!(index.base_dir, "adls://container/data/auditlog");
+        assert!(!std::path::Path::new("adls:").exists());
+    }
+
     #[tokio::test]
     async fn test_index_event() {
-        let base_dir = PathBuf::from("/tmp/test_index_event");
+        let base_dir = "/tmp/test_index_event".to_string();
         let index = EventIndex::new(base_dir.clone()).unwrap();
 
         let event = Event {
@@ -327,7 +341,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_entity_events() {
-        let base_dir = PathBuf::from("/tmp/test_get_entity");
+        let base_dir = "/tmp/test_get_entity".to_string();
         let index = EventIndex::new(base_dir.clone()).unwrap();
 
         // Index multiple events
@@ -365,7 +379,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_stats() {
-        let base_dir = PathBuf::from("/tmp/test_index_stats");
+        let base_dir = "/tmp/test_index_stats".to_string();
         let index = EventIndex::new(base_dir.clone()).unwrap();
 
         let event = Event {

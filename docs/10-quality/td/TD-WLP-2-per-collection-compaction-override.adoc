@@ -1,0 +1,48 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-WLP-2: Per-collection compaction override (global gate stays default-OFF)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Implemented 2026-07-14 — cascade in `crates/storage/proximadb-storage-common/src/compaction_override.rs` (tri-state global gate: truthy=armed-for-all, explicitly-falsy=master hard-disable, unset=per-collection `compaction:on\|off` tag decides, default OFF); wired into `should_trigger_compaction` (SST flush) with per-collection `l0_threshold:N`, plus `OrchestratorCompactionConfig::effective_for_collection_tags`. TDD gates green: `tests/storage_wlp_compaction_gate.rs` (`test_append_collection_arms_compaction_while_global_off`, `test_global_hard_disable_wins_over_collection_opt_in`) + unit cascade tests. Untagged path byte-for-byte unchanged.
+| Priority | P1 — arms the (dark) compaction re-cluster path per-collection; prerequisite for TD-WLP-4.
+| Severity | Medium — touches the compaction trigger; must preserve the global kill-switch.
+| Component | `src/storage/engines/sst/flush/mod.rs` (`should_trigger_compaction`, `l0_compaction_enabled`, ~595–617); `src/storage/common/compaction_orchestrator.rs` (`OrchestratorCompactionConfig`, ~135–170)
+| Governs | link:../../12-design/adr/ADR-061-per-collection-workload-profiles.adoc[ADR-061] (D5)
+| Relates to | `CollectionWalConfig` / `effective_config_for_collection` (the per-collection pattern to mirror); `PROXIMADB_L0_COMPACTION_ENABLED` (master kill-switch)
+| Pillar | PERF (unlocks read-side prune via re-clustering), OE (per-collection cadence)
+|===
+
+toc::[]
+
+== Why
+
+Compaction re-clusters (it re-runs `write_pax_segment_full`), but it is global and default-OFF, so
+no collection ever re-clusters today. ADR-061 D5 makes compaction arm-able per-collection so
+`AppendBulk` collections can get re-clustering while the global default and `Churn` stay OFF.
+
+== Scope
+
+* Add a per-collection compaction override (arm + optional L0 threshold), resolved through the
+  TD-WLP-1 cascade (e.g. a `compaction:on` / `l0_threshold:N` tag, or profile-implied for
+  `AppendBulk`), mirroring `CollectionWalConfig` / `effective_config_for_collection`.
+* Wire it into `should_trigger_compaction`: fire if (global env armed) OR (per-collection opt-in) —
+  and if globally disabled AND no per-collection opt-in → OFF. The global env remains the master
+  kill-switch (globally-off can never be overridden to on... i.e. a global *hard* disable wins;
+  choose the precedence in the ADR-consistent direction: per-collection opt-in arms only when the
+  global switch is not a hard-disable).
+* Add per-collection resolution to `OrchestratorCompactionConfig`.
+
+== TDD gate
+
+Integration test `tests/storage_wlp_compaction_gate.rs` (storage-integration CI job — `*storage*`):
+
+* `test_append_collection_arms_compaction_while_global_off`: with the global env unset, a collection
+  tagged `workload_profile:append` + compaction opt-in reaching L0 ≥ threshold → compaction fires;
+  an untagged collection under the same global-off does NOT.
+
+== Gating
+
+Default path unchanged (no tag → global gate governs, still OFF). Requires an explicit
+per-collection opt-in tag to arm.

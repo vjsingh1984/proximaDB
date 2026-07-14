@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 use proximadb_security::{AuditEvent, AuditEventType, AuditResult};
 pub use proximadb_security::{AuditStatistics, AuditStorage};
 use std::path::Path;
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 /// File-based audit storage implementation
@@ -24,7 +25,23 @@ pub struct FileAuditStorage {
 impl FileAuditStorage {
     /// Create a new `FileAuditStorage` that writes JSONL audit logs to the given directory.
     /// The directory is created automatically if it does not already exist.
+    ///
+    /// Accepts a bare local path or a `file://` URL. Object-store URLs are
+    /// rejected fail-fast — use [`ObjectStoreAuditStorage`] for those
+    /// (TD-OBJSTORE-1, #960).
     pub async fn new(directory: String) -> Result<Self> {
+        let directory = match directory.strip_prefix("file://") {
+            Some(stripped) => stripped.to_string(),
+            None if directory.contains("://") => {
+                return Err(anyhow!(
+                    "FileAuditStorage requires a local directory; got object-store URL '{}' — \
+                     use ObjectStoreAuditStorage instead",
+                    directory
+                ));
+            }
+            None => directory,
+        };
+
         // Ensure directory exists
         tokio::fs::create_dir_all(&directory)
             .await
@@ -75,8 +92,16 @@ impl AuditStorage for FileAuditStorage {
         let event_json = serde_json::to_string(event)?;
         let log_line = format!("{}\n", event_json);
 
-        // Append to audit log file
-        tokio::fs::write(&file_path, &log_line)
+        // Append to the audit log file (`tokio::fs::write` would truncate,
+        // silently dropping every previously stored event in the file).
+        use tokio::io::AsyncWriteExt;
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)
+            .await
+            .map_err(|e| anyhow!("Failed to open audit log {}: {}", file_path, e))?;
+        file.write_all(log_line.as_bytes())
             .await
             .map_err(|e| anyhow!("Failed to write audit event to {}: {}", file_path, e))?;
 
@@ -133,45 +158,7 @@ impl AuditStorage for FileAuditStorage {
         let events = self
             .query_events(None, None, Some(since), None, None)
             .await?;
-
-        let mut events_by_type = std::collections::HashMap::new();
-        let mut unique_users = std::collections::HashSet::new();
-        let mut unique_tenants = std::collections::HashSet::new();
-        let mut success_count = 0;
-
-        for event in &events {
-            // Count by event type
-            *events_by_type.entry(event.event_type.clone()).or_insert(0) += 1;
-
-            // Track unique users and tenants
-            if let Some(ref user_id) = event.user_id {
-                unique_users.insert(user_id.clone());
-            }
-            if let Some(ref tenant_id) = event.tenant_id {
-                unique_tenants.insert(tenant_id.clone());
-            }
-
-            // Count successes
-            if matches!(event.result, AuditResult::Success) {
-                success_count += 1;
-            }
-        }
-
-        let success_rate = if !events.is_empty() {
-            (success_count as f64) / (events.len() as f64) * 100.0
-        } else {
-            0.0
-        };
-
-        Ok(AuditStatistics {
-            total_events: events.len() as u64,
-            events_by_type,
-            unique_users: unique_users.len() as u64,
-            unique_tenants: unique_tenants.len() as u64,
-            success_rate,
-            period_start: since,
-            period_end: Utc::now(),
-        })
+        Ok(statistics_from_events(&events, since))
     }
 
     async fn cleanup_old_logs(&self, retention_days: u32) -> Result<usize> {
@@ -234,32 +221,9 @@ impl FileAuditStorage {
 
             match serde_json::from_str::<AuditEvent>(line) {
                 Ok(event) => {
-                    // Apply filters
-                    if let Some(ref filter_type) = event_type
-                        && &event.event_type != filter_type
-                    {
-                        continue;
+                    if event_matches_filters(&event, &event_type, &user_id, since, until) {
+                        events.push(event);
                     }
-
-                    if let Some(ref filter_user) = user_id
-                        && event.user_id.as_ref() != Some(filter_user)
-                    {
-                        continue;
-                    }
-
-                    if let Some(since_time) = since
-                        && event.timestamp < since_time
-                    {
-                        continue;
-                    }
-
-                    if let Some(until_time) = until
-                        && event.timestamp > until_time
-                    {
-                        continue;
-                    }
-
-                    events.push(event);
                 }
                 Err(e) => {
                     warn!(
@@ -272,6 +236,264 @@ impl FileAuditStorage {
         }
 
         Ok(events)
+    }
+}
+
+/// Does `event` pass the optional query filters? Shared by the file- and
+/// object-store-backed implementations.
+fn event_matches_filters(
+    event: &AuditEvent,
+    event_type: &Option<AuditEventType>,
+    user_id: &Option<String>,
+    since: Option<DateTime<Utc>>,
+    until: Option<DateTime<Utc>>,
+) -> bool {
+    if let Some(filter_type) = event_type
+        && &event.event_type != filter_type
+    {
+        return false;
+    }
+    if let Some(filter_user) = user_id
+        && event.user_id.as_ref() != Some(filter_user)
+    {
+        return false;
+    }
+    if let Some(since_time) = since
+        && event.timestamp < since_time
+    {
+        return false;
+    }
+    if let Some(until_time) = until
+        && event.timestamp > until_time
+    {
+        return false;
+    }
+    true
+}
+
+/// Object-store-backed audit storage (TD-OBJSTORE-1, #960).
+///
+/// Persists one JSONL object per audit event under
+/// `{base_url}/audit_{timestamp}_{event_id}.jsonl`, routed through the
+/// scheme-dispatching [`FilesystemFactory`] so the base may be `s3://…`,
+/// `adls://…`/`abfs://…`, `gcs://…`, or `file://…`. Object stores reject
+/// append on immutable/block blobs, so per-event objects replace the local
+/// backend's append-and-rotate layout; the flat keyspace makes the extra
+/// objects cheap and listing is only paid on (rare, admin-facing) queries.
+pub struct ObjectStoreAuditStorage {
+    /// Scheme-qualified base URL for audit objects
+    base_url: String,
+    /// Scheme-dispatching filesystem factory
+    filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+}
+
+impl ObjectStoreAuditStorage {
+    /// Create an object-store audit storage rooted at `base_url`
+    /// (scheme-qualified, e.g. `adls://container/data/audit`).
+    pub async fn new(base_url: String) -> Result<Self> {
+        if !base_url.contains("://") {
+            return Err(anyhow!(
+                "ObjectStoreAuditStorage requires a scheme-qualified URL; got '{}' — \
+                 use FileAuditStorage for local directories",
+                base_url
+            ));
+        }
+        let filesystem = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::create(
+                crate::storage::persistence::filesystem::FilesystemConfig::default(),
+            )
+            .await
+            .map_err(|e| anyhow!("Failed to create filesystem factory: {}", e))?,
+        );
+        // Fail fast on unsupported/misconfigured schemes (e.g. s3:// without
+        // the aws feature) instead of at the first audit write.
+        filesystem
+            .get_filesystem(&base_url)
+            .map_err(|e| anyhow!("Audit storage URL '{}' not routable: {}", base_url, e))?;
+
+        info!("✅ Object-store audit storage initialized: {}", base_url);
+
+        Ok(Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            filesystem,
+        })
+    }
+
+    fn object_url(&self, event: &AuditEvent) -> String {
+        format!(
+            "{}/audit_{}_{}.jsonl",
+            self.base_url,
+            event.timestamp.format("%Y%m%d_%H%M%S%.3f"),
+            event.event_id
+        )
+    }
+}
+
+#[async_trait]
+impl AuditStorage for ObjectStoreAuditStorage {
+    async fn store_audit_event(&self, event: &AuditEvent) -> Result<()> {
+        let url = self.object_url(event);
+        let event_json = serde_json::to_string(event)?;
+        let fs = self
+            .filesystem
+            .get_filesystem(&url)
+            .map_err(|e| anyhow!("Audit storage URL '{}' not routable: {}", url, e))?;
+        let options = crate::storage::persistence::filesystem::FileOptions {
+            create_dirs: true,
+            overwrite: true,
+            ..Default::default()
+        };
+        fs.write(&url, event_json.as_bytes(), Some(options))
+            .await
+            .map_err(|e| anyhow!("Failed to write audit event to {}: {}", url, e))?;
+        debug!("📝 Stored audit event {} to {}", event.event_id, url);
+        Ok(())
+    }
+
+    async fn query_events(
+        &self,
+        event_type: Option<AuditEventType>,
+        user_id: Option<String>,
+        since: Option<DateTime<Utc>>,
+        until: Option<DateTime<Utc>>,
+        limit: Option<usize>,
+    ) -> Result<Vec<AuditEvent>> {
+        let fs = self
+            .filesystem
+            .get_filesystem(&self.base_url)
+            .map_err(|e| anyhow!("Audit storage URL not routable: {}", e))?;
+        let entries = fs.list(&self.base_url).await.map_err(|e| {
+            anyhow!(
+                "Failed to list audit objects under {}: {}",
+                self.base_url,
+                e
+            )
+        })?;
+
+        let mut events = Vec::new();
+        for entry in entries {
+            if !entry.name.ends_with(".jsonl") {
+                continue;
+            }
+            let data = match fs.read(&entry.url).await {
+                Ok(data) => data,
+                Err(e) => {
+                    warn!("Failed to read audit object {}: {}", entry.url, e);
+                    continue;
+                }
+            };
+            let content = String::from_utf8_lossy(&data);
+            for line in content.lines() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                match serde_json::from_str::<AuditEvent>(line) {
+                    Ok(event) => {
+                        if event_matches_filters(&event, &event_type, &user_id, since, until) {
+                            events.push(event);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse audit event from {}: {}", entry.url, e);
+                    }
+                }
+            }
+            if let Some(limit) = limit
+                && events.len() >= limit
+            {
+                events.truncate(limit);
+                break;
+            }
+        }
+
+        // Sort by timestamp (newest first)
+        events.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
+        debug!("🔍 Queried {} audit events matching criteria", events.len());
+        Ok(events)
+    }
+
+    async fn get_audit_statistics(&self, since: DateTime<Utc>) -> Result<AuditStatistics> {
+        let events = self
+            .query_events(None, None, Some(since), None, None)
+            .await?;
+        Ok(statistics_from_events(&events, since))
+    }
+
+    async fn cleanup_old_logs(&self, retention_days: u32) -> Result<usize> {
+        let cutoff_date = Utc::now() - chrono::Duration::days(retention_days as i64);
+        let fs = self
+            .filesystem
+            .get_filesystem(&self.base_url)
+            .map_err(|e| anyhow!("Audit storage URL not routable: {}", e))?;
+        let entries = fs.list(&self.base_url).await.map_err(|e| {
+            anyhow!(
+                "Failed to list audit objects under {}: {}",
+                self.base_url,
+                e
+            )
+        })?;
+
+        let mut deleted_files = 0usize;
+        for entry in entries {
+            if !entry.name.ends_with(".jsonl") {
+                continue;
+            }
+            let Some(modified) = entry.metadata.modified else {
+                continue;
+            };
+            if modified < cutoff_date {
+                if let Err(e) = fs.delete(&entry.url).await {
+                    warn!("Failed to delete old audit object {}: {}", entry.url, e);
+                } else {
+                    deleted_files += 1;
+                    info!("🗑️ Deleted old audit object: {}", entry.url);
+                }
+            }
+        }
+
+        info!(
+            "🧹 Cleanup complete: deleted {} old audit objects",
+            deleted_files
+        );
+        Ok(deleted_files)
+    }
+}
+
+/// Aggregate statistics over a set of audit events. Shared by every
+/// [`AuditStorage`] backend.
+fn statistics_from_events(events: &[AuditEvent], since: DateTime<Utc>) -> AuditStatistics {
+    let mut events_by_type = std::collections::HashMap::new();
+    let mut unique_users = std::collections::HashSet::new();
+    let mut unique_tenants = std::collections::HashSet::new();
+    let mut success_count = 0;
+
+    for event in events {
+        *events_by_type.entry(event.event_type.clone()).or_insert(0) += 1;
+        if let Some(ref user_id) = event.user_id {
+            unique_users.insert(user_id.clone());
+        }
+        if let Some(ref tenant_id) = event.tenant_id {
+            unique_tenants.insert(tenant_id.clone());
+        }
+        if matches!(event.result, AuditResult::Success) {
+            success_count += 1;
+        }
+    }
+
+    let success_rate = if !events.is_empty() {
+        (success_count as f64) / (events.len() as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    AuditStatistics {
+        total_events: events.len() as u64,
+        events_by_type,
+        unique_users: unique_users.len() as u64,
+        unique_tenants: unique_tenants.len() as u64,
+        success_rate,
+        period_start: since,
+        period_end: Utc::now(),
     }
 }
 

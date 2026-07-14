@@ -73,6 +73,40 @@ fn lease_manifest_prune_interval_secs() -> u64 {
         .unwrap_or(300)
 }
 
+/// Join a subsystem subpath onto the configured durable storage base
+/// (TD-OBJSTORE-1, #960).
+///
+/// `base` is `storage.metadata_url`: a bare local path (`/data`), a `file://`
+/// URL, or an object-store URL (`s3://…`, `adls://…`, `abfs://…`, `gcs://…`).
+/// The scheme is preserved verbatim; a bare path stays bare (every downstream
+/// consumer normalizes with a `contains("://")` guard). Never strip a scheme
+/// and re-prepend one around this join — stripping `file://` off metadata_url
+/// and then formatting `file://{…}` back on is exactly what produced the
+/// invalid `file://adls://…` URLs on object-store deployments.
+pub(crate) fn join_storage_url(base: &str, sub: &str) -> String {
+    let trimmed = base.trim_end_matches('/');
+    if sub.is_empty() {
+        trimmed.to_string()
+    } else {
+        format!("{}/{}", trimmed, sub.trim_start_matches('/'))
+    }
+}
+
+/// The local-filesystem view of a storage base, for subsystems that cannot yet
+/// run over an object store (TD-OBJSTORE-1 deferred set — e.g. the TST
+/// time-series engine). Returns `None` when the base carries a non-`file`
+/// scheme, so callers can fail over loudly instead of handing an
+/// `adls://…`-shaped string to `std::fs`.
+fn local_storage_path(base: &str) -> Option<std::path::PathBuf> {
+    if let Some(path) = base.strip_prefix("file://") {
+        Some(std::path::PathBuf::from(path))
+    } else if base.contains("://") {
+        None
+    } else {
+        Some(std::path::PathBuf::from(base))
+    }
+}
+
 /// Which consumer is constructing the shared service core.
 ///
 /// The core (catalog, collection, vector/doc/graph compute, storage/WAL,
@@ -511,6 +545,13 @@ impl SharedServices {
         }
 
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
+        // Inject the object-store filesystem resolver (root half of the
+        // CatalogFilesystemResolver port-inversion). Lazily creates a
+        // FilesystemFactory only if an s3://gs://az:// catalog URL is used;
+        // local `file://` setups never touch it.
+        catalog_manager
+            .set_filesystem_resolver(Arc::new(crate::catalog::LazyFilesystemResolver::new()))
+            .await;
 
         // SharedServices owns metadata configuration logic
         info!(
@@ -1656,10 +1697,7 @@ impl SharedServices {
         let metrics_config = MetricsConfig {
             enabled: true,
             collection_partitions: 16,
-            storage_path: format!(
-                "file://{}/metrics",
-                storage_config.metadata_url.replace("file://", "")
-            ),
+            storage_path: join_storage_url(&storage_config.metadata_url, "metrics"),
             flush_interval_seconds: 60,
             retention_days: 7,
             parallel_scan_threshold: 1000,
@@ -1697,7 +1735,7 @@ impl SharedServices {
 
         // Create DocumentService (moved up for UnifiedHandlers)
         debug!("🔧 SharedServices::new - Creating DocumentService for document queries...");
-        let document_base_path = storage_config.metadata_url.replace("file://", "");
+        let document_base_path = join_storage_url(&storage_config.metadata_url, "");
         // TD-DOC-RETIRE-1 P2 rewires this to the canonical constructor
         // (with_canonical_record_store_and_wal); the deprecated call is intentional until then.
         #[allow(deprecated)]
@@ -1723,7 +1761,7 @@ impl SharedServices {
         debug!(
             "🔧 SharedServices::new - Creating ObservabilityQueryEngine for observability queries..."
         );
-        let observability_base_path = storage_config.metadata_url.replace("file://", "");
+        let observability_base_path = join_storage_url(&storage_config.metadata_url, "");
         let observability_storage = match ObservabilityStorage::new_with_wal(
             &observability_base_path,
         )
@@ -1746,9 +1784,9 @@ impl SharedServices {
 
         // Create EventLogEngine for persistent audit trails (TD-050 Phase 5)
         debug!("🔧 SharedServices::new - Creating EventLogEngine for audit trails...");
-        let event_log_base_path = storage_config.metadata_url.replace("file://", "") + "/auditlog";
+        let event_log_base_path = join_storage_url(&storage_config.metadata_url, "auditlog");
         let event_log_config = crate::storage::engines::eventlog::EventLogConfig {
-            base_dir: std::path::PathBuf::from(event_log_base_path),
+            base_dir: event_log_base_path,
             ..Default::default()
         };
         let event_log_filesystem = Arc::new(
@@ -1773,9 +1811,25 @@ impl SharedServices {
         // TST engine, rooted under the data dir. Non-fatal on failure (surface stays
         // unavailable rather than blocking bootstrap).
         {
-            let ts_base_path = std::path::PathBuf::from(
-                storage_config.metadata_url.replace("file://", "") + "/timeseries",
-            );
+            // The TST engine is local-filesystem-native (PathBuf WAL/segments);
+            // it cannot yet run over an object store. On an object-store
+            // metadata_url the time-series surface stays on local disk
+            // (non-durable across VM loss — TD-OBJSTORE-1 deferred item)
+            // instead of mangling the URL into a local path.
+            let ts_base_path = match local_storage_path(&storage_config.metadata_url) {
+                Some(local) => local.join("timeseries"),
+                None => {
+                    let fallback = std::env::temp_dir().join("proximadb").join("timeseries");
+                    warn!(
+                        "TimeSeriesService does not support object-store storage yet \
+                         (metadata_url={}); falling back to LOCAL, NON-DURABLE {} \
+                         (TD-OBJSTORE-1)",
+                        storage_config.metadata_url,
+                        fallback.display()
+                    );
+                    fallback
+                }
+            };
             if let Err(e) =
                 crate::services::timeseries_service::init_timeseries_service(ts_base_path)
             {
@@ -1914,7 +1968,7 @@ impl SharedServices {
             crate::storage::multimodel::DocumentStore::new(Default::default())
                 .with_service(document_service.clone()),
         );
-        let obs_base_path = storage_config.metadata_url.replace("file://", "");
+        let obs_base_path = join_storage_url(&storage_config.metadata_url, "");
         let observability_store = Arc::new(
             crate::storage::multimodel::ObservabilityStore::new(
                 crate::storage::multimodel::stores::observability_store::ObservabilityStoreConfig {
@@ -2136,8 +2190,20 @@ impl SharedServices {
         // adapter.execute_sql) and the RecordOpsService (REST write path), so DDL
         // writes over either surface address the same catalog state and execute
         // tenant-scoped.
-        let ddl_service =
-            std::sync::Arc::new(crate::services::DdlService::new(catalog_manager.clone()));
+        // Wire the write-lease authority into DDL so collection/table-scoped DDL
+        // fast-fails misrouted writes (ADR-032): the primary-pod registry + pod id
+        // for in-memory routing, and — when the lease system is on — the SAME
+        // PartitionLeaseManager the DML write-gate uses (`lease_manager_for_writes`),
+        // so DDL and DML share one ownership view.
+        let mut ddl = crate::services::DdlService::new(catalog_manager.clone())
+            .with_primary_pod_registry(primary_pod_registry.clone())
+            .with_self_pod_id(crate::cluster::primary_pod_registry::resolve_self_pod_id(
+                None,
+            ));
+        if let Some(manager) = &lease_manager_for_writes {
+            ddl = ddl.with_partition_lease_manager(manager.clone());
+        }
+        let ddl_service = std::sync::Arc::new(ddl);
         // Wire QueryFacadeAdapter onto the runtime handler for unified SQL routing.
         // This enables SQL queries to flow through the facade when the
         // unified-facade-routing feature is enabled. The adapter carries the
@@ -3227,5 +3293,69 @@ mod function_store_wiring_tests {
     async fn build_function_store_without_wal_is_empty() {
         let store = build_function_store(None).await;
         assert_eq!(store.list_all().await.unwrap().len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod join_storage_url_tests {
+    use super::{join_storage_url, local_storage_path};
+
+    /// TD-OBJSTORE-1 (#960): every (base, sub) pair must join scheme-preserving
+    /// with no double scheme — the `file://adls://…` class must be impossible.
+    #[test]
+    fn joins_preserve_scheme_for_every_base_shape() {
+        let cases = [
+            ("/data", "metrics", "/data/metrics"),
+            ("/data/", "metrics", "/data/metrics"),
+            ("file:///data", "metrics", "file:///data/metrics"),
+            ("s3://bucket/data", "auditlog", "s3://bucket/data/auditlog"),
+            (
+                "adls://container/data/",
+                "timeseries",
+                "adls://container/data/timeseries",
+            ),
+            (
+                "abfs://container/data",
+                "metrics",
+                "abfs://container/data/metrics",
+            ),
+            (
+                "gcs://bucket/data",
+                "auditlog",
+                "gcs://bucket/data/auditlog",
+            ),
+            ("azure://container/data", "", "azure://container/data"),
+            ("s3://bucket/data", "", "s3://bucket/data"),
+            ("/data", "", "/data"),
+        ];
+        for (base, sub, expected) in cases {
+            let joined = join_storage_url(base, sub);
+            assert_eq!(joined, expected, "join_storage_url({base:?}, {sub:?})");
+            // No double scheme, ever.
+            assert_eq!(
+                joined.matches("://").count(),
+                expected.matches("://").count(),
+                "double scheme in {joined:?}"
+            );
+            assert!(
+                !joined.starts_with("file://s3://") && !joined.starts_with("file://adls://"),
+                "invalid double-scheme URL {joined:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn local_storage_path_rejects_object_store_bases() {
+        assert_eq!(
+            local_storage_path("/data").as_deref(),
+            Some(std::path::Path::new("/data"))
+        );
+        assert_eq!(
+            local_storage_path("file:///data").as_deref(),
+            Some(std::path::Path::new("/data"))
+        );
+        assert!(local_storage_path("adls://container/data").is_none());
+        assert!(local_storage_path("s3://bucket/data").is_none());
+        assert!(local_storage_path("abfs://container/data").is_none());
     }
 }

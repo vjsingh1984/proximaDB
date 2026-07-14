@@ -208,6 +208,17 @@ impl TantivyLogIndex {
 
         let schema = schema_builder.build();
 
+        // The tantivy index is deliberately LOCAL (fast mmap'd search over
+        // logs whose durable copy lives in the log storage) — reject
+        // object-store URLs fail-fast instead of creating a literal
+        // `s3:`/`adls:` directory (TD-OBJSTORE-1, #960).
+        if path.contains("://") {
+            anyhow::bail!(
+                "tantivy log index path must be a local directory, got URL-shaped '{path}' — \
+                 the index stays local; only the log STORAGE is object-store-durable"
+            );
+        }
+
         // Ensure directory exists
         std::fs::create_dir_all(path).context("Failed to create index directory")?;
 

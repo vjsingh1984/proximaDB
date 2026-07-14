@@ -1227,10 +1227,6 @@ mod tests {
             ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
                 Ok(Vec::new())
             }
-
-            fn get_filesystem_factory(&self) -> &FilesystemFactory {
-                &self.filesystem_factory
-            }
         }
 
         // Create a filesystem factory for the mock

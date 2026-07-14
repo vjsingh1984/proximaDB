@@ -153,6 +153,23 @@ pub struct OrchestratorCompactionConfig {
     pub urgency_threshold: f64,
 }
 
+impl OrchestratorCompactionConfig {
+    /// Per-collection resolution (TD-WLP-2 / ADR-061 D5): apply the
+    /// collection's `l0_threshold:N` tag override on top of this config,
+    /// mirroring how `WALConfig::effective_config_for_collection` makes flush
+    /// thresholds per-collection. Absent/invalid tags leave the config
+    /// unchanged.
+    pub fn effective_for_collection_tags(&self, tags: &[String]) -> Self {
+        Self {
+            level0_threshold: proximadb_storage_common::resolve_l0_threshold(
+                tags,
+                self.level0_threshold,
+            ),
+            ..self.clone()
+        }
+    }
+}
+
 impl Default for OrchestratorCompactionConfig {
     fn default() -> Self {
         Self {

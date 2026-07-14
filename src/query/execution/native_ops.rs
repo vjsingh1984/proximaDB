@@ -1321,6 +1321,9 @@ const WALK_STACK_GROW: usize = 4 * 1024 * 1024;
 /// back through this entry, so every level checks its own headroom.
 fn walk(plan: &PhysicalPlan, scan_ctx: Option<&ScanCtx>) -> Result<Walked, ExecutionError> {
     stacker::maybe_grow(WALK_RED_ZONE, WALK_STACK_GROW, || {
+        // TD-EXEC-2 Slice 1: sample the recursion's stack low-water mark when a
+        // probe is armed (a TLS read + branch otherwise).
+        proximadb_relational_planner::stack_probe::note();
         walk_inner(plan, scan_ctx)
     })
 }

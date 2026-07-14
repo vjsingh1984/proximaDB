@@ -887,10 +887,6 @@ mod tests {
         ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
             Ok(Vec::new())
         }
-
-        fn get_filesystem_factory(&self) -> &FilesystemFactory {
-            &self.filesystem_factory
-        }
     }
 
     #[tokio::test]

@@ -40,12 +40,13 @@ use proximadb_relational_executor::{ExecError, NodeMetric, ReaderFactory};
 use proximadb_relational_frontend::{CatalogLookup, lower_sql};
 use proximadb_relational_planner::{
     CapabilityResolver, PhysicalPlan, Planner, StaticCapabilities, explain_physical,
+    measure_geometry, stack_probe,
 };
 use proximadb_relational_reader::{ReaderCapabilities, ReaderError, RelationalReader, ScanContext};
 use proximadb_relational_types::{ColumnInfo, Expr, ExprError, RelationalRow, RelationalSchema};
 use sqlparser::ast::{
     BinaryOperator, Expr as SqlExpr, GroupByExpr, Query as SqlQuery, SelectItem, SetExpr,
-    Statement, TableFactor, TableWithJoins,
+    SetOperator, Statement, TableFactor, TableWithJoins,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -444,15 +445,23 @@ pub async fn try_run_select(
     };
 
     let operation_class = query_operation_class(query);
+    // TD-EXEC-2 Slice 3: the geometry tier — bucketed depth × breaker bands
+    // estimated from the AST, refining the cost-model class so EWMA cells
+    // accumulate per shape⊕geometry (the dimension TD-OLAP-15 measured engines
+    // win/lose on).
+    let geometry = query_geometry_class(query);
+    let shape = crate::query::compute_scheduler::QueryShape {
+        engages_relational: true,
+        parquet_backed,
+        pax_backed: false,
+        partition_fanout,
+        cardinality,
+        operation_class,
+        geometry,
+        join_bearing: query_join_bearing(query),
+    };
     let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
-        crate::query::compute_scheduler::QueryShape {
-            engages_relational: true,
-            parquet_backed,
-            pax_backed: false,
-            partition_fanout,
-            cardinality,
-            operation_class,
-        },
+        shape,
         // C4: observe-mode advisory from the trace-driven cost model — augments
         // the reason for telemetry/EXPLAIN, never changes the backend.
         Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
@@ -484,6 +493,7 @@ pub async fn try_run_select(
             decision.backend,
             crate::query::table_write_plan::ComputeBackend::DataFusionLocal
                 | crate::query::table_write_plan::ComputeBackend::Native
+                | crate::query::table_write_plan::ComputeBackend::DuckDbCompat
         )
     {
         // TD-OLAP-4 "favor native by operation": for the operation classes native
@@ -566,6 +576,108 @@ pub async fn try_run_select(
                     .map(|tr| (t.table_name.clone(), *tr))
             })
             .collect();
+        // ADR-059 rollout step 2: DuckDB-Local as PRIMARY for the join/agg-shaped
+        // parquet OLAP route — the shapes with the measured 100–700× DataFusion
+        // join-plan gap (TD-OLAP-15/TD-OLAP-2). DataFusion remains the correctness
+        // floor: any DuckDB error falls through to the DataFusion execution below.
+        // Trigger (default-OFF): the PROXIMADB_DUCKDB_ROUTE master switch, OR a
+        // warmed cost-model override/exploration that advised DuckDbCompat (the
+        // #946 per-class staged enable). Eligibility (ADR-058: precedes selection):
+        // join-bearing or grouped shape, AND every referenced table's ADR-025
+        // post-snapshot WAL delta is EMPTY — DuckDB reads bare parquet and cannot
+        // reconcile a delta, so it serves only when base parquet == current state
+        // (the delta-merging DataFusion floor serves everything else; errors from
+        // the delta probe fail closed to the floor). The probe is the TD-OLAP-17
+        // per-collection high-water check DataFusion itself pays at table open, so
+        // the common no-writes case costs no scan. The io_trace route is
+        // re-stamped to the engine that actually served ("last write wins" by
+        // design), so cost cells never mis-attribute.
+        #[cfg(feature = "duckdb")]
+        {
+            let duckdb_advised = matches!(
+                decision.backend,
+                crate::query::table_write_plan::ComputeBackend::DuckDbCompat
+            ) && matches!(
+                decision.source,
+                crate::query::compute_scheduler::RouteSource::OverrideExploit
+                    | crate::query::compute_scheduler::RouteSource::OverrideExplore
+            );
+            let duckdb_eligible_shape = shape.join_bearing
+                || matches!(
+                    operation_class,
+                    crate::query::compute_scheduler::OperationClass::Grouped
+                );
+            let duckdb_delta_clean =
+                if (crate::query::execution::duckdb_engine::duckdb_route_enabled()
+                    || duckdb_advised)
+                    && duckdb_eligible_shape
+                {
+                    use crate::query::execution::olap_delta_merge::OlapDeltaSource;
+                    let mut clean = true;
+                    for (tkey, params) in &olap_delta_tables {
+                        match dml
+                            .changed_oids_since(tkey, params.snapshot_lsn, tenant)
+                            .await
+                        {
+                            Ok(oids) if oids.is_empty() => {}
+                            _ => {
+                                clean = false;
+                                break;
+                            }
+                        }
+                    }
+                    clean
+                } else {
+                    false
+                };
+            if duckdb_delta_clean {
+                let duck_context = QueryExecutionContext {
+                    parquet_tables: parquet_tables.clone(),
+                    parquet_table_trust: parquet_table_trust.clone(),
+                    tenant_id: tenant.map(str::to_string),
+                    controls: controls.clone(),
+                    ..Default::default()
+                };
+                crate::observability::io_trace::record_setup_ms(
+                    setup_start.elapsed().as_millis() as u64
+                );
+                match execute_sql_with_backend(
+                    crate::query::table_write_plan::ComputeBackend::DuckDbCompat,
+                    sql,
+                    duck_context,
+                )
+                .await
+                {
+                    Ok(result) => {
+                        crate::observability::io_trace::record_route(
+                            &crate::query::route_cost_model::shape_class(&shape),
+                            "DuckDbCompat",
+                        );
+                        tracing::debug!(
+                            target: "proximadb::compute_route",
+                            "duckdb-local served as PRIMARY (join/agg parquet shape); \
+                             DataFusion floor bypassed"
+                        );
+                        if let Some((skey, lsn)) = &cache_ctx {
+                            populate_olap_result_cache(
+                                result_cache,
+                                skey,
+                                *lsn,
+                                result.clone(),
+                                &tables,
+                            );
+                        }
+                        return Some(Ok(result));
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            target: "proximadb::compute_route",
+                            "duckdb-local PRIMARY declined ({e}); DataFusion floor serves"
+                        );
+                    }
+                }
+            }
+        }
         let context = QueryExecutionContext {
             parquet_tables,
             parquet_table_trust,
@@ -603,6 +715,21 @@ pub async fn try_run_select(
         // for the native-primary attempt above), but `execute_sql_with_backend` only
         // serves `DataFusionLocal`; anything else errors `UnsupportedBackend`.
         let floor_backend = crate::query::table_write_plan::ComputeBackend::DataFusionLocal;
+        // Fold-attribution correctness: the decision stamp may carry an advised
+        // Native/DuckDbCompat backend whose PRIMARY attempt declined above — the
+        // floor is about to serve, so re-stamp the route to DataFusion ("last
+        // write wins"). Without this, a gap-missed flip poisons the advised
+        // engine's cost cells with DataFusion's measured quantities (the
+        // TD-ROUTE-1 §review failure mode).
+        if !matches!(
+            decision.backend,
+            crate::query::table_write_plan::ComputeBackend::DataFusionLocal
+        ) {
+            crate::observability::io_trace::record_route(
+                &crate::query::route_cost_model::shape_class(&shape),
+                &crate::query::compute_scheduler::backend_label(&floor_backend),
+            );
+        }
         let engine_result = execute_sql_with_backend(floor_backend.clone(), sql, context).await;
         crate::observability::io_trace::record_compute_ms(
             &crate::query::compute_scheduler::backend_label(&floor_backend),
@@ -679,8 +806,42 @@ async fn run_plan<F: ReaderFactory, R: CapabilityResolver>(
     controls: ExecutionControls,
 ) -> Result<ExecutionPipelineResult, String> {
     let planner = Planner::new(resolver);
-    let physical = planner.plan(logical).map_err(|e| format!("plan: {e}"))?;
+    let physical = plan_instrumented(&planner, logical)?;
     execute_physical(physical, factory, controls).await
+}
+
+/// Plan `logical` and record the TD-EXEC-2 Slice-1 observe-only trace fields into
+/// the active io_trace scope: planning wall ms, the planner recursion's measured
+/// stack high-water mark (via `stack_probe`), and the served plan's geometry
+/// vector (`measure_geometry`, iterative — safe on any depth). This is the
+/// plan→execute seam the calibration ledger reads; it makes no decision and
+/// changes no behavior, and every record call no-ops outside an io_trace scope.
+fn plan_instrumented<R: CapabilityResolver>(
+    planner: &Planner<R>,
+    logical: proximadb_relational_algebra::LogicalNode,
+) -> Result<PhysicalPlan, String> {
+    let plan_start = std::time::Instant::now();
+    let (planned, stack_hwm) = stack_probe::probe(|| planner.plan(logical));
+    let physical = planned.map_err(|e| format!("plan: {e}"))?;
+    crate::observability::io_trace::record_plan_ms(plan_start.elapsed().as_millis() as u64);
+    if stack_hwm > 0 {
+        crate::observability::io_trace::record_stack_hwm(stack_hwm);
+    }
+    let g = measure_geometry(&physical);
+    let ops: Vec<(&str, u64)> = g
+        .op_histogram
+        .iter()
+        .map(|(kind, count)| (kind.as_str(), u64::from(*count)))
+        .collect();
+    crate::observability::io_trace::record_plan_geometry(
+        g.max_depth as u64,
+        g.node_count as u64,
+        g.leaf_count as u64,
+        g.max_fanout as u64,
+        u64::from(g.blocking_count),
+        &ops,
+    );
+    Ok(physical)
 }
 
 /// Build + open + drain an executor for an already-planned `physical` plan.
@@ -756,7 +917,7 @@ fn plan_over_snapshot(
         secondary_by_table,
     };
     let planner = Planner::new(resolver);
-    Some(planner.plan(logical).map_err(|e| format!("plan: {e}")))
+    Some(plan_instrumented(&planner, logical))
 }
 
 // =========================================================================
@@ -1857,6 +2018,7 @@ pub fn classify_select_route(
                 engages_relational: engages,
                 parquet_backed: false,
                 cardinality: query_cardinality_hint(query),
+                join_bearing: query_join_bearing(query),
                 ..Default::default()
             },
             Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
@@ -2153,6 +2315,7 @@ async fn route_and_plan_select(
             engages_relational: engages,
             parquet_backed,
             cardinality: query_cardinality_hint(query),
+            join_bearing: query_join_bearing(query),
             ..Default::default()
         },
         Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
@@ -2396,14 +2559,6 @@ fn query_engages_relational_engine(query: &SqlQuery) -> bool {
     set_expr_engages(&query.body)
 }
 
-/// A cheap, syntax-only cardinality hint from the parsed AST — the fallback
-/// when the footer-warmed [`crate::query::route_cost_model::classify_table_shapes`]
-/// stat is `Unknown` (native storage, or a cold Parquet table never yet scanned),
-/// so the cost-model shape-class still discriminates instead of collapsing to
-/// the coarse class. Returns [`CardinalityClass::Small`] only when the query
-/// shape GUARANTEES a tiny result, else `Unknown` (never over-claims). Pure AST
-/// walk — zero route-time I/O (co-design P5: I/O round-trips, not CPU, dominate;
-/// the route path must not probe storage).
 /// TD-OLAP-4 operation dimension: classify the SELECT's OLAP operation from the AST
 /// (syntax-only, zero route-time I/O). Feeds the cost-model shape-class so per-engine
 /// samples accumulate per operation — the geometry the shadow ledger showed engines
@@ -2438,6 +2593,68 @@ fn query_operation_class(query: &SqlQuery) -> crate::query::compute_scheduler::O
         return OperationClass::ScalarAggregate;
     }
     OperationClass::Other
+}
+
+/// TD-ROUTE-1 eligibility signal (ADR-058: eligibility precedes selection):
+/// does the plan anywhere contain a JOIN — top-level, inside a derived table /
+/// nested join / CTE, or implied by a subquery PATH B lowers to a
+/// semi/anti/left join? The Native arm cannot serve a join-bearing plan over
+/// Parquet: Volcano *does* have hash/nested-loop join executors, but no
+/// external-parquet scan is wired for it, and the vectorized
+/// native-over-parquet path is single-scan-only — a flipped plan would be
+/// served by the DataFusion floor while `finalize_route` stamps Native into
+/// the io_trace (poisoning the cost model's EWMA cells), and `EXPLAIN ANALYZE`
+/// would execute a diverging plan. [`query_operation_class`] cannot carry the
+/// signal — a `JOIN … GROUP BY` classifies as `Grouped` (the FROM clause is
+/// never inspected there) — hence a dedicated shape bit. Fail-closed: set-op /
+/// non-`SELECT` bodies count as join-bearing.
+fn query_join_bearing(query: &SqlQuery) -> bool {
+    // A CTE can carry the join the outer body then scans.
+    if let Some(with) = &query.with
+        && with
+            .cte_tables
+            .iter()
+            .any(|cte| query_join_bearing(&cte.query))
+    {
+        return true;
+    }
+    set_expr_join_bearing(query.body.as_ref())
+}
+
+fn set_expr_join_bearing(body: &SetExpr) -> bool {
+    match body {
+        SetExpr::Query(q) => query_join_bearing(q),
+        SetExpr::Select(select) => {
+            // Top-level: multi-table FROM (comma join) or explicit JOINs.
+            if select.from.len() > 1 || select.from.iter().any(|t| !t.joins.is_empty()) {
+                return true;
+            }
+            // A single FROM factor can still hide a join: a derived table
+            // (`FROM (SELECT … JOIN …) t`) or a nested join (`FROM (a JOIN b)`).
+            if select
+                .from
+                .iter()
+                .any(|t| table_factor_join_bearing(&t.relation))
+            {
+                return true;
+            }
+            // WHERE `IN`/`EXISTS` subqueries lower to Semi/Anti joins, and a
+            // projection scalar subquery is hoisted into a LEFT JOIN (PATH B) —
+            // join-bearing plans regardless of the FROM clause.
+            select.selection.as_ref().is_some_and(where_has_subquery)
+                || select.projection.iter().any(select_item_has_subquery)
+        }
+        // Set-ops / anything else: fail closed.
+        _ => true,
+    }
+}
+
+fn table_factor_join_bearing(relation: &TableFactor) -> bool {
+    match relation {
+        TableFactor::Derived { subquery, .. } => query_join_bearing(subquery),
+        TableFactor::NestedJoin { .. } => true,
+        _ => false,
+    }
 }
 
 /// Does the predicate use a string-matching construct (`LIKE`/`ILIKE`/`SIMILAR TO`
@@ -2477,6 +2694,14 @@ fn select_item_is_elidable_aggregate(item: &SelectItem) -> bool {
     }
 }
 
+/// A cheap, syntax-only cardinality hint from the parsed AST — the fallback
+/// when the footer-warmed [`crate::query::route_cost_model::classify_table_shapes`]
+/// stat is `Unknown` (native storage, or a cold Parquet table never yet scanned),
+/// so the cost-model shape-class still discriminates instead of collapsing to
+/// the coarse class. Returns [`CardinalityClass::Small`] only when the query
+/// shape GUARANTEES a tiny result, else `Unknown` (never over-claims). Pure AST
+/// walk — zero route-time I/O (co-design P5: I/O round-trips, not CPU, dominate;
+/// the route path must not probe storage).
 fn query_cardinality_hint(query: &SqlQuery) -> crate::query::compute_scheduler::CardinalityClass {
     use crate::query::compute_scheduler::CardinalityClass;
     // sqlparser 0.59 carries LIMIT on the Query as a `LimitClause` enum (standard
@@ -2536,6 +2761,187 @@ fn cardinality_hint_body(body: &SetExpr) -> crate::query::compute_scheduler::Car
     }
 }
 
+/// TD-EXEC-2 Slice 3: estimate the plan-geometry bands (depth × pipeline
+/// breakers) from the AST — a pure syntax walk, zero route-time I/O (co-design
+/// P5), computed BEFORE lowering because the route decision precedes the
+/// physical plan. Key consistency is by construction: `finalize_route` stamps
+/// the geometry-refined shape-class into the io_trace, so the consult key and
+/// the EWMA fold key are the same string even when the estimate is imperfect.
+/// The *measured* `plan_depth`/`plan_blocking` recorded per query by
+/// `plan_instrumented` (TD-EXEC-2 Slice 1) sit beside the stamped class in the
+/// ledger, exposing the prediction error for band refitting.
+fn query_geometry_class(query: &SqlQuery) -> crate::query::compute_scheduler::GeometryClass {
+    let (depth, blocking) = geometry_of_query(query);
+    crate::query::compute_scheduler::GeometryClass::from_estimate(depth, blocking)
+}
+
+/// Estimated (longest root→leaf operator chain, pipeline-breaker count) for a
+/// query. Mirrors what lowering emits: the body's plan plus `Sort` for ORDER BY
+/// (a breaker, per `plan_geometry::OpKind::is_blocking`) and `Limit`.
+fn geometry_of_query(query: &SqlQuery) -> (u32, u32) {
+    let (mut depth, mut blocking) = geometry_of_body(&query.body);
+    if query.order_by.is_some() {
+        depth += 1; // Sort
+        blocking += 1;
+    }
+    if query.limit_clause.is_some() {
+        depth += 1; // Limit
+    }
+    (depth, blocking)
+}
+
+fn geometry_of_body(body: &SetExpr) -> (u32, u32) {
+    match body {
+        SetExpr::Select(select) => {
+            // The deepest FROM chain feeds the plan's leaf slot; additional
+            // comma-separated FROM items lower as cross joins above it.
+            let mut depth = 1u32; // Scan/Values floor (also covers empty FROM)
+            let mut blocking = 0u32;
+            let mut first = true;
+            for twj in &select.from {
+                let (d, b) = geometry_of_table_with_joins(twj);
+                blocking += b;
+                if first {
+                    depth = d;
+                    first = false;
+                } else {
+                    depth = depth.max(d) + 1; // implicit cross join
+                    blocking += 1;
+                }
+            }
+            if select.selection.is_some() {
+                depth += 1; // Filter
+            }
+            let has_group_by = match &select.group_by {
+                GroupByExpr::All(_) => true,
+                GroupByExpr::Expressions(exprs, _) => !exprs.is_empty(),
+            };
+            let has_agg = select.projection.iter().any(select_item_has_aggregate);
+            if has_group_by || has_agg {
+                depth += 1; // Aggregate
+                blocking += 1;
+            }
+            if select.having.is_some() {
+                depth += 1; // post-aggregate Filter
+            }
+            // v2 (measured 2026-07-13): predicate/projection subqueries lower
+            // to HOISTED join branches (semi/anti/left) — the deepest path may
+            // run through the branch, and each hoist is a breaker. v1 ignored
+            // them; TPC-H Q22 measured mxhi against an sxlo estimate.
+            let mut subqueries: Vec<&SqlQuery> = Vec::new();
+            if let Some(sel) = &select.selection {
+                geometry_subqueries_of_expr(sel, &mut subqueries);
+            }
+            if let Some(having) = &select.having {
+                geometry_subqueries_of_expr(having, &mut subqueries);
+            }
+            for item in &select.projection {
+                if let SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } = item
+                {
+                    geometry_subqueries_of_expr(e, &mut subqueries);
+                }
+            }
+            for sub in subqueries {
+                let (sd, sb) = geometry_of_query(sub);
+                depth = depth.max(sd) + 1; // hoisted Join above the deeper side
+                blocking += sb + 1; // branch breakers + the join itself
+            }
+            // v2: a window function lowers to a Window node plus the sort it
+            // implies — two extra levels (measured: win_rank/win_running
+            // banded mxhi against an sxhi estimate; depth-only divergence, so
+            // no breaker is added — mirrors `measure_logical_geometry`, which
+            // labels window without counting it as blocking).
+            if select.projection.iter().any(select_item_has_window) {
+                depth += 2;
+            }
+            depth += 1; // Project
+            if select.distinct.is_some() {
+                depth += 1; // Distinct
+            }
+            (depth, blocking)
+        }
+        SetExpr::Query(q) => geometry_of_query(q),
+        SetExpr::SetOperation {
+            op, left, right, ..
+        } => {
+            let (dl, bl) = geometry_of_body(left);
+            let (dr, br) = geometry_of_body(right);
+            match op {
+                // UNION streams through a concat node.
+                SetOperator::Union => (dl.max(dr) + 1, bl + br),
+                // v2: EXCEPT/INTERSECT lower to distinct-aggregates on BOTH
+                // sides under an anti/semi join plus alias/projection wrappers
+                // — not a single set node (measured: both banded mxhi against
+                // an sxlo estimate; the DF lowering adds ~5 levels and 3
+                // breakers: two side aggregates + the join).
+                _ => (dl.max(dr) + 5, bl + br + 3),
+            }
+        }
+        _ => (1, 0),
+    }
+}
+
+/// One FROM item: the join chain lowers left-deep, so each JOIN adds one level
+/// above its deeper input and counts as one pipeline breaker.
+fn geometry_of_table_with_joins(twj: &TableWithJoins) -> (u32, u32) {
+    let (mut depth, mut blocking) = geometry_of_table_factor(&twj.relation);
+    for join in &twj.joins {
+        let (d, b) = geometry_of_table_factor(&join.relation);
+        depth = depth.max(d) + 1; // Join node above the deeper side
+        blocking += b + 1; // the Join itself is a breaker
+    }
+    (depth, blocking)
+}
+
+fn geometry_of_table_factor(tf: &TableFactor) -> (u32, u32) {
+    match tf {
+        TableFactor::Derived { subquery, .. } => geometry_of_query(subquery),
+        TableFactor::NestedJoin {
+            table_with_joins, ..
+        } => geometry_of_table_with_joins(table_with_joins),
+        _ => (1, 0), // named table → Scan leaf
+    }
+}
+
+/// Collect the subqueries in an expression tree (scalar `(SELECT …)`,
+/// `EXISTS`, `IN (SELECT …)`) — the shapes lowering hoists into join
+/// branches. Traversal mirrors [`where_has_subquery`].
+fn geometry_subqueries_of_expr<'a>(expr: &'a SqlExpr, out: &mut Vec<&'a SqlQuery>) {
+    match expr {
+        SqlExpr::Subquery(q) => out.push(q),
+        SqlExpr::Exists { subquery, .. } => out.push(subquery),
+        SqlExpr::InSubquery { subquery, .. } => out.push(subquery),
+        SqlExpr::BinaryOp { left, right, .. } => {
+            geometry_subqueries_of_expr(left, out);
+            geometry_subqueries_of_expr(right, out);
+        }
+        SqlExpr::UnaryOp { expr, .. } | SqlExpr::Nested(expr) | SqlExpr::Cast { expr, .. } => {
+            geometry_subqueries_of_expr(expr, out)
+        }
+        _ => {}
+    }
+}
+
+/// True if a projection item applies a window function (`… OVER (…)`).
+fn select_item_has_window(item: &SelectItem) -> bool {
+    let expr = match item {
+        SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } => e,
+        _ => return false,
+    };
+    expr_has_window(expr)
+}
+
+fn expr_has_window(expr: &SqlExpr) -> bool {
+    match expr {
+        SqlExpr::Function(f) => f.over.is_some(),
+        SqlExpr::BinaryOp { left, right, .. } => expr_has_window(left) || expr_has_window(right),
+        SqlExpr::UnaryOp { expr, .. } | SqlExpr::Nested(expr) | SqlExpr::Cast { expr, .. } => {
+            expr_has_window(expr)
+        }
+        _ => false,
+    }
+}
+
 fn set_expr_engages(body: &SetExpr) -> bool {
     match body {
         SetExpr::SetOperation { .. } => true,
@@ -2572,6 +2978,17 @@ fn set_expr_engages(body: &SetExpr) -> bool {
             // Aggregated forms (e.g. d09 GROUP BY) already engage via `has_group_by`.
             let has_json_extract = select.projection.iter().any(select_item_has_json_extract)
                 || select.selection.as_ref().is_some_and(expr_has_json_extract);
+            // TD-XMODAL-4 S1: a table-valued function in FROM (a `TableFactor::Table`
+            // carrying `args`, e.g. `vector_search('c','[..]',k)` / `timeseries_range`
+            // / `graph_traverse`) is a DataFusion UDTF — the legacy single-table path
+            // can't serve it, so engage the relational/OLAP route to reach DataFusion
+            // where the UDTFs are registered. This is what makes a STANDALONE
+            // `SELECT * FROM vector_search(...)` resolve over pgwire (before, only a
+            // JOIN engaged). Default-safe: a plain table has `args: None`.
+            let has_table_function = select
+                .from
+                .iter()
+                .any(|twj| matches!(&twj.relation, TableFactor::Table { args: Some(_), .. }));
             has_join
                 || has_group_by
                 || select.having.is_some()
@@ -2580,6 +2997,7 @@ fn set_expr_engages(body: &SetExpr) -> bool {
                 || has_projection_subquery
                 || has_derived
                 || has_json_extract
+                || has_table_function
         }
         _ => false,
     }
@@ -2787,6 +3205,30 @@ mod tests {
         }
     }
 
+    /// TD-XMODAL-4 S1: a STANDALONE table-valued function in FROM (a DataFusion
+    /// UDTF like `vector_search`/`timeseries_range`/`graph_traverse`) must engage the
+    /// relational route so it reaches DataFusion where the UDTF is registered — this
+    /// is what makes `SELECT * FROM vector_search(...)` resolve over pgwire (before,
+    /// only a JOIN engaged; a lone UDTF FROM fell through to the legacy path).
+    #[test]
+    fn standalone_table_function_from_engages() {
+        assert!(
+            gate("SELECT * FROM vector_search('c', '[0.1,0.2,0.3]', 5)"),
+            "lone vector_search UDTF must engage the relational route"
+        );
+        assert!(
+            gate("SELECT id, score FROM vector_search('c', '[0.1]', 10) WHERE score > 0.5"),
+            "UDTF FROM engages even without a join"
+        );
+        assert!(
+            gate("SELECT * FROM timeseries_range('c', 0, 100)"),
+            "other UDTFs engage the same way"
+        );
+        // Default-safe: a plain single-table SELECT does NOT engage via this signal
+        // (it has `args: None`) — it stays on the hardened legacy OLTP path.
+        assert!(!gate("SELECT id, name FROM users WHERE id = 1"));
+    }
+
     /// ADR-058 D5 / §9.A: the stats-trust derivation is the load-bearing security
     /// mapping behind the native route's footer-elision gate — an authority that
     /// wrongly classifies external parquet as `Trusted` would re-open the
@@ -2896,6 +3338,120 @@ mod tests {
         assert_eq!(
             op("SELECT regionid, COUNT(*) FROM hits GROUP BY regionid"),
             OperationClass::Grouped
+        );
+    }
+
+    #[test]
+    fn geometry_class_bands_separate_scan_from_join_shapes() {
+        use crate::query::compute_scheduler::{BlockingBand, DepthBand, GeometryClass};
+        let geom = |sql: &str| {
+            let s = Parser::parse_sql(&GenericDialect {}, sql).expect("parse");
+            match s.as_slice() {
+                [Statement::Query(q)] => query_geometry_class(q),
+                _ => panic!("one SELECT"),
+            }
+        };
+        // Plain filtered scan (scan→filter→project) — shallow, no breakers.
+        assert_eq!(
+            geom("SELECT id FROM t WHERE x = 1"),
+            GeometryClass::Known {
+                depth: DepthBand::Shallow,
+                blocking: BlockingBand::Zero,
+            }
+        );
+        // ClickBench posture: single-table aggregate — shallow, low breakers
+        // (the shapes TD-OLAP-15 measured native winning).
+        assert_eq!(
+            geom("SELECT COUNT(*) FROM hits"),
+            GeometryClass::Known {
+                depth: DepthBand::Shallow,
+                blocking: BlockingBand::Low,
+            }
+        );
+        // TPC-H posture: join chain + GROUP BY + ORDER BY — high breakers
+        // (the shapes TD-OLAP-15 measured DataFusion winning).
+        let tpch_ish = geom(
+            "SELECT c.name, SUM(o.total) FROM customer c \
+             JOIN orders o ON c.id = o.cid \
+             JOIN lineitem l ON o.id = l.oid \
+             WHERE o.d > 5 GROUP BY c.name ORDER BY 2 DESC LIMIT 10",
+        );
+        assert_eq!(
+            tpch_ish,
+            GeometryClass::Known {
+                depth: DepthBand::Mid,
+                blocking: BlockingBand::High,
+            }
+        );
+        // A derived-table subquery deepens the leaf; set-ops sum branch breakers.
+        let nested = geom(
+            "SELECT a FROM (SELECT a FROM u JOIN v ON u.i = v.i \
+             GROUP BY a ORDER BY a) t WHERE a > 0 ORDER BY a",
+        );
+        assert!(
+            matches!(
+                nested,
+                GeometryClass::Known {
+                    depth: DepthBand::Mid | DepthBand::Deep,
+                    blocking: BlockingBand::High,
+                }
+            ),
+            "nested join+agg+two sorts must band mid/deep × high: {nested:?}"
+        );
+    }
+
+    #[test]
+    fn geometry_estimator_v2_covers_the_measured_gaps() {
+        use crate::query::compute_scheduler::{BlockingBand, DepthBand, GeometryClass};
+        let raw = |sql: &str| {
+            let s = Parser::parse_sql(&GenericDialect {}, sql).expect("parse");
+            match s.as_slice() {
+                [Statement::Query(q)] => geometry_of_query(q),
+                _ => panic!("one SELECT"),
+            }
+        };
+        let geom = |sql: &str| {
+            let (d, b) = raw(sql);
+            GeometryClass::from_estimate(d, b)
+        };
+        // Gap 1 — predicate subqueries (TPC-H Q22 shape: v1 banded sxlo,
+        // measured mxhi). Each subquery is a hoisted join branch.
+        let q22ish = geom(
+            "SELECT cntrycode, COUNT(*) FROM customer              WHERE c_acctbal > (SELECT AVG(c_acctbal) FROM customer WHERE c_acctbal > 0)              AND NOT EXISTS (SELECT * FROM orders WHERE o_custkey = c_custkey)              GROUP BY cntrycode ORDER BY cntrycode",
+        );
+        assert_eq!(
+            q22ish,
+            GeometryClass::Known {
+                depth: DepthBand::Mid,
+                blocking: BlockingBand::High,
+            },
+            "Q22 shape must band mxhi (measured 10x5)"
+        );
+        // Gap 2 — window functions add Window + implied-sort levels
+        // (depth-only; window is not a breaker in the OpKind vocabulary).
+        let (d_plain, b_plain) = raw("SELECT x FROM t");
+        let (d_win, b_win) = raw("SELECT rank() OVER (ORDER BY x) FROM t");
+        assert_eq!(d_win, d_plain + 2, "window adds two levels");
+        assert_eq!(b_win, b_plain, "window adds no breaker");
+        // Gap 3 — EXCEPT/INTERSECT lower to side-aggregates + join, unlike
+        // UNION's streaming concat (measured: simple set-ops banded mxhi).
+        let except = geom("SELECT a FROM t EXCEPT SELECT a FROM u");
+        assert_eq!(
+            except,
+            GeometryClass::Known {
+                depth: DepthBand::Mid,
+                blocking: BlockingBand::High,
+            },
+            "EXCEPT must band mid x high"
+        );
+        let union = geom("SELECT a FROM t UNION ALL SELECT a FROM u");
+        assert_eq!(
+            union,
+            GeometryClass::Known {
+                depth: DepthBand::Shallow,
+                blocking: BlockingBand::Zero,
+            },
+            "UNION ALL stays a streaming concat"
         );
     }
 
@@ -3069,6 +3625,44 @@ mod tests {
             panic!("expected query");
         };
         (**query).clone()
+    }
+
+    #[test]
+    fn join_bearing_detects_joins_at_every_nesting_level() {
+        // TD-ROUTE-1 follow-up (review of #923): the bit must see joins the
+        // top-level FROM walk misses, or the override poisons Native's cost
+        // cells (the DataFusion floor serves the query while the io_trace
+        // stamps Native) and EXPLAIN ANALYZE diverges.
+        let jb = |sql: &str| query_join_bearing(&parse_query(sql));
+
+        // Top-level: explicit JOIN and comma join.
+        assert!(jb("SELECT * FROM a JOIN b ON a.id = b.id"));
+        assert!(jb("SELECT * FROM a, b WHERE a.id = b.id"));
+        // Derived table hiding a join.
+        assert!(jb(
+            "SELECT count(*) FROM (SELECT a.id FROM a JOIN b ON a.id = b.id) t"
+        ));
+        // CTE carrying the join the body then scans.
+        assert!(jb(
+            "WITH x AS (SELECT a.id FROM a JOIN b ON a.id = b.id) SELECT * FROM x"
+        ));
+        // WHERE IN / EXISTS lower to semi/anti joins.
+        assert!(jb("SELECT * FROM a WHERE id IN (SELECT id FROM b)"));
+        assert!(jb(
+            "SELECT * FROM a WHERE EXISTS (SELECT 1 FROM b WHERE b.id = a.id)"
+        ));
+        // Projection scalar subquery hoists into a LEFT JOIN.
+        assert!(jb("SELECT id, (SELECT max(x) FROM b) FROM a"));
+        // Set-op body: fail closed.
+        assert!(jb("SELECT id FROM a UNION ALL SELECT id FROM b"));
+
+        // Join-free shapes stay eligible for a Native flip.
+        assert!(!jb("SELECT * FROM a WHERE id = 1"));
+        assert!(!jb("SELECT status, count(*) FROM a GROUP BY status"));
+        assert!(!jb(
+            "SELECT count(*) FROM (SELECT id FROM a WHERE id > 5) t"
+        ));
+        assert!(!jb("WITH x AS (SELECT id FROM a) SELECT * FROM x"));
     }
 
     #[test]

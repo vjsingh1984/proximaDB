@@ -620,7 +620,6 @@ impl RaptorEngine {
             config.clone(),
             cache, // Tier 1: Shared metadata cache (CrossCacheOrchestrator)
             zero_copy_filesystem.clone(), // Tier 2: Disk cache wrapper
-            transaction_coordinator.clone(),
         ));
 
         let compactor = Arc::new(RaptorCompactor::new(
@@ -1059,7 +1058,6 @@ impl RaptorEngine {
                 self.config.clone(),
                 cache.clone(),
                 self.filesystem.clone(),
-                self.transaction_coordinator.clone(),
             );
 
             // STEP 1: Use hierarchical_search to find top-k rowgroups by centroid distance
@@ -1200,7 +1198,6 @@ impl RaptorEngine {
             self.config.clone(),
             cache,
             self.filesystem.clone(),
-            self.transaction_coordinator.clone(),
         );
 
         // Use scan_vectors_with_strategy for full scan
@@ -2602,7 +2599,6 @@ impl UnifiedStorageFormat for RaptorEngine {
                 self.config.clone(),
                 cache_orchestrator,
                 self.filesystem.clone(),
-                self.transaction_coordinator.clone(),
             ));
 
             // Try to get metadata for this file
@@ -2867,7 +2863,10 @@ impl UnifiedStorageFormat for RaptorEngine {
         // Return OptimizedSearchRecord directly
         Ok(results)
     }
+}
 
+#[allow(deprecated)] // RaptorEngine is #[deprecated] (experimental); accessing its own field is intentional
+impl crate::storage::traits::EngineFilesystemAccess for RaptorEngine {
     fn get_filesystem_factory(
         &self,
     ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
