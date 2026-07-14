@@ -1149,9 +1149,11 @@ jobs:
   # Both matrix legs are in `ci-success.needs`.
   #
   # The `test` shape is `--lib --bins --tests` (unit + integration tests) — the
-  # correctness-bearing targets. Benches/examples are excluded for now (they
-  # carry separate pre-existing rot); widen to `--all-targets` once those are
-  # repaired.
+  # correctness-bearing targets. The `benches` shape compiles the criterion
+  # micro-benchmarks so internal-API refactors can no longer rot them silently
+  # (TD-BENCH-1: bench_14 was fixed, the 2 unrepairable-against-current-APIs
+  # benches are disabled in Cargo.toml; the rest compile). Examples are still
+  # excluded (separate rot).
   rust-compile:
     name: Rust Compile (${{ matrix.shape }})
     runs-on: ubuntu-latest
@@ -1173,6 +1175,8 @@ jobs:
             args: "--workspace --lib --bins"
           - shape: test
             args: "--workspace --lib --bins --tests"
+          - shape: benches
+            args: "--workspace --benches"
     steps:
       - uses: actions/checkout@v4
 
