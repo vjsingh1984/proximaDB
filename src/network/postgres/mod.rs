@@ -102,6 +102,9 @@ pub struct PostgresServer {
     /// E0: shared per-IP rate limiter applied to the pgwire query path,
     /// consistent with REST. `None` (default) = no pgwire rate-limiting.
     rate_limiter: Option<Arc<crate::network::middleware::rate_limit::RateLimitState>>,
+    /// TD-TENANT-1: the deployment's bare tenant-assertion trust policy,
+    /// threaded into every per-connection `PostgresProtocol`. Default `Open`.
+    tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
     /// Whether the server is running
     running: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -143,8 +146,16 @@ impl PostgresServer {
             self_pod_id: None,
             warehouse_root_url: None,
             rate_limiter: None,
+            tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// TD-TENANT-1: set the deployment's bare tenant-assertion trust policy —
+    /// the same `HeaderTrustPolicy` the REST/gRPC/Arrow Flight surfaces hold.
+    pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
+        self.tenant_header_trust = policy;
+        self
     }
 
     /// E0: attach a shared per-IP rate limiter so each per-connection
@@ -257,6 +268,7 @@ impl PostgresServer {
                     let self_pod_id = self.self_pod_id.clone();
                     let warehouse_root_url = self.warehouse_root_url.clone();
                     let rate_limiter = self.rate_limiter.clone();
+                    let tenant_header_trust = self.tenant_header_trust;
 
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection(
@@ -275,6 +287,7 @@ impl PostgresServer {
                             self_pod_id,
                             warehouse_root_url,
                             rate_limiter,
+                            tenant_header_trust,
                         )
                         .await
                         {
@@ -315,6 +328,7 @@ impl PostgresServer {
         self_pod_id: Option<String>,
         warehouse_root_url: Option<String>,
         rate_limiter: Option<Arc<crate::network::middleware::rate_limit::RateLimitState>>,
+        tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
     ) -> Result<()> {
         // Create session
         let session = session_manager.create_session(addr).await?;
@@ -359,6 +373,9 @@ impl PostgresServer {
         if let Some(limiter) = rate_limiter {
             protocol = protocol.with_rate_limiter(limiter, addr.ip());
         }
+        // TD-TENANT-1: same bare-assertion trust policy as REST/gRPC/Flight,
+        // enforced at the startup handshake and the tenant session vars.
+        protocol = protocol.with_tenant_header_trust(tenant_header_trust);
 
         // Run protocol loop
         match protocol.run().await {

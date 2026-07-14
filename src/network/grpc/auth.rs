@@ -16,6 +16,11 @@ use tonic::codegen::http::{self, HeaderMap, Request as HttpRequest, Response as 
 use tonic::{Code, Request, Status};
 use tower::{Layer, Service};
 
+use proximadb_tenant::identity_trust::{
+    AuthenticatedTenantBinding, HeaderTrustPolicy, ResolvedTenantAssertion, TenantAssertionError,
+    resolve_tenant_assertion,
+};
+
 use crate::network::auth::middleware::DataPlaneCapability;
 use crate::security::{AuthenticationData, SecurityCoordinator, UnifiedUserContext};
 
@@ -23,18 +28,31 @@ use crate::security::{AuthenticationData, SecurityCoordinator, UnifiedUserContex
 pub struct GrpcAuthContext {
     pub user_context: UnifiedUserContext,
     pub capability: Option<DataPlaneCapability>,
+    /// The request tenant as resolved by the ONE shared trust primitive
+    /// (`proximadb_tenant::resolve_tenant_assertion`, TD-TENANT-1): the
+    /// credential binding, an accepted `x-tenant-id` assertion, or a
+    /// permitted gateway delegation. `None` = no tenant asserted or bound.
+    pub resolved_tenant: Option<String>,
 }
 
 #[derive(Clone)]
 pub struct GrpcAuthLayer {
     security_coordinator: Arc<SecurityCoordinator>,
+    header_trust: HeaderTrustPolicy,
 }
 
 impl GrpcAuthLayer {
     pub fn new(security_coordinator: Arc<SecurityCoordinator>) -> Self {
         Self {
             security_coordinator,
+            header_trust: HeaderTrustPolicy::default(),
         }
+    }
+
+    /// Set the deployment's bare `x-tenant-id` trust policy (TD-TENANT-1).
+    pub fn with_header_trust(mut self, header_trust: HeaderTrustPolicy) -> Self {
+        self.header_trust = header_trust;
+        self
     }
 }
 
@@ -42,6 +60,7 @@ impl GrpcAuthLayer {
 pub struct GrpcAuthService<S> {
     inner: S,
     security_coordinator: Arc<SecurityCoordinator>,
+    header_trust: HeaderTrustPolicy,
 }
 
 impl<S> Layer<S> for GrpcAuthLayer {
@@ -51,6 +70,7 @@ impl<S> Layer<S> for GrpcAuthLayer {
         GrpcAuthService {
             inner,
             security_coordinator: self.security_coordinator.clone(),
+            header_trust: self.header_trust,
         }
     }
 }
@@ -77,8 +97,11 @@ where
         let clone = self.inner.clone();
         let mut inner = std::mem::replace(&mut self.inner, clone);
 
+        let header_trust = self.header_trust;
+
         Box::pin(async move {
-            match authenticate_http_request(&security_coordinator, &mut request).await {
+            match authenticate_http_request(&security_coordinator, &mut request, header_trust).await
+            {
                 Ok(()) => inner.call(request).await,
                 Err(status) => Ok(status_to_http_response(status)),
             }
@@ -89,6 +112,7 @@ where
 pub async fn authenticate_http_request<B>(
     security_coordinator: &SecurityCoordinator,
     request: &mut HttpRequest<B>,
+    header_trust: HeaderTrustPolicy,
 ) -> Result<(), Status> {
     let path = request.uri().path();
     if is_arrow_flight_path(path) {
@@ -107,6 +131,48 @@ pub async fn authenticate_http_request<B>(
         validate_tenant_metadata(&user_context, request.headers())?;
     }
 
+    // TD-TENANT-1: reconcile the asserted `x-tenant-id` against the
+    // credential's tenant binding through the ONE shared primitive (same call
+    // REST / Arrow Flight / pgwire make). This also closes the pre-existing
+    // gRPC gap where a NON-capability credential's metadata mismatch was
+    // silently ignored instead of rejected.
+    let asserted = request
+        .headers()
+        .get("x-tenant-id")
+        .and_then(|value| value.to_str().ok());
+    let binding = user_context
+        .tenant_id
+        .as_ref()
+        .map(|tenant_id| AuthenticatedTenantBinding {
+            tenant_id: tenant_id.clone(),
+            is_gateway_principal: user_context.is_gateway_principal(),
+        });
+    let resolved_tenant = match resolve_tenant_assertion(asserted, binding.as_ref(), header_trust) {
+        Ok(
+            ResolvedTenantAssertion::Asserted(tenant) | ResolvedTenantAssertion::Credential(tenant),
+        ) => Some(tenant),
+        Ok(ResolvedTenantAssertion::NoTenant) => None,
+        Err(error @ TenantAssertionError::Mismatch { .. }) => {
+            tracing::warn!(
+                target: "proximadb::tenant_audit",
+                surface = "grpc",
+                %error,
+                "rejected x-tenant-id: does not match authenticated tenant binding"
+            );
+            return Err(Status::permission_denied(error.to_string()));
+        }
+        Err(error @ TenantAssertionError::UnauthenticatedAssertionRejected { .. }) => {
+            tracing::warn!(
+                target: "proximadb::tenant_audit",
+                surface = "grpc",
+                policy = %header_trust,
+                %error,
+                "rejected bare x-tenant-id without authenticated tenant binding"
+            );
+            return Err(Status::permission_denied(error.to_string()));
+        }
+    };
+
     // Open-core cache tier hook: record the tenant's tier from `x-tenant-tier`
     // metadata (control-plane supplied, opaque id) for the cache policy, before
     // `user_context` is moved into the auth context.
@@ -121,6 +187,7 @@ pub async fn authenticate_http_request<B>(
     request.extensions_mut().insert(GrpcAuthContext {
         user_context,
         capability,
+        resolved_tenant,
     });
 
     if let (Some(tenant), Some(tier)) = (tenant_for_tier, tier_claim) {
@@ -137,11 +204,17 @@ pub fn data_plane_capability<T>(request: &Request<T>) -> Option<DataPlaneCapabil
 }
 
 pub fn tenant_id<T>(request: &Request<T>) -> Option<String> {
-    request
-        .extensions()
-        .get::<GrpcAuthContext>()
-        .and_then(|context| context.user_context.tenant_id.clone())
-        .or_else(|| tenant_id_from_metadata(request.metadata()))
+    if let Some(context) = request.extensions().get::<GrpcAuthContext>() {
+        // The auth layer already reconciled assertion vs binding under the
+        // deployment policy (TD-TENANT-1); its verdict is authoritative.
+        return context
+            .resolved_tenant
+            .clone()
+            .or_else(|| context.user_context.tenant_id.clone());
+    }
+    // No auth layer on this mount (dev / embedded): bare metadata is the only
+    // signal — the legacy Open behavior. Strict policies require the layer.
+    tenant_id_from_metadata(request.metadata())
 }
 
 /// The RESOLVED request tenant for gRPC + Arrow Flight — the authenticated /
@@ -449,6 +522,7 @@ mod tests {
             },
             encryption: crate::security::EncryptionConfig::default(),
             key_store: crate::security::KeyStoreConfig::default(),
+            tenant: Default::default(),
         }
     }
 
@@ -504,7 +578,7 @@ mod tests {
             .body(())
             .expect("request should build");
 
-        authenticate_http_request(&coordinator().await, &mut request)
+        authenticate_http_request(&coordinator().await, &mut request, HeaderTrustPolicy::Open)
             .await
             .expect("valid gRPC capability should authenticate");
 
@@ -532,9 +606,10 @@ mod tests {
             .body(())
             .expect("request should build");
 
-        let status = authenticate_http_request(&coordinator().await, &mut request)
-            .await
-            .expect_err("REST capability must not authorize generic gRPC");
+        let status =
+            authenticate_http_request(&coordinator().await, &mut request, HeaderTrustPolicy::Open)
+                .await
+                .expect_err("REST capability must not authorize generic gRPC");
         assert_eq!(status.code(), Code::PermissionDenied);
     }
 
@@ -548,9 +623,10 @@ mod tests {
             .body(())
             .expect("request should build");
 
-        let status = authenticate_http_request(&coordinator().await, &mut request)
-            .await
-            .expect_err("capability must not authorize catalog methods");
+        let status =
+            authenticate_http_request(&coordinator().await, &mut request, HeaderTrustPolicy::Open)
+                .await
+                .expect_err("capability must not authorize catalog methods");
         assert_eq!(status.code(), Code::PermissionDenied);
     }
 
@@ -616,7 +692,7 @@ mod tests {
             .body(())
             .expect("request should build");
 
-        authenticate_http_request(&coordinator().await, &mut request)
+        authenticate_http_request(&coordinator().await, &mut request, HeaderTrustPolicy::Open)
             .await
             .expect("Flight service performs its own auth");
         assert!(request.extensions().get::<GrpcAuthContext>().is_none());
@@ -632,9 +708,10 @@ mod tests {
             .body(())
             .expect("request should build");
 
-        let status = authenticate_http_request(&coordinator().await, &mut request)
-            .await
-            .expect_err("tenant header mismatch must fail");
+        let status =
+            authenticate_http_request(&coordinator().await, &mut request, HeaderTrustPolicy::Open)
+                .await
+                .expect_err("tenant header mismatch must fail");
         assert_eq!(status.code(), Code::PermissionDenied);
     }
 
@@ -664,7 +741,7 @@ mod tests {
             .body(())
             .expect("request should build");
 
-        authenticate_http_request(&coordinator().await, &mut request)
+        authenticate_http_request(&coordinator().await, &mut request, HeaderTrustPolicy::Open)
             .await
             .expect("normal JWT should authenticate");
         assert!(
@@ -674,5 +751,89 @@ mod tests {
                 .and_then(|context| context.capability.as_ref())
                 .is_none()
         );
+    }
+
+    async fn normal_jwt(tenant: Option<&str>) -> String {
+        let jwt_service = JwtService::new(crate::network::auth::config::JwtConfig {
+            secret: Some("dev-jwt-secret".to_string()),
+            expiration_secs: 900,
+            refresh_expiration_secs: 86400,
+            issuer: "operator-control-plane".to_string(),
+            audience: "proximadb-data-plane".to_string(),
+            algorithm: JwtAlgorithm::HS256,
+        })
+        .expect("jwt service should initialize");
+        jwt_service
+            .generate_token_pair(
+                "admin-user",
+                tenant.map(str::to_string),
+                vec!["admin".to_string()],
+            )
+            .await
+            .expect("jwt should generate")
+            .access_token
+    }
+
+    /// TD-TENANT-1 gap closure: a NON-capability credential asserting a
+    /// different tenant via `x-tenant-id` was previously silently ignored
+    /// (the authenticated tenant just won). It is now a PERMISSION_DENIED
+    /// in every policy mode — the same masquerade rejection REST applies.
+    #[tokio::test]
+    async fn grpc_auth_rejects_normal_jwt_tenant_metadata_mismatch() {
+        let token = normal_jwt(Some("tenant-a")).await;
+        let mut request = HttpRequest::builder()
+            .uri("/proximadb.v1.CollectionService/ListCollections")
+            .header("authorization", format!("Bearer {token}"))
+            .header("x-tenant-id", "tenant-b")
+            .body(())
+            .expect("request should build");
+
+        let status =
+            authenticate_http_request(&coordinator().await, &mut request, HeaderTrustPolicy::Open)
+                .await
+                .expect_err("normal-JWT tenant metadata mismatch must fail");
+        assert_eq!(status.code(), Code::PermissionDenied);
+    }
+
+    /// A credential with NO tenant binding asserting a tenant via metadata:
+    /// accepted under `open` (resolved tenant = the assertion), rejected
+    /// under `authenticated-only`.
+    #[tokio::test]
+    async fn grpc_auth_applies_policy_to_unbound_credential_assertions() {
+        let token = normal_jwt(None).await;
+        let build = |token: &str| {
+            HttpRequest::builder()
+                .uri("/proximadb.v1.CollectionService/ListCollections")
+                .header("authorization", format!("Bearer {token}"))
+                .header("x-tenant-id", "demo1")
+                .body(())
+                .expect("request should build")
+        };
+
+        let mut open_request = build(&token);
+        authenticate_http_request(
+            &coordinator().await,
+            &mut open_request,
+            HeaderTrustPolicy::Open,
+        )
+        .await
+        .expect("open policy accepts the assertion");
+        assert_eq!(
+            open_request
+                .extensions()
+                .get::<GrpcAuthContext>()
+                .and_then(|context| context.resolved_tenant.as_deref()),
+            Some("demo1")
+        );
+
+        let mut strict_request = build(&token);
+        let status = authenticate_http_request(
+            &coordinator().await,
+            &mut strict_request,
+            HeaderTrustPolicy::AuthenticatedOnly,
+        )
+        .await
+        .expect_err("strict policy rejects the unbound assertion");
+        assert_eq!(status.code(), Code::PermissionDenied);
     }
 }
