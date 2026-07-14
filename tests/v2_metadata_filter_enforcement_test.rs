@@ -332,3 +332,271 @@ async fn v2_metadata_filter_is_enforced_on_all_paths() {
         "hybrid filter must return exactly acctA records a1/a2, got {filtered_body}"
     );
 }
+
+/// A props value in a `RecordResponse` may serialize as a bare JSON value or
+/// as the typed `{type, value}` envelope. Normalize both to a string.
+fn prop_as_str(props: &serde_json::Value, key: &str) -> Option<String> {
+    let v = props.get(key)?;
+    v.as_str().map(str::to_string).or_else(|| {
+        v.get("value")
+            .and_then(|inner| inner.as_str())
+            .map(str::to_string)
+    })
+}
+
+/// Live-UAT regression for issues #949/#950/#951 (anvaiops vm-testbed):
+/// tenant-stamped `/documents` ingest must produce records whose tenant is
+/// queryable, the REST JSON hybrid path must honor a `tenant_id` filter on
+/// them, and the `/documents` ack contract must never accept-then-drop.
+///
+/// - #951 symptom A: ingest into a NONEXISTENT collection previously left a
+///   dimension-0 black hole behind a 200 ack. Now the handler auto-creates
+///   the collection at the batch's embedding dimension.
+/// - #950: the request tenant must land in stored `props.tenant_id` (the
+///   isolation field alone is invisible to metadata filters and record GET).
+/// - #949: `POST /api/v2/hybrid/search` with `{"filters":{"tenant_id":...}}`
+///   previously resolved the allowed id-set with no tenant context and
+///   fail-closed dropped every BM25 candidate — the filtered query returned
+///   `{"results":[],"total":0}` while the unfiltered one returned hits.
+/// - #951 symptom B: a dimension-mismatched write must be rejected with a
+///   4xx instead of 200-acked and silently dropped by the batch processor.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn documents_tenant_stamp_hybrid_tenant_filter_and_ack_contract() {
+    let server = TestServer::start().await.expect("server start");
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .no_proxy()
+        .build()
+        .unwrap();
+    let base = server.base_url();
+    let collection = format!(
+        "dtest_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
+    // ── #951 A: ingest into a nonexistent collection (sdk-vector mode so the
+    // dimension is carried by the request, no embedding runtime needed).
+    let ingest = http
+        .post(format!("{base}/api/v2/collections/{collection}/documents"))
+        .header("X-Tenant-ID", "demo1")
+        .header("X-Embed-Source", "sdk-vector")
+        .json(&json!({
+            "records": [
+                { "id": "d1", "text": "alpha quantum widget",
+                  "vector": [0.1, 0.2, 0.3, 0.4], "metadata": { "kind": "doc" } },
+                { "id": "d2", "text": "alpha quantum gadget",
+                  "vector": [0.2, 0.1, 0.4, 0.3], "metadata": { "kind": "doc" } }
+            ]
+        }))
+        .send()
+        .await
+        .expect("documents ingest");
+    let ingest_status = ingest.status();
+    let ingest_body = ingest.text().await.unwrap_or_default();
+    assert!(
+        ingest_status.is_success(),
+        "documents ingest must succeed (auto-create at dim 4): {ingest_status} {ingest_body}"
+    );
+
+    sleep(Duration::from_millis(500)).await;
+
+    // The auto-created collection must carry the real embedding dimension,
+    // not the dimension-0 black hole (#951 A).
+    let col = http
+        .get(format!("{base}/api/v2/collections/{collection}"))
+        .header("X-Tenant-ID", "demo1")
+        .send()
+        .await
+        .expect("get collection");
+    assert!(
+        col.status().is_success(),
+        "get collection: {}",
+        col.status()
+    );
+    let col_body: serde_json::Value = col.json().await.expect("collection json");
+    let dimension = col_body
+        .get("dimension")
+        .or_else(|| col_body.get("config").and_then(|c| c.get("dimension")))
+        .and_then(|d| d.as_u64());
+    assert_eq!(
+        dimension,
+        Some(4),
+        "auto-created collection must have dimension 4, got {col_body}"
+    );
+
+    // ── #950: stored props must carry the queryable tenant stamp.
+    let rec = http
+        .get(format!("{base}/api/v2/collections/{collection}/records/d1"))
+        .header("X-Tenant-ID", "demo1")
+        .send()
+        .await
+        .expect("get record");
+    assert!(rec.status().is_success(), "get record: {}", rec.status());
+    let rec_body: serde_json::Value = rec.json().await.expect("record json");
+    let props = rec_body.get("props").cloned().unwrap_or_default();
+    assert_eq!(
+        prop_as_str(&props, "tenant_id").as_deref(),
+        Some("demo1"),
+        "stored props must carry the request tenant (#950), got {rec_body}"
+    );
+    assert_eq!(
+        prop_as_str(&props, "kind").as_deref(),
+        Some("doc"),
+        "user metadata must persist alongside the tenant stamp, got {rec_body}"
+    );
+
+    // ── #951 B: a dimension-mismatched write is a 4xx, never accept-then-drop.
+    let mismatch = http
+        .post(format!("{base}/api/v2/collections/{collection}/documents"))
+        .header("X-Tenant-ID", "demo1")
+        .header("X-Embed-Source", "sdk-vector")
+        .json(&json!({
+            "records": [
+                { "id": "bad1", "text": "wrong dims", "vector": [0.5, 0.5] }
+            ]
+        }))
+        .send()
+        .await
+        .expect("mismatched ingest");
+    assert!(
+        mismatch.status().is_client_error(),
+        "dimension-mismatched write must be rejected with a 4xx, got {} {}",
+        mismatch.status(),
+        mismatch.text().await.unwrap_or_default()
+    );
+
+    // ── #950: the async ack path must stamp the tenant the same way. This
+    // harness has no queue configured, so `X-Ingest-Mode: async` exercises
+    // the inline-degradation branch (202 ack) — the exact path the live
+    // deployment hit.
+    let async_ingest = http
+        .post(format!("{base}/api/v2/collections/{collection}/documents"))
+        .header("X-Tenant-ID", "demo1")
+        .header("X-Embed-Source", "sdk-vector")
+        .header("X-Ingest-Mode", "async")
+        .json(&json!({
+            "records": [
+                { "id": "d3", "text": "alpha quantum sprocket",
+                  "vector": [0.3, 0.3, 0.2, 0.2] }
+            ]
+        }))
+        .send()
+        .await
+        .expect("async documents ingest");
+    assert!(
+        async_ingest.status().is_success(),
+        "async documents ingest must ack: {} {}",
+        async_ingest.status(),
+        async_ingest.text().await.unwrap_or_default()
+    );
+    sleep(Duration::from_millis(300)).await;
+    let rec3 = http
+        .get(format!("{base}/api/v2/collections/{collection}/records/d3"))
+        .header("X-Tenant-ID", "demo1")
+        .send()
+        .await
+        .expect("get async record");
+    assert!(
+        rec3.status().is_success(),
+        "get async record: {}",
+        rec3.status()
+    );
+    let rec3_body: serde_json::Value = rec3.json().await.expect("async record json");
+    let props3 = rec3_body.get("props").cloned().unwrap_or_default();
+    assert_eq!(
+        prop_as_str(&props3, "tenant_id").as_deref(),
+        Some("demo1"),
+        "async-acked record must carry the tenant stamp (#950), got {rec3_body}"
+    );
+
+    // ── #949: REST JSON hybrid path with a tenant_id filter.
+    // Feed the in-process BM25 index (the /documents surface intentionally
+    // does not — see SUPPORTED_SURFACE), discovering the mounted prefix the
+    // same way the account-filter test above does.
+    let mut hybrid_prefix: Option<&str> = None;
+    for prefix in ["/api/v1/hybrid", "/api/v2/hybrid"] {
+        let probe = http
+            .post(format!("{base}{prefix}/index"))
+            .json(&json!({
+                "collection": collection,
+                "documents": [
+                    { "id": "d1", "text": "alpha quantum widget" },
+                    { "id": "d2", "text": "alpha quantum gadget" }
+                ]
+            }))
+            .send()
+            .await
+            .expect("hybrid index probe");
+        if probe.status().is_success() {
+            hybrid_prefix = Some(prefix);
+            break;
+        }
+    }
+    let Some(prefix) = hybrid_prefix else {
+        eprintln!("hybrid routes not mounted in this harness; skipping hybrid leg");
+        return;
+    };
+
+    let tenant_hybrid_search = |tenant_filter: Option<&str>| {
+        let http = http.clone();
+        let url = format!("{base}{prefix}/search");
+        let mut body = json!({
+            "collection": collection,
+            "text_query": "quantum",
+            "top_k": 10,
+        });
+        if let Some(t) = tenant_filter {
+            body["filters"] = json!({ "tenant_id": t });
+        }
+        async move {
+            let resp = http
+                .post(url)
+                .header("X-Tenant-ID", "demo1")
+                .json(&body)
+                .send()
+                .await
+                .expect("hybrid search");
+            assert!(
+                resp.status().is_success(),
+                "hybrid status {}",
+                resp.status()
+            );
+            let parsed: serde_json::Value = resp.json().await.expect("hybrid json");
+            let recs = parsed
+                .get("results")
+                .and_then(|r| r.as_array())
+                .cloned()
+                .unwrap_or_default();
+            (ids(&recs), parsed)
+        }
+    };
+
+    // Baseline (no filter) proves the BM25 leg surfaces the docs at all —
+    // without this the filtered assertion below can't distinguish "gate
+    // dropped everything" from "nothing was indexed".
+    let expected: BTreeSet<String> = ["d1".to_string(), "d2".to_string()].into_iter().collect();
+    let (baseline_ids, baseline_body) = tenant_hybrid_search(None).await;
+    assert_eq!(
+        baseline_ids, expected,
+        "unfiltered hybrid baseline must surface the indexed docs, got {baseline_body}"
+    );
+
+    // The live repro: filtering by the caller's own tenant must return the
+    // tenant's docs, not drop every BM25 candidate.
+    let (own_tenant_ids, own_body) = tenant_hybrid_search(Some("demo1")).await;
+    assert_eq!(
+        own_tenant_ids, expected,
+        "hybrid search with the caller's tenant_id filter must return the \
+         tenant's docs (#949/#950), got {own_body}"
+    );
+
+    // And a foreign-tenant filter must return nothing (fail-closed narrowing).
+    let (foreign_ids, foreign_body) = tenant_hybrid_search(Some("someone-else")).await;
+    assert!(
+        foreign_ids.is_empty(),
+        "a foreign tenant_id filter must not match demo1 records, got {foreign_body}"
+    );
+}

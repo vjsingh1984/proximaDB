@@ -1519,7 +1519,15 @@ pub fn create_router(state: AppState) -> axum::Router {
     // Hybrid search — port-backed via RestHybridPortImpl (real BM25+vector fusion).
     // Shares the in-process HybridFullTextIndexMap with Bm25IndexPortImpl so indexed
     // documents are immediately searchable without a separate startup step.
-    {
+    //
+    // Built here but MERGED at the very end, after the blanket default-tenant
+    // `Extension` layers below: those layers sit INSIDE the tenant middleware on
+    // the request path and would overwrite the middleware's per-request
+    // `proximadb_api::rest::TenantContext` with "default" — which is exactly how
+    // the hybrid filter gate lost the caller's tenant (#949). Routes merged
+    // after `.layer(...)` are not wrapped by it; the hybrid handler falls back
+    // gracefully (`Option<Extension<..>>`) in mounts without the middleware.
+    let hybrid_router = {
         use crate::network::hybrid_search::{Bm25IndexPortImpl, RestHybridPortImpl};
         use proximadb_api::rest::{HybridRestState, create_hybrid_search_router};
 
@@ -1537,9 +1545,9 @@ pub fn create_router(state: AppState) -> axum::Router {
             hybrid_port,
             bm25_port: Some(bm25_port),
         };
-        router = router.merge(create_hybrid_search_router().with_state(hybrid_state));
         info!("✅ Hybrid search at /api/v2/hybrid/* via RestHybridPortImpl (real BM25+vector)");
-    }
+        create_hybrid_search_router().with_state(hybrid_state)
+    };
 
     // SQL execution + explain are served by the canonical v2 query facade
     // (`/api/v2/query`, `/api/v2/query/explain` in `create_v2_router`). The
@@ -1738,7 +1746,11 @@ pub fn create_router(state: AppState) -> axum::Router {
         .with_state(state)
         .layer(Extension(default_tenant))
         .layer(axum::Extension(default_api_tenant))
-        .layer(axum::middleware::from_fn(add_rest_v1_deprecation_headers));
+        .layer(axum::middleware::from_fn(add_rest_v1_deprecation_headers))
+        // Merged AFTER the layers above so the per-request tenant from the
+        // tenant middleware is not clobbered by the default-tenant Extension
+        // (#949). The hybrid router carries its own v1-compat headers.
+        .merge(hybrid_router);
 
     // Optional AI endpoints (disabled by default; enable with `--features ai_endpoints`)
     #[cfg(feature = "ai_endpoints")]
