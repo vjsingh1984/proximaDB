@@ -141,18 +141,17 @@ jobs:
       - name: Run TD-112 post-flush recall ratchet (TD-182 P0b)
         run: cargo test --test td112_postflush_recall_e2e recall -- --nocapture
 
-  # WS8: real-dataset PAX RaBitQ→SQ8 recall artifact. MANUAL ONLY
-  # (workflow_dispatch) — it downloads the SIFT1M corpus (~160 MB) and runs a
-  # heavy recall bench, so it is deliberately NOT in the always-on
-  # `pgwire-recall-tests` job (avoids 160 MB-download flakiness on every qa PR).
+  # WS8: real-dataset PAX RaBitQ→SQ8 recall artifact. Runs on promotion PRs and
+  # workflow_dispatch. It downloads the SIFT1M corpus (~525 MB) and runs a heavy
+  # release-mode recall gate, so it remains separate from normal PR CI.
   # Produces the dated recall@10 ≥ 0.90 artifact that GATES the PAX default-on
   # flip (Phase F): the existing `pax-recall-ratchet` is a synthetic DIM=64 CI
   # floor only (representativeness caveat in BENCHMARK_EVIDENCE.toml WS8). The
-  # ratchet self-skips when the corpus is absent, so a non-manual trigger would
-  # just skip — the `if:` keeps it from scheduling at all.
+  # Local runs may skip when the corpus is absent. This QA job sets
+  # PROXIMADB_RECALL_DATASET_REQUIRED=1, so a missing/corrupt corpus fails loud.
   sift-pax-recall:
     name: SIFT1M PAX RaBitQ recall ratchet (WS8)
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -186,13 +185,15 @@ jobs:
       - name: Build ratchet binary
         env:
           CARGO_BUILD_JOBS: "4"
-        run: cargo test --test sift_pax_recall_ratchet_test --no-run
+        run: cargo test --release --test sift_pax_recall_ratchet_test --no-run
       - name: Run SIFT PAX recall ratchet (N=${{ inputs.sift_n || '100000' }})
         env:
           PROXIMADB_SIFT_DATASET_DIR: /home/runner/sift1m
           PROXIMADB_SIFT_N: ${{ inputs.sift_n || '100000' }}
           PROXIMADB_SIFT_QUERIES: "1000"
-        run: cargo test --test sift_pax_recall_ratchet_test -- --nocapture
+          PROXIMADB_RECALL_DATASET_REQUIRED: "1"
+          PROXIMADB_SIFT_CENTROID_MAX_RECALL_DROP: "0"
+        run: cargo test --release --test sift_pax_recall_ratchet_test -- --nocapture
 
   # Validate the object-store access-tier cost lever (TD-168/TD-173) against REAL
   # cloud APIs via emulators — Azurite (Azure), MinIO (S3), fake-gcs (GCP) — the

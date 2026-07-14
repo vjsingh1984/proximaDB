@@ -722,11 +722,16 @@ jobs:
       matrix:
         include:
           # The two combos the published images actually ship (PR #78):
-          - { label: "cloud-full",          pkg: proximadb-server, feats: "cloud-full" }
-          - { label: "cloud-full,onnx",     pkg: proximadb-server, feats: "cloud-full,onnx" }
+          - { label: "cloud-full",          pkg: proximadb-server, args: "--features cloud-full" }
+          - { label: "cloud-full,onnx",     pkg: proximadb-server, args: "--features cloud-full,onnx" }
           # Other gated surfaces invisible to default CI:
-          - { label: "cluster",             pkg: proximadb,        feats: "cluster" }
-          - { label: "enterprise-catalogs", pkg: proximadb,        feats: "enterprise-catalogs" }
+          - { label: "cluster",             pkg: proximadb,        args: "--features cluster" }
+          - { label: "enterprise-catalogs", pkg: proximadb,        args: "--features enterprise-catalogs" }
+          # Refactor/move coverage: these configurations catch cfg drift hidden
+          # by the default build. Keep them in the same mandatory matrix rather
+          # than relying on a PR being correctly labelled as mechanical.
+          - { label: "no-default-features",  pkg: proximadb,        args: "--no-default-features" }
+          - { label: "experimental-engines", pkg: proximadb,        args: "--features experimental-engines" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -739,10 +744,10 @@ jobs:
         with:
           prefix-key: "v1-feature-matrix"
           shared-key: ${{ matrix.label }}
-      - name: cargo check -p ${{ matrix.pkg }} --features ${{ matrix.feats }}
+      - name: cargo check -p ${{ matrix.pkg }} ${{ matrix.args }}
         env:
           CARGO_PROFILE_DEV_DEBUG: 0
-        run: cargo check -p ${{ matrix.pkg }} --features ${{ matrix.feats }}
+        run: cargo check -p ${{ matrix.pkg }} ${{ matrix.args }}
 
   rust-security:
     name: Security Audit
@@ -1118,6 +1123,8 @@ jobs:
       # merge. Convention: docs/12-design/HOW_TO_FILE_TD_AND_ADR.adoc.
       - name: Check TD/ADR id uniqueness
         run: python3 scripts/check_td_adr_unique.py
+      - name: Check resolved TD status/body consistency
+        run: python3 scripts/check_td_status_consistency.py
       - name: Check documentation links
         run: |
           echo "Checking for broken links in documentation..."
