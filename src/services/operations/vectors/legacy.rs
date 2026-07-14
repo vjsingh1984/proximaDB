@@ -5733,7 +5733,7 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
         &self,
         collection_id: &str,
         filters: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
-        _tenant_id: Option<&str>,
+        tenant_id: Option<&str>,
     ) -> anyhow::Result<std::collections::HashSet<String>> {
         use std::collections::HashSet;
 
@@ -5753,12 +5753,18 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
 
         // Read the authoritative record set — WAL memtable plus flushed storage —
         // and keep the ids whose property tree satisfies the filter under the
-        // single canonical evaluator. Tenant scope is not threaded here (the
-        // hybrid boundary carries no `TenantContext`, mirroring the vector leg's
-        // `search(req, None)`); correctness holds because this set only ever
-        // *narrows* the BM25 candidates and never widens them.
+        // single canonical evaluator. The caller's tenant identity (threaded
+        // from the REST boundary through `HybridPort`, #949) scopes the
+        // listing: in multi-tenant mode the record listing REQUIRES a tenant
+        // context, so the former `None` made every filtered hybrid query fail
+        // closed to an empty allowed-set and drop all BM25 candidates. The
+        // fail-closed direction is preserved (errors still empty the set at
+        // the caller); this set only ever *narrows* the BM25 candidates.
+        let tenant_ctx = tenant_id
+            .filter(|t| !t.is_empty())
+            .map(crate::storage::tenant::context::TenantContext::for_tenant_id);
         let records = self
-            .list_all_records_with_tenant_context(&resolved, None)
+            .list_all_records_with_tenant_context(&resolved, tenant_ctx.as_ref())
             .await?;
 
         let matching = records
