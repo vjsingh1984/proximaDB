@@ -567,10 +567,12 @@ impl SharedServices {
             // `NativeCatalog` for the duration of the cutover.
             let disable_system_catalog = std::env::var("PROXIMADB_DISABLE_SYSTEM_CATALOG").is_ok();
             let metadata_url = storage_config.metadata_url.clone();
-            let is_objstore = metadata_url.starts_with("s3://")
-                || metadata_url.starts_with("gs://")
-                || metadata_url.starts_with("az://")
-                || metadata_url.starts_with("memory://");
+            // ANY non-file scheme is an object store — never enumerate schemes
+            // here: `adls://`/`abfs://`/`azure://`/`gcs://` (documented aliases,
+            // ADR-036) used to fall through BOTH branches and land on
+            // NativeCatalog's non-durable temp cache, silently losing catalog
+            // durability on Azure deployments (TD-OBJSTORE-1, #960).
+            let is_objstore = metadata_url.contains("://") && !metadata_url.starts_with("file://");
             // Phase 5d: object-store deployments use the SystemCatalog too — its
             // snapshot blob persists to the object store under
             // `_operator/catalog/…` (real durability, replacing NativeCatalog's
