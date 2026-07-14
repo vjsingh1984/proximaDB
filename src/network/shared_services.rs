@@ -1497,17 +1497,29 @@ impl SharedServices {
         debug!(
             "🔧 SharedServices::new - Creating SHARED GraphCollectionService instance with auto-recovery..."
         );
-        let graph_collection_service =
-            match crate::services::GraphCollectionService::new_with_recovery().await {
-                Ok(svc) => Arc::new(svc),
-                Err(e) => {
-                    warn!(
-                        "Failed to create GraphCollectionService with recovery: {}. Using non-persistent service.",
-                        e
-                    );
-                    Arc::new(crate::services::GraphCollectionService::new())
-                }
-            };
+        let graph_metadata_url =
+            join_storage_url(&storage_config.metadata_url, "graph_collections.json");
+        let graph_collection_service = match if graph_metadata_url.starts_with("file://") {
+            crate::services::GraphCollectionService::new_with_recovery_at(std::path::PathBuf::from(
+                graph_metadata_url.trim_start_matches("file://"),
+            ))
+            .await
+        } else {
+            crate::services::GraphCollectionService::new_with_recovery_at_url(
+                graph_metadata_url.clone(),
+                filesystem_factory.clone(),
+            )
+            .await
+        } {
+            Ok(svc) => Arc::new(svc),
+            Err(e) => {
+                warn!(
+                    "Failed to create GraphCollectionService with recovery at {}: {}. Using non-persistent service.",
+                    graph_metadata_url, e
+                );
+                Arc::new(crate::services::GraphCollectionService::new())
+            }
+        };
         debug!(
             "✅ SharedServices::new - Shared GraphCollectionService created (with auto-recovery)"
         );
@@ -2257,27 +2269,39 @@ impl SharedServices {
         // sender is intentionally leaked (matching the always-on
         // start_axis_consumer maintenance pattern): dropping it would make the
         // executor's `shutdown.changed()` return Err and exit immediately.
-        // Registry is in-memory for this first (experimental) wiring; durable
-        // persistence under the data dir is a follow-up.
+        // Registry is durable below metadata_url when a full config is present;
+        // embedded/test wiring without one remains in-memory.
         let snapshot_coordinator = Arc::new(
             crate::services::snapshot::SnapshotPublishCoordinator::new(catalog_manager.clone()),
         );
         // Phase 8 (F1): per-collection discovery-job registry. Durable when a
-        // full config is present (jobs + states survive restart), mirroring the
-        // primary-pod registry persistence pattern; in-memory otherwise
-        // (embedded/test harnesses without a data dir).
+        // full config is present (jobs + states survive restart). Object-store
+        // deployments route the sidecar through FileSystem below metadata_url;
+        // embedded/test harnesses without a config remain in-memory.
         let discovery_registry = match opt_config {
-            Some(cfg) => {
-                let path = cfg
-                    .server
-                    .data_dir
-                    .join("discovery_jobs")
-                    .join("registry.json");
+            Some(_cfg) => {
+                let url =
+                    join_storage_url(&storage_config.metadata_url, "discovery_jobs/registry.json");
                 info!(
                     "🔍 SharedServices: discovery-job registry persistence at {}",
-                    path.display()
+                    url
                 );
-                Arc::new(crate::services::discovery::DiscoveryRegistry::load_or_create_at(path))
+                if url.starts_with("file://") {
+                    Arc::new(
+                        crate::services::discovery::DiscoveryRegistry::load_or_create_at(
+                            std::path::PathBuf::from(url.trim_start_matches("file://")),
+                        ),
+                    )
+                } else {
+                    Arc::new(
+                        crate::services::discovery::DiscoveryRegistry::load_or_create_at_url(
+                            url,
+                            filesystem_factory.clone(),
+                        )
+                        .await
+                        .context("opening object-store discovery registry")?,
+                    )
+                }
             }
             None => Arc::new(crate::services::discovery::DiscoveryRegistry::new()),
         };

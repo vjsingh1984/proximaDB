@@ -331,7 +331,12 @@ impl SystemCatalog {
                 .commits_since_snapshot
                 .fetch_add(applied, Ordering::SeqCst)
                 + applied;
-            if n >= cfg.threshold {
+            // For an object-store catalog the local WAL is only a staging log:
+            // a VM/pod replacement starts with a fresh local data_dir, so the
+            // snapshot is the ONLY catalog artifact that survives. Publish it
+            // before acknowledging every DDL. Local catalogs retain the normal
+            // threshold because their WAL itself is durable.
+            if cfg.store.requires_snapshot_on_commit() || n >= cfg.threshold {
                 self.checkpoint_locked(cfg).await?;
                 self.commits_since_snapshot.store(0, Ordering::SeqCst);
             }
@@ -1257,6 +1262,67 @@ mod tests {
                 "table {t} must survive object-store snapshot + WAL tail + reopen"
             );
         }
+        Ok(())
+    }
+
+    /// TD-OBJSTORE-2 regression: one collection-sized DDL batch must survive a
+    /// restart onto a fresh local volume without an explicit checkpoint. Before
+    /// this fix the default threshold (1,000 mutations) left these mutations
+    /// only in the local catalog WAL, so a VM replacement recovered an empty
+    /// catalog even though the data WAL was durable in object storage.
+    #[tokio::test]
+    async fn object_store_commit_survives_fresh_local_wal_without_checkpoint() -> Result<()> {
+        use crate::services::catalog_snapshot_store::ObjectStoreSnapshotStore;
+        use proximadb_object_store::ProximaObjectStore;
+
+        let first_vm = tempfile::tempdir()?;
+        let replacement_vm = tempfile::tempdir()?;
+        let backing: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+        let key = "_operator/catalog/_manifests/";
+
+        {
+            let store = Arc::new(ObjectStoreSnapshotStore::new(
+                ProximaObjectStore::new(backing.clone()),
+                "memory:///",
+                key,
+            ));
+            let cat = SystemCatalog::open_with_snapshot_store(
+                "default",
+                first_vm.path().join("catalog.wal"),
+                store,
+            )
+            .await?;
+            cat.create_namespace(&nslevels(&["default"]), HashMap::new())
+                .await?;
+            cat.create_table(
+                &TableIdentifier::new(nslevels(&["default"]), "durable_collection"),
+                vec_schema("durable_collection"),
+            )
+            .await?;
+            // No checkpoint and no graceful shutdown: model abrupt VM loss.
+        }
+
+        let store = Arc::new(ObjectStoreSnapshotStore::new(
+            ProximaObjectStore::new(backing),
+            "memory:///",
+            key,
+        ));
+        let reopened = SystemCatalog::open_with_snapshot_store(
+            "default",
+            replacement_vm.path().join("catalog.wal"),
+            store,
+        )
+        .await?;
+        assert!(
+            reopened
+                .table_exists(&TableIdentifier::new(
+                    nslevels(&["default"]),
+                    "durable_collection"
+                ))
+                .await?,
+            "catalog DDL must be present when the replacement VM has no local WAL"
+        );
         Ok(())
     }
 

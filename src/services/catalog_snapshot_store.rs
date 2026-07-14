@@ -66,6 +66,17 @@ pub enum SnapshotWrite {
 /// rejected instead of clobbering the newer pod's snapshot.
 #[async_trait]
 pub trait CatalogSnapshotStore: Send + Sync {
+    /// Whether this snapshot is the only durable copy that survives loss of the
+    /// catalog WAL's local volume. Object-store deployments keep a local WAL as
+    /// a write-ahead staging log, but that WAL is not durable across VM/pod
+    /// replacement. They therefore must publish a snapshot for every committed
+    /// DDL before acknowledging it. Local stores return `false`: their WAL is
+    /// already on the durable filesystem and snapshots remain a bounded-restart
+    /// optimization.
+    fn requires_snapshot_on_commit(&self) -> bool {
+        false
+    }
+
     /// Read the current snapshot blob with its pointer version + fencing
     /// generation, or `None` if none has been written yet.
     async fn read(&self) -> Result<Option<SnapshotRead>>;
@@ -223,6 +234,10 @@ impl ObjectStoreSnapshotStore {
 
 #[async_trait]
 impl CatalogSnapshotStore for ObjectStoreSnapshotStore {
+    fn requires_snapshot_on_commit(&self) -> bool {
+        true
+    }
+
     async fn read(&self) -> Result<Option<SnapshotRead>> {
         match self
             .committer
