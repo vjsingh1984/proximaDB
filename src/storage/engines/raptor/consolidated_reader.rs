@@ -22,7 +22,6 @@ use proximadb_distance_kernel::engine::{DistanceMetric, SimilarityResult, Unifie
 
 use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, types::ProximaScheme};
 use crate::storage::persistence::filesystem::FileSystem;
-use crate::storage::transaction_coordinator::TransactionCoordinator;
 use proximadb_storage_ports::{CacheAccessPatternPort, CacheKind};
 
 use super::common::{
@@ -289,9 +288,6 @@ pub struct RaptorReader {
     /// changes. The (footer read + bincode::deserialize) round-trip otherwise
     /// occurs on every `read_metadata()` call.
     metadata_cache: Arc<DashMap<String, CachedFileMetadata>>,
-
-    /// Transaction coordinator
-    _transaction_coordinator: Arc<TransactionCoordinator>,
     // Note: Caching strategy:
     // - File-level metadata (footer, K centroids, K×K matrix) is cached via
     //   `metadata_cache` above (per-reader, mtime-validated).
@@ -345,7 +341,6 @@ impl RaptorReader {
         config: RaptorConfig,
         cache: Arc<dyn CacheAccessPatternPort>,
         filesystem: Arc<dyn FileSystem>,
-        transaction_coordinator: Arc<TransactionCoordinator>,
     ) -> Self {
         Self {
             base_path,
@@ -355,7 +350,6 @@ impl RaptorReader {
             distance_compute: Arc::new(UnifiedDistanceCompute::default()),
             filesystem,
             metadata_cache: Arc::new(DashMap::new()),
-            _transaction_coordinator: transaction_coordinator,
         }
     }
 
