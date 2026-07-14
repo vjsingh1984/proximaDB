@@ -282,17 +282,26 @@ impl TemporalQueryEngine {
 mod tests {
     use super::*;
     use crate::storage::engines::eventlog::{Event, EventLogConfig};
+    use crate::storage::persistence::filesystem::FileSystem;
     use std::collections::HashMap;
-    use std::path::PathBuf;
+
+    async fn local_fs() -> Arc<dyn FileSystem> {
+        let fs = crate::storage::persistence::filesystem::local::LocalFileSystem::new(
+            crate::storage::persistence::filesystem::local::LocalConfig::default(),
+        )
+        .await
+        .expect("local fs");
+        Arc::new(fs)
+    }
 
     #[tokio::test]
     async fn test_temporal_engine_creation() {
-        let base_dir = PathBuf::from("/tmp/test_temporal_engine");
+        let base_dir = String::from("/tmp/test_temporal_engine");
         let event_index = Arc::new(
             EventIndex::new(base_dir.clone()).expect("Failed to create event index for test"),
         );
         let snapshot_manager = Arc::new(
-            SnapshotManager::new(base_dir.clone())
+            SnapshotManager::new(base_dir.clone(), local_fs().await)
                 .expect("Failed to create snapshot manager for test"),
         );
         let config = EventLogConfig::default();
@@ -304,12 +313,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_entity_exists_at() {
-        let base_dir = PathBuf::from("/tmp/test_entity_exists");
+        let base_dir = String::from("/tmp/test_entity_exists");
         let event_index = Arc::new(
             EventIndex::new(base_dir.clone()).expect("Failed to create event index for test"),
         );
         let snapshot_manager = Arc::new(
-            SnapshotManager::new(base_dir.clone())
+            SnapshotManager::new(base_dir.clone(), local_fs().await)
                 .expect("Failed to create snapshot manager for test"),
         );
         let config = EventLogConfig::default();

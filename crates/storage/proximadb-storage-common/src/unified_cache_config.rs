@@ -424,6 +424,20 @@ impl UnifiedCacheConfig {
             return Err(ConfigError::InvalidMemoryDistribution(total));
         }
 
+        // The disk cache is local by design (its whole point is to sit in
+        // front of remote storage). Reject URL-shaped paths fail-fast
+        // instead of creating a literal `s3:`/`adls:` directory
+        // (TD-OBJSTORE-1, #960).
+        if self.disk.enabled && self.disk.path.to_string_lossy().contains("://") {
+            return Err(ConfigError::InvalidPath(
+                self.disk.path.clone(),
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "disk cache path must be a local directory, not an object-store URL",
+                ),
+            ));
+        }
+
         if self.disk.enabled && !self.disk.path.exists() {
             std::fs::create_dir_all(&self.disk.path)
                 .map_err(|e| ConfigError::InvalidPath(self.disk.path.clone(), e))?;

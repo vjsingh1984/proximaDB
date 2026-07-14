@@ -190,11 +190,20 @@ impl FileAlertPersistence {
     /// Create a new file-based alert persistence layer.
     ///
     /// # Arguments
-    /// * `base_path` - Directory where alert data will be persisted
-    pub fn new(base_path: impl AsRef<Path>) -> Self {
-        Self {
-            base_path: base_path.as_ref().to_path_buf(),
+    /// * `base_path` - LOCAL directory where alert data will be persisted.
+    ///   Object-store URLs (`s3://…`, `adls://…`) are rejected fail-fast:
+    ///   this backend uses direct `tokio::fs` I/O and cannot address an
+    ///   object store; an object-store-backed `AlertPersistence` port
+    ///   implementation is the TD-OBJSTORE-1 deferred path (#960).
+    pub fn new(base_path: impl AsRef<Path>) -> Result<Self> {
+        let base_path = base_path.as_ref().to_path_buf();
+        if base_path.to_string_lossy().contains("://") {
+            return Err(anyhow!(
+                "FileAlertPersistence requires a local directory; got URL-shaped path '{}'",
+                base_path.display()
+            ));
         }
+        Ok(Self { base_path })
     }
 
     fn rules_path(&self) -> PathBuf {
@@ -377,7 +386,7 @@ mod tests {
     #[tokio::test]
     async fn test_rule_persistence_roundtrip() {
         let tmp = TempDir::new().unwrap();
-        let persistence = FileAlertPersistence::new(tmp.path());
+        let persistence = FileAlertPersistence::new(tmp.path()).expect("local path");
 
         let rule = AlertRule {
             name: "HighCPU".to_string(),
@@ -402,7 +411,7 @@ mod tests {
     #[tokio::test]
     async fn test_alert_state_persistence() {
         let tmp = TempDir::new().unwrap();
-        let persistence = FileAlertPersistence::new(tmp.path());
+        let persistence = FileAlertPersistence::new(tmp.path()).expect("local path");
 
         let active = ActiveAlert {
             alert: Alert {
@@ -437,7 +446,7 @@ mod tests {
     #[tokio::test]
     async fn test_history_append_and_query() {
         let tmp = TempDir::new().unwrap();
-        let persistence = FileAlertPersistence::new(tmp.path());
+        let persistence = FileAlertPersistence::new(tmp.path()).expect("local path");
 
         let entry1 = AlertHistoryEntry {
             alert_name: "HighCPU".to_string(),
@@ -498,7 +507,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_rule() {
         let tmp = TempDir::new().unwrap();
-        let persistence = FileAlertPersistence::new(tmp.path());
+        let persistence = FileAlertPersistence::new(tmp.path()).expect("local path");
 
         let rule = AlertRule {
             name: "Test".to_string(),
