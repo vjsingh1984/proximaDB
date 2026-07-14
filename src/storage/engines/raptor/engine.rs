@@ -32,9 +32,34 @@ use super::smart_rowgroup_sizing::SmartRowGroupSizer;
 
 // Deep integration with AXIS clustering
 use crate::index::axis::clustering::{
-    ClusterManager, ClusteringAlgorithm, ClusteringConfig, KMeansConfig,
+    AxisClusteringEngine, ClusterManager, ClusteringAlgorithm, ClusteringConfig, KMeansConfig,
+    KMeansInit,
 };
 use proximadb_index_types::ClusterAssignment;
+
+/// Build the AXIS clustering engine for RAPTOR with the standard config, returning
+/// it behind the AxisClusteringPort DI port. Injected into RaptorWriter (which no
+/// longer constructs it internally — Slice D port-inversion).
+fn make_raptor_axis_clustering(
+    config: &super::config::RaptorConfig,
+) -> std::sync::Arc<dyn proximadb_storage_ports::AxisClusteringPort> {
+    let axis_clustering_config = ClusteringConfig {
+        algorithm: ClusteringAlgorithm::KMeans(KMeansConfig {
+            k: super::constants::clustering::DEFAULT_CLUSTER_COUNT,
+            max_iterations: super::constants::clustering::KMEANS_MAX_ITERATIONS,
+            tolerance: super::constants::clustering::KMEANS_TOLERANCE as f32,
+            n_init: super::constants::clustering::KMEANS_INIT_ATTEMPTS,
+            init_method: KMeansInit::KMeansPlusPlus,
+        }),
+        min_vectors_for_clustering: config.rowgroup_size,
+        max_clusters: super::constants::clustering::MAX_CLUSTER_COUNT,
+        distance_metric: proximadb_distance_kernel::DistanceMetric::Euclidean,
+        adaptive_cluster_count: true,
+        recompute_threshold: 10000,
+        enable_incremental: false,
+    };
+    std::sync::Arc::new(AxisClusteringEngine::new(axis_clustering_config))
+}
 
 // Deep integration with filesystem API for cloud-aware I/O
 use crate::storage::persistence::filesystem::TierConfig;
@@ -517,6 +542,7 @@ impl RaptorEngine {
                 config.clone(),
                 "placeholder".to_string(),
                 config.dimension, // dimension from config
+                make_raptor_axis_clustering(&config),
             )
             .await?,
         ));
@@ -2227,6 +2253,7 @@ impl UnifiedStorageFormat for RaptorEngine {
             self.config.clone(),
             collection_id.to_string(),
             collection_dimension as usize,
+            make_raptor_axis_clustering(&self.config),
         )
         .await?;
 

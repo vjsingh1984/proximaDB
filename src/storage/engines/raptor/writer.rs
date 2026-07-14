@@ -78,11 +78,8 @@ use crate::storage::engines::core::ops::proximacodec::{
 };
 use crate::storage::persistence::filesystem::FileSystem;
 
-// Import AXIS clustering for reuse
-use crate::index::axis::clustering::{
-    AxisClusteringEngine, ClusteringAlgorithm, ClusteringConfig as AxisClusteringConfig,
-    KMeansConfig, KMeansInit, ReusableClusteringEngine,
-};
+// AXIS clustering is injected via the AxisClusteringPort DI port (Slice D)
+use proximadb_storage_ports::AxisClusteringPort;
 
 use super::config::CompressionCodec as RaptorCompressionCodec;
 use super::constants;
@@ -287,7 +284,7 @@ struct IvfClusteringBuilder {
     #[allow(dead_code)]
     hardware: Arc<HardwareCapabilities>,
     /// AXIS clustering engine for reusable k-means implementation
-    axis_clustering: Arc<AxisClusteringEngine>,
+    axis_clustering: Arc<dyn AxisClusteringPort>,
     /// Pre-computed centroids for k clusters
     centroids: Vec<Centroid>,
     /// Boosting parameters
@@ -360,26 +357,11 @@ struct Centroid {
 // This avoids duplication and keeps related data together
 
 impl IvfClusteringBuilder {
-    fn new(target_rowgroup_size: usize, hardware: Arc<HardwareCapabilities>) -> Self {
-        // Create AXIS clustering configuration for RAPTOR
-        let axis_clustering_config = AxisClusteringConfig {
-            algorithm: ClusteringAlgorithm::KMeans(KMeansConfig {
-                k: constants::clustering::DEFAULT_CLUSTER_COUNT,
-                max_iterations: constants::clustering::KMEANS_MAX_ITERATIONS,
-                tolerance: constants::clustering::KMEANS_TOLERANCE as f32,
-                n_init: constants::clustering::KMEANS_INIT_ATTEMPTS,
-                init_method: KMeansInit::KMeansPlusPlus,
-            }),
-            min_vectors_for_clustering: target_rowgroup_size,
-            max_clusters: constants::clustering::MAX_CLUSTER_COUNT,
-            distance_metric: DistanceMetric::Euclidean,
-            adaptive_cluster_count: true,
-            recompute_threshold: 10000,
-            enable_incremental: false, // Disable for RAPTOR use case
-        };
-
-        let axis_clustering = Arc::new(AxisClusteringEngine::new(axis_clustering_config));
-
+    fn new(
+        target_rowgroup_size: usize,
+        hardware: Arc<HardwareCapabilities>,
+        axis_clustering: Arc<dyn AxisClusteringPort>,
+    ) -> Self {
         Self {
             nodes: Vec::new(),
             id_to_node: HashMap::new(),
@@ -2574,6 +2556,7 @@ impl RaptorWriter {
         config: RaptorConfig,
         collection_id: String,
         dimension: usize,
+        axis_clustering: Arc<dyn AxisClusteringPort>,
     ) -> Result<Self> {
         // Initialize filesystem using local filesystem
         use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
@@ -2711,7 +2694,11 @@ impl RaptorWriter {
                 id_hashes: Vec::new(),
                 row_offsets: Vec::new(),
             },
-            ivf_builder: IvfClusteringBuilder::new(rowgroup_size, get_hardware_capabilities()),
+            ivf_builder: IvfClusteringBuilder::new(
+                rowgroup_size,
+                get_hardware_capabilities(),
+                axis_clustering,
+            ),
             column_projections: ColumnProjectionsBuilder {
                 metadata_columns: HashMap::new(),
                 filter_bitmaps: HashMap::new(),
