@@ -48,6 +48,22 @@ pub struct Message {
     pub attempt_count: u32,
 }
 
+/// A message handed to a consumer together with the stable identity required
+/// to acknowledge that exact delivery.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Delivery {
+    pub message_id: MessageId,
+    pub message: Message,
+}
+
+impl std::ops::Deref for Delivery {
+    type Target = Message;
+
+    fn deref(&self) -> &Self::Target {
+        &self.message
+    }
+}
+
 fn default_now() -> SystemTime {
     SystemTime::now()
 }

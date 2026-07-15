@@ -239,6 +239,12 @@ pub struct IoTrace {
     /// engine* — without io_trace depending on any query-layer type. `None` until
     /// a route is chosen.
     route: Mutex<Option<(String, String)>>,
+    /// The resolved per-collection storage profile (`append_bulk`/`churn`) this
+    /// query read under (ADR-061 D6 / TD-WLP-6), stamped at the search boundary
+    /// so a query's projection strategy is observable per-tenant. `None` until
+    /// stamped; io_trace never depends on the `StorageProfile` type (neutral
+    /// label string only).
+    storage_profile: Mutex<Option<String>>,
 }
 
 impl IoTrace {
@@ -257,6 +263,23 @@ impl IoTrace {
     /// The stamped route, if any.
     pub fn route(&self) -> Option<(String, String)> {
         self.route.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// Stamp the resolved storage profile this query read under (neutral label,
+    /// e.g. `append_bulk`/`churn`). Last write wins. TD-WLP-6.
+    pub fn record_storage_profile(&self, profile: &str) {
+        *self
+            .storage_profile
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(profile.to_string());
+    }
+
+    /// The stamped storage-profile label, if any.
+    pub fn storage_profile(&self) -> Option<String> {
+        self.storage_profile
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     /// Record one classified object-store operation.
@@ -497,6 +520,7 @@ impl IoTrace {
                 .clone(),
             stack_hwm_bytes: self.stack_hwm_bytes.load(Ordering::Relaxed),
             route: self.route(),
+            storage_profile: self.storage_profile(),
         }
     }
 }
@@ -560,6 +584,10 @@ pub struct IoTraceSnapshot {
     /// top dispatch dimension (which engine). `None` if no route was stamped.
     #[serde(default)]
     pub route: Option<(String, String)>,
+    /// The resolved per-collection storage profile (`append_bulk`/`churn`) this
+    /// query read under (ADR-061 D6 / TD-WLP-6). `None` if unstamped.
+    #[serde(default)]
+    pub storage_profile: Option<String>,
     /// pgwire relational-pipeline setup wall ms — pre-execution xCatalog schema
     /// resolution + route classification, DataFusion route only (TD-OLAP-4).
     #[serde(default)]
@@ -682,6 +710,7 @@ impl IoTraceSnapshot {
             target: TARGET,
             tenant_id = tenant_id.unwrap_or("default"),
             route = route,
+            storage_profile = self.storage_profile.as_deref().unwrap_or("unset"),
             get_ops = self.get_ops,
             put_ops = self.put_ops,
             list_ops = self.list_ops,
@@ -861,6 +890,13 @@ pub fn record_table_open(hit: bool) {
 /// depends on a query-layer type.
 pub fn record_route(shape_class: &str, backend_label: &str) {
     let _ = IO_TRACE.try_with(|t| t.record_route(shape_class, backend_label));
+}
+
+/// Stamp the resolved storage profile (`append_bulk`/`churn`) onto the active
+/// query trace (ADR-061 D6 / TD-WLP-6). Silently no-ops outside an active
+/// scope. Neutral label string — io_trace never depends on `StorageProfile`.
+pub fn record_storage_profile(profile: &str) {
+    let _ = IO_TRACE.try_with(|t| t.record_storage_profile(profile));
 }
 
 /// Record embedding API calls for the active query (KEU metering).
@@ -1177,6 +1213,21 @@ mod tests {
             r,
             Some(("olap/parquet".to_string(), "DataFusionLocal".to_string()))
         );
+    }
+
+    /// TD-WLP-6: the storage-profile stamp round-trips in scope (and into the
+    /// snapshot), no-ops outside a scope.
+    #[tokio::test]
+    async fn record_storage_profile_round_trips_and_reaches_snapshot() {
+        record_storage_profile("churn"); // outside scope: no-op
+        let snap = scope(async {
+            record_storage_profile("churn");
+            IO_TRACE.try_with(|t| t.snapshot()).unwrap()
+        })
+        .await;
+        assert_eq!(snap.storage_profile.as_deref(), Some("churn"));
+        // A fresh trace has no profile stamp.
+        assert_eq!(IoTrace::new().snapshot().storage_profile, None);
     }
 
     // Both flush→observer cases live in ONE test: the route observer is a

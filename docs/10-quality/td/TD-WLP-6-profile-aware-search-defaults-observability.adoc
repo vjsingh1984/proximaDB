@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open — spec filed 2026-07-14 (ADR-061). Not started. Depends on TD-WLP-3 + TD-WLP-4.
+| Status | Implemented (mechanism + observability; calibration evidence-gated) 2026-07-14 — `StorageProfile::{label, default_radius_k}` in proximadb-storage-common (the profile→prune-default seam) + io_trace storage-profile stamp (`record_storage_profile` free fn + `IoTrace`/`IoTraceSnapshot` field + emit) wired at the vector-search boundary (`unified_search_with_tenant_context`); ADR-061 README + TD cross-links closed out. TDD: `test_profile_prune_defaults_and_labels` (storage-common), `record_storage_profile_round_trips_and_reaches_snapshot` (observability). **`default_radius_k` is `0.0` for BOTH profiles** — the ADR-061 evidence-gated-defaults carve-out: the 2026-07-14 SIFT sweep measured `radius_k=1/2` as a recall *regression* under sign-bit L0 clustering, and a valid re-measurement needs the fp32-PCA/IVF compaction re-cluster to actually engage, which is blocked on the flush→compaction execution wiring (**TD-WLP-7**). The seam makes calibrating `AppendBulk` a one-line change once that measurement clears; the behaviour ratchet (re-run the TD-WLP-3 sweep under the profile-default path) moves to TD-WLP-7's close-out.
 | Priority | P2 — the calibration + observability closing slice.
 | Severity | Low/Medium — defaults + trace wiring; no new durability surface.
 | Component | `src/storage/engines/sst/search/` (per-profile default `BlockPruneConfig`); `crates/modalities/proximadb-observability-engine/src` (emit resolved profile in io_trace); `docs/12-design/adr/README.adoc` + `TD-WLP-*` cross-links

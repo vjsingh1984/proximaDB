@@ -93,13 +93,15 @@ cargo test -p proximadb-object-store --features aws,azure,gcp -- --ignored --noc
   put_with_tier_against_fake_gcs
 
 if [ "$SCOPE" = "all" ]; then
-  # Compiles the full main `proximadb` crate (~8400-test binary). CARGO_BUILD_JOBS=2
-  # caps compile parallelism low enough to keep the 16GB hosted runner off the OOM
-  # cliff (the "runner received a shutdown signal" failure that jobs=1 was added to
-  # dodge), while halving the serialized ~35-40m compile that grew past the 60m job
-  # budget and got cancelled mid-build. 2 (not the .cargo/config.toml default of 3)
-  # is the deliberate middle ground: faster than 1, safer than 3 on a 16GB runner.
-  CARGO_BUILD_JOBS=2 cargo test -p proximadb --features azure -- --ignored --nocapture \
+  # Compiles the full main `proximadb` crate (~8400-test binary). CARGO_BUILD_JOBS=1
+  # (serial): a single root-crate rustc peaks at ~12.8GB, so jobs>=2 is a HARD OOM on
+  # the 16GB hosted runner (12.8 + concurrent >= 16) — jobs=2 failed at ~26m with
+  # "runner received a shutdown signal" on the #992 promotion's cold compile. jobs=1
+  # caps peak RSS at one ~12.8GB rustc (fits), trading speed for reliability — this
+  # mirrors the rust-test ci.yml job, which also runs jobs=1 for the same reason.
+  # The 90m qa-gate budget + sccache absorb the ~35-40m serialized cold compile;
+  # warm runs compile far less. Durable fix = root-crate extraction (lower peak RSS).
+  CARGO_BUILD_JOBS=1 cargo test -p proximadb --features azure -- --ignored --nocapture \
     cold_graph_record_store_round_trips_on_real_azure
 fi
 

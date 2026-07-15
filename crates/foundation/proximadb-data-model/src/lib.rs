@@ -967,3 +967,84 @@ pub struct ServiceIndexStats {
     #[serde(default)]
     pub object_vector_bounds_pruned_blocks: i64,
 }
+
+// =========================================================================
+// Canonical DATE encoding (ADR-024 single-canonical)
+// =========================================================================
+
+/// Parse an ISO-8601 `YYYY-MM-DD` date into the canonical `ProximaValue::Date`
+/// encoding — **days since the Unix epoch (1970-01-01)**, the same i32 the
+/// write path stores and materialization keeps as Arrow `Date32`. Returns
+/// `None` on a malformed string so callers fail loud rather than guess.
+///
+/// Dependency-free (no chrono in this foundation leaf) via Howard Hinnant's
+/// `days_from_civil` algorithm — exact for the proleptic Gregorian calendar and
+/// bit-identical to `chrono::NaiveDate…num_days()`. This is THE canonical date
+/// parser: both the relational frontend (lowering `DATE '…'` literals) and the
+/// DML write path resolve dates through it, so a literal predicate and a stored
+/// column can never diverge in encoding.
+pub fn parse_iso_date_to_days(s: &str) -> Option<i32> {
+    let s = s.trim();
+    let mut parts = s.split('-');
+    // Leading '-' (negative year) is not expected for SQL date literals; reject.
+    let y: i32 = parts.next()?.parse().ok()?;
+    let m: u32 = parts.next()?.parse().ok()?;
+    let d: u32 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    Some(days_from_civil(y, m, d))
+}
+
+/// Days since 1970-01-01 for a proleptic-Gregorian `(year, month, day)`
+/// (Hinnant's algorithm). `month` in 1..=12, `day` in 1..=31.
+fn days_from_civil(y: i32, m: u32, d: u32) -> i32 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = (y - era * 400) as i64; // [0, 399]
+    let mp = if m > 2 { m - 3 } else { m + 9 } as i64; // Mar=0 … Feb=11
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    (era as i64 * 146097 + doe - 719468) as i32
+}
+
+#[cfg(test)]
+mod date_encoding_tests {
+    use super::parse_iso_date_to_days;
+
+    #[test]
+    fn epoch_and_known_dates() {
+        assert_eq!(parse_iso_date_to_days("1970-01-01"), Some(0));
+        assert_eq!(parse_iso_date_to_days("1970-01-02"), Some(1));
+        assert_eq!(parse_iso_date_to_days("1969-12-31"), Some(-1));
+        // Verified against chrono / Python datetime.date.toordinal offset.
+        assert_eq!(parse_iso_date_to_days("2000-01-01"), Some(10957));
+        assert_eq!(parse_iso_date_to_days("1995-03-15"), Some(9204));
+        assert_eq!(parse_iso_date_to_days("1998-12-01"), Some(10561));
+        // Leap-day handling.
+        assert_eq!(parse_iso_date_to_days("2000-02-29"), Some(11016));
+        assert_eq!(
+            parse_iso_date_to_days("2000-03-01"),
+            Some(parse_iso_date_to_days("2000-02-29").unwrap() + 1)
+        );
+    }
+
+    #[test]
+    fn malformed_dates_return_none() {
+        for bad in [
+            "",
+            "1995-03",
+            "1995/03/15",
+            "not-a-date",
+            "1995-13-01",
+            "1995-03-32",
+            "1995-03-15-00",
+        ] {
+            assert_eq!(
+                parse_iso_date_to_days(bad),
+                None,
+                "expected None for {bad:?}"
+            );
+        }
+    }
+}

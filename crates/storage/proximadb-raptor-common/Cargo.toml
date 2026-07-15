@@ -17,6 +17,7 @@ path = "src/lib.rs"
 anyhow.workspace = true
 serde.workspace = true
 proximadb-proto.workspace = true
+proximadb-data-model.workspace = true
 proximadb-bloom.workspace = true
 proximadb-codec.workspace = true
 proximadb-compression.workspace = true

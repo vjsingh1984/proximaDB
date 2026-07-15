@@ -1797,6 +1797,24 @@ pub fn push_projections(plan: PhysicalPlan) -> Result<PhysicalPlan, PlanError> {
 fn rebind_columns(expr: Expr, schema: &RelationalSchema) -> Result<Expr, PlanError> {
     match expr {
         Expr::Column(c) => {
+            // Preserve the existing ordinal when it still names this column —
+            // i.e. projection-pushdown did NOT narrow/shift this slot. Required
+            // for SELF-JOINS: the join output carries DUPLICATE column names
+            // (both aliases of the same table), and a blind `column_by_name`
+            // returns the FIRST match, collapsing every reference onto one
+            // alias's ordinal (TD-REL-EXEC-1 — a silent wrong result). The
+            // column's own ordinal is the authoritative reference; the name
+            // only re-derives it when narrowing actually moved the column, in
+            // which case the by-name fallback below applies.
+            if c.ordinal < schema.columns.len() && schema.columns[c.ordinal].name == c.name {
+                let info = &schema.columns[c.ordinal];
+                return Ok(Expr::Column(ColumnRef {
+                    ordinal: c.ordinal,
+                    ty: info.ty.clone(),
+                    nullable: info.nullable,
+                    name: c.name,
+                }));
+            }
             let (idx, info) = schema.column_by_name(&c.name).ok_or_else(|| {
                 PlanError::Internal(format!(
                     "rebind_columns: column `{}` not in narrowed schema",

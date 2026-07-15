@@ -6,9 +6,9 @@
 |===
 | Field | Value
 | Status | Open — filed 2026-07-14 from the post-#953 ledger native sweep (SF 0.01 release).
-| Priority | P2 — hard error on valid ANSI SQL (`[XX000] plan: internal planner error`), scope currently 2 TPC-DS queries; pre-existing planner bug newly *reachable* (pre-#953 these queries declined earlier, at lowering).
+| Priority | P2 — hard error on valid ANSI SQL (`[XX000] plan: internal planner error`); ≥3 TPC queries (TPC-DS q3/q52, TPC-H Q15); pre-existing planner bug newly *reachable* as upstream lowering gaps close.
 | Component | `crates/query/proximadb-relational-planner` — `push_projections_inner` / `rebind_columns` (name-keyed ordinal rebind).
-| Evidence | TPC-DS q3 and q52 on the native route, both: `plan: internal planner error: rebind_columns: column `brand_id` not in narrowed schema`. Shape: comma-join + `GROUP BY` + projection alias used as an ORDER BY key (`select … item.i_brand_id brand_id … order by d_year, sum_agg desc, brand_id`).
+| Evidence | TPC-DS q3/q52: `rebind_columns: column `brand_id` not in narrowed schema` — a projection alias used as an ORDER BY key. **TPC-H Q15 (reachable after this PR's DATE fix): `column `supplier_no` not in narrowed schema`** — a DERIVED-TABLE alias (`select l_suppkey as supplier_no … ) as revenue0 where s_suppkey = supplier_no`) referenced by the outer join/filter. So the bug is broader than ORDER BY keys: `rebind_columns` re-derives ordinals by NAME against a narrowed child schema, but an ALIAS name (ORDER-BY output alias OR derived-table column alias) does not appear in the schema at the level rebind runs, so it errors. Repro needs a planner-crate harness that can lower SQL (add `proximadb-relational-frontend` + `sqlparser` as dev-deps, or drive via a pgwire e2e).
 |===
 
 == The finding
@@ -42,6 +42,19 @@ carries no disambiguation — this is the adjacent gap on the alias axis.
    (conservative, loses narrowing).
 3. **Gate:** q3 + q52 flip from `internal planner error` to `ok` native samples in the ledger
    sweep; no pushdown-narrowing regression on the existing planner tests.
+
+== Progress (2026-07-15)
+
+The **derived-table-alias case (Q15, `… (SELECT … AS supplier_no …) WHERE … = supplier_no`) is
+FIXED** by the TD-REL-EXEC-1 `rebind_columns` ordinal-preservation change: `supplier_no` is
+referenced at a valid, unshifted ordinal, so it is now preserved instead of erroring on the by-name
+lookup. **Remaining: the ORDER-BY-alias case (q3/q52).** It is a *different* sub-mechanism — the
+sort key names a projection/aggregate output ALIAS (`sum_agg`, `brand_id`, `nm`) that the
+intermediate (pre-Project) schema does not carry by that name AND whose ordinal points at a slot
+holding the pre-alias column, so neither the ordinal-preserve fast path nor the by-name fallback
+resolves it. Direction: carry aliases through the aggregate/project so the Sort binds to the actual
+output column, or resolve ORDER-BY-alias keys against the outermost Project's output schema before
+pushdown.
 
 == Non-goals
 
