@@ -646,6 +646,11 @@ proximadb-sdk = { path = "clients/rust", default-features = false, features = ["
 httpmock = "0.7"
 serde_yaml = "0.9"
 
+[dev-dependencies]
+# Test-only: integration tests use EmbeddedProximaDB from the embedded crate.
+# Dev-deps don't create build cycles (test-mode only).
+proximadb-embedded = { path = "crates/horizontal/proximadb-embedded" }
+
 [features]
 # Default feature set as of 2026-05-26 (ADR-020 Tier 2.2 / TD-065 default-enable).
 # `canonical-document-store` flips on by default so the canonical WAL path is

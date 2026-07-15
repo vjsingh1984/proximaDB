@@ -24,7 +24,7 @@
 
 use std::collections::HashSet;
 
-use proximadb::embedded::{
+use proximadb_embedded::{
     EmbeddedConfig, EmbeddedGraphEdge, EmbeddedGraphNode, EmbeddedProximaDB,
 };
 
