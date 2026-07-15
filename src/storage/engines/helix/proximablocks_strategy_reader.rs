@@ -25,9 +25,6 @@ pub struct UnifiedHELIXReader {
     /// Filesystem factory for direct reads
     filesystem_factory: Arc<FilesystemFactory>,
 
-    /// Cached filesystem for selective reads
-    cached_filesystem: Option<Arc<UnifiedCachingFilesystem>>,
-
     /// Current read strategy
     strategy: ReadAccessStrategy,
 
@@ -58,24 +55,11 @@ impl UnifiedHELIXReader {
         collection_id: String,
         strategy: ReadAccessStrategy,
     ) -> Result<Self> {
-        // Create cached filesystem if needed by strategy
-        let cached_filesystem = if strategy.should_use_cache() {
-            let base_fs = filesystem_factory.get_filesystem("file://")?;
-            Some(Arc::new(UnifiedCachingFilesystem::new(
-                base_fs,
-                collection_id.clone(),
-                "helix".to_string(),
-            )))
-        } else {
-            None
-        };
-
         // Convert unified strategy to HELIX search strategy
         let search_strategy = Self::to_helix_search_strategy(&strategy);
 
         Ok(Self {
             filesystem_factory,
-            cached_filesystem,
             strategy,
             collection_id,
             search_strategy,
@@ -152,7 +136,7 @@ impl UnifiedHELIXReader {
     /// Direct streaming read (for full scans and compaction)
     async fn read_direct_streaming(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
         // Use filesystem factory directly for streaming reads
-        let fs = self.filesystem_factory.get_filesystem("file://")?;
+        let fs = self.filesystem_factory.get_filesystem(file_path)?;
         let _data = fs.read(file_path).await?;
 
         // Deferred: Parse HELIX Proxima format directly without caching
@@ -166,10 +150,9 @@ impl UnifiedHELIXReader {
         file_path: &str,
         _query_hilbert: Option<HilbertKey>,
     ) -> Result<Vec<VectorRecord>> {
-        let cached_fs = self
-            .cached_filesystem
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Cached filesystem not initialized"))?;
+        let base_fs = self.filesystem_factory.get_filesystem(file_path)?;
+        let cached_fs =
+            UnifiedCachingFilesystem::new(base_fs, self.collection_id.clone(), "helix".to_string());
 
         let _data = cached_fs.read(file_path).await?;
 
@@ -195,7 +178,7 @@ impl UnifiedHELIXReader {
 
     /// Check if reader is using cache
     pub fn is_using_cache(&self) -> bool {
-        self.cached_filesystem.is_some()
+        self.strategy.should_use_cache()
     }
 }
 
@@ -207,18 +190,6 @@ impl StrategyAwareReader for UnifiedHELIXReader {
     fn set_strategy(&mut self, strategy: ReadAccessStrategy) {
         self.strategy = strategy;
         self.search_strategy = Self::to_helix_search_strategy(&self.strategy);
-
-        // Update cached filesystem if needed
-        if self.strategy.should_use_cache()
-            && self.cached_filesystem.is_none()
-            && let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://")
-        {
-            self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
-                base_fs,
-                self.collection_id.clone(),
-                "helix".to_string(),
-            )));
-        }
     }
 }
 
@@ -244,7 +215,7 @@ impl DirectHELIXReader {
 
     /// Stream Proxima blocks directly for compaction
     pub async fn stream_proximablocks(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
-        let fs = self.filesystem_factory.get_filesystem("file://")?;
+        let fs = self.filesystem_factory.get_filesystem(file_path)?;
         let _data = fs.read(file_path).await?;
 
         // Deferred: Use Proxima block streaming for direct access
@@ -256,11 +227,12 @@ impl DirectHELIXReader {
         &self,
         sstables: &[SStableMetadata],
     ) -> Result<Vec<VectorRecord>> {
-        let _fs = self.filesystem_factory.get_filesystem("file://")?;
         let mut all_records = Vec::new();
 
         for sstable in sstables {
-            let _data = _fs.read(&sstable.path.to_string_lossy()).await?;
+            let path = sstable.path.to_string_lossy();
+            let fs = self.filesystem_factory.get_filesystem(&path)?;
+            let _data = fs.read(&path).await?;
             // Deferred: Read Proxima blocks and extract records
             // For now, return empty vec - actual implementation would parse Proxima format
         }
@@ -283,8 +255,8 @@ impl DirectHELIXReader {
 /// - Search operations with PCA-based pruning
 /// - Liquid clustering adaptive patterns
 pub struct CachedHELIXReader {
-    cached_filesystem: Arc<UnifiedCachingFilesystem>,
-    _collection_id: String,
+    filesystem_factory: Arc<FilesystemFactory>,
+    collection_id: String,
     search_strategy: HelixSearchStrategy,
 }
 
@@ -294,16 +266,9 @@ impl CachedHELIXReader {
         collection_id: String,
         search_strategy: HelixSearchStrategy,
     ) -> Result<Self> {
-        let base_fs = filesystem_factory.get_filesystem("file://")?;
-        let cached_filesystem = Arc::new(UnifiedCachingFilesystem::new(
-            base_fs,
-            collection_id.clone(),
-            "helix".to_string(),
-        ));
-
         Ok(Self {
-            cached_filesystem,
-            _collection_id: collection_id,
+            filesystem_factory,
+            collection_id,
             search_strategy,
         })
     }
@@ -315,7 +280,10 @@ impl CachedHELIXReader {
         _query_hilbert: Option<HilbertKey>,
         _range_filter: Option<(f64, f64)>, // (min_value, max_value) for any dimension
     ) -> Result<Vec<VectorRecord>> {
-        let _data = self.cached_filesystem.read(file_path).await?;
+        let base_fs = self.filesystem_factory.get_filesystem(file_path)?;
+        let cached_filesystem =
+            UnifiedCachingFilesystem::new(base_fs, self.collection_id.clone(), "helix".to_string());
+        let _data = cached_filesystem.read(file_path).await?;
 
         // Deferred: Apply spatial locality optimized pruning
         match self.search_strategy {
@@ -344,7 +312,10 @@ impl CachedHELIXReader {
         file_path: &str,
         _access_pattern: &str, // Query pattern for adaptation
     ) -> Result<Vec<VectorRecord>> {
-        let _data = self.cached_filesystem.read(file_path).await?;
+        let base_fs = self.filesystem_factory.get_filesystem(file_path)?;
+        let cached_filesystem =
+            UnifiedCachingFilesystem::new(base_fs, self.collection_id.clone(), "helix".to_string());
+        let _data = cached_filesystem.read(file_path).await?;
 
         // Deferred: Apply liquid clustering based on access pattern
         // Cache frequently accessed patterns for better performance

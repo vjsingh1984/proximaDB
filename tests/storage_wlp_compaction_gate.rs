@@ -67,10 +67,10 @@ async fn flush_once(engine: &SstEngine, coll: &Collection, ids: &[&str]) -> Resu
     engine.do_flush(&params).await
 }
 
-/// TD-WLP-2 TDD gate: with the global env unset, a collection tagged
-/// `workload_profile:append` + `compaction:on` reaching L0 >= its
-/// per-collection threshold fires compaction; an untagged collection under the
-/// same global-off does NOT — even past the legacy threshold of 5.
+/// TD-WLP-2/TD-WLP-4 gate: with the global env unset, an `AppendBulk`
+/// collection (tagged or untagged — AppendBulk is the default profile) arms
+/// compaction at its L0 threshold **by default**; a `Churn`-tagged collection
+/// never arms (so it never re-clusters/trains — ADR-061 D4/D5).
 #[tokio::test]
 async fn test_append_collection_arms_compaction_while_global_off() -> Result<()> {
     unsafe {
@@ -79,44 +79,88 @@ async fn test_append_collection_arms_compaction_while_global_off() -> Result<()>
     }
     let engine = SstEngine::new().await?;
 
-    // Opted-in AppendBulk collection: arms once L0 reaches its own threshold.
-    let opted_dir = tempfile::tempdir()?;
-    let opted = collection(
-        "wlp2_append_opted",
-        opted_dir.path().to_str().expect("utf8 tempdir"),
-        &["workload_profile:append", "compaction:on", "l0_threshold:2"],
+    // AppendBulk collection (explicit tag + tight threshold): arms once L0
+    // reaches its own threshold, with NO compaction:on opt-in needed.
+    let append_dir = tempfile::tempdir()?;
+    let append = collection(
+        "wlp2_append_default",
+        append_dir.path().to_str().expect("utf8 tempdir"),
+        &["workload_profile:append", "l0_threshold:2"],
     );
-    let first = flush_once(&engine, &opted, &["a0", "a1"]).await?;
+    let first = flush_once(&engine, &append, &["a0", "a1"]).await?;
     assert!(first.success, "first flush must succeed");
     assert!(
         !first.compaction_triggered,
         "1 L0 segment < l0_threshold:2 — compaction must not fire yet"
     );
-    let second = flush_once(&engine, &opted, &["a2", "a3"]).await?;
+    let second = flush_once(&engine, &append, &["a2", "a3"]).await?;
     assert!(second.success, "second flush must succeed");
     assert!(
         second.compaction_triggered,
-        "opted-in collection at L0 >= per-collection threshold must arm \
-         compaction while the global gate is OFF (TD-WLP-2)"
+        "AppendBulk collection at L0 >= threshold must arm compaction BY \
+         DEFAULT (TD-WLP-4 arm-defaults)"
     );
 
-    // Untagged collection: the global gate governs and it is OFF — never arms,
-    // even once past the legacy L0_COMPACTION_THRESHOLD of 5.
+    // Untagged collection = AppendBulk profile: arms at the default legacy
+    // threshold of 5 once enough L0 segments accumulate.
     let untagged_dir = tempfile::tempdir()?;
     let untagged = collection(
         "wlp2_untagged",
         untagged_dir.path().to_str().expect("utf8 tempdir"),
         &[],
     );
+    let mut untagged_triggered = false;
     for i in 0..6 {
         let ids = [format!("u{i}")];
         let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
         let result = flush_once(&engine, &untagged, &id_refs).await?;
         assert!(result.success, "untagged flush {i} must succeed");
+        if i < 3 {
+            assert!(
+                !result.compaction_triggered,
+                "below the default threshold of 5 — must not fire (flush {i})"
+            );
+        }
+        untagged_triggered |= result.compaction_triggered;
+    }
+    assert!(
+        untagged_triggered,
+        "untagged (AppendBulk-default) collection must arm compaction at the \
+         default L0 threshold (TD-WLP-4 arm-defaults)"
+    );
+
+    // Churn collection: never arms by default, even past every threshold.
+    let churn_dir = tempfile::tempdir()?;
+    let churn = collection(
+        "wlp2_churn",
+        churn_dir.path().to_str().expect("utf8 tempdir"),
+        &["workload_profile:churn", "l0_threshold:1"],
+    );
+    for i in 0..3 {
+        let ids = [format!("c{i}")];
+        let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+        let result = flush_once(&engine, &churn, &id_refs).await?;
+        assert!(result.success, "churn flush {i} must succeed");
         assert!(
             !result.compaction_triggered,
-            "untagged collection must keep today's default-OFF behaviour \
-             (flush {i})"
+            "Churn profile must never arm compaction by default (flush {i})"
+        );
+    }
+
+    // compaction:off opts an AppendBulk collection back out.
+    let optout_dir = tempfile::tempdir()?;
+    let optout = collection(
+        "wlp2_optout",
+        optout_dir.path().to_str().expect("utf8 tempdir"),
+        &["compaction:off", "l0_threshold:1"],
+    );
+    for i in 0..2 {
+        let ids = [format!("o{i}")];
+        let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+        let result = flush_once(&engine, &optout, &id_refs).await?;
+        assert!(
+            !result.compaction_triggered,
+            "compaction:off must opt out of the armed default (flush {i})"
         );
     }
     Ok(())

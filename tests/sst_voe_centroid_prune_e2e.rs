@@ -12,9 +12,9 @@
 //! compare silently missed and the prune fell back to a full scan (`centroid_
 //! pruned_blocks = 0`). The read now matches by filename basename.
 //!
-//! Synthetic corpus (no SIFT dataset) so it runs in NORMAL CI — the storage
-//! integration job globs `tests/*sst*.rs` (hence this file's name). nextest /
-//! `--test-threads=1` isolates the process, so the env opt-ins below don't leak.
+//! A 768-dimensional, multi-flush corpus runs in normal CI. It is not a substitute
+//! for the required real-dataset gate, but it catches dimensional and segment-churn
+//! regressions between those heavier runs.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,7 +32,7 @@ use proximadb::storage::traits::{
 };
 use tempfile::TempDir;
 
-const DIM: usize = 32;
+const DIM: usize = 768;
 const TOP_K: usize = 10;
 
 fn collection(id: &str, temp: &TempDir) -> Collection {
@@ -136,7 +136,7 @@ async fn voe_centroid_block_prune_engages_e2e() {
         std::env::set_var("PROXIMADB_PAX_CENTROID_PRUNE_MIN_BLOCKS", "2"); // force on small seg
         // Small target block ⇒ many blocks from few vectors, so the prune has
         // blocks to skip (needs ≥ MIN_BLOCKS to engage).
-        std::env::set_var("PROXIMADB_PAX_BLOCK_SIZE", "16384");
+        std::env::set_var("PROXIMADB_PAX_BLOCK_SIZE", "4096");
     }
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
@@ -147,8 +147,10 @@ async fn voe_centroid_block_prune_engages_e2e() {
         .unwrap()
         .with_directory_cache(Arc::new(VectorObjectEconomyDirectoryCache::new()));
 
-    // Well-separated synthetic corpus, enough for many blocks at the small target.
-    let n: u32 = 400;
+    // Production-dimensional structured corpus, enough for many blocks at the
+    // small target. Four flush generations exercise directory accumulation and
+    // the multi-segment read shape that exposed the measured churn regression.
+    let n: u32 = 80;
     let corpus: Vec<Vec<f32>> = (0..n)
         .map(|i| {
             (0..DIM)
@@ -156,23 +158,42 @@ async fn voe_centroid_block_prune_engages_e2e() {
                 .collect()
         })
         .collect();
-    let batch: Vec<VectorRecord> = corpus
-        .iter()
-        .enumerate()
-        .map(|(i, v)| vrec(i as u32, v.clone()))
-        .collect();
-    flush_batch(&engine, &coll, batch).await;
+    for (generation, chunk) in corpus.chunks(20).enumerate() {
+        let batch: Vec<VectorRecord> = chunk
+            .iter()
+            .enumerate()
+            .map(|(i, v)| vrec((generation * 20 + i) as u32, v.clone()))
+            .collect();
+        flush_batch(&engine, &coll, batch).await;
+    }
 
+    unsafe {
+        std::env::remove_var("PROXIMADB_PAX_CENTROID_PRUNE");
+    }
+    let query_indices = [7usize, 23, 49, 79];
+    let mut baseline = Vec::new();
+    for &i in &query_indices {
+        baseline.push(search_topk(&engine, &coll, corpus[i].clone()).await);
+    }
+
+    unsafe {
+        std::env::set_var("PROXIMADB_PAX_CENTROID_PRUNE", "1");
+    }
     // Search inside an io_trace scope so the centroid-prune counter is observable.
-    let query = corpus[137].clone();
-    let (got, snap) = io_trace::scope(async {
-        let r = search_topk(&engine, &coll, query).await;
+    let (pruned, snap) = io_trace::scope(async {
+        let mut results = Vec::new();
+        for &i in &query_indices {
+            results.push(search_topk(&engine, &coll, corpus[i].clone()).await);
+        }
         let s = io_trace::snapshot().expect("io_trace scope active");
-        (r, s)
+        (results, s)
     })
     .await;
 
-    assert!(!got.is_empty(), "search returned results");
+    assert!(
+        pruned.iter().all(|got| !got.is_empty()),
+        "search returned results"
+    );
     assert!(
         snap.centroid_pruned_blocks > 0,
         "centroid BLOCK prune must ENGAGE (flush→emit→read round-trip) — got total={} pruned={} \
@@ -180,5 +201,9 @@ async fn voe_centroid_block_prune_engages_e2e() {
          emit `object_url` vs read `sstable_path` file match must be basename-based, not exact-URL).",
         snap.centroid_total_blocks,
         snap.centroid_pruned_blocks
+    );
+    assert_eq!(
+        pruned, baseline,
+        "768D multi-flush VOE results must not regress against the same-run unpruned path"
     );
 }

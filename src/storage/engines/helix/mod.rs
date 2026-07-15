@@ -97,7 +97,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, warn};
 
 // Core modules
 pub mod clustering;
@@ -280,20 +280,6 @@ pub struct HelixEngine {
     /// Tuned for spatial locality optimization
     config: HelixConfig,
 
-    /// **Unified Caching Filesystem**
-    ///
-    /// Production-grade filesystem with integrated caching:
-    /// - Handles local, S3, Azure, GCS backends
-    /// - Metadata caching for file stats
-    /// - Disk caching for frequently accessed data
-    /// - Prefetch optimization for sequential reads
-    /// - Engine-aware serialization
-    /// - Zero-copy I/O integration
-    ///
-    /// Shared across all file operations (flush, compact, search)
-    filesystem:
-        Arc<crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem>,
-
     /// **Filesystem Factory**
     ///
     /// Creates filesystem instances for backends:
@@ -375,17 +361,6 @@ pub struct HelixEngine {
     ///
     /// RwLock allows concurrent reads, exclusive writes
     levels: Arc<RwLock<HashMap<usize, Vec<SStableMetadata>>>>,
-
-    /// **Leveled Compactor**
-    ///
-    /// Background compaction with Hilbert awareness:
-    /// - Merges overlapping Hilbert ranges across levels
-    /// - Maintains sorted order within each level
-    /// - Splits SSTables at Hilbert boundaries
-    /// - Recomputes zone maps during merge
-    ///
-    /// Runs asynchronously, triggered by level thresholds
-    compactor: Arc<LeveledCompactor>,
 
     /// **Query Optimizer**
     ///
@@ -663,8 +638,11 @@ impl HelixEngine {
 
         // Create UnifiedCachingFilesystem with engine-aware serialization (like SST/VIPER/RAPTOR)
         // This provides metadata caching, disk caching, and prefetch optimization
+        let data_dir_url = data_dir
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("HELIX: Invalid data directory path"))?;
         let base_filesystem = filesystem_factory
-            .get_filesystem("file://")
+            .get_filesystem(data_dir_url)
             .map_err(|e| anyhow::anyhow!("Failed to get base filesystem: {}", e))?;
 
         let filesystem = Arc::new(
@@ -677,11 +655,7 @@ impl HelixEngine {
 
         // Create data directory if it doesn't exist
         // Note: data_dir should come from collection config storage assignment
-        if let Some(dir_str) = data_dir.to_str() {
-            filesystem.create_dir_all(dir_str).await?;
-        } else {
-            return Err(anyhow::anyhow!("HELIX: Invalid data directory path"));
-        }
+        filesystem.create_dir_all(data_dir_url).await?;
 
         // Initialize unified components (similar to SST)
         let distance_compute = if let Some(compute) = distance_compute_override {
@@ -740,13 +714,6 @@ impl HelixEngine {
         // Initialize levels from existing files
         let levels = Self::load_levels(&filesystem, &data_dir).await?;
 
-        // Create compactor
-        let compactor = Arc::new(LeveledCompactor::new(
-            config.clone(),
-            filesystem.clone(),
-            data_dir.clone(),
-        ));
-
         // Create query optimizer
         let query_optimizer = Arc::new(QueryOptimizer::new(
             1000, // Max query history
@@ -765,7 +732,6 @@ impl HelixEngine {
         // Create engine instance (stateless - no collection-specific state)
         let engine = Self {
             config,
-            filesystem,
             filesystem_factory,
             distance_compute,
             storage_quantization_engine,
@@ -773,7 +739,6 @@ impl HelixEngine {
             cache_orchestrator,
             pca_model: Arc::new(RwLock::new(None)),
             levels: Arc::new(RwLock::new(levels)),
-            compactor,
             query_optimizer,
             event_log,
             axis_manager: None, // AXIS manager will be set externally if available
@@ -1003,11 +968,37 @@ impl HelixEngine {
         format!("{}/__model/pca_model.bin", collection_data_dir)
     }
 
+    /// Resolve the caching filesystem from the collection-assigned URL.
+    /// HELIX engines are shared across collections, so a wrapper captured at
+    /// construction time cannot safely represent every local/cloud backend.
+    fn filesystem_for_url(
+        &self,
+        url: &str,
+        collection_id: &str,
+    ) -> Result<
+        Arc<crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem>,
+    > {
+        let underlying = self.filesystem_factory.get_filesystem(url)?;
+        Ok(Arc::new(
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
+                underlying,
+                collection_id.to_string(),
+                "helix".to_string(),
+            ),
+        ))
+    }
+
     /// Load PCA model from filesystem for a collection
-    async fn load_pca_model(&self, collection_data_dir: &str) -> Result<Option<PCAModel>> {
+    async fn load_pca_model(
+        &self,
+        filesystem: &Arc<
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem,
+        >,
+        collection_data_dir: &str,
+    ) -> Result<Option<PCAModel>> {
         let model_path = self.get_pca_model_path(collection_data_dir);
 
-        match PCAModel::load_from_file(&self.filesystem, &model_path).await {
+        match PCAModel::load_from_file(filesystem, &model_path).await {
             Ok(model) => {
                 tracing::info!(
                     "[HELIX] Loaded persisted PCA model for collection (version: {})",
@@ -1028,17 +1019,24 @@ impl HelixEngine {
     }
 
     /// Save PCA model to filesystem for a collection
-    async fn save_pca_model(&self, collection_data_dir: &str, model: &PCAModel) -> Result<()> {
+    async fn save_pca_model(
+        &self,
+        filesystem: &Arc<
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem,
+        >,
+        collection_data_dir: &str,
+        model: &PCAModel,
+    ) -> Result<()> {
         let model_path = self.get_pca_model_path(collection_data_dir);
 
         // Ensure __model directory exists
         let model_dir = format!("{}/__model", collection_data_dir);
-        self.filesystem
+        filesystem
             .create_dir_all(&model_dir)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create __model directory: {}", e))?;
 
-        model.save_to_file(&self.filesystem, &model_path).await?;
+        model.save_to_file(filesystem, &model_path).await?;
         tracing::info!(
             "[HELIX] Persisted PCA model for collection at {}",
             model_path
@@ -1087,7 +1085,7 @@ impl HelixEngine {
             data_dir
         );
 
-        let filesystem = self.filesystem_factory.get_filesystem(data_dir)?;
+        let filesystem = self.filesystem_for_url(data_dir, "helix-discovery")?;
         tracing::debug!("[HELIX] Got filesystem for data_dir: {}", data_dir);
 
         // List all .helix files in the directory
@@ -1138,28 +1136,25 @@ impl HelixEngine {
             // Get file size from metadata
             let size_bytes = entry.metadata.size;
 
-            // CRITICAL: Read Hilbert range from file footer for pruning
-            // This enables spatial pruning based on Hilbert curve locality
-            let hilbert_range = self.read_hilbert_range_from_file(file_path).await.ok();
-
-            // CRITICAL: Read num_vectors from header for accurate search performance
-            let num_vectors = self
-                .read_num_vectors_from_file(file_path)
-                .await
-                .unwrap_or_else(|e| {
-                    warn!(
-                        "Failed to read num_vectors from {}: {}, using 0",
-                        file_path, e
-                    );
-                    0
-                });
+            // Read both pruning range and vector count through the backend
+            // selected from this collection URL.
+            let (hilbert_range, num_vectors) =
+                Self::read_file_metadata_from_header(&filesystem, file_path)
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!(
+                            "Failed to read HELIX metadata from {}: {}, using empty metadata",
+                            file_path, e
+                        );
+                        (None, 0)
+                    });
 
             // Create metadata with Hilbert range for pruning
             let metadata = SStableMetadata {
                 path: std::path::PathBuf::from(file_path),
                 level,
                 hilbert_range, // Now populated from file footer
-                num_vectors,   // Now populated from file header!
+                num_vectors: num_vectors as usize,
                 size_bytes,
                 created_at: chrono::Utc::now(),
                 blocks: Vec::new(),
@@ -1175,39 +1170,6 @@ impl HelixEngine {
             data_dir
         );
         Ok(sstables)
-    }
-
-    /// Read Hilbert range from HELIX unified header
-    /// This is critical for spatial pruning to work effectively
-    async fn read_hilbert_range_from_file(&self, file_path: &str) -> Result<(u64, u64)> {
-        // Use the unified header reader for correct format
-        let (hilbert_range, _) =
-            Self::read_file_metadata_from_header(&self.filesystem, file_path).await?;
-
-        if let Some((min_key, max_key)) = hilbert_range {
-            debug!(
-                "Read Hilbert range from {}: [{}, {}]",
-                file_path, min_key, max_key
-            );
-            Ok((min_key, max_key))
-        } else {
-            Err(anyhow::anyhow!("No Hilbert range found in file"))
-        }
-    }
-
-    /// Read number of vectors from HELIX unified header
-    /// This provides accurate vector count for search optimization
-    async fn read_num_vectors_from_file(&self, file_path: &str) -> Result<usize> {
-        // Use the unified header reader for accurate count
-        let (_, num_vectors) =
-            Self::read_file_metadata_from_header(&self.filesystem, file_path).await?;
-
-        trace!(
-            "Read num_vectors from {}: {} vectors",
-            file_path, num_vectors
-        );
-
-        Ok(num_vectors as usize)
     }
 }
 
@@ -1273,6 +1235,7 @@ impl UnifiedStorageFormat for HelixEngine {
 
         // Get data directory early for both flush and model persistence
         let data_dir = self.get_data_dir_from_flush_params(params)?;
+        let filesystem = self.filesystem_for_url(&data_dir, &collection_id)?;
 
         // SORTED FLUSH OPTIMIZATION: Sort by Hilbert key during L0 flush
         // This enables immediate query pruning even before compaction
@@ -1289,7 +1252,9 @@ impl UnifiedStorageFormat for HelixEngine {
                 } else {
                     drop(model_guard);
                     // Try loading from disk
-                    if let Ok(Some(loaded_model)) = self.load_pca_model(&data_dir).await {
+                    if let Ok(Some(loaded_model)) =
+                        self.load_pca_model(&filesystem, &data_dir).await
+                    {
                         info!(
                             "[HELIX] ✅ Loaded existing PCA model from disk: version={}",
                             loaded_model.version
@@ -1324,7 +1289,7 @@ impl UnifiedStorageFormat for HelixEngine {
                 let trained_model = self.pca_model.read().await.clone();
                 if let Some(ref model) = trained_model {
                     let model_path = self.get_pca_model_path(&data_dir);
-                    match self.save_pca_model(&data_dir, model).await {
+                    match self.save_pca_model(&filesystem, &data_dir, model).await {
                         Ok(_) => info!(
                             "[HELIX] ✅ PCA model persisted: version={}, path={}",
                             model.version, model_path
@@ -1399,13 +1364,13 @@ impl UnifiedStorageFormat for HelixEngine {
         let filename = self.generate_sstable_filename(0);
 
         // Create directory if it doesn't exist
-        self.filesystem.create_dir_all(&data_dir).await?;
+        filesystem.create_dir_all(&data_dir).await?;
 
         let file_path = std::path::Path::new(&data_dir).join(&filename);
 
         // Write unified SIMD-optimized Proxima blocks
         let bytes_written = proxima::write_helix_sstable(
-            &self.filesystem,
+            &filesystem,
             &file_path,
             &sorted_records,
             self.config.proxima_block_size,
@@ -1462,7 +1427,11 @@ impl UnifiedStorageFormat for HelixEngine {
 
         // Trigger compaction if needed
         if self.should_compact().await {
-            let compactor = self.compactor.clone();
+            let compactor = Arc::new(LeveledCompactor::new(
+                self.config.clone(),
+                filesystem.clone(),
+                PathBuf::from(&data_dir),
+            ));
             let levels = self.levels.clone();
             tokio::spawn(async move {
                 if let Err(e) = compactor.compact_l0_to_l1(levels).await {
@@ -1490,6 +1459,10 @@ impl UnifiedStorageFormat for HelixEngine {
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
         let collection_id = self.get_collection_id_from_compaction_params(params)?;
         info!("HELIX compaction started for collection {}", collection_id);
+        let data_dir = self.get_data_dir_from_compaction_params(params)?;
+        let filesystem = self.filesystem_for_url(&data_dir, &collection_id)?;
+        let compactor =
+            LeveledCompactor::new(self.config.clone(), filesystem, PathBuf::from(&data_dir));
 
         let start = std::time::Instant::now();
 
@@ -1513,10 +1486,10 @@ impl UnifiedStorageFormat for HelixEngine {
         // Perform compaction based on level
         let (files_compacted, bytes_written) = if level_to_compact == 0 {
             // L0 to L1: Initial clustering with PCA + Hilbert
-            self.compactor.compact_l0_to_l1(self.levels.clone()).await?
+            compactor.compact_l0_to_l1(self.levels.clone()).await?
         } else {
             // Li to Li+1: Progressive refinement with liquid clustering
-            self.compactor
+            compactor
                 .compact_level_to_next(
                     self.levels.clone(),
                     level_to_compact,
@@ -1692,6 +1665,7 @@ impl UnifiedStorageFormat for HelixEngine {
         // HYBRID APPROACH: Use per-collection cache with filesystem discovery
         // Get collection's data directory
         let collection_data_dir = self.get_data_dir_from_collection_config(&ctx.collection)?;
+        let filesystem = self.filesystem_for_url(&collection_data_dir, collection_id)?;
 
         // Get PCA model (load from disk if not in memory)
         let pca_model = {
@@ -1707,7 +1681,10 @@ impl UnifiedStorageFormat for HelixEngine {
                 drop(model_guard); // Release read lock before attempting load
 
                 // Try to load persisted model for this collection
-                if let Some(loaded_model) = self.load_pca_model(&collection_data_dir).await? {
+                if let Some(loaded_model) = self
+                    .load_pca_model(&filesystem, &collection_data_dir)
+                    .await?
+                {
                     debug!(
                         "[HELIX] PCA model loaded from disk: version={}, n_components={}, collection={}",
                         loaded_model.version, loaded_model.n_components, collection_id
@@ -1954,7 +1931,7 @@ impl UnifiedStorageFormat for HelixEngine {
                     &sstables_to_search,
                     k,
                     distance_metric,
-                    &self.filesystem,
+                    &filesystem,
                 )
                 .await?;
 
@@ -2005,7 +1982,7 @@ impl UnifiedStorageFormat for HelixEngine {
 
             // Use parallel search with Hilbert key for block-level pruning
             let results = readers::parallel_search(
-                self.filesystem.clone(),
+                filesystem.clone(),
                 sstables_vec,
                 query_vector.to_vec(),
                 query_hilbert, // CRITICAL: Pass Hilbert key for 80-90% block pruning!
@@ -2034,7 +2011,7 @@ impl UnifiedStorageFormat for HelixEngine {
                 accessed_files.push(sstable.path.to_string_lossy().to_string());
 
                 let sstable_results = readers::search_sstable(
-                    &self.filesystem,
+                    &filesystem,
                     &sstable,
                     query_vector,
                     query_hilbert, // CRITICAL: Pass Hilbert key for 80-90% block pruning!
@@ -2117,8 +2094,8 @@ impl UnifiedStorageFormat for HelixEngine {
         // Construct data directory from base_path and collection_id
         let data_dir = StoragePath::collection_data_path(base_path, collection_id);
 
-        // Use the engine's unified caching filesystem
-        let fs = &self.filesystem;
+        // Resolve the backend from this collection's assigned base path.
+        let fs = self.filesystem_for_url(&data_dir, collection_id)?;
 
         // List all SSTable files in the data directory
         let entries = fs.list(&data_dir).await?;
@@ -2140,7 +2117,7 @@ impl UnifiedStorageFormat for HelixEngine {
                     bloom_filter: None,
                 };
 
-                if let Some(vector) = readers::find_vector_by_id(fs, &metadata, vector_id).await? {
+                if let Some(vector) = readers::find_vector_by_id(&fs, &metadata, vector_id).await? {
                     // Update global cache with found vector
                     if let Some(orchestrator) =
                         crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
@@ -2238,7 +2215,7 @@ impl UnifiedStorageFormat for HelixEngine {
         let Some(storage_url) = storage_url else {
             return Ok(Vec::new());
         };
-        let fs = self.filesystem_factory.get_filesystem(storage_url)?;
+        let fs = self.filesystem_for_url(storage_url, collection_id)?;
         let mut files = Vec::new();
         if let Ok(entries) = fs.list(storage_url).await {
             for entry in &entries {
@@ -2256,7 +2233,7 @@ impl UnifiedStorageFormat for HelixEngine {
         }
         let reader =
             crate::storage::engines::core::formats::proximablocks::block_reader::HelixBlockReader::new(
-                self.filesystem.clone(),
+                fs,
                 collection_id.to_string(),
             );
         let mut all = Vec::new();

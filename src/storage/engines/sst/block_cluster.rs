@@ -11,16 +11,34 @@
 //!
 //! Reordering is **result-preserving**: the reader ranks/dedups by distance and
 //! OID, so the returned top-k is identical regardless of physical order (parity-
-//! gated in tests). Default-OFF behind `PROXIMADB_PAX_BLOCK_CLUSTER`.
+//! gated in tests). Default ON since TD-WLP-4 (ADR-061 D3);
+//! `PROXIMADB_PAX_BLOCK_CLUSTER=0` is the kill-switch. The sign-Gray key is the
+//! model-free **L0 bootstrap**; compaction re-clusters with PCA+IVF
+//! ([`cluster_order_pca_ivf`]).
 
 use proximadb_records::{EmbeddingValues, ProximaRecord};
 
-/// Opt-in for sort-by-code block clustering (TD-RDSTRAT-5 S1). Default OFF — the
-/// insertion-order write is unchanged; set `PROXIMADB_PAX_BLOCK_CLUSTER=1` to
-/// reorder records by their sign-code at flush/compaction so blocks are
-/// spatially coherent (and centroids are computed for the VOE directory).
+/// Sort-by-code block clustering at PAX write (TD-RDSTRAT-5 S1, default ON
+/// since TD-WLP-4 / ADR-061 D3 — pre-GA "arm defaults" directive). Records are
+/// reordered by locality key at flush so blocks are spatially coherent and
+/// centroids+radii are emitted for the VOE directory. Reordering is
+/// result-preserving, so the only escape needed is the kill-switch:
+/// `PROXIMADB_PAX_BLOCK_CLUSTER=0|false|off|no` restores insertion-order
+/// writes (no centroids).
 pub fn block_cluster_enabled() -> bool {
-    env_flag_on("PROXIMADB_PAX_BLOCK_CLUSTER")
+    !env_flag_off("PROXIMADB_PAX_BLOCK_CLUSTER")
+}
+
+/// True when `var` is explicitly set to a falsy value (kill-switch semantics:
+/// unset/unrecognized → not off).
+fn env_flag_off(var: &str) -> bool {
+    match std::env::var(var).ok().as_deref().map(str::trim) {
+        Some(v) => matches!(
+            v.to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        ),
+        None => false,
+    }
 }
 
 /// TD-RDSTRAT-5 S3 (read side): opt-in for the VOE-directory centroid probe-prune
@@ -137,6 +155,118 @@ pub fn cluster_order(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>
     // Precompute keys once (avoid recomputing in the comparator).
     let keys: Vec<Vec<u8>> = records.iter().map(key_of).collect();
     order.sort_by(|&a, &b| keys[a].cmp(&keys[b]).then(a.cmp(&b)));
+    Some(order)
+}
+
+/// TD-WLP-4 (ADR-061 D3): the compaction re-cluster order — **PCA + IVF
+/// (k-means) on fp32**, replacing the sign-Gray L0 bootstrap when a merged
+/// batch is worth a model. Trains a write-time PCA on this batch
+/// (`IncrementalPCA`, f32-native), k-means-clusters the projections
+/// (foundation clustering kernel), orders IVF cells by the Hilbert code of
+/// their centroid (set-normalized, so same-region cells are physically
+/// contiguous — coalescing-friendly), and orders records by
+/// `(cell rank, PC1 within cell, index)`. Clustering is computed on
+/// PCA-projected fp32, never on quantized codes (ADR-061 D3/A3).
+///
+/// Falls back to [`cluster_order`] (the model-free bootstrap) when the batch
+/// is too small to train (< [`MIN_ROWS_FOR_IVF`] usable rows) or k-means
+/// fails; returns `None` like `cluster_order` when nothing is usable. The
+/// batch-local model is discarded after ordering — persisted-model reuse
+/// (`pca_model_ref`) is the TD-WLP-4b follow-up.
+pub fn cluster_order_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>> {
+    /// Below this many usable rows a trained model can't beat the bootstrap.
+    const MIN_ROWS_FOR_IVF: usize = 64;
+    /// Target rows per IVF cell — approximates rows-per-PAX-block so one cell
+    /// maps to roughly one block worth of rows.
+    const ROWS_PER_CELL: usize = 128;
+
+    use crate::storage::engines::core::formats::proximablocks::spatial_clustering::{
+        AdaptivePcaConfig, IncrementalPCA,
+    };
+
+    let usable: Vec<(usize, &[f32])> = records
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| embedding_f32(r, idx).map(|v| (i, v)))
+        .collect();
+    if usable.len() < MIN_ROWS_FOR_IVF {
+        return cluster_order(records, idx);
+    }
+    let dim = usable[0].1.len();
+    if usable.iter().any(|(_, v)| v.len() != dim) {
+        return cluster_order(records, idx);
+    }
+
+    // Batch-local PCA (one projection serves the IVF assignment, the cell
+    // Hilbert order, and the within-cell order).
+    let cfg = AdaptivePcaConfig::for_vector_dim(dim);
+    let mut pca = IncrementalPCA::new(dim, cfg.n_components);
+    for (_, v) in &usable {
+        pca.add_sample(v);
+    }
+    pca.finalize();
+    let coords: Vec<Vec<f32>> = usable.iter().map(|(_, v)| pca.transform(v)).collect();
+
+    // IVF: k-means over the projections.
+    let k = (usable.len() / ROWS_PER_CELL).clamp(2, 1024);
+    let Ok(centroids) = proximadb_clustering_kernel::kmeans_clustering(&coords, k, 15, 1e-3) else {
+        return cluster_order(records, idx);
+    };
+    let assignments = proximadb_clustering_kernel::kmeans_assign(&coords, &centroids);
+
+    // Order cells by the Hilbert code of their centroid. Normalization is over
+    // the CENTROID SET per dimension (per-vector min/max would destroy
+    // cross-centroid comparability).
+    let hilbert_dims = centroids.first().map(|c| c.len().clamp(1, 6)).unwrap_or(1);
+    let bits_per_dim = 10usize; // 6 dims × 10 bits ≤ u64
+    let mut lo = vec![f32::INFINITY; hilbert_dims];
+    let mut hi = vec![f32::NEG_INFINITY; hilbert_dims];
+    for c in &centroids {
+        for d in 0..hilbert_dims {
+            lo[d] = lo[d].min(c[d]);
+            hi[d] = hi[d].max(c[d]);
+        }
+    }
+    let curve =
+        proximadb_storage_common::hilbert_curve::HilbertCurve::new(hilbert_dims, bits_per_dim);
+    let max_val = (1u32 << bits_per_dim) - 1;
+    let cell_key = |c: &[f32]| -> u64 {
+        let ints: Vec<u32> = (0..hilbert_dims)
+            .map(|d| {
+                let range = hi[d] - lo[d];
+                if range <= 0.0 {
+                    max_val / 2
+                } else {
+                    (((c[d] - lo[d]) / range) * max_val as f32) as u32
+                }
+            })
+            .collect();
+        curve.encode(&ints)
+    };
+    let mut cell_order: Vec<usize> = (0..centroids.len()).collect();
+    let keys: Vec<u64> = centroids.iter().map(|c| cell_key(c)).collect();
+    cell_order.sort_by_key(|&c| keys[c]);
+    let mut cell_rank = vec![0usize; centroids.len()];
+    for (rank, &cell) in cell_order.iter().enumerate() {
+        cell_rank[cell] = rank;
+    }
+
+    // Records: usable ordered by (cell rank, PC1, index); unusable last, stably.
+    let mut order: Vec<usize> = Vec::with_capacity(records.len());
+    let mut usable_sorted: Vec<usize> = (0..usable.len()).collect();
+    usable_sorted.sort_by(|&a, &b| {
+        cell_rank[assignments[a]]
+            .cmp(&cell_rank[assignments[b]])
+            .then_with(|| {
+                let pa = coords[a].first().copied().unwrap_or(0.0);
+                let pb = coords[b].first().copied().unwrap_or(0.0);
+                pa.partial_cmp(&pb).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| usable[a].0.cmp(&usable[b].0))
+    });
+    order.extend(usable_sorted.iter().map(|&u| usable[u].0));
+    let in_usable: std::collections::HashSet<usize> = usable.iter().map(|(i, _)| *i).collect();
+    order.extend((0..records.len()).filter(|i| !in_usable.contains(i)));
     Some(order)
 }
 
@@ -333,9 +463,59 @@ mod tests {
     }
 
     #[test]
-    fn flag_defaults_off() {
-        // Not asserting env (tests share the process); just that the parser maps
-        // falsey/unset to false and truthy to true.
-        assert!(!block_cluster_enabled() || std::env::var("PROXIMADB_PAX_BLOCK_CLUSTER").is_ok());
+    fn block_cluster_defaults_on_with_kill_switch() {
+        // TD-WLP-4: clustering is default-ON; only an explicitly falsy env
+        // value disables it (kill-switch semantics). nextest process-per-test
+        // isolation makes the env mutation safe.
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_BLOCK_CLUSTER");
+        }
+        assert!(block_cluster_enabled(), "unset ⇒ clustering ON (default)");
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_BLOCK_CLUSTER", "0");
+        }
+        assert!(!block_cluster_enabled(), "explicit falsy ⇒ kill-switch");
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_BLOCK_CLUSTER", "1");
+        }
+        assert!(block_cluster_enabled(), "truthy stays ON");
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_BLOCK_CLUSTER");
+        }
+    }
+
+    /// TD-WLP-4: PCA+IVF ordering groups two well-separated clusters
+    /// contiguously and returns a permutation; below the training floor it
+    /// falls back to the bootstrap (still a permutation).
+    #[test]
+    fn cluster_order_pca_ivf_groups_clusters_contiguously() {
+        // 80 records in two tight 8-dim clusters (interleaved on input).
+        let mut recs = Vec::new();
+        for i in 0..40 {
+            let e = (i % 5) as f32 * 0.01;
+            recs.push(rec(&format!("a{i:02}"), vec![1.0 + e; 8]));
+            recs.push(rec(&format!("b{i:02}"), vec![-1.0 - e; 8]));
+        }
+        let order = cluster_order_pca_ivf(&recs, 0).expect("order");
+        assert_eq!(order.len(), recs.len());
+        let mut seen = order.clone();
+        seen.sort_unstable();
+        assert_eq!(seen, (0..recs.len()).collect::<Vec<_>>(), "permutation");
+        // Contiguity: all a's adjacent, all b's adjacent.
+        let labels: Vec<char> = order
+            .iter()
+            .map(|&i| recs[i].oid.chars().next().unwrap_or('?'))
+            .collect();
+        let transitions = labels.windows(2).filter(|w| w[0] != w[1]).count();
+        assert_eq!(
+            transitions, 1,
+            "two clusters must form two contiguous runs, got {labels:?}"
+        );
+        // Small batch → bootstrap fallback, still a permutation.
+        let small: Vec<ProximaRecord> = recs.iter().take(4).cloned().collect();
+        let fallback = cluster_order_pca_ivf(&small, 0).expect("fallback order");
+        let mut fs = fallback.clone();
+        fs.sort_unstable();
+        assert_eq!(fs, vec![0, 1, 2, 3]);
     }
 }

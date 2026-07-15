@@ -1120,7 +1120,7 @@ impl Compaction {
 
         // M1-3 (ADR-049): the legacy ProximaBlocks write arms (which needed a
         // block size + a writer-local filesystem factory + compression config)
-        // are retired — compaction re-emits PAX (`write_pax_segment_full`) or
+        // are retired — compaction re-emits PAX (`write_pax_segment_compacted`) or
         // Arrow (`ArrowBlockWriter`), neither of which takes those.
 
         let bytes_written = if let Some(ref coordinator) = atomic_coordinator {
@@ -1218,7 +1218,7 @@ impl Compaction {
                         crate::storage::engines::sst::segment_format::pax_inputs_rerank_quant(
                             &task.input_files,
                         );
-                    crate::storage::engines::sst::segment_format::write_pax_segment_full(
+                    crate::storage::engines::sst::segment_format::write_pax_segment_compacted(
                         &staging_file_path,
                         &records,
                         &collection_id,
@@ -1347,7 +1347,7 @@ impl Compaction {
                         crate::storage::engines::sst::segment_format::pax_inputs_rerank_quant(
                             &task.input_files,
                         );
-                    crate::storage::engines::sst::segment_format::write_pax_segment_full(
+                    crate::storage::engines::sst::segment_format::write_pax_segment_compacted(
                         &task.output_file,
                         &records,
                         &collection_id,

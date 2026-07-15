@@ -1,0 +1,55 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-WLP-7: Persisted PCA model ref + flush-trigger→compaction-execution wiring (WLP-4 follow-up)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open — filed 2026-07-14 as the TD-WLP-4 deferral. Not started.
+| Priority | P1b — completes the ADR-061 D3 arc: without execution wiring, the armed-by-default trigger only sets `FlushResult.compaction_triggered`; nothing runs the compactor in production.
+| Severity | Medium — background execution plumbing (test-hygiene sensitive: no non-daemon threads) + model persistence/reuse.
+| Component | `src/storage/engines/sst/flush/coordinator.rs` (`post_flush_operations` — the historical "Compaction would be triggered here" stub); `src/storage/engines/sst/compaction.rs` (`schedule_compaction`/`perform_compaction_enhanced`); `src/storage/engines/sst/compactor_impl.rs` (`retrain_pca_model_for_compaction` — the persistence pattern to reuse); `object_economy_directory.rs` (`pca_model_ref` + `with_pca_model_ref`, currently write-only in tests)
+| Governs | link:../../12-design/adr/ADR-061-per-collection-workload-profiles.adoc[ADR-061] (D3, arm-defaults amendment)
+| Relates to | TD-WLP-4 (the clustering this executes), TD-WLP-6 (query-side model reuse for PCA-space pruning), ADR-046 (LSN-coherent read across the atomic segment swap)
+| Pillar | PERF (the armed default actually fires), REL (atomic swap read-consistency), OE (background execution observability)
+|===
+
+toc::[]
+
+== Why
+
+TD-WLP-4 landed the re-cluster mechanism (`write_pax_segment_compacted`, PCA+IVF ordering) and
+armed compaction by default for `AppendBulk`, but two seams were deferred:
+
+1. **Execution wiring.** `FlushCoordinator::post_flush_operations` still carries the historical
+   stub — `compaction_triggered=true` feeds tiering accounting but never schedules the compactor.
+   The armed default is only real end-to-end once the trigger schedules
+   (`schedule_compaction` → `perform_compaction_enhanced`) in production code.
+2. **Persisted model + directory ref.** The WLP-4 write-time PCA is batch-local and discarded.
+   Persist an `EnhancedPCAModel` at compaction (reuse `retrain_pca_model_for_compaction`'s
+   `{collection_dir}/__model/pca_model.bin` pattern) and populate the VOE directory's
+   `pca_model_ref` `ObjectRef`, so cold queries load the projection in one round trip and the
+   read side can prune in PCA space (TD-WLP-6).
+
+== Scope
+
+* Wire post-flush triggering to actual background compaction execution — tokio-native (no
+  non-daemon threads; deterministic-testable via a synchronous test hook), respecting
+  `OrchestratorCompactionConfig::effective_for_collection_tags` and the WLP-2/4 arming cascade.
+* Persist the compaction-trained PCA model and set `pca_model_ref` (url/size/etag) in the VOE
+  directory emission for compacted segments; compaction outputs must emit VOE directory entries
+  (today only flush emits).
+* Read-consistency across the atomic segment swap during re-cluster (ADR-046 LSN-coherence) —
+  the TD-WLP-4 gate item that rides on execution wiring.
+
+== TDD gate
+
+* Integration: a flush that crosses the L0 threshold on an `AppendBulk` collection leads —
+  without any manual compaction call — to a compacted `.pax` segment whose VOE entry carries
+  populated centroids/radii and `pca_model_ref`; reads during the swap stay consistent.
+* `Churn` collection under the same process: no compaction executes, no model persists.
+
+== Gating
+
+Same cascade as TD-WLP-2/4: armed by default for `AppendBulk`, `compaction:off` opt-out,
+`PROXIMADB_L0_COMPACTION_ENABLED` falsy = master kill-switch.

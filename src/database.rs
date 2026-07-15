@@ -1287,7 +1287,8 @@ async fn open_queue_client_from_resolved(
             .await
             .map_err(|e| anyhow::anyhow!("FilesystemFactory init: {}", e))?,
     );
-    let fs_adapter = crate::services::queue_fs_adapter::FactoryQueueFs::new(factory, &rq.root);
+    let fs_adapter = crate::services::queue_fs_adapter::FactoryQueueFs::new(factory, &rq.root)
+        .map_err(|e| anyhow::anyhow!("queue filesystem capability check: {}", e))?;
 
     let queue = proximadb_queue::QueueClient::open_with_fs(queue_cfg, Some(fs_adapter))
         .await

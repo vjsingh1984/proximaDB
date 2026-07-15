@@ -151,7 +151,7 @@ impl ServerProcess {
     }
 }
 
-async fn create_and_insert(base: &str, collection: &str) -> anyhow::Result<()> {
+async fn create_and_insert(base: &str, collection: &str, engine: &str) -> anyhow::Result<()> {
     let http = Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(30))
@@ -161,7 +161,7 @@ async fn create_and_insert(base: &str, collection: &str) -> anyhow::Result<()> {
         .json(&json!({
             "name": collection,
             "dimension": 8,
-            "engine": "sst",
+            "engine": engine,
             "distance_metric": "cosine",
             "canonical_embedding_precision": "fp32",
             "enable_proxima_record": false
@@ -249,7 +249,8 @@ async fn catalog_wal_and_sst_survive_fresh_local_disks() -> anyhow::Result<()> {
         uuid::Uuid::new_v4().simple()
     );
     let tmp = tempfile::tempdir()?;
-    let collection = format!("td_objstore_{}", uuid::Uuid::new_v4().simple());
+    let sst_collection = format!("td_objstore_sst_{}", uuid::Uuid::new_v4().simple());
+    let helix_collection = format!("td_objstore_helix_{}", uuid::Uuid::new_v4().simple());
 
     let vm1 = tmp.path().join("vm1");
     let vm2 = tmp.path().join("vm2");
@@ -259,15 +260,18 @@ async fn catalog_wal_and_sst_survive_fresh_local_disks() -> anyhow::Result<()> {
     }
 
     let first = ServerProcess::start(&root, &vm1, &tmp.path().join("vm1.toml")).await?;
-    create_and_insert(&first.base_url, &collection).await?;
+    create_and_insert(&first.base_url, &sst_collection, "sst").await?;
+    create_and_insert(&first.base_url, &helix_collection, "helix").await?;
     first.crash()?;
 
     let wal_replay = ServerProcess::start(&root, &vm2, &tmp.path().join("vm2.toml")).await?;
-    assert_recovered(&wal_replay.base_url, &collection, "WAL replay").await?;
+    assert_recovered(&wal_replay.base_url, &sst_collection, "SST WAL replay").await?;
+    assert_recovered(&wal_replay.base_url, &helix_collection, "HELIX WAL replay").await?;
     wal_replay.graceful()?; // materializes SST and reclaims flushed WAL
 
     let cold_sst = ServerProcess::start(&root, &vm3, &tmp.path().join("vm3.toml")).await?;
-    assert_recovered(&cold_sst.base_url, &collection, "cold SST").await?;
+    assert_recovered(&cold_sst.base_url, &sst_collection, "cold SST").await?;
+    assert_recovered(&cold_sst.base_url, &helix_collection, "cold HELIX").await?;
     cold_sst.crash()?;
     Ok(())
 }

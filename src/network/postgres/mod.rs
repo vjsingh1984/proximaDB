@@ -93,6 +93,7 @@ pub struct PostgresServer {
     /// can decide once whether to wire the gate.
     primary_pod_registry: Option<Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>>,
     self_pod_id: Option<String>,
+    partition_lease_manager: Option<Arc<crate::cluster::partition_lease::PartitionLeaseManager>>,
     /// Object-store root URL the warehouse materializer publishes Parquet snapshots
     /// under (the same URL the OLAP reader reopens the store from). When `Some`,
     /// every per-connection `DdlService` is wired with a `DmlTableMaterializer` so
@@ -144,6 +145,7 @@ impl PostgresServer {
             rank_pipeline: None,
             primary_pod_registry: None,
             self_pod_id: None,
+            partition_lease_manager: None,
             warehouse_root_url: None,
             rate_limiter: None,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
@@ -180,6 +182,16 @@ impl PostgresServer {
     ) -> Self {
         self.primary_pod_registry = Some(registry);
         self.self_pod_id = Some(self_pod_id);
+        self
+    }
+
+    /// Attach the same durable lease manager used by the REST/DML write gates
+    /// so per-connection pgwire DDL does not degrade to registry-only checks.
+    pub fn with_partition_lease_manager(
+        mut self,
+        manager: Option<Arc<crate::cluster::partition_lease::PartitionLeaseManager>>,
+    ) -> Self {
+        self.partition_lease_manager = manager;
         self
     }
 
@@ -266,6 +278,7 @@ impl PostgresServer {
                     // routing decisions.
                     let primary_pod_registry = self.primary_pod_registry.clone();
                     let self_pod_id = self.self_pod_id.clone();
+                    let partition_lease_manager = self.partition_lease_manager.clone();
                     let warehouse_root_url = self.warehouse_root_url.clone();
                     let rate_limiter = self.rate_limiter.clone();
                     let tenant_header_trust = self.tenant_header_trust;
@@ -285,6 +298,7 @@ impl PostgresServer {
                             rank_pipeline,
                             primary_pod_registry,
                             self_pod_id,
+                            partition_lease_manager,
                             warehouse_root_url,
                             rate_limiter,
                             tenant_header_trust,
@@ -326,6 +340,9 @@ impl PostgresServer {
         rank_pipeline: Option<PgwireRankPipeline>,
         primary_pod_registry: Option<Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>>,
         self_pod_id: Option<String>,
+        partition_lease_manager: Option<
+            Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
+        >,
         warehouse_root_url: Option<String>,
         rate_limiter: Option<Arc<crate::network::middleware::rate_limit::RateLimitState>>,
         tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
@@ -367,7 +384,10 @@ impl PostgresServer {
         // sides are present so a partial wiring fails closed (no
         // gate, legacy behavior) rather than silently misconfigured.
         if let (Some(registry), Some(pod_id)) = (primary_pod_registry, self_pod_id) {
-            protocol = protocol.with_primary_pod_gate(registry, pod_id);
+            protocol = protocol.with_primary_pod_gate(registry.clone(), pod_id.clone());
+            if let Some(manager) = partition_lease_manager {
+                protocol = protocol.with_ddl_lease_manager(manager, registry, pod_id);
+            }
         }
         // E0: apply the shared per-IP rate limiter (subject = this peer's IP) so
         // the pgwire query path is rate-limited consistently with REST.

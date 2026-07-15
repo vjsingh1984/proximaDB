@@ -14,6 +14,19 @@
 driven in the ProximaDB implementation session on handoff. Ships incrementally, every slice
 default-OFF and mixed-read-safe — absent the opt-in tag, behaviour is byte-for-byte today's.
 
+**Amendment (2026-07-14, owner directive — pre-GA "no back-compat, arm defaults"):** the
+*default-OFF gating* clause above is superseded for the write-time internals as of TD-WLP-4.
+Nothing is rolled out externally, so improved internals REPLACE their predecessors rather than
+shipping behind opt-in flags, and the improved behaviour is the default: block clustering at PAX
+write is default-ON (`PROXIMADB_PAX_BLOCK_CLUSTER=0` is the kill-switch), compaction is armed by
+default for `AppendBulk` — including untagged — collections (`compaction:off` tag opts out;
+`PROXIMADB_L0_COMPACTION_ENABLED` falsy remains the master kill-switch; `Churn` stays OFF). What
+is NOT relaxed: (a) on-disk **readability** of already-written segments/sidecars
+(`#[serde(default)]` fields, version markers) — data safety, not behaviour compat; (b)
+**evidence-gated defaults** — `radius_k` stays `0.0` until the post-clustering re-measurement
+shows lift (the 2026-07-14 sweep measured k=1/2 as a recall regression under sign-bit clustering);
+(c) the read-side centroid-prune default flip, which stays recall-ratchet-gated (TD-WLP-6).
+
 == Context
 
 ProximaDB's vector storage assumes a single physical paradigm — LSM-structured, clustered PAX
@@ -111,7 +124,9 @@ Add a per-collection compaction override resolved through the same cascade, mirr
 (`L0_COMPACTION_THRESHOLD = 5`; `OrchestratorCompactionConfig` in
 `src/storage/common/compaction_orchestrator.rs`). `AppendBulk` collections may **arm** compaction
 (to get re-clustering) while the global default stays OFF and `Churn` stays OFF. The global env
-remains the master kill-switch.
+remains the master kill-switch. *(Amended by the 2026-07-14 arm-defaults directive: `AppendBulk` —
+including untagged — collections are armed BY DEFAULT; `compaction:off` opts out; a falsy global
+env is the kill-switch; `Churn` stays OFF. See the Status amendment.)*
 
 === D6 — Profile selects a read-path projection, not a query route
 
@@ -151,7 +166,9 @@ wrongly prune.
   create-time engine.
 * The dark compaction re-cluster path (`write_pax_segment_full`) gets a **safe, per-collection**
   trigger — it lights up only where it pays.
-* Zero-risk default: absent a `workload_profile:` tag → `AppendBulk` → today's behaviour (compaction
+* Zero-risk default *(superseded by the 2026-07-14 arm-defaults amendment — untagged collections
+  now cluster at write and compact at threshold by default)*: absent a `workload_profile:` tag →
+  `AppendBulk` → today's behaviour (compaction
   still globally OFF). No migration, no format flag day.
 
 *Negative / cost.*

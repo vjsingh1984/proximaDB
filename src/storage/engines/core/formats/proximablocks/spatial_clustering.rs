@@ -764,8 +764,17 @@ impl AdaCurve {
         let dimensions = pca_coords[0].len();
         let num_segments = num_segments.min(pca_coords.len()).max(8);
 
-        // Step 1: K-means clustering to find natural groupings
-        let control_points = kmeans_clustering(pca_coords, num_segments);
+        // Step 1: K-means clustering to find natural groupings (foundation
+        // clustering kernel — this file's local duplicate was folded into it,
+        // TD-WLP-4). k clamped to the point count; on the (impossible-here)
+        // empty-input error, degrade to no control points.
+        let control_points = proximadb_clustering_kernel::kmeans_clustering(
+            pca_coords,
+            num_segments.min(pca_coords.len()),
+            10,
+            1e-3,
+        )
+        .unwrap_or_default();
 
         // Step 2: Order control points to minimize jumps (greedy nearest neighbor)
         let segment_order = optimize_traversal_order(&control_points);
@@ -835,97 +844,6 @@ impl AdaCurve {
         let max_code = self.encode(max_coords);
         (min_code.min(max_code), min_code.max(max_code))
     }
-}
-
-/// K-means clustering to find natural groupings in data.
-fn kmeans_clustering(points: &[Vec<f32>], k: usize) -> Vec<Vec<f32>> {
-    if points.is_empty() {
-        return vec![];
-    }
-
-    let dimensions = points[0].len();
-    let k = k.min(points.len());
-
-    // Initialize centroids using k-means++ for better starting positions
-    let mut centroids = Vec::with_capacity(k);
-
-    // First centroid: random point
-    if let Some(first) = points.first() {
-        centroids.push(first.clone());
-    }
-
-    // Remaining centroids: k-means++ selection
-    for _ in 1..k {
-        let distances: Vec<f32> = points
-            .iter()
-            .map(|p| {
-                centroids
-                    .iter()
-                    .map(|c| {
-                        p.iter()
-                            .zip(c.iter())
-                            .map(|(a, b)| (a - b).powi(2))
-                            .sum::<f32>()
-                    })
-                    .fold(f32::INFINITY, f32::min)
-            })
-            .collect();
-
-        // Select point with maximum distance to nearest centroid
-        if let Some((idx, _)) = distances
-            .iter()
-            .enumerate()
-            .max_by(|(_, d1), (_, d2)| d1.partial_cmp(d2).unwrap_or(std::cmp::Ordering::Equal))
-        {
-            centroids.push(points[idx].clone());
-        }
-    }
-
-    // Run k-means iterations (10 iterations is usually enough)
-    for _ in 0..10 {
-        // Assignment step: assign each point to nearest centroid
-        let mut clusters: Vec<Vec<Vec<f32>>> = vec![vec![]; k];
-
-        for point in points {
-            let nearest = centroids
-                .iter()
-                .enumerate()
-                .map(|(i, c)| {
-                    let dist: f32 = point
-                        .iter()
-                        .zip(c.iter())
-                        .map(|(a, b)| (a - b).powi(2))
-                        .sum();
-                    (i, dist)
-                })
-                .min_by(|(_, d1), (_, d2)| d1.partial_cmp(d2).unwrap_or(std::cmp::Ordering::Equal))
-                .map_or(0, |(i, _)| i);
-
-            clusters[nearest].push(point.clone());
-        }
-
-        // Update step: recompute centroids
-        for (i, cluster) in clusters.iter().enumerate() {
-            if cluster.is_empty() {
-                continue;
-            }
-
-            let mut new_centroid = vec![0.0; dimensions];
-            for point in cluster {
-                for (j, &val) in point.iter().enumerate() {
-                    new_centroid[j] += val;
-                }
-            }
-
-            for val in &mut new_centroid {
-                *val /= cluster.len() as f32;
-            }
-
-            centroids[i] = new_centroid;
-        }
-    }
-
-    centroids
 }
 
 /// Optimize traversal order of control points using greedy nearest neighbor.

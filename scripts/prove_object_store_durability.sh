@@ -22,7 +22,8 @@ esac
 echo "TD-OBJSTORE-2 durability proof"
 echo "  object root: ${PROXIMADB_OBJECT_STORE_URL}"
 echo "  backend feature: ${feature}"
-echo "  phases: crash/WAL replay -> graceful SST flush -> fresh-disk cold SST read"
+echo "  engines: SST + HELIX"
+echo "  phases: crash/WAL replay -> graceful flush -> fresh-disk cold read"
 
 cargo test \
   -p proximadb-server \
@@ -31,4 +32,4 @@ cargo test \
   catalog_wal_and_sst_survive_fresh_local_disks \
   -- --ignored --nocapture --test-threads=1
 
-echo "PASS: catalog recovered from metadata_url, WAL replay reattached the collection, and SST served a second fresh-disk restart"
+echo "PASS: catalog recovered from metadata_url, WAL replay reattached SST + HELIX collections, and both engines served a second fresh-disk restart"

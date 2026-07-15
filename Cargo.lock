@@ -6768,6 +6768,7 @@ dependencies = [
  "proximadb-bloom",
  "proximadb-cache",
  "proximadb-catalog",
+ "proximadb-clustering-kernel",
  "proximadb-codec",
  "proximadb-compression",
  "proximadb-compression-types",
@@ -6779,6 +6780,7 @@ dependencies = [
  "proximadb-document-query",
  "proximadb-embedded-common",
  "proximadb-embedding",
+ "proximadb-engine-core",
  "proximadb-execution-contracts",
  "proximadb-filter-expression",
  "proximadb-functions",
@@ -7048,6 +7050,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-clustering-kernel"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "rand 0.8.6",
+]
+
+[[package]]
 name = "proximadb-codec"
 version = "0.2.0"
 dependencies = [
@@ -7201,6 +7211,23 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "proximadb-engine-core"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "half",
+ "proximadb-compression",
+ "proximadb-distance-kernel",
+ "proximadb-kernel",
+ "proximadb-records",
+ "proximadb-storage-common",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -7578,6 +7605,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "dashmap",
+ "proximadb-clustering-kernel",
  "proximadb-distance-kernel",
  "proximadb-hardware",
  "proximadb-quantization-model",

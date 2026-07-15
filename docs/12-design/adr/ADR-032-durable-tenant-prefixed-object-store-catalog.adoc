@@ -55,6 +55,15 @@ The **operator catalog stays in AnvaiOps** (per `OSS_ENTERPRISE_BOUNDARY`); this
 * Provide a one-shot repath/migration that re-emits existing flat catalog assets under their tenant-prefixed paths and stamps the marker.
 * Gate promotion on round-trip + cross-read tests (legacy flat and new prefixed coexist), not just compile.
 
+=== Fence-scope clarification
+
+The `SystemCatalog` generation fence protects publication of the catalog snapshot pointer. It does
+not fence data-plane or external DDL side effects such as writing a MATERIALIZE Parquet object or
+building an index. Table-scoped DDL therefore uses the renewable per-resource partition lease as
+its operation authority and revalidates that lease before reporting success. The process must wire
+one shared `PartitionLeaseManager` (and one renewal loop) into DML, REST, and per-connection pgwire
+DDL; constructing a second manager creates a divergent TTL/ownership timeline and is not valid.
+
 == Consequences
 
 *Positive.* The catalog becomes durable and shared, so stateless pods can serve any tenant after a cold start (the serverless unlock). Isolation is structural and fail-closed, so it holds for every workload class — agent (many tiny bursty tenants), data-engineering (Iceberg/Parquet, TD-119 tenant-scoped REST), OLTP/pgwire, graph, docs — with no per-modality isolation code. Per-tenant lifecycle, CRR, and billing become prefix operations. The misconfiguration footgun (intended multi-tenant silently permissive) is closed.

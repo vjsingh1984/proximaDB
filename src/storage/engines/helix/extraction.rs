@@ -113,21 +113,24 @@ impl VectorExtractor for HelixExtractor {
         }
 
         // Filter out non-existent files to handle race conditions gracefully
-        // (e.g., temp directories cleaned up before AXIS consumer processes events)
+        // (e.g., temp directories cleaned up before AXIS consumer processes events).
+        // Use the configured filesystem: std::path::Path::exists would classify every
+        // object-store URL as missing and silently skip extraction.
         let mut existing_files = Vec::with_capacity(request.file_paths.len());
         let mut missing_count = 0;
         for path in &request.file_paths {
-            // Strip file:// prefix if present
-            let local_path = if path.starts_with("file://") {
-                path.strip_prefix("file://").unwrap_or(path)
-            } else {
-                path.as_str()
-            };
-            if std::path::Path::new(local_path).exists() {
-                existing_files.push(path.clone());
-            } else {
-                missing_count += 1;
-                debug!("[HELIX Extractor] File not found (skipping): {}", path);
+            match self.filesystem.exists(path).await {
+                Ok(true) => existing_files.push(path.clone()),
+                Ok(false) => {
+                    missing_count += 1;
+                    debug!("[HELIX Extractor] File not found (skipping): {}", path);
+                }
+                Err(error) => {
+                    return Err(ExtractionError::IoError(format!(
+                        "Failed to check HELIX file {}: {}",
+                        path, error
+                    )));
+                }
             }
         }
 
