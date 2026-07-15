@@ -86,6 +86,19 @@ alias-named sort keys (q3/q52 — pre-existing pushdown bug newly reachable, fil
 TD-REL-LOWER-3). Follow-up guard candidate: extend the specific-error treatment to single-table
 relational declines so Q1/Q4/Q6 stop mangling.
 
+**Re-measured again (2026-07-14, post-`1a424f3c6` + this PR's DATE-literal fix):** develop's
+`1a424f3c6` landed the cross→equi-join rewrite in `push_predicates` (the TD-REL-LOWER-2 core) and a
+`plan_has_raw_cross_join` fail-fast decline, so the grinders are GONE. Native TPC-H then measured
+**4/22 OK** — and the dominant remaining blocker was NOT the join at all: the frontend declined
+every `DATE 'YYYY-MM-DD'` typed literal (`Unsupported("typed string literal")`), so ~8 date-filtered
+queries fell through to the legacy path and surfaced the misleading "comma-separated table list"
+`0A000` (a red herring). Lowering typed DATE literals to the canonical `ProximaValue::Date`
+(days-since-epoch, shared `proximadb_data_model::parse_iso_date_to_days`) took native TPC-H to
+**12/22 OK** (Q1/Q3/Q4/Q5/Q6/Q7/Q10/Q12 flipped). The residual 10 are now diverse, separate
+mechanisms: scalar/IN subqueries (Q2/Q11/Q17/Q18/Q20), `CASE` (Q14), a derived table (Q8), two
+genuine non-equi cross-joins (Q9/Q19), and one `rebind_columns` alias error (Q15 — see
+TD-REL-LOWER-3). Each is its own frontend/planner coverage item; none share a single fix.
+
 == Non-goals
 
 Not a perf item; not the ClickBench case-folding wall (TD-OLAP-18). The
