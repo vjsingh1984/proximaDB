@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open — spec filed 2026-07-14 (ADR-061). Not started. Depends on TD-WLP-1 + TD-WLP-2.
+| Status | Implemented 2026-07-14 (core; under the ADR-061 arm-defaults amendment) — `kmeans_clustering`/`kmeans_assign` hoisted to the new foundation crate `proximadb-clustering-kernel` (quantization-kernel PQ training + the `spatial_clustering.rs` duplicate both folded onto it); compaction re-clusters via `write_pax_segment_compacted` → `cluster_order_pca_ivf` (batch-local `IncrementalPCA` on fp32, k-means IVF cells ordered by set-normalized centroid Hilbert code, `(cell, PC1)` record order); L0 flush keeps the model-free sign-Gray bootstrap, now **default-ON** (`PROXIMADB_PAX_BLOCK_CLUSTER=0` kill-switch); compaction armed **by default** for `AppendBulk` incl. untagged (`resolve_compaction_armed` profile default; `Churn` never schedules ⇒ never trains). Coherence gate `tests/sst_compaction_reclustering_test.rs` (compacted mean block radius must undercut bootstrap 5×). **Deferred to TD-WLP-7:** persisted `EnhancedPCAModel` + VOE `pca_model_ref` population + the flush-trigger→compaction-execution wiring (post-flush hook is still the historical stub).
 | Priority | P1b — the append-path recall payoff; double-gated (compaction armed + profile=AppendBulk).
 | Severity | High — the clustering geometry that read-side prune quality depends on.
 | Component | `src/storage/engines/sst/compaction.rs` (re-cluster call sites ~1221/1350); `src/storage/engines/sst/object_economy_directory.rs` (`pca_model_ref` + centroids ~46/135); `src/storage/engines/sst/block_cluster.rs` / `spatial_clustering.rs` (Hilbert bootstrap); `kmeans_clustering` hoist target (new foundation crate)

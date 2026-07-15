@@ -470,8 +470,9 @@ impl UnifiedQuantizationEngine {
                 .map(|v| v[start..end].to_vec())
                 .collect();
 
-            // Run k-means for this subspace
-            let subspace_centroids = self.kmeans_clustering(
+            // Run k-means for this subspace (foundation clustering kernel,
+            // hoisted for storage/modality reuse — TD-WLP-4).
+            let subspace_centroids = proximadb_clustering_kernel::kmeans_clustering(
                 &subvectors,
                 num_centroids,
                 100,  // max iterations
@@ -509,152 +510,6 @@ impl UnifiedQuantizationEngine {
             .store_codebook(codebook_id, &codebook)
             .await?;
         Ok(())
-    }
-
-    /// K-means clustering with pre-allocated working buffers.
-    /// Avoids per-iteration allocation by reusing buffers for distances, sums, and counts.
-    /// Uses inline squared L2 instead of the full distance engine for inner loops.
-    fn kmeans_clustering(
-        &self,
-        vectors: &[Vec<f32>],
-        k: usize,
-        max_iterations: usize,
-        convergence_threshold: f32,
-    ) -> Result<Vec<Vec<f32>>> {
-        use rand::seq::SliceRandom;
-
-        if vectors.is_empty() || k == 0 {
-            anyhow::bail!("Invalid input for k-means");
-        }
-
-        let mut rng = rand::thread_rng();
-        let n = vectors.len();
-        let dimension = vectors[0].len();
-
-        // ── Pre-allocate all working buffers (reused across iterations) ──
-        let mut distances = vec![f32::INFINITY; n];
-        let mut assignments = vec![0usize; n];
-        let mut counts = vec![0u32; k];
-        // Flat buffer for centroid sums: k centroids × dimension, avoids Vec<Vec<f32>> per iteration
-        let mut sums = vec![0.0f32; k * dimension];
-        // Buffer for convergence check (stores previous centroids)
-        let mut old_centroids_flat = vec![0.0f32; k * dimension];
-
-        // Inline squared L2 distance helper (avoids DistanceResult overhead)
-        let sq_l2 = |a: &[f32], b: &[f32]| -> f32 {
-            a.iter()
-                .zip(b.iter())
-                .map(|(&x, &y)| {
-                    let d = x - y;
-                    d * d
-                })
-                .sum::<f32>()
-        };
-
-        // ── Initialize centroids using k-means++ ──
-        let mut centroids = Vec::with_capacity(k);
-
-        let first_centroid = vectors
-            .choose(&mut rng)
-            .ok_or_else(|| anyhow::anyhow!("k-means requires at least one vector"))?
-            .clone();
-        centroids.push(first_centroid);
-
-        for _ in 1..k {
-            // Reuse distances buffer — reset to INFINITY
-            distances.iter_mut().for_each(|d| *d = f32::INFINITY);
-
-            // Compute distance to nearest existing centroid for each point
-            for (i, vector) in vectors.iter().enumerate() {
-                for centroid in &centroids {
-                    let dist = sq_l2(vector, centroid);
-                    distances[i] = distances[i].min(dist);
-                }
-            }
-
-            // Choose next centroid proportional to distance (already squared from sq_l2)
-            let total_dist: f32 = distances.iter().sum();
-            if total_dist <= 0.0 {
-                // All points are at distance 0 — just pick a random one
-                if let Some(v) = vectors.choose(&mut rng) {
-                    centroids.push(v.clone());
-                }
-                continue;
-            }
-            let mut cumulative = 0.0;
-            let threshold = rand::random::<f32>() * total_dist;
-
-            for (i, &dist) in distances.iter().enumerate() {
-                cumulative += dist;
-                if cumulative >= threshold {
-                    centroids.push(vectors[i].clone());
-                    break;
-                }
-            }
-        }
-
-        // ── Run k-means iterations with reused buffers ──
-        for _iteration in 0..max_iterations {
-            // Save current centroids for convergence check (flat copy, no allocation)
-            for (j, centroid) in centroids.iter().enumerate() {
-                old_centroids_flat[j * dimension..(j + 1) * dimension].copy_from_slice(centroid);
-            }
-
-            // Assignment step
-            for (i, vector) in vectors.iter().enumerate() {
-                let mut best_idx = 0;
-                let mut best_dist = f32::INFINITY;
-
-                for (j, centroid) in centroids.iter().enumerate() {
-                    let dist = sq_l2(vector, centroid);
-                    if dist < best_dist {
-                        best_dist = dist;
-                        best_idx = j;
-                    }
-                }
-
-                assignments[i] = best_idx;
-            }
-
-            // Update step — zero sums and counts, then accumulate in-place
-            sums.iter_mut().for_each(|s| *s = 0.0);
-            counts.iter_mut().for_each(|c| *c = 0);
-
-            for (i, &assignment) in assignments.iter().enumerate() {
-                let offset = assignment * dimension;
-                for (dim, val) in vectors[i].iter().enumerate() {
-                    sums[offset + dim] += val;
-                }
-                counts[assignment] += 1;
-            }
-
-            // Compute new centroids from sums/counts
-            for (j, centroid_j) in centroids.iter_mut().enumerate() {
-                let count = counts[j];
-                if count > 0 {
-                    let offset = j * dimension;
-                    let inv_count = 1.0 / count as f32;
-                    for dim in 0..dimension {
-                        centroid_j[dim] = sums[offset + dim] * inv_count;
-                    }
-                }
-            }
-
-            // Check convergence using saved flat buffer
-            let mut max_change = 0.0f32;
-            for (j, centroid) in centroids.iter().enumerate() {
-                let old_slice = &old_centroids_flat[j * dimension..(j + 1) * dimension];
-                let change = sq_l2(old_slice, centroid);
-                max_change = max_change.max(change);
-            }
-
-            // Compare squared distance against squared threshold to avoid sqrt
-            if max_change < convergence_threshold * convergence_threshold {
-                break;
-            }
-        }
-
-        Ok(centroids)
     }
 
     /// Quantize vector to binary representation

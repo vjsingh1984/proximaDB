@@ -6768,6 +6768,7 @@ dependencies = [
  "proximadb-bloom",
  "proximadb-cache",
  "proximadb-catalog",
+ "proximadb-clustering-kernel",
  "proximadb-codec",
  "proximadb-compression",
  "proximadb-compression-types",
@@ -7046,6 +7047,14 @@ dependencies = [
  "tracing",
  "urlencoding",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-clustering-kernel"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "rand 0.8.6",
 ]
 
 [[package]]
@@ -7587,6 +7596,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "dashmap",
+ "proximadb-clustering-kernel",
  "proximadb-distance-kernel",
  "proximadb-hardware",
  "proximadb-quantization-model",
