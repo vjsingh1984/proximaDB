@@ -52,7 +52,7 @@ asserted_in = [
   "docs/12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc",
   "docs/10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc",
 ]
-bench_source = "tests/sift_pax_recall_ratchet_test.rs::sift_coalesced_rabitq_scan_rerank_eval"
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
 bench_command = "PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=100000 PROXIMADB_SIFT_QUERIES=100 cargo test --release --test sift_pax_recall_ratchet_test sift_coalesced_rabitq_scan_rerank_eval -- --ignored --nocapture"
 artifact = "docs/_internal/status/SIFT1M_COALESCED_RABITQ_RECALL_2026_07_15.adoc"
 hardware = "Local macOS arm64 (Apple Silicon), no other workload"
