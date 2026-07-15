@@ -1609,6 +1609,28 @@ fn lower_projection_with_aggregates(
                     }),
                 });
             }
+            // Aggregate(s) nested inside an arithmetic projection expression
+            // (`sum(x)/sum(y)`, `100.0*sum(case…)/sum(y)` — the ratio /
+            // market-share shapes, TPC-H Q8/Q14). Hoist each nested aggregate to
+            // its own Aggregate slot and rebuild the surrounding expression as a
+            // post-aggregate Project expression. (A *bare* top-level aggregate is
+            // handled by the arm above; this is the "Phase 3" nested case.)
+            _ if expr_contains_aggregate(&sql_expr) => {
+                let name = alias
+                    .or_else(|| projection_alias_for_expr(&sql_expr))
+                    .unwrap_or_else(|| auto_column_name(outputs.len()));
+                let output_expr = lower_agg_projection_expr(
+                    &sql_expr,
+                    scope,
+                    group_by,
+                    group_count,
+                    &mut aggregates,
+                )?;
+                outputs.push(NamedExpr {
+                    name,
+                    expr: output_expr,
+                });
+            }
             _ => {
                 // Aggregate-path projection: scalar subqueries here would need to
                 // hoist a join under the Aggregate, which is out of scope for MVP
@@ -1654,8 +1676,183 @@ fn lower_projection_with_aggregates(
     Ok((outputs, aggregates))
 }
 
+/// Lower a projection expression that CONTAINS one or more aggregate calls nested
+/// inside arithmetic (the "aggregate ratio / market-share" shapes — TPC-H Q8
+/// `sum(case…)/sum(vol)`, Q14 `100.0*sum(case…)/sum(…)`). Each nested aggregate is
+/// extracted into its own Aggregate slot (appended to `aggregates`) and replaced
+/// by a `ColumnRef` to that slot; a sub-expression with no aggregate is lowered
+/// directly (a scalar over group keys / literals) with its group-key column refs
+/// remapped to the post-aggregate group slots. The result is an expression over
+/// the post-aggregate schema, suitable as a `Project` output above the `Aggregate`.
+///
+/// Handles the arithmetic spine (`BinaryOp` / `UnaryOp` / parentheses) that carries
+/// the aggregates. An aggregate nested inside a shape not covered here (CASE/CAST/
+/// scalar-function at the projection top level) still declines to legacy, exactly
+/// as before — no regression, just not yet newly supported.
+fn lower_agg_projection_expr(
+    sql: &SqlExpr,
+    scope: &Scope,
+    group_by: &[NamedExpr],
+    group_count: usize,
+    aggregates: &mut Vec<NamedAggregate>,
+) -> Result<Expr, FrontendError> {
+    // A subtree with no aggregate is a scalar over group keys / literals: lower it
+    // as-is, then point any group-key column at its post-aggregate slot (group keys
+    // occupy ordinals 0..group_count ahead of the aggregate slots).
+    if !expr_contains_aggregate(sql) {
+        let lowered = lower_expr_sealed(sql, scope)?;
+        return Ok(remap_group_key_refs(lowered, group_by));
+    }
+    match sql {
+        SqlExpr::Nested(inner) => {
+            lower_agg_projection_expr(inner, scope, group_by, group_count, aggregates)
+        }
+        SqlExpr::Function(f) if is_aggregate_function_name(&f.name) => {
+            let agg = lower_aggregate_call(f, scope)?;
+            let slot = group_count + aggregates.len();
+            let ty = agg.result_type();
+            // Internal, unique slot name so the post-aggregate scope and the
+            // planner's name-based projection-pushdown rebind stay consistent
+            // (`ColumnRef.name` must equal the Aggregate output slot's name).
+            let name = format!("__agg_{slot}");
+            aggregates.push(NamedAggregate {
+                name: name.clone(),
+                agg,
+            });
+            Ok(Expr::column(ColumnRef {
+                name,
+                ordinal: slot,
+                ty,
+                nullable: true,
+            }))
+        }
+        SqlExpr::BinaryOp { left, op, right } => {
+            let l = lower_agg_projection_expr(left, scope, group_by, group_count, aggregates)?;
+            let r = lower_agg_projection_expr(right, scope, group_by, group_count, aggregates)?;
+            Ok(Expr::BinaryOp {
+                op: lower_binary_op(op)?,
+                left: Box::new(l),
+                right: Box::new(r),
+            })
+        }
+        SqlExpr::UnaryOp { op, expr } => {
+            let inner = lower_agg_projection_expr(expr, scope, group_by, group_count, aggregates)?;
+            match lower_unary_op(op)? {
+                Some(u) => Ok(Expr::UnaryOp {
+                    op: u,
+                    expr: Box::new(inner),
+                }),
+                None => Ok(inner), // unary plus is identity
+            }
+        }
+        _ => Err(FrontendError::Unsupported(
+            "aggregate nested inside an unsupported projection expression".into(),
+        )),
+    }
+}
+
+/// Remap every `Expr::Column` in `expr` that references a GROUP BY key to that
+/// key's post-aggregate slot (`ordinal` = its position in `group_by`, `name` =
+/// the group-key's declared name). Non-group columns and literals pass through
+/// unchanged. Used for the aggregate-free sub-expressions of a nested-aggregate
+/// projection (e.g. the `yr` in `sum(vol) + yr`), so they index the Aggregate
+/// output rather than a stale pre-aggregate ordinal.
+fn remap_group_key_refs(expr: Expr, group_by: &[NamedExpr]) -> Expr {
+    match &expr {
+        Expr::Column(c) => {
+            if let Some(slot) = group_by.iter().position(|g| g.expr == expr) {
+                return Expr::column(ColumnRef {
+                    name: group_by[slot].name.clone(),
+                    ordinal: slot,
+                    ty: c.ty.clone(),
+                    nullable: c.nullable,
+                });
+            }
+            expr
+        }
+        _ => map_expr_children(expr, &mut |child| remap_group_key_refs(child, group_by)),
+    }
+}
+
+/// Structural map over an expression's immediate child expressions, rebuilding
+/// the node with each child passed through `f`. Leaves (Column/Literal) are
+/// returned unchanged. Keeps recursive rewrites (e.g. [`remap_group_key_refs`])
+/// from having to enumerate every operator variant at each call site.
+fn map_expr_children(expr: Expr, f: &mut dyn FnMut(Expr) -> Expr) -> Expr {
+    match expr {
+        Expr::Column(_) | Expr::Literal { .. } => expr,
+        Expr::Cast { expr, ty } => Expr::Cast {
+            expr: Box::new(f(*expr)),
+            ty,
+        },
+        Expr::BinaryOp { op, left, right } => Expr::BinaryOp {
+            op,
+            left: Box::new(f(*left)),
+            right: Box::new(f(*right)),
+        },
+        Expr::UnaryOp { op, expr } => Expr::UnaryOp {
+            op,
+            expr: Box::new(f(*expr)),
+        },
+        Expr::IsNull { expr, not } => Expr::IsNull {
+            expr: Box::new(f(*expr)),
+            not,
+        },
+        Expr::Between {
+            expr,
+            low,
+            high,
+            not,
+        } => Expr::Between {
+            expr: Box::new(f(*expr)),
+            low: Box::new(f(*low)),
+            high: Box::new(f(*high)),
+            not,
+        },
+        Expr::In { expr, list, not } => Expr::In {
+            expr: Box::new(f(*expr)),
+            list: list.into_iter().map(&mut *f).collect(),
+            not,
+        },
+        Expr::Like {
+            expr,
+            pattern,
+            not,
+            case_insensitive,
+        } => Expr::Like {
+            expr: Box::new(f(*expr)),
+            pattern: Box::new(f(*pattern)),
+            not,
+            case_insensitive,
+        },
+        Expr::Case {
+            branches,
+            otherwise,
+        } => Expr::Case {
+            branches: branches.into_iter().map(|(w, t)| (f(w), f(t))).collect(),
+            otherwise: otherwise.map(|e| Box::new(f(*e))),
+        },
+        Expr::Coalesce(items) => Expr::Coalesce(items.into_iter().map(&mut *f).collect()),
+        Expr::NullIf { left, right } => Expr::NullIf {
+            left: Box::new(f(*left)),
+            right: Box::new(f(*right)),
+        },
+        Expr::FuncCall {
+            name,
+            args,
+            return_ty,
+        } => Expr::FuncCall {
+            name,
+            args: args.into_iter().map(&mut *f).collect(),
+            return_ty,
+        },
+    }
+}
+
 /// Build a [`Scope`] representing the columns visible AFTER an
 /// Aggregate node: group_by columns first (in declared order),
+/// followed by aggregate-result slots. Used to lower HAVING
+/// expressions over the post-aggregate schema.
 /// followed by aggregate-result slots. Used to lower HAVING
 /// expressions over the post-aggregate schema.
 fn post_aggregate_scope(group_by: &[NamedExpr], aggregates: &[NamedAggregate]) -> Scope {
@@ -2935,6 +3132,56 @@ mod tests {
     }
 
     #[test]
+    fn select_aggregate_arithmetic_hoists_nested_aggregates() {
+        // TD-REL-LOWER-4: an aggregate nested inside projection arithmetic
+        // (`sum(id) / sum(age)`, the ratio / market-share shape) must lower to
+        // a `Project(BinaryOp(Div, __agg_0, __agg_1))` over an `Aggregate` with
+        // TWO extracted aggregate slots — not decline with "aggregate function
+        // in non-aggregate position". Each hoisted ColumnRef names its slot
+        // (`__agg_<slot>`) at the post-aggregate ordinal so the planner's
+        // name-based projection-pushdown rebind resolves it.
+        let plan = lower("SELECT sum(id) / sum(age) FROM users");
+        let LogicalNode::Project { outputs, input } = plan else {
+            panic!("expected Project");
+        };
+        assert_eq!(outputs.len(), 1);
+        match &outputs[0].expr {
+            Expr::BinaryOp {
+                op: BinaryOp::Div,
+                left,
+                right,
+            } => {
+                match (&**left, &**right) {
+                    (Expr::Column(l), Expr::Column(r)) => {
+                        // Global aggregate (no GROUP BY): slots are ordinals 0,1.
+                        assert_eq!(l.ordinal, 0);
+                        assert_eq!(r.ordinal, 1);
+                        assert_eq!(l.name, "__agg_0");
+                        assert_eq!(r.name, "__agg_1");
+                    }
+                    other => panic!("expected two aggregate column refs, got {other:?}"),
+                }
+            }
+            other => panic!("expected BinaryOp(Div) over aggregates, got {other:?}"),
+        }
+        match *input {
+            LogicalNode::Aggregate {
+                group_by,
+                aggregates,
+                ..
+            } => {
+                assert_eq!(group_by.len(), 0, "no GROUP BY");
+                assert_eq!(aggregates.len(), 2, "both sums extracted to slots");
+                assert!(matches!(aggregates[0].agg, AggregateExpr::Sum { .. }));
+                assert!(matches!(aggregates[1].agg, AggregateExpr::Sum { .. }));
+                assert_eq!(aggregates[0].name, "__agg_0");
+                assert_eq!(aggregates[1].name, "__agg_1");
+            }
+            other => panic!("expected Aggregate, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn select_with_inner_join() {
         let plan = lower("SELECT users.id FROM users INNER JOIN orders ON users.id = orders.uid");
         match plan {
@@ -3192,9 +3439,21 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_in_scalar_position_is_rejected() {
-        // A bare aggregate name in scalar (non-GROUP-BY) position is still a misuse.
-        let err = lower_sql("SELECT sum(age) + 1 FROM users", &catalog()).unwrap_err();
+    fn aggregate_in_projection_arithmetic_lowers_but_unsupported_nesting_declines() {
+        // TD-REL-LOWER-4: an aggregate nested in projection ARITHMETIC is valid
+        // SQL (a global aggregate expression) and now lowers — previously it was
+        // rejected as "aggregate function in non-aggregate position".
+        let plan = lower_sql("SELECT sum(age) + 1 FROM users", &catalog());
+        assert!(plan.is_ok(), "sum(age) + 1 must lower: {plan:?}");
+
+        // But an aggregate nested inside a CASE / scalar function at the
+        // projection top level is not yet supported and must still decline
+        // (graceful fall-through to legacy), not silently mislower.
+        let err = lower_sql(
+            "SELECT case when sum(age) > 0 then 1 else 0 end FROM users",
+            &catalog(),
+        )
+        .unwrap_err();
         assert!(matches!(err, FrontendError::Unsupported(_)));
     }
 
