@@ -1626,8 +1626,18 @@ fn lower_projection_with_aggregates(
                 // isn't the table's first column.
                 let ty = expr.result_type();
                 let output_expr = match group_by.iter().position(|g| g.expr == expr) {
+                    // Reference the group-key slot by the AGGREGATE OUTPUT's
+                    // declared name (the group-by key's name), NOT the projection
+                    // ALIAS. The alias belongs only on the enclosing `NamedExpr`
+                    // (the Project renames the column); the inner `ColumnRef` must
+                    // name the slot it indexes so name-based rebind in
+                    // `push_projections` resolves it. With the alias on the inner
+                    // ref, `SELECT g AS a … ORDER BY a` produced a `ColumnRef`
+                    // named `a` over an Aggregate output named `g`, and the
+                    // planner rebind failed (`column 'a' not in narrowed schema`,
+                    // TD-REL-LOWER-3 q3/q52).
                     Some(slot) => Expr::column(ColumnRef {
-                        name: name.clone(),
+                        name: group_by[slot].name.clone(),
                         ordinal: slot,
                         ty,
                         nullable: true,
