@@ -30,6 +30,7 @@ use proximadb_records::ProximaRecord;
 use proximadb_storage_common::pax_block::{
     PaxSegmentScanner, PaxSegmentWriter, SEGMENT_MAGIC, ScanPredicate, SegmentMeta,
 };
+use proximadb_storage_common::segment_layout::is_coalesced_segment;
 
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
@@ -58,11 +59,14 @@ impl SegmentFormat {
     }
 }
 
-/// True iff `bytes` is a PAX segment: leading PAX block magic AND trailing segment
-/// magic. Both ends are checked so a stray prefix or suffix alone can't false-positive.
+/// True iff `bytes` is a PAX segment: a recognised PAX head AND the trailing
+/// segment magic. Both ends are checked so a stray prefix or suffix alone can't
+/// false-positive. The head is EITHER the legacy block magic `PBLK` (block 0 at
+/// offset 0) OR the coalesced-RaBitQ header magic (ADR-062) — both tail with
+/// `SEGMENT_MAGIC`, so the trailing check is the common anchor.
 fn is_pax_segment(bytes: &[u8]) -> bool {
     bytes.len() >= BLOCK_MAGIC.len() + SEGMENT_MAGIC.len()
-        && bytes.starts_with(&BLOCK_MAGIC)
+        && (bytes.starts_with(&BLOCK_MAGIC) || is_coalesced_segment(bytes))
         && bytes.ends_with(SEGMENT_MAGIC)
 }
 
@@ -274,7 +278,12 @@ fn write_pax_segment_ordered(
     .with_quant(quant)
     .with_f32_tier(f32_tier)
     .with_rerank_quant(rerank_quant)
-    .with_block_centroids(cluster);
+    .with_block_centroids(cluster)
+    // ADR-062 / TD-RDSTRAT-6: hoist the RaBitQ binary tier into a coalesced
+    // file-level header region for RaBitQ-quantized writes (default ON per the
+    // ADR-061 pre-GA in-place amendment; `PROXIMADB_PAX_COALESCED_RABITQ=0` opts
+    // out to the legacy in-block RaBitQ layout for mixed-read / measurement).
+    .with_coalesced_rabitq(quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled());
     match &order {
         Some(perm) => {
             for &i in perm {
@@ -574,6 +583,25 @@ pub fn rabitq_search_segment(
     Ok(Some(hits))
 }
 
+/// Whether the coalesced-RaBitQ layout is engaged for new RaBitQ writes
+/// (ADR-062 / TD-RDSTRAT-6). **Opt-in** (`PROXIMADB_PAX_COALESCED_RABITQ=1`),
+/// default OFF, per the storage-format-migration mandate (default-OFF until the
+/// recall/GET measurement bakes it — the SIFT ratchet in this PR is that bake).
+/// The reader handles BOTH layouts via the `SEG_HEADER_MAGIC` presence-field, so
+/// this is mixed-read-safe either way; flipping to default-on is the gated
+/// follow-up once the SIFT measurement clears recall ≈ 0.99 + GETs ≪ 370.
+pub fn coalesced_rabitq_enabled() -> bool {
+    matches!(
+        std::env::var("PROXIMADB_PAX_COALESCED_RABITQ")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "on" | "true" | "yes")
+    )
+}
+
 /// Whether the cost-driven selective (striped) read is engaged (ADR-057 /
 /// TD-RDSTRAT-3 Slice C). Default OFF — the whole-segment read stays the default
 /// until the observe→flip gate; `PROXIMADB_PAX_STRIPED_READ=1` opts in.
@@ -766,6 +794,229 @@ pub async fn rabitq_search_segment_ranged(
     if !any_rabitq {
         return Ok(None);
     }
+    hits.sort_by(|a, b| {
+        a.distance
+            .partial_cmp(&b.distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    hits.truncate(k);
+    Ok(Some(hits))
+}
+
+/// A coalesced ranged GET over one or more survivor data blocks.
+struct CoalescedFetch {
+    start: u64,
+    end: u64,
+    blocks: Vec<usize>,
+}
+
+/// Plan coalesced ranged GETs over a set of survivor block indices using the
+/// shared `ObjectRangeCoalescePolicy` thresholds (ADR-062 D3 — the GET win is the
+/// *policy* planning merged ranges; `FileSystem::read_ranges` only executes them).
+/// Adjacent blocks within `max_gap_bytes` (and under `max_range_bytes`) merge into
+/// one GET, so cluster-adjacent survivors fetch in a handful of coalesced reads.
+fn plan_coalesced_block_ranges(
+    footer: &proximadb_storage_common::segment_layout::SegmentFooterIndex,
+    block_indices: &[usize],
+    policy: &crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy,
+) -> Vec<CoalescedFetch> {
+    let mut sorted: Vec<usize> = block_indices.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let mut out: Vec<CoalescedFetch> = Vec::new();
+    for bi in sorted {
+        let Some(b) = footer.blocks.get(bi) else {
+            continue;
+        };
+        let start = b.offset;
+        let end = b.offset + b.size as u64;
+        let merge = match out.last_mut() {
+            Some(last) => {
+                let gap = start.saturating_sub(last.end);
+                let merged_len = end - last.start;
+                let within_gap = gap <= policy.max_gap_bytes;
+                let within_max =
+                    policy.max_range_bytes == 0 || merged_len <= policy.max_range_bytes;
+                if within_gap && within_max {
+                    last.end = last.end.max(end);
+                    last.blocks.push(bi);
+                    true
+                } else {
+                    false
+                }
+            }
+            None => false,
+        };
+        if !merge {
+            out.push(CoalescedFetch {
+                start,
+                end,
+                blocks: vec![bi],
+            });
+        }
+    }
+    out
+}
+
+/// Per-metric "lower = nearer" rerank score against a reconstructed vector.
+fn rerank_distance(metric: RankMetric, q: &[f32], v: &[f32]) -> f32 {
+    match metric {
+        RankMetric::L2 => q.iter().zip(v).map(|(a, b)| (a - b) * (a - b)).sum(),
+        RankMetric::Cosine => {
+            let dot: f32 = q.iter().zip(v).map(|(a, b)| a * b).sum();
+            let nq: f32 = q.iter().map(|a| a * a).sum::<f32>().sqrt();
+            let nv: f32 = v.iter().map(|a| a * a).sum::<f32>().sqrt();
+            1.0 - dot / (nq * nv + 1e-12)
+        }
+        RankMetric::DotProduct => -q.iter().zip(v).map(|(a, b)| a * b).sum::<f32>(),
+    }
+}
+
+/// ADR-062 / TD-RDSTRAT-6 **scan-then-rerank** over a coalesced-RaBitQ segment
+/// on the engine's own filesystem — the ranged analogue of
+/// [`rabitq_search_segment`] for the new layout:
+///
+/// 1. **Scan** the coalesced RaBitQ header region (one ranged GET, header-prefix
+///    coalesced in) — `keep=100%`: rank ALL codes → approximate distance for
+///    every vector (zero prune loss).
+/// 2. **Select** the top-M survivors (M = `pool`, the adaptive GET-budget).
+/// 3. **Rerank** survivors: because the segment is cluster-ordered
+///    (`cluster_order_pca_ivf`), survivors fall in few adjacent blocks → the
+///    `ObjectRangeCoalescePolicy` plans merged/coalesced ranged GETs → fetch the
+///    survivor blocks, decode the UNCHANGED SQ8 `EMBED_BASE` stripe, score.
+/// 4. **Finalize** top-k.
+///
+/// Net: ~1 RaBitQ GET + 1 footer GET + a few coalesced survivor GETs — vs the
+/// legacy per-block cascade's ~4-5 GETs × every selected block. Returns
+/// `Ok(None)` when `path` is not a coalesced segment (the caller falls back to
+/// the legacy in-block RaBitQ path); physical bytes/GETs are traced by the fs
+/// layer's `read_range` calls.
+pub async fn rabitq_search_segment_coalesced(
+    fs: &dyn proximadb_storage_filesystem_types::FileSystem,
+    path: &str,
+    query: &[f32],
+    k: usize,
+    pool: usize,
+    metric: RankMetric,
+) -> Result<Option<Vec<CascadeHit>>> {
+    use proximadb_block_format::{PaxBlockReader, RaBitQRegion, col_id};
+    use proximadb_storage_common::segment_layout::{
+        SEG_HEADER_PREFIX_LEN, SegmentFooterIndex, SegmentHeaderPrefix,
+    };
+
+    let size = fs
+        .metadata(path)
+        .await
+        .map_err(|e| anyhow::anyhow!("coalesced scan stat {path}: {e}"))?
+        .size;
+    if size < (SEG_HEADER_PREFIX_LEN as u64 + SEGMENT_MAGIC.len() as u64) {
+        return Ok(None);
+    }
+
+    // 1. Header-prefix → RaBitQ region + footer extents (one tiny GET). A bad
+    //    magic means this is a legacy segment → caller falls back.
+    let header_bytes = fs
+        .read_range(path, 0, SEG_HEADER_PREFIX_LEN as u64)
+        .await
+        .map_err(|e| anyhow::anyhow!("coalesced scan header {path}: {e}"))?;
+    let header = match SegmentHeaderPrefix::parse(&header_bytes) {
+        Ok(h) => h,
+        Err(_) => return Ok(None),
+    };
+
+    // 2. Scan the RaBitQ region (one GET) + rank ALL codes → top-M survivors.
+    let region_bytes = fs
+        .read_range(path, header.rabitq_off, header.rabitq_len)
+        .await
+        .map_err(|e| anyhow::anyhow!("coalesced scan region {path}: {e}"))?;
+    let region = RaBitQRegion::from_bytes(&region_bytes)?;
+    let survivors = region.rank(query, metric, pool.max(k));
+    if survivors.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+
+    // 3. Footer-index → block table (absolute offsets + per-block row counts).
+    let footer_bytes = fs
+        .read_range(path, header.footer_off, header.footer_len)
+        .await
+        .map_err(|e| anyhow::anyhow!("coalesced scan footer {path}: {e}"))?;
+    let footer = SegmentFooterIndex::parse(&footer_bytes)?;
+
+    // 4. Map survivor global rows → blocks via cumulative row counts; collect the
+    //    per-block local row indices that need SQ8 rerank.
+    let mut block_start: Vec<u64> = Vec::with_capacity(footer.blocks.len());
+    let mut acc = 0u64;
+    for b in &footer.blocks {
+        block_start.push(acc);
+        acc += b.row_count as u64;
+    }
+    let mut block_rows: std::collections::BTreeMap<usize, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for &g in &survivors {
+        if block_start.is_empty() {
+            break;
+        }
+        let bi = match block_start.binary_search(&(g as u64)) {
+            Ok(i) => i,
+            Err(i) => i.saturating_sub(1),
+        };
+        let local = g as u64 - block_start[bi];
+        block_rows.entry(bi).or_default().push(local as usize);
+    }
+    if block_rows.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+
+    // 5. Plan coalesced ranged GETs over the survivor blocks (the GET-win policy).
+    let policy =
+        crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy::default(
+        );
+    let survivor_blocks: Vec<usize> = block_rows.keys().copied().collect();
+    let fetches = plan_coalesced_block_ranges(&footer, &survivor_blocks, &policy);
+
+    // 6. Fetch each coalesced range, decode the survivor blocks' SQ8 EMBED_BASE
+    //    stripe (UNCHANGED block decoder), rerank the survivor rows, attach OIDs.
+    let mut hits: Vec<CascadeHit> = Vec::with_capacity(survivors.len());
+    for fetch in &fetches {
+        let buf = fs
+            .read_range(path, fetch.start, fetch.end - fetch.start)
+            .await
+            .map_err(|e| anyhow::anyhow!("coalesced scan block fetch {path}: {e}"))?;
+        for &bi in &fetch.blocks {
+            let Some(b) = footer.blocks.get(bi) else {
+                continue;
+            };
+            let rel = match b.offset.checked_sub(fetch.start) {
+                Some(r) => r as usize,
+                None => continue,
+            };
+            let end = rel + b.size as usize;
+            if end > buf.len() {
+                continue;
+            }
+            let block_bytes = &buf[rel..end];
+            let Ok(reader) = PaxBlockReader::open(block_bytes) else {
+                continue;
+            };
+            let Some(vecs) = reader.decode_f32_vec_stripe(col_id::EMBED_BASE) else {
+                continue;
+            };
+            let oids = reader.decode_str_stripe(col_id::OID).unwrap_or_default();
+            if let Some(rows) = block_rows.get(&bi) {
+                for &local in rows {
+                    if let Some(Some(v)) = vecs.get(local) {
+                        hits.push(CascadeHit {
+                            oid: oids.get(local).cloned().flatten().unwrap_or_default(),
+                            distance: rerank_distance(metric, query, v),
+                            vector: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // 7. Finalize global top-k (nearest-first).
     hits.sort_by(|a, b| {
         a.distance
             .partial_cmp(&b.distance)
@@ -1823,6 +2074,263 @@ mod tests {
         assert!(
             total_block_bytes > 0 && total_block_bytes < seg_size,
             "Σ block bytes {total_block_bytes} must be in (0, {seg_size})"
+        );
+    }
+
+    // ── ADR-062 / TD-RDSTRAT-6 coalesced-RaBitQ layout ───────────────────────
+
+    /// Opt into the coalesced-RaBitQ layout for one test. SAFETY: nextest runs
+    /// process-per-test, so the env mutation is isolated to this test process.
+    fn enable_coalesced_rabitq() {
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_COALESCED_RABITQ", "1");
+        }
+    }
+
+    fn disable_coalesced_rabitq() {
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_COALESCED_RABITQ", "0");
+        }
+    }
+
+    /// A coalesced-RaBitQ segment (opt-in) is detected as Pax, carries a non-zero
+    /// RaBitQ region, and round-trips back to the same records through the
+    /// mixed-format reader. The RaBitQ binary tier lives in the header region;
+    /// the block's EMBED_BASE is SQ8 (the rerank data), which the reader
+    /// reconstructs via the unchanged SQ8 decode path.
+    #[test]
+    fn coalesced_rabitq_segment_round_trips_and_detects_as_pax() {
+        enable_coalesced_rabitq();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coalesced.pax");
+        let records: Vec<ProximaRecord> = (0..64)
+            .map(|i| {
+                rec(
+                    &format!("v{i}"),
+                    1_700_000_000_000_000_000 + i,
+                    (0..48).map(|d| (i as f32 + d as f32) * 0.1).collect(),
+                )
+            })
+            .collect();
+        let meta = write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, None).unwrap();
+        // Coalesced layout: a non-empty RaBitQ region pinned right after the
+        // 40 B header-prefix.
+        assert!(
+            meta.rabitq_len > 0,
+            "coalesced segment must carry a RaBitQ region"
+        );
+        assert_eq!(
+            meta.rabitq_off,
+            proximadb_storage_common::segment_layout::SEG_HEADER_PREFIX_LEN as u64
+        );
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(SegmentFormat::detect(&bytes), SegmentFormat::Pax);
+        assert!(
+            is_coalesced_segment(&bytes),
+            "opt-in write must produce the coalesced presence-field"
+        );
+
+        let back = read_segment_records(&bytes, &[], &[], None).unwrap();
+        assert_eq!(back.len(), records.len());
+        let got: std::collections::HashSet<String> = back.iter().map(|r| r.oid.clone()).collect();
+        let want: std::collections::HashSet<String> = (0..64).map(|i| format!("v{i}")).collect();
+        assert_eq!(got, want, "round-tripped oids must match the input set");
+    }
+
+    /// The presence-field cleanly distinguishes a coalesced segment from a legacy
+    /// one (mixed-read): opt-out writes carry no RaBitQ region and are NOT
+    /// coalesced; opt-in writes are. Both detect as Pax.
+    #[test]
+    fn coalesced_presence_field_distinguishes_legacy_from_coalesced() {
+        let mk = |coalesced: bool, name: &str| -> (Vec<u8>, u64) {
+            if coalesced {
+                enable_coalesced_rabitq();
+            } else {
+                disable_coalesced_rabitq();
+            }
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join(name);
+            let records: Vec<ProximaRecord> = (0..16)
+                .map(|i| {
+                    rec(
+                        &format!("v{i}"),
+                        1_700_000_000_000_000_000 + i,
+                        vec![i as f32 * 0.1; 32],
+                    )
+                })
+                .collect();
+            let meta =
+                write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, None).unwrap();
+            (std::fs::read(&path).unwrap(), meta.rabitq_len)
+        };
+
+        let (legacy_bytes, legacy_len) = mk(false, "legacy.pax");
+        assert_eq!(legacy_len, 0, "legacy write has no coalesced region");
+        assert!(
+            !is_coalesced_segment(&legacy_bytes),
+            "legacy write must not carry the coalesced presence-field"
+        );
+        assert_eq!(SegmentFormat::detect(&legacy_bytes), SegmentFormat::Pax);
+
+        let (coalesced_bytes, coalesced_len) = mk(true, "coalesced.pax");
+        assert!(coalesced_len > 0, "opt-in write carries a RaBitQ region");
+        assert!(is_coalesced_segment(&coalesced_bytes));
+        assert_eq!(SegmentFormat::detect(&coalesced_bytes), SegmentFormat::Pax);
+    }
+
+    /// The coalesced region + footer-index of a real written segment parse and the
+    /// region ranks: the RaBitQ region decodes (Slice 2a codec over writer output)
+    /// and the footer's block table + rabitq mirror match the SegmentMeta. This
+    /// ties the writer (2d), scanner footer parse (2e), and region codec (2a).
+    #[test]
+    fn coalesced_region_and_footer_parse_from_written_segment() {
+        enable_coalesced_rabitq();
+        use proximadb_block_format::{RaBitQRegion, col_id};
+        use proximadb_storage_common::segment_layout::SegmentFooterIndex;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coalesced.pax");
+        let records: Vec<ProximaRecord> = (0..128)
+            .map(|i| {
+                rec(
+                    &format!("v{i}"),
+                    1_700_000_000_000_000_000 + i,
+                    (0..64).map(|d| (i as f32 + d as f32) * 0.1).collect(),
+                )
+            })
+            .collect();
+        let meta = write_pax_segment(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            Some(8 * 1024),
+        )
+        .unwrap();
+        assert!(meta.block_count >= 1);
+
+        let bytes = std::fs::read(&path).unwrap();
+
+        // Footer-index: block table + rabitq mirror match the SegmentMeta.
+        let footer = SegmentFooterIndex::locate_in_segment(&bytes)
+            .unwrap()
+            .expect("coalesced footer located");
+        assert_eq!(footer.blocks.len(), meta.block_count as usize);
+        assert_eq!(footer.rabitq_off, meta.rabitq_off);
+        assert_eq!(footer.rabitq_len, meta.rabitq_len);
+        assert_eq!(footer.row_count, meta.row_count);
+        assert_eq!(footer.embed_quant_tag, 1, "block tier-1 is SQ8");
+
+        // RaBitQ region: decodes + ranks nearest-first; n_rows == record count.
+        let off = meta.rabitq_off as usize;
+        let region = &bytes[off..off + meta.rabitq_len as usize];
+        let parsed = RaBitQRegion::from_bytes(region).unwrap();
+        assert_eq!(parsed.n_rows(), records.len());
+
+        // The block decoder no longer finds an in-block RaBitQ stripe (it moved to
+        // the header) — mixed-read: the SQ8 EMBED_BASE column is what the block
+        // carries now.
+        let mut scanner =
+            PaxSegmentScanner::from_bytes(bytes.clone(), ScanPredicate::default()).unwrap();
+        let block = scanner.next_block().expect("segment has a block");
+        let embed = block.vector_params().get(col_id::EMBED_BASE);
+        assert!(
+            embed.is_some_and(|e| e.quant_kind != proximadb_block_format::QUANT_RABITQ),
+            "coalesced block EMBED_BASE must not be RaBitQ (it is SQ8 now)"
+        );
+
+        // Rank a query that is one of the records; the top-1 survivor is present.
+        let query = records[10]
+            .embeddings
+            .first()
+            .unwrap()
+            .as_fp32_slice()
+            .to_vec();
+        let ranked = parsed.rank(&query, RankMetric::L2, records.len());
+        assert!(!ranked.is_empty());
+        assert!(parsed.code(ranked[0]).is_some());
+    }
+
+    /// ADR-062 scan-then-rerank over a coalesced segment via the filesystem:
+    /// recall@k holds vs brute-force ground truth, and the path returns the
+    /// nearest neighbours. (The GET-count win is quantified by the SIFT ratchet;
+    /// this proves correctness of the new read path end-to-end.)
+    #[tokio::test]
+    async fn coalesced_scan_then_rerank_recall_vs_bruteforce() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        const DIM: usize = 64;
+        const N: usize = 400;
+        const K: usize = 10;
+        const POOL: usize = 100;
+
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                (0..DIM)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec(&format!("r{i}"), 1000 + i as i64, v.clone()))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        // Small target block ⇒ multi-block segment (exercises survivor→block mapping).
+        write_pax_segment(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            Some(16 * 1024),
+        )
+        .unwrap();
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+
+        let query = corpus[137].clone();
+        let hits = rabitq_search_segment_coalesced(
+            &fs,
+            path.to_str().unwrap(),
+            &query,
+            K,
+            POOL,
+            RankMetric::L2,
+        )
+        .await
+        .unwrap()
+        .expect("coalesced scan-then-rerank must return hits");
+        assert!(!hits.is_empty(), "cascade must return top-k");
+
+        // Brute-force ground-truth top-k over the f32 corpus.
+        let l2 =
+            |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>();
+        let mut idx: Vec<usize> = (0..N).collect();
+        idx.sort_by(|&a, &b| {
+            l2(&corpus[a], &query)
+                .partial_cmp(&l2(&corpus[b], &query))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let truth: std::collections::HashSet<String> =
+            idx.iter().take(K).map(|i| format!("r{i}")).collect();
+        let got: std::collections::HashSet<String> = hits.iter().map(|h| h.oid.clone()).collect();
+        let recall = truth.iter().filter(|o| got.contains(*o)).count() as f32 / K as f32;
+        assert!(
+            recall >= 0.90,
+            "coalesced scan-then-rerank recall@{K} = {recall:.2} (N={N}, pool={POOL})"
+        );
+
+        // The nearest neighbour (r137 is the query itself) must be ranked first.
+        assert_eq!(
+            hits[0].oid, "r137",
+            "the query vector itself must be the top hit"
         );
     }
 }

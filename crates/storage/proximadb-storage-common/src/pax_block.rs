@@ -40,6 +40,7 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use anyhow::{Result, bail};
+use proximadb_block_format::coalesced_rabitq::{RABITQ_SEED_BASE, encode_region};
 use proximadb_block_format::{
     BlockCompression, BlockMode, BlockStats, BlockZoneSource, ColumnMeta, FlatRow, PaxBlockReader,
     PaxBlockWriter, RowGroupBlock, VectorQuant, col_id, header::fnv1a_hash,
@@ -48,6 +49,10 @@ use proximadb_records::{EmbeddingValues, ProximaRecord};
 use serde::{Deserialize, Serialize};
 
 use crate::engine_constants::{DEFAULT_TARGET_BLOCK_SIZE_BYTES, MAX_TARGET_BLOCK_SIZE_BYTES};
+use crate::segment_layout::{
+    FooterBlockEntry, SEG_HEADER_PREFIX_LEN, SEG_LAYOUT_VERSION, SegmentFooterIndex,
+    SegmentHeaderPrefix, StatsKind, is_coalesced_segment, segment_tail,
+};
 
 /// File extension for PAX segment files.
 pub const PAX_SEGMENT_EXT: &str = ".pax";
@@ -530,6 +535,18 @@ pub struct PaxSegmentWriter {
     /// Finalised per-block RMS radius (spread), 1:1 with `block_centroids`
     /// (`0.0` for a block with no Fp32 vector). Empty unless centroids opted in.
     block_radii: Vec<f32>,
+
+    /// ADR-062 / TD-RDSTRAT-6: emit the coalesced-RaBitQ layout — a file-level
+    /// header region (cluster-ordered, single segment centroid) + self-describing
+    /// footer-index — so the read path scans ALL RaBitQ codes in one GET
+    /// (keep=100%, ~0.99 recall) and reranks survivors via coalesced block GETs.
+    /// Default OFF; the flush path opts in for RaBitQ-quantized collections. When
+    /// on, data blocks are written as `VectorQuant::Sq8` (the survivor-rerank
+    /// data) — the unchanged SQ8 decode path reconstructs + reranks them.
+    coalesced_rabitq: bool,
+    /// Embedding-0 f32 vectors in cluster (add) order, buffered for the
+    /// segment-level RaBitQ region. Populated only when `coalesced_rabitq` is on.
+    rabitq_vectors: Vec<Option<Vec<f32>>>,
 }
 
 impl PaxSegmentWriter {
@@ -582,6 +599,8 @@ impl PaxSegmentWriter {
             cur_centroid_sumsq: 0.0,
             block_centroids: Vec::new(),
             block_radii: Vec::new(),
+            coalesced_rabitq: false,
+            rabitq_vectors: Vec::new(),
         }
     }
 
@@ -633,11 +652,30 @@ impl PaxSegmentWriter {
         self
     }
 
+    /// ADR-062 / TD-RDSTRAT-6: emit the coalesced-RaBitQ layout. When on, the
+    /// RaBitQ binary tier is hoisted into a coalesced file-level header region
+    /// (single segment centroid) and data blocks are written as SQ8 (the
+    /// survivor-rerank data); the read path scans the region in one GET and
+    /// reranks survivors via coalesced block GETs. Builder form mirroring
+    /// [`with_quant`]; rebuilds the (still-empty) current block writer so the SQ8
+    /// block encoding applies from the first record.
+    pub fn with_coalesced_rabitq(mut self, enabled: bool) -> Self {
+        self.coalesced_rabitq = enabled;
+        self.current_writer = self.fresh_block_writer();
+        self
+    }
+
     /// Build a fresh (empty) block writer carrying ALL of this segment's accumulated
     /// settings. Single source of truth so every builder AND every mid-segment block
     /// rotation re-applies the same config (quant, f32 tier, rerank quant, shred spec)
-    /// — no per-builder drift.
+    /// — no per-builder drift. In coalesced mode the block's tier-1 encoding is forced
+    /// to SQ8 (the RaBitQ binary tier lives in the header region, not the block).
     fn fresh_block_writer(&self) -> PaxBlockWriter {
+        let block_quant = if self.coalesced_rabitq {
+            VectorQuant::Sq8
+        } else {
+            self.quant
+        };
         PaxBlockWriter::new(
             self.mode,
             self.compression,
@@ -645,7 +683,7 @@ impl PaxSegmentWriter {
             self.schema_fingerprint,
             self.embedding_count,
         )
-        .with_quant(self.quant)
+        .with_quant(block_quant)
         .with_f32_tier(self.f32_tier)
         .with_rerank_quant(self.rerank_quant)
         .with_shred_spec(self.shred_spec.clone())
@@ -659,6 +697,16 @@ impl PaxSegmentWriter {
         self.row_count += 1;
         if self.compute_centroids {
             self.accumulate_centroid(record);
+        }
+        // ADR-062: buffer the embedding-0 f32 vector (in cluster/add order) for
+        // the segment-level RaBitQ region. The caller has already reordered
+        // records by `cluster_order_pca_ivf`, so this preserves survivor locality.
+        if self.coalesced_rabitq {
+            let v = record.embeddings.first().and_then(|e| match &e.values {
+                EmbeddingValues::Fp32(v) => Some(v.clone()),
+                _ => None,
+            });
+            self.rabitq_vectors.push(v);
         }
 
         // Rough size estimate: each record contributes ~1 KB in the worst case.
@@ -775,8 +823,10 @@ impl PaxSegmentWriter {
         Ok(())
     }
 
-    /// Finalise the segment: flush remaining records, write index + magic, and
-    /// persist to `self.path`. Returns `SegmentMeta` for Iceberg manifest use.
+    /// Finalise the segment: flush remaining records, then either append the
+    /// legacy `[blocks][index][magic]` tail or — when coalesced-RaBitQ is on —
+    /// assemble the ADR-062 layout `[header][RaBitQ region][blocks][footer][tail]`.
+    /// Persists to `self.path`; returns `SegmentMeta` for Iceberg manifest use.
     pub fn finish(mut self) -> Result<SegmentMeta> {
         // Flush any remaining rows as the last block
         self.flush_current_block()?;
@@ -785,30 +835,139 @@ impl PaxSegmentWriter {
             bail!("segment is empty — nothing to write");
         }
 
+        // Coalesced-RaBitQ requires embedding-0 f32 vectors to build the region.
+        // If there are none (a non-vector or malformed batch), fall through to the
+        // legacy layout rather than failing the flush — mixed-read-safe.
+        let coalesced_dim = self
+            .rabitq_vectors
+            .iter()
+            .flatten()
+            .next()
+            .map(|v| v.len())
+            .unwrap_or(0) as u32;
+
+        if self.coalesced_rabitq && coalesced_dim > 0 {
+            self.finish_coalesced(coalesced_dim)
+        } else {
+            self.finish_legacy()
+        }
+    }
+
+    /// Legacy `[blocks][SegmentIndex][SEGMENT_MAGIC]` layout (readability-preserving
+    /// fallback for non-coalesced writes — the reader detects it via the `PBLK`
+    /// head + `PAXSEG01` tail).
+    fn finish_legacy(&mut self) -> Result<SegmentMeta> {
         // Append segment index
         let index_bytes = self.index.to_bytes();
         self.file_buf.extend_from_slice(&index_bytes);
         // Append magic
         self.file_buf.extend_from_slice(SEGMENT_MAGIC);
 
-        let total_bytes = self.file_buf.len() as u64;
+        let total_bytes = self.write_file(&self.file_buf)?;
+        Ok(SegmentMeta {
+            path: self.path.clone(),
+            size_bytes: total_bytes,
+            block_count: self.index.blocks.len() as u32,
+            row_count: self.row_count,
+            block_stats: std::mem::take(&mut self.block_stats),
+            block_centroids: std::mem::take(&mut self.block_centroids),
+            block_radii: std::mem::take(&mut self.block_radii),
+            rabitq_off: 0,
+            rabitq_len: 0,
+        })
+    }
 
-        // Persist to disk
+    /// ADR-062 / TD-RDSTRAT-6 coalesced layout: `[HEADER-PREFIX][RaBitQ region]
+    /// [blocks][FOOTER-INDEX][footer_len][SEGMENT_MAGIC]`. The RaBitQ region is
+    /// one ranged GET (keep=100% scan); the footer-index block table carries
+    /// absolute offsets so the read path maps survivors → blocks → coalesced GETs.
+    fn finish_coalesced(&mut self, dim: u32) -> Result<SegmentMeta> {
+        // 1. Build the coalesced RaBitQ region (single segment centroid) over the
+        //    cluster-ordered embedding-0 vectors. `self.file_buf` already holds the
+        //    blocks at 0-based offsets (relative to the blocks region).
+        let refs: Vec<Option<&[f32]>> = self.rabitq_vectors.iter().map(|o| o.as_deref()).collect();
+        let seed = RABITQ_SEED_BASE ^ (col_id::EMBED_BASE as u64);
+        let (region_bytes, _centroid) = encode_region(&refs, dim, seed)?;
+
+        let header_len = SEG_HEADER_PREFIX_LEN as u64;
+        let rabitq_off = header_len;
+        let rabitq_len = region_bytes.len() as u64;
+        // Blocks begin right after the header + region.
+        let data_offset = header_len + rabitq_len;
+
+        // 2. Footer block table: absolute offsets = data_offset + block's 0-based
+        //    offset; row_count from the block's zone summary (1:1 with the index).
+        let blocks: Vec<FooterBlockEntry> = self
+            .index
+            .blocks
+            .iter()
+            .map(|b| FooterBlockEntry {
+                offset: data_offset + b.offset,
+                size: b.size,
+                row_count: b.zone.as_ref().map(|z| z.row_count).unwrap_or(0),
+                stats_kind: StatsKind::None,
+            })
+            .collect();
+
+        // 3. Footer-index body + header-prefix offsets. The footer sits after the
+        //    blocks; its length is known once serialized.
+        let footer = SegmentFooterIndex {
+            row_count: self.row_count,
+            rabitq_off,
+            rabitq_len,
+            embed_dim: dim,
+            embed_count: self.embedding_count as u32,
+            embed_quant_tag: 1, // SQ8 (the survivor-rerank data tier)
+            has_f32_tier: false,
+            blocks,
+        };
+        let footer_body = footer.to_bytes();
+        let footer_off = data_offset + self.file_buf.len() as u64;
+        let footer_len = footer_body.len() as u64;
+
+        let header = SegmentHeaderPrefix {
+            layout_version: SEG_LAYOUT_VERSION,
+            rabitq_off,
+            rabitq_len,
+            footer_off,
+            footer_len,
+        };
+
+        // 4. Assemble: header + region + blocks + [footer][footer_len][magic].
+        let mut out = Vec::with_capacity(
+            SEG_HEADER_PREFIX_LEN
+                + region_bytes.len()
+                + self.file_buf.len()
+                + footer_body.len()
+                + 16,
+        );
+        out.extend_from_slice(&header.to_bytes());
+        out.extend_from_slice(&region_bytes);
+        out.extend_from_slice(&self.file_buf);
+        out.extend(segment_tail(&footer_body));
+
+        let total_bytes = self.write_file(&out)?;
+        Ok(SegmentMeta {
+            path: self.path.clone(),
+            size_bytes: total_bytes,
+            block_count: self.index.blocks.len() as u32,
+            row_count: self.row_count,
+            block_stats: std::mem::take(&mut self.block_stats),
+            block_centroids: std::mem::take(&mut self.block_centroids),
+            block_radii: std::mem::take(&mut self.block_radii),
+            rabitq_off,
+            rabitq_len,
+        })
+    }
+
+    /// Create the parent dir + write `buf` to `self.path`; returns bytes written.
+    fn write_file(&self, buf: &[u8]) -> Result<u64> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let mut f = std::fs::File::create(&self.path)?;
-        f.write_all(&self.file_buf)?;
-
-        Ok(SegmentMeta {
-            path: self.path,
-            size_bytes: total_bytes,
-            block_count: self.index.blocks.len() as u32,
-            row_count: self.row_count,
-            block_stats: self.block_stats,
-            block_centroids: self.block_centroids,
-            block_radii: self.block_radii,
-        })
+        f.write_all(buf)?;
+        Ok(buf.len() as u64)
     }
 
     /// Test-only: finish writing a **legacy v1** segment (segment index without
@@ -838,6 +997,8 @@ impl PaxSegmentWriter {
             block_stats: self.block_stats,
             block_centroids: self.block_centroids,
             block_radii: self.block_radii,
+            rabitq_off: 0,
+            rabitq_len: 0,
         })
     }
 }
@@ -899,21 +1060,23 @@ impl PaxSegmentScanner {
     }
 
     /// Parse from an in-memory byte slice (useful for WAL replay / testing).
+    ///
+    /// Mixed-read-safe (ADR-061 amendment): a coalesced-RaBitQ segment
+    /// (`SEG_HEADER_MAGIC` head) is parsed from its self-describing footer-index
+    /// (the block table there carries absolute offsets); a legacy segment
+    /// (`PBLK` head) keeps using `SegmentIndex::locate`. Both feed `next_block`
+    /// the same `SegmentIndex` shape.
     pub fn from_bytes(data: Vec<u8>, predicate: ScanPredicate) -> Result<Self> {
-        // Validate magic
+        // Validate magic (both layouts tail with SEGMENT_MAGIC).
         if data.len() < 8 || &data[data.len() - 8..] != SEGMENT_MAGIC {
             bail!("not a valid PAX segment file (bad magic)");
         }
-        // The index sits between the blocks and the magic.
-        // We don't know the index size without reading block_count first.
-        // Strategy: read block_count from (len - 8 - 4 - ...). We need to
-        // scan backwards. The index format is: [n u32][entries: n×12][crc32 u32].
-        // Minimum index size = 4 + 0 + 4 = 8 bytes.
-        // We try increasing index sizes until CRC matches.
-        let magic_start = data.len() - 8;
-        // Try to find the index by reading block_count at various positions
-        // (binary search would be ideal, but CRC validation is cheap enough).
-        let index = Self::parse_index(&data[..magic_start])?;
+        let index = if is_coalesced_segment(&data) {
+            Self::parse_coalesced_index(&data)?
+        } else {
+            let magic_start = data.len() - 8;
+            Self::parse_index(&data[..magic_start])?
+        };
 
         Ok(Self {
             data,
@@ -925,6 +1088,25 @@ impl PaxSegmentScanner {
 
     fn parse_index(before_magic: &[u8]) -> Result<SegmentIndex> {
         SegmentIndex::locate(before_magic)
+    }
+
+    /// Build the block list for a coalesced-RaBitQ segment from its footer-index.
+    /// The footer block table carries absolute offsets + row counts; we mirror
+    /// them into a `SegmentIndex` (with a row-count-only zone summary) so the
+    /// shared `next_block` / `read_records` paths work unchanged.
+    fn parse_coalesced_index(data: &[u8]) -> Result<SegmentIndex> {
+        let footer = SegmentFooterIndex::locate_in_segment(data)?
+            .ok_or_else(|| anyhow::anyhow!("coalesced segment missing footer-index"))?;
+        let blocks = footer
+            .blocks
+            .iter()
+            .map(|b| BlockIndexEntry {
+                offset: b.offset,
+                size: b.size,
+                zone: Some(BlockZoneSummary::empty(b.row_count)),
+            })
+            .collect();
+        Ok(SegmentIndex { blocks })
     }
 
     /// Yield the next block that passes predicate pruning.

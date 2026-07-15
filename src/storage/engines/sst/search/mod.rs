@@ -365,6 +365,50 @@ impl SstEngine {
             .map_err(|e| anyhow::anyhow!("opening PAX segment {sstable_path}: {e}"))?;
         let pool = Self::pax_rabitq_pool_for_top_k(k);
 
+        // ADR-062 / TD-RDSTRAT-6: a coalesced-RaBitQ segment takes the
+        // scan-then-rerank path — one RaBitQ-region GET (keep=100% rank) + one
+        // footer GET + a few coalesced survivor-block GETs. Detected by the 4 B
+        // `SEG_HEADER_MAGIC` head; a legacy segment (PBLK head) falls through to
+        // the in-block RaBitQ cascade below (mixed-read). Any I/O error / `None`
+        // also falls through (safe degradation, never an incorrect result).
+        {
+            use crate::storage::engines::sst::segment_format::rabitq_search_segment_coalesced;
+            use proximadb_storage_common::segment_layout::is_coalesced_segment;
+            if let Ok(prefix) = fs.read_range(sstable_path, 0, 4).await
+                && is_coalesced_segment(&prefix)
+            {
+                // `?` can't live in a let-chain condition, so bind the result first.
+                let coalesced_hits = rabitq_search_segment_coalesced(
+                    fs.as_ref(),
+                    sstable_path,
+                    query_vector,
+                    k,
+                    pool,
+                    rank_metric,
+                )
+                .await?;
+                if let Some(hits) = coalesced_hits {
+                    let records = hits
+                        .into_iter()
+                        .map(|h| {
+                            let mut r = OptimizedSearchRecord::new(
+                                h.oid,
+                                OptimizedSearchRecord::standardized_distance_to_similarity(
+                                    h.distance,
+                                    &distance_metric,
+                                ),
+                            );
+                            if let Some(v) = h.vector {
+                                r = r.add_vector(v);
+                            }
+                            r
+                        })
+                        .collect();
+                    return Ok(Some(records));
+                }
+            }
+        }
+
         // Decide whole vs selective (striped) read (ADR-057 / TD-RDSTRAT-3). Only
         // unfiltered queries are eligible for the striped path (metadata pruning
         // over the ranged reader is a follow-up). Precedence:
