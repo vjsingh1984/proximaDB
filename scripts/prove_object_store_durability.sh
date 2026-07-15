@@ -6,15 +6,16 @@
 set -euo pipefail
 
 if [[ -z "${PROXIMADB_OBJECT_STORE_URL:-}" ]]; then
-  echo "PROXIMADB_OBJECT_STORE_URL is required (s3://bucket/prefix or adls://container/prefix)" >&2
+  echo "PROXIMADB_OBJECT_STORE_URL is required (s3://, adls://, gs://, or gcs:// prefix)" >&2
   exit 2
 fi
 
 case "${PROXIMADB_OBJECT_STORE_URL}" in
   s3://*) feature=aws ;;
   adls://*) feature=azure ;;
+  gs://*|gcs://*) feature=gcp ;;
   *)
-    echo "unsupported proof URL: ${PROXIMADB_OBJECT_STORE_URL} (expected s3:// or adls://)" >&2
+    echo "unsupported proof URL: ${PROXIMADB_OBJECT_STORE_URL} (expected s3://, adls://, gs://, or gcs://)" >&2
     exit 2
     ;;
 esac

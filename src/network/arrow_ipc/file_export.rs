@@ -719,6 +719,59 @@ impl ArrowFileExportHandler {
         self.sst_cache.stats()
     }
 
+    /// Resolve a client-supplied export path within the selected collection.
+    ///
+    /// Both paths are canonicalized so `..` components and symlinks cannot
+    /// escape the collection's data directory.
+    pub fn resolve_collection_file(
+        &self,
+        collection: &Collection,
+        file_path: &str,
+    ) -> Result<PathBuf> {
+        let requested = Path::new(file_path)
+            .canonicalize()
+            .context("requested export file is unavailable")?;
+
+        if !requested.is_file()
+            || ExportFileFormat::from_path(requested.to_string_lossy().as_ref()).is_none()
+        {
+            anyhow::bail!("requested export file is unavailable");
+        }
+
+        for base_url in &self.storage_locations {
+            let data_path = StoragePath::collection_data_path(base_url, &collection.id);
+            let local_path = if let Some(path) = data_path.strip_prefix("file://") {
+                PathBuf::from(path)
+            } else if data_path.contains("://") {
+                continue;
+            } else {
+                PathBuf::from(data_path)
+            };
+
+            let Ok(collection_root) = local_path.canonicalize() else {
+                continue;
+            };
+            if requested.starts_with(collection_root) {
+                return Ok(requested);
+            }
+        }
+
+        anyhow::bail!("requested export file is outside collection storage")
+    }
+
+    /// Read a supported export file after binding it to its collection.
+    pub fn read_collection_file(
+        &self,
+        collection: &Collection,
+        file_path: &str,
+    ) -> Result<Vec<RecordBatch>> {
+        let authorized_path = self.resolve_collection_file(collection, file_path)?;
+        let authorized_path = authorized_path
+            .to_str()
+            .context("requested export file path is not valid UTF-8")?;
+        self.read_arrow_file(authorized_path)
+    }
+
     /// List available .arrow and .parquet files for a collection
     ///
     /// This method searches for both Arrow IPC files (.arrow) and Parquet files (.parquet)
@@ -1081,7 +1134,7 @@ impl ArrowFileExportHandler {
     ///
     /// Automatically detects file format based on extension and uses the
     /// appropriate reader (Arrow IPC, Parquet, or ProximaBlocks SST).
-    pub fn read_arrow_file(&self, file_path: &str) -> Result<Vec<RecordBatch>> {
+    fn read_arrow_file(&self, file_path: &str) -> Result<Vec<RecordBatch>> {
         let format = ExportFileFormat::from_path(file_path)
             .ok_or_else(|| anyhow::anyhow!("Unsupported file format: {}", file_path))?;
 
@@ -1499,6 +1552,72 @@ impl ArrowFileExportHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn collection(id: &str) -> Collection {
+        Collection {
+            id: id.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn collection_file_authority_accepts_listed_collection_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let base_url = format!("file://{}", temp.path().display());
+        let root = temp.path().join("owned").join("data");
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("segment.arrow");
+        fs::write(&file, b"fixture").unwrap();
+        let handler = ArrowFileExportHandler::new(vec![base_url]);
+
+        assert_eq!(
+            handler
+                .resolve_collection_file(&collection("owned"), file.to_str().unwrap())
+                .unwrap(),
+            file.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn collection_file_authority_rejects_cross_collection_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let base_url = format!("file://{}", temp.path().display());
+        let other_root = temp.path().join("other").join("data");
+        fs::create_dir_all(&other_root).unwrap();
+        let file = other_root.join("segment.parquet");
+        fs::write(&file, b"fixture").unwrap();
+        let handler = ArrowFileExportHandler::new(vec![base_url]);
+
+        let error = handler
+            .resolve_collection_file(&collection("owned"), file.to_str().unwrap())
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "requested export file is outside collection storage"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collection_file_authority_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let base_url = format!("file://{}", temp.path().display());
+        let root = temp.path().join("owned").join("data");
+        fs::create_dir_all(&root).unwrap();
+        let outside = temp.path().join("outside.sst");
+        fs::write(&outside, b"fixture").unwrap();
+        let link = root.join("segment.sst");
+        symlink(&outside, &link).unwrap();
+        let handler = ArrowFileExportHandler::new(vec![base_url]);
+
+        assert!(
+            handler
+                .resolve_collection_file(&collection("owned"), link.to_str().unwrap())
+                .is_err()
+        );
+    }
 
     #[test]
     fn test_export_file_format() {

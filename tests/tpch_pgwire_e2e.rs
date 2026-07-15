@@ -252,21 +252,13 @@ async fn tpch_pgwire_conformance_inner() {
     }
     eprintln!("✓ materialize: {materialized}/{} tables", SCHEMA.len());
 
-    // 4. Run the 22 TPC-H queries one by one; record pass/fail.
-    // Known pre-existing crashes (stack overflow in the planner's correlated-
-    // subquery handling — NOT caused by the native engine) are skipped so the
-    // remaining queries can execute. Confirmed by running WITHOUT native ON.
-    let skip: &[&str] = &["Q2"];
+    // 4. Run the 22 TPC-H queries one by one; record pass/fail. Deep plans such
+    // as Q2 are protected by the planner/executor stack-growth contract and must
+    // execute; skipped queries never satisfy the conformance ratchet.
     let queries = tpch_queries();
     let mut passed = Vec::new();
     let mut failed = Vec::new();
-    let mut skipped = Vec::new();
     for (id, sql) in &queries {
-        if skip.contains(id) {
-            eprintln!("  ⊘ {id}: SKIP (known pre-existing crash)");
-            skipped.push(*id);
-            continue;
-        }
         // Trace BEFORE execution: a stack overflow / panic during simple_query
         // aborts the process (the match below never runs), so the LAST line
         // printed identifies the culprit query + its SQL. Run with --nocapture.
@@ -284,16 +276,12 @@ async fn tpch_pgwire_conformance_inner() {
     }
 
     eprintln!(
-        "\n=== TPC-H pgwire conformance: {}/{} passed, {} skipped, {} failed (ratchet {}) ===",
+        "\n=== TPC-H pgwire conformance: {}/{} passed, {} failed (ratchet {}) ===",
         passed.len(),
         queries.len(),
-        skipped.len(),
         failed.len(),
         TPCH_RATCHET
     );
-    if !skipped.is_empty() {
-        eprintln!("skipped (known pre-existing): {skipped:?}");
-    }
     if !failed.is_empty() {
         eprintln!("failing:");
         for (id, err) in &failed {
@@ -302,7 +290,7 @@ async fn tpch_pgwire_conformance_inner() {
     }
 
     assert!(
-        passed.len() + skipped.len() >= TPCH_RATCHET,
+        passed.len() >= TPCH_RATCHET,
         "TPC-H conformance regressed: {} passed < ratchet {}",
         passed.len(),
         TPCH_RATCHET
