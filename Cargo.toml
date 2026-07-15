@@ -55,8 +55,8 @@ members = [
     "crates/control/proximadb-metrics",
     "crates/horizontal/proximadb-codec",
     "crates/horizontal/proximadb-compression",
-    "crates/horizontal/proximadb-embedded-common",
-    "crates/horizontal/proximadb-embedded",
+    "crates/binding/proximadb-embedded-common",
+    "crates/binding/proximadb-embedded",
     "crates/horizontal/proximadb-recall-bench",
     "crates/horizontal/proximadb-runtime-common",
     "crates/horizontal/proximadb-serialization",
@@ -344,7 +344,7 @@ proximadb-mcp = { path = "crates/platform/proximadb-mcp" }
 proximadb-runtime = { path = "crates/platform/proximadb-runtime" }
 proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
-proximadb-embedded-common = { path = "crates/horizontal/proximadb-embedded-common" }
+proximadb-embedded-common = { path = "crates/binding/proximadb-embedded-common" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
 proximadb-security = { path = "crates/horizontal/proximadb-security" }
@@ -647,7 +647,7 @@ httpmock = "0.7"
 serde_yaml = "0.9"
 # Test-only: integration tests use EmbeddedProximaDB from the embedded crate.
 # Dev-deps don't create build cycles (test-mode only).
-proximadb-embedded = { path = "crates/horizontal/proximadb-embedded" }
+proximadb-embedded = { path = "crates/binding/proximadb-embedded" }
 
 [features]
 # Default feature set as of 2026-05-26 (ADR-020 Tier 2.2 / TD-065 default-enable).
@@ -829,7 +829,7 @@ debug-filters = []  # Enable debug filtering for search operations
 experimental-cdc-connectors = ["dep:tokio-postgres"]
 
 # ============================================================================
-# EMBEDDED features moved to the proximadb-embedded crate (crates/horizontal/proximadb-embedded).
+# EMBEDDED features moved to the proximadb-embedded crate (crates/binding/proximadb-embedded).
 c_ffi = []  # Stub — the C-FFI bindings live in proximadb-embedded; kept here for the duckdb connector cfg.
 # The server binary no longer compiles language bindings (Python/Java/Node.js/C-FFI).
 

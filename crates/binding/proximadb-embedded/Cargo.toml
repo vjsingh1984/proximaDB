@@ -16,7 +16,7 @@ path = "src/lib.rs"
 [dependencies]
 # Depends on the root proximadb library (one-directional: embedded -> root, no cycle).
 proximadb = { path = "../../.." }
-proximadb-embedded-common = { path = "../proximadb-embedded-common" }
+proximadb-embedded-common = { path = "../../horizontal/proximadb-embedded-common" }
 anyhow.workspace = true
 serde.workspace = true
 tokio.workspace = true
