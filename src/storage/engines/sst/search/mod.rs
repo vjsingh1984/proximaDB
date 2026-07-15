@@ -371,11 +371,17 @@ impl SstEngine {
         // `SEG_HEADER_MAGIC` head; a legacy segment (PBLK head) falls through to
         // the in-block RaBitQ cascade below (mixed-read). Any I/O error / `None`
         // also falls through (safe degradation, never an incorrect result).
+        //
+        // UNFILTERED only: the coalesced scan ranks by vector distance and does
+        // not apply `filter_expression`, so a filtered query is routed past it to
+        // the exact materialize-and-rank path (which applies the filter) below —
+        // matching the ranged cascade's "unfiltered only" contract.
         {
             use crate::storage::engines::sst::segment_format::rabitq_search_segment_coalesced;
             use proximadb_storage_common::segment_layout::is_coalesced_segment;
             if let Ok(prefix) = fs.read_range(sstable_path, 0, 4).await
                 && is_coalesced_segment(&prefix)
+                && filter_expression.is_none()
             {
                 // `?` can't live in a let-chain condition, so bind the result first.
                 let coalesced_hits = rabitq_search_segment_coalesced(
