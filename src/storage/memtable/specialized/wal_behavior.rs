@@ -837,6 +837,15 @@ impl WALBehaviorWrapper {
         Ok(vectors)
     }
 
+    /// Return every physical unflushed record, including tombstones, expired
+    /// rows, and superseded versions. Intended for cross-source reconciliation.
+    pub async fn get_collection_vectors_raw(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<ProximaRecord>> {
+        self.inner.get_collection_vectors_raw(collection_id).await
+    }
+
     /// Paginated, deduped, time-ordered scan of a collection's unflushed records
     /// (TD-099(3d) push-down). Returns up to `limit` records with canonical key
     /// `(updated_at_ns, oid)` strictly greater than `after`, in ascending order,

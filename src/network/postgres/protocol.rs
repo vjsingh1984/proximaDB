@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use anyhow::{Context, Result, anyhow};
 use bytes::{Buf, BufMut, BytesMut};
@@ -19,7 +20,7 @@ use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use super::session::Session;
+use super::session::{Session, SessionManager};
 use super::translator::QueryTranslator;
 use super::types::{FieldDescription, PgType};
 use crate::catalog::CatalogManager;
@@ -47,6 +48,9 @@ pub struct PostgresProtocol {
     stream: TcpStream,
     /// Session state
     session: Arc<RwLock<Session>>,
+    /// Shared registry used to resolve PostgreSQL CancelRequest backend keys.
+    session_manager: Option<Arc<SessionManager>>,
+    cancel_request_processed: bool,
     /// Collection service
     collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     /// Vector operations service for search
@@ -99,6 +103,13 @@ pub struct PostgresProtocol {
     /// result set, flushed to the meter (direction=result) at CommandComplete /
     /// PortalSuspended. Zero on the free path / non-row commands.
     result_bytes_pending: u64,
+    /// TD-TENANT-1: the deployment's bare tenant-assertion trust policy. On
+    /// pgwire there is NO authenticated binding (trust auth), so a startup
+    /// `database` (== tenant/catalog, TD-064) or `SET proximadb.write.tenant_id`
+    /// naming a non-default tenant is a bare assertion by definition — strict
+    /// policies reject it at the assertion point (SQLSTATE 28000) through the
+    /// same shared primitive REST/gRPC/Arrow Flight use. Default `Open`.
+    tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
 }
 
 /// Slice 6.3 gate-input bundle. Distinct type per surface for module
@@ -391,6 +402,8 @@ impl PostgresProtocol {
         Self {
             stream,
             session: Arc::new(RwLock::new(session)),
+            session_manager: None,
+            cancel_request_processed: false,
             collection_port,
             vector_ops,
             translator: QueryTranslator::new(),
@@ -409,7 +422,13 @@ impl PostgresProtocol {
             rate_limiter: None,
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
+            tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
         }
+    }
+
+    pub fn with_session_manager(mut self, manager: Arc<SessionManager>) -> Self {
+        self.session_manager = Some(manager);
+        self
     }
 
     /// Attach a shared per-IP rate limiter (and this connection's peer IP) so the
@@ -439,6 +458,8 @@ impl PostgresProtocol {
         Self {
             stream,
             session: Arc::new(RwLock::new(session)),
+            session_manager: None,
+            cancel_request_processed: false,
             collection_port,
             vector_ops,
             translator: QueryTranslator::new(),
@@ -457,6 +478,7 @@ impl PostgresProtocol {
             rate_limiter: None,
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
+            tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
         }
     }
 
@@ -484,6 +506,8 @@ impl PostgresProtocol {
         Self {
             stream,
             session: Arc::new(RwLock::new(session)),
+            session_manager: None,
+            cancel_request_processed: false,
             collection_port,
             vector_ops,
             translator: QueryTranslator::new(),
@@ -502,6 +526,7 @@ impl PostgresProtocol {
             rate_limiter: None,
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
+            tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
         }
     }
 
@@ -520,6 +545,58 @@ impl PostgresProtocol {
             registry,
             self_pod_id,
         });
+        self
+    }
+
+    /// TD-TENANT-1: set the deployment's bare tenant-assertion trust policy —
+    /// the same `HeaderTrustPolicy` REST/gRPC/Arrow Flight enforce.
+    pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
+        self.tenant_header_trust = policy;
+        self
+    }
+
+    /// TD-TENANT-1: gate a pgwire tenant assertion (startup `database` or the
+    /// tenant session var) through the shared trust primitive. pgwire has no
+    /// authenticated binding (trust auth), so the binding is always `None`;
+    /// the ONE canonical default tenant does not count as an assertion.
+    /// Returns the audit-logged error message to send when rejected.
+    fn check_pgwire_tenant_assertion(&self, asserted: &str) -> std::result::Result<(), String> {
+        use proximadb_tenant::identity_trust::resolve_tenant_assertion;
+
+        let asserted = asserted.trim();
+        if asserted.is_empty() || asserted == proximadb_tenant::DEFAULT_TENANT {
+            return Ok(());
+        }
+        match resolve_tenant_assertion(Some(asserted), None, self.tenant_header_trust) {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                warn!(
+                    target: "proximadb::tenant_audit",
+                    surface = "pgwire",
+                    policy = %self.tenant_header_trust,
+                    %error,
+                    "rejected bare pgwire tenant assertion"
+                );
+                Err(error.to_string())
+            }
+        }
+    }
+
+    /// Attach the durable partition-lease authority to this connection's DDL
+    /// service after rank/materializer decoration has finished.
+    pub fn with_ddl_lease_manager(
+        mut self,
+        manager: Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
+        registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+        self_pod_id: String,
+    ) -> Self {
+        if let Some(ddl) = self.ddl_service.as_mut().and_then(Arc::get_mut) {
+            ddl.set_write_lease_authority(manager, registry, self_pod_id);
+        } else {
+            tracing::error!(
+                "pgwire DDL lease authority could not be attached to the per-connection service"
+            );
+        }
         self
     }
 
@@ -633,6 +710,9 @@ impl PostgresProtocol {
     pub async fn run(&mut self) -> Result<()> {
         // Handle startup
         self.handle_startup().await?;
+        if self.cancel_request_processed {
+            return Ok(());
+        }
 
         // Main loop
         loop {
@@ -700,14 +780,35 @@ impl PostgresProtocol {
 
         // Check for cancel request
         if version == 80877102 {
-            // Cancel request - not implemented
-            return Err(anyhow!("Cancel request not supported"));
+            if length != 16 {
+                return Err(anyhow!("Invalid cancel request length"));
+            }
+            let process_id = self.read_i32().await? as u32;
+            let secret_key = self.read_i32().await? as u32;
+            let cancelled = match &self.session_manager {
+                Some(manager) => manager.cancel_query(process_id, secret_key).await,
+                None => false,
+            };
+            debug!(process_id, cancelled, "Processed PostgreSQL CancelRequest");
+            self.cancel_request_processed = true;
+            return Ok(());
         }
 
         // Read startup parameters
         let param_len = length - 8;
         let params = self.read_bytes(param_len).await?;
         let params = self.parse_startup_params(&params)?;
+
+        // TD-TENANT-1: the startup `database` doubles as the tenant/catalog
+        // (TD-064) and pgwire runs trust auth — the assertion is bare by
+        // definition. Under a strict policy, reject the connection at the
+        // handshake (SQLSTATE 28000) instead of granting the asserted tenant.
+        if let Some(database) = params.get("database")
+            && let Err(message) = self.check_pgwire_tenant_assertion(database)
+        {
+            self.send_error("FATAL", "28000", &message).await?;
+            return Err(anyhow!("pgwire tenant assertion rejected: {message}"));
+        }
 
         // Store parameters in session
         {
@@ -944,6 +1045,19 @@ impl PostgresProtocol {
 
     async fn execute_set_parameter(&mut self, query: &str) -> Result<()> {
         let (name, value) = Self::parse_set_parameter(query)?;
+        // TD-TENANT-1: the tenant session vars are the second pgwire
+        // assertion entry point (after the startup `database`). Gate them
+        // through the same policy — an ERROR, not a silent no-op, so the
+        // client knows the assertion did not take effect.
+        let normalized_name = name.trim().to_ascii_lowercase();
+        if matches!(
+            normalized_name.as_str(),
+            "proximadb.write.tenant_id" | "proximadb.write_tenant_id"
+        ) && let Err(message) = self.check_pgwire_tenant_assertion(&value)
+        {
+            self.send_error("ERROR", "28000", &message).await?;
+            return Ok(());
+        }
         {
             let mut session = self.session.write().await;
             session.set_parameter(&name, &value);
@@ -1013,8 +1127,11 @@ impl PostgresProtocol {
     async fn execute_query_with_controls(
         &mut self,
         query: &str,
-        controls: ExecutionControls,
+        mut controls: ExecutionControls,
     ) -> Result<()> {
+        let cancellation_flag = self.session.read().await.cancellation_flag.clone();
+        cancellation_flag.store(false, Ordering::Relaxed);
+        controls.cancellation_flag = Some(cancellation_flag);
         // E0 rate-limiting: reject over-quota queries up front with a pgwire
         // error, using the SAME converged RateLimitState check REST uses (no
         // duplicate limiter). No-op when unset/disabled.
@@ -1228,7 +1345,7 @@ impl PostgresProtocol {
             {
                 return match result {
                     Ok(pr) => self.emit_pipeline_result(pr).await,
-                    Err(msg) => self.send_error("ERROR", "XX000", &msg).await,
+                    Err(msg) => self.send_relational_error(&msg).await,
                 };
             }
             if let Some((column, value)) = Self::extract_simple_constant_select(query) {
@@ -4839,13 +4956,22 @@ impl PostgresProtocol {
             // same scope in the next slice (kept out here to avoid restructuring
             // the borrow in this `&&` let-chain).
             if query.trim_start().to_uppercase().starts_with("SELECT")
-                && let Some(result) = self
-                    .try_run_relational_select_pipeline(query, ExecutionControls::default())
+                && let Some(result) = {
+                    let cancellation_flag = self.session.read().await.cancellation_flag.clone();
+                    cancellation_flag.store(false, Ordering::Relaxed);
+                    self.try_run_relational_select_pipeline(
+                        query,
+                        ExecutionControls {
+                            cancellation_flag: Some(cancellation_flag),
+                            ..Default::default()
+                        },
+                    )
                     .await
+                }
             {
                 let result = match result {
                     Ok(result) => result,
-                    Err(msg) => return self.send_error("ERROR", "XX000", &msg).await,
+                    Err(msg) => return self.send_relational_error(&msg).await,
                 };
                 if let Some(portal) = self.portals.get_mut(portal_name) {
                     portal.execution_state = Some(PortalExecutionState {
@@ -4928,6 +5054,17 @@ impl PostgresProtocol {
             max_rows: Some(max_rows as usize),
             row_limit_mode: RowLimitMode::Truncate,
             ..Default::default()
+        }
+    }
+
+    async fn send_relational_error(&mut self, message: &str) -> Result<()> {
+        if message.contains("query execution was cancelled") {
+            self.send_error("ERROR", "57014", "canceling statement due to user request")
+                .await
+        } else if let Some(message) = message.strip_prefix("0A000: ") {
+            self.send_error("ERROR", "0A000", message).await
+        } else {
+            self.send_error("ERROR", "XX000", message).await
         }
     }
 

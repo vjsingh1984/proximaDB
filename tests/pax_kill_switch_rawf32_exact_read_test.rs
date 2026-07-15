@@ -181,6 +181,7 @@ async fn kill_switch_flushes_rawf32_pax_and_reads_back_exact() {
             top_k: Some(TOP_K),
             distance_metric: Some(DistanceMetric::Euclidean),
             block_prune: BlockPruneConfig {
+                radius_k: 0.0,
                 force_exact: true,
                 mode: BlockPruneMode::Ratio,
                 ratio: 1.0,

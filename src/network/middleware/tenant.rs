@@ -76,6 +76,12 @@ pub struct MiddlewareTenantContext {
     /// Whether this is a system/admin tenant with elevated privileges. Doubles
     /// as the operator (control-plane) marker.
     pub is_system_tenant: bool,
+    /// ADR-031 stable `u64` id of the tenant, resolved at the identity
+    /// boundary when a [`proximadb_tenant::TenantStableIdResolver`] is wired
+    /// on the extractor. `None` = not resolved / not yet minted — always an
+    /// optimization for catalog/storage keying, never a second source of
+    /// truth (the string `tenant_id` remains authoritative).
+    pub tenant_stable_id: Option<u64>,
 }
 
 impl MiddlewareTenantContext {
@@ -88,6 +94,7 @@ impl MiddlewareTenantContext {
             account_id: None,
             source,
             is_system_tenant,
+            tenant_stable_id: None,
         }
     }
 
@@ -129,78 +136,25 @@ pub enum TenantIdSource {
     JwtClaim,
     /// Derived from API key mapping
     ApiKey,
+    /// Selected by an authenticated system/gateway principal.
+    GatewayDelegation,
     /// Default tenant (single-tenant mode or fallback)
     Default,
     /// System/internal request
     System,
 }
 
-/// Trust policy for the **bare** `X-Tenant-ID` header — i.e. a request that
-/// asserts a tenant via header while carrying NO authenticated tenant binding
-/// (no JWT claim / API-key mapping). When a binding exists, the header must
-/// match it (403 otherwise) in every mode; `GatewayOnly` additionally lets an
-/// authenticated system/gateway principal delegate — select an acting tenant
-/// via the header (the trusted-gateway topology: the gateway authenticates
-/// with a service credential and stamps the end user's tenant per request).
-///
-/// Env override at server construction: `PROXIMADB_TENANT_HEADER_TRUST` =
-/// `open` | `authenticated-only` | `gateway-only` (see
-/// [`TenantExtractorConfig::apply_env_overrides`]). Unset ⇒ the config value
-/// (default-safe: `Open` preserves existing deployments).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum HeaderTrustPolicy {
-    /// Accept the bare header verbatim. Correct for dev, single-tenant, and
-    /// network-isolated trusted-gateway topologies. The default.
-    #[default]
-    Open,
-    /// Reject (403 + audit log) any request that asserts a tenant via header
-    /// without an authenticated binding. Credential-derived tenants
-    /// (JWT/API-key) are unaffected. Default for
-    /// [`TenantExtractorConfig::multi_tenant`] strict mode.
-    AuthenticatedOnly,
-    /// Like `AuthenticatedOnly`, but an authenticated **system/gateway
-    /// principal** (its bound tenant is in
-    /// [`TenantExtractorConfig::system_tenants`]) may set `X-Tenant-ID` to act
-    /// on behalf of that tenant (delegation is audit-logged).
-    GatewayOnly,
-}
+/// The bare-header trust policy — MOVED to the foundation crate
+/// (`proximadb_tenant::identity_trust`, TD-TENANT-1 follow-up) so pgwire,
+/// gRPC, and Arrow Flight share the exact same reconciliation primitive.
+/// Re-exported here so `crate::network::middleware::tenant::HeaderTrustPolicy`
+/// stays a stable path.
+pub use proximadb_tenant::identity_trust::HeaderTrustPolicy;
 
-impl std::fmt::Display for HeaderTrustPolicy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Open => write!(f, "open"),
-            Self::AuthenticatedOnly => write!(f, "authenticated-only"),
-            Self::GatewayOnly => write!(f, "gateway-only"),
-        }
-    }
-}
-
-impl std::str::FromStr for HeaderTrustPolicy {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().replace('_', "-").as_str() {
-            "open" => Ok(Self::Open),
-            "authenticated-only" | "authenticated-match" => Ok(Self::AuthenticatedOnly),
-            "gateway-only" => Ok(Self::GatewayOnly),
-            other => Err(format!(
-                "invalid tenant header-trust policy '{other}' \
-                 (expected open | authenticated-only | gateway-only)"
-            )),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum TenantExtractionError {
-    HeaderAuthenticatedMismatch {
-        requested: String,
-        authenticated: String,
-    },
-    /// The bare header was rejected by a non-`Open` [`HeaderTrustPolicy`]:
-    /// the request asserted a tenant without any authenticated binding.
-    UnauthenticatedHeaderRejected { requested: String },
-}
+use proximadb_tenant::identity_trust::{
+    AuthenticatedTenantBinding, ResolvedTenantAssertion, TenantAssertionError,
+    resolve_tenant_assertion,
+};
 
 impl std::fmt::Display for TenantIdSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -208,6 +162,7 @@ impl std::fmt::Display for TenantIdSource {
             Self::Header => write!(f, "header"),
             Self::JwtClaim => write!(f, "jwt"),
             Self::ApiKey => write!(f, "api_key"),
+            Self::GatewayDelegation => write!(f, "gateway_delegation"),
             Self::Default => write!(f, "default"),
             Self::System => write!(f, "system"),
         }
@@ -306,32 +261,21 @@ impl TenantExtractorConfig {
     }
 
     /// Apply deployment env overrides. Called at server construction (NOT in
-    /// constructors, so tests and embedded uses stay hermetic). Currently:
-    /// `PROXIMADB_TENANT_HEADER_TRUST` = `open` | `authenticated-only` |
-    /// `gateway-only` overrides `header_trust`; an unparseable value is
-    /// rejected loudly rather than silently weakening the policy.
+    /// constructors, so tests and embedded uses stay hermetic). Delegates to
+    /// the ONE shared resolution (`HeaderTrustPolicy::effective`): env
+    /// `PROXIMADB_TENANT_HEADER_TRUST` wins; an unparseable value tightens
+    /// to `authenticated-only` (fail-closed) rather than silently weakening.
     pub fn apply_env_overrides(mut self) -> Self {
-        if let Ok(raw) = std::env::var("PROXIMADB_TENANT_HEADER_TRUST") {
-            match raw.parse::<HeaderTrustPolicy>() {
-                Ok(policy) => {
-                    tracing::info!(
-                        %policy,
-                        "tenant header-trust policy set from PROXIMADB_TENANT_HEADER_TRUST"
-                    );
-                    self.header_trust = policy;
-                }
-                Err(e) => {
-                    // Fail-closed: an operator explicitly set a policy we can't
-                    // parse — tighten to AuthenticatedOnly instead of silently
-                    // running Open.
-                    warn!(
-                        error = %e,
-                        "invalid PROXIMADB_TENANT_HEADER_TRUST; tightening to authenticated-only"
-                    );
-                    self.header_trust = HeaderTrustPolicy::AuthenticatedOnly;
-                }
-            }
+        let (policy, warning) = HeaderTrustPolicy::effective(self.header_trust, None);
+        if let Some(warning) = warning {
+            warn!("{warning}");
+        } else if policy != self.header_trust {
+            tracing::info!(
+                %policy,
+                "tenant header-trust policy set from PROXIMADB_TENANT_HEADER_TRUST"
+            );
         }
+        self.header_trust = policy;
         self
     }
 }
@@ -342,6 +286,9 @@ pub struct TenantExtractor {
     config: TenantExtractorConfig,
     /// Optional TenantManager for validation
     tenant_manager: Option<Arc<crate::storage::tenant::TenantManager>>,
+    /// Optional ADR-031 stable-id resolver: when wired, the middleware stamps
+    /// `MiddlewareTenantContext::tenant_stable_id` at the identity boundary.
+    stable_id_resolver: Option<Arc<dyn proximadb_tenant::TenantStableIdResolver>>,
 }
 
 impl TenantExtractor {
@@ -350,6 +297,7 @@ impl TenantExtractor {
         Self {
             config: TenantExtractorConfig::default(),
             tenant_manager: None,
+            stable_id_resolver: None,
         }
     }
 
@@ -358,6 +306,7 @@ impl TenantExtractor {
         Self {
             config,
             tenant_manager: None,
+            stable_id_resolver: None,
         }
     }
 
@@ -370,76 +319,80 @@ impl TenantExtractor {
         self
     }
 
-    /// Extract tenant ID from request
+    /// Wire the ADR-031 tenant stable-id resolver (catalog-backed once tenant
+    /// stable-id minting lands; see TD-TENANT-1 follow-ups).
+    pub fn with_stable_id_resolver(
+        mut self,
+        resolver: Arc<dyn proximadb_tenant::TenantStableIdResolver>,
+    ) -> Self {
+        self.stable_id_resolver = Some(resolver);
+        self
+    }
+
+    /// Extract tenant ID from request. Delegates the assertion-vs-binding
+    /// reconciliation to the ONE shared primitive
+    /// (`proximadb_tenant::resolve_tenant_assertion`, TD-TENANT-1) — the same
+    /// call pgwire, gRPC, and Arrow Flight make — and maps the result onto
+    /// the REST source vocabulary + default-tenant fallback.
     fn extract_tenant_id(
         &self,
         req: &Request,
-    ) -> Result<Option<(String, TenantIdSource)>, TenantExtractionError> {
+    ) -> Result<Option<(String, TenantIdSource)>, TenantAssertionError> {
         let requested_tenant = req
             .headers()
             .get(X_TENANT_ID)
-            .and_then(|header_value| header_value.to_str().ok())
-            .map(str::trim)
-            .filter(|tenant_id| !tenant_id.is_empty())
-            .map(ToOwned::to_owned);
+            .and_then(|header_value| header_value.to_str().ok());
 
-        if let Some((authenticated_tenant, source)) = Self::authenticated_tenant_id(req) {
-            if let Some(requested) = requested_tenant
-                && requested != authenticated_tenant
-            {
-                // GatewayOnly delegation: an authenticated system/gateway
-                // principal may act on behalf of the header tenant (the
-                // trusted-gateway topology — the gateway authenticates with a
-                // service credential and stamps the end user's tenant).
-                if self.config.header_trust == HeaderTrustPolicy::GatewayOnly
-                    && self.config.system_tenants.contains(&authenticated_tenant)
-                {
+        let authenticated = self.authenticated_tenant_binding(req);
+        let binding = authenticated
+            .as_ref()
+            .map(|(binding, _source)| binding.clone());
+
+        match resolve_tenant_assertion(
+            requested_tenant,
+            binding.as_ref(),
+            self.config.header_trust,
+        )? {
+            ResolvedTenantAssertion::Asserted(tenant_id) => {
+                let source = if let Some((binding, _)) = &authenticated {
                     debug!(
-                        gateway = %authenticated_tenant,
-                        acting_tenant = %requested,
+                        gateway = %binding.tenant_id,
+                        acting_tenant = %tenant_id,
                         "gateway principal delegated tenant via X-Tenant-ID"
                     );
-                    return Ok(Some((requested, TenantIdSource::Header)));
-                }
-                return Err(TenantExtractionError::HeaderAuthenticatedMismatch {
-                    requested,
-                    authenticated: authenticated_tenant,
-                });
-            }
-            debug!(
-                "Extracted tenant_id from authenticated context: {}",
-                authenticated_tenant
-            );
-            return Ok(Some((authenticated_tenant, source)));
-        }
-
-        // Bare header — no authenticated tenant binding to compare against.
-        // Whether it is an identity or a masquerade vector is the deployment's
-        // header-trust policy call (see `HeaderTrustPolicy`).
-        if let Some(tenant_id) = requested_tenant {
-            return match self.config.header_trust {
-                HeaderTrustPolicy::Open => {
+                    TenantIdSource::GatewayDelegation
+                } else {
                     debug!("Extracted tenant_id from header: {}", tenant_id);
-                    Ok(Some((tenant_id, TenantIdSource::Header)))
+                    TenantIdSource::Header
+                };
+                Ok(Some((tenant_id, source)))
+            }
+            ResolvedTenantAssertion::Credential(tenant_id) => {
+                debug!("Extracted tenant_id from authenticated context: {tenant_id}");
+                let source = authenticated
+                    .map(|(_, source)| source)
+                    .unwrap_or(TenantIdSource::JwtClaim);
+                Ok(Some((tenant_id, source)))
+            }
+            ResolvedTenantAssertion::NoTenant => {
+                if let Some(ref default_tenant) = self.config.default_tenant {
+                    debug!("Using default tenant: {}", default_tenant);
+                    return Ok(Some((default_tenant.clone(), TenantIdSource::Default)));
                 }
-                HeaderTrustPolicy::AuthenticatedOnly | HeaderTrustPolicy::GatewayOnly => {
-                    Err(TenantExtractionError::UnauthenticatedHeaderRejected {
-                        requested: tenant_id,
-                    })
-                }
-            };
+                Ok(None)
+            }
         }
-
-        // Priority 3: Default tenant (if configured)
-        if let Some(ref default_tenant) = self.config.default_tenant {
-            debug!("Using default tenant: {}", default_tenant);
-            return Ok(Some((default_tenant.clone(), TenantIdSource::Default)));
-        }
-
-        Ok(None)
     }
 
-    fn authenticated_tenant_id(req: &Request) -> Option<(String, TenantIdSource)> {
+    /// The authenticated tenant binding for this request, if any, with the
+    /// gateway-capability flag the `GatewayOnly` delegation consults: the
+    /// first-class principal marker (`UnifiedUserContext::is_gateway_principal`,
+    /// stamped from credential data) OR — compat — the bound tenant being in
+    /// the deployment's `system_tenants` list.
+    fn authenticated_tenant_binding(
+        &self,
+        req: &Request,
+    ) -> Option<(AuthenticatedTenantBinding, TenantIdSource)> {
         if let Some(user_context) = req
             .extensions()
             .get::<crate::security::UnifiedUserContext>()
@@ -453,20 +406,35 @@ impl TenantExtractor {
             } else {
                 TenantIdSource::JwtClaim
             };
-            return Some((tenant_id.clone(), source));
+            let is_gateway_principal = user_context.is_gateway_principal()
+                || self.config.system_tenants.contains(tenant_id);
+            return Some((
+                AuthenticatedTenantBinding {
+                    tenant_id: tenant_id.clone(),
+                    is_gateway_principal,
+                },
+                source,
+            ));
         }
 
         if let Some(user_info) = req.extensions().get::<super::auth::UserInfo>()
             && let Some(ref tenant_id) = user_info.tenant_id
         {
-            return Some((tenant_id.clone(), TenantIdSource::ApiKey));
+            let is_gateway_principal = self.config.system_tenants.contains(tenant_id);
+            return Some((
+                AuthenticatedTenantBinding {
+                    tenant_id: tenant_id.clone(),
+                    is_gateway_principal,
+                },
+                TenantIdSource::ApiKey,
+            ));
         }
 
         None
     }
 
     /// Validate tenant exists and is active
-    fn validate_tenant(&self, tenant_id: &str) -> bool {
+    fn validate_tenant(&self, tenant_id: &str, source: TenantIdSource) -> bool {
         // System tenants bypass validation
         if self.config.system_tenants.contains(&tenant_id.to_string()) {
             return true;
@@ -493,9 +461,21 @@ impl TenantExtractor {
                     false
                 }
             }
-        } else {
-            // No manager configured, allow all
+        } else if matches!(
+            source,
+            TenantIdSource::JwtClaim | TenantIdSource::ApiKey | TenantIdSource::GatewayDelegation
+        ) {
+            // Without a local tenant catalog, only a credential-bound tenant
+            // identity remains authoritative. A bare header/default must not
+            // become trusted merely because validation infrastructure is absent.
             true
+        } else {
+            warn!(
+                tenant_id,
+                source = %source,
+                "Tenant validation requested but no TenantManager is configured"
+            );
+            false
         }
     }
 }
@@ -527,7 +507,7 @@ pub async fn tenant_middleware(
             }
 
             // Validate tenant if configured
-            if !extractor.validate_tenant(&tenant_id) {
+            if !extractor.validate_tenant(&tenant_id, source) {
                 return (
                     StatusCode::FORBIDDEN,
                     format!("Tenant '{}' is not valid or not active", tenant_id),
@@ -547,7 +527,13 @@ pub async fn tenant_middleware(
                 .map(|s| s.to_string());
 
             // Inject tenant context into request extensions
-            let context = MiddlewareTenantContext::new(tenant_id, source);
+            let mut context = MiddlewareTenantContext::new(tenant_id, source);
+            // ADR-031: stamp the tenant's stable u64 id at the boundary when a
+            // resolver is wired, so downstream catalog/storage keying can use
+            // it without re-resolving per operation.
+            if let Some(resolver) = &extractor.stable_id_resolver {
+                context.tenant_stable_id = resolver.stable_id_of(&context.tenant_id);
+            }
             if let Some(tier) = tier_claim {
                 crate::services::record_store::set_tenant_tier(&context.tenant_id, tier);
             }
@@ -578,15 +564,15 @@ pub async fn tenant_middleware(
                 next.run(req).await
             }
         }
-        Err(TenantExtractionError::HeaderAuthenticatedMismatch {
-            requested,
+        Err(TenantAssertionError::Mismatch {
+            asserted,
             authenticated,
         }) => {
             // Audit trail: a credentialed principal asserted a DIFFERENT
             // tenant via header — the masquerade signature.
             warn!(
                 target: "proximadb::tenant_audit",
-                requested = %requested,
+                requested = %asserted,
                 authenticated = %authenticated,
                 source = %TenantIdSource::Header,
                 "rejected X-Tenant-ID: does not match authenticated tenant binding"
@@ -595,15 +581,15 @@ pub async fn tenant_middleware(
                 StatusCode::FORBIDDEN,
                 format!(
                     "Tenant '{}' does not match authenticated tenant '{}'",
-                    requested, authenticated
+                    asserted, authenticated
                 ),
             )
                 .into_response()
         }
-        Err(TenantExtractionError::UnauthenticatedHeaderRejected { requested }) => {
+        Err(TenantAssertionError::UnauthenticatedAssertionRejected { asserted }) => {
             warn!(
                 target: "proximadb::tenant_audit",
-                requested = %requested,
+                requested = %asserted,
                 source = %TenantIdSource::Header,
                 policy = %extractor.config.header_trust,
                 "rejected bare X-Tenant-ID without authenticated tenant binding"
@@ -613,7 +599,7 @@ pub async fn tenant_middleware(
                 format!(
                     "Tenant '{}' asserted via X-Tenant-ID without authenticated credentials; \
                      this deployment requires a tenant-bound credential (JWT or API key)",
-                    requested
+                    asserted
                 ),
             )
                 .into_response()
@@ -730,6 +716,11 @@ mod tests {
         assert!(config.default_tenant.is_none());
         assert!(config.require_tenant);
         assert!(config.validate_tenant);
+        assert_eq!(
+            config.header_trust,
+            HeaderTrustPolicy::AuthenticatedOnly,
+            "multi-tenant deployments must reject unbound tenant headers"
+        );
     }
 
     #[test]
@@ -754,6 +745,10 @@ mod tests {
         assert_eq!(TenantIdSource::Header.to_string(), "header");
         assert_eq!(TenantIdSource::JwtClaim.to_string(), "jwt");
         assert_eq!(TenantIdSource::ApiKey.to_string(), "api_key");
+        assert_eq!(
+            TenantIdSource::GatewayDelegation.to_string(),
+            "gateway_delegation"
+        );
         assert_eq!(TenantIdSource::Default.to_string(), "default");
         assert_eq!(TenantIdSource::System.to_string(), "system");
     }
@@ -794,14 +789,25 @@ mod tests {
     }
 
     #[test]
+    fn strict_validation_without_manager_accepts_only_credential_bound_identity() {
+        let extractor = TenantExtractor::with_config(TenantExtractorConfig::multi_tenant());
+
+        assert!(extractor.validate_tenant("acme", TenantIdSource::JwtClaim));
+        assert!(extractor.validate_tenant("acme", TenantIdSource::ApiKey));
+        assert!(extractor.validate_tenant("acme", TenantIdSource::GatewayDelegation));
+        assert!(!extractor.validate_tenant("acme", TenantIdSource::Header));
+        assert!(!extractor.validate_tenant("acme", TenantIdSource::Default));
+    }
+
+    #[test]
     fn authenticated_only_rejects_bare_header() {
         let err = extractor(HeaderTrustPolicy::AuthenticatedOnly)
             .extract_tenant_id(&trust_request(Some("demo1"), None))
             .expect_err("bare header must be rejected without a credential binding");
         assert_eq!(
             err,
-            TenantExtractionError::UnauthenticatedHeaderRejected {
-                requested: "demo1".to_string()
+            TenantAssertionError::UnauthenticatedAssertionRejected {
+                asserted: "demo1".to_string()
             }
         );
     }
@@ -813,7 +819,7 @@ mod tests {
             .expect_err("bare header must be rejected without a credential binding");
         assert!(matches!(
             err,
-            TenantExtractionError::UnauthenticatedHeaderRejected { .. }
+            TenantAssertionError::UnauthenticatedAssertionRejected { .. }
         ));
     }
 
@@ -855,8 +861,8 @@ mod tests {
                 .expect_err("header != binding is the masquerade signature");
             assert_eq!(
                 err,
-                TenantExtractionError::HeaderAuthenticatedMismatch {
-                    requested: "victim".to_string(),
+                TenantAssertionError::Mismatch {
+                    asserted: "victim".to_string(),
                     authenticated: "acme".to_string(),
                 },
                 "policy {policy}"
@@ -872,7 +878,43 @@ mod tests {
         let result = extractor(HeaderTrustPolicy::GatewayOnly)
             .extract_tenant_id(&trust_request(Some("demo1"), Some("system")))
             .expect("gateway delegation must be allowed");
-        assert_eq!(result, Some(("demo1".to_string(), TenantIdSource::Header)));
+        assert_eq!(
+            result,
+            Some(("demo1".to_string(), TenantIdSource::GatewayDelegation))
+        );
+    }
+
+    /// TD-TENANT-1 follow-up: the first-class principal marker. A credential
+    /// carrying the `gateway` role may delegate under `GatewayOnly` even when
+    /// its bound tenant is NOT in `system_tenants` — the marker, not the
+    /// tenant name, is the capability.
+    #[test]
+    fn gateway_role_marker_delegates_without_system_tenant_membership() {
+        let mut req = trust_request(Some("demo1"), None);
+        let mut ctx = crate::security::UnifiedUserContext::anonymous();
+        ctx.tenant_id = Some("svc-gw".to_string());
+        ctx.auth_method = crate::security::UnifiedAuthMethod::JWT;
+        ctx.roles.push(proximadb_tenant::GATEWAY_ROLE.to_string());
+        req.extensions_mut().insert(ctx);
+
+        let result = extractor(HeaderTrustPolicy::GatewayOnly)
+            .extract_tenant_id(&req)
+            .expect("gateway-role principal must be allowed to delegate");
+        assert_eq!(
+            result,
+            Some(("demo1".to_string(), TenantIdSource::GatewayDelegation))
+        );
+
+        // Same principal WITHOUT the marker → mismatch.
+        let mut req = trust_request(Some("demo1"), None);
+        let mut ctx = crate::security::UnifiedUserContext::anonymous();
+        ctx.tenant_id = Some("svc-gw".to_string());
+        ctx.auth_method = crate::security::UnifiedAuthMethod::JWT;
+        req.extensions_mut().insert(ctx);
+        let err = extractor(HeaderTrustPolicy::GatewayOnly)
+            .extract_tenant_id(&req)
+            .expect_err("non-gateway principal must not delegate");
+        assert!(matches!(err, TenantAssertionError::Mismatch { .. }));
     }
 
     #[test]
@@ -887,10 +929,7 @@ mod tests {
                 .extract_tenant_id(&trust_request(Some("demo1"), Some("system")))
                 .expect_err("delegation requires gateway-only mode");
             assert!(
-                matches!(
-                    err,
-                    TenantExtractionError::HeaderAuthenticatedMismatch { .. }
-                ),
+                matches!(err, TenantAssertionError::Mismatch { .. }),
                 "policy {policy}"
             );
         }

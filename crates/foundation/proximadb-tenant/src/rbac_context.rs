@@ -151,6 +151,23 @@ impl UnifiedUserContext {
         self.user_id != "anonymous"
     }
 
+    /// First-class gateway/operator principal marker (TD-TENANT-1). A gateway
+    /// principal may delegate — assert a different acting tenant — under
+    /// [`crate::identity_trust::HeaderTrustPolicy::GatewayOnly`]. Stamped
+    /// from credential data at construction: a `gateway`/`operator` role
+    /// (e.g. from a `gateway: true` JWT claim) or a `gateway: "true"`
+    /// metadata entry. Prefer this over tenant-name membership in a
+    /// system-tenant list (the compat fallback surfaces still honor).
+    pub fn is_gateway_principal(&self) -> bool {
+        self.roles.iter().any(|role| {
+            role == crate::identity_trust::GATEWAY_ROLE
+                || role == crate::identity_trust::OPERATOR_ROLE
+        }) || self
+            .metadata
+            .get("gateway")
+            .is_some_and(|value| value == "true")
+    }
+
     /// Check if the user session has expired. A session with no expiry is never
     /// considered expired.
     pub fn is_session_expired(&self) -> bool {

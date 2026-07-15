@@ -727,6 +727,7 @@ impl RestServer {
         external_collection_service: Option<
             Arc<crate::services::external_collection::ExternalCollectionService>,
         >,
+        tenant_config: TenantExtractorConfig,
         // Mount the read-only `/admin` dashboard (from `[server.admin_ui] enabled`).
         admin_ui_enabled: bool,
     ) -> Router {
@@ -861,10 +862,9 @@ impl RestServer {
         // `/api/v2` request 500s with "missing request extension". The
         // multi-port path applies the same layer in `create_router`; the
         // unified path must apply it too (it is NOT wrapped by the caller).
-        // Default config resolves to the single "default" tenant in dev.
-        // PROXIMADB_TENANT_HEADER_TRUST overrides the bare-header trust policy.
-        let tenant_extractor =
-            TenantExtractor::with_config(TenantExtractorConfig::default().apply_env_overrides());
+        // The caller supplies the same deployment-derived policy used by the
+        // multi-port path. Environment overrides are applied once here.
+        let tenant_extractor = TenantExtractor::with_config(tenant_config.apply_env_overrides());
         let tenant_layer = middleware::from_fn_with_state(tenant_extractor, tenant_middleware);
 
         // Auth layer — convergent with the multi-port `start_with_security`
@@ -1247,6 +1247,7 @@ mod tests {
             },
             encryption: crate::security::EncryptionConfig::default(),
             key_store: crate::security::KeyStoreConfig::default(),
+            tenant: Default::default(),
         }
     }
 

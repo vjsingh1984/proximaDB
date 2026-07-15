@@ -473,6 +473,19 @@ impl CollectionPartition {
         vectors
     }
 
+    /// Return every physical record still held by this unflushed partition.
+    ///
+    /// Unlike [`Self::get_all_vectors`], this intentionally performs no MVCC
+    /// winner selection and no tombstone/TTL filtering. Cross-source readers
+    /// need the complete delta so a delete in WAL can suppress an older live
+    /// copy that has already been flushed.
+    fn get_all_vectors_raw(&self) -> Vec<ProximaRecord> {
+        self.wal_batches
+            .values()
+            .flat_map(|batch| batch.vector_records.iter().cloned())
+            .collect()
+    }
+
     /// Rebuild the deduped, time-ordered [`ScanIndex`] from `wal_batches`.
     ///
     /// Winner selection per oid uses the SAME MVCC rule as
@@ -1039,6 +1052,22 @@ impl GlobalPartitionedMemtable {
         } else {
             Ok(Vec::new())
         }
+    }
+
+    /// Return the raw physical WAL/memtable delta for a collection.
+    ///
+    /// This is deliberately narrower than `get_collection_vectors`: callers
+    /// must perform their own cross-source winner selection and dead filtering.
+    pub async fn get_collection_vectors_raw(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<ProximaRecord>> {
+        let collections = self.collections.read().await;
+
+        Ok(collections
+            .get(collection_id)
+            .map(CollectionPartition::get_all_vectors_raw)
+            .unwrap_or_default())
     }
 
     /// Paginated, deduped, time-ordered scan of a collection's unflushed records.
@@ -1972,6 +2001,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(oids(&page), vec!["live".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn raw_collection_scan_retains_tombstones_expiry_and_versions() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "raw-delta";
+        let now_ns = test_now_ns();
+
+        m.add_wal_batch(c, batch_of(vec![rec_at("d1", 10, 1, None)]))
+            .await
+            .unwrap();
+        m.add_wal_batch(c, batch_of(vec![rec_at("d1", 20, 2, Some(0))]))
+            .await
+            .unwrap();
+        m.add_wal_batch(
+            c,
+            batch_of(vec![rec_at("expired", 30, 1, Some(now_ns - 1))]),
+        )
+        .await
+        .unwrap();
+
+        let live = m.get_collection_vectors(c).await.unwrap();
+        assert!(live.is_empty(), "normal scans remain dead-filtered");
+
+        let mut raw = m.get_collection_vectors_raw(c).await.unwrap();
+        raw.sort_by_key(|record| record.updated_at_ns);
+        assert_eq!(raw.len(), 3);
+        assert_eq!(raw[0].record_version, 1);
+        assert_eq!(raw[1].valid_to_ns, Some(0));
+        assert_eq!(raw[2].oid, "expired");
     }
 
     #[tokio::test]

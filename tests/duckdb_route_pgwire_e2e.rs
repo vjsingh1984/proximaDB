@@ -141,7 +141,15 @@ fn eligible_cases() -> Vec<(&'static str, Vec<&'static str>)> {
         ),
         (
             "SELECT o_orderstatus, count(*) FROM orders GROUP BY o_orderstatus ORDER BY o_orderstatus",
-            vec!["F|2", "O|2", "P|1"],
+            vec!["F|2", "O|3", "P|1"],
+        ),
+        (
+            "SELECT o.o_orderstatus, CAST(sum(l.l_extendedprice) AS DECIMAL(12,2)) FROM orders o JOIN lineitem l ON o.o_orderkey = l.l_orderkey GROUP BY o.o_orderstatus ORDER BY o.o_orderstatus",
+            vec!["F|90.00", "O|80.00", "P|80.00"],
+        ),
+        (
+            "SELECT o.o_orderkey, l.l_extendedprice FROM orders o LEFT JOIN lineitem l ON o.o_orderkey = l.l_orderkey WHERE o.o_orderkey = 6",
+            vec!["6|"],
         ),
     ]
 }
@@ -182,7 +190,7 @@ async fn eval_body() {
         "DROP TABLE IF EXISTS orders",
         "CREATE TABLE orders (o_orderkey INT PRIMARY KEY, o_custkey INT, o_totalprice DOUBLE PRECISION, o_orderstatus VARCHAR)",
         "CREATE TABLE lineitem (l_orderkey INT, l_quantity DOUBLE PRECISION, l_extendedprice DOUBLE PRECISION)",
-        "INSERT INTO orders VALUES (1,10,100.0,'O'),(2,20,200.0,'F'),(3,10,50.0,'O'),(4,30,300.0,'P'),(5,20,150.0,'F')",
+        "INSERT INTO orders VALUES (1,10,100.0,'O'),(2,20,200.0,'F'),(3,10,50.0,'O'),(4,30,300.0,'P'),(5,20,150.0,'F'),(6,40,NULL,'O')",
         "INSERT INTO lineitem VALUES (1,5.0,50.0),(1,2.0,20.0),(2,3.0,60.0),(3,1.0,10.0),(4,4.0,80.0),(5,2.0,30.0)",
     ] {
         client
@@ -214,7 +222,7 @@ async fn eval_body() {
     let rows = query_rows(&client, "SELECT count(*) FROM orders")
         .await
         .expect("scalar count");
-    assert_eq!(rows, vec!["5".to_string()]);
+    assert_eq!(rows, vec!["6".to_string()]);
 
     // 2. Attribution: DuckDbCompat cells learned for eligible classes only.
     let cells = proximadb::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL.learned_cell_keys();

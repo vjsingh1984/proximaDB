@@ -78,6 +78,8 @@ jobs:
       # 8MB worker stack: correlated subqueries + recall ratchets produce
       # deep-but-finite async call chains that overflow the default ~2MB.
       RUST_MIN_STACK: "8388608"
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: /home/runner/.cache/sccache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -88,6 +90,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-qa-integration"
+      # sccache complements rust-cache: content-addressed per-rustc-invocation, so
+      # it hits even when the target/ artifact cache misses (Cargo.lock churn).
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: sccache-${{ runner.os }}-
       - name: Build all integration test binaries (once)
         env:
           CARGO_BUILD_JOBS: "4"
@@ -131,18 +141,17 @@ jobs:
       - name: Run TD-112 post-flush recall ratchet (TD-182 P0b)
         run: cargo test --test td112_postflush_recall_e2e recall -- --nocapture
 
-  # WS8: real-dataset PAX RaBitQ→SQ8 recall artifact. MANUAL ONLY
-  # (workflow_dispatch) — it downloads the SIFT1M corpus (~160 MB) and runs a
-  # heavy recall bench, so it is deliberately NOT in the always-on
-  # `pgwire-recall-tests` job (avoids 160 MB-download flakiness on every qa PR).
+  # WS8: real-dataset PAX RaBitQ→SQ8 recall artifact. Runs on promotion PRs and
+  # workflow_dispatch. It downloads the SIFT1M corpus (~525 MB) and runs a heavy
+  # release-mode recall gate, so it remains separate from normal PR CI.
   # Produces the dated recall@10 ≥ 0.90 artifact that GATES the PAX default-on
   # flip (Phase F): the existing `pax-recall-ratchet` is a synthetic DIM=64 CI
   # floor only (representativeness caveat in BENCHMARK_EVIDENCE.toml WS8). The
-  # ratchet self-skips when the corpus is absent, so a non-manual trigger would
-  # just skip — the `if:` keeps it from scheduling at all.
+  # Local runs may skip when the corpus is absent. This QA job sets
+  # PROXIMADB_RECALL_DATASET_REQUIRED=1, so a missing/corrupt corpus fails loud.
   sift-pax-recall:
     name: SIFT1M PAX RaBitQ recall ratchet (WS8)
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -176,13 +185,15 @@ jobs:
       - name: Build ratchet binary
         env:
           CARGO_BUILD_JOBS: "4"
-        run: cargo test --test sift_pax_recall_ratchet_test --no-run
+        run: cargo test --release --test sift_pax_recall_ratchet_test --no-run
       - name: Run SIFT PAX recall ratchet (N=${{ inputs.sift_n || '100000' }})
         env:
           PROXIMADB_SIFT_DATASET_DIR: /home/runner/sift1m
           PROXIMADB_SIFT_N: ${{ inputs.sift_n || '100000' }}
           PROXIMADB_SIFT_QUERIES: "1000"
-        run: cargo test --test sift_pax_recall_ratchet_test -- --nocapture
+          PROXIMADB_RECALL_DATASET_REQUIRED: "1"
+          PROXIMADB_SIFT_CENTROID_MAX_RECALL_DROP: "0"
+        run: cargo test --release --test sift_pax_recall_ratchet_test -- --nocapture
 
   # Validate the object-store access-tier cost lever (TD-168/TD-173) against REAL
   # cloud APIs via emulators — Azurite (Azure), MinIO (S3), fake-gcs (GCP) — the
@@ -199,9 +210,15 @@ jobs:
     # The --all scope compiles the full main crate under CARGO_BUILD_JOBS=2 (see
     # scripts/run_cloud_emulator_tests.sh) — a middle ground that stays off the 16GB
     # runner's OOM cliff while halving the old jobs=1 ~35-40m serialized compile that
-    # grew past this budget and got cancelled mid-build (#882). 60m (1h) leaves ample
-    # headroom for the ~20m parallel compile + emulator round-trips.
-    timeout-minutes: 60
+    # grew past this budget and got cancelled mid-build (#882). sccache (below)
+    # covers the COLD compile that rust-cache misses when Cargo.lock churns (e.g. a
+    # promotion merge) — that cold ~35-40m compile + emulator round-trips pushed this
+    # job past the old 60m cap on #980. 90m leaves headroom for the first (cold) run
+    # while sccache warms; subsequent runs compile far less.
+    timeout-minutes: 90
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: /home/runner/.cache/sccache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -212,6 +229,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-qa-cloud-emulator"
+      # sccache complements rust-cache: content-addressed per-rustc-invocation, so
+      # it hits even when the target/ artifact cache misses (Cargo.lock churn).
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: sccache-${{ runner.os }}-
       - name: Validate Cool tier against Azure/S3/GCS emulators
         # docker + aws/az CLIs are preinstalled on ubuntu-latest runners.
         run: bash scripts/run_cloud_emulator_tests.sh

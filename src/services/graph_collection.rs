@@ -130,6 +130,13 @@ pub struct GraphCollectionService {
     /// Path to persistence file
     persistence_path: PathBuf,
 
+    /// Object-store filesystem for URL-backed metadata. `None` preserves the
+    /// local temp-file + rename implementation used by embedded/local mode.
+    persistence_filesystem: Option<Arc<dyn crate::storage::persistence::filesystem::FileSystem>>,
+
+    /// Scheme-qualified object path when `persistence_filesystem` is set.
+    persistence_url: Option<String>,
+
     /// Lock for persistence operations
     persistence_lock: Arc<RwLock<()>>,
 
@@ -154,6 +161,8 @@ impl GraphCollectionService {
         Self {
             collections: Arc::new(DashMap::new()),
             persistence_path,
+            persistence_filesystem: None,
+            persistence_url: None,
             persistence_lock: Arc::new(RwLock::new(())),
             max_graphs: 1000,
             metadata_cache_size: 100,
@@ -204,9 +213,52 @@ impl GraphCollectionService {
         Ok(service)
     }
 
+    /// Create a graph collection service whose sidecar lives under an object-
+    /// store metadata URL. All reads/writes go through the unified filesystem;
+    /// no URL-shaped path reaches `std::fs`/`tokio::fs`.
+    pub async fn new_with_recovery_at_url(
+        persistence_url: String,
+        filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+    ) -> Result<Self> {
+        let filesystem = filesystem_factory
+            .get_filesystem(&persistence_url)
+            .map_err(|e| {
+                ProximaDBError::Internal(format!(
+                    "Failed to open graph metadata filesystem at {persistence_url}: {e}"
+                ))
+            })?;
+        let service = Self {
+            collections: Arc::new(DashMap::new()),
+            // Never used by the URL-backed branch; retained to keep the local
+            // constructor and its tests byte-identical.
+            persistence_path: PathBuf::new(),
+            persistence_filesystem: Some(filesystem),
+            persistence_url: Some(persistence_url),
+            persistence_lock: Arc::new(RwLock::new(())),
+            max_graphs: 1000,
+            metadata_cache_size: 100,
+        };
+        service.load_from_disk().await?;
+        Ok(service)
+    }
+
     /// Load graph collections from persistent storage
     pub async fn load_from_disk(&self) -> Result<usize> {
         let _lock = self.persistence_lock.read().await;
+
+        if let (Some(filesystem), Some(url)) = (&self.persistence_filesystem, &self.persistence_url)
+        {
+            if !filesystem.exists(url).await.map_err(|e| {
+                ProximaDBError::Internal(format!("Failed to probe graph metadata at {url}: {e}"))
+            })? {
+                debug!("Graph metadata object does not exist yet: {}", url);
+                return Ok(0);
+            }
+            let contents = filesystem.read(url).await.map_err(|e| {
+                ProximaDBError::Internal(format!("Failed to read graph metadata object {url}: {e}"))
+            })?;
+            return self.load_serialized_store(&contents);
+        }
 
         if !self.persistence_path.exists() {
             debug!(
@@ -222,10 +274,13 @@ impl GraphCollectionService {
                 ProximaDBError::Internal(format!("Failed to read graph metadata file: {}", e))
             })?;
 
-        let store: GraphMetadataStore = serde_json::from_str(&contents).map_err(|e| {
+        self.load_serialized_store(contents.as_bytes())
+    }
+
+    fn load_serialized_store(&self, contents: &[u8]) -> Result<usize> {
+        let store: GraphMetadataStore = serde_json::from_slice(contents).map_err(|e| {
             ProximaDBError::Internal(format!("Failed to parse graph metadata: {}", e))
         })?;
-
         let count = store.collections.len();
         for (graph_id, metadata) in store.collections {
             let collection = Arc::new(metadata.to_collection());
@@ -267,6 +322,24 @@ impl GraphCollectionService {
         let contents = serde_json::to_string_pretty(&store).map_err(|e| {
             ProximaDBError::Internal(format!("Failed to serialize graph metadata: {}", e))
         })?;
+
+        if let (Some(filesystem), Some(url)) = (&self.persistence_filesystem, &self.persistence_url)
+        {
+            filesystem
+                .write_atomic(url, contents.as_bytes(), None)
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Internal(format!(
+                        "Failed to persist graph metadata object {url}: {e}"
+                    ))
+                })?;
+            debug!(
+                "Saved {} graph collections to object storage at {}",
+                store.collections.len(),
+                url
+            );
+            return Ok(());
+        }
 
         fs::write(&temp_path, &contents).await.map_err(|e| {
             ProximaDBError::Internal(format!("Failed to write graph metadata: {}", e))

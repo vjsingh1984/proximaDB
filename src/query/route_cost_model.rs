@@ -798,28 +798,13 @@ fn parse_backend_label(label: &str) -> Option<ComputeBackend> {
 /// DataFusion floor serves otherwise and the route is re-stamped).
 fn freshness_safe_backends_from_class(shape_class: &str) -> Vec<ComputeBackend> {
     if shape_class.starts_with("olap/parquet") {
-        let mut safe = vec![ComputeBackend::Native, ComputeBackend::DataFusionLocal];
-        if duckdb_route_candidate() {
-            safe.push(ComputeBackend::DuckDbCompat);
-        }
-        safe
+        // DuckDB remains an explicit-route evidence harness until its reader
+        // reports comparable GET/byte quantities. Ranking compute-only cells
+        // beside fully metered engines would make live overrides prefer an
+        // artificially cheap candidate.
+        vec![ComputeBackend::Native, ComputeBackend::DataFusionLocal]
     } else {
         vec![ComputeBackend::Native]
-    }
-}
-
-/// Whether `DuckDbCompat` participates as a cost-model candidate: compiled in
-/// (`--features duckdb`) AND route-enabled (`PROXIMADB_DUCKDB_ROUTE`, default
-/// OFF per ADR-059 §6 / ADR-054 progressive-cutover). Without both, the
-/// frozen table never ranks or explores DuckDB, so no flip can target it.
-fn duckdb_route_candidate() -> bool {
-    #[cfg(feature = "duckdb")]
-    {
-        crate::query::execution::duckdb_engine::duckdb_route_enabled()
-    }
-    #[cfg(not(feature = "duckdb"))]
-    {
-        false
     }
 }
 
@@ -2194,13 +2179,12 @@ mod tests {
         );
     }
 
-    /// ADR-059: with the `duckdb` feature compiled AND `PROXIMADB_DUCKDB_ROUTE`
-    /// set, DuckDbCompat joins the olap/parquet freshness-safe set — its cells
-    /// rank and it can be explored/flipped to. (nextest process-per-test
-    /// isolation makes the env-before-first-call OnceLock read deterministic.)
+    /// DuckDB traces remain evidence-only until its I/O quantities are
+    /// comparable to the other engines. Even an explicitly enabled route may
+    /// collect cells, but the live model must not rank or explore them.
     #[cfg(feature = "duckdb")]
     #[test]
-    fn duckdb_joins_the_olap_parquet_safe_set_when_route_enabled() {
+    fn duckdb_cells_are_evidence_only_when_route_enabled() {
         unsafe { std::env::set_var("PROXIMADB_DUCKDB_ROUTE", "1") };
         let m = RouteCostModel::new().with_min_samples(1);
         m.observe_by_label("olap/parquet", "DuckDbCompat", &snap(2, 1 << 20, 1));
@@ -2208,14 +2192,12 @@ mod tests {
         m.recompute();
         let consult = m.consult("olap/parquet").expect("baked");
         assert!(
-            consult
+            !consult
                 .ranked()
                 .iter()
                 .any(|c| backend_label(&c.backend) == "DuckDbCompat"),
-            "DuckDbCompat must rank as a freshness-safe candidate"
+            "compute-only DuckDB cells must not feed live overrides"
         );
-        // Cheapest-first: DuckDB (2 GETs) beats DataFusion (200 GETs) here.
-        assert_eq!(backend_label(&consult.ranked()[0].backend), "DuckDbCompat");
         // OLTP classes never gain DuckDB regardless of the gate.
         m.observe_by_label("oltp/native", "DuckDbCompat", &snap(2, 1 << 20, 1));
         m.recompute();

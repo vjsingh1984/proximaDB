@@ -175,6 +175,89 @@ async fn audit_storage_scheme_dispatch() {
     assert_eq!(events[0].event_id, event.event_id);
 }
 
+/// Graph collection metadata follows `metadata_url` through FileSystem rather
+/// than falling back to the hard-coded `/tmp/proximadb/metadata` sidecar.
+#[tokio::test]
+async fn graph_catalog_round_trips_through_scheme_qualified_metadata_url() {
+    use proximadb::proto::proximadb_v1::CreateGraphRequest;
+    use proximadb::services::GraphCollectionService;
+    use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let url = format!("file://{}/graph_collections.json", dir.path().display());
+    let factory = Arc::new(
+        FilesystemFactory::create(FilesystemConfig::default())
+            .await
+            .expect("filesystem factory"),
+    );
+    {
+        let service =
+            GraphCollectionService::new_with_recovery_at_url(url.clone(), factory.clone())
+                .await
+                .expect("graph service");
+        service
+            .create_graph(CreateGraphRequest {
+                graph_id: "durable-graph".to_string(),
+                name: Some("durable-graph".to_string()),
+                ..Default::default()
+            })
+            .await
+            .expect("create graph");
+    }
+    let reopened = GraphCollectionService::new_with_recovery_at_url(url, factory)
+        .await
+        .expect("reopen graph service");
+    assert!(
+        reopened
+            .get_graph("durable-graph")
+            .await
+            .expect("get graph")
+            .is_some()
+    );
+}
+
+/// Discovery registry object-store mode uses one ordered filesystem writer and
+/// can restore its job snapshot through a scheme-qualified URL.
+#[tokio::test]
+async fn discovery_registry_round_trips_through_scheme_qualified_metadata_url() {
+    use proximadb::services::discovery::{DiscoveryJob, DiscoveryJobKind, DiscoveryRegistry};
+    use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("discovery")).expect("discovery dir");
+    let url = format!("file://{}/discovery/registry.json", dir.path().display());
+    let factory = Arc::new(
+        FilesystemFactory::create(FilesystemConfig::default())
+            .await
+            .expect("filesystem factory"),
+    );
+    let job_id = {
+        let registry = DiscoveryRegistry::load_or_create_at_url(url.clone(), factory.clone())
+            .await
+            .expect("discovery registry");
+        let job = registry.schedule(DiscoveryJob::new(
+            "durable-collection",
+            DiscoveryJobKind::Recluster,
+        ));
+        let fs = factory.get_filesystem(&url).expect("filesystem");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !fs.exists(&url).await.expect("exists") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "ordered discovery writer did not persist in time"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        job.job_id
+    };
+    let reopened = DiscoveryRegistry::load_or_create_at_url(url, factory)
+        .await
+        .expect("reopen discovery registry");
+    assert!(reopened.get(&job_id).is_some());
+}
+
 /// Source guard: the strip-and-re-prepend pattern (`.replace("file://"`)
 /// that produced `file://adls://…` URLs must not reappear anywhere in `src/`.
 #[test]

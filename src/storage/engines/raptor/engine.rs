@@ -32,9 +32,79 @@ use super::smart_rowgroup_sizing::SmartRowGroupSizer;
 
 // Deep integration with AXIS clustering
 use crate::index::axis::clustering::{
-    ClusterManager, ClusteringAlgorithm, ClusteringConfig, KMeansConfig,
+    AxisClusteringEngine, ClusterManager, ClusteringAlgorithm, ClusteringConfig, KMeansConfig,
+    KMeansInit,
 };
 use proximadb_index_types::ClusterAssignment;
+
+/// Build the AXIS clustering engine for RAPTOR with the standard config,
+/// returned behind the `AxisClusteringPort` DI port. Injected into RaptorWriter
+/// (which no longer constructs it internally — Slice D port-inversion).
+fn make_raptor_axis_clustering(
+    config: &super::config::RaptorConfig,
+) -> std::sync::Arc<dyn proximadb_storage_ports::AxisClusteringPort> {
+    let axis_clustering_config = ClusteringConfig {
+        algorithm: ClusteringAlgorithm::KMeans(KMeansConfig {
+            k: super::constants::clustering::DEFAULT_CLUSTER_COUNT,
+            max_iterations: super::constants::clustering::KMEANS_MAX_ITERATIONS,
+            tolerance: super::constants::clustering::KMEANS_TOLERANCE as f32,
+            n_init: super::constants::clustering::KMEANS_INIT_ATTEMPTS,
+            init_method: KMeansInit::KMeansPlusPlus,
+        }),
+        min_vectors_for_clustering: config.rowgroup_size,
+        max_clusters: super::constants::clustering::MAX_CLUSTER_COUNT,
+        distance_metric: proximadb_distance_kernel::DistanceMetric::Euclidean,
+        adaptive_cluster_count: true,
+        recompute_threshold: 10000,
+        enable_incremental: false,
+    };
+    std::sync::Arc::new(AxisClusteringEngine::new(axis_clustering_config))
+}
+
+/// Build the local filesystem for RAPTOR behind the `FileSystem` trait. Injected
+/// into RaptorWriter (which no longer constructs `LocalFileSystem` internally).
+async fn make_raptor_filesystem()
+-> anyhow::Result<std::sync::Arc<dyn crate::storage::persistence::filesystem::FileSystem>> {
+    use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+    Ok(std::sync::Arc::new(
+        LocalFileSystem::new(LocalConfig::default()).await?,
+    ))
+}
+
+/// Build the storage-quantization chain for RAPTOR (codebook store -> unified
+/// quant -> storage quant) behind the `StorageQuantizationEnginePort` DI port.
+/// Injected into RaptorWriter (which no longer constructs it internally).
+async fn make_raptor_quantization_engine(
+    config: &super::config::RaptorConfig,
+) -> anyhow::Result<std::sync::Arc<dyn proximadb_storage_ports::StorageQuantizationEnginePort>> {
+    use crate::compute::quantization::quantization_engine::{
+        CodebookStore, InMemoryCodebookStore, UnifiedQuantizationEngine,
+    };
+    use crate::compute::quantization::storage_engine::{
+        StorageQuantizationConfig, StorageQuantizationEngine,
+    };
+    use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
+
+    let distance_compute = std::sync::Arc::new(UnifiedDistanceCompute::new(
+        proximadb_distance_kernel::DistanceMetric::Cosine,
+    ));
+    let codebook_store: std::sync::Arc<dyn CodebookStore> =
+        std::sync::Arc::new(InMemoryCodebookStore::new());
+    let unified_quantization = std::sync::Arc::new(UnifiedQuantizationEngine::new(
+        distance_compute.clone(),
+        codebook_store,
+    ));
+    let quant_config = StorageQuantizationConfig {
+        enable_hardware_acceleration: config.enable_simd,
+        distance_metric: proximadb_distance_kernel::DistanceMetric::Cosine,
+        ..Default::default()
+    };
+    Ok(std::sync::Arc::new(StorageQuantizationEngine::new(
+        unified_quantization,
+        distance_compute,
+        quant_config,
+    )))
+}
 
 // Deep integration with filesystem API for cloud-aware I/O
 use crate::storage::persistence::filesystem::TierConfig;
@@ -517,6 +587,9 @@ impl RaptorEngine {
                 config.clone(),
                 "placeholder".to_string(),
                 config.dimension, // dimension from config
+                make_raptor_filesystem().await?,
+                make_raptor_quantization_engine(&config).await?,
+                make_raptor_axis_clustering(&config),
             )
             .await?,
         ));
@@ -2227,6 +2300,9 @@ impl UnifiedStorageFormat for RaptorEngine {
             self.config.clone(),
             collection_id.to_string(),
             collection_dimension as usize,
+            self.filesystem.clone(),
+            make_raptor_quantization_engine(&self.config).await?,
+            make_raptor_axis_clustering(&self.config),
         )
         .await?;
 

@@ -6768,6 +6768,7 @@ dependencies = [
  "proximadb-bloom",
  "proximadb-cache",
  "proximadb-catalog",
+ "proximadb-clustering-kernel",
  "proximadb-codec",
  "proximadb-compression",
  "proximadb-compression-types",
@@ -6779,6 +6780,7 @@ dependencies = [
  "proximadb-document-query",
  "proximadb-embedded-common",
  "proximadb-embedding",
+ "proximadb-engine-core",
  "proximadb-execution-contracts",
  "proximadb-filter-expression",
  "proximadb-functions",
@@ -7048,6 +7050,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-clustering-kernel"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "rand 0.8.6",
+]
+
+[[package]]
 name = "proximadb-codec"
 version = "0.2.0"
 dependencies = [
@@ -7201,6 +7211,23 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "proximadb-engine-core"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "half",
+ "proximadb-compression",
+ "proximadb-distance-kernel",
+ "proximadb-kernel",
+ "proximadb-records",
+ "proximadb-storage-common",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -7578,6 +7605,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "dashmap",
+ "proximadb-clustering-kernel",
  "proximadb-distance-kernel",
  "proximadb-hardware",
  "proximadb-quantization-model",
@@ -7785,12 +7813,16 @@ dependencies = [
  "bincode",
  "chrono",
  "dashmap",
+ "prost",
+ "proximadb-bloom",
  "proximadb-codec",
  "proximadb-compression",
  "proximadb-distance-kernel",
+ "proximadb-hardware-caps",
  "proximadb-kernel",
  "proximadb-proto",
  "proximadb-raptor-common",
+ "proximadb-runtime-common",
  "proximadb-search-types",
  "proximadb-storage-filesystem-types",
  "proximadb-storage-ports",
@@ -8039,10 +8071,14 @@ dependencies = [
  "clap",
  "proximadb",
  "proximadb-embedding",
+ "reqwest 0.11.27",
+ "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -8167,6 +8203,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "proximadb-distance-kernel",
  "proximadb-filter-expression",
  "proximadb-kernel",
  "proximadb-proto",
@@ -9752,6 +9789,7 @@ checksum = "4591acadbcf52f0af60eafbb2c003232b2b4cd8de5f0e9437cb8b1b59046cc0f"
 dependencies = [
  "log",
  "recursive",
+ "sqlparser_derive 0.3.0",
 ]
 
 [[package]]
@@ -9761,7 +9799,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c6d1b651dc4edf07eead2a0c6c78016ce971bc2c10da5266861b13f25e7cec"
 dependencies = [
  "log",
- "sqlparser_derive",
+ "sqlparser_derive 0.5.0",
+]
+
+[[package]]
+name = "sqlparser_derive"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da5fc6819faabb412da764b99d3b713bb55083c11e7e0c00144d386cd6a1939c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]

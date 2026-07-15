@@ -36,6 +36,7 @@ members = [
     "crates/foundation/proximadb-hardware",
     "crates/foundation/proximadb-hardware-caps",
     "crates/foundation/proximadb-distance-kernel",
+    "crates/foundation/proximadb-clustering-kernel",
     "crates/foundation/proximadb-memory-pool",
     "crates/foundation/proximadb-kernel",
     "crates/foundation/proximadb-bloom",
@@ -78,6 +79,7 @@ members = [
     "crates/modalities/proximadb-rank-expr",
     "crates/modalities/proximadb-rank-profile",
     "crates/modalities/proximadb-rank-onnx",
+    "crates/storage/proximadb-engine-core",
     "crates/storage/proximadb-raptor-common",
     "crates/storage/proximadb-raptor-engine",
     "crates/storage/proximadb-storage-common",
@@ -152,7 +154,7 @@ anyhow = "1.0"
 # `sqlparser = { workspace = true }` without first declaring the
 # dep at the workspace level. Same pin as the root `[dependencies]`
 # entry.
-sqlparser = "0.59"
+sqlparser = { version = "0.59", features = ["visitor"] }
 arrow = { version = "58", features = ["prettyprint"] }
 arrow-array = { version = "58", default-features = false }
 bincode = "1.3"
@@ -172,6 +174,7 @@ proximadb-compression-types = { path = "crates/foundation/proximadb-compression-
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
 proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
+proximadb-clustering-kernel = { path = "crates/foundation/proximadb-clustering-kernel" }
 proximadb-memory-pool = { path = "crates/foundation/proximadb-memory-pool" }
 proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
 proximadb-bloom = { path = "crates/foundation/proximadb-bloom" }
@@ -314,6 +317,7 @@ proximadb-compression-types = { path = "crates/foundation/proximadb-compression-
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
 proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
+proximadb-clustering-kernel = { path = "crates/foundation/proximadb-clustering-kernel" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-graph-model = { path = "crates/foundation/proximadb-graph-model" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
@@ -390,7 +394,7 @@ proximadb-uql = { path = "crates/query/proximadb-uql" }
 proximadb-vector-query = { path = "crates/query/proximadb-vector-query" }
 
 # SQL Parsing
-sqlparser = "0.59"
+sqlparser = { version = "0.59", features = ["visitor"] }
 
 # Async recursion support
 async-recursion = "1.0"
@@ -603,6 +607,7 @@ napi = { version = "2.14", features = ["napi9"], optional = true }
 napi-derive = { version = "2.14", optional = true }
 proximadb-raptor-common = { version = "0.2.0", path = "crates/storage/proximadb-raptor-common" }
 proximadb-raptor-engine = { version = "0.2.0", path = "crates/storage/proximadb-raptor-engine" }
+proximadb-engine-core = { version = "0.2.0", path = "crates/storage/proximadb-engine-core" }
 
 # GPU acceleration dependencies (platform-specific)
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]

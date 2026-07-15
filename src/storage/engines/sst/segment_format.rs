@@ -171,19 +171,89 @@ pub fn write_pax_segment_full(
     f32_tier: bool,
     target_block: Option<usize>,
 ) -> Result<SegmentMeta> {
-    // TD-RDSTRAT-5 S1 (default-OFF): reorder records by their sign-code so
-    // spatially-close vectors co-locate into the same block, and compute each
-    // block's centroid for the Vector Object Economy directory. Reordering is
-    // result-preserving (the reader ranks/dedups by distance + OID). When the
-    // flag is off, records write in insertion order and no centroids are computed
-    // — zero behaviour/cost change.
+    // TD-RDSTRAT-5 S1 / TD-WLP-4 (default ON, kill-switch
+    // `PROXIMADB_PAX_BLOCK_CLUSTER=0`): reorder records by the model-free
+    // sign-code bootstrap so spatially-close vectors co-locate into the same
+    // block, and compute each block's centroid+radius for the Vector Object
+    // Economy directory. Reordering is result-preserving (the reader
+    // ranks/dedups by distance + OID). Compaction upgrades the ordering to
+    // PCA+IVF via `write_pax_segment_compacted`.
     let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
     let order = if cluster {
         crate::storage::engines::sst::block_cluster::cluster_order(records, 0)
     } else {
         None
     };
+    write_pax_segment_ordered(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        rerank_quant,
+        f32_tier,
+        target_block,
+        cluster,
+        order,
+    )
+}
 
+/// TD-WLP-4 (ADR-061 D3): the **compaction** write entry point — identical to
+/// [`write_pax_segment_full`] except the record ordering is the PCA+IVF
+/// re-cluster (`cluster_order_pca_ivf`) instead of the L0 sign-code bootstrap.
+/// Compaction is the re-cluster event: the merged batch is large enough to
+/// train a write-time PCA, and same-cell rows co-locate into blocks whose
+/// centroids+radii make the read-side prune effective. Honors the same
+/// kill-switch (`PROXIMADB_PAX_BLOCK_CLUSTER=0` ⇒ insertion order, no
+/// centroids). Gating by profile happens at compaction *arming*
+/// (`resolve_compaction_armed`): Churn collections never schedule compaction,
+/// so this path only serves AppendBulk (or explicit `compaction:on`) work.
+#[allow(clippy::too_many_arguments)]
+pub fn write_pax_segment_compacted(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+) -> Result<SegmentMeta> {
+    let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
+    let order = if cluster {
+        crate::storage::engines::sst::block_cluster::cluster_order_pca_ivf(records, 0)
+    } else {
+        None
+    };
+    write_pax_segment_ordered(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        rerank_quant,
+        f32_tier,
+        target_block,
+        cluster,
+        order,
+    )
+}
+
+/// Shared writer loop for the flush (bootstrap-ordered) and compaction
+/// (IVF-ordered) entry points.
+#[allow(clippy::too_many_arguments)]
+fn write_pax_segment_ordered(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+    cluster: bool,
+    order: Option<Vec<usize>>,
+) -> Result<SegmentMeta> {
     let mut writer = PaxSegmentWriter::new(
         path,
         BlockMode::Pax,

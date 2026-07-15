@@ -551,10 +551,10 @@ pub fn consult_for_write(
 ///
 /// ## Split-brain safety
 ///
-/// Even if a pod bypasses this check (e.g., local single-pod deployment),
-/// the object-store fence in `SystemCatalog` still enforces generation fencing
-/// on every DDL commit. The lease is a latency optimization; the fence is
-/// the correctness authority.
+/// `SystemCatalog` generation-fences its snapshot pointer, not arbitrary DDL
+/// side effects. Callers performing external writes (for example MATERIALIZE)
+/// must therefore keep this renewable lease wired and revalidate ownership
+/// before publishing success.
 ///
 /// ## Usage
 ///

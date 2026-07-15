@@ -122,6 +122,25 @@ The bug class has two shapes:
 | local-fs impl (currently unwired — no production constructor)
 | constructor now rejects URL-shaped paths fail-fast
 | ✅ Guarded (object-store port impl deferred)
+
+| **SystemCatalog durable path never engaged on Azure/GCS aliases** (batch 2) —
+  `shared_services` `is_objstore` allowlisted `s3://\|gs://\|az://\|memory://`; and
+  `store_for_url` forwarded `adls://`/`gcs://` to the upstream `object_store`
+  parser, which doesn't know those aliases — catalog metadata silently landed in
+  `NativeCatalog`'s temp cache
+| scheme-enumeration anti-pattern (same class as delta.rs `parse_storage_url`)
+| scheme-generic predicate in `shared_services`; alias normalization
+  (`adls://`→`az://`, `gcs://`→`gs://`) centralized in
+  `proximadb-object-store::store_for_url`; `CatalogManager::resolve_object_store_fs`
+  shared by native + delta creation
+| ✅ Fixed (batch 2)
+
+| **Delta catalog metadata staged in `$TMPDIR`** (batch 2)
+| `DeltaCatalog` used `tokio::fs` exclusively; cloud URLs downgraded to a local cache
+| `new_with_filesystem` routes catalog JSON + delta logs through the injected
+  `FileSystem` (scheme-qualified URLs); round-trip + reopen-durability test.
+  Follow-ups (CAS, rename relocation, log checkpoints): TD-CAT-4
+| ✅ Fixed (batch 2; follow-ups TD-CAT-4)
 |===
 
 == Deferred (documented limitations — next cycles)
@@ -136,18 +155,28 @@ The bug class has two shapes:
   with a loud warn instead of mangling the URL. Durable path: route TST segment I/O
   through the filesystem abstraction, or flush-to-object-store tiering.
 
-| **Delta catalog metadata on object store**
-| `DeltaCatalog` stages metadata in `$TMPDIR/proximadb_delta_cache` for cloud URLs
-  (now loudly warned). Durable path: write `_delta_catalog.json` + delta logs through
-  `FilesystemFactory`. Note the default catalog path in production is not delta-backed.
+| **Delta catalog multi-writer CAS + rename relocation + log checkpoints**
+| Core object-store durability LANDED in batch 2 (see inventory above); the
+  remaining refinements are tracked in TD-CAT-4. The catalog pointer is
+  last-writer-wins (single-writer warehouse model) until CAS lands.
 
-| **RAPTOR/SWIFT writers use `FileSystem::append`**
-| Experimental engines (feature-gated `experimental-engines`, default-OFF) append to
-  segment files; object-store backends reject append. Same full-buffer-overwrite or
-  multipart strategy as the WAL fix when these engines graduate.
+| **RAPTOR writer format still requires append**
+| Contained: `FileSystem::supports_append` makes the backend capability explicit and
+  `RaptorWriter` rejects incompatible injected backends during construction. RAPTOR
+  remains feature-gated/default-OFF. A full-buffer-overwrite or multipart format is
+  still required before RAPTOR can support object stores.
 
-| **`queue_fs_adapter.rs` uses `append`**
-| Audit whether its queue paths can be object-store-configured; guard or convert.
+| **Queue root format still requires append**
+| Contained: `FactoryQueueFs::new` now rejects a root whose resolved backend does not
+  advertise durable append. Object-store archive targets remain independent, but an
+  object-store queue root is unsupported until the queue segment format becomes
+  immutable/replace-based.
+
+| **Filesystem trait retains the `append` method**
+| `supports_append` prevents capability-blind constructors, but the method remains on
+  the shared trait for local/HDFS compatibility. New append-dependent formats must
+  check the capability at construction; removing/splitting the method is a later
+  workspace-wide API migration.
 
 | **Alerting persistence object-store port**
 | `AlertPersistence` is a port; add an object-store-backed impl (layering: the
@@ -169,6 +198,11 @@ The bug class has two shapes:
   bases share); `join_storage_url` matrix over bare/file/s3/adls/abfs/gcs bases
   asserting **no `file://<scheme>://` and no `<scheme>://<scheme>://` ever**; audit
   logger scheme dispatch.
+* Construction ratchets: queue roots and RAPTOR writers reject a backend without
+  `supports_append`; object-store backends retain the default `false`, while local and
+  HDFS advertise `true`.
+* WAL reopen ratchet: current-format `wal_NNNNNNNN.log` frames are scanned on writer
+  construction and the next `sequence_number` resumes at `max + 1`.
 * Guard: `tests/objstore_url_construction_test.rs::no_strip_and_reprepend_pattern_in_src`
   greps `src/` for `.replace("file://"` outside an allowlist — the pattern that caused
   this class is now build-enforced dead.
@@ -178,5 +212,11 @@ The bug class has two shapes:
 
 == History
 
-* 2026-07-14 — batch 1 filed + fixed (this PR); folds in #932 (cdc `[[test]]` explicit
+* 2026-07-14 — batch 1 filed + fixed (PR #966); folds in #932 (cdc `[[test]]` explicit
   paths) to unblock the develop image publish. Refs #960.
+* 2026-07-14 — batch 2 (catalog): SystemCatalog durable path now engages on ALL
+  object-store schemes (`is_objstore` scheme-generic; `adls://`/`gcs://` alias
+  normalization in `store_for_url`); DeltaCatalog persists through the injected
+  `FileSystem` (TD-CAT-4 follow-ups). Design review vs Polaris/Horizon/Nessie/
+  Delta: `docs/12-design/CATALOG_OBJECT_STORE_DESIGN_REVIEW_2026_07_14.adoc`;
+  cache eviction finding: TD-CAT-5.
