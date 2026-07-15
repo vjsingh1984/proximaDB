@@ -1,3 +1,8 @@
+// Language-binding API methods may be unused without features + have many args
+// (matching the root crate allowances).
+#![allow(dead_code)]
+#![allow(clippy::too_many_arguments)]
+
 //! # Embedded Mode - In-Process ProximaDB Database
 //!
 //! This module provides an embedded mode for using ProximaDB as an in-process
@@ -815,7 +820,6 @@ pub struct EmbeddedProximaDB {
     /// Checkpoint manager for incremental persistence
     checkpoint_manager: std::sync::Arc<CheckpointManager>,
     /// File lock manager for multi-process coordination
-    #[allow(dead_code)]
     lock_manager: Option<FileLockManager>,
     /// Leader election for leader/follower mode
     leader_election: Option<LeaderElection>,
@@ -3472,7 +3476,6 @@ impl EmbeddedProximaDB {
     }
 
     /// Create a single edge in the graph.
-    #[allow(dead_code)]
     pub fn create_edge(
         &self,
         graph_id: &str,
@@ -3763,7 +3766,6 @@ impl EmbeddedProximaDB {
     /// Vector-seed → graph-expand → fuse-by-`oid` (TD-137/TD-131). Constructs the SAME `FusionService`
     /// core the REST endpoint uses (`FusionService::new(vector, graph)`), so embedded results are
     /// identical to the server path by construction. `rrf` selects the rank-based fallback policy;
-    #[allow(dead_code)]
     /// `grain` = `"nodes"` | `"edges"` | `"both"`. Returns `(FusedItem, FusionStats)`.
     pub fn fusion_search(
         &self,
@@ -5512,7 +5514,6 @@ impl EmbeddedProximaDB {
             Ok(result.ingested)
         })
     }
-    #[allow(dead_code)]
 
     /// Query trace spans across one or more traces in a namespace.
     pub fn query_traces(
