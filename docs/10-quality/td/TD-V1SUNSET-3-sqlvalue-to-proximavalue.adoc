@@ -9,9 +9,15 @@
 |===
 | Field | Value
 
-| Status | **Scoped (plan; implementation not started).** This TD scopes the migration of the v1 proto
-`SqlValue` to the v2 canonical `ProximaValue`. It migrates nothing yet; execution is a dedicated
-slice (or series of slices), independent of the OOM/decomposition track.
+| Status | **Bridge DONE (step 1 complete); Slice 1 (raptor swap) is the first code step.** The
+`SqlValue ↔ ProximaValue` bridge already exists in `proximadb-records::conversions`
+(`sql_value_to_proxima` / `proxima_to_sql_value` / `json_to_proxima`) — the original "no bridge
+exists" claim verified the wrong crate (`data-model`); it lives in `records`. So this TD's step 1
+is done; the first *code* step is Slice 1 (raptor crates swap `MetadataValue`).
+**Slice 1 blocker:** `ProximaValue` has no `Ord`/`PartialOrd`, so raptor-engine's
+`compare_sql_values` (SqlValue predicate matching at `raptor-engine/src/lib.rs:59`) needs a
+`compare_proxima_values` equivalent — a design decision (mirror `compare_sql_values` ordering for
+the metadata types: String/numbers/Bool/Int64; exotic variants are Equal) before the swap.
 | Severity | Medium — `SqlValue` is a v1 proto *wire/in-memory* type used for predicate pushdown and
 metadata stats (not a durable format), so this is an in-memory type swap (lower risk than the
 VectorRecord durable migration in link:TD-V1SUNSET-2-vectorrecord-to-proximatecord-first-slice.adoc[TD-V1SUNSET-2]).
@@ -24,10 +30,13 @@ reference `proximadb_v1::SqlValue`/`sql_value`).
 canonical-type decision); link:../../12-design/V1_RETIREMENT_ROADMAP_2026_07_08.adoc[V1_RETIREMENT_ROADMAP]
 (the v1 sunset, of which TD-V1SUNSET-1 REST/gRPC + TD-V1SUNSET-2 VectorRecord are sibling slices); the
 v1-proto ratchet (`scripts/check_v1_proto_usage.py`).
-| Depends-on | `ProximaValue` (already exists in `proximadb-data-model`, 27+ variants — verified). A
-`SqlValue → ProximaValue` bridge (does **not** exist yet — this TD adds it). The raptor crates
-landed by the decomposition track (`proximadb-raptor-common` #955/#958, `proximadb-raptor-engine`
-#962) — the migration lands cleanly in those crates post-extraction.
+| Depends-on | `ProximaValue` (already exists in `proximadb-data-model`, 27+ variants — verified). The
+`SqlValue ↔ ProximaValue` bridge **already exists** in `proximadb-records::conversions`
+(`sql_value_to_proxima`, `proxima_to_sql_value`, `json_to_proxima`) — verified 2026-07-15; the
+prior "does not exist" note was a wrong-crate check (`data-model` instead of `records`). The
+raptor crates landed by the decomposition track (`proximadb-raptor-common` #955/#958,
+`proximadb-raptor-engine` #962) — the migration lands cleanly in those crates post-extraction
+(raptor-common currently deps only `proto`; Slice 1 adds `records` + `data-model`).
 |===
 
 == Context — why v1 `SqlValue` is still in the raptor path
