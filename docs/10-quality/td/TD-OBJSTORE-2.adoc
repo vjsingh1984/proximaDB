@@ -6,7 +6,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Implemented; live ADLS/S3 proof required before closure.** Code and process-boundary harness are in this change; `scripts/prove_object_store_durability.sh` is the closure gate.
+| Status | **Implemented; live ADLS/S3 proof rerun required before closure.** The 2026-07-15 live run proved catalog + HELIX WAL recovery, then exposed a recovered-record point-read escape fixed by the follow-up below. `scripts/prove_object_store_durability.sh` remains the closure gate.
 | Severity | Critical — WAL objects survive, but a replacement VM recovers zero collections when the collection catalog is only in the lost local `data_dir`; the durable WAL cannot be attached or replayed.
 | Component | `SystemCatalog`, collection/WAL recovery, SST/VIPER storage assignment, graph/discovery catalog sidecars, cloud deployment configuration.
 | Follows | PR #966 / `TD-OBJSTORE-1` (scheme-safe WAL and metadata path construction).
@@ -52,6 +52,13 @@ collections' storage engines. Recovery found the catalog rows and WAL segments, 
 could not flush them (`No storage engine registered for collection`). A redundant
 second replay in `ProximaDB::start()` repeated the failure while startup still became
 healthy because per-collection replay errors were only warnings.
+
+The 2026-07-15 live proof exposed a final read-boundary escape after WAL replay
+itself succeeded. `VectorOperationsService::vector()` checked the recovered WAL,
+then used the service-wide SST file lister and reader for every WAL miss. A recovered
+HELIX record was therefore flushed to ADLS successfully while a subsequent v2 GET
+tried the local SST filesystem and returned 404. AnvaiOps API-key validation uses the
+same point-read path, so the same defect also presented as a 401 after restart.
 
 == Fix
 
@@ -100,6 +107,18 @@ remains unchanged: HELIX is a supported production engine on object storage, not
 silently downgraded. The resolved engine is also persisted in `StorageAssignment`
 and used for compression defaults.
 
+=== Canonical point-read boundary
+
+`VectorReadCoordinator` now owns the complete WAL-first point-read boundary. On a
+WAL miss it resolves the collection, passes the persisted
+`StorageAssignment.base_location` to that collection's configured engine, and calls
+the engine-neutral batch-capable `point_lookup` contract. The public
+`VectorOperationsService::vector()` surface remains stable as a thin delegate while
+the original service is decomposed; protocols cannot create parallel SST-specific
+fallbacks. Typed collection identity is carried from the storage assignment into the
+engine contract, and insert-only existence checks reuse this same authority. Projection
+flags are applied once to the canonical returned record.
+
 === Local-filesystem escape audit
 
 * Graph collection metadata now resolves to
@@ -133,6 +152,11 @@ namespace/table, performs no explicit checkpoint or graceful shutdown, and prove
 second instance recovers the table solely from object storage. This fails with the old
 1,000-mutation threshold.
 
+`wal_miss_routes_to_collection_engine_and_object_store_base_path` installs a HELIX
+engine for a recovered collection with an `adls://` base and proves a WAL miss reaches
+that engine's `point_lookup` with the object-store path. The old global-SST
+implementation returns no record and fails this test.
+
 === Real process / real backend integration
 
 `apps/proximadb-server/tests/object_store_restart_recovery.rs` launches the production
@@ -140,10 +164,10 @@ server binary three times against one unique `s3://` or `adls://` prefix and cre
 both SST and HELIX collections:
 
 . VM 1: create both collections + insert records; SIGKILL.
-. VM 2 with empty local disk: recover catalog, replay WAL, and find both records; SIGINT
-  to materialize SST/HELIX files and reclaim flushed WAL.
-. VM 3 with another empty local disk: recover catalog and find both records from cold
-  object-store files.
+. VM 2 with empty local disk: recover catalog, replay WAL, and find both records by
+  v2 point GET and vector search; SIGINT to materialize SST/HELIX files and reclaim WAL.
+. VM 3 with another empty local disk: recover catalog and find both records by point
+  GET and search from cold object-store files.
 
 Run:
 
@@ -157,6 +181,13 @@ identity/IAM credentials. It is ignored in credential-free CI and is the anvaiop
 deployment proof.
 
 == Closure evidence
+
+The 2026-07-15 attempt using runtime-full digest
+`sha256:f4bddeb506186ee572ee1e18469d966f0dbc1f821f31cbedd2cbadae2da64b4a`
+is diagnostic evidence, not closure evidence. Startup registered HELIX for collection
+12 and recovered two vectors from two ADLS files, while the post-restart GET returned
+404 and logged local `Failed to list files for collection 12`. The point-read fix must
+be merged, republished, deployed, and the complete proof rerun.
 
 Before marking this TD closed, attach:
 
@@ -178,3 +209,8 @@ Before marking this TD closed, attach:
   caching filesystem remained bound to `file://`; routed HELIX operations through the
   collection-assigned backend and corrected the persisted resolved engine. A passing
   rerun remains the closure gate.
+* 2026-07-15 — canonical QA runtime-full digest `sha256:f4bddeb5...da64b4a`
+  recovered the HELIX catalog and two probe records from ADLS, but v2 point GET and
+  API-key lookup still used the global SST/local path. Converged point reads behind
+  `VectorReadCoordinator` and the configured engine contract; a passing
+  republished-image rerun remains the closure gate.

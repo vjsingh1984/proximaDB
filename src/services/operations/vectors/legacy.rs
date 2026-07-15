@@ -2059,27 +2059,9 @@ impl VectorOperationsService {
     }
 
     async fn record_exists_unchecked(&self, collection_id: &str, record_id: &str) -> Result<bool> {
-        if self
-            .wal_manager
-            .search_vector_by_id(collection_id, &record_id.to_string())
-            .await?
-            .is_some()
-        {
-            return Ok(true);
-        }
-
-        let collection = self.get_or_load_collection(collection_id).await?;
-        let base_path = collection
-            .storage_assignment
-            .as_ref()
-            .map(|assignment| assignment.base_location.as_str())
-            .unwrap_or("");
-        let engine = self.get_engine_for_collection(collection_id).await?;
-
-        Ok(!engine
-            .point_lookup(collection_id, base_path, &[record_id.to_string()], None)
-            .await?
-            .is_empty())
+        self.read_coordinator()
+            .contains(collection_id, record_id)
+            .await
     }
 
     /// Return lightweight, default planning/pruning hints without executing search.
@@ -4078,47 +4060,9 @@ impl VectorOperationsService {
         include_vector: bool,
         include_metadata: bool,
     ) -> Result<Option<ProximaRecord>> {
-        // First check WAL for unflushed vectors
-        if let Some(record) = self
-            .wal_manager
-            .search_vector_by_id(collection_id, &vector_id.to_string())
-            .await?
-        {
-            let mut result = record;
-            if !include_vector {
-                result.embeddings.clear();
-            }
-            if !include_metadata {
-                result.props.clear();
-            }
-            return Ok(Some(result));
-        }
-
-        // WAL miss → point-lookup in SST files. Read the FULL record straight from the SST
-        // reader (bloom-filter reject + B+ tree O(log n) block lookup), rather than the
-        // search-shaped `OptimizedSearchRecord`, so `labels` + `variation_id` are preserved.
-        // Document-facade projections (`proxima_record_to_legacy_document`) require the
-        // `document` label, which the search shape drops (TD-DOC-CONV-1).
-        let file_paths = self
-            .storage_engine
-            .list_collection_files(collection_id)
+        self.read_coordinator()
+            .vector(collection_id, vector_id, include_vector, include_metadata)
             .await
-            .unwrap_or_default();
-
-        let reader = self.storage_engine.sstable_reader();
-        for file_path in &file_paths {
-            if let Ok(Some(mut record)) = reader.vector(file_path, vector_id).await {
-                if !include_vector {
-                    record.embeddings.clear();
-                }
-                if !include_metadata {
-                    record.props.clear();
-                }
-                return Ok(Some(record));
-            }
-        }
-
-        Ok(None)
     }
 
     /// Unified search by ID for embedded API
@@ -4176,6 +4120,16 @@ impl VectorOperationsService {
             self.wal_manager.clone(),
             self.bulk_write_router.clone(),
             self.pseudo_query_generator.clone(),
+            self.collection_resolver(),
+        )
+    }
+
+    /// Build the canonical point-read coordinator on demand. The collaborator
+    /// owns the WAL-first → configured-engine boundary; this service retains the
+    /// stable public API while the original god object is decomposed.
+    fn read_coordinator(&self) -> super::read::VectorReadCoordinator {
+        super::read::VectorReadCoordinator::new(
+            self.wal_manager.clone(),
             self.collection_resolver(),
         )
     }
