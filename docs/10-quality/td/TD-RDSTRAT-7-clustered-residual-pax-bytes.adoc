@@ -235,16 +235,34 @@ retain that byte in the v1 core as the legacy/default summary.
 
 ```
 entries[] {
+  descriptor_id:u16,
   logical_field_id:i32,
   physical_column_id:i32,
   tier_role:u8,              // index | rerank | exact | metadata
   codec_tag:u8,              // stable ProximaScheme marker
   codec_version:u8,
   compression_tag:u8,
-  parameter_scope:u8,        // none | segment | block | cluster-run
-  flags:u16
+  compression_version:u8,
+  parameter_scope:u8,        // none | segment | block | cluster-run | row
+  vector_transform:u8,       // none | l2-normalized | centered-rotated
+  auxiliary_flags:u16,       // exact-norm-sq | residual-norm | correction-scale
+  source_fidelity:u8,        // exact | lossy
+  quantization_generation:u16
+}
+
+block_tier_assignments[] {
+  block_ordinal:u32,
+  physical_column_id:i32,
+  tier_role:u8,
+  descriptor_id:u16
 }
 ```
+
+Multiple descriptors for the same logical field/tier are permitted because
+write-time fallback can produce mixed SQ8/residual blocks in one segment. The
+block assignment is the footer planning authority; the block-local `ColumnMeta`
+and `VectorParamBlock` repeat the selected codec facts required for independent
+decode. The reader rejects disagreement between them.
 
 Compatibility is asymmetric by design:
 
@@ -260,6 +278,44 @@ Compatibility is asymmetric by design:
 Optional metadata is skippable; an unknown data encoding is not. This is the
 same compatibility distinction that keeps Parquet Bloom additions benign while
 new encodings require reader support.
+
+=== Vector metric and source-fidelity contract
+
+Each logical vector field records the immutable physical contract under which
+the segment was written:
+
+```
+vector_contracts[] {
+  logical_field_id:i32,
+  built_metric:u8,
+  metric_epoch:u64,
+  normalization_contract:u8, // none | enforced-unit-l2
+  durability_policy:u8       // exact-retained | external-authority | approximate-only
+}
+```
+
+Runtime metric support comes from the registered codec implementation keyed by
+`codec_tag`, version, and transform; the file does not assert an unaudited
+supported-metric bitmap. Unit-normalized vectors may share one dot estimator
+for L2/cosine/MIPS. General vectors require the candidate norm for direct
+L2/cosine estimation, or full coordinate reconstruction. L1-family metrics
+cannot use a dot-only TurboQuant/RaBitQ estimator as their candidate stage.
+
+The optional per-row exact squared L2 norm used by an SQ6 experiment is declared
+by `auxiliary_flags`/row parameter scope. It may improve L2 and dot ranking, but
+positive radial rescaling cancels from cosine and does not make reconstructed
+coordinates exact. It must never be surfaced as tier role `exact`.
+
+Physical f32 may be absent only under an explicit catalog durability policy:
+
+* `ExactRetained`: every live block retains authoritative original f32.
+* `ExternalAuthority`: PAX may omit f32, but the catalog names a durable source
+  able to supply every original row for rebuild/compaction.
+* `ApproximateOnly`: original f32 may be irrecoverable; exact search/vector
+  return and unrestricted metric migration are not promised.
+
+The weakest live block determines the collection guarantee. "Any input has
+f32" is never sufficient to mark a compacted output exact.
 
 === BlockColumnStats and optional Bloom payloads
 
@@ -356,6 +412,58 @@ minimum realized-saving threshold fall back to flat SQ8 for that block.
 The encoding map declares the block's chosen codec; block-local parameters live
 in a versioned `VectorParamBlock` extension. Mixed codec blocks in one segment
 are permitted.
+
+=== Equal-protocol codec bake-off
+
+The first implementation does not earn a permanent format tag merely by
+existing. Three isolated worktrees run the same release-profile SIFT1M N=100k,
+100-query, single-file IVF-ON protocol:
+
+* clustered SQ4/SQ6, including the explicitly declared exact-norm experiment;
+* clustered TurboQuant-style 4-bit;
+* clustered multi-bit RaBitQ 4-bit.
+
+The result table records recall@10, range GETs/query, bytes read/query, query
+latency percentiles, persisted bytes/row including parameters, and encode/flush
+time. Total route cost is also reported under ADR-062's durable weights
+`20 * GETs + 5 * MiB_read`. Only an arm clearing recall `>= 0.98`, preserving
+the GET result, and moving bytes materially below `31.7 MB` is eligible. Losing
+experimental codecs are discarded unless independently justified by another
+workload.
+
+Metric compatibility is evaluated separately from the Euclidean SIFT headline:
+L2, cosine, and dot require ranking/score-domain tests; other public metrics
+must either reconstruct and use the generic kernel or bypass the compact
+estimator. Approximate and exact search labels must remain honest.
+
+=== Compaction and metric-change rules
+
+. Read every block's footer assignment and source fidelity; do not infer a
+  file-wide codec or exactness flag from block zero or from any one input.
+. Pass-through is allowed when blocks need no reorder/policy rewrite. This is
+  the only lossless option when no original-vector authority exists.
+. Re-clustering changes row order and cluster-run parameters, so it requires
+  original f32 for every row from an exact tier or declared external authority.
+. If exact source is unavailable, default to pass-through/defer. An explicitly
+  `ApproximateOnly` lossy transcode increments `quantization_generation`, stays
+  lossy, and reruns the recall gate because error compounds.
+. A collection metric change increments `metric_epoch`. Compatible generic
+  reconstruction may continue approximately; estimator-specific tiers are
+  rebuilt or bypassed. Until this reconciliation exists, metric changes must be
+  rejected or executed as an explicit rebuild transaction.
+. Exact queries and exact vector return require an exact authority for every
+  relevant live block.
+
+Before activating a new rerank codec, fix the current exact-tier propagation
+seam: coalesced writers must actually emit a requested exact tier, compaction
+must materialize that tier rather than lossy `EMBED_BASE`, and output exactness
+must require all input rows to have an exact authority.
+
+Also normalize the score boundary before mixed files are compared: the
+coalesced reranker currently produces squared L2 while the canonical distance
+kernel returns Euclidean distance, and its internal negated-dot ordering value
+must be converted back to the public positive-dot similarity exactly once.
+Homogeneous ranking can hide both defects; mixed codecs/files cannot.
 
 === Opt-in and fallback
 
