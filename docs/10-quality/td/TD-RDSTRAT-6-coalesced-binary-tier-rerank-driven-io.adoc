@@ -112,9 +112,10 @@ Bloom, no false negatives → `vector_by_id`/edge-by-oid skips to the one positi
 
 PR1 implemented the readable footer-v1 **core**: RaBitQ/row/dimension summary, legacy encoding
 summary, block extents, and an empty typed stats slot (`StatsKind::None`). The full schema,
-per-stripe map, per-column stats directory, and auxiliary-region references are additive typed
-sections specified by ADR-062 D4/D5 and TD-RDSTRAT-7. Missing sections use PR1/block-local
-metadata; explicit unknown data encodings fail closed rather than aliasing to SQ8.
+per-stripe map, per-column stats directory, and auxiliary-region references live in the clean
+footer v2 specified by ADR-062 D4/D5 and TD-RDSTRAT-7. New readers retain the footer-v1 parser;
+footer-v2 writes remain default OFF during rollout. Explicit unknown data encodings fail closed
+rather than aliasing to SQ8.
 
 == Self-derived geometry
 
@@ -182,7 +183,7 @@ amendment sanctions.
 == Phased implementation (one coherent PR at a time)
 
 * **PR1 — SHIPPED #1019, layout + scan-then-rerank foundation (the GET win):** header-prefix +
-  RaBitQ-head + footer-v1 core (block table + legacy encoding/schema summary + additive seams) +
+  RaBitQ-head + footer-v1 core (block table + legacy encoding/schema summary) +
   scan-then-rerank read path
   (reuse `plan_selected_block_ranges`/`read_ranges` + unchanged block decoder) + self-derived
   geometry + in-place writer/reader + round-trip/detection tests + SIFT recall + GET measurement.
@@ -190,8 +191,8 @@ amendment sanctions.
 * **PR2 — cost control:** GET-budget compaction trigger (WLP-7 seam) + per-file RaBitQ/footer
   LRU cache (engine `DashMap` vs mmap residency).
 * **PR3 — point-lookup index:** per-block OID bloom (`StatsKind::BloomOid`) + `vector_by_id` fast path.
-* **Bytes phase — TD-RDSTRAT-7:** clustered-residual rerank encoding + additive schema/encoding/
-  stats footer sections; default OFF; end-to-end SIFT bytes + recall gate.
+* **Bytes phase — TD-RDSTRAT-7:** clustered-residual rerank encoding + clean typed footer v2
+  with a footer-v1 read fallback; default OFF; end-to-end SIFT bytes + recall gate.
 * **Deferred (foundation anticipates):** schema-evolution semantics (TD-TBL-4/ADR-047); `MinMax`
   pushdown; within-cell Hilbert; text-as-variable-fetch; coarse
   VOE prune for monster collections; per-collection RaBitQ sidecar only if file-merging proves
@@ -246,4 +247,5 @@ the bytes phase.
   catalog-authority invariant (Q3) are PR2/PR3 follow-ups, not PR1 gates.
 * 2026-07-15 — PR1 #1019 landed and measured recall@10 `0.984`, `20` range GETs/query, and
   `31.7 MB` read/query. Linked the active bytes phase TD-RDSTRAT-7 and reconciled the spec with
-  the shipped footer-v1 core/default-OFF gate; full typed footer sections are additive.
+  the shipped footer-v1 core/default-OFF gate; full typed metadata uses footer v2 while new
+  readers retain the v1 path.

@@ -171,31 +171,33 @@ This follows Parquet's useful separation: file metadata plans physical access;
 column/page-local metadata decodes bytes; optional indexes/Blooms may be ignored.
 It does not copy Parquet Thrift structures into PAX.
 
-=== Additive footer extension envelope
+=== Clean footer v2 with a v1 read fallback
 
-PR1 footer v1 emits a fixed core and its parser stops after the declared block
-entries. It intentionally tolerates trailing bytes. Preserve that readable core
-and append an independently framed extension:
+PR1 footer v1 is an input compatibility case, not a byte-layout constraint on
+this unreleased follow-on writer. Footer v2 removes the v1 summary fields that
+the typed sections supersede:
 
 ```
-[PR1 footer-v1 core]
-[extension payload:
-   ext_version:u8
-   section_count:u16
-   repeated { section_tag:u8, section_version:u8, section_len:u32, bytes[] }]
-[extension_len:u32]
-[PXE1:4B]
+[footer_version:u8 = 2]
+[row_count:u64 | rabitq_off:u64 | rabitq_len:u64]
+[embed_dim:u32 | embed_count:u32]
+[block_count:u32 | required block entries]
+[section_count:u16]
+[repeated { section_tag:u8, section_version:u8, section_len:u32, bytes[] }]
 ```
 
 Rules:
 
-* No segment-magic, header-layout, or footer-version bump for these additive
-  sections. `PXE1` frames only the optional footer extension.
-* An old PR1 reader parses the v1 core and ignores the trailing extension.
-* A new reader first parses the v1 core, then recognizes `PXE1`, validates all
-  lengths with checked arithmetic, and skips unknown section tags/versions.
-* Missing extension means the exact PR1 interpretation. A malformed recognized
-  extension is an error, not a legacy fallback.
+* No segment-magic or header-layout bump. Footer version changes because its
+  byte layout changes; the new residual encoding remains a codec tag, not a
+  format magic.
+* A new reader dispatches footer v1 to the PR1 parser and footer v2 to the typed
+  parser. New-reader -> old-file readability is required.
+* Old PR1 binaries are not required to read footer v2. Footer-v2 writes remain
+  default OFF until the new reader is deployed.
+* Footer v2 validates all lengths with checked arithmetic and skips unknown
+  optional section tags/versions.
+* A malformed recognized v2 section is an error, not a v1 fallback.
 * Section order is deterministic on write; readers do not depend on order.
 
 Initial section tags are `SchemaSnapshot`, `StripeEncodingMap`,
@@ -246,8 +248,9 @@ entries[] {
 
 Compatibility is asymmetric by design:
 
-* Extension/map absent: use the PR1/block-local `VectorParamBlock` path; legacy
-  SQ8 remains readable.
+* Footer v1: use the PR1/block-local `VectorParamBlock` path; legacy SQ8 remains
+  readable.
+* Footer v2 with no encoding map: reject the malformed self-description.
 * Known codec tag: dispatch the declared decoder and validate its version/scope.
 * Explicit unknown codec tag/version: never reinterpret its bytes as SQ8.
   Either use an independently declared exact tier when the caller permits that
@@ -374,8 +377,8 @@ OFF until its recall and bytes gates are accepted.
 The code PR proceeds in this order; each production slice starts from a failing
 test.
 
-. Footer extension tests: legacy PR1 body/no extension; full section round-trip;
-  unknown optional section skip; malformed/truncated extension fail; explicit
+. Footer tests: legacy footer-v1 parse; footer-v2 full section round-trip;
+  unknown optional v2 section skip; malformed/truncated v2 fail; explicit
   unknown required codec fail.
 . Shared codec tests: deterministic encode; exact wire round-trip; dimension/run
   validation; odd nibble count; error bound; clustered recall-tolerance fixture;
@@ -384,7 +387,8 @@ test.
   decode; mixed SQ8/residual blocks; ranged reader parity; unknown quant kind
   fail closed.
 . Segment tests: schema/encoding/stats sections are emitted from actual block
-  metadata; missing extension reads PR1; gate OFF writes SQ8; gate ON with IVF
+  metadata; footer v1 reads through the PR1 path; gate OFF writes footer v1/SQ8;
+  gate ON with IVF
   writes residual; legacy and new segments coexist in one query.
 . SIFT eval: same N=100k, 100-query, single-file, IVF-ON protocol; compare OFF
   and ON in one run; assert recall floor `>= 0.98`, GET non-regression, and a
@@ -401,8 +405,8 @@ Included in the implementation PR:
 * shared clustered-residual codec and stable tag;
 * cluster-plan reuse;
 * PAX writer/reader and block-local codebooks;
-* additive footer sections for schema, encodings, stats descriptors, and aux
-  region references;
+* clean footer-v2 sections for schema, encodings, stats descriptors, and aux
+  region references, plus the footer-v1 read path;
 * default-OFF mixed-read gate, tests, SIFT evidence, and ledger claim.
 
 Not included:
@@ -422,10 +426,10 @@ survivor-block codec and is not tuned in the bytes PR.
 
 * This audit/design and the ADR-062 D4/D5 amendment land before code.
 * A canonical clustered-residual codec tag is registered; no segment magic bump.
-* Footer schema/encoding/stats sections round-trip and old PR1 readers can ignore
-  them.
-* Missing map reads legacy SQ8; explicit unknown data encoding never aliases to
-  SQ8.
+* Footer-v2 schema/encoding/stats sections round-trip; the new reader also reads
+  footer v1.
+* Footer v1 reads legacy SQ8; footer v2 requires an encoding map; explicit
+  unknown data encoding never aliases to SQ8.
 * Encoding is default OFF and mixed-read-safe.
 * Unit, block, segment, ranged-read, and recall-tolerance coverage passes.
 * SIFT1M N=100k single-file IVF-ON records recall@10 `>= 0.98`, GET
@@ -438,5 +442,6 @@ survivor-block codec and is not tuned in the bytes PR.
 
 * 2026-07-15 — filed after PR1 #1019 landed. Audit established one shared codec
   engine/two layouts; selected residual-as-rerank-replacement, per-cluster-run
-  codebooks local to each PAX block, additive footer TLV sections, typed optional
+  codebooks local to each PAX block, a clean footer-v2 section layout with v1
+  read fallback, typed optional
   Bloom references, and fail-closed unknown encoding behavior.

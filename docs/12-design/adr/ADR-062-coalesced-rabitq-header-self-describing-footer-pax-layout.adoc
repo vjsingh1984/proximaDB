@@ -123,7 +123,7 @@ coalescing win is the policy's, not `read_ranges`' (a backend may override `read
 true batched/multipart as a follow-on). fp32 finalized for top-k only. Net: ~1 RaBitQ GET/file
 (cached) + a few coalesced survivor GETs, vs today's ~4-5 × every selected block.
 
-=== D4 — Parquet-style self-describing footer-index; additive typed sections
+=== D4 — Parquet-style self-describing footer-index; clean footer v2
 
 The footer-index is the metadata hub: **schema snapshot** (field-ids, types, column order —
 self-describing; catalog stays the write authority, footer is the segment's physical
@@ -131,20 +131,25 @@ self-description), block offset table, per-block per-column **stats**, per-strip
 map**, rabitq_off/len, row_count. **Encoding control lives in the footer** (Parquet-style),
 not in segment magic — magic stays format-family-only.
 
-PR1's footer-v1 core is the readability base: RaBitQ extent mirror, row/dimension summary,
-legacy `embed_quant_tag`, f32-presence flag, and block extents. Its parser stops after the
-declared block entries and tolerates trailing bytes. Later phases append a framed, versioned
-section envelope after that core:
+PR1's footer v1 is readable input, not the byte-layout base for unreleased follow-on writers.
+It contains the RaBitQ extent mirror, row/dimension summary, legacy `embed_quant_tag`,
+f32-presence flag, and block extents. The bytes phase introduces a clean footer v2:
 
 ```
-[footer-v1 core][typed sections][extension_len:u32][PXE1]
+[footer_version:u8 = 2]
+[row_count | rabitq_off/len | embed_dim/count]
+[required block table]
+[section_count:u16][typed sections]
 section = { tag:u8, version:u8, len:u32, payload }
 ```
 
 Initial sections are `SchemaSnapshot`, `StripeEncodingMap`, `BlockColumnStats`, and
-`AuxRegionDirectory`. Old PR1 readers ignore the envelope; new readers skip unknown optional
-sections after validating lengths. A malformed recognized envelope fails closed. This is an
-additive footer extension, not a segment-magic/header/footer-version bump.
+`AuxRegionDirectory`. The existing footer tail already supplies the total footer length, so v2
+does not add a second extension length/magic. New readers dispatch on footer version: v1 parses
+the PR1 core and synthesizes its legacy interpretation; v2 parses typed sections and skips
+unknown optional section tags/versions after validating lengths. A malformed recognized
+section fails closed. The segment/header magic is unchanged; the footer version changes because
+the footer layout changes.
 
 The schema snapshot contains the immutable physical facts required to interpret the file:
 schema fingerprint/version and ordered fields `{ CatalogColumn.id (stable physical field-id),
@@ -160,11 +165,13 @@ shared `ProximaScheme` marker. Codec parameters needed to decode one PAX block r
 block's `VectorParamBlock`, so a fetched block is self-sufficient and the segment footer does
 not duplicate codebooks.
 
-Compatibility distinguishes absent metadata from unknown data bytes: a missing extension/map
-uses the PR1 block-local SQ8 path, but an explicitly unknown codec/version is never
+Compatibility distinguishes legacy metadata from unknown data bytes: a v1 footer uses the PR1
+block-local SQ8 path, but a v2 footer requires its encoding map. An explicitly unknown
+codec/version is never
 reinterpreted as SQ8. The reader may use an independently declared exact tier when the caller
 permits it; otherwise it returns unsupported-encoding. Unknown optional metadata sections may
-be ignored.
+be ignored. Because this phase is unreleased, old PR1 binaries are not required to read v2;
+footer-v2 writes stay default-OFF until new readers are deployed.
 
 === D5 — Per-block stats: typed slot in v1; optional OID Bloom activation in PR3
 
@@ -362,8 +369,9 @@ leaving RaBitQ at the header.
 . **Bloom sizing — initial policy resolved, activation evidence remains.** Per-block,
   approximately 10 bits/key and ~1% target FPP, deterministic versioned payload; PR3 ratchets
   it from measured cardinality and footer/aux bytes.
-. **Readability — resolved by PR1 and D4.** Header/footer presence selects the legacy path;
-  old PR1 readers ignore additive footer sections; explicit unknown data encodings fail closed.
+. **Readability — resolved by PR1 and D4.** New readers parse both footer v1 and v2; v2 writes
+  stay default-OFF during reader rollout. Explicit unknown data encodings fail closed. Old PR1
+  binaries reading v2 is not a pre-release requirement.
 
 == Review corrections (2026-07-15)
 
@@ -397,7 +405,8 @@ inconsistency, separate cleanup, not a spec error.)
 After PR1 #1019 landed and measured recall `0.984`, `20` range GETs/query, and `31.7 MB`
 read/query, link:../../10-quality/td/TD-RDSTRAT-7-clustered-residual-pax-bytes.adoc[TD-RDSTRAT-7]
 audited the shared codec, ProximaBlocks prior art, PAX `ColumnMeta`/`VectorParamBlock`, and Bloom
-implementations. D4/D5/D8 now fix the implementation seams: additive typed footer sections;
+implementations. D4/D5/D8 now fix the implementation seams: a clean typed footer v2 with a v1
+read fallback;
 stable physical field IDs with catalog/footer/block authority separation; skippable optional
 metadata but fail-closed unknown data encodings; auxiliary-region Bloom references; and a
 default-OFF clustered-residual SQ4 rerank encoding that replaces flat SQ8 only for eligible
