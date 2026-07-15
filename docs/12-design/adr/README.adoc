@@ -241,7 +241,7 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 
 | link:ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062]
 | Coalesced RaBitQ-header + self-describing footer PAX layout — scan-then-rerank over the logical-file unit
-| Proposed (2026-07-15)
+| Accepted (2026-07-15, review-approved)
 | Dissolves the measured block-centroid-prune GET ceiling (TD-WLP-9 / the 2026-07-15 SIFT eval: block-prune is GET-capped at ~0.87 recall, not tunable). **D1** the file is the atomic logical unit (no RaBitQ sidecar — per-object DR/lifecycle/versioning/conditional-write stay atomic); **D2** RaBitQ hoisted to a coalesced header region @0, scanned at keep=100% (~0.99 recall, zero prune loss, cached/file) while SQ8/fp32/metadata/text blocks stay unchanged; **D3** rerank reuses the existing `plan_selected_block_ranges` + `read_ranges` (clustered survivors → few coalesced GETs); **D4** Parquet-style self-describing footer-index (schema snapshot + block table + per-stripe encoding map; encoding control in the footer, magic stays format-family); **D5** per-block OID bloom in v1 via an extensible `StatsKind` (point-lookup index; `MinMax` pushdown deferred, no format change); **D6** self-derived block geometry (dim × tier-composition × backend IOPS) + GET-budget compaction (file-count = query GET-count knob; the WLP-7 seam reframed). In-place writer + readability-preserving reader (footer presence-field) per the ADR-061 pre-GA amendment. Supersedes block-prune (TD-RDSTRAT-4/5) as the object-storage end-state; block-prune retained as optional coarse pre-filter. Implemented by TD-RDSTRAT-6; phased PR1 (layout+read-path) / PR2 (cost-control) / PR3 (point-lookup).
 |===
 
