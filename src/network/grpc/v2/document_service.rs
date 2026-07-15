@@ -74,7 +74,7 @@ impl ProximaDocumentServiceImpl {
         request: &Request<T>,
         collection_id: &str,
     ) -> Result<(String, String), Status> {
-        let tenant = grpc_auth::resolved_tenant_id(request);
+        let tenant = grpc_auth::resolved_tenant_id(request)?;
         let scoped =
             crate::storage::document::service::scoped_document_collection(&tenant, collection_id)
                 .map_err(|e| Status::invalid_argument(format!("invalid tenant: {e}")))?;

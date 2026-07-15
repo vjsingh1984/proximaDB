@@ -64,6 +64,9 @@ jobs:
     - name: Run tenant-path guard (DrPathBuilder mandate)
       run: python3 scripts/check_tenant_path_guard.py
 
+    - name: Run tenant ingress contract guard
+      run: python3 scripts/check_tenant_ingress_contract.py
+
     # OSS/enterprise boundary: fails on NEW commercial leaks (pricing/billing/
     # control-plane refs) in non-gated engine code. Known debt is tracked (warn).
     # See docs/12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc.
