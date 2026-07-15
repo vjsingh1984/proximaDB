@@ -1095,10 +1095,13 @@ name = "bench_22_multimodal_queries"
 harness = false
 path = "benches/bench_22_multimodal_queries.rs"
 
-[[bench]]
-name = "bench_cross_modal_fusion_e2e"
-harness = false
-path = "benches/bench_cross_modal_fusion_e2e.rs"
+# Disabled — rotted against refactored internal APIs (VectorOperationsService,
+# GraphOperationsService::{create_graph,add_node,add_edge}, FilesystemFactory::new,
+# GraphFusionParams); see TD-BENCH-1. Resurrect once those surfaces stabilize.
+# [[bench]]
+# name = "bench_cross_modal_fusion_e2e"
+# harness = false
+# path = "benches/bench_cross_modal_fusion_e2e.rs"
 
 [[bench]]
 name = "bench_23_codec_vector_base_xor"
@@ -1125,10 +1128,12 @@ name = "bench_vector_object_economy_e2e"
 harness = false
 path = "benches/bench_vector_object_economy_e2e.rs"
 
-[[bench]]
-name = "bench_warm_path_profile"
-harness = false
-path = "benches/bench_warm_path_profile.rs"
+# Disabled — rotted: IndexEngine no longer exposes insert_record (downcast to
+# AxisManager required); see TD-BENCH-1. Resurrect once that path stabilizes.
+# [[bench]]
+# name = "bench_warm_path_profile"
+# harness = false
+# path = "benches/bench_warm_path_profile.rs"
 
 # Recall@k computation bench (criterion). NOTE: measures the recall-computation
 # utility over synthetic vectors + simulated approximate results — it does NOT
