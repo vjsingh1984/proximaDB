@@ -7220,6 +7220,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "half",
+ "proximadb-clustering-kernel",
  "proximadb-compression",
  "proximadb-distance-kernel",
  "proximadb-kernel",

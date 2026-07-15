@@ -21,6 +21,8 @@ proximadb-compression.workspace = true
 proximadb-distance-kernel.workspace = true
 proximadb-kernel.workspace = true
 proximadb-records.workspace = true
+# spatial_* cohort (spatial_clustering k-means + hilbert_curve via storage_common).
+proximadb-clustering-kernel.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
