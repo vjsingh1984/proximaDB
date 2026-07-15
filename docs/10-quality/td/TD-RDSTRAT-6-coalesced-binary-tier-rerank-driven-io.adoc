@@ -1,81 +1,182 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
-= TD-RDSTRAT-6: coalesced binary-tier rerank-driven I/O — the scan-then-rerank layout that supersedes block-centroid pruning for object storage
+= TD-RDSTRAT-6: coalesced RaBitQ-header + self-describing footer PAX layout — scan-then-rerank (full implementation spec)
 :toc: macro
 
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Proposed** (design memo, grounded in the 2026-07-15 measured eval). Supersedes the *block-centroid-prune* path (link:TD-RDSTRAT-4-centroid-block-clustering-and-segment-directory.adoc[TD-RDSTRAT-4] Lever B / link:TD-RDSTRAT-5-cache-first-voe-directory-activation-codesign.adoc[TD-RDSTRAT-5]) as the **end-state for the dominant cost term** (object-storage GET round-trips). Block-prune remains as a *coarse pre-filter* for collections too large to scan-then-rerank whole — the two coexist behind a strategy flag (the SPANN/DiskANN hybrid).
-| Severity | High — `per_get=20.0` is the dominant term in the vector-route cost model (`src/query/route_cost_model.rs`); block-pruning is measured GET-capped (see Finding), so the cost lever is currently unreachable at high recall.
-| Component | PAX segment layout (`src/storage/engines/sst/segment_format.rs`); the cascade read path (`src/storage/engines/sst/search/mod.rs::try_pax_cascade`, `src/storage/engines/sst/readers/`); the VOE directory (`object_economy_directory.rs`); the route cost model.
-| Relates | link:TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (the within-block binary→SQ8→fp32 striped cascade — the rerank substrate this builds on), link:TD-WLP-9-voe-centroid-prune-recall-fail-closed-gate.adoc[TD-WLP-9] (the gate whose measured ceiling motivates this), ADR-046 (mixed-read format migration), ADR-052 (bytes/round-trip co-design thesis), link:../../12-design/CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc[co-design P5: round-trips dominate]
+| Status | **Spec'd** (full implementation spec, 2026-07-15). The *decision rationale, alternatives, and consequences* live in link:../../12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (Proposed → Accepted on review). This TD is the *what/how* for an implementer/reviewer. Supersedes the *block-centroid-prune* path (link:TD-RDSTRAT-4-centroid-block-clustering-and-segment-directory.adoc[TD-RDSTRAT-4] Lever B / link:TD-RDSTRAT-5-cache-first-voe-directory-activation-codesign.adoc[TD-RDSTRAT-5]) as the object-storage end-state; block-prune is retained as an optional coarse pre-filter for monster collections.
+| Severity | High — `per_get=20.0` is the dominant vector-route cost-model term; block-pruning is measured GET-capped (link:../../_internal/status/SIFT1M_VOE_COMPACTED_RECALL_PARETO_2026_07_15.adoc[the eval]), so the GET lever is unreachable until this lands.
+| Component | `src/storage/engines/sst/segment_format.rs` (writer+reader); `crates/storage/proximadb-block-format` (`PaxBlockWriter`/`PaxSegmentScanner`, `stripe.rs::SegmentMeta`); `src/storage/engines/sst/search/mod.rs::try_pax_cascade`; `src/storage/engines/core/coalesce_strategy.rs` + `sst_query_engine.rs::plan_selected_block_ranges`; `src/storage/engines/sst/compaction.rs`; `crates/storage/proximadb-storage-common` (storage-profile IOPS); `crates/storage/proximadb-storage-filesystem-types` (`FileSystem::read_ranges`).
+| Relates | link:../../12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (decision), link:TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (rerank substrate), link:TD-WLP-9-voe-centroid-prune-recall-fail-closed-gate.adoc[TD-WLP-9] (gate), ADR-061 (pre-GA in-place/amend), ADR-046/045 (mixed-read/readability), ADR-036 (storage profile), ADR-020 (WAL authority; footer is advisory), ADR-047 (collection-as-table schema)
 | Pillar | COST (GET round-trips), PERF (recall at fixed GETs)
 |===
 
 toc::[]
 
-== Finding (the measured ceiling this redesign dissolves)
+== Status & relationship to ADR-062
 
-The 2026-07-15 SIFT1M eval (link:../../_internal/status/SIFT1M_VOE_COMPACTED_RECALL_PARETO_2026_07_15.adoc[SIFT1M_VOE_COMPACTED_RECALL_PARETO]) measured the block-centroid-prune path to its structural limit. PCA/IVF clustering is *validated* (tightens block radii, lifts pruned recall +0.11 at fixed keep), but a block-size sweep exposed a ceiling that is **not a tuning gap**:
+This is the implementation spec for link:../../12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062].
+The ADR carries the *why* (the measured GET ceiling, first principles, alternatives rejected);
+this TD carries the *what/how* (byte layout, writer/reader changes, read path, sizing,
+compaction, stats, phasing, verification). Read the ADR first.
 
-[cols="1,1,1,1", options="header"]
-|===
-| block geometry | keep=0.5 recall | GETs/query | GETs/kept-block
+== The layout (byte-level)
 
-| default (~28 vec/block) | 0.867 |    220 | 0.13 (coalesced)
-| 8 vec/block             | 0.991 | 62 530 | ~10 (fragmented)
-| 64 vec/block            | 0.991 |  7 870 | ~10
-|===
+Same segment magic/version as today; in-place writer + readability-preserving reader (see
+<<_readability_preservation>>). One self-contained logical object per file:
 
-There is **no sweet spot**: tight blocks recover recall to ~0.99 but shatter GETs (the binary tier is read *per block*, so block count × per-block overhead dominates the GET term); the default coalesces reads (0.13 GETs/kept-block) but caps recall at ~0.87. Recall is easy once blocks are tight; **GET economics are the ceiling**.
+```
+ offset
+ 0      HEADER-PREFIX (~32 B, fixed):
+          [SEGMENT_MAGIC][version:u8][rabitq_off:u64][rabitq_len:u64]
+          [footer_off:u64][footer_len:u64]
+ 32      RaBitQ region [rabitq_off, rabitq_off+rabitq_len):
+          [RaBitQ col header: centroid(dim·f32) + subspace meta, ONCE]
+          per row: [code: ceil(dim/8) B][side: dist_to_centroid f32 + inv_factor f32 = 8 B]
+          rows in CLUSTER order (IVF cell ▸ Hilbert/PC1 within cell — cluster_order_pca_ivf)
+ …      Block0 [PBLK hdr | OID | tenant | ts | props | labels | text | SQ8 | fp32 | footer]
+        Block1 … BlockK                              ◄ UNCHANGED PaxBlock decoder (RaBitQ stripe REMOVED)
+ …      FOOTER-INDEX [footer_off, footer_off+footer_len):
+          [schema snapshot: field-ids, types, column order]
+          [block table: per block { off, len, row_count, stats[] }]
+          [per-stripe ENCODING MAP: RaBitQ/SQ8/fp32/raw + compression, per column]
+          [rabitq_off/len mirror][row_count]
+        [footer_len: u64]
+        [SEGMENT_MAGIC]
+```
 
-Root cause: the PAX layout is **block-major** — each block interleaves its binary/SQ8/fp32 tiers, so scanning the cheap binary column of *N* blocks costs *N* ranged GETs. The cascade (binary→SQ8→fp32 rerank) cuts **bytes** but not **block-count GETs**, and on object storage GETs dominate (`per_get=20 ≫ per_mib_read=5`). Block-centroid pruning tries to cut GETs by skipping blocks, but it pays recall for it — and the sweep shows it cannot reach both high recall and low GETs.
+* **HEADER-PREFIX @0** — fixed ~32 B; the RaBitQ scan GET reads `[0, rabitq_len]` in one
+  ranged GET (prefix + region coalesce). Zero metadata dependency for the hot scan.
+* **RaBitQ region** — the *index* (≈ `dim/8 + 8 B`/row → 24 MB for 1 M×128d; 200 MB for
+  1536d). Cluster-ordered so survivors are contiguous (rerank coalescing).
+* **Blocks** — the *data*; `PaxBlockWriter`/reader reused verbatim for SQ8/fp32/metadata/text.
+* **FOOTER-INDEX @tail** — the metadata hub (Parquet-style): schema snapshot, block table,
+  per-stripe encoding map, per-block stats. Read via a tail GET (`[size-footer_len, size]`),
+  cached per-file.
 
-== Design — coalesce the binary tier, let rerank prune at the vector level
+== Writer changes (in-place)
 
-Flip the layout so the **binary (RaBitQ) tier is one coalesced sequential region per segment** (or a segment-level binary sidecar), read in ~1 ranged GET regardless of block count. The read path becomes scan-then-rerank:
+`write_pax_segment_ordered` / `PaxSegmentWriter::finish()` (`segment_format.rs`) becomes:
 
-. **Scan** the coalesced binary column (1 GET) for the whole segment → approximate distance for *every* vector, keep=100% effectively → **zero prune recall loss**.
-. **Rerank** the top-M candidates by binary distance with SQ8 (fetch SQ8 ranges only for those M) → vector-level candidate reduction, which is rerank's strength.
-. **Finalize** the top-k with fp32 (fetch fp32 for the few finalists).
+1. Buffer the flush batch (already done — flush accumulates a `BATCH_SIZE` batch in RAM).
+2. Compute the RaBitQ centroid + per-row codes (needs the whole batch → buffered, no streaming break).
+3. Emit: HEADER-PREFIX → RaBitQ region → blocks (SQ8/fp32/metadata/text, existing writer,
+   RaBitQ stripe omitted) → FOOTER-INDEX → footer_len → SEGMENT_MAGIC.
+4. `SegmentMeta` gains `rabitq_off/rabitq_len`; `pax_write_outcome` (`flush/mod.rs:970`) threads
+   them into the VOE `IndexEntry`/footer so the read path finds the region.
 
-Net I/O: ~1 GET (binary scan) + a handful of GETs (SQ8/fp32 for survivors). That is *fewer* GETs than block-pruning at keep=0.5 (220 GETs) **and** higher recall (~0.99), because candidate reduction moved from the lossy block level to the lossless rerank level. The block-prune ceiling dissolves: there are no per-block GETs to fragment.
+Same magic/version. Default-ON for new writes (ADR-061 pre-GA amendment: write-time internals
+replace predecessors).
 
-This is the **SPANN/DiskANN/ScaNN scan-then-rerank paradigm realized over PAX** — the cascade substrate (TD-RDSTRAT-3's binary→SQ8→fp32 striped rerank) already exists; the missing piece is the *coalesced binary column* that lets the scan be one GET instead of N.
+== Reader changes — scan-then-rerank
 
-== Grounding — what the literature does
+`try_pax_cascade` (`search/mod.rs`) becomes:
 
-* **SPANN** (Microsoft, SIGMOD 2022): IVF with *balanced* posting lists (~250–1000 vectors/cell, `k ≈ N/500`, split/merge to bound cell size) + adaptive `nprobe` + a **compact code per vector** stored in a **contiguous posting list**. Probing `nprobe` cells = a few sequential reads, then rerank the compact codes. SPANN's cells are *coarser* than our ~28–64-vec blocks but *coalesced* — that is why its GETs win, not the cell size.
-* **DiskANN** (NIPS 2019): a single contiguous store of compressed vectors (PQ/SQ) scanned/graph-traversed, with a full-precision sidecar for fp32 rerank of the finalists. The compressed store is one sequential region.
-* **ScaNN** (Google): anisotropic quantization + reordering; the coarse quantizer + codes are scanned, then reranked.
-* **FAISS IVF-ADC**: scan compact codes of probed cells, rerank — identical pattern.
+1. **Scan:** `fs.read_range(path, 0, rabitq_len)` — one GET/file (LRU-cached). Rank all codes
+   (keep=100%) → approximate distance for every vector.
+2. **Select top-M survivors** (M = adaptive GET-budget; expand until the next survivor crosses a
+   block boundary — see <<_self_derived_geometry>>).
+3. **Rerank:** survivors are cluster-adjacent → they fall in few adjacent blocks → reuse
+   `plan_selected_block_ranges` (`sst_query_engine.rs:733`) + `ObjectRangeCoalescePolicy` +
+   `FileSystem::read_ranges` (batched multi-range) to fetch their SQ8(+metadata) stripes in a
+   few coalesced GETs. Decode with the UNCHANGED block decoder.
+4. **Finalize** top-k with fp32 (fetch fp32 stripe for finalists only).
+5. **OID recovery** unchanged (`segment_format.rs:737-755`).
 
-Common shape: **a coalesced compact-code region (scan) + a finer tier fetched only for survivors (rerank)**. ProximaDB already has the tiers (RaBitQ/SQ8/fp32) and the rerank; it lacks the coalesced compact-code region. This TD is that region.
+Net: ~1 RaBitQ GET/file (cached) + a few coalesced survivor GETs, vs today's ~4-5 × every
+selected block.
 
-== What it requires
+== Footer-index detail
 
-* **Format change — segregated binary tier.** Today PAX is block-major (`segment_format.rs` writes blocks as `[binary|sq8|fp32]` interleaved). Add a segment layout variant (magic-versioned, mixed-read-safe per ADR-046) that segregates the binary column into one contiguous region followed by the SQ8/fp32 tiers (or a separate `*.bin` sidecar). Readers detect by magic and route; the legacy block-major layout coexists.
-* **Scan-then-rerank read path.** A new `try_pax_scan_rerank` alongside `try_pax_cascade`: 1 ranged GET for the binary region → top-M by binary distance → fetch SQ8 ranges for M → fp32 for top-k. Reuse TD-RDSTRAT-3's rerank kernels.
-* **Strategy flag + size routing.** Default-OFF; chosen per collection by size/profile: small/medium → scan-then-rerank (one binary scan is cheap); very large → coarse block/region prune first (the VOE directory), then scan-then-rerank *within* the region. The block-prune path (TD-RDSTRAT-5) is retained as the pre-filter — the hybrid.
-* **Cost-model awareness.** Teach the route cost model (`route_cost_model.rs`) the scan-then-rerank GET signature (1 scan + rerank GETs) so it ranks it correctly vs the cascade.
+* **Schema snapshot** — the catalog schema at write time (field-ids, types, column order). The
+  reader decodes from the footer schema (self-describing). Catalog stays the *write* authority.
+  (Full schema-*evolution* reconciliation is the follow-on, TD-TBL-4/ADR-047.)
+* **Per-stripe ENCODING MAP** — which stripe is RaBitQ/SQ8/fp32/raw + which compression, per
+  column. This is the encoding control plane (Parquet-style); magic stays format-family-only.
+  Future clustered-SQ8/fp32 compression registers here, no magic bump.
+* **Per-block per-column STATS** — optional, tagged, extensible:
++
+```
+stats: [ per-column: { col_id, stats_kind: StatsKind, payload } ]
+enum StatsKind { None, BloomOid, MinMax, BloomOid_MinMax, … }   // add kinds, no format change
+```
+v1: `BloomOid` (per-block OID bloom, no false negatives → `vector_by_id`/edge-by-oid skips to the
+one positive block — the point-lookup index). `MinMax` pushdown + bloom on other columns deferred
+(forward-compatible; unknown kinds skipped).
 
-== Phased plan
+== Self-derived geometry
 
-. **S1 — segregated binary tier, opt-in (mixed-read-safe).** Magic-versioned segment layout with a contiguous binary column. Round-trip + recall-parity test vs block-major (the f32 baseline). Default-OFF.
-. **S2 — scan-then-rerank read path.** `try_pax_scan_rerank`; measure GETs (expect ~1 + rerank) and recall (expect ~0.99) vs the cascade on SIFT.
-. **S3 — strategy flag + size routing + cost-model wiring.** Default-OFF; opt-in per collection; route cost ranks it.
-. **S4 — default for new object-store collections** once S2/S3 measured; legacy stays mixed-read.
+Block geometry emerges from dim × tier-composition × backend IOPS (replaces static
+`SST_DEFAULT_VECTORS_PER_BLOCK`/`PROXIMADB_PAX_BLOCK_SIZE`):
 
-Each phase is independently shippable and mixed-read-safe (the canonical phased pattern, link:../../12-design/RABITQ_PAX_SEGMENT_MIGRATION_PLAN_2026_06.adoc[RABITQ_PAX_SEGMENT_MIGRATION_PLAN]).
+```
+ per_row_survivor_bytes = sq8(if present)·dim + fp32(if present)·4·dim + fixed_metadata   (RaBitQ excluded — it's in the header)
+ block_bytes_target     = storage_profile.iops_target ∈ [iops_min, iops_max]              (backend-derived)
+ rows_per_block         = clamp( iops_target / per_row_bytes, ceil(iops_min/per_row), floor(iops_max/per_row) )
+```
 
-== Risks / open questions
+`iops_min ≈ 512 KB`, `iops_target ≈ 2 MB`, `iops_max ≈ 8 MB` (S3/ABFS → 4 MB; MinIO/local →
+512 KB-1 MB). The RaBitQ header region is sized separately (one GET = N × rabitq_bytes, cached);
+this governs only the survivor-fetch block. Adaptive survivor M expands until the next survivor
+would cross into a new block (a new GET), then stops — clustering makes this elasticity cheap.
 
-* **Very large collections** — even a coalesced binary scan may be too many bytes (N × 16 B; 100 M vectors ≈ 1.6 GB). The coarse block/region pre-filter (TD-RDSTRAT-5 directory) is still needed first — the hybrid, not a pure replacement. The size threshold is a tuning question (S3).
-* **Write-path cost** — segregating the binary tier changes the flush/compaction write order; must stay streaming (the sign-bit/PCA-IVF ordering still applies). Verify flush throughput.
-* **Block boundaries vs IVF cells** — separately, the default block-cutting geometry produces looser centroids than an explicit `PROXIMADB_PAX_BLOCK_SIZE` aligned to IVF cells (the 0.867 vs 0.985 gap in the eval). Worth fixing for the block-prune *pre-filter*, independent of this redesign.
-* **Non-goal** — this is not a graph index (DiskANN/HNSW). A per-vector graph would avoid scans entirely but is a different substrate; scan-then-rerank is the PAX-native answer.
+== GET-budget compaction (file-count = GET-count knob)
 
-== Why now
+A collection accumulates files LSM-style (flush → one self-contained file). Compaction triggers
+on a **query GET-budget**: projected RaBitQ-GETs/query (= file count) exceeds target, or
+file-count > threshold (3-5). Merge N→1: read each file's RaBitQ (cheap), re-cluster the union
+(`cluster_order_pca_ivf`), rewrite one file. Double duty: fewer files (fewer GETs) AND tighter
+survivor locality. Atomicity: single-object conditional replace (S3 `If-None-Match` / ABFS
+`If-None-Match`). This is the WLP-7 compaction-scheduler seam reframed as the vector-query
+GET-cost lever.
 
-The eval (this change) is the evidence: it *refutes* block-centroid pruning as the end-state (GET-capped at ~0.87) and *motivates* scan-then-rerank as the way to reach the GET term at high recall. Without the measurement, this redesign would be speculation; with it, the block-prune ceiling is a demonstrated fact and the coalesced-binary-rerank direction is grounded.
+== Readability preservation
+
+Per the ADR-061 pre-GA amendment, on-disk *readability* of already-written segments is preserved
+even as write-time internals replace predecessors. Mechanism: the reader keys off the
+FOOTER-INDEX / header-prefix `rabitq_off` — **present → scan-then-rerank; absent → legacy
+in-block RaBitQ path**. So the reader supports both layouts (mixed-read) via a cheap
+presence-field, while the writer changes in-place (same magic/version). No full dual-format
+versioning machinery pre-GA; the presence-field is the serde-default/version-marker the
+amendment sanctions.
+
+== Phased implementation (one coherent PR at a time)
+
+* **PR1 — layout + scan-then-rerank foundation (the GET win):** header-prefix + RaBitQ-head +
+  footer-index (block table + encoding map + schema snapshot) + scan-then-rerank read path
+  (reuse `plan_selected_block_ranges`/`read_ranges` + unchanged block decoder) + self-derived
+  geometry + in-place writer/reader + round-trip/detection tests + SIFT recall + GET measurement.
+  Indivisible core.
+* **PR2 — cost control:** GET-budget compaction trigger (WLP-7 seam) + per-file RaBitQ/footer
+  LRU cache (engine `DashMap` vs mmap residency).
+* **PR3 — point-lookup index:** per-block OID bloom (`StatsKind::BloomOid`) + `vector_by_id` fast path.
+* **Deferred (foundation anticipates):** schema-evolution semantics (TD-TBL-4/ADR-047); `MinMax`
+  pushdown; clustered SQ8/fp32 compression; within-cell Hilbert; text-as-variable-fetch; coarse
+  VOE prune for monster collections; per-collection RaBitQ sidecar only if file-merging proves
+  insufficient at extreme scale.
+
+== Verification
+
+* Round-trip + format-detection tests (mirror `write_pax_segment_round_trips_through_reader`,
+  `detection_defaults_to_legacy_and_guards_false_positives` in `segment_format.rs`).
+* `check_td_adr_unique.py` + `check_td_status_consistency.py`; `cargo check --lib` + clippy + fmt.
+* **Recall + GET measurement** (the point): re-run `sift_voe_centroid_prune_compacted_recall_at_10_eval`
+  against the new layout — expect recall@10 ≈ 0.99 at the keep=100% scan AND `range_gets`/query ≪
+  ~370 (target low tens). Record into `BENCHMARK_EVIDENCE.toml`.
+* Compaction test: N→1 merge → fewer RaBitQ GETs/query + re-clustered tighter locality.
+
+== Open questions for review
+
+(see ADR-062 §Open questions) — header-first write correctness; footer-index size at scale;
+schema-footer vs catalog authority; GET-budget compaction trigger tuning; conditional-write
+availability per backend; bloom FPP/sizing; readability during the docs→code window.
+
+== History
+
+* 2026-07-14 — filed as Proposed design memo in PR #1015 (the eval PR).
+* 2026-07-15 — upgraded to full implementation spec; decision rationale split into ADR-062;
+  design refined across the planning iteration (logical-file unit, header-RaBitQ + Parquet
+  footer-index, schema-snapshot, OID bloom + extensible StatsKind, self-derived geometry,
+  GET-budget compaction, in-place/readability-preserving per ADR-061).
