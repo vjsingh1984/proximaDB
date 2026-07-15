@@ -207,6 +207,24 @@ async fn assert_recovered(base: &str, collection: &str, phase: &str) -> anyhow::
     );
 
     let response = http
+        .get(format!(
+            "{base}/api/v2/collections/{collection}/records/durable-0"
+        ))
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    anyhow::ensure!(
+        status.is_success(),
+        "{phase}: recovered point read failed: {status} {body}"
+    );
+    let record: Value = serde_json::from_str(&body)?;
+    anyhow::ensure!(
+        record.get("id").and_then(Value::as_str) == Some("durable-0"),
+        "{phase}: point read returned the wrong record: {body}"
+    );
+
+    let response = http
         .post(format!("{base}/api/v2/collections/{collection}/search"))
         .json(&json!({
             "vector": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
