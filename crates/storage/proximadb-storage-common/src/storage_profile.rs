@@ -38,6 +38,21 @@ pub enum StorageProfile {
     Churn,
 }
 
+impl StorageProfile {
+    /// Whether this profile forces freshness-critical (Strong / delta-merged)
+    /// reads regardless of a request's freshness hint (ADR-061 D4, TD-WLP-5).
+    ///
+    /// `Churn` collections are the agent code-RAG shape: a symbol is re-embedded
+    /// and immediately re-queried on a bounded, hot working set, so a stale read
+    /// would return the pre-edit neighbours. Their reads therefore always merge
+    /// the unflushed WAL/memtable delta — a request's `StaleOk`/`BoundedStale`
+    /// hint is overridden to Strong. `AppendBulk` honors the request's hint
+    /// (Strong is already the unset default), so this is a no-op there.
+    pub fn forces_strong_reads(self) -> bool {
+        matches!(self, StorageProfile::Churn)
+    }
+}
+
 /// Resolve the storage profile for a collection from its tag list.
 ///
 /// Precedence: `workload_profile:` tag (last matching wins; an unrecognized
@@ -82,6 +97,17 @@ mod tests {
 
     fn tags(values: &[&str]) -> Vec<String> {
         values.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// TD-WLP-5: Churn forces Strong reads; AppendBulk honors the request.
+    #[test]
+    fn test_forces_strong_reads_only_for_churn() {
+        assert!(StorageProfile::Churn.forces_strong_reads());
+        assert!(!StorageProfile::AppendBulk.forces_strong_reads());
+        // Resolved from a churn tag → forces strong.
+        assert!(resolve_storage_profile(&tags(&["workload_profile:churn"])).forces_strong_reads());
+        // Untagged (AppendBulk default) → does not.
+        assert!(!resolve_storage_profile(&[]).forces_strong_reads());
     }
 
     /// TD-WLP-1 TDD gate: the tag > env > default cascade, mirroring
