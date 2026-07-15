@@ -43,6 +43,19 @@ carries no disambiguation — this is the adjacent gap on the alias axis.
 3. **Gate:** q3 + q52 flip from `internal planner error` to `ok` native samples in the ledger
    sweep; no pushdown-narrowing regression on the existing planner tests.
 
+== Progress (2026-07-15)
+
+The **derived-table-alias case (Q15, `… (SELECT … AS supplier_no …) WHERE … = supplier_no`) is
+FIXED** by the TD-REL-EXEC-1 `rebind_columns` ordinal-preservation change: `supplier_no` is
+referenced at a valid, unshifted ordinal, so it is now preserved instead of erroring on the by-name
+lookup. **Remaining: the ORDER-BY-alias case (q3/q52).** It is a *different* sub-mechanism — the
+sort key names a projection/aggregate output ALIAS (`sum_agg`, `brand_id`, `nm`) that the
+intermediate (pre-Project) schema does not carry by that name AND whose ordinal points at a slot
+holding the pre-alias column, so neither the ordinal-preserve fast path nor the by-name fallback
+resolves it. Direction: carry aliases through the aggregate/project so the Sort binds to the actual
+output column, or resolve ORDER-BY-alias keys against the outermost Project's output schema before
+pushdown.
+
 == Non-goals
 
 The cross-product perf of the same queries (TD-REL-LOWER-2); join-subtree rebind disambiguation
