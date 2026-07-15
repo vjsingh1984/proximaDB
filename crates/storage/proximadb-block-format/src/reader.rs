@@ -57,6 +57,9 @@ pub enum RankMetric {
     /// Cosine: stage-1 ranks by inner product (`ip_rank_score`), stage-2 computes
     /// the exact cosine distance `1 − cos_sim` on SQ8-decoded vectors.
     Cosine,
+    /// DotProduct (max inner product): stage-1 uses the same IP proxy as Cosine
+    /// (`ip_rank_score`); stage-2 scores negated inner product (lower = nearer).
+    DotProduct,
 }
 
 /// Decode one rerank-column row (SQ8 or FP16) into `scratch` and score it against
@@ -99,6 +102,9 @@ pub fn score_rerank_row(
                 1.0 // zero vector: maximally dissimilar
             }
         }
+        // DotProduct (max inner product): negated inner product (lower = nearer).
+        // Handles non-normalized vectors — no write-time normalization needed.
+        RankMetric::DotProduct => -scratch.iter().zip(query).map(|(x, q)| x * q).sum::<f32>(),
     }
 }
 
@@ -406,7 +412,9 @@ impl<'a> PaxBlockReader<'a> {
         let q_rotated = rabitq::rotate_query(query, &params, &rotation);
         Some(match metric {
             RankMetric::L2 => rabitq::rank_candidates(&q_rotated, &codes, pool),
-            RankMetric::Cosine => rabitq::rank_candidates_ip(&q_rotated, &codes, pool),
+            RankMetric::Cosine | RankMetric::DotProduct => {
+                rabitq::rank_candidates_ip(&q_rotated, &codes, pool)
+            }
         })
     }
 
@@ -539,6 +547,10 @@ impl<'a> PaxBlockReader<'a> {
                     } else {
                         1.0 // zero vector: maximally dissimilar
                     }
+                }
+                // DotProduct (max inner product): negated inner product (lower = nearer).
+                RankMetric::DotProduct => {
+                    -decoded.iter().zip(query).map(|(x, q)| x * q).sum::<f32>()
                 }
             };
             scored.push((row, dist));
