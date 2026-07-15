@@ -51,6 +51,19 @@ pub struct ProximaDB {
     )>,
 }
 
+async fn initialize_configured_security(
+    config: Option<security::SecurityConfig>,
+) -> anyhow::Result<Option<Arc<security::SecurityCoordinator>>> {
+    let Some(config) = config.filter(|config| config.enabled) else {
+        return Ok(None);
+    };
+
+    let coordinator = security::initialize_security(config)
+        .await
+        .map_err(|error| anyhow::anyhow!("enabled security initialization failed: {error:#}"))?;
+    Ok(Some(Arc::new(coordinator)))
+}
+
 fn resolve_server_tenant_mode(
     server_tenant: &proximadb_config::ServerTenantConfig,
     security_config: Option<&security::SecurityConfig>,
@@ -490,26 +503,8 @@ impl ProximaDB {
         tracing::debug!("✅ ProximaDB::new - Multi-server config created successfully");
 
         // Initialize security coordinator if configured
-        let security_config = config
-            .security
-            .clone()
-            .filter(|sec_cfg| sec_cfg.enabled && sec_cfg.authentication.enabled);
-        let security: Option<Arc<security::SecurityCoordinator>> = if let Some(sec_cfg) =
-            security_config.clone()
-        {
-            match security::initialize_security(sec_cfg).await {
-                Ok(coordinator) => Some(Arc::new(coordinator)),
-                Err(err) => {
-                    tracing::warn!(
-                        "Security initialization failed, continuing with security disabled: {:?}",
-                        err
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        let security_config = config.security.clone().filter(|sec_cfg| sec_cfg.enabled);
+        let security = initialize_configured_security(config.security.clone()).await?;
 
         // Initialize LLM engine if configured
         let llm_engine = if let Some(llm_cfg) = config.llm.clone() {
@@ -526,7 +521,9 @@ impl ProximaDB {
 
         // Create MultiServer with SharedServices (network orchestrator)
         tracing::debug!("🔧 ProximaDB::new - Creating MultiServer...");
-        let rest_auth_enabled = security_config.is_some();
+        let rest_auth_enabled = security_config
+            .as_ref()
+            .is_some_and(|sec_cfg| sec_cfg.authentication.enabled);
         let tenant_deployment_mode =
             resolve_server_tenant_mode(&config.server.tenant, security_config.as_ref())?;
         // Capture the drainer's record + vector services BEFORE shared_services
@@ -1482,5 +1479,91 @@ mod async_ingest_wiring_tests {
     fn parse_partition_list_rejects_garbage() {
         assert_eq!(parse_partition_list("abc"), None);
         assert_eq!(parse_partition_list("0..abc"), None);
+    }
+}
+
+#[cfg(test)]
+mod security_initialization_tests {
+    use super::initialize_configured_security;
+    use crate::security::auth_service::{JwtConfig, SSOConfig};
+    use crate::security::security_coordinator::{ComplianceConfig, TenantTrustConfig, TlsConfig};
+    use crate::security::{
+        AuthenticationConfig, AuthenticationMethod, EncryptionConfig, KeyStoreConfig, MtlsConfig,
+        RBACConfig, SecurityConfig, SecurityMode,
+    };
+    use proximadb_security::AuditConfig;
+    use std::collections::HashMap;
+
+    fn security_config(enabled: bool) -> SecurityConfig {
+        SecurityConfig {
+            enabled,
+            mode: SecurityMode::Production,
+            authentication: AuthenticationConfig {
+                enabled: true,
+                methods: vec![AuthenticationMethod::ClientCertificate],
+                require_authentication: true,
+                default_session_timeout_minutes: 60,
+                api_keys: HashMap::new(),
+                jwt: JwtConfig {
+                    enabled: false,
+                    secret: String::new(),
+                    access_token_expiration_minutes: 15,
+                    refresh_token_expiration_days: 7,
+                    issuer: String::new(),
+                    audience: String::new(),
+                    algorithm: "HS256".to_string(),
+                },
+                sso: SSOConfig {
+                    enabled: false,
+                    providers: Vec::new(),
+                    token_cache_ttl_minutes: 5,
+                    aws_iam: None,
+                    azure_ad: None,
+                },
+                mtls: MtlsConfig {
+                    enabled: true,
+                    ca_cert_path: None,
+                    require_client_cert: true,
+                    cn_role_mapping: HashMap::new(),
+                },
+            },
+            rbac: RBACConfig::default(),
+            audit: AuditConfig::default(),
+            tls: TlsConfig {
+                enabled: false,
+                require_client_certificates: false,
+                cert_file: None,
+                key_file: None,
+                ca_file: None,
+            },
+            compliance: ComplianceConfig {
+                frameworks: Vec::new(),
+                data_residency: None,
+                encryption_at_rest: false,
+                encryption_in_transit: false,
+            },
+            encryption: EncryptionConfig::default(),
+            key_store: KeyStoreConfig::default(),
+            tenant: TenantTrustConfig::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn enabled_security_initialization_failure_is_fatal() {
+        let error = match initialize_configured_security(Some(security_config(true))).await {
+            Ok(_) => panic!("enabled invalid security must fail startup"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("mTLS"));
+    }
+
+    #[tokio::test]
+    async fn disabled_security_remains_an_explicit_oss_posture() {
+        let security = initialize_configured_security(Some(security_config(false)))
+            .await
+            .expect("disabled security must not initialize its invalid providers");
+
+        assert!(security.is_none());
     }
 }

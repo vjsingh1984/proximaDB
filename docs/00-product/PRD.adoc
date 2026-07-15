@@ -663,7 +663,8 @@ Theme: Production-ready with distributed consensus and security hardening.
 
 | Cross-Model ACID Transactions
 | Saga pattern, compensating transactions, read-your-writes consistency
-| ✅ Complete (Mar 2026, TD-038; 2PC with durable participants, MVCC isolation)
+| Experimental foundation only; participant durability, rollback, isolation, and restart
+  conformance remain release gates. pgwire transaction control is unsupported in v0.2.
 
 | SOC 2 Type II Compliance
 | Encryption at rest, complete RBAC, audit trail integrity, change management
