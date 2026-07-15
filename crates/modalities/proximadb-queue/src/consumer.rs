@@ -21,7 +21,7 @@ use tracing::{debug, warn};
 use crate::QueueClient;
 use crate::error::{QueueError, Result};
 use crate::memory_tier::MemoryEntry;
-use crate::message::{Message, MessageId};
+use crate::message::{Delivery, MessageId};
 use crate::topic::PartitionId;
 
 #[derive(Clone)]
@@ -174,7 +174,7 @@ impl Consumer {
 
     /// Poll up to `max_batch` messages across owned partitions. Blocks up to
     /// `max_wait` for at least one message to arrive.
-    pub async fn poll(&self, max_batch: usize, max_wait: Duration) -> Result<Vec<Message>> {
+    pub async fn poll(&self, max_batch: usize, max_wait: Duration) -> Result<Vec<Delivery>> {
         let deadline = tokio::time::Instant::now() + max_wait;
         loop {
             let mut out = Vec::with_capacity(max_batch);
@@ -200,7 +200,10 @@ impl Consumer {
                     }
                     drop(tracker);
                     for memo in batch {
-                        out.push(memo.message);
+                        out.push(Delivery {
+                            message_id: memo.message_id,
+                            message: memo.message,
+                        });
                     }
                 }
             }

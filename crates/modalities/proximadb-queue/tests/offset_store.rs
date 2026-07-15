@@ -51,12 +51,9 @@ async fn ack_commits_offset_to_disk() {
         .expect("poll");
     assert_eq!(batch.len(), 7, "should poll 7 messages");
 
-    // To ack, we need the MessageIds. The consumer's in_flight tracker
-    // has them but isn't part of the public API; we reconstruct them
-    // from the deterministic memory-tier offset assignment (partition
-    // 0, segment 0, offsets 0..7).
-    let ack_ids: Vec<proximadb_queue::MessageId> = (0..7u64)
-        .map(|offset| proximadb_queue::MessageId::new(0, 0, offset))
+    let ack_ids: Vec<proximadb_queue::MessageId> = batch
+        .iter()
+        .map(|delivery| delivery.message_id.clone())
         .collect();
     consumer.ack(&ack_ids).await.expect("ack");
 
@@ -91,25 +88,22 @@ async fn offset_commit_is_atomic() {
     let consumer = Arc::new(client.consumer("g"));
     consumer.subscribe("t", &[0]).await.expect("subscribe");
     // Drain so the in_flight tracker has all 100.
-    let mut polled = 0;
+    let mut delivery_ids = Vec::new();
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    while polled < 100 && std::time::Instant::now() < deadline {
+    while delivery_ids.len() < 100 && std::time::Instant::now() < deadline {
         let batch = consumer
             .poll(32, Duration::from_millis(50))
             .await
             .expect("poll");
-        polled += batch.len();
+        delivery_ids.extend(batch.into_iter().map(|delivery| delivery.message_id));
     }
-    assert_eq!(polled, 100, "should poll all 100 first");
+    assert_eq!(delivery_ids.len(), 100, "should poll all 100 first");
 
-    // 100 ack tasks, one per offset. Each task acks a single MessageId.
+    // 100 ack tasks, one per delivered identity.
     let mut handles = Vec::new();
-    for offset in 0..100u64 {
+    for id in delivery_ids {
         let c = consumer.clone();
-        handles.push(tokio::spawn(async move {
-            let id = proximadb_queue::MessageId::new(0, 0, offset);
-            c.ack(&[id]).await
-        }));
+        handles.push(tokio::spawn(async move { c.ack(&[id]).await }));
     }
     for h in handles {
         h.await.unwrap().expect("ack");
