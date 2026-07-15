@@ -27,6 +27,16 @@ is NOT relaxed: (a) on-disk **readability** of already-written segments/sidecars
 shows lift (the 2026-07-14 sweep measured k=1/2 as a recall regression under sign-bit clustering);
 (c) the read-side centroid-prune default flip, which stays recall-ratchet-gated (TD-WLP-6).
 
+**Amendment (2026-07-15 — D4 mechanism, measure-don't-assert):** the `Churn` read mechanism (D4)
+is changed from a *dedicated in-memory mutable ANN index + `oid` fusion + memory guard* to **WAL
+authority + the already-~2 MB backpressure-bounded memtable delta + a Strong brute-force merge
+(TD-WLP-5) + observability (TD-WLP-8a)**. Reading the code showed the unflushed delta is already
+hard-bounded, so a purpose-built mutable index would optimize a large-unflushed-set condition the
+bounded-working-set premise excludes — it is not built. TD-WLP-8's mutable-index/fusion/guard scope
+is superseded: 8a (observability) shipped; the mutable index is retired (future evidence-gated
+option); a `Churn`-specific tighter flush threshold is deferred to TD-WLP-10 (evidence-gated); ORION
+`oid` fusion is deferred to TD-ORION-1 (blocked on an ORION `oid`→node index). See D4.
+
 == Context
 
 ProximaDB's vector storage assumes a single physical paradigm — LSM-structured, clustered PAX
@@ -75,7 +85,7 @@ read-acceleration projection strategy. It is deliberately **distinct** from the 
 |===
 | Profile | Read-acceleration projection | Freshness | Clustering
 | `AppendBulk` (`append` / `bulk`) | Durable clustered PAX-LSM segments + VOE directory | flush + delta-merge | fp32-PCA IVF/Hilbert **at compaction**
-| `Churn` (code-RAG) | In-memory mutable ANN index (AXIS) + ORION graph + `oid` fusion | immediate (epoch-gated) | none — memory-resident; no compaction-cluster staleness
+| `Churn` (code-RAG) | Bounded (~2 MB) memtable delta + Strong brute-force merge (TD-WLP-5) footnote:[Amended 2026-07-15 — see D4. The original "in-memory mutable ANN index + `oid` fusion" mechanism is retired as unnecessary: the unflushed delta is already backpressure-bounded to ~2 MB, so a Strong brute-force merge is sub-ms and already correct. ORION `oid` fusion is deferred to TD-ORION-1.] | immediate (pre-flush, Strong-merged) | none — small memory-resident delta; no compaction-cluster staleness
 |===
 
 === D1 — `StorageProfile` is a per-collection attribute via the existing tag cascade
@@ -85,7 +95,7 @@ A `workload_profile:append|bulk|churn` tag on `CollectionConfig.tags`, resolved 
 (`src/storage/engines/sst/flush/mod.rs`): **tag > env `PROXIMADB_STORAGE_PROFILE` > default
 `append`**. No proto/DDL surface change and no new create-time storage engine. `append` and `bulk`
 resolve to the same `AppendBulk` durable strategy (they differ only in flush-sizing defaults);
-`churn` selects the mutable-projection strategy.
+`churn` selects the Strong-merge-over-bounded-delta read strategy (D4, amended).
 
 === D2 — Authority is invariant across profiles (the load-bearing safety decision)
 
@@ -107,14 +117,46 @@ low-cardinality decision where precision is cheap and directly buys read-side I/
 read-time per-vector cascade codes (never the clustering driver). One PCA projection serves the
 Hilbert score, the IVF assignment, and the stored centroid.
 
-=== D4 — `Churn`: in-memory mutable index + ORION graph + `oid` fusion
+=== D4 — `Churn`: bounded-memtable delta + Strong brute-force merge (no dedicated mutable ANN index)
 
-`Churn` collections serve reads from an in-memory mutable ANN index (the AXIS mutable path,
-`src/index/axis/`) sized to the bounded working set, fused with ORION's epoch-fresh CSR traversal
-via `oid`-keyed correlation (ADR-044). A re-embedded symbol is immediately visible **pre-flush**;
-durability is still WAL, and the index is rebuilt on recovery. Compaction-clustering is pinned OFF
-for `Churn` (churn invalidates a model faster than it pays off). The bounded-working-set assumption
-is enforced with a memory guard/metric.
+`Churn` collections serve freshness-critical reads by **Strong-merging the unflushed WAL/memtable
+delta** on every read (`forces_strong_reads()`, TD-WLP-5): a re-embedded symbol is immediately
+visible **pre-flush**. Durability is WAL (D2); the memtable is a rebuildable projection. Compaction-
+clustering is pinned OFF for `Churn` (churn invalidates a model faster than it pays off).
+
+[NOTE]
+.Amended 2026-07-15 — the original "dedicated in-memory mutable ANN index + `oid` fusion + memory
+guard" mechanism is *retired* (superseded before implementation).
+====
+The original D4 called for a purpose-built mutable ANN index over unflushed inserts. Reading the
+code showed that infrastructure is **unnecessary for the stated premise**: the write path already
+**hard-bounds each collection's unflushed delta** to `MemtableConfig::flush_threshold_bytes`
+(default **~2 MB**, `src/storage/memtable/core/mod.rs`) via per-collection backpressure
+(`wal_behavior.rs`, `current_usage >= threshold`). A Strong brute-force merge over a ≤2 MB delta is
+sub-millisecond (≈ a few thousand vectors) and is already **correct** (TD-WLP-5, shipped). A
+dedicated mutable index would optimize a *large* unflushed set — a condition the "bounded hot
+working set" premise says does not exist — while adding incremental-insert / eviction-on-flush /
+double-serving coherence cost. **Measure-don't-assert:** we do not build it speculatively. The
+Churn read design is therefore: **WAL authority (D2) + ~2 MB backpressure-bounded memtable delta +
+Strong brute-force merge (TD-WLP-5) + observability (`proximadb_churn_collection_working_set_bytes`
+gauge + `PROXIMADB_CHURN_WORKING_SET_MB` soft-ceiling warn, TD-WLP-8a, shipped)**.
+
+Two pieces of the original D4 are **deferred, not adopted**:
+
+* **A `Churn`-specific *tighter* flush threshold** (flush sooner than the shared ~2 MB bound so the
+  delta is even smaller) is **evidence-gated**: the live flush trigger is spread across three
+  write-path serialization strategies and is not profile-parameterized, so a per-`Churn` override is
+  real hot-path plumbing for a sub-2 MB gain. Revisit only if a measured `Churn` trace shows the
+  bounded delta hurts read latency/freshness. Tracked in link:../../10-quality/td/TD-WLP-10-churn-evidence-gated-flush-threshold.adoc[TD-WLP-10].
+* **ORION `oid` match-then-traverse fusion** is **blocked**: `ProximaRecord.oid` is populated (the
+  SDK mints the ADR-044 stable oid, consumed verbatim), but ORION has **no `oid`→node index today**
+  (only `NodeId` lookups). Building that index + the fusion read path is a separate workitem, tracked
+  in link:../../10-quality/td/TD-ORION-1-oid-node-index-and-vector-graph-fusion.adoc[TD-ORION-1].
+
+A dedicated mutable ANN index remains a *future evidence-gated option* (revisit if update-heavy
+`Churn` LSM tombstone/version churn — GC'd by compaction, D5 — is measured to be a real cost), not a
+planned slice.
+====
 
 === D5 — Per-collection compaction override lifts the global gate
 
