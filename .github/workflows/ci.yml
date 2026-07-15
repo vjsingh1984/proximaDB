@@ -2013,6 +2013,47 @@ jobs:
           retention-days: 30
 
   # ============================================================================
+  # PROMOTION FRESHNESS GATE
+  # ============================================================================
+  # A develop->qa (or qa->main) promotion PR must contain the LATEST commits of
+  # its source branch. Promotion PRs deliberately use a fixed `release/...` head
+  # (so incoming feat->develop merges can't synchronize/cancel the run), but that
+  # means develop can advance *after* the PR is opened, leaving the PR snapshot
+  # stale — merging it would DROP the newer commits (the #992 failure, where 47
+  # paths / #983/#984/#988/#990 were omitted). This gate fails if the source
+  # branch has commits not in the PR head, blocking the merge until the PR is
+  # refreshed. Skips on non-promotion PRs (and push events); ci-success treats a
+  # `skipped` result as pass.
+  promotion-freshness:
+    name: Promotion Freshness (head must contain source branch)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && contains(fromJson('["qa", "main"]'), github.base_ref)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: merge-base --is-ancestor must walk back to the source
+          # branch's merge point, which a shallow clone cannot prove.
+          fetch-depth: 0
+      - name: Verify PR head contains the latest source branch
+        run: |
+          set -euo pipefail
+          case "${{ github.base_ref }}" in
+            qa)   SRC="develop" ;;  # develop -> qa promotion
+            main) SRC="qa" ;;        # qa -> main promotion
+            *)    echo "::notice::not a promotion PR (${{ github.base_ref }}); nothing to check"; exit 0 ;;
+          esac
+          git fetch origin "$SRC"
+          if git merge-base --is-ancestor "origin/$SRC" HEAD; then
+            echo "::notice::PR head contains latest origin/$SRC — fresh."
+          else
+            echo "::error::PR head is STALE: origin/$SRC has commits NOT in this PR. Merging now would DROP them. Refresh this PR from origin/$SRC and rerun CI."
+            echo "::group::commits on origin/$SRC missing from this PR"
+            git log --oneline HEAD.."origin/$SRC" | head -25
+            echo "::endgroup::"
+            exit 1
+          fi
+
+  # ============================================================================
   # SUMMARY - Final status check
   # ============================================================================
   ci-success:
@@ -2063,8 +2104,21 @@ jobs:
       # gates that encode load-bearing decisions as checks
       - docs-authority
       - risk-coverage
+      # promotion correctness — a promotion PR must not be a stale snapshot
+      - promotion-freshness
     if: always()
     steps:
+      # HARD GATE — a promotion PR must contain the latest source-branch commits.
+      # Promotion PRs use a fixed `release/...` head (churn-immune), so the source
+      # branch can advance after the PR opens and leave it stale — merging would
+      # DROP commits (#992). `promotion-freshness` skips on non-promotion PRs, so
+      # block only on failure/cancelled and treat skipped as pass.
+      - name: Require promotion freshness
+        if: ${{ needs.promotion-freshness.result == 'failure' || needs.promotion-freshness.result == 'cancelled' }}
+        run: |
+          echo "::error::Promotion PR is stale — refresh from the source branch before merging (else commits are dropped). See the 'Promotion Freshness' job for the missing commits."
+          exit 1
+
       # HARD GATE — Rust lib + test compile (the `rust-compile` matrix) must pass
       # whenever it runs. `rust-compile` is gated on the comprehensive `compile`
       # path filter (a SUPERSET of all code paths), so it is `skipped` ONLY for a
