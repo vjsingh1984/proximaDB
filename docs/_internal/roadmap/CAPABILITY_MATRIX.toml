@@ -81,7 +81,7 @@ notes = "Trino Arrow-Flight wire layer complete (TD-098, all 7 flight_* methods)
 controlling_td = ["TD-097", "TD-098", "TD-099"]
 evidence = [
   "src/connectors/trino.rs:1",
-  "src/connectors/spark.rs:1",
+  "crates/binding/proximadb-embedded/src/spark.rs:1",
   "tests/connectors_flight_contract.rs:1",
 ]
 

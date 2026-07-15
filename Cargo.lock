@@ -6750,6 +6750,7 @@ dependencies = [
  "proximadb-distance-types",
  "proximadb-document",
  "proximadb-document-query",
+ "proximadb-embedded",
  "proximadb-embedded-common",
  "proximadb-embedding",
  "proximadb-engine-core",
@@ -8013,6 +8014,7 @@ dependencies = [
  "httpmock",
  "progenitor-client",
  "proximadb",
+ "proximadb-embedded",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
@@ -8098,6 +8100,7 @@ version = "0.2.0"
 dependencies = [
  "jni 0.21.1",
  "proximadb",
+ "proximadb-embedded",
  "tracing",
 ]
 
