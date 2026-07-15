@@ -31,7 +31,7 @@ pub mod optimizer;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use std::collections::HashMap;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::engines::core::formats::arrow_block::{ArrowBlockConfig, ArrowBlockWriter};
@@ -555,6 +555,56 @@ impl SstEngine {
             .should_trigger_compaction(storage_url, collection_tags)
             .await?;
 
+        // TD-WLP-7 (ADR-061 D3): actually EXECUTE compaction when armed. Before
+        // this, the flush only set `compaction_triggered` and nothing scheduled
+        // the compactor (the post-flush hook was a historical stub), so the
+        // TD-WLP-4 armed-by-default re-cluster never ran and the read-side prune
+        // it unlocks stayed dark. Run it inline (awaited) via the atomic-swap
+        // path (ADR-046 LSN-coherent read across the segment swap) — synchronous
+        // so it is deterministic and spawns no background worker thread. The
+        // segment this flush wrote is already committed at its final URL above,
+        // so the merge reads a consistent L0 set. Best-effort: a compaction
+        // failure is recorded on the result but never fails the flush.
+        let mut compaction_error: Option<String> = None;
+        let mut compaction_ran = false;
+        if should_trigger_compaction
+            && let Some(cid) = params.collection_id.as_deref()
+            && let Some(compaction) = self.compaction_manager()
+        {
+            let collection_dir = std::path::Path::new(storage_url);
+            // Same per-collection L0 threshold the arming gate used, so the
+            // executor doesn't re-gate on the deployment default and decline.
+            let l0_threshold = proximadb_storage_common::resolve_l0_threshold(
+                collection_tags,
+                L0_COMPACTION_THRESHOLD,
+            );
+            match compaction
+                .run_due_compaction(
+                    cid,
+                    collection_dir,
+                    self.config(),
+                    l0_threshold,
+                    Some(self.atomic_coordinator().clone()),
+                )
+                .await
+            {
+                Ok(true) => {
+                    compaction_ran = true;
+                    info!("✅ SST Flush: re-cluster compaction ran for collection {cid}");
+                }
+                Ok(false) => {
+                    debug!("SST Flush: compaction armed but nothing due for collection {cid}");
+                }
+                Err(e) => {
+                    warn!(
+                        "SST Flush: re-cluster compaction failed for {cid} (best-effort, \
+                         flush succeeded): {e}"
+                    );
+                    compaction_error = Some(e.to_string());
+                }
+            }
+        }
+
         // TD-112: index the just-flushed vectors into AXIS so post-flush search is
         // served by the ANN index rather than a brute-force segment scan.
         self.index_flushed_into_axis(params, vec![final_file_path.clone()])
@@ -596,10 +646,18 @@ impl SstEngine {
                     "filename".to_string(),
                     serde_json::Value::String(filename.to_string()),
                 );
+                // TD-WLP-7: whether the armed re-cluster compaction actually
+                // executed on this flush (distinct from `compaction_triggered`,
+                // which only means "armed + over threshold"). The integration
+                // gate asserts on this.
+                metrics.insert(
+                    "compaction_ran".to_string(),
+                    serde_json::Value::Bool(compaction_ran),
+                );
                 metrics
             },
             compaction_triggered: should_trigger_compaction,
-            compaction_error: None,
+            compaction_error,
             flushed_batch_ids: params.batch_ids.clone(),
         })
     }
