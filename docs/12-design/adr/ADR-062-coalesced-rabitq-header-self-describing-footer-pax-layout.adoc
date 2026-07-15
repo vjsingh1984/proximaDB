@@ -67,10 +67,10 @@ file-level header region. Six decisions:
 === D1 — The file is the atomic logical unit (no sidecar)
 
 One self-contained object per segment: RaBitQ region + data blocks + footer-index + magic.
-Object-store mechanisms (DR replication, lifecycle tiering, point-in-time versioning,
-conditional replace) all operate per-object, so a single logical file is operationally simpler
-than a 2-object RaBitQ sidecar and makes compaction/delete atomic (write-new + conditional
-swap). A collection accumulates 3-5 files LSM-style.
+Object-store mechanisms (DR replication, lifecycle tiering, point-in-time versioning, lifecycle
+delete) all operate per-object, so a single logical file is operationally simpler than a 2-object
+RaBitQ sidecar and makes compaction/delete a single-object operation (atomicity mechanics in D6).
+A collection accumulates 3-5 files LSM-style.
 
 === D2 — RaBitQ hoisted to a coalesced header region at offset 0; scan at keep=100%
 
@@ -99,12 +99,23 @@ SQ8/fp32/metadata/text is reused verbatim; only the RaBitQ stripe leaves the blo
 === D3 — Rerank does the candidate reduction (vector-level), reusing existing infra
 
 After the RaBitQ scan, select top-M survivors and fetch their SQ8(+metadata) block-stripes.
-Because survivors are **cluster-adjacent** (`cluster_order_pca_ivf` orders rows by
-IVF-cell-then-Hilbert/PC1), they fall in a handful of adjacent blocks → reuse the **existing**
-cross-block range planner `plan_selected_block_ranges` (`sst_query_engine.rs:733`) +
-`ObjectRangeCoalescePolicy` + `FileSystem::read_ranges` (`filesystem-types/lib.rs:507`,
-batched multi-range) → **few coalesced GETs**, not M scattered. fp32 finalized for top-k only.
-Net: ~1 RaBitQ GET/file (cached) + a few survivor GETs, vs today's ~4-5 × every selected block.
+Because survivors are **cluster-adjacent** — the row order is the compaction-grade PCA/IVF
+re-cluster `cluster_order_pca_ivf` (`src/storage/engines/sst/block_cluster.rs:198`, shipped
+#995; reachable at *flush* via the `PROXIMADB_PAX_FLUSH_CLUSTER=ivf` opt-in, `block_cluster.rs:54`
++ the `write_pax_segment_full` branch at `segment_format.rs:183`, shipped #1015; measured in
+the 2026-07-15 eval) — they fall in a handful of adjacent blocks. D3's rerank-coalescing GET-win
+**depends on this clustered ordering being in effect**; PR1 therefore measures GETs *with the
+flush opt-in ON* (the shipped `cluster_order_pca_ivf`), and names S4 (calibrated IVF
+nlist/nprobe) a co-requisite if PR1's survivor locality is insufficient.
+
+The GET reduction itself comes from the **existing cross-block range planner**
+`plan_selected_block_ranges` (`sst_query_engine.rs:733`) + `ObjectRangeCoalescePolicy`
+(`sst_query_engine.rs:289`), which *plan* merged/coalesced ranges (fewer, larger reads) before
+any fetch. `FileSystem::read_ranges` (`filesystem-types/lib.rs:507`) only *executes* those
+planned ranges — its default impl is a sequential `for range { read_range }` loop, so the
+coalescing win is the policy's, not `read_ranges`' (a backend may override `read_ranges` to
+true batched/multipart as a follow-on). fp32 finalized for top-k only. Net: ~1 RaBitQ GET/file
+(cached) + a few coalesced survivor GETs, vs today's ~4-5 × every selected block.
 
 === D4 — Parquet-style self-describing footer-index; schema snapshot in v1
 
@@ -136,19 +147,56 @@ Block geometry **emerges** from dim × tier-composition × backend IOPS, not a s
 
 ```
  per_row_survivor_bytes = sq8(if present)·dim + fp32(if present)·4·dim + fixed_metadata   (RaBitQ excluded — it's in the header)
- block_bytes_target     = storage_profile.iops_target ∈ [iops_min, iops_max]              (backend-derived)
+ block_bytes_target     = iops_budget.target ∈ [iops_budget.min, iops_budget.max]         (backend-derived; see below)
  rows_per_block         = clamp( iops_target / per_row_bytes, ceil(iops_min/per_row), floor(iops_max/per_row) )
 ```
 
-`iops_min ≈ 512 KB`, `iops_target ≈ 2 MB`, `iops_max ≈ 8 MB` (S3/ABFS lean to 4 MB; MinIO/local
-to 512 KB-1 MB). A collection accumulates files LSM-style; **compaction triggers on a query
-GET-budget** (projected RaBitQ-GETs/query = file count, or file-count threshold 3-5). Compaction
-merges N→1: reads each file's RaBitQ (cheap), **re-clusters** the union, rewrites one file —
-**double duty**: fewer files (fewer GETs) AND tighter survivor locality. This reframes the WLP-7
-compaction scheduler as *the* vector-query GET-cost lever. Atomicity via single-object
-conditional replace (S3 `If-None-Match` / ABFS `If-None-Match`). Block-centroid pruning
-(TD-RDSTRAT-4/5) is retained only as an optional coarse pre-filter for monster collections where
-a cached RaBitQ scan would exceed RAM.
+The IOPS budgets (`iops_min ≈ 512 KB`, `iops_target ≈ 2 MB`, `iops_max ≈ 8 MB`; S3/ABFS lean
+to 4 MB, MinIO/local to 512 KB-1 MB) are a **NEW per-backend `IopsBudget` property** on the
+object-store/storage configuration — **not** the `StorageProfile` enum (`{AppendBulk, Churn}`,
+`storage_profile.rs:33`, which is a per-collection *workload* tag, ADR-061). PR1 introduces
+`IopsBudget` (the storage-profile crate is a reasonable home) keyed by backend; it is distinct
+from and does not modify the workload enum.
+
+A collection accumulates files LSM-style; **compaction triggers on a query GET-budget**
+(projected RaBitQ-GETs/query = file count, or file-count threshold 3-5). Compaction merges N→1:
+reads each file's RaBitQ (cheap), **re-clusters** the union, rewrites one file — **double duty**:
+fewer files (fewer GETs) AND tighter survivor locality. This reframes the WLP-7 compaction
+scheduler as *the* vector-query GET-cost lever. **Atomicity:** the object-store abstraction
+exposes only create-only `put_if_absent` today (`proximadb-object-store/src/lib.rs:247`; no
+`if-match`/`if-none-match` conditional replace yet), so compaction uses the **Iceberg-style
+fresh-name + atomic pointer/manifest advance** — write the new file under a fresh
+content-addressed name via `put_if_absent`, then atomically advance the WAL-authoritative
+manifest/pointer (ADR-020: the segment/footer is advisory, the WAL is authority). Native S3/ABFS
+conditional-replace (`if-match`) is a future optimization once the abstraction gains it.
+Block-centroid pruning (TD-RDSTRAT-4/5) is retained only as an optional coarse pre-filter for
+monster collections where a cached RaBitQ scan would exceed RAM.
+
+=== D7 — Workload-profile applicability + write path (AppendBulk-optimal; Churn/graph scoped)
+
+This layout is the **durable PAX-LSM segment format** — AppendBulk-optimal, applied
+per-workload-profile (ADR-061), so it never lands on a hot high-churn write path or a graph-edge
+path:
+
+* **AppendBulk** (bulk vector loads, RAG corpora) — direct fit: large-batch flushes → few,
+  well-sized files → RaBitQ header amortized; compaction merges occasionally.
+* **Churn** (agent code-RAG, high trickle-write churn) — the HOT read/write path is the
+  in-memory mutable AXIS index (ADR-061 D4) for immediate freshness; this layout is Churn's
+  **durable tier only**, fed batched. It does not touch the hot write path.
+* **Graph / ORION** — graph EDGES are CSR, epoch-rebuilt (not this layout); node EMBEDDINGS use
+  the vector layout under AppendBulk/Churn rules.
+
+**Write-path churn-tolerance:** the layout sits behind the existing **WAL → memtable → flush**
+seam (ADR-020: WAL is durable authority; the memtable buffers before flush). Trickling writes
+(agent codegraph, Churn) are absorbed by the in-memory memtable; a PAX file flushes only when
+the memtable crosses a threshold. That threshold is **co-designed with the file-count/GET-count
+knob** (D6): flush at a size that amortizes the RaBitQ header and bounds file count — *not* on
+every small write. This prevents per-trickle file explosion + compaction thrash; the GET-budget
+compaction (D6) then merges accumulated files. Graph-edge churn is ORION epoch-rebuild, separate.
+
+**Net:** SEARCH is served identically across profiles (the layout helps reads everywhere); the
+WRITE path is churn-tolerant via the memtable buffer + GET-budget compaction, and the layout is
+scoped so it is never on a per-trickle-write or per-graph-edge path.
 
 == First principles / rationale
 
@@ -226,8 +274,37 @@ bytes once the layout is in and measured; not v1.
    assumes catalog-only schema (ADR-047/048 interaction).
 . **GET-budget compaction trigger** — file-count threshold vs projected-GETs vs hybrid; tuning;
    write-amplification bounds.
-. **Conditional-write availability** — S3 `If-None-Match` (GA 2024) / ABFS for the compaction
-   CAS; fallback where unavailable.
+. **Compaction atomicity** — the object-store exposes only create-only `put_if_absent` today
+   (no `if-match` CAS); D6 specifies the Iceberg fresh-name + manifest-advance fallback
+   (ADR-020). Confirm that path is sound and that no compaction step assumes an object-level
+   conditional replace. (Native S3/ABFS `if-match` is a future optimization.)
 . **Bloom sizing** — FPP target + bits/elt for OID; per-block vs per-file; cost in the cached footer.
 . **Readability during the docs→code window** — in-place change is atomic per PR; the footer
    presence-field preserves legacy readability (ADR-061 amendment).
+
+== Review corrections (2026-07-15)
+
+Spec-accuracy pass after the first review (verdict: Request changes — decision sound, references
+to fix). Applied against **current** `develop` (which includes #995 `cluster_order_pca_ivf` and
+#1015 the `PROXIMADB_PAX_FLUSH_CLUSTER=ivf` opt-in):
+
+* **#3 read_ranges attribution** — clarified that the GET win is the `ObjectRangeCoalescePolicy`
+  *planning* merged ranges; `FileSystem::read_ranges`'s default impl is a sequential loop that
+  only executes them (D3).
+* **#4 IOPS budget** — `iops_min/target/max` are a **new per-backend `IopsBudget`**, not the
+  `StorageProfile` `{AppendBulk, Churn}` workload enum (D6).
+* **#5 PaxSegmentScanner path** — corrected to `proximadb-storage-common/src/pax_block.rs:887`
+  (`PaxBlockWriter` remains in `proximadb-block-format/src/writer.rs:134`).
+* **#6 compaction atomicity** — the object-store has only create-only `put_if_absent` (no
+  `if-match` CAS); compaction uses Iceberg fresh-name + WAL-authoritative manifest advance
+  (ADR-020); native conditional-replace is future (D1, D6, open-question).
+
+Two review findings were **stale-checkout false alarms** (the review's own meta-note flagged its
+Explore agent read a pre-#995/#1015 checkout), verified present on current `develop`:
+* `cluster_order_pca_ivf` **exists** at `block_cluster.rs:198` (shipped #995) — not hallucinated.
+* `PROXIMADB_PAX_FLUSH_CLUSTER=ivf` **exists** at `block_cluster.rs:54/56` + the
+  `write_pax_segment_full` branch at `segment_format.rs:183` (shipped #1015); the 2026-07-15
+  eval measured it. D3 now states the precise refs + that PR1 measures GETs with the opt-in ON.
+(Note: `block_cluster.rs:8-10` still calls IVF "the S4 upgrade" in the *module doc* while
+:16-17 references `cluster_order_pca_ivf` as shipped for compaction — a pre-existing source-doc
+inconsistency, separate cleanup, not a spec error.)

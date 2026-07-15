@@ -8,7 +8,7 @@
 | Field | Value
 | Status | **Spec'd** (full implementation spec, 2026-07-15). The *decision rationale, alternatives, and consequences* live in link:../../12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (Proposed → Accepted on review). This TD is the *what/how* for an implementer/reviewer. Supersedes the *block-centroid-prune* path (link:TD-RDSTRAT-4-centroid-block-clustering-and-segment-directory.adoc[TD-RDSTRAT-4] Lever B / link:TD-RDSTRAT-5-cache-first-voe-directory-activation-codesign.adoc[TD-RDSTRAT-5]) as the object-storage end-state; block-prune is retained as an optional coarse pre-filter for monster collections.
 | Severity | High — `per_get=20.0` is the dominant vector-route cost-model term; block-pruning is measured GET-capped (link:../../_internal/status/SIFT1M_VOE_COMPACTED_RECALL_PARETO_2026_07_15.adoc[the eval]), so the GET lever is unreachable until this lands.
-| Component | `src/storage/engines/sst/segment_format.rs` (writer+reader); `crates/storage/proximadb-block-format` (`PaxBlockWriter`/`PaxSegmentScanner`, `stripe.rs::SegmentMeta`); `src/storage/engines/sst/search/mod.rs::try_pax_cascade`; `src/storage/engines/core/coalesce_strategy.rs` + `sst_query_engine.rs::plan_selected_block_ranges`; `src/storage/engines/sst/compaction.rs`; `crates/storage/proximadb-storage-common` (storage-profile IOPS); `crates/storage/proximadb-storage-filesystem-types` (`FileSystem::read_ranges`).
+| Component | `src/storage/engines/sst/segment_format.rs` (writer+reader); `crates/storage/proximadb-block-format/src/writer.rs::PaxBlockWriter` (`:134`) + `crates/storage/proximadb-storage-common/src/pax_block.rs::PaxSegmentScanner` (`:887`) + `stripe.rs::SegmentMeta`; `src/storage/engines/sst/search/mod.rs::try_pax_cascade`; `src/storage/engines/core/coalesce_strategy.rs` + `sst_query_engine.rs::{plan_selected_block_ranges (:733), ObjectRangeCoalescePolicy (:289)}`; `src/storage/engines/sst/compaction.rs`; `crates/storage/proximadb-storage-common` (a NEW per-backend `IopsBudget` — NOT the `StorageProfile` workload enum); `crates/storage/proximadb-storage-filesystem-types` (`FileSystem::read_ranges` — default is a sequential loop; the GET win is the coalesce policy's); `crates/storage/proximadb-object-store/src/lib.rs::put_if_absent` (`:247`, create-only — compaction CAS via Iceberg fresh-name+manifest-swap, ADR-020).
 | Relates | link:../../12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (decision), link:TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (rerank substrate), link:TD-WLP-9-voe-centroid-prune-recall-fail-closed-gate.adoc[TD-WLP-9] (gate), ADR-061 (pre-GA in-place/amend), ADR-046/045 (mixed-read/readability), ADR-036 (storage profile), ADR-020 (WAL authority; footer is advisory), ADR-047 (collection-as-table schema)
 | Pillar | COST (GET round-trips), PERF (recall at fixed GETs)
 |===
@@ -78,10 +78,13 @@ replace predecessors).
    (keep=100%) → approximate distance for every vector.
 2. **Select top-M survivors** (M = adaptive GET-budget; expand until the next survivor crosses a
    block boundary — see <<_self_derived_geometry>>).
-3. **Rerank:** survivors are cluster-adjacent → they fall in few adjacent blocks → reuse
-   `plan_selected_block_ranges` (`sst_query_engine.rs:733`) + `ObjectRangeCoalescePolicy` +
-   `FileSystem::read_ranges` (batched multi-range) to fetch their SQ8(+metadata) stripes in a
-   few coalesced GETs. Decode with the UNCHANGED block decoder.
+3. **Rerank:** survivors are cluster-adjacent (row order is `cluster_order_pca_ivf`,
+   `block_cluster.rs:198`, shipped #995; reachable at flush via `PROXIMADB_PAX_FLUSH_CLUSTER=ivf`,
+   `block_cluster.rs:54`, shipped #1015) → they fall in few adjacent blocks → the GET reduction
+   comes from `plan_selected_block_ranges` (`sst_query_engine.rs:733`) +
+   `ObjectRangeCoalescePolicy` (`:289`) *planning* merged/coalesced ranges; `FileSystem::read_ranges`
+   (`filesystem-types/lib.rs:507`) only *executes* them (its default impl is a sequential `for`
+   loop — a backend may override to true batched/multipart). Decode with the UNCHANGED block decoder.
 4. **Finalize** top-k with fp32 (fetch fp32 stripe for finalists only).
 5. **OID recovery** unchanged (`segment_format.rs:737-755`).
 
@@ -113,14 +116,16 @@ Block geometry emerges from dim × tier-composition × backend IOPS (replaces st
 
 ```
  per_row_survivor_bytes = sq8(if present)·dim + fp32(if present)·4·dim + fixed_metadata   (RaBitQ excluded — it's in the header)
- block_bytes_target     = storage_profile.iops_target ∈ [iops_min, iops_max]              (backend-derived)
+ block_bytes_target     = iops_budget.target ∈ [iops_budget.min, iops_budget.max]         (backend-derived; NEW IopsBudget — NOT the StorageProfile enum)
  rows_per_block         = clamp( iops_target / per_row_bytes, ceil(iops_min/per_row), floor(iops_max/per_row) )
 ```
 
-`iops_min ≈ 512 KB`, `iops_target ≈ 2 MB`, `iops_max ≈ 8 MB` (S3/ABFS → 4 MB; MinIO/local →
-512 KB-1 MB). The RaBitQ header region is sized separately (one GET = N × rabitq_bytes, cached);
-this governs only the survivor-fetch block. Adaptive survivor M expands until the next survivor
-would cross into a new block (a new GET), then stops — clustering makes this elasticity cheap.
+`IopsBudget { min ≈ 512 KB, target ≈ 2 MB, max ≈ 8 MB }` (S3/ABFS → 4 MB; MinIO/local →
+512 KB-1 MB) is a **NEW per-backend property** on the object-store/storage config — distinct
+from the `StorageProfile {AppendBulk, Churn}` workload enum (`storage_profile.rs:33`, ADR-061).
+The RaBitQ header region is sized separately (one GET = N × rabitq_bytes, cached); this governs
+only the survivor-fetch block. Adaptive survivor M expands until the next survivor would cross
+into a new block (a new GET), then stops — clustering makes this elasticity cheap.
 
 == GET-budget compaction (file-count = GET-count knob)
 
@@ -128,9 +133,34 @@ A collection accumulates files LSM-style (flush → one self-contained file). Co
 on a **query GET-budget**: projected RaBitQ-GETs/query (= file count) exceeds target, or
 file-count > threshold (3-5). Merge N→1: read each file's RaBitQ (cheap), re-cluster the union
 (`cluster_order_pca_ivf`), rewrite one file. Double duty: fewer files (fewer GETs) AND tighter
-survivor locality. Atomicity: single-object conditional replace (S3 `If-None-Match` / ABFS
-`If-None-Match`). This is the WLP-7 compaction-scheduler seam reframed as the vector-query
-GET-cost lever.
+survivor locality. **Atomicity:** the object-store exposes only create-only `put_if_absent`
+(`proximadb-object-store/src/lib.rs:247`; no `if-match` CAS yet) → compaction uses the
+Iceberg-style fresh-name + WAL-authoritative manifest advance (write the new file under a fresh
+content-addressed name, then atomically advance the manifest — ADR-020: WAL is authority, the
+segment is advisory). Native S3/ABFS conditional-replace is a future optimization. This is the
+WLP-7 compaction-scheduler seam reframed as the vector-query GET-cost lever.
+
+== Workload-profile applicability + write path (D7)
+
+The layout is the **durable PAX-LSM segment format** — AppendBulk-optimal, scoped
+per-workload-profile (ADR-061) so it never lands on a hot high-churn write path or a graph-edge
+path:
+
+* **AppendBulk** — direct fit (large-batch flushes → few well-sized files → RaBitQ header amortized).
+* **Churn** (agent code-RAG, high trickle-write churn) — the HOT path is the in-memory mutable
+  AXIS index (ADR-061 D4); this layout is Churn's **durable tier only**, fed batched via the
+  memtable. It does not touch the hot write path.
+* **Graph / ORION** — edges are CSR, epoch-rebuilt (not this layout); node embeddings use the
+  vector layout under AppendBulk/Churn rules.
+
+**Write-path churn-tolerance (the key coupling):** the layout sits behind the existing
+`WAL → memtable → flush` seam (ADR-020). Trickling writes (agent codegraph, Churn) are absorbed
+by the in-memory memtable; a PAX file flushes only when the memtable crosses a threshold
+**co-designed with the file-count/GET-count knob** — flush at a size that amortizes the RaBitQ
+header and bounds file count, *not* on every small write. This prevents per-trickle file
+explosion + compaction thrash; the GET-budget compaction then merges accumulated files.
+PR1/PR2 must (a) confirm the flush threshold is sized for the new layout (not the old static
+block size), and (b) measure write amplification under a Churn/codegraph trickle-write trace.
 
 == Readability preservation
 
@@ -180,3 +210,13 @@ availability per backend; bloom FPP/sizing; readability during the docs→code w
   design refined across the planning iteration (logical-file unit, header-RaBitQ + Parquet
   footer-index, schema-snapshot, OID bloom + extensible StatsKind, self-derived geometry,
   GET-budget compaction, in-place/readability-preserving per ADR-061).
+* 2026-07-15 — spec-accuracy pass after the first review (Request changes): applied #3
+  (`read_ranges` is a sequential loop; GET win is the `ObjectRangeCoalescePolicy` plan),
+  #4 (`IopsBudget` is a new per-backend property, not the `StorageProfile` enum), #5
+  (`PaxSegmentScanner` at `proximadb-storage-common/src/pax_block.rs:887`), #6 (compaction CAS =
+  Iceberg fresh-name+manifest-swap via `put_if_absent`, ADR-020; no `if-match` yet). Refuted #1/#2
+  as stale-checkout false alarms (`cluster_order_pca_ivf`@`block_cluster.rs:198` + the
+  `PROXIMADB_PAX_FLUSH_CLUSTER=ivf` opt-in are shipped #995/#1015). Added **D7** — workload-profile
+  applicability + write path (AppendBulk-optimal; Churn = in-memory AXIS hot path + durable-tier
+  memtable-buffered; graph edges = ORION epoch-rebuild; the memtable flush threshold is co-designed
+  with the file-count/GET-count knob for churn-tolerance). See ADR-062 §Review corrections.
