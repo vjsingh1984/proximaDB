@@ -52,7 +52,7 @@ pub mod topic;
 pub use config::{QueueConfig, SyncMode, TopicConfig};
 pub use consumer::Consumer;
 pub use error::{QueueError, Result};
-pub use message::{Message, MessageId, MessageReceipt};
+pub use message::{Delivery, Message, MessageId, MessageReceipt};
 pub use producer::Producer;
 pub use topic::{PartitionId, partition_for};
 

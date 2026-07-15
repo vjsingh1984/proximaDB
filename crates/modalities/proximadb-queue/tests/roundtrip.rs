@@ -66,9 +66,14 @@ async fn produce_and_consume_round_trip() {
         received.extend(batch);
     }
     assert_eq!(received.len(), 8, "should receive all 8 sent messages");
+    let received_ids: Vec<_> = received
+        .iter()
+        .map(|delivery| delivery.message_id.clone())
+        .collect();
+    assert!(sent_ids.iter().all(|id| received_ids.contains(id)));
 
     // Ack everything; subsequent polls should return empty.
-    consumer.ack(&sent_ids).await.expect("ack");
+    consumer.ack(&received_ids).await.expect("ack");
     let empty = consumer
         .poll(16, Duration::from_millis(50))
         .await
