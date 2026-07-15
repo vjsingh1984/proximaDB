@@ -110,4 +110,21 @@ pub use pushdown::{
 pub use traits::{DataReader, DataSourceConnector, DataWriter, ReadContext, WriteContext};
 pub use types::{ColumnStatistics, Statistics, TableInfo, TableStatistics, WriteResult};
 
-// Spark DataSource V2 connector
+pub use duckdb::{
+    DuckDBBindData, DuckDBColumnRef, DuckDBColumnStats, DuckDBConnectorConfig, DuckDBCopy,
+    DuckDBCopyResult, DuckDBError, DuckDBErrorType, DuckDBFilter, DuckDBFilterType,
+    DuckDBGlobalState, DuckDBInitData, DuckDBInsert, DuckDBInsertResult, DuckDBLocalState,
+    DuckDBScanStatistics, DuckDBTableScan, DuckDBVectorSearch, DuckDBVectorSearchParams,
+    DuckDBWriteMode,
+};
+pub use hadoop::{
+    HadoopError, HadoopErrorCode, HadoopInputSplit, HadoopShimConfig, HadoopWritable, HiveType,
+    ProximaInputFormat, ProximaOutputCommitter, ProximaOutputFormat, ProximaRecordReader,
+    ProximaRecordWriter, ProximaSerDe,
+};
+pub use trino::{
+    TrinoBlock, TrinoColumnMetadata, TrinoConnectorConfig, TrinoConnectorSession, TrinoDomain,
+    TrinoError, TrinoErrorCode, TrinoHostAddress, TrinoPage, TrinoPageSink, TrinoPageSource,
+    TrinoRange, TrinoSchema, TrinoSplit, TrinoSplitManager, TrinoTable, TrinoTableLayout,
+    TrinoTupleDomain, TrinoWriteSummary,
+};
