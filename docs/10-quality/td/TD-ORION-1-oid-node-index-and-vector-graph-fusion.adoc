@@ -1,0 +1,57 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-ORION-1: ORION `oid`→node index + vector→graph match-then-traverse fusion
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Open — blocked on an ORION `oid`→node index** (filed 2026-07-15 as the ADR-061 D4-amendment / TD-WLP-8 fusion residual). Not started.
+| Priority | P2 — the graph-RAG payoff for `Churn` (agent code-RAG): answer a vector query, then traverse the code graph from the matched symbols.
+| Severity | Medium — adds a graph-fusion read path; no durability change (canonical `ProximaRecord`s stay authority; ORION CSR is a rebuildable projection, ADR-061 D2).
+| Component | `src/graph/engines/orion/` (build an `oid`→`NodeId` index; today only `NodeId` lookups exist, e.g. `contains_node(&NodeId)`); `src/graph/hybrid/` (today fuses vector+graph by *score*, not `oid`); the read wiring at the `Churn` search seam (`src/services/operations/vectors/legacy.rs`, `unified_search_with_tenant_context`)
+| Governs | link:../../12-design/adr/ADR-061-per-collection-workload-profiles.adoc[ADR-061] (D4, amended 2026-07-15)
+| Relates to | ADR-044 (stable symbol `oid`), TD-WLP-5 (Churn read core), TD-WLP-8 (the amendment this splits from), TD-133 (opt-in CrossModelTransactionCoordinator)
+| Pillar | PERF (graph-RAG retrieval), correctness (dead-filter invariants on the fused path)
+|===
+
+toc::[]
+
+== Why
+
+ADR-061 D4's "match-then-traverse" fusion — run a vector ANN query, then follow the code graph from
+the matched symbols via their stable `oid` (ADR-044) — is the graph-RAG payoff for `Churn`
+collections. It is entirely unbuilt.
+
+== The blocker (verified 2026-07-15)
+
+* `ProximaRecord.oid` **is** populated: the SDK mints the ADR-044 stable symbol `oid`
+  (`victor_codegraph.stable_symbol_oid`, `clients/python/.../_code_oid.py`), and ProximaDB consumes
+  it **verbatim** (no server-side derivation — `write.rs`, `canonical_wal.rs`). The same `oid` flows
+  into both the vector records (AXIS) and the graph nodes.
+* **ORION has no `oid`→node index today** — only `NodeId`-keyed lookups
+  (`orion/mod.rs::contains_node(&NodeId)`); `src/graph/model.rs` `Node.id` is a `String`, not the
+  `oid`. `src/graph/hybrid/` fuses vector and graph results by *score*, not by `oid` correlation.
+
+So the fusion cannot be wired until ORION can resolve a vector-side `oid` to a graph node.
+
+== Scope
+
+1. **`oid`→`NodeId` index in ORION** — populated as the CSR is (re)built; O(1) resolve. The load-bearing
+   piece; everything else rides on it.
+2. **Match-then-traverse read path** — vector ANN → `oid` set → ORION node resolve → bounded traversal
+   → fuse. Dead-filter (`is_dead`/`valid_to_ns`) applies on the fused output (read-correctness invariant).
+3. **Wire behind the `Churn` read seam** (opt-in), reusing the `resolve_storage_profile` gate already
+   at `legacy.rs`; `AppendBulk` unaffected.
+4. **Eval, not just tests** (mandate #13): graph-RAG retrieval is a ranked/generated surface — ship a
+   rubric eval (output + trajectory: was the traverse sound), not only unit tests.
+
+== TDD / eval gate
+
+* Insert a vector with `oid` X + a graph node with the same `oid` X → a vector match on X yields X's
+  graph neighbours via traverse; a dead/tombstoned X is filtered from the fused result.
+* Eval suite over a small code-graph corpus with a relevance rubric; gate on a threshold.
+
+== Gating
+
+Opt-in `workload_profile:churn`. Canonical records stay authority (ADR-061 D2); ORION CSR + the
+`oid` index are rebuildable projections. `AppendBulk` untouched.
