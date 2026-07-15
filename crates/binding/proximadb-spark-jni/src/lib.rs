@@ -49,12 +49,12 @@ use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JString};
 use jni::sys::{JNI_FALSE, JNI_TRUE, JavaVM, jboolean, jbyteArray, jint, jlong, jstring};
 
-use proximadb::connectors::spark::{
+use proximadb_embedded::spark::{
     SparkDataWriter, SparkPartitionReader, spark_abort_writer, spark_close_partition_reader,
     spark_commit_writer, spark_create_data_writer, spark_create_partition_reader,
     spark_get_table_schema, spark_plan_input_partitions, spark_read_next_batch, spark_write_batch,
 };
-use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+use proximadb_embedded::{EmbeddedConfig, EmbeddedProximaDB};
 use tracing::{info, warn};
 
 struct SparkJniState {
