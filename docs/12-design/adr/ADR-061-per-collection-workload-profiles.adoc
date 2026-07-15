@@ -143,6 +143,24 @@ Fold in the measured lever: rank blocks by the distance lower bound `d(q, centro
 payoff that D3's clustering unlocks — it keeps spread-out blocks that a centre-only rank would
 wrongly prune.
 
+=== D8 — Default-off optimization ratchets gate activation, not unrelated releases
+
+A recall ratchet that deliberately forces an experimental, default-off read optimization ON is
+the activation gate for that optimization. It does not by itself prove a regression in the shipped
+default path. A release may waive such a ratchet for one named promotion only when all of the
+following are recorded and true:
+
+* the optimization and every prerequisite that changes read selection remain default-OFF;
+* the same-run unoptimized/default baseline clears its recall floor;
+* the failed optimized result, risk, mitigation, owner, and review date are recorded in the
+  governing TD;
+* every other required promotion check is green; and
+* the merge explicitly identifies the single waived check. No blanket red-check bypass is allowed.
+
+A failure in a shipped default path is not eligible for this exception. The exception does not
+authorize enabling the optimization: its default may flip only after the original recall ratchet
+passes without a waiver.
+
 == First principles / rationale
 
 * **Co-design against the trace, not the component.** For a serverless-on-object-store DB the
