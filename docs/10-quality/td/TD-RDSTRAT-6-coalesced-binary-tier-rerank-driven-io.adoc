@@ -6,7 +6,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Spec'd + review-approved (ADR-062 Accepted, 2026-07-15).** The *decision rationale, alternatives, and consequences* live in link:../../12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (✅ Accepted — code PR1 may proceed). This TD is the *what/how* for an implementer. Supersedes the *block-centroid-prune* path (link:TD-RDSTRAT-4-centroid-block-clustering-and-segment-directory.adoc[TD-RDSTRAT-4] Lever B / link:TD-RDSTRAT-5-cache-first-voe-directory-activation-codesign.adoc[TD-RDSTRAT-5]) as the object-storage end-state; block-prune is retained as an optional coarse pre-filter for monster collections.
+| Status | **PR1 shipped (#1019, 2026-07-15); phased program remains active.** PR1 measured recall@10 `0.984`, `20` range GETs/query, and `31.7 MB` read/query. The *decision rationale, alternatives, and consequences* live in link:../../12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062]. The deferred bytes phase is now specified by link:TD-RDSTRAT-7-clustered-residual-pax-bytes.adoc[TD-RDSTRAT-7]. Supersedes the *block-centroid-prune* path (link:TD-RDSTRAT-4-centroid-block-clustering-and-segment-directory.adoc[TD-RDSTRAT-4] Lever B / link:TD-RDSTRAT-5-cache-first-voe-directory-activation-codesign.adoc[TD-RDSTRAT-5]) as the object-storage end-state; block-prune is retained as an optional coarse pre-filter for monster collections.
 | Severity | High — `per_get=20.0` is the dominant vector-route cost-model term; block-pruning is measured GET-capped (link:../../_internal/status/SIFT1M_VOE_COMPACTED_RECALL_PARETO_2026_07_15.adoc[the eval]), so the GET lever is unreachable until this lands.
 | Component | `src/storage/engines/sst/segment_format.rs` (writer+reader); `crates/storage/proximadb-block-format/src/writer.rs::PaxBlockWriter` (`:134`) + `crates/storage/proximadb-storage-common/src/pax_block.rs::PaxSegmentScanner` (`:887`) + `stripe.rs::SegmentMeta`; `src/storage/engines/sst/search/mod.rs::try_pax_cascade`; `src/storage/engines/core/coalesce_strategy.rs` + `sst_query_engine.rs::{plan_selected_block_ranges (:733), ObjectRangeCoalescePolicy (:289)}`; `src/storage/engines/sst/compaction.rs`; `crates/storage/proximadb-storage-common` (a NEW per-backend `IopsBudget` — NOT the `StorageProfile` workload enum); `crates/storage/proximadb-storage-filesystem-types` (`FileSystem::read_ranges` — default is a sequential loop; the GET win is the coalesce policy's); `crates/storage/proximadb-object-store/src/lib.rs::put_if_absent` (`:247`, create-only — compaction CAS via Iceberg fresh-name+manifest-swap, ADR-020).
 | Relates | link:../../12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (decision), link:TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (rerank substrate), link:TD-WLP-9-voe-centroid-prune-recall-fail-closed-gate.adoc[TD-WLP-9] (gate), ADR-061 (pre-GA in-place/amend), ADR-046/045 (mixed-read/readability), ADR-036 (storage profile), ADR-020 (WAL authority; footer is advisory), ADR-047 (collection-as-table schema)
@@ -67,8 +67,9 @@ Same segment magic/version as today; in-place writer + readability-preserving re
 4. `SegmentMeta` gains `rabitq_off/rabitq_len`; `pax_write_outcome` (`flush/mod.rs:970`) threads
    them into the VOE `IndexEntry`/footer so the read path finds the region.
 
-Same magic/version. Default-ON for new writes (ADR-061 pre-GA amendment: write-time internals
-replace predecessors).
+Same magic/version. PR1 shipped behind `PROXIMADB_PAX_COALESCED_RABITQ=1`, default OFF; readers
+remain mixed-read-safe. Later on-disk encodings stay independently default OFF until their
+recall/cost and readability ratchets pass.
 
 == Reader changes — scan-then-rerank
 
@@ -105,9 +106,15 @@ selected block.
 stats: [ per-column: { col_id, stats_kind: StatsKind, payload } ]
 enum StatsKind { None, BloomOid, MinMax, BloomOid_MinMax, … }   // add kinds, no format change
 ```
-v1: `BloomOid` (per-block OID bloom, no false negatives → `vector_by_id`/edge-by-oid skips to the
-one positive block — the point-lookup index). `MinMax` pushdown + bloom on other columns deferred
-(forward-compatible; unknown kinds skipped).
+PR1/v1 emits `StatsKind::None` with an empty payload. PR3 activates `BloomOid` (per-block OID
+Bloom, no false negatives → `vector_by_id`/edge-by-oid skips to the one positive block).
+`MinMax` pushdown + Bloom on other columns remain deferred.
+
+PR1 implemented the readable footer-v1 **core**: RaBitQ/row/dimension summary, legacy encoding
+summary, block extents, and an empty typed stats slot (`StatsKind::None`). The full schema,
+per-stripe map, per-column stats directory, and auxiliary-region references are additive typed
+sections specified by ADR-062 D4/D5 and TD-RDSTRAT-7. Missing sections use PR1/block-local
+metadata; explicit unknown data encodings fail closed rather than aliasing to SQ8.
 
 == Self-derived geometry
 
@@ -174,16 +181,19 @@ amendment sanctions.
 
 == Phased implementation (one coherent PR at a time)
 
-* **PR1 — layout + scan-then-rerank foundation (the GET win):** header-prefix + RaBitQ-head +
-  footer-index (block table + encoding map + schema snapshot) + scan-then-rerank read path
+* **PR1 — SHIPPED #1019, layout + scan-then-rerank foundation (the GET win):** header-prefix +
+  RaBitQ-head + footer-v1 core (block table + legacy encoding/schema summary + additive seams) +
+  scan-then-rerank read path
   (reuse `plan_selected_block_ranges`/`read_ranges` + unchanged block decoder) + self-derived
   geometry + in-place writer/reader + round-trip/detection tests + SIFT recall + GET measurement.
   Indivisible core.
 * **PR2 — cost control:** GET-budget compaction trigger (WLP-7 seam) + per-file RaBitQ/footer
   LRU cache (engine `DashMap` vs mmap residency).
 * **PR3 — point-lookup index:** per-block OID bloom (`StatsKind::BloomOid`) + `vector_by_id` fast path.
+* **Bytes phase — TD-RDSTRAT-7:** clustered-residual rerank encoding + additive schema/encoding/
+  stats footer sections; default OFF; end-to-end SIFT bytes + recall gate.
 * **Deferred (foundation anticipates):** schema-evolution semantics (TD-TBL-4/ADR-047); `MinMax`
-  pushdown; clustered SQ8/fp32 compression; within-cell Hilbert; text-as-variable-fetch; coarse
+  pushdown; within-cell Hilbert; text-as-variable-fetch; coarse
   VOE prune for monster collections; per-collection RaBitQ sidecar only if file-merging proves
   insufficient at extreme scale.
 
@@ -192,9 +202,9 @@ amendment sanctions.
 * Round-trip + format-detection tests (mirror `write_pax_segment_round_trips_through_reader`,
   `detection_defaults_to_legacy_and_guards_false_positives` in `segment_format.rs`).
 * `check_td_adr_unique.py` + `check_td_status_consistency.py`; `cargo check --lib` + clippy + fmt.
-* **Recall + GET measurement** (the point): re-run `sift_voe_centroid_prune_compacted_recall_at_10_eval`
-  against the new layout — expect recall@10 ≈ 0.99 at the keep=100% scan AND `range_gets`/query ≪
-  ~370 (target low tens). Record into `BENCHMARK_EVIDENCE.toml`.
+* **Recall + GET measurement — measured by PR1:** SIFT1M N=100k, single-file, IVF-ON reached
+  recall@10 `0.984`, `20` range GETs/query, and `31.7 MB` read/query; recorded in the dated
+  status artifact and `BENCHMARK_EVIDENCE.toml`.
   **Reviewer ratchet notes (PR1):** (a) run the SIFT GET measurement **with the IVF opt-in ON**
   (`PROXIMADB_PAX_FLUSH_CLUSTER=ivf`) — D3's rerank-coalescing assumes `cluster_order_pca_ivf`
   ordering; (b) **isolate the per-file "~1 RaBitQ GET" win on a compacted/single-file collection**
@@ -204,11 +214,11 @@ amendment sanctions.
 * PR2/PR3 follow-ups (not PR1 gates): footer-index sizing at scale (Q2); bloom FPP/sizing (Q6);
   the schema-footer vs catalog-authority invariant (Q3).
 
-== Open questions for review
+== Remaining questions
 
-(see ADR-062 §Open questions) — header-first write correctness; footer-index size at scale;
-schema-footer vs catalog authority; GET-budget compaction trigger tuning; conditional-write
-availability per backend; bloom FPP/sizing; readability during the docs→code window.
+See ADR-062 §Initial open questions and resolution. PR2 still owns GET-budget compaction tuning;
+PR3 owns measured Bloom sizing/FPP. TD-RDSTRAT-7 resolves the footer/schema/encoding seams for
+the bytes phase.
 
 == History
 
@@ -234,3 +244,6 @@ availability per backend; bloom FPP/sizing; readability during the docs→code w
   the IVF opt-in ON; (b) isolate the per-file "~1 RaBitQ GET" win on a compacted/single-file
   collection so it isn't conflated with the PR2 compaction win. Footer/bloom sizing (Q2/Q6) and the
   catalog-authority invariant (Q3) are PR2/PR3 follow-ups, not PR1 gates.
+* 2026-07-15 — PR1 #1019 landed and measured recall@10 `0.984`, `20` range GETs/query, and
+  `31.7 MB` read/query. Linked the active bytes phase TD-RDSTRAT-7 and reconciled the spec with
+  the shipped footer-v1 core/default-OFF gate; full typed footer sections are additive.

@@ -5,7 +5,7 @@
 :status: Accepted (2026-07-15, review-approved)
 :date: 2026-07-15
 :deciders: architecture
-:relates-to: ADR-061 (pre-GA "no back-compat, arm defaults" amendment — the in-place writer / readability-preserving reader reconciliation), ADR-052 (round-trips dominate the cost term), ADR-046/045 (PAX durable-core / mixed-read), ADR-036 (per-object access tier / storage profile), ADR-020 (WAL is the durable authority; the segment/footer is advisory), ADR-026 (PAX canonical vector path), link:../../10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6 (full spec)], link:../../10-quality/td/TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (the rerank substrate), link:../../10-quality/td/TD-RDSTRAT-4-centroid-block-clustering-and-segment-directory.adoc[TD-RDSTRAT-4]/link:../../10-quality/td/TD-RDSTRAT-5-cache-first-voe-directory-activation-codesign.adoc[5] (block-prune, superseded as the end-state), link:../../10-quality/td/TD-WLP-9-voe-centroid-prune-recall-fail-closed-gate.adoc[TD-WLP-9] (the gate), link:../../_internal/status/SIFT1M_VOE_COMPACTED_RECALL_PARETO_2026_07_15.adoc[the measured eval]
+:relates-to: ADR-061 (pre-GA mixed-read/default policy), ADR-052 (round-trips dominate the cost term), ADR-047/046/045 (schema authority / PAX durable-core / mixed-read), ADR-036 (per-object access tier / storage profile), ADR-020 (WAL is the durable authority; the segment/footer is advisory), ADR-026 (PAX canonical vector path), link:../../10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6 (GET phase)], link:../../10-quality/td/TD-RDSTRAT-7-clustered-residual-pax-bytes.adoc[TD-RDSTRAT-7 (bytes/footer phase)], link:../../10-quality/td/TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (the rerank substrate), link:../../10-quality/td/TD-RDSTRAT-4-centroid-block-clustering-and-segment-directory.adoc[TD-RDSTRAT-4]/link:../../10-quality/td/TD-RDSTRAT-5-cache-first-voe-directory-activation-codesign.adoc[5] (block-prune, superseded as the end-state), link:../../10-quality/td/TD-WLP-9-voe-centroid-prune-recall-fail-closed-gate.adoc[TD-WLP-9] (the gate), link:../../_internal/status/SIFT1M_COALESCED_RABITQ_RECALL_2026_07_15.adoc[the PR1 measured eval]
 :supersedes: the *block-centroid-prune* path (TD-RDSTRAT-4 Lever B / TD-RDSTRAT-5) as the **end-state for the dominant object-storage cost term** (GET round-trips). Block-prune is retained only as an optional coarse pre-filter for monster collections (§Decision D6).
 
 == Status
@@ -16,11 +16,11 @@ proceed**, after a Request-changes round whose 4 spec-accuracy fixes (#3 `read_r
 attribution, #4 `IopsBudget` ≠ `StorageProfile`, #5 `PaxSegmentScanner` path, #6 compaction CAS
 via `put_if_absent`+Iceberg) were applied and verified; 2 stale-checkout false alarms
 (`cluster_order_pca_ivf`, `PROXIMADB_PAX_FLUSH_CLUSTER`) were retracted (both shipped #995/#1015).
-All 7 open questions answered (header-first write + readability confirmed safe; compaction
-atomicity sound). Implementation is a phased program (PR1 layout+read-path, PR2 cost-control,
-PR3 point-lookup); each slice default-ON for new writes, readability-preserving for already-written
-segments (per the ADR-061 pre-GA amendment). Reviewer's two PR1-ratchet notes folded into
-TD-RDSTRAT-6 §Verification.
+All 7 initial open questions were answered (header-first write + readability confirmed safe;
+compaction atomicity sound). Implementation is a phased program: PR1 (#1019) shipped the
+layout+read-path behind an opt-in and measured the GET win; PR2 is cost-control; PR3 is
+point-lookup. New on-disk encodings remain default-OFF until their mixed-read + recall/cost
+ratchets pass. Reviewer's two PR1-ratchet notes are folded into TD-RDSTRAT-6 §Verification.
 
 == Context
 
@@ -123,17 +123,50 @@ coalescing win is the policy's, not `read_ranges`' (a backend may override `read
 true batched/multipart as a follow-on). fp32 finalized for top-k only. Net: ~1 RaBitQ GET/file
 (cached) + a few coalesced survivor GETs, vs today's ~4-5 × every selected block.
 
-=== D4 — Parquet-style self-describing footer-index; schema snapshot in v1
+=== D4 — Parquet-style self-describing footer-index; additive typed sections
 
 The footer-index is the metadata hub: **schema snapshot** (field-ids, types, column order —
 self-describing; catalog stays the write authority, footer is the segment's physical
 self-description), block offset table, per-block per-column **stats**, per-stripe **encoding
 map**, rabitq_off/len, row_count. **Encoding control lives in the footer** (Parquet-style),
-not in magic bytes — magic stays format-family-only. Full schema-*evolution* (field-ID
-reconciliation, complex types) is the follow-on (TD-TBL-4 / ADR-047); v1 embeds the snapshot so
-that follow-on is additive.
+not in segment magic — magic stays format-family-only.
 
-=== D5 — Per-block stats: OID bloom in v1, extensible `StatsKind` (min/max deferred)
+PR1's footer-v1 core is the readability base: RaBitQ extent mirror, row/dimension summary,
+legacy `embed_quant_tag`, f32-presence flag, and block extents. Its parser stops after the
+declared block entries and tolerates trailing bytes. Later phases append a framed, versioned
+section envelope after that core:
+
+```
+[footer-v1 core][typed sections][extension_len:u32][PXE1]
+section = { tag:u8, version:u8, len:u32, payload }
+```
+
+Initial sections are `SchemaSnapshot`, `StripeEncodingMap`, `BlockColumnStats`, and
+`AuxRegionDirectory`. Old PR1 readers ignore the envelope; new readers skip unknown optional
+sections after validating lengths. A malformed recognized envelope fails closed. This is an
+additive footer extension, not a segment-magic/header/footer-version bump.
+
+The schema snapshot contains the immutable physical facts required to interpret the file:
+schema fingerprint/version and ordered fields `{ CatalogColumn.id (stable physical field-id),
+physical_column_id, name, physical/logical type, nullable, role }`. Catalog `object_id`,
+defaults, comments, indexes, and mutable properties remain catalog-only. Tier stripes
+(RaBitQ index, residual/SQ8 rerank, exact f32) are physical representations of one logical
+vector field and therefore belong in the encoding map, not as duplicate logical schema
+fields. Full schema-*evolution* reconciliation remains TD-TBL-4 / ADR-047.
+
+The footer encoding map declares `{ logical_field_id, physical_column_id, tier_role,
+codec_tag, codec_version, compression_tag, parameter_scope }`. `codec_tag` is the stable
+shared `ProximaScheme` marker. Codec parameters needed to decode one PAX block remain in that
+block's `VectorParamBlock`, so a fetched block is self-sufficient and the segment footer does
+not duplicate codebooks.
+
+Compatibility distinguishes absent metadata from unknown data bytes: a missing extension/map
+uses the PR1 block-local SQ8 path, but an explicitly unknown codec/version is never
+reinterpreted as SQ8. The reader may use an independently declared exact tier when the caller
+permits it; otherwise it returns unsupported-encoding. Unknown optional metadata sections may
+be ignored.
+
+=== D5 — Per-block stats: typed slot in v1; optional OID Bloom activation in PR3
 
 The footer block-table carries an optional, tagged, per-block per-column stats entry:
 
@@ -142,10 +175,22 @@ The footer block-table carries an optional, tagged, per-block per-column stats e
  enum StatsKind { None, BloomOid, MinMax, BloomOid_MinMax, … }   // extensible, no format change
 ```
 
-v1: `BloomOid` (per-block OID bloom, no false negatives → `vector_by_id`/edge-by-oid skips to
-the one positive block — the *point-lookup* index, complementary to the RaBitQ *vector-search*
-index). `MinMax` zone-map pushdown and bloom on other columns are deferred, added as new
-`StatsKind` values (forward-compatible; unknown kinds skipped).
+PR1 emits `StatsKind::None` and zero payload length; it reserves the typed slot. PR3 activates
+`BloomOid` (per-block OID Bloom, no false negatives → `vector_by_id`/edge-by-oid skips to the
+one positive block — the *point-lookup* index, complementary to the RaBitQ *vector-search*
+index). `MinMax` zone-map pushdown and Bloom on other columns are deferred, added as new
+`StatsKind` values.
+
+The segment-level stats directory is keyed by `{block_ordinal, stable column_id}` and is lifted
+from the existing PAX block `ColumnMeta`; it does not run a second stats producer. Large Bloom
+and statistics payloads live in a contiguous auxiliary metadata region referenced by
+`{region_id, offset, length}`, analogous to Parquet's optional column-chunk Bloom
+offset+length. This bounds the cache-hot footer control plane. Bloom payloads carry their own
+version, hash algorithm/seed, hash count, bit count, inserted count, and bits. Start sizing at
+approximately 10 bits/key (~1% target false-positive rate), then measure by block cardinality.
+Unknown/missing/corrupt optional Bloom metadata degrades conservatively to "may contain"; it
+must never create a false-negative skip. TD-RDSTRAT-7 lands the directory/envelope; PR3 owns
+population and point-lookup routing.
 
 === D6 — Self-derived block geometry; GET-budget compaction (file-count = GET-count knob)
 
@@ -204,6 +249,28 @@ compaction (D6) then merges accumulated files. Graph-edge churn is ORION epoch-r
 WRITE path is churn-tolerant via the memtable buffer + GET-budget compaction, and the layout is
 scoped so it is never on a per-trickle-write or per-graph-edge path.
 
+=== D8 — Clustered statistical encoding moves bytes; clustering alone does not
+
+PR1 (#1019) validates the separation of levers: SIFT1M N=100k, single-file, IVF-ON measured
+recall@10 `0.984`, `20` range GETs/query (18.5x fewer), but `31.7 MB` read/query. Reordering
+near-max-entropy SQ8/RaBitQ codes makes survivors contiguous but does not compress those codes.
+The bytes term moves through link:../../10-quality/td/TD-RDSTRAT-7-clustered-residual-pax-bytes.adoc[TD-RDSTRAT-7]:
+a per-IVF-cluster-run residual model, encoded by the shared codec and consumed first by PAX.
+
+Under the default-OFF gate, clustered-residual rerank **replaces** flat SQ8 for an eligible
+block; it does not sit beside SQ8 as another permanently fetched tier. The pipeline is
+`RaBitQ header index -> residual rerank -> optional exact f32`. Flat SQ8 remains the legacy and
+write-time fallback. Codebook granularity follows contiguous IVF cluster-runs intersecting a
+PAX block: cluster is the statistical model, block is the IOPS/range-read unit. Each block
+stores the parameters needed for its local run fragments, preserving independent decode.
+
+The initial implementation is versioned four-bit symmetric per-dimension residual
+quantization (centroid + per-dimension scale per run). Small runs, missing IVF plans,
+inconsistent dimensions, non-finite inputs, or insufficient realized byte savings fall back
+to flat SQ8 and are declared as such in the encoding map. Lossy activation requires an
+end-to-end SIFT gate: bytes/query materially below `31.7 MB`, recall@10 `>= 0.98`, and no
+material regression from PR1's GET result. Codec microbenchmarks are not headline evidence.
+
 == First principles / rationale
 
 * **Move the dominant cost term.** On object storage GET round-trips dominate (`per_get=20 ≫
@@ -233,15 +300,16 @@ segments (DR, external-tool inspection, debugging); a point-lookup index (OID bl
 in the same footer; block geometry self-tunes to dim/composition/backend; the compaction
 scheduler becomes the query-cost knob.
 
-*Negative / costs:* a format change (in-place per ADR-061's pre-GA amendment — writer changes
-default-on; reader retains a footer presence-field fallback to read legacy RaBitQ-in-block
-segments, so on-disk *readability* is preserved); footer-index grows with block count +
-blooms (cap/region layout needed at scale — open question); LSM write-amplification from
-file-merging compaction; a cold query pays one footer-index GET before the scan (cached after).
+*Negative / costs:* a format change behind an opt-in; the reader retains a footer
+presence-field fallback for legacy RaBitQ-in-block segments, so on-disk *readability* is
+preserved. Footer metadata grows with block/column count, hence large optional payloads use a
+separate referenced auxiliary region. LSM file-merging adds write amplification. A cold query
+may pay a footer-index GET to plan survivor data reads, but the fixed-offset RaBitQ scan never
+depends on that footer GET and can proceed independently.
 
-*Co-design cost-term note:* this moves GETs (dominant). Bytes move secondarily and are the
-deferred lever — clustered SQ8/fp32 statistical compression (per-block residual/codebook) cuts
-bytes once the layout is in and measured; not v1.
+*Co-design cost-term note:* PR1 moved GETs (dominant). TD-RDSTRAT-7 is the separately gated
+bytes lever; it reuses the same IVF producer for per-cluster-run residual codebooks while
+leaving RaBitQ at the header.
 
 == Alternatives considered
 
@@ -257,6 +325,12 @@ bytes once the layout is in and measured; not v1.
   Rejected; RaBitQ pinned at head (D2).
 * **Per-encoding magic/version bumps** — rejected; encoding control lives in the footer's
   per-stripe encoding map + extensible `StatsKind` (Parquet-style).
+* **Unknown encoding -> assume SQ8** — rejected. Absence of the new map means the legacy SQ8
+  path; an explicit unknown codec describes bytes the reader cannot safely interpret and must
+  fail closed (or use an independently declared exact tier).
+* **Residual beside flat SQ8** — rejected for the normal rerank path because both would be
+  fetched for the same accuracy stage. Eligible blocks replace SQ8; ineligible blocks declare
+  SQ8 as their write-time fallback.
 * **Cap files at 1 (force compaction)** — rejected; LSM-accumulate 3-5, compact on a GET-budget
   (D6), so file-count = the GET-count knob without over-compacting.
 
@@ -264,29 +338,32 @@ bytes once the layout is in and measured; not v1.
 
 * Round-trip + format-detection unit tests (mirror `write_pax_segment_round_trips_through_reader`).
 * `check_td_adr_unique.py` + `check_td_status_consistency.py`.
-* **Recall + GET measurement** (the point): re-run
-  `sift_voe_centroid_prune_compacted_recall_at_10_eval` against the new layout — expect
-  recall@10 ≈ 0.99 at the keep=100% scan AND `range_gets`/query ≪ ~370. Record into
-  `BENCHMARK_EVIDENCE.toml`.
+* **PR1 result (measured):** SIFT1M N=100k, single-file, IVF-ON reached recall@10 `0.984`,
+  `20` range GETs/query, and `31.7 MB` read/query; recorded in
+  `SIFT1M_COALESCED_RABITQ_RECALL_2026_07_15.adoc` and `BENCHMARK_EVIDENCE.toml`.
+* **TD-RDSTRAT-7 bytes ratchet:** same end-to-end protocol, recall@10 `>= 0.98`, no material
+  GET regression, and bytes/query materially below `31.7 MB`. Codec-only ratios are diagnostic.
 * Compaction test: N→1 merge yields fewer RaBitQ GETs/query + re-clustered tighter locality.
 
-== Open questions for review
+== Initial open questions and resolution
 
-. **Header-first write correctness** — flush buffers the batch in RAM; confirm no
-   single-row streaming path bypasses the buffer.
-. **Footer-index size at scale** — OID bloom + block table for thousands of blocks; cap/region
-   layout so the cached footer stays small.
-. **Schema-footer vs catalog authority** — v1 footer = write-time snapshot; confirm no read-path
-   assumes catalog-only schema (ADR-047/048 interaction).
-. **GET-budget compaction trigger** — file-count threshold vs projected-GETs vs hybrid; tuning;
-   write-amplification bounds.
-. **Compaction atomicity** — the object-store exposes only create-only `put_if_absent` today
-   (no `if-match` CAS); D6 specifies the Iceberg fresh-name + manifest-advance fallback
-   (ADR-020). Confirm that path is sound and that no compaction step assumes an object-level
-   conditional replace. (Native S3/ABFS `if-match` is a future optimization.)
-. **Bloom sizing** — FPP target + bits/elt for OID; per-block vs per-file; cost in the cached footer.
-. **Readability during the docs→code window** — in-place change is atomic per PR; the footer
-   presence-field preserves legacy readability (ADR-061 amendment).
+. **Header-first write correctness — resolved by PR1.** Flush buffers the batch; #1019 shipped
+  the fixed-offset header/RaBitQ writer and mixed reader.
+. **Footer-index size at scale — structure resolved, measurement remains.** Keep typed
+  descriptors in the cache-hot footer and place large Bloom/statistics bytes in referenced
+  auxiliary regions (D4/D5). PR3 measures actual size/FPP.
+. **Schema-footer vs catalog authority — resolved.** Catalog is logical/write authority;
+  footer is the immutable physical snapshot keyed by `CatalogColumn.id`; block metadata owns
+  local decode parameters. TD-TBL-4 owns evolution reconciliation.
+. **GET-budget compaction trigger — open for PR2.** File-count threshold versus projected GETs
+  versus a hybrid still requires workload/write-amplification evidence.
+. **Compaction atomicity — resolved in design.** Use Iceberg fresh-name + manifest advance via
+  create-only `put_if_absent` (ADR-020); native `if-match` remains an optimization.
+. **Bloom sizing — initial policy resolved, activation evidence remains.** Per-block,
+  approximately 10 bits/key and ~1% target FPP, deterministic versioned payload; PR3 ratchets
+  it from measured cardinality and footer/aux bytes.
+. **Readability — resolved by PR1 and D4.** Header/footer presence selects the legacy path;
+  old PR1 readers ignore additive footer sections; explicit unknown data encodings fail closed.
 
 == Review corrections (2026-07-15)
 
@@ -314,3 +391,14 @@ Explore agent read a pre-#995/#1015 checkout), verified present on current `deve
 (Note: `block_cluster.rs:8-10` still calls IVF "the S4 upgrade" in the *module doc* while
 :16-17 references `cluster_order_pca_ivf` as shipped for compaction — a pre-existing source-doc
 inconsistency, separate cleanup, not a spec error.)
+
+== Footer/bytes implementation amendment (2026-07-15)
+
+After PR1 #1019 landed and measured recall `0.984`, `20` range GETs/query, and `31.7 MB`
+read/query, link:../../10-quality/td/TD-RDSTRAT-7-clustered-residual-pax-bytes.adoc[TD-RDSTRAT-7]
+audited the shared codec, ProximaBlocks prior art, PAX `ColumnMeta`/`VectorParamBlock`, and Bloom
+implementations. D4/D5/D8 now fix the implementation seams: additive typed footer sections;
+stable physical field IDs with catalog/footer/block authority separation; skippable optional
+metadata but fail-closed unknown data encodings; auxiliary-region Bloom references; and a
+default-OFF clustered-residual SQ4 rerank encoding that replaces flat SQ8 only for eligible
+blocks. The RaBitQ header decision is unchanged.
