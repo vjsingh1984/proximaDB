@@ -159,11 +159,27 @@ defaults, comments, indexes, and mutable properties remain catalog-only. Tier st
 vector field and therefore belong in the encoding map, not as duplicate logical schema
 fields. Full schema-*evolution* reconciliation remains TD-TBL-4 / ADR-047.
 
-The footer encoding map declares `{ logical_field_id, physical_column_id, tier_role,
-codec_tag, codec_version, compression_tag, parameter_scope }`. `codec_tag` is the stable
-shared `ProximaScheme` marker. Codec parameters needed to decode one PAX block remain in that
-block's `VectorParamBlock`, so a fetched block is self-sufficient and the segment footer does
-not duplicate codebooks.
+The footer encoding map is a descriptor table, not one file-global codec choice. It declares
+`{ descriptor_id, logical_field_id, physical_column_id, tier_role, codec_tag, codec_version,
+compression_tag/version, parameter_scope, vector_transform, auxiliary flags,
+source_fidelity, quantization_generation }`. Each footer block entry carries the compact
+descriptor ID selected for each physical tier. This is required because one segment may mix a
+new rerank encoding with write-time SQ8 fallback blocks. It also lets footer-only ranged
+planning determine row stride and required parameters without first fetching every block
+footer. `codec_tag` is the stable shared `ProximaScheme` marker.
+
+Codec parameters needed to decode one PAX block remain in that block's
+`VectorParamBlock`, so a fetched block is self-sufficient and the segment footer does not
+duplicate codebooks. The descriptor records semantics and parameter scope; it does not carry
+the centroid/codebook payload.
+
+Each immutable file also records the vector field's `metric_epoch`, the metric under which
+estimator-specific tiers were built, and its normalization contract (`none` or enforced
+unit-L2). Runtime metric support is derived from the registered
+`(codec_tag, codec_version, vector_transform)` implementation rather than trusting a serialized
+"supported metrics" claim. A catalog distance-metric change advances the metric epoch and
+requires compatibility validation or a rebuild before the file can serve the new estimator
+path.
 
 Compatibility distinguishes legacy metadata from unknown data bytes: a v1 footer uses the PR1
 block-local SQ8 path, but a v2 footer requires its encoding map. An explicitly unknown
@@ -277,6 +293,26 @@ inconsistent dimensions, non-finite inputs, or insufficient realized byte saving
 to flat SQ8 and are declared as such in the encoding map. Lossy activation requires an
 end-to-end SIFT gate: bytes/query materially below `31.7 MB`, recall@10 `>= 0.98`, and no
 material regression from PR1's GET result. Codec microbenchmarks are not headline evidence.
+
+The implementation choice is ratcheted by an equal-protocol bake-off, not fixed by the first
+codec prototype. Clustered SQ4/SQ6 (with an explicitly declared optional exact squared-norm
+parameter), clustered TurboQuant-style 4-bit, and clustered multi-bit RaBitQ 4-bit are measured
+at the same N=100k single-file IVF-ON SIFT workload. The accepted rerank encoding must beat
+the PR1 byte result while clearing recall and GET gates; losing prototypes do not become
+durable format variants merely because they were implemented for evaluation.
+
+An exact norm is metric auxiliary data, not an exact-vector tier. It can improve magnitude-
+sensitive L2/dot estimates, is algebraically irrelevant to cosine after positive radial
+rescaling, and supplies no L1-specific guarantee. `exact` remains reserved for original f32
+values.
+
+Exact-f32 presence is a per-block physical fact plus a catalog durability policy:
+`ExactRetained`, `ExternalAuthority`, or `ApproximateOnly`. Compaction/re-clustering may
+re-encode from original f32 supplied by every input block or the declared external authority.
+Without such a source it must pass blocks through/defer, unless `ApproximateOnly` explicitly
+permits lossy transcoding; that path increments `quantization_generation` and never relabels
+the output exact. Query guarantees follow the weakest live block, not whether any one input
+file has f32.
 
 == First principles / rationale
 
