@@ -86,6 +86,30 @@ use crate::storage::engines::sst::SstEngine;
 
 const FILTER_FAIL_LOUD_ENV: &str = "PROXIMADB_FILTER_FAIL_LOUD";
 
+/// TD-WLP-5 (ADR-061 D4): the effective read freshness for a collection,
+/// applying the `Churn` Strong-override on top of the request's hint. `Churn`
+/// collections always delta-merge the unflushed WAL (a re-embedded symbol must
+/// be immediately visible), overriding any `StaleOk`/`BoundedStale` hint;
+/// `AppendBulk` honors the request (unset ⇒ Strong default), so this is a no-op
+/// there. Profile is resolved from the collection's `workload_profile:` tag.
+fn churn_effective_freshness(
+    collection: &crate::proto::proximadb_v1::Collection,
+    config: Option<&UnifiedSearchConfig>,
+) -> crate::core::search::VectorFreshnessMode {
+    use crate::core::search::VectorFreshnessMode;
+    let tags = collection
+        .config
+        .as_ref()
+        .map(|c| c.tags.as_slice())
+        .unwrap_or(&[]);
+    if proximadb_storage_common::resolve_storage_profile(tags).forces_strong_reads() {
+        return VectorFreshnessMode::Strong;
+    }
+    config
+        .and_then(|c| c.freshness_mode.clone())
+        .unwrap_or_default()
+}
+
 fn filter_fail_loud_enabled() -> bool {
     let value = std::env::var(FILTER_FAIL_LOUD_ENV).ok();
     filter_fail_loud_for_value(value.as_deref())
@@ -2137,6 +2161,16 @@ impl VectorOperationsService {
             &query_vector,
         )?;
 
+        // TD-WLP-5 (ADR-061 D4): resolve the collection's storage profile and
+        // force Strong (delta-merged) reads for `Churn`. Churn is the agent
+        // code-RAG shape — a symbol is re-embedded and immediately re-queried
+        // on a bounded, hot working set, so a `StaleOk`/`BoundedStale` hint
+        // must not serve the pre-edit neighbours. `AppendBulk` honors the
+        // request's hint (Strong is already the unset default), so this is a
+        // no-op there. Computed once and reused at the cache gate and the
+        // execute path below so both honor the override.
+        let freshness_mode = churn_effective_freshness(&collection, config.as_ref());
+
         // Create cache key for unified result caching
         let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
         let cache_key = QueryKey::new(
@@ -2150,10 +2184,6 @@ impl VectorOperationsService {
         // cache — a Strong read could be served an entry that predates a
         // concurrent write, violating read-after-write. Gate the cache read on
         // freshness (mirrors unified_search_v1_inner); Strong reads recompute.
-        let freshness_mode = config
-            .as_ref()
-            .and_then(|c| c.freshness_mode.clone())
-            .unwrap_or_default();
         if !matches!(
             freshness_mode,
             crate::core::search::VectorFreshnessMode::Strong
@@ -2186,11 +2216,9 @@ impl VectorOperationsService {
             )
             .await?
         } else {
-            // Direct search without progressive stages
-            let freshness_mode = config
-                .as_ref()
-                .and_then(|c| c.freshness_mode.clone())
-                .unwrap_or_default();
+            // Direct search without progressive stages. Reuse the
+            // profile-resolved freshness (TD-WLP-5) so Churn's Strong override
+            // reaches the delta-merge decision, not just the cache gate.
             self.execute_search_internal(
                 collection_id,
                 query_vector,
@@ -2200,7 +2228,7 @@ impl VectorOperationsService {
                     .as_ref()
                     .map(|c| c.optimization_goal)
                     .unwrap_or_default(),
-                freshness_mode,
+                freshness_mode.clone(),
             )
             .await?
         };
@@ -4384,6 +4412,77 @@ impl VectorOperationsService {
                 .unwrap_or_default()
                 .as_secs()
         }))
+    }
+}
+
+#[cfg(test)]
+mod wlp5_freshness_tests {
+    use super::*;
+    use crate::core::search::VectorFreshnessMode;
+    use crate::proto::proximadb_v1::{Collection, CollectionConfig};
+
+    fn collection_with_tags(tags: &[&str]) -> Collection {
+        Collection {
+            config: Some(CollectionConfig {
+                tags: tags.iter().map(|s| s.to_string()).collect(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn config_with_freshness(mode: VectorFreshnessMode) -> UnifiedSearchConfig {
+        UnifiedSearchConfig {
+            freshness_mode: Some(mode),
+            ..Default::default()
+        }
+    }
+
+    /// TD-WLP-5 (ADR-061 D4): a `Churn` collection forces Strong reads even when
+    /// the request explicitly asked for `StaleOk` — a re-embedded symbol must
+    /// never be served stale.
+    #[test]
+    fn churn_overrides_stale_request_to_strong() {
+        let churn = collection_with_tags(&["workload_profile:churn"]);
+        let stale_cfg = config_with_freshness(VectorFreshnessMode::StaleOk);
+        assert_eq!(
+            churn_effective_freshness(&churn, Some(&stale_cfg)),
+            VectorFreshnessMode::Strong,
+            "Churn must override StaleOk to Strong"
+        );
+        // Also overrides BoundedStale.
+        let bounded = config_with_freshness(VectorFreshnessMode::BoundedStale {
+            max_staleness_ms: 60_000,
+        });
+        assert_eq!(
+            churn_effective_freshness(&churn, Some(&bounded)),
+            VectorFreshnessMode::Strong
+        );
+    }
+
+    /// An `AppendBulk` (or untagged) collection honors the request's freshness
+    /// hint — the override is a no-op there (mixed-read-safe default path).
+    #[test]
+    fn append_bulk_honors_request_freshness() {
+        let append = collection_with_tags(&["workload_profile:append"]);
+        let stale_cfg = config_with_freshness(VectorFreshnessMode::StaleOk);
+        assert_eq!(
+            churn_effective_freshness(&append, Some(&stale_cfg)),
+            VectorFreshnessMode::StaleOk,
+            "AppendBulk must honor an explicit StaleOk request"
+        );
+        // Untagged collection = AppendBulk default; no config → Strong default.
+        let untagged = collection_with_tags(&[]);
+        assert_eq!(
+            churn_effective_freshness(&untagged, None),
+            VectorFreshnessMode::Strong,
+            "unset freshness defaults to Strong"
+        );
+        // Untagged + explicit StaleOk is honored.
+        assert_eq!(
+            churn_effective_freshness(&untagged, Some(&stale_cfg)),
+            VectorFreshnessMode::StaleOk
+        );
     }
 }
 
