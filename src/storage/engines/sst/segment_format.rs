@@ -180,7 +180,15 @@ pub fn write_pax_segment_full(
     // PCA+IVF via `write_pax_segment_compacted`.
     let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
     let order = if cluster {
-        crate::storage::engines::sst::block_cluster::cluster_order(records, 0)
+        // TD-WLP-4/WLP-9 eval opt-in (`PROXIMADB_PAX_FLUSH_CLUSTER=ivf`): apply
+        // the compaction-grade PCA+IVF re-cluster at flush instead of the sign-bit
+        // bootstrap, so clustering quality is measurable without the (unwired)
+        // flush→compaction scheduler. Default OFF ⇒ bootstrap.
+        if crate::storage::engines::sst::block_cluster::flush_cluster_ivf() {
+            crate::storage::engines::sst::block_cluster::cluster_order_pca_ivf(records, 0)
+        } else {
+            crate::storage::engines::sst::block_cluster::cluster_order(records, 0)
+        }
     } else {
         None
     };

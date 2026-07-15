@@ -41,6 +41,28 @@ fn env_flag_off(var: &str) -> bool {
     }
 }
 
+/// TD-WLP-4/WLP-9 eval opt-in: upgrade the **flush** (L0) ordering from the
+/// model-free sign-bit bootstrap ([`cluster_order`]) to the full PCA+IVF
+/// re-cluster ([`cluster_order_pca_ivf`]) — the ordering compaction normally
+/// applies, but reached at flush so it is measurable without the (unwired)
+/// flush→compaction scheduler. Default OFF: production L0 flush keeps the
+/// bootstrap (cold-start-safe, streaming), and the production re-cluster event
+/// remains compaction. Set `PROXIMADB_PAX_FLUSH_CLUSTER=ivf` to exercise PCA/IVF
+/// at flush (the SIFT recall eval uses this to validate clustering quality). The
+/// ordering is result-preserving (the reader ranks/dedups by distance + OID),
+/// so this is mixed-read-safe.
+pub fn flush_cluster_ivf() -> bool {
+    matches!(
+        std::env::var("PROXIMADB_PAX_FLUSH_CLUSTER")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(|v| v.to_ascii_lowercase())
+            .as_deref(),
+        Some("ivf") | Some("pca_ivf") | Some("1") | Some("true") | Some("on") | Some("yes")
+    )
+}
+
 /// TD-RDSTRAT-5 S3 (read side): opt-in for the VOE-directory centroid probe-prune
 /// at the PAX cascade. Default OFF — the cascade scans every block; set
 /// `PROXIMADB_PAX_CENTROID_PRUNE=1` to load the Vector Object Economy directory

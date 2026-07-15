@@ -1,0 +1,100 @@
+= SIFT1M VOE centroid-prune recall — PCA/IVF vs sign-bit Pareto (2026-07-15)
+
+:toc: macro
+
+toc::[]
+
+== Why this run
+
+The WS8 qa-gate `sift_voe_centroid_prune_recall_at_10_ratchet` is fail-closed (pruned
+recall@10 = 0.8087 < 0.9 floor; TD-WLP-9). The unblock chain assumes the compaction-grade
+fp32-PCA/IVF re-cluster (`cluster_order_pca_ivf`, TD-WLP-4 / #995) lifts prune recall to
+≥0.9 — but nobody had measured it: the production flush→compaction scheduler is unwired
+(TD-WLP-7), so the re-cluster never fires. This run measures it directly via the
+`PROXIMADB_PAX_FLUSH_CLUSTER=ivf` flush opt-in (added in this change), which reaches the
+re-cluster at flush and reuses the entire production flush + VOE-directory emit + search
+path (no manual wiring). It is the eval TD-WLP-9's unblock chain was gated on.
+
+== Run provenance
+
+- **Date:** 2026-07-15
+- **Hardware:** local macOS arm64 (shared dev machine — indicative, *not* an SLA)
+- **Toolchain:** `rust-toolchain.toml` pinned 1.95.0, `--release`
+- **Dataset:** TEXMEX SIFT1M, N=100000 subset, 100 queries, top-10, Euclidean
+  (brute-force ground truth over the subset; ground-truth file not required at N<1M).
+- **Command:**
+  `PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=100000 PROXIMADB_SIFT_QUERIES=100 \
+   cargo test --release --test sift_pax_recall_ratchet_test \
+   sift_voe_centroid_prune_compacted_recall_at_10_eval -- --ignored --nocapture`
+- **Source:** `tests/sift_pax_recall_ratchet_test.rs::sift_voe_centroid_prune_compacted_recall_at_10_eval`
+
+== Result 1 — PCA/IVF tightens block radii (the re-cluster works)
+
+Mean per-block RMS spread-from-centroid, sign-bit bootstrap vs PCA/IVF, at three block
+granularities (N=50000). Clustering tightens blocks more at finer granularity — a 20k
+flush-batch chunk is a near-random sample regardless of ordering, so the *block* size (not
+the flush-batch size) is the load-bearing granularity.
+
+[cols="1,1,1,1", options="header"]
+|===
+| block_size | sign-bit | pca/ivf | Δ
+
+| 128   | 322.31 | 265.38 | −18% (tightest)
+| 1024  | 351.78 | 315.46 | −10%
+| 8192  | 369.04 | 331.03 | −10%
+|===
+
+== Result 2 — the recall/GET Pareto (radius_k = 0)
+
+recall@10 over 100 queries (N=100000, top-10, Euclidean), sign-bit vs PCA/IVF, across the
+keep (nprobe) axis. `range_gets` is the cumulative GET count the route cost model weights
+(`per_get=20.0`, the dominant cost term); per-query = total/100.
+
+[cols="1,1,1,1,1,1,1", options="header"]
+|===
+| mode | keep=1.00 | keep=0.70 | keep=0.50 | keep=0.30 | keep=0.15 | notes
+
+| sign-bit | 0.987 | 0.835 | 0.758 | 0.696 | 0.557 | today's failing baseline
+| pca/ivf  | 0.993 | **0.904** | 0.870 | 0.811 | 0.703 | +0.11 @ keep=0.5
+| pruned%  | 0% | 29% | 43% | 57% | 71% | blocks skipped
+| range_gets (total/100q) | 37000 | 27000 | 22000 | 17000 | 12000 | per-q: 370/270/220/170/120
+|===
+
+`radius_k` ∈ {0, 0.5, 1.0, 2.0} moved recall by ≤ 0.02 at every cell — consistent with
+TD-WLP-3's finding that the lower-bound weight adds little signal until clustering
+differentiates radii further. The PCA/IVF lift is the dominant lever.
+
+== Verdict (drives the TD-WLP-6 / RDSTRAT-5 decisions)
+
+* **The article of faith is partially confirmed.** PCA/IVF clustering is *validated* as the
+  right direction: it tightens block radii (−18% at 128/block) and lifts pruned recall by
+  ~+0.11 at a fixed keep (0.758 → 0.870 @ keep=0.5).
+* **It does NOT clear the 0.9 floor at keep=0.5** (0.870 < 0.9). So the WS8 default-ON flip
+  at the aggressive 0.5 ratio stays **BLOCKED** (TD-WLP-9 gate holds).
+* **It DOES clear 0.9 at keep=0.7** (0.904, −29% blocks / −27% GETs). That is a defensible
+  operating point if the flip targets a conservative keep rather than 0.5.
+* **The GET reduction is real and large** — at keep=0.5, 43% fewer blocks and ~40% fewer
+  GETs/bytes vs full scan. Pruning is the right cost lever; the open gap is recall quality
+  at aggressive keeps, not the GET math.
+
+== Next (the residual 0.870 → 0.900 gap at keep=0.5)
+
+The remaining gap is the SPANN/DiskANN-class problem, not a clustering-quality problem:
+* **SPANN-style balanced/bounded cells** — k-means cells here are unbalanced; rebalancing
+  (split heavy cells, merge light ones) tightens centroids where queries actually land.
+* **Adaptive nprobe** — probe more cells for hard/boundary queries (today keep is global).
+* **Re-rank refinement** — a cheap fp32 rerank over the pruned candidate set recovers recall.
+
+Until one of those closes the gap, the flip targets keep=0.7 (measured 0.904) or stays dark.
+
+== Status of the chain
+
+* **TD-WLP-4** (`cluster_order_pca_ivf`): exercised end-to-end on real data for the first
+  time — clustering works and helps.
+* **TD-WLP-6** (calibrated `default_radius_k`): `radius_k` is *not* the lever (≤0.02 effect);
+  the calibration that matters is the **keep/ratio** default, informed by this Pareto.
+* **TD-WLP-7** (production flush→compaction scheduler): still open — this eval bypassed it
+  via the flush opt-in; the opt-in is itself a candidate production path (clustering at flush
+  decouples quality from the compaction scheduler).
+* **TD-RDSTRAT-5** (VOE default-ON flip): gate evidence now exists — flip justified at
+  keep=0.7, not at keep=0.5.

@@ -90,6 +90,19 @@ version = "v0.2"
 notes = "TD-096 S1 (2026-06-28): ran bench_24_recall_at_k_engine in Approximate mode (dim 128, 20 queries, deterministic seeded LCG) at 10K and 100K vectors for BOTH sst and helix — Recall@{1,10,100} = 100.00% across the board, including the SST 100K case (>=100 blocks, the condition that historically tripped a ~5% collapse on the flat Exact block-scan path, now bypassed via force_exact). 100% >= the ~97% claim, so the claim is substantiated. DATA CAVEAT: this is random normalized dim-128 data (easy for HNSW — neighbors well-separated); the 97% figure in README is not an SLA and real high-dim embedding corpora may differ. See the reconciliation doc for the full table + the block-skip unit proof (block_pruning.rs::td096_block_skip_tests)."
 
 [[claims]]
+id = "voe_compacted_pca_ivf_prune_recall_at_10"
+claim = "VOE centroid-prune recall@10 under compaction-grade PCA/IVF clustering vs sign-bit bootstrap (real SIFT1M) — partial confirmation of the TD-WLP-4 article of faith"
+metric = "recall_at_10_pct"
+status = "measured"
+bench_source = "tests/sift_pax_recall_ratchet_test.rs::sift_voe_centroid_prune_compacted_recall_at_10_eval"
+bench_command = "PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=100000 PROXIMADB_SIFT_QUERIES=100 cargo test --release --test sift_pax_recall_ratchet_test sift_voe_centroid_prune_compacted_recall_at_10_eval -- --ignored --nocapture"
+artifact = "docs/_internal/status/SIFT1M_VOE_COMPACTED_RECALL_PARETO_2026_07_15.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), no other workload"
+date = "2026-07-15"
+version = "v0.2"
+notes = "TD-WLP-4/WLP-9 eval (2026-07-15): real SIFT1M N=100000, 100 queries, top-10, Euclidean, brute-force subset GT, --release. PCA/IVF reached via the PROXIMADB_PAX_FLUSH_CLUSTER=ivf flush opt-in (the production flush->compaction scheduler is unwired, TD-WLP-7). recall@10 (radius_k=0): sign-bit [keep 1.0/0.7/0.5/0.3/0.15] = 0.987/0.835/0.758/0.696/0.557; pca/ivf = 0.993/0.904/0.870/0.811/0.703. PCA/IVF lifts pruned recall ~+0.11 at fixed keep and tightens block RMS radii (128/block 322->265, -18%). VERDICT: clustering validated as the right direction, but it does NOT clear the 0.9 floor at keep=0.5 (0.870) — only at keep>=0.7 (0.904, -27% GETs). radius_k in {0,0.5,1,2} moved recall <=0.02 (TD-WLP-3 confirmed: radius_k not the lever yet). The WS8 default-ON flip stays BLOCKED at keep=0.5; residual 0.87->0.90 gap needs SPANN-style balanced/bounded cells or adaptive nprobe. Indicative local run, not an SLA."
+
+[[claims]]
 id = "hybrid_search_latency"
 claim = "~8 ms hybrid search (vector + BM25, RRF fusion)"
 metric = "hybrid_search_latency_ms"
