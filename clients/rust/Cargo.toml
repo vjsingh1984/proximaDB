@@ -39,6 +39,7 @@ url = "2.4"
 
 # Reference to main proximadb crate for embedded mode
 proximadb = { path = "../..", optional = true }
+proximadb-embedded = { path = "../../crates/horizontal/proximadb-embedded" }
 
 [features]
 default = ["client"]
