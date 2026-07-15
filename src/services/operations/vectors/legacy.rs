@@ -2161,6 +2161,21 @@ impl VectorOperationsService {
             &query_vector,
         )?;
 
+        // TD-WLP-6 (ADR-061 D6): stamp the resolved storage profile onto the
+        // active per-query io_trace so a query's projection strategy is
+        // observable per-tenant. No-ops outside an io_trace scope; neutral
+        // label only (io_trace never depends on `StorageProfile`).
+        {
+            let tags = collection
+                .config
+                .as_ref()
+                .map(|c| c.tags.as_slice())
+                .unwrap_or(&[]);
+            crate::observability::io_trace::record_storage_profile(
+                proximadb_storage_common::resolve_storage_profile(tags).label(),
+            );
+        }
+
         // TD-WLP-5 (ADR-061 D4): resolve the collection's storage profile and
         // force Strong (delta-merged) reads for `Churn`. Churn is the agent
         // code-RAG shape — a symbol is re-embedded and immediately re-queried
