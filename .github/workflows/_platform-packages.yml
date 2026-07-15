@@ -90,7 +90,7 @@ jobs:
             tar -xzf binary-cache/proximadb-*.tar.gz -C rpm_build/usr/bin --strip-components=1
           fi
           cp -r config/* rpm_build/etc/proximadb/
-          cp packaging/systemd/proximadb.service rpm_build/usr/lib/systemd/system/
+          cp deploy/packaging/systemd/proximadb.service rpm_build/usr/lib/systemd/system/
 
           fpm -s dir -t rpm \
             -n proximadb \
@@ -101,8 +101,8 @@ jobs:
             --license "Apache-2.0" \
             --vendor "ProximaDB" \
             --rpm-dist "el8" \
-            --after-install packaging/scripts/postinstall.sh \
-            --before-remove packaging/scripts/preremove.sh \
+            --after-install deploy/packaging/scripts/postinstall.sh \
+            --before-remove deploy/packaging/scripts/preremove.sh \
             rpm_build/=/
 
           echo "success=true" >> $GITHUB_OUTPUT
@@ -179,8 +179,8 @@ jobs:
             --vendor "ProximaDB" \
             --deb-priority "optional" \
             --deb-systemd \
-            --after-install packaging/scripts/postinstall.sh \
-            --before-remove packaging/scripts/preremove.sh \
+            --after-install deploy/packaging/scripts/postinstall.sh \
+            --before-remove deploy/packaging/scripts/preremove.sh \
             deb_build/=/
 
           echo "success=true" >> $GITHUB_OUTPUT
@@ -338,7 +338,7 @@ jobs:
         id: build
         run: |
           $VERSION = "${{ inputs.version }}"
-          wix build -o "proximadb-$VERSION.msi" packaging\wix\proximadb.wxs
+          wix build -o "proximadb-$VERSION.msi" deploy\packaging\wix\proximadb.wxs
           echo "success=true" >> $GITHUB_OUTPUT
 
       - name: Upload MSI Artifact

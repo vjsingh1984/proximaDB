@@ -1,0 +1,53 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-WLP-8: Churn dedicated mutable index + ORION oid fusion + working-set memory guard (WLP-5 follow-up)
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open — filed 2026-07-14 as the TD-WLP-5 descope. Not started.
+| Priority | P2 — the Churn projection's performance + graph-RAG payoff; the read-correctness core (Strong-override) already shipped in TD-WLP-5.
+| Severity | Medium — adds a bounded in-memory surface (OOM risk, guarded) + a graph-fusion read path; no durability change (WAL stays authority, ADR-061 D2).
+| Component | `src/index/axis/` (mutable ANN index that also indexes UNFLUSHED inserts, not just flushed segments — today `handle_flushed_vectors` is post-flush only); `src/graph/engines/orion/` (`oid`-keyed match-then-traverse fusion, ADR-044); a per-collection working-set memory gauge (telemetry) + guard in the Churn write path
+| Governs | link:../../12-design/adr/ADR-061-per-collection-workload-profiles.adoc[ADR-061] (D4)
+| Relates to | TD-WLP-5 (the freshness-override core this builds on), ADR-044 (stable symbol OID), TD-133 (opt-in CrossModelTransactionCoordinator), the read-side dead-filter invariants
+| Pillar | PERF (bounded-set ANN + graph traversal), OE (memory guard/metric)
+|===
+
+toc::[]
+
+== Why
+
+TD-WLP-5 delivered the load-bearing D4 read-correctness guarantee — `Churn` collections force Strong
+(delta-merged) reads so a re-embedded symbol is immediately visible — by reusing the existing WAL
+delta-merge path (its explicit descope). The remaining D4 pieces are performance/observability, not
+correctness, and were deferred to keep WLP-5 focused and low-risk:
+
+1. **Dedicated in-memory mutable index.** Today AXIS indexes only *flushed* segments
+   (`handle_flushed_vectors`, TD-112); unflushed reads go through the WAL/memtable Stage-1 scan.
+   For a bounded, hot Churn working set, serving reads from a mutable in-memory ANN index sized to
+   that set is the D4 performance goal — without introducing a *new* memtable structure (reuse the
+   AXIS mutable path).
+2. **ORION `oid` fusion.** ADR-061 D4's "match-then-traverse" (vector ANN → graph neighbours via
+   `oid`, ADR-044) is entirely unbuilt. Add the fusion read path.
+3. **Working-set memory guard + metric.** The bounded-working-set assumption must be enforced
+   (per-collection resident-bytes gauge `proximadb_churn_collection_working_set_bytes` + a soft
+   ceiling, e.g. env `PROXIMADB_CHURN_WORKING_SET_MB`) so an unbounded Churn collection degrades
+   gracefully instead of OOMing.
+
+== Scope
+
+* AXIS mutable index that indexes unflushed inserts for `Churn` collections; read path prefers it
+  for the bounded set, still dead-filtered (`is_dead`/`valid_to_ns`).
+* ORION `oid`-keyed match-then-traverse fusion behind the Churn read path.
+* Per-collection working-set gauge + guard; emit on the Churn write/flush boundary.
+* Full-server pre-flush freshness e2e (`tests/storage_wlp_churn_freshness.rs`) exercising the real
+  REST/pgwire path: insert → search pre-flush sees it; re-embed same `oid` → search pre-flush sees
+  the new neighbours; restart + WAL replay reconstructs identical state; an `AppendBulk` collection
+  in the same process is unaffected.
+
+== Gating
+
+Keyed on `workload_profile:churn` (opt-in — Churn is never the default even under the ADR-061
+arm-defaults amendment). `AppendBulk` untouched (asserted). WAL stays the sole durable authority
+(D2); the mutable index + ORION CSR are rebuildable projections.

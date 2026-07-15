@@ -543,11 +543,46 @@ impl Compaction {
         Ok(())
     }
 
-    /// Check if compaction is needed for the given collection and level
+    /// TD-WLP-7 (ADR-061 D3): run compaction for a collection **now** if it is
+    /// due (L0 ≥ threshold), synchronously (awaited) — the flush-path trigger's
+    /// execution primitive. Deterministic and test-safe: it does NOT enqueue to
+    /// the background workers (`schedule_compaction`), so there is no rogue
+    /// non-daemon thread and a test can await the merge to completion. Uses the
+    /// atomic-swap path (ADR-046 LSN-coherent read across the segment swap) when
+    /// an `atomic_coordinator` is supplied. Returns whether a compaction ran
+    /// (`false` = nothing was due). The caller treats errors as best-effort — a
+    /// compaction failure must never fail the flush that armed it.
+    pub async fn run_due_compaction(
+        &self,
+        collection_id: &str,
+        collection_dir: &Path,
+        config: &SstConfig,
+        l0_threshold: usize,
+        atomic_coordinator: Option<Arc<TransactionCoordinator>>,
+    ) -> Result<bool> {
+        let Some(task) = self
+            .check_compaction_needed(collection_id, collection_dir, Some(l0_threshold))
+            .await?
+        else {
+            return Ok(false);
+        };
+        self.perform_compaction_enhanced(&task, config, atomic_coordinator, None)
+            .await?;
+        Ok(true)
+    }
+
+    /// Check if compaction is needed for the given collection and level.
+    ///
+    /// `l0_threshold_override` (TD-WLP-7 / TD-WLP-2): when `Some`, the L0
+    /// file-count threshold the unified builder gates on is replaced with the
+    /// per-collection value resolved from the `l0_threshold:` tag, so this stays
+    /// consistent with the flush-path `should_trigger_compaction` decision.
+    /// `None` uses the deployment `CompactionConfig` default.
     pub async fn check_compaction_needed(
         &self,
         collection_id: &str,
         collection_dir: &Path,
+        l0_threshold_override: Option<usize>,
     ) -> Result<Option<SstCompactionTask>> {
         debug!(
             "🔍 SST COMPACTION: Delegating to unified framework for collection: {}",
@@ -557,20 +592,32 @@ impl Compaction {
         let collection_path = collection_dir.to_string_lossy();
 
         // Use SST-specific config if available, otherwise use defaults
-        let compaction_config = self
+        let mut compaction_config = self
             .config
             .compaction_config
             .as_ref()
             .cloned()
             .unwrap_or_else(crate::core::config::CompactionConfig::default);
 
+        // TD-WLP-7: honor the per-collection L0 threshold (from the
+        // `l0_threshold:` tag) so this agrees with the flush-path
+        // `should_trigger_compaction` gate that armed the run.
+        if let Some(threshold) = l0_threshold_override {
+            compaction_config.l0_file_threshold = threshold;
+        }
+
         // Use unified compaction task builder with configuration.
         // (Was `SstCompactionTaskBuilder` before the
         // disambiguate-rename pass; companion call-site fix-up.)
+        // TD-WLP-7: discover `.pax` segments — PAX is the sole vector write
+        // format since ADR-049 M1-3 (flush + compaction both emit `.pax`), so
+        // the prior `"sst"` extension found nothing and compaction never ran.
+        // This matches the `.pax`-aware `discover_sstable_files` gate that arms
+        // the run.
         let task_info = CompactionTaskBuilder::check_and_build_compaction_task(
             collection_id,
             &collection_path,
-            "sst",
+            "pax",
             CompactionEngineType::SST,
             &compaction_config,
             self.filesystem_factory.clone(),

@@ -54,7 +54,7 @@ pub mod scheduler;
 pub mod service;
 pub mod tokenizer;
 
-pub use config::{ChunkConfig, EmbedRoute, EmbeddingConfig};
+pub use config::{ChunkConfig, EmbedRoute, EmbedRouteIdentity, EmbeddingConfig};
 pub use models::{BatchConversionSummary, ModelRegistry};
 // INT-1 (mini-phase): typed embedding values for native-precision
 // inference output. Re-exported from proximadb-records so callers don't

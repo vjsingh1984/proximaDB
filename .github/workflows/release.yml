@@ -436,9 +436,9 @@ jobs:
 
           tar -xzf binary/proximadb-*.tar.gz -C rpm_build/usr/bin --strip-components=1
           cp config/config.toml rpm_build/etc/proximadb/
-          cp packaging/systemd/proximadb.service rpm_build/usr/lib/systemd/system/
-          cp packaging/scripts/postinstall.sh rpm_build/tmp/postinstall.sh
-          cp packaging/scripts/preremove.sh rpm_build/tmp/preremove.sh
+          cp deploy/packaging/systemd/proximadb.service rpm_build/usr/lib/systemd/system/
+          cp deploy/packaging/scripts/postinstall.sh rpm_build/tmp/postinstall.sh
+          cp deploy/packaging/scripts/preremove.sh rpm_build/tmp/preremove.sh
 
           fpm -s dir -t rpm \
             -n proximadb \
@@ -492,9 +492,9 @@ jobs:
 
           tar -xzf binary/proximadb-*.tar.gz -C deb_build/usr/bin --strip-components=1
           cp config/config.toml deb_build/etc/proximadb/
-          cp packaging/systemd/proximadb.service deb_build/lib/systemd/system/
-          cp packaging/scripts/postinstall.sh deb_build/tmp/postinstall.sh
-          cp packaging/scripts/preremove.sh deb_build/tmp/preremove.sh
+          cp deploy/packaging/systemd/proximadb.service deb_build/lib/systemd/system/
+          cp deploy/packaging/scripts/postinstall.sh deb_build/tmp/postinstall.sh
+          cp deploy/packaging/scripts/preremove.sh deb_build/tmp/preremove.sh
 
           # Build DEB with systemd support
           # Note: --deb-systemd flag removed - using manual scripts instead
@@ -556,7 +556,7 @@ jobs:
       - name: Build MSI
         run: |
           $VERSION = "${{ needs.prepare.outputs.version }}"
-          wix build -d "Version=$VERSION" -o "proximadb-$VERSION-x64.msi" packaging\wix\proximadb.wxs
+          wix build -d "Version=$VERSION" -o "proximadb-$VERSION-x64.msi" deploy\packaging\wix\proximadb.wxs
 
       - name: Upload MSI Artifact
         uses: actions/upload-artifact@v4
@@ -616,11 +616,11 @@ jobs:
             if find artifacts -name "$binary" -type f | grep -q .; then
               echo "  [OK] $binary"
               FOUND_ARTIFACTS="$FOUND_ARTIFACTS\n  - $binary"
-              ((BINARY_COUNT++))
+              BINARY_COUNT=$((BINARY_COUNT+1))
             else
               echo "  [MISSING] $binary"
               MISSING_ARTIFACTS="$MISSING_ARTIFACTS\n  - $binary"
-              ((BINARY_MISSING++))
+              BINARY_MISSING=$((BINARY_MISSING+1))
               VALIDATION_PASSED=false
             fi
           done
@@ -636,7 +636,7 @@ jobs:
             CHECKSUM="${binary}.sha256"
             if find artifacts -name "$CHECKSUM" -type f | grep -q .; then
               echo "  [OK] $CHECKSUM"
-              ((CHECKSUM_COUNT++))
+              CHECKSUM_COUNT=$((CHECKSUM_COUNT+1))
             else
               echo "  [MISSING] $CHECKSUM"
               # Checksums are important but not blocking
@@ -962,6 +962,7 @@ jobs:
           path: sdist
 
       - name: Consolidate Packages
+        id: consolidate
         run: |
           mkdir -p publish
           cp dist/*.whl publish/ 2>/dev/null || true
@@ -976,7 +977,14 @@ jobs:
           echo "Embedded package contents:"
           ls -la publish-embedded/
 
+          # pypa/gh-action-pypi-publish hard-fails on an empty packages-dir;
+          # emit outputs so the publish steps can skip instead (wheel builds
+          # are disabled here and the embedded sdist build is commented out).
+          echo "main_has_files=$([ -n "$(ls -A publish)" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "embedded_has_files=$([ -n "$(ls -A publish-embedded)" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
       - name: Publish Main Package to PyPI
+        if: steps.consolidate.outputs.main_has_files == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: publish/
@@ -984,6 +992,7 @@ jobs:
           verbose: true
 
       - name: Publish Embedded Package to PyPI
+        if: steps.consolidate.outputs.embedded_has_files == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: publish-embedded/

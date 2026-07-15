@@ -1,11 +1,14 @@
-# Auto-rerun CI jobs killed by runner infrastructure (NOT by test failures).
+# Auto-rerun CI / QA Gate jobs killed by runner infrastructure (NOT by test failures).
 #
-# The long compile-bound jobs (Rust Tests (unit) in particular) occasionally
-# die with "The runner has received a shutdown signal" / exit 143 — a hosted-
-# runner reclamation/OOM kill, not a code failure. Historically a human had to
-# notice and run `gh run rerun <id> --failed`. This workflow does that once,
-# automatically, and ONLY when every failed job carries the infra-kill
-# signature — a genuine test failure is never retried.
+# The long compile-bound jobs (Rust Tests (unit) in CI; the QA Gate's
+# cloud-emulator / coverage / SIFT1M jobs) occasionally die with "The runner has
+# received a shutdown signal" / exit 143 — a hosted-runner reclamation/OOM kill,
+# not a code failure. Historically a human had to notice and run
+# `gh run rerun <id> --failed`. This workflow does that once, automatically, and
+# ONLY when every failed job carries the infra-kill signature — a genuine test
+# failure is never retried. (This is a SAFETY NET for non-deterministic infra
+# kills; the deterministic cold-compile OOM is fixed at the source — e.g. the
+# cloud-emulator job runs CARGO_BUILD_JOBS=1, see run_cloud_emulator_tests.sh.)
 #
 # NOTE: workflow_run triggers execute from the DEFAULT branch's copy of this
 # file, so this becomes active once promoted to main.
@@ -13,7 +16,7 @@ name: Flake Rerun
 
 on:
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["CI", "QA Gate"]
     types: [completed]
 
 permissions:

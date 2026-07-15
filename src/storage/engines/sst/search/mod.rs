@@ -354,6 +354,7 @@ impl SstEngine {
         let Some(rank_metric) = (match distance_metric {
             DistanceMetric::Euclidean => Some(RankMetric::L2),
             DistanceMetric::Cosine => Some(RankMetric::Cosine),
+            DistanceMetric::DotProduct => Some(RankMetric::DotProduct),
             _ => None,
         }) else {
             return Ok(None);
@@ -1193,7 +1194,7 @@ impl SstEngine {
             let pax_cascade: Option<Vec<OptimizedSearchRecord>> = if sstable_path.ends_with(".pax")
                 && matches!(
                     distance_metric,
-                    DistanceMetric::Euclidean | DistanceMetric::Cosine
+                    DistanceMetric::Euclidean | DistanceMetric::Cosine | DistanceMetric::DotProduct
                 ) {
                 match self
                     .try_pax_cascade(

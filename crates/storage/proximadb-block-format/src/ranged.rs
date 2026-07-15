@@ -275,6 +275,8 @@ impl BlockLayout {
         Some(match metric {
             RankMetric::L2 => rabitq::rank_candidates(&q_rotated, &codes, pool),
             RankMetric::Cosine => rabitq::rank_candidates_ip(&q_rotated, &codes, pool),
+            // DotProduct ranks by the same IP proxy as Cosine (max inner product).
+            RankMetric::DotProduct => rabitq::rank_candidates_ip(&q_rotated, &codes, pool),
         })
     }
 

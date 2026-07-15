@@ -1241,9 +1241,24 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope, ctx: &mut LoweringCtx) -> Result<Ex
             scope.resolve_qualified(table, column).map(Expr::column)
         }
         SqlExpr::Value(v) => Ok(Expr::literal(lower_value(&v.value)?)),
-        SqlExpr::TypedString { .. } => {
-            Err(FrontendError::Unsupported("typed string literal".into()))
+        // `DATE 'YYYY-MM-DD'` typed literal → the canonical `ProximaValue::Date`
+        // (days since the Unix epoch), matching the write path's encoding so a
+        // `col < DATE '…'` predicate compares correctly against a stored Date32
+        // column. TPC-H/TPC-DS date filters (Q1/Q3/Q5/Q10/Q12/… ) declined here
+        // before this. Other typed strings (TIME/TIMESTAMP/INTERVAL) stay
+        // unsupported for now — a scoped follow-up.
+        SqlExpr::TypedString(ts) if matches!(ts.data_type, SqlDataType::Date) => {
+            let raw = ts.value.value.clone().into_string().ok_or_else(|| {
+                FrontendError::InvalidLiteral(format!("DATE literal: {:?}", ts.value.value))
+            })?;
+            let days = proximadb_data_model::parse_iso_date_to_days(&raw)
+                .ok_or_else(|| FrontendError::InvalidLiteral(format!("DATE '{raw}'")))?;
+            Ok(Expr::literal(ProximaValue::Date(days)))
         }
+        SqlExpr::TypedString(ts) => Err(FrontendError::Unsupported(format!(
+            "typed string literal: {}",
+            ts.data_type
+        ))),
         SqlExpr::BinaryOp { left, op, right } => {
             let l = lower_expr(left, scope, ctx)?;
             let r = lower_expr(right, scope, ctx)?;
@@ -2175,6 +2190,62 @@ mod tests {
 
     fn lower(sql: &str) -> LogicalNode {
         lower_sql(sql, &catalog()).unwrap_or_else(|e| panic!("lower failed: {e:?}"))
+    }
+
+    /// A `DATE 'YYYY-MM-DD'` typed literal lowers to the canonical
+    /// `ProximaValue::Date` (days since the Unix epoch) — the same encoding the
+    /// write path stores — so `col < DATE '…'` compares correctly against a
+    /// Date32 column. Was `Unsupported("typed string literal")` before, which
+    /// declined ~8 TPC-H native queries (Q1/Q3/Q5/Q10/Q12/…) at lowering.
+    #[test]
+    fn typed_date_literal_lowers_to_canonical_days() {
+        let mut cat = InMemoryCatalog::new();
+        cat.register(
+            "events",
+            RelationalSchema::new(vec![
+                ColumnInfo::new("id", ProximaType::Int64, false),
+                ColumnInfo::new("ts", ProximaType::Date, true),
+            ]),
+        );
+        let plan = lower_sql("SELECT id FROM events WHERE ts < DATE '1995-03-15'", &cat)
+            .expect("DATE literal must lower");
+        // Reach the Filter predicate and confirm the RHS literal.
+        fn find_date_literal(node: &LogicalNode) -> Option<i32> {
+            fn in_expr(e: &Expr) -> Option<i32> {
+                match e {
+                    Expr::Literal {
+                        value: ProximaValue::Date(d),
+                        ..
+                    } => Some(*d),
+                    Expr::BinaryOp { left, right, .. } => in_expr(left).or_else(|| in_expr(right)),
+                    Expr::Cast { expr, .. } | Expr::UnaryOp { expr, .. } => in_expr(expr),
+                    _ => None,
+                }
+            }
+            match node {
+                LogicalNode::Filter { predicate, .. } => in_expr(predicate),
+                LogicalNode::Project { input, .. } => find_date_literal(input),
+                _ => None,
+            }
+        }
+        assert_eq!(
+            find_date_literal(&plan),
+            Some(9204),
+            "DATE '1995-03-15' must be 9204 days since epoch"
+        );
+        // A malformed date fails loud, not silently.
+        assert!(matches!(
+            lower_sql("SELECT id FROM events WHERE ts < DATE '1995-13-99'", &cat),
+            Err(FrontendError::InvalidLiteral(_))
+        ));
+        // A non-DATE typed literal is still declined with its type named.
+        assert!(matches!(
+            lower_sql(
+                "SELECT id FROM events WHERE ts < TIMESTAMP '1995-03-15 00:00:00'",
+                &cat
+            ),
+            Err(FrontendError::Unsupported(_))
+        ));
     }
 
     // --- Semi/Anti via uncorrelated IN / EXISTS / NOT EXISTS subqueries --------

@@ -54,6 +54,9 @@ mod flush;
 // Collection-resolution + engine-resolution collaborator (Phase 2.1 decomposition)
 mod resolver;
 
+// WAL-first, per-collection-engine point-read collaborator
+mod read;
+
 // Pure input validators for inserts/queries (Phase 2.1 decomposition)
 mod input_validation;
 

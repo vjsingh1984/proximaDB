@@ -38,6 +38,53 @@ pub enum StorageProfile {
     Churn,
 }
 
+impl StorageProfile {
+    /// Whether this profile forces freshness-critical (Strong / delta-merged)
+    /// reads regardless of a request's freshness hint (ADR-061 D4, TD-WLP-5).
+    ///
+    /// `Churn` collections are the agent code-RAG shape: a symbol is re-embedded
+    /// and immediately re-queried on a bounded, hot working set, so a stale read
+    /// would return the pre-edit neighbours. Their reads therefore always merge
+    /// the unflushed WAL/memtable delta — a request's `StaleOk`/`BoundedStale`
+    /// hint is overridden to Strong. `AppendBulk` honors the request's hint
+    /// (Strong is already the unset default), so this is a no-op there.
+    pub fn forces_strong_reads(self) -> bool {
+        matches!(self, StorageProfile::Churn)
+    }
+
+    /// Stable lowercase label for traces/EXPLAIN (io_trace storage-profile
+    /// stamp, TD-WLP-6). Kept separate from `Debug` so external surfaces don't
+    /// pin on the derived form.
+    pub fn label(self) -> &'static str {
+        match self {
+            StorageProfile::AppendBulk => "append_bulk",
+            StorageProfile::Churn => "churn",
+        }
+    }
+
+    /// The profile-default radius weight `k` for the read-side centroid prune
+    /// (ADR-061 D7 / TD-WLP-6): the `radius_k` a collection of this profile uses
+    /// when the request doesn't set one, scoring blocks by `d(q,c) − k·radius`.
+    ///
+    /// **Currently `0.0` for BOTH profiles (byte-for-byte legacy scoring).**
+    /// This is the *evidence-gated-defaults* carve-out of the ADR-061
+    /// arm-defaults amendment: the 2026-07-14 SIFT sweep measured `radius_k=1/2`
+    /// as a recall *regression* under the sign-bit L0 clustering, and a valid
+    /// re-measurement needs the fp32-PCA/IVF compaction re-cluster to actually
+    /// engage — which is blocked on the flush→compaction execution wiring
+    /// (TD-WLP-7). The seam exists so calibrating `AppendBulk` is a one-line
+    /// change once that measurement clears; `Churn` stays `0.0` (memory-resident
+    /// path, radius irrelevant).
+    pub fn default_radius_k(self) -> f32 {
+        match self {
+            // Calibration pending TD-WLP-7 re-measurement; DO NOT set non-zero
+            // without a measured recall win (ADR-061 evidence-gated defaults).
+            StorageProfile::AppendBulk => 0.0,
+            StorageProfile::Churn => 0.0,
+        }
+    }
+}
+
 /// Resolve the storage profile for a collection from its tag list.
 ///
 /// Precedence: `workload_profile:` tag (last matching wins; an unrecognized
@@ -82,6 +129,35 @@ mod tests {
 
     fn tags(values: &[&str]) -> Vec<String> {
         values.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// TD-WLP-5: Churn forces Strong reads; AppendBulk honors the request.
+    #[test]
+    fn test_forces_strong_reads_only_for_churn() {
+        assert!(StorageProfile::Churn.forces_strong_reads());
+        assert!(!StorageProfile::AppendBulk.forces_strong_reads());
+        // Resolved from a churn tag → forces strong.
+        assert!(resolve_storage_profile(&tags(&["workload_profile:churn"])).forces_strong_reads());
+        // Untagged (AppendBulk default) → does not.
+        assert!(!resolve_storage_profile(&[]).forces_strong_reads());
+    }
+
+    /// TD-WLP-6: profile → prune defaults + label. `radius_k` is `0.0` for both
+    /// profiles today (evidence-gated; calibration pending TD-WLP-7) — this
+    /// test pins that intent so a non-zero value can't land without also
+    /// updating the measured-lift rationale here.
+    #[test]
+    fn test_profile_prune_defaults_and_labels() {
+        assert_eq!(StorageProfile::AppendBulk.label(), "append_bulk");
+        assert_eq!(StorageProfile::Churn.label(), "churn");
+        // Evidence-gated: both 0.0 until TD-WLP-7 unblocks a re-measurement.
+        assert_eq!(StorageProfile::AppendBulk.default_radius_k(), 0.0);
+        assert_eq!(StorageProfile::Churn.default_radius_k(), 0.0);
+        // Resolved-from-tag parity.
+        assert_eq!(
+            resolve_storage_profile(&tags(&["workload_profile:churn"])).default_radius_k(),
+            0.0
+        );
     }
 
     /// TD-WLP-1 TDD gate: the tag > env > default cascade, mirroring

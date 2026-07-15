@@ -16,6 +16,45 @@
 
 toc::[]
 
+== QA promotion exception: PR #992 (2026-07-14)
+
+PR #992's SIFT1M promotion run measured the same known weak-cluster result recorded above:
+unpruned/default recall@10 `0.9891`, forced centroid-pruned recall@10 `0.8087`, with 15,000 of
+35,000 block visits pruned. The `0.90` optimized floor correctly failed. This is not accepted as
+adequate recall and does not clear the default-ON flip.
+
+One promotion exception is accepted for PR #992 under ADR-061 D8 because
+`PROXIMADB_PAX_CENTROID_PRUNE` remains default-OFF and the shipped unpruned path passed. The
+exception applies only to `SIFT1M PAX RaBitQ recall ratchet (WS8)` on that PR; every other required
+promotion check must be green before merge.
+
+Risk:: An operator who manually enables both block clustering and centroid pruning at the current
+`0.5` keep ratio can reduce recall materially (measured drop `0.1804`).
+
+Mitigation:: Keep centroid pruning default-OFF; do not recommend or enable the flag in deployment
+configuration. Whole-scan/unpruned search remains the production path.
+
+Owner and review date:: Storage/search owner; review by 2026-07-29 or before any proposal to make
+centroid pruning default-ON, whichever comes first.
+
+Closure gate:: Tune clustering/nprobe/keep-ratio (prefer TD-WLP-4 fp32-PCA/IVF geometry over
+weakening the floor), then rerun the same SIFT1M N=100000 / 1000-query gate. Close only when the
+prune engages, optimized recall is at least `0.90`, and the permitted same-run recall drop is
+explicitly approved. Never "fix" this by removing the unpruned differential or allowing a silent
+full-scan fallback.
+
+=== Handoff prompt
+
+----
+Investigate TD-WLP-3 / PR #992's default-off VOE centroid-prune recall failure. Reproduce with
+SIFT1M N=100000, 1000 queries: unpruned recall@10 was 0.9891; keep-ratio 0.5 pruned recall was
+0.8087 (15,000/35,000 block visits pruned). Preserve the fail-closed assertions that pruning
+actually engages and compare against the same-run unpruned baseline. Run the ignored nprobe x
+radius-k sweep, then prefer improving fp32-PCA/IVF clustering (TD-WLP-4) or a measured keep-ratio
+over lowering the 0.90 floor. Keep PROXIMADB_PAX_CENTROID_PRUNE default-OFF. Deliver code, the
+SIFT evidence table, ADR/TD updates, and a PR whose promotion ratchet passes without a waiver.
+----
+
 == Why
 
 The centroid prune ranks blocks by raw centroid distance, which ignores block spread and drops

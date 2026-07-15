@@ -27,7 +27,6 @@
 //! `proximadb_queue_embedded` Python module re-exports these with
 //! ergonomic wrappers.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -141,7 +140,7 @@ impl PyProducer {
         let payload_bytes = payload.as_bytes().to_vec();
         let msg = RsMessage::new(topic, tenant_id, payload_bytes);
         let receipt = py
-            .allow_threads(|| rt().block_on(self.inner.send(msg)))
+            .detach(|| rt().block_on(self.inner.send(msg)))
             .map_err(err)?;
         Ok(PyMessageReceipt {
             message_id: receipt.message_id.0,
@@ -170,28 +169,29 @@ impl PyConsumer {
     fn poll(&self, py: Python<'_>, max_batch: usize, max_wait_ms: u64) -> PyResult<Vec<PyMessage>> {
         let wait = Duration::from_millis(max_wait_ms);
         let msgs = py
-            .allow_threads(|| rt().block_on(self.inner.poll(max_batch, wait)))
+            .detach(|| rt().block_on(self.inner.poll(max_batch, wait)))
             .map_err(err)?;
         Ok(msgs
             .into_iter()
-            .map(|m| PyMessage {
-                topic: m.topic,
-                tenant_id: m.tenant_id,
-                payload: m.payload,
-                attempt_count: m.attempt_count,
+            .map(|delivery| PyMessage {
+                message_id: delivery.message_id.0,
+                topic: delivery.message.topic,
+                tenant_id: delivery.message.tenant_id,
+                payload: delivery.message.payload,
+                attempt_count: delivery.message.attempt_count,
             })
             .collect())
     }
 
     fn ack(&self, py: Python<'_>, message_ids: Vec<String>) -> PyResult<()> {
         let ids: Vec<RsMessageId> = message_ids.into_iter().map(RsMessageId).collect();
-        py.allow_threads(|| rt().block_on(self.inner.ack(&ids)))
+        py.detach(|| rt().block_on(self.inner.ack(&ids)))
             .map_err(err)
     }
 
     fn nack(&self, py: Python<'_>, message_ids: Vec<String>) -> PyResult<()> {
         let ids: Vec<RsMessageId> = message_ids.into_iter().map(RsMessageId).collect();
-        py.allow_threads(|| rt().block_on(self.inner.nack(&ids)))
+        py.detach(|| rt().block_on(self.inner.nack(&ids)))
             .map_err(err)
     }
 }
@@ -199,6 +199,8 @@ impl PyConsumer {
 #[pyclass(name = "Message", module = "proximadb_queue_embedded._native")]
 #[derive(Clone)]
 pub struct PyMessage {
+    #[pyo3(get)]
+    pub message_id: String,
     #[pyo3(get)]
     pub topic: String,
     #[pyo3(get)]

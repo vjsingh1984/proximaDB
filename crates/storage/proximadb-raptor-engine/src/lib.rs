@@ -43,6 +43,7 @@ use proximadb_raptor_common::constants;
 use proximadb_raptor_common::{
     ColumnType, // For selective column reading
     InterCentroidMatrix,
+    MetadataValue,
     P2Matrix, // P² matrix for intra-rowgroup navigation
     RaptorFileMetadata,
     RaptorFooter,
@@ -55,26 +56,39 @@ use proximadb_raptor_common::{
 // Additional imports for component boosting and hierarchical search
 use std::collections::HashSet;
 
-/// Compare two SqlValue instances for ordering (used in predicate pushdown)
-fn compare_sql_values(
-    a: &proximadb_proto::proximadb_v1::SqlValue,
-    b: &proximadb_proto::proximadb_v1::SqlValue,
-) -> std::cmp::Ordering {
-    use proximadb_proto::proximadb_v1::sql_value::Value as V;
-    match (a.value.as_ref(), b.value.as_ref()) {
-        (Some(V::NumberValue(a)), Some(V::NumberValue(b))) => {
-            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-        }
-        (Some(V::Int64Value(a)), Some(V::Int64Value(b))) => a.cmp(b),
-        (Some(V::Int64Value(a)), Some(V::NumberValue(b))) => (*a as f64)
-            .partial_cmp(b)
-            .unwrap_or(std::cmp::Ordering::Equal),
-        (Some(V::NumberValue(a)), Some(V::Int64Value(b))) => a
-            .partial_cmp(&(*b as f64))
-            .unwrap_or(std::cmp::Ordering::Equal),
-        (Some(V::StringValue(a)), Some(V::StringValue(b))) => a.cmp(b),
-        (Some(V::BoolValue(a)), Some(V::BoolValue(b))) => a.cmp(b),
-        _ => std::cmp::Ordering::Equal, // Incomparable types treated as equal (conservative)
+/// Compare two metadata values for ordering (used in predicate pushdown range pruning).
+///
+/// Mirrors the prior `compare_proxima_values` semantics now that `MetadataValue` is the
+/// v2 `ProximaValue` (TD-V1SUNSET-3): numeric variants compare by value (cross-type
+/// via f64 — preserves the prior NumberValue↔Int64Value behavior), `String` is lexical,
+/// `Boolean` direct; incomparable types are `Equal` (conservative, unchanged).
+fn compare_proxima_values(a: &MetadataValue, b: &MetadataValue) -> std::cmp::Ordering {
+    if let (Some(x), Some(y)) = (proxima_as_f64(a), proxima_as_f64(b)) {
+        return x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal);
+    }
+    match (a, b) {
+        (MetadataValue::String(x), MetadataValue::String(y)) => x.cmp(y),
+        (MetadataValue::Boolean(x), MetadataValue::Boolean(y)) => x.cmp(y),
+        _ => std::cmp::Ordering::Equal, // incomparable types → Equal (conservative)
+    }
+}
+
+/// Extract an f64 from numeric `ProximaValue` variants for cross-type comparison
+/// (mirrors the prior NumberValue/Int64Value cross-comparison).
+fn proxima_as_f64(v: &MetadataValue) -> Option<f64> {
+    match v {
+        MetadataValue::Float64(x) => Some(*x),
+        MetadataValue::Float32(x) => Some(*x as f64),
+        MetadataValue::Float16(x) => Some(*x as f64),
+        MetadataValue::Int64(x) => Some(*x as f64),
+        MetadataValue::Int32(x) => Some(*x as f64),
+        MetadataValue::Int16(x) => Some(*x as f64),
+        MetadataValue::Int8(x) => Some(*x as f64),
+        MetadataValue::UInt64(x) => Some(*x as f64),
+        MetadataValue::UInt32(x) => Some(*x as f64),
+        MetadataValue::UInt16(x) => Some(*x as f64),
+        MetadataValue::UInt8(x) => Some(*x as f64),
+        _ => None,
     }
 }
 
@@ -833,8 +847,8 @@ impl RaptorReader {
                         (&column_stats.min_value, &column_stats.max_value)
                     {
                         // Value must be >= min AND <= max for it to possibly exist
-                        compare_sql_values(&predicate.value, min) != std::cmp::Ordering::Less
-                            && compare_sql_values(&predicate.value, max)
+                        compare_proxima_values(&predicate.value, min) != std::cmp::Ordering::Less
+                            && compare_proxima_values(&predicate.value, max)
                                 != std::cmp::Ordering::Greater
                     } else {
                         true // No statistics available, include rowgroup
@@ -843,14 +857,14 @@ impl RaptorReader {
                 proximadb_raptor_common::PredicateOp::Lt => {
                     // For Lt, we need min < value (at least one row could be less)
                     if let Some(min) = &column_stats.min_value {
-                        compare_sql_values(min, &predicate.value) == std::cmp::Ordering::Less
+                        compare_proxima_values(min, &predicate.value) == std::cmp::Ordering::Less
                     } else {
                         true
                     }
                 }
                 proximadb_raptor_common::PredicateOp::Lte => {
                     if let Some(min) = &column_stats.min_value {
-                        compare_sql_values(min, &predicate.value) != std::cmp::Ordering::Greater
+                        compare_proxima_values(min, &predicate.value) != std::cmp::Ordering::Greater
                     } else {
                         true
                     }
@@ -858,14 +872,14 @@ impl RaptorReader {
                 proximadb_raptor_common::PredicateOp::Gt => {
                     // For Gt, we need max > value
                     if let Some(max) = &column_stats.max_value {
-                        compare_sql_values(max, &predicate.value) == std::cmp::Ordering::Greater
+                        compare_proxima_values(max, &predicate.value) == std::cmp::Ordering::Greater
                     } else {
                         true
                     }
                 }
                 proximadb_raptor_common::PredicateOp::Gte => {
                     if let Some(max) = &column_stats.max_value {
-                        compare_sql_values(max, &predicate.value) != std::cmp::Ordering::Less
+                        compare_proxima_values(max, &predicate.value) != std::cmp::Ordering::Less
                     } else {
                         true
                     }
@@ -1052,6 +1066,9 @@ impl RaptorReader {
                 >(json_str)
                 {
                     for (key, value) in metadata_map {
+                        // VectorRecord.metadata is the v1 proto SqlValue (this record is a
+                        // VectorRecord); it stays SqlValue here. Predicate/column-stats
+                        // MetadataValue migrated to ProximaValue (TD-V1SUNSET-3) separately.
                         let sql_value = match value {
                             serde_json::Value::String(s) => proximadb_proto::proximadb_v1::SqlValue {
                                 value: Some(
@@ -1059,7 +1076,6 @@ impl RaptorReader {
                                 ),
                             },
                             serde_json::Value::Number(n) => {
-                                // Convert all numbers to f64 since we only have NumberValue(f64) in the proto
                                 proximadb_proto::proximadb_v1::SqlValue {
                                     value: Some(
                                         proximadb_proto::proximadb_v1::sql_value::Value::NumberValue(

@@ -315,9 +315,12 @@ async fn ingest_documents_inner(
     // real embedding dimension before inserting.
     if mode == "async"
         && embed_source == "native"
-        && existing_dimension.is_some()
+        && let Some(expected_dimension) = existing_dimension
+        && records.iter().all(|record| record.embeddings.is_empty())
         && let Some(queue) = state.queue_client.clone()
     {
+        let embedding_route_identity =
+            admit_native_async(&records, &collection, &tenant_id, expected_dimension)?;
         let producer = queue.producer();
         // Build the EmbedIngestPayload directly from `records`'
         // props (where the text was hoisted during the build-loop
@@ -340,6 +343,8 @@ async fn ingest_documents_inner(
         let payload = crate::services::EmbedIngestPayload {
             target_collection: collection.clone(),
             tenant_id: tenant_id.clone(),
+            embedding_route_identity,
+            expected_dimension,
             records: drainer_records,
         };
         let payload_bytes = serde_json::to_vec(&payload)
@@ -357,9 +362,7 @@ async fn ingest_documents_inner(
                         .iter()
                         .map(|r| IngestedRecord {
                             id: r.oid.clone(),
-                            // Vector dim unknown until drainer
-                            // embeds; 0 = pending.
-                            dim: 0,
+                            dim: expected_dimension,
                         })
                         .collect(),
                     retry_after_ms: None,
@@ -518,6 +521,52 @@ async fn ingest_documents_inner(
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+/// Validate all facts needed to make a durable native-embedding job
+/// admissible before returning 202. The returned credential-free identity is
+/// serialized into the queue payload; the drainer accepts credential rotation
+/// but rejects any model, endpoint, or geometry drift before inference.
+fn admit_native_async(
+    records: &[ProximaRecord],
+    collection: &str,
+    tenant_id: &str,
+    expected_dimension: u32,
+) -> ApiResult<proximadb_embedding::config::EmbedRouteIdentity> {
+    let missing_text: Vec<&str> = records
+        .iter()
+        .filter(|record| {
+            extract_text(record)
+                .as_deref()
+                .is_none_or(|text| text.trim().is_empty())
+        })
+        .map(|record| record.oid.as_str())
+        .collect();
+    if !missing_text.is_empty() {
+        return Err(ApiError::InvalidArgument(format!(
+            "{} record(s) have no text to embed: {}",
+            missing_text.len(),
+            missing_text.join(", ")
+        )));
+    }
+
+    let embed_service = proximadb_embedding::EmbeddingService::try_global().ok_or_else(|| {
+        ApiError::Internal("native embedding service is not initialized".to_string())
+    })?;
+    let route = embed_service.resolve_route(tenant_id);
+    let route_dimension = u32::try_from(route.dimension()).map_err(|_| {
+        ApiError::Internal(format!(
+            "embedding route dimension {} exceeds the supported range",
+            route.dimension()
+        ))
+    })?;
+    if route_dimension != expected_dimension {
+        return Err(ApiError::InvalidArgument(format!(
+            "native embedding route produces dimension {route_dimension} but collection \
+             '{collection}' expects dimension {expected_dimension}"
+        )));
+    }
+    Ok((&route).into())
+}
+
 /// #951: create a missing target collection at the embedding dimension the
 /// handler just produced, through the same unified create path the v2
 /// `POST /collections` handler uses (full registration + tenant tagging —
@@ -663,6 +712,8 @@ fn json_to_proxima_value(value: serde_json::Value) -> ProximaValue {
 mod tests {
     use super::*;
     use crate::services::operations::BatchOperationResult;
+    use proximadb_embedding::config::{ChunkConfig, EmbedRoute, EmbeddingConfig};
+    use proximadb_embedding::scheduler::EmbedSchedulerConfig;
 
     fn record_with_props(entries: &[(&str, ProximaValue)]) -> ProximaRecord {
         ProximaRecord {
@@ -732,5 +783,41 @@ mod tests {
             batch_failure_to_api_error("docs", &opaque),
             ApiError::Internal(_)
         ));
+    }
+
+    fn ensure_embedding_singleton() {
+        if proximadb_embedding::EmbeddingService::try_global().is_some() {
+            return;
+        }
+        let _ = proximadb_embedding::EmbeddingService::initialize(
+            EmbeddingConfig {
+                route: EmbedRoute::BgeSmall,
+                chunk: ChunkConfig::default(),
+            },
+            EmbedSchedulerConfig::default(),
+        );
+    }
+
+    #[test]
+    fn async_native_admission_rejects_route_dimension_mismatch() {
+        ensure_embedding_singleton();
+        let record = record_with_props(&[(
+            "text",
+            ProximaValue::String("dimensionally checked before enqueue".to_string()),
+        )]);
+
+        let result = admit_native_async(&[record], "docs", "tenant-admission", 1024);
+
+        assert!(matches!(result, Err(ApiError::InvalidArgument(_))));
+    }
+
+    #[test]
+    fn async_native_admission_rejects_blank_text() {
+        ensure_embedding_singleton();
+        let record = record_with_props(&[("text", ProximaValue::String("   ".to_string()))]);
+
+        let result = admit_native_async(&[record], "docs", "tenant-admission", 384);
+
+        assert!(matches!(result, Err(ApiError::InvalidArgument(_))));
     }
 }
