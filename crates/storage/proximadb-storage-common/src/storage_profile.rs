@@ -23,6 +23,15 @@ pub const STORAGE_PROFILE_TAG_PREFIX: &str = "workload_profile:";
 /// per-collection tag; unset / unrecognized → `AppendBulk`.
 pub const STORAGE_PROFILE_ENV: &str = "PROXIMADB_STORAGE_PROFILE";
 
+/// Soft ceiling (in **megabytes**) on a `Churn` collection's in-memory
+/// working set — the unflushed WAL/memtable delta a `Churn` collection keeps
+/// hot for immediate-freshness reads (ADR-061 D4, TD-WLP-8). It bounds the
+/// assumption that a `Churn` working set is small; crossing it is a soft
+/// signal (gauge + warn), not a hard reject — an over-budget collection
+/// degrades gracefully rather than OOMing. Unset / `0` / unparseable ⇒ no
+/// ceiling (unbounded, default-safe). `AppendBulk` is unaffected.
+pub const CHURN_WORKING_SET_MB_ENV: &str = "PROXIMADB_CHURN_WORKING_SET_MB";
+
 /// Per-collection storage-projection strategy (ADR-061).
 ///
 /// `AppendBulk` (tag values `append` / `bulk`): durable clustered PAX-LSM
@@ -105,6 +114,21 @@ pub fn resolve_storage_profile(tags: &[String]) -> StorageProfile {
     }
 }
 
+/// The `Churn` working-set soft ceiling in **bytes**, from
+/// `PROXIMADB_CHURN_WORKING_SET_MB` (TD-WLP-8). `None` = no ceiling (unset,
+/// `0`, empty, or unparseable — default-safe / unbounded). A positive integer
+/// number of MB is converted to bytes with saturating arithmetic so an absurd
+/// value can't overflow. The ceiling is advisory (observability + warn); it
+/// never rejects a write.
+pub fn churn_working_set_ceiling_bytes() -> Option<u64> {
+    let raw = std::env::var(CHURN_WORKING_SET_MB_ENV).ok()?;
+    let mb: u64 = raw.trim().parse().ok()?;
+    if mb == 0 {
+        return None; // explicit "unbounded"
+    }
+    Some(mb.saturating_mul(1024 * 1024))
+}
+
 /// Read the per-collection `workload_profile:append|bulk|churn` tag from a tag
 /// list. Last matching tag wins; an unrecognized value keeps the prior
 /// resolution (parity with `pax_vector_format_tag`). Absent → `None` (defer to
@@ -158,6 +182,41 @@ mod tests {
             resolve_storage_profile(&tags(&["workload_profile:churn"])).default_radius_k(),
             0.0
         );
+    }
+
+    /// TD-WLP-8: the `Churn` working-set soft ceiling parses MB→bytes, and
+    /// unset / `0` / garbage ⇒ unbounded (`None`, default-safe). Serialized on
+    /// the shared env var; brackets its own mutation.
+    #[test]
+    fn test_churn_working_set_ceiling_bytes() {
+        unsafe {
+            std::env::remove_var(CHURN_WORKING_SET_MB_ENV);
+        }
+        // unset → unbounded
+        assert_eq!(churn_working_set_ceiling_bytes(), None);
+        // positive MB → bytes
+        unsafe {
+            std::env::set_var(CHURN_WORKING_SET_MB_ENV, "256");
+        }
+        assert_eq!(churn_working_set_ceiling_bytes(), Some(256 * 1024 * 1024));
+        // whitespace tolerated
+        unsafe {
+            std::env::set_var(CHURN_WORKING_SET_MB_ENV, "  8 ");
+        }
+        assert_eq!(churn_working_set_ceiling_bytes(), Some(8 * 1024 * 1024));
+        // explicit 0 → unbounded (not a zero-byte ceiling that rejects everything)
+        unsafe {
+            std::env::set_var(CHURN_WORKING_SET_MB_ENV, "0");
+        }
+        assert_eq!(churn_working_set_ceiling_bytes(), None);
+        // unparseable → unbounded (default-safe)
+        unsafe {
+            std::env::set_var(CHURN_WORKING_SET_MB_ENV, "lots");
+        }
+        assert_eq!(churn_working_set_ceiling_bytes(), None);
+        unsafe {
+            std::env::remove_var(CHURN_WORKING_SET_MB_ENV);
+        }
     }
 
     /// TD-WLP-1 TDD gate: the tag > env > default cascade, mirroring

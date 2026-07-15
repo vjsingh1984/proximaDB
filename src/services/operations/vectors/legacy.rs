@@ -110,6 +110,53 @@ fn churn_effective_freshness(
         .unwrap_or_default()
 }
 
+/// TD-WLP-8 (ADR-061 D4): sample a `Churn` collection's resident working-set
+/// bytes (the unflushed WAL/memtable delta) onto the per-collection gauge and
+/// edge-trigger a `warn!` when it crosses the soft ceiling
+/// (`PROXIMADB_CHURN_WORKING_SET_MB`). Best-effort observability: a sampling
+/// error is swallowed (it must never fail a search), and the warn is deduped
+/// per collection so a hot over-budget collection doesn't spam the log — it
+/// fires once on breach and re-arms only after the working set drops back under
+/// the ceiling. `AppendBulk` never calls this (gated at the call site).
+async fn sample_churn_working_set(
+    wal_manager: &crate::storage::persistence::write_ahead_log::WriteAheadLogManager,
+    tenant_id: Option<&str>,
+    collection_id: &str,
+) {
+    let bytes = match wal_manager
+        .get_collection_working_set_bytes(collection_id)
+        .await
+    {
+        Ok(b) => b,
+        Err(_) => return, // observability must never fail the read
+    };
+    crate::metrics::consumption_metrics::record_churn_working_set_bytes(
+        tenant_id,
+        collection_id,
+        bytes,
+    );
+    let Some(ceiling) = proximadb_storage_common::churn_working_set_ceiling_bytes() else {
+        return; // unbounded (default) — gauge only, no ceiling to breach
+    };
+    static WARNED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    let warned = WARNED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+    if let Ok(mut set) = warned.lock() {
+        if bytes > ceiling {
+            if set.insert(collection_id.to_string()) {
+                warn!(
+                    "Churn collection '{}' working set {} B exceeds soft ceiling {} B \
+                     (PROXIMADB_CHURN_WORKING_SET_MB): reads stay correct but the in-memory \
+                     working set is unbounded — flush/compact or raise the ceiling",
+                    collection_id, bytes, ceiling
+                );
+            }
+        } else {
+            set.remove(collection_id); // dropped back under → re-arm the warn
+        }
+    }
+}
+
 fn filter_fail_loud_enabled() -> bool {
     let value = std::env::var(FILTER_FAIL_LOUD_ENV).ok();
     filter_fail_loud_for_value(value.as_deref())
@@ -2167,6 +2214,27 @@ impl VectorOperationsService {
         // no-op there. Computed once and reused at the cache gate and the
         // execute path below so both honor the override.
         let freshness_mode = churn_effective_freshness(&collection, config.as_ref());
+
+        // TD-WLP-8 (ADR-061 D4): for `Churn` collections, sample the resident
+        // in-memory working-set bytes onto the per-collection gauge and warn if
+        // it crosses the soft ceiling. Gated on the profile (not the effective
+        // freshness — an `AppendBulk` request may also ask Strong). Best-effort;
+        // never fails the search. `AppendBulk` is skipped entirely.
+        {
+            let tags = collection
+                .config
+                .as_ref()
+                .map(|c| c.tags.as_slice())
+                .unwrap_or(&[]);
+            if proximadb_storage_common::resolve_storage_profile(tags).forces_strong_reads() {
+                sample_churn_working_set(
+                    &self.wal_manager,
+                    tenant_context.map(|t| t.tenant_id.as_str()),
+                    collection_id,
+                )
+                .await;
+            }
+        }
 
         // Create cache key for unified result caching
         let filter_str = filter.as_ref().map(|f| format!("{:?}", f));

@@ -2391,6 +2391,20 @@ impl WriteAheadLogManager {
                 .collect())
         }
     }
+    /// TD-WLP-8 (ADR-061 D4): current resident **working-set bytes** for a
+    /// collection — the sum of its unflushed WAL/memtable batch sizes. This is
+    /// the same quantity `MemtableManager::get_collection_memory_usage` reports
+    /// via the shared behavior; exposed here so the `Churn` read seam can sample
+    /// it for the working-set gauge/soft-ceiling without reaching a
+    /// `MemtableManager` handle it doesn't hold. Best-effort: `0` for an unknown
+    /// collection (no unflushed delta).
+    pub async fn get_collection_working_set_bytes(&self, collection_id: &str) -> Result<u64> {
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        let batches = wal_behavior.get_unflushed_batches(collection_id).await?;
+        Ok(batches.iter().map(|b| b.total_size_bytes as u64).sum())
+    }
+
     /// Enhanced search with bloom filter optimization for WAL/memtable data
     /// This is the PREFERRED method for searching unflushed vectors with metadata filtering
     pub async fn search_unflushed_vectors(
@@ -3368,6 +3382,58 @@ mod wal_manager_infra_tests {
 
         let stats = manager.stats().await.expect("stats should succeed");
         assert_eq!(stats.total_entries, 0);
+    }
+
+    /// TD-WLP-8: the working-set-bytes accessor is `0` before any insert and
+    /// reflects the unflushed batch size after — the quantity the `Churn`
+    /// read seam samples onto the working-set gauge. `MemoryOnly` sync keeps
+    /// the batch resident (no disk dependency) so the assertion is exact.
+    #[tokio::test]
+    async fn test_get_collection_working_set_bytes_reflects_unflushed() {
+        let mut config = WALConfig::default();
+        config.performance.sync_mode = config::SyncMode::MemoryOnly;
+        let manager =
+            WriteAheadLogManager::new_for_collection(config, "wlp8_ws_collection".to_string())
+                .await
+                .expect("manager creation should succeed");
+
+        // No inserts yet → zero working set (accessor never errors).
+        let empty = manager
+            .get_collection_working_set_bytes("wlp8_ws_collection")
+            .await
+            .expect("accessor should not error on an empty collection");
+        assert_eq!(empty, 0, "no unflushed delta yet → zero working-set bytes");
+
+        // Insert a handful of fp32 records; insert_vectors sizes each record as
+        // dim*4 + 256 bytes into the batch's total_size_bytes.
+        let dim = 8u32;
+        let records: Vec<ProximaRecord> = (0..4)
+            .map(|i| ProximaRecord {
+                oid: format!("wlp8-rec-{i}"),
+                embeddings: vec![EmbeddingCell {
+                    model_id: "wlp8".to_string(),
+                    modality: "dense_vector".to_string(),
+                    dim,
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![i as f32; dim as usize]),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .collect();
+        manager
+            .insert_vectors("wlp8_ws_collection".to_string(), records)
+            .await
+            .expect("insert should succeed under MemoryOnly sync");
+
+        let after = manager
+            .get_collection_working_set_bytes("wlp8_ws_collection")
+            .await
+            .expect("accessor should not error after inserts");
+        let expected = 4 * (dim as u64 * 4 + 256);
+        assert_eq!(
+            after, expected,
+            "working-set bytes must reflect the unflushed batch total_size_bytes"
+        );
     }
 
     #[tokio::test]

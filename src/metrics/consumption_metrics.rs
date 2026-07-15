@@ -97,6 +97,18 @@ lazy_static! {
         "Bytes written to object storage per tenant by access tier (write-time; the cold-tier cost lever)",
         &["tenant_id", "tier"]
     );
+    /// TD-WLP-8 (ADR-061 D4): resident in-memory **working-set** bytes of a
+    /// `Churn` collection — the unflushed WAL/memtable delta it keeps hot for
+    /// immediate-freshness reads. A level gauge (current resident bytes),
+    /// sampled at the `Churn` read seam; the companion soft ceiling
+    /// (`PROXIMADB_CHURN_WORKING_SET_MB`) makes an over-budget collection
+    /// observable so it degrades gracefully instead of silently OOMing.
+    /// Emitted only for `Churn` collections (`AppendBulk` never samples).
+    pub static ref CHURN_WORKING_SET_BYTES: GaugeVec = registered_gauge_vec(
+        "proximadb_churn_collection_working_set_bytes",
+        "Resident in-memory working-set bytes of a Churn collection (unflushed WAL/memtable delta)",
+        &["tenant_id", "collection_id"]
+    );
 }
 
 /// Cloud provider hosting the object store — the multi-cloud axis for egress
@@ -574,6 +586,17 @@ pub fn record_storage_bytes(tenant_id: Option<&str>, storage_type: &str, bytes: 
         .set(bytes);
 }
 
+/// TD-WLP-8: set the `Churn` collection working-set level gauge. Called from
+/// the `Churn` read seam with the collection's current unflushed byte count;
+/// pure gauge `.set()` (the soft-ceiling decision lives at the call site,
+/// which owns the env). An absent/empty tenant is attributed to `"default"`.
+pub fn record_churn_working_set_bytes(tenant_id: Option<&str>, collection_id: &str, bytes: u64) {
+    let t_id = tenant_id.unwrap_or("default");
+    CHURN_WORKING_SET_BYTES
+        .with_label_values(&[t_id, collection_id])
+        .set(bytes as f64);
+}
+
 /// ADR-030 **KSU**: snapshot per-tenant *resident* storage bytes from the live
 /// collection set and `.set()` the `STORAGE_BYTES_SECONDS` **level** gauge
 /// (Prometheus integrates the level to byte-seconds downstream — KSU is an
@@ -809,6 +832,35 @@ mod tests {
                 .get(),
             7.0,
             "unowned bytes attributed to default (fail-closed)"
+        );
+    }
+
+    /// TD-WLP-8: the Churn working-set gauge round-trips per (tenant, collection)
+    /// and attributes an absent tenant to "default" (fail-closed).
+    #[test]
+    fn churn_working_set_gauge_round_trips() {
+        record_churn_working_set_bytes(Some("ksu_wlp8"), "col_hot", 4096);
+        assert_eq!(
+            CHURN_WORKING_SET_BYTES
+                .with_label_values(&["ksu_wlp8", "col_hot"])
+                .get(),
+            4096.0
+        );
+        // A later sample overwrites the level (gauge, not counter).
+        record_churn_working_set_bytes(Some("ksu_wlp8"), "col_hot", 2048);
+        assert_eq!(
+            CHURN_WORKING_SET_BYTES
+                .with_label_values(&["ksu_wlp8", "col_hot"])
+                .get(),
+            2048.0
+        );
+        // Absent tenant → "default".
+        record_churn_working_set_bytes(None, "col_unowned", 512);
+        assert_eq!(
+            CHURN_WORKING_SET_BYTES
+                .with_label_values(&["default", "col_unowned"])
+                .get(),
+            512.0
         );
     }
 
