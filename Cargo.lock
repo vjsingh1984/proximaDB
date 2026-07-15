@@ -7218,7 +7218,16 @@ name = "proximadb-engine-core"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "chrono",
+ "half",
+ "proximadb-compression",
+ "proximadb-distance-kernel",
+ "proximadb-kernel",
+ "proximadb-records",
  "proximadb-storage-common",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
