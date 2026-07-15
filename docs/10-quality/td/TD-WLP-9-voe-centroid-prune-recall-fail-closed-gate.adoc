@@ -79,3 +79,12 @@ passes and the VOE-prune default-ON flip may proceed.
 * 2026-07-14 — #983 introduced the fail-closed VOE centroid-prune ratchet (evidence: pruned 0.8087 < 0.9).
 * 2026-07-15 — observed RED on qa-promotion #992; determined not a regression (cascade 0.9891
   unaffected); filed this TD to make the gate self-documenting and record the unblock chain.
+* 2026-07-15 — the eval landed (this change): PCA/IVF (reached via the
+  `PROXIMADB_PAX_FLUSH_CLUSTER=ivf` flush opt-in) is measured to lift pruned recall ~+0.11
+  (sign-bit 0.758 → PCA/IVF 0.867 @ keep=0.5) and clear 0.9 at keep=0.7 (0.929). BUT a
+  block-size sweep shows block-pruning is **GET-capped at ~0.87** for any tight-block recall
+  win (smaller blocks recover recall to ~0.99 yet explode GETs 10×). So the gate holds at
+  keep=0.5 by design; the strategic unblock is the coalesced binary-tier rerank redesign
+  (link:TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6]), which
+  sidesteps the block-prune ceiling. Near-term flip at keep=0.7 is defensible (0.929, −27% GETs).
+  Evidence: link:../../_internal/status/SIFT1M_VOE_COMPACTED_RECALL_PARETO_2026_07_15.adoc[].

@@ -750,6 +750,361 @@ async fn sift_voe_centroid_prune_ratio_sweep() {
 }
 
 // ---------------------------------------------------------------------------
+// TD-WLP-4/WLP-9 EVAL — does PCA/IVF clustering lift VOE prune recall? (#[ignore])
+// ---------------------------------------------------------------------------
+
+/// Mean per-block RMS spread-from-centroid for the chosen record ordering,
+/// computed directly on `base` via the *real* clustering fn, chunking the
+/// ordering into blocks of `block_size` records. `block_size` must match the
+/// granularity the engine emits centroids at (`SST_DEFAULT_VECTORS_PER_BLOCK` =
+/// 128) — at the flush *batch* size (20k) every block is a near-random sample
+/// and no ordering tightens it, so the granularity is load-bearing. `ivf=false`
+/// ⇒ sign-bit bootstrap.
+fn mean_block_radius(base: &[Vec<f32>], ivf: bool, block_size: usize) -> f64 {
+    use proximadb::storage::engines::sst::block_cluster::{cluster_order, cluster_order_pca_ivf};
+    // Type inference: `cluster_order` takes `&[ProximaRecord]`, so `records` is
+    // inferred `Vec<ProximaRecord>` without naming the type (VectorRecord→ProximaRecord
+    // via the same `Into` the flush path uses).
+    let records: Vec<_> = base
+        .iter()
+        .enumerate()
+        .map(|(i, v)| vector_record(i as u32, v.clone()).into())
+        .collect();
+    let order = if ivf {
+        cluster_order_pca_ivf(&records, 0)
+    } else {
+        cluster_order(&records, 0)
+    };
+    let order = match order {
+        Some(o) => o,
+        None => return f64::NAN,
+    };
+    let mut sum = 0.0f64;
+    let mut blocks = 0usize;
+    for chunk in order.chunks(block_size) {
+        let vecs: Vec<&Vec<f32>> = chunk.iter().map(|&i| &base[i]).collect();
+        let dim = vecs[0].len();
+        let mut centroid = vec![0f64; dim];
+        for v in &vecs {
+            for (c, x) in centroid.iter_mut().zip(v.iter()) {
+                *c += *x as f64;
+            }
+        }
+        for c in &mut centroid {
+            *c /= vecs.len() as f64;
+        }
+        let mut ssd = 0.0f64;
+        for v in &vecs {
+            for (c, x) in centroid.iter().zip(v.iter()) {
+                ssd += (*x as f64 - c).powi(2);
+            }
+        }
+        sum += (ssd / vecs.len() as f64).sqrt();
+        blocks += 1;
+    }
+    if blocks > 0 {
+        sum / blocks as f64
+    } else {
+        f64::NAN
+    }
+}
+
+/// TD-WLP-4/WLP-9 EVAL (MEASUREMENT, `#[ignore]`): the untested article of faith
+/// is that the compaction-grade fp32-PCA/IVF re-cluster (`cluster_order_pca_ivf`)
+/// lifts VOE centroid-prune recall@10 to the 0.9 floor at a GET-reducing keep.
+/// Nobody has measured it: the production flush→compaction scheduler is unwired
+/// (TD-WLP-7 stub), so the re-cluster never fires. This eval reaches it via the
+/// `PROXIMADB_PAX_FLUSH_CLUSTER=ivf` flush opt-in (which reuses the *entire*
+/// production flush + VOE-directory emit + search path — no manual wiring), then
+/// traces the recall/GET Pareto for sign-bit (L0 bootstrap) vs PCA/IVF.
+///
+/// Run:
+///   PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=100000 \
+///     cargo test --release --test sift_pax_recall_ratchet_test \
+///     sift_voe_centroid_prune_compacted_recall_at_10_eval -- --ignored --nocapture
+#[tokio::test]
+#[ignore = "local measurement; needs SIFT1M + long runtime (not a CI gate)"]
+async fn sift_voe_centroid_prune_compacted_recall_at_10_eval() {
+    unsafe {
+        std::env::set_var("PROXIMADB_PAX_VECTOR_SEGMENTS", "1");
+        std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rabitq");
+        std::env::set_var("PROXIMADB_PAX_BLOCK_CLUSTER", "1");
+        std::env::set_var("PROXIMADB_PAX_CENTROID_PRUNE", "1");
+        std::env::set_var("PROXIMADB_PAX_CENTROID_PRUNE_MIN_BLOCKS", "2");
+        // Meter the physical I/O the route cost model weights (per_get=20.0).
+        std::env::set_var("PROXIMADB_COUNT_FS_IO", "1");
+    }
+
+    let base_path = match dataset_path("sift_base.fvecs") {
+        Some(p) if p.exists() => p,
+        _ => {
+            eprintln!(
+                "skip: PROXIMADB_SIFT_DATASET_DIR unset/missing — compacted eval needs SIFT1M"
+            );
+            return;
+        }
+    };
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let subset_n: Option<usize> = std::env::var("PROXIMADB_SIFT_N")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0);
+    let max_queries: usize = std::env::var("PROXIMADB_SIFT_QUERIES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_QUERIES);
+
+    let base = read_vec_records_f32(&base_path, subset_n).expect("read sift_base.fvecs");
+    let n = base.len();
+    assert!(n >= TOP_K, "need at least {TOP_K} base vectors, got {n}");
+
+    // (0) Informational: mean per-block RMS radius for sign-bit vs PCA/IVF at a
+    // few block granularities. This is the co-design insight — clustering only
+    // tightens blocks BELOW some size threshold (a block of ~random samples is
+    // loose regardless of ordering). The granularity the engine emits centroids
+    // at is `SST_DEFAULT_VECTORS_PER_BLOCK` (128); the engine's own recall
+    // Pareto below is the load-bearing measurement, so this is printed, not
+    // asserted. (Distinct sign-bit vs PCA/IVF radii already prove the re-cluster
+    // ran — a silent fallback would yield identical radii.)
+    let radius_cap = n.min(50_000);
+    eprintln!("mean block RMS radius (N={radius_cap}), sign-bit vs pca/ivf:");
+    for bs in [128usize, 1024, 8192] {
+        let r_sign = mean_block_radius(&base[..radius_cap], false, bs);
+        let r_ivf = mean_block_radius(&base[..radius_cap], true, bs);
+        eprintln!("  block_size={bs:<5}  sign-bit={r_sign:.2}  pca/ivf={r_ivf:.2}");
+    }
+
+    // Queries + ground truth: computed ONCE, shared across both clustering modes.
+    let query_path = dataset_path("sift_query.fvecs");
+    let queries: Vec<Vec<f32>> = match query_path.as_ref().filter(|p| p.exists()) {
+        Some(p) => read_vec_records_f32(p, Some(max_queries)).expect("read sift_query.fvecs"),
+        None => base.iter().take(max_queries.min(n)).cloned().collect(),
+    };
+    let qcount = queries.len();
+    let gt_path = dataset_path("sift_groundtruth.ivecs");
+    let use_provided_gt = subset_n.is_none() && gt_path.as_ref().is_some_and(|p| p.exists());
+    let ground_truth: Vec<std::collections::HashSet<String>> = if use_provided_gt {
+        let gt = read_vec_records_u32(gt_path.as_ref().unwrap(), Some(qcount)).expect("read gt");
+        gt.into_iter()
+            .map(|row| row.into_iter().take(TOP_K).map(vid).collect())
+            .collect()
+    } else {
+        queries
+            .iter()
+            .map(|q| brute_force_topk(&base, q, TOP_K).into_iter().collect())
+            .collect()
+    };
+
+    let ratios = [1.0f64, 0.7, 0.5, 0.3, 0.15];
+    let radius_ks = [0.0f64, 0.5, 1.0, 2.0];
+
+    // Build + sweep each clustering mode. Each gets its OWN engine + collection
+    // + directory cache so the flushed segments carry that mode's centroids. The
+    // engine emits the VOE directory itself (we reuse the production flush path),
+    // so the read-side prune sees the real centroids — no manual sidecar wiring.
+    for (label, flush_ivf) in [("sign-bit", false), ("pca/ivf", true)] {
+        unsafe {
+            if flush_ivf {
+                std::env::set_var("PROXIMADB_PAX_FLUSH_CLUSTER", "ivf");
+            } else {
+                std::env::remove_var("PROXIMADB_PAX_FLUSH_CLUSTER");
+            }
+        }
+
+        let temp_dir = TempDir::new().unwrap();
+        let collection = collection(&format!("sift_voe_eval_{label}"), &temp_dir);
+        let engine = SstEngine::new().await.unwrap().with_directory_cache(Arc::new(
+            proximadb::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
+        ));
+
+        let mut batch: Vec<VectorRecord> = Vec::with_capacity(BATCH_SIZE);
+        for (i, v) in base.iter().enumerate() {
+            batch.push(vector_record(i as u32, v.clone()));
+            if batch.len() == BATCH_SIZE {
+                let b = std::mem::take(&mut batch);
+                flush_batch(&engine, &collection, b).await;
+            }
+        }
+        if !batch.is_empty() {
+            flush_batch(&engine, &collection, batch).await;
+        }
+
+        eprintln!(
+            "=== {label}: VOE centroid-prune keep × radius_k Pareto (N={n}, {qcount} queries, top-{TOP_K}) ==="
+        );
+        eprintln!(
+            "{:>8} {:>5} {:>8} {:>8} {:>10} {:>11}",
+            "mode", "keep", "recall", "pruned%", "range_gets", "bytes_read"
+        );
+        for k in radius_ks {
+            unsafe {
+                std::env::set_var("PROXIMADB_PAX_CENTROID_RADIUS_K", format!("{k}"));
+            }
+            for keep in ratios {
+                unsafe {
+                    std::env::set_var("PROXIMADB_PAX_CENTROID_PRUNE_RATIO", format!("{keep}"));
+                }
+                // One io_trace scope per cell so the centroid + I/O counters
+                // reset and accumulate over just this cell's query loop. The
+                // first cell of a collection also charges the one-time directory
+                // sidecar load — the steady-state signal is the keep=1.0→0.5
+                // range_gets delta within a collection (same cold load).
+                let (recall, measured, snap) = proximadb::observability::io_trace::scope(async {
+                    let mut recall_sum = 0.0f64;
+                    let mut measured = 0usize;
+                    for (qi, query) in queries.iter().enumerate() {
+                        let got = search_topk(&engine, &collection, query.clone()).await;
+                        if got.is_empty() {
+                            continue;
+                        }
+                        let got_ids: std::collections::HashSet<String> =
+                            got.into_iter().take(TOP_K).collect();
+                        recall_sum +=
+                            got_ids.intersection(&ground_truth[qi]).count() as f64 / TOP_K as f64;
+                        measured += 1;
+                    }
+                    let recall = if measured > 0 {
+                        recall_sum / measured as f64
+                    } else {
+                        0.0
+                    };
+                    let snap = proximadb::observability::io_trace::snapshot()
+                        .expect("io_trace scope active");
+                    (recall, measured, snap)
+                })
+                .await;
+                let total = snap.centroid_total_blocks;
+                let pruned = snap.centroid_pruned_blocks;
+                let pct = if total > 0 {
+                    100.0 * pruned as f64 / total as f64
+                } else {
+                    0.0
+                };
+                eprintln!(
+                    "{label:>8} {keep:>5.2} {recall:>8.4} {pct:>8.1} {:>10} {:>11}  (blocks={total}, m={measured})",
+                    snap.range_gets, snap.bytes_read
+                );
+                // The prune must engage for every keep < 1.0 cell — a silent
+                // full-scan fallback (centroid_pruned_blocks=0) would make the
+                // recall a false positive.
+                if keep < 1.0 {
+                    assert!(
+                        snap.centroid_pruned_blocks > 0,
+                        "[{label} keep={keep} k={k}] centroid prune did NOT engage \
+                         (centroid_pruned_blocks=0) — check with_directory_cache + the flush \
+                         opt-in + PROXIMADB_PAX_CENTROID_PRUNE_MIN_BLOCKS"
+                    );
+                }
+            }
+        }
+    }
+
+    // ---- Block-size sweep (PCA/IVF): does a smaller block (tighter centroids)
+    //      buy back the recall the 0.9 floor demands, and at what GET cost?
+    //      `PROXIMADB_PAX_BLOCK_SIZE` is in BYTES (TD-156/ADR-026); we sweep a few
+    //      targets and report the resulting block count (vectors/block = N/total)
+    //      so the geometry is observed, not guessed. Focused on the decision
+    //      keeps {0.7, 0.5} with radius_k=0 (the lever that mattered above).
+    unsafe {
+        std::env::set_var("PROXIMADB_PAX_FLUSH_CLUSTER", "ivf");
+        std::env::set_var("PROXIMADB_PAX_CENTROID_RADIUS_K", "0");
+    }
+    eprintln!(
+        "=== pca/ivf block-size sweep (N={n}, {qcount} queries): PROXIMADB_PAX_BLOCK_SIZE bytes → vectors/block ==="
+    );
+    eprintln!(
+        "{:>12} {:>10} {:>5} {:>8} {:>8} {:>10}",
+        "block_bytes", "vec/block", "keep", "recall", "pruned%", "range_gets"
+    );
+    for block_bytes in [8_192usize, 16_384, 32_768, 65_536] {
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_BLOCK_SIZE", format!("{block_bytes}"));
+        }
+        let temp_dir = TempDir::new().unwrap();
+        let collection = collection(&format!("sift_voe_eval_ivf_bs{block_bytes}"), &temp_dir);
+        let engine = SstEngine::new().await.unwrap().with_directory_cache(Arc::new(
+            proximadb::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
+        ));
+        let mut batch: Vec<VectorRecord> = Vec::with_capacity(BATCH_SIZE);
+        for (i, v) in base.iter().enumerate() {
+            batch.push(vector_record(i as u32, v.clone()));
+            if batch.len() == BATCH_SIZE {
+                let b = std::mem::take(&mut batch);
+                flush_batch(&engine, &collection, b).await;
+            }
+        }
+        if !batch.is_empty() {
+            flush_batch(&engine, &collection, batch).await;
+        }
+        for keep in [0.7f64, 0.5] {
+            unsafe {
+                std::env::set_var("PROXIMADB_PAX_CENTROID_PRUNE_RATIO", format!("{keep}"));
+            }
+            let (recall, measured, snap) = proximadb::observability::io_trace::scope(async {
+                let mut recall_sum = 0.0f64;
+                let mut measured = 0usize;
+                for (qi, query) in queries.iter().enumerate() {
+                    let got = search_topk(&engine, &collection, query.clone()).await;
+                    if got.is_empty() {
+                        continue;
+                    }
+                    let got_ids: std::collections::HashSet<String> =
+                        got.into_iter().take(TOP_K).collect();
+                    recall_sum +=
+                        got_ids.intersection(&ground_truth[qi]).count() as f64 / TOP_K as f64;
+                    measured += 1;
+                }
+                let recall = if measured > 0 {
+                    recall_sum / measured as f64
+                } else {
+                    0.0
+                };
+                let snap =
+                    proximadb::observability::io_trace::snapshot().expect("io_trace scope active");
+                (recall, measured, snap)
+            })
+            .await;
+            let total = snap.centroid_total_blocks;
+            let pruned = snap.centroid_pruned_blocks;
+            let pct = if total > 0 {
+                100.0 * pruned as f64 / total as f64
+            } else {
+                0.0
+            };
+            // io_trace counters are cumulative over the 100-query loop; the
+            // per-query block total is total/queries (each query sees the same
+            // collection's blocks). vectors/block = N / per-query-blocks.
+            let per_q_blocks = if measured > 0 {
+                total / measured as u64
+            } else {
+                0
+            };
+            let vec_per_block = if per_q_blocks > 0 {
+                n as f64 / per_q_blocks as f64
+            } else {
+                0.0
+            };
+            eprintln!(
+                "{block_bytes:>12} {vec_per_block:>10.1} {keep:>5.2} {recall:>8.4} {pct:>8.1} {:>10}  (m={measured})",
+                snap.range_gets
+            );
+            assert!(
+                snap.centroid_pruned_blocks > 0,
+                "[bs={block_bytes} keep={keep}] prune did not engage"
+            );
+        }
+    }
+
+    // Restore default flush clustering + block size so a subsequent in-process
+    // test isn't affected (nextest isolates processes, but be tidy).
+    unsafe {
+        std::env::remove_var("PROXIMADB_PAX_FLUSH_CLUSTER");
+        std::env::remove_var("PROXIMADB_PAX_BLOCK_SIZE");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Loader unit tests — synthetic .fvecs/.ivecs round-trip (no dataset needed).
 // ---------------------------------------------------------------------------
 
