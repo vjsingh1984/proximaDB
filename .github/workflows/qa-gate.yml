@@ -184,7 +184,10 @@ jobs:
           ls -lh "$HOME/sift1m"
       - name: Build ratchet binary
         env:
-          CARGO_BUILD_JOBS: "4"
+          # jobs=1 — the root-crate rustc is ~12.8GB; jobs≥2 OOMs the 16GB runner
+          # (same rationale as the Rust Tests (unit) job). Until root extraction
+          # drops the single compile <~8GB, this must stay at 1.
+          CARGO_BUILD_JOBS: "1"
         run: cargo test --release --test sift_pax_recall_ratchet_test --no-run
       - name: Run SIFT PAX recall ratchet (N=${{ inputs.sift_n || '100000' }})
         env:
