@@ -116,7 +116,7 @@ corrected).
 
 == 6. Trace-first plan (mirrors ADR-055's P-Trace discipline)
 
-* **P0 — Baseline trace (no code):** extend `tests/rdstrat_get_count_measurement_test.rs` to record the
+* **P0 — Baseline trace (no code):** extend `tests/rdstrat_get_count_measurement_test.rs` (retired #1024 — striped-read dormant under the canonical coalesced path, ADR-062) to record the
   cascade's whole-segment bytes vs the *logical* striped bytes it already projects, on a
   cold-tier-simulated (`s3://`-schemed path) representative trace. This quantifies the headroom before
   any build.
