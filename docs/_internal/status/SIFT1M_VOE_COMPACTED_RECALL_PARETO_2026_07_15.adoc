@@ -64,28 +64,54 @@ keep (nprobe) axis. `range_gets` is the cumulative GET count the route cost mode
 TD-WLP-3's finding that the lower-bound weight adds little signal until clustering
 differentiates radii further. The PCA/IVF lift is the dominant lever.
 
-== Verdict (drives the TD-WLP-6 / RDSTRAT-5 decisions)
+== Result 3 — the block-size sweep exposes a structural ceiling (NOT a tuning gap)
 
-* **The article of faith is partially confirmed.** PCA/IVF clustering is *validated* as the
-  right direction: it tightens block radii (−18% at 128/block) and lifts pruned recall by
-  ~+0.11 at a fixed keep (0.758 → 0.870 @ keep=0.5).
-* **It does NOT clear the 0.9 floor at keep=0.5** (0.870 < 0.9). So the WS8 default-ON flip
-  at the aggressive 0.5 ratio stays **BLOCKED** (TD-WLP-9 gate holds).
-* **It DOES clear 0.9 at keep=0.7** (0.904, −29% blocks / −27% GETs). That is a defensible
-  operating point if the flip targets a conservative keep rather than 0.5.
-* **The GET reduction is real and large** — at keep=0.5, 43% fewer blocks and ~40% fewer
-  GETs/bytes vs full scan. Pruning is the right cost lever; the open gap is recall quality
-  at aggressive keeps, not the GET math.
+`PROXIMADB_PAX_BLOCK_SIZE` (bytes, TD-156/ADR-026) swept at PCA/IVF, keep ∈ {0.7, 0.5},
+radius_k=0. Smaller blocks tighten centroids and *recover recall to ~0.99* — but the GET
+count explodes (per-block ranged-read fragmentation). Recall is easy; GET economics are the
+ceiling.
 
-== Next (the residual 0.870 → 0.900 gap at keep=0.5)
+[cols="1,1,1,1,1,1", options="header"]
+|===
+| block_bytes | vec/block | keep=0.5 recall | pruned% | GETs/query | GETs/kept-block
 
-The remaining gap is the SPANN/DiskANN-class problem, not a clustering-quality problem:
-* **SPANN-style balanced/bounded cells** — k-means cells here are unbalanced; rebalancing
-  (split heavy cells, merge light ones) tightens centroids where queries actually land.
-* **Adaptive nprobe** — probe more cells for hard/boundary queries (today keep is global).
-* **Re-rank refinement** — a cheap fp32 rerank over the pruned candidate set recovers recall.
+| default (None) | ~28  | 0.867 | 43% |     220 |  0.13 (coalesced)
+| 8192          |    8 | 0.991 | 50% |  62 530 | ~10 (fragmented)
+| 16384         |   16 | 0.992 | 50% |  31 280 | ~10
+| 32768         |   32 | 0.985 | 50% |  15 670 | ~10
+| 65536         |   64 | 0.991 | 50% |   7 870 | ~10
+|===
 
-Until one of those closes the gap, the flip targets keep=0.7 (measured 0.904) or stays dark.
+There is **no sweet spot**: tight blocks give recall but shatter GETs (10 GETs/kept-block);
+the default bounds GETs (0.13/kept-block via read coalescing) but caps recall at ~0.87. This
+is a structural property of *block-centroid pruning* — the binary tier is read per-block, so
+block count × per-block-overhead dominates the GET term the route cost weights (`per_get=20`).
+The default-geometry 0.867 vs explicit-32vec 0.985 gap also suggests the default block-cutting
+does not align block boundaries with the IVF cell structure (a separate fix, but secondary).
+
+== Verdict (drives the TD-WLP-6 / RDSTRAT-5 / RDSTRAT-6 decisions)
+
+* **PCA/IVF is validated** as the right clustering (tightens radii, +0.11 recall @ keep=0.5).
+* **Block-centroid pruning is GET-capped at ~0.87** for any tight-block recall win (Result 3).
+  It is not the end-state; the ceiling is structural, not a tuning gap.
+* **The flip is justified at keep=0.7** (PCA/IVF 0.929 on rebased develop, −27% GETs) as a
+  near-term block-prune operating point — but the strategic direction is Result 3's lesson.
+* **`radius_k` is not the lever** (≤0.02 effect) — TD-WLP-6's calibration is the keep/ratio
+  default, not radius_k.
+
+== Next — coalesced binary-tier rerank (the redesign this eval motivates)
+
+The GET ceiling exists because the binary tier is read *per block*. If the binary (RaBitQ)
+column were laid out as **one coalesced sequential region**, a query would scan all codes in
+~1 GET (no per-block fragmentation), keep=100% effectively (zero prune recall loss), and let
+the **rerank** (binary → SQ8 → fp32) do vector-level candidate reduction — its strength.
+Net: ~1 GET (binary scan) + a handful (SQ8/fp32 for survivors). This is the SPANN/DiskANN
+scan-then-rerank paradigm over PAX, and it sidesteps the block-prune ceiling entirely. It
+needs a columnar/segregated binary tier (a format change → mixed-read-safe migration) and
+coexists with block-prune behind a strategy flag (huge collections prune to a region first).
+Filed as the design TD that supersedes the block-prune path. (SPANN grounding: balanced
+~250–1000-vec cells stored as *contiguous posting lists* + compact-code rerank — coarser
+than our ~28–64-vec blocks but coalesced, which is why SPANN's GETs win.)
 
 == Status of the chain
 
@@ -98,3 +124,5 @@ Until one of those closes the gap, the flip targets keep=0.7 (measured 0.904) or
   decouples quality from the compaction scheduler).
 * **TD-RDSTRAT-5** (VOE default-ON flip): gate evidence now exists — flip justified at
   keep=0.7, not at keep=0.5.
+* **TD-RDSTRAT-6** (coalesced binary-tier rerank-driven I/O): the strategic redesign this
+  eval motivates — supersedes block-centroid pruning as the end-state for object storage.

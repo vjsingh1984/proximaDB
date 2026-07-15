@@ -1,0 +1,81 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-RDSTRAT-6: coalesced binary-tier rerank-driven I/O — the scan-then-rerank layout that supersedes block-centroid pruning for object storage
+:toc: macro
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Proposed** (design memo, grounded in the 2026-07-15 measured eval). Supersedes the *block-centroid-prune* path (link:TD-RDSTRAT-4-centroid-block-clustering-and-segment-directory.adoc[TD-RDSTRAT-4] Lever B / link:TD-RDSTRAT-5-cache-first-voe-directory-activation-codesign.adoc[TD-RDSTRAT-5]) as the **end-state for the dominant cost term** (object-storage GET round-trips). Block-prune remains as a *coarse pre-filter* for collections too large to scan-then-rerank whole — the two coexist behind a strategy flag (the SPANN/DiskANN hybrid).
+| Severity | High — `per_get=20.0` is the dominant term in the vector-route cost model (`src/query/route_cost_model.rs`); block-pruning is measured GET-capped (see Finding), so the cost lever is currently unreachable at high recall.
+| Component | PAX segment layout (`src/storage/engines/sst/segment_format.rs`); the cascade read path (`src/storage/engines/sst/search/mod.rs::try_pax_cascade`, `src/storage/engines/sst/readers/`); the VOE directory (`object_economy_directory.rs`); the route cost model.
+| Relates | link:TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (the within-block binary→SQ8→fp32 striped cascade — the rerank substrate this builds on), link:TD-WLP-9-voe-centroid-prune-recall-fail-closed-gate.adoc[TD-WLP-9] (the gate whose measured ceiling motivates this), ADR-046 (mixed-read format migration), ADR-052 (bytes/round-trip co-design thesis), link:../../12-design/CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc[co-design P5: round-trips dominate]
+| Pillar | COST (GET round-trips), PERF (recall at fixed GETs)
+|===
+
+toc::[]
+
+== Finding (the measured ceiling this redesign dissolves)
+
+The 2026-07-15 SIFT1M eval (link:../../_internal/status/SIFT1M_VOE_COMPACTED_RECALL_PARETO_2026_07_15.adoc[SIFT1M_VOE_COMPACTED_RECALL_PARETO]) measured the block-centroid-prune path to its structural limit. PCA/IVF clustering is *validated* (tightens block radii, lifts pruned recall +0.11 at fixed keep), but a block-size sweep exposed a ceiling that is **not a tuning gap**:
+
+[cols="1,1,1,1", options="header"]
+|===
+| block geometry | keep=0.5 recall | GETs/query | GETs/kept-block
+
+| default (~28 vec/block) | 0.867 |    220 | 0.13 (coalesced)
+| 8 vec/block             | 0.991 | 62 530 | ~10 (fragmented)
+| 64 vec/block            | 0.991 |  7 870 | ~10
+|===
+
+There is **no sweet spot**: tight blocks recover recall to ~0.99 but shatter GETs (the binary tier is read *per block*, so block count × per-block overhead dominates the GET term); the default coalesces reads (0.13 GETs/kept-block) but caps recall at ~0.87. Recall is easy once blocks are tight; **GET economics are the ceiling**.
+
+Root cause: the PAX layout is **block-major** — each block interleaves its binary/SQ8/fp32 tiers, so scanning the cheap binary column of *N* blocks costs *N* ranged GETs. The cascade (binary→SQ8→fp32 rerank) cuts **bytes** but not **block-count GETs**, and on object storage GETs dominate (`per_get=20 ≫ per_mib_read=5`). Block-centroid pruning tries to cut GETs by skipping blocks, but it pays recall for it — and the sweep shows it cannot reach both high recall and low GETs.
+
+== Design — coalesce the binary tier, let rerank prune at the vector level
+
+Flip the layout so the **binary (RaBitQ) tier is one coalesced sequential region per segment** (or a segment-level binary sidecar), read in ~1 ranged GET regardless of block count. The read path becomes scan-then-rerank:
+
+. **Scan** the coalesced binary column (1 GET) for the whole segment → approximate distance for *every* vector, keep=100% effectively → **zero prune recall loss**.
+. **Rerank** the top-M candidates by binary distance with SQ8 (fetch SQ8 ranges only for those M) → vector-level candidate reduction, which is rerank's strength.
+. **Finalize** the top-k with fp32 (fetch fp32 for the few finalists).
+
+Net I/O: ~1 GET (binary scan) + a handful of GETs (SQ8/fp32 for survivors). That is *fewer* GETs than block-pruning at keep=0.5 (220 GETs) **and** higher recall (~0.99), because candidate reduction moved from the lossy block level to the lossless rerank level. The block-prune ceiling dissolves: there are no per-block GETs to fragment.
+
+This is the **SPANN/DiskANN/ScaNN scan-then-rerank paradigm realized over PAX** — the cascade substrate (TD-RDSTRAT-3's binary→SQ8→fp32 striped rerank) already exists; the missing piece is the *coalesced binary column* that lets the scan be one GET instead of N.
+
+== Grounding — what the literature does
+
+* **SPANN** (Microsoft, SIGMOD 2022): IVF with *balanced* posting lists (~250–1000 vectors/cell, `k ≈ N/500`, split/merge to bound cell size) + adaptive `nprobe` + a **compact code per vector** stored in a **contiguous posting list**. Probing `nprobe` cells = a few sequential reads, then rerank the compact codes. SPANN's cells are *coarser* than our ~28–64-vec blocks but *coalesced* — that is why its GETs win, not the cell size.
+* **DiskANN** (NIPS 2019): a single contiguous store of compressed vectors (PQ/SQ) scanned/graph-traversed, with a full-precision sidecar for fp32 rerank of the finalists. The compressed store is one sequential region.
+* **ScaNN** (Google): anisotropic quantization + reordering; the coarse quantizer + codes are scanned, then reranked.
+* **FAISS IVF-ADC**: scan compact codes of probed cells, rerank — identical pattern.
+
+Common shape: **a coalesced compact-code region (scan) + a finer tier fetched only for survivors (rerank)**. ProximaDB already has the tiers (RaBitQ/SQ8/fp32) and the rerank; it lacks the coalesced compact-code region. This TD is that region.
+
+== What it requires
+
+* **Format change — segregated binary tier.** Today PAX is block-major (`segment_format.rs` writes blocks as `[binary|sq8|fp32]` interleaved). Add a segment layout variant (magic-versioned, mixed-read-safe per ADR-046) that segregates the binary column into one contiguous region followed by the SQ8/fp32 tiers (or a separate `*.bin` sidecar). Readers detect by magic and route; the legacy block-major layout coexists.
+* **Scan-then-rerank read path.** A new `try_pax_scan_rerank` alongside `try_pax_cascade`: 1 ranged GET for the binary region → top-M by binary distance → fetch SQ8 ranges for M → fp32 for top-k. Reuse TD-RDSTRAT-3's rerank kernels.
+* **Strategy flag + size routing.** Default-OFF; chosen per collection by size/profile: small/medium → scan-then-rerank (one binary scan is cheap); very large → coarse block/region prune first (the VOE directory), then scan-then-rerank *within* the region. The block-prune path (TD-RDSTRAT-5) is retained as the pre-filter — the hybrid.
+* **Cost-model awareness.** Teach the route cost model (`route_cost_model.rs`) the scan-then-rerank GET signature (1 scan + rerank GETs) so it ranks it correctly vs the cascade.
+
+== Phased plan
+
+. **S1 — segregated binary tier, opt-in (mixed-read-safe).** Magic-versioned segment layout with a contiguous binary column. Round-trip + recall-parity test vs block-major (the f32 baseline). Default-OFF.
+. **S2 — scan-then-rerank read path.** `try_pax_scan_rerank`; measure GETs (expect ~1 + rerank) and recall (expect ~0.99) vs the cascade on SIFT.
+. **S3 — strategy flag + size routing + cost-model wiring.** Default-OFF; opt-in per collection; route cost ranks it.
+. **S4 — default for new object-store collections** once S2/S3 measured; legacy stays mixed-read.
+
+Each phase is independently shippable and mixed-read-safe (the canonical phased pattern, link:../../12-design/RABITQ_PAX_SEGMENT_MIGRATION_PLAN_2026_06.adoc[RABITQ_PAX_SEGMENT_MIGRATION_PLAN]).
+
+== Risks / open questions
+
+* **Very large collections** — even a coalesced binary scan may be too many bytes (N × 16 B; 100 M vectors ≈ 1.6 GB). The coarse block/region pre-filter (TD-RDSTRAT-5 directory) is still needed first — the hybrid, not a pure replacement. The size threshold is a tuning question (S3).
+* **Write-path cost** — segregating the binary tier changes the flush/compaction write order; must stay streaming (the sign-bit/PCA-IVF ordering still applies). Verify flush throughput.
+* **Block boundaries vs IVF cells** — separately, the default block-cutting geometry produces looser centroids than an explicit `PROXIMADB_PAX_BLOCK_SIZE` aligned to IVF cells (the 0.867 vs 0.985 gap in the eval). Worth fixing for the block-prune *pre-filter*, independent of this redesign.
+* **Non-goal** — this is not a graph index (DiskANN/HNSW). A per-vector graph would avoid scans entirely but is a different substrate; scan-then-rerank is the PAX-native answer.
+
+== Why now
+
+The eval (this change) is the evidence: it *refutes* block-centroid pruning as the end-state (GET-capped at ~0.87) and *motivates* scan-then-rerank as the way to reach the GET term at high recall. Without the measurement, this redesign would be speculation; with it, the block-prune ceiling is a demonstrated fact and the coalesced-binary-rerank direction is grounded.
