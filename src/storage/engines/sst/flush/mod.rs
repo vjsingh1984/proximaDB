@@ -1030,7 +1030,11 @@ fn pax_write_outcome(
 ) -> crate::storage::engines::sst::writer::SstableWriteOutcome {
     use crate::storage::engines::sst::{IndexEntry, VectorFormat};
     let mut entries = Vec::with_capacity(meta.block_stats.len());
-    let mut offset = 0u64;
+    // ADR-062: in the coalesced-RaBitQ layout the data blocks begin after the
+    // header-prefix + RaBitQ region (`rabitq_off + rabitq_len`); for the legacy
+    // layout both are 0, so blocks start at offset 0 (unchanged). Block offsets
+    // recorded here are absolute file offsets (the VOE directory / read path).
+    let mut offset = meta.rabitq_off + meta.rabitq_len;
     for (block_id, stats) in meta.block_stats.iter().enumerate() {
         let centroid = meta
             .block_centroids
@@ -1096,6 +1100,8 @@ mod pax_write_outcome_tests {
             block_stats: vec![stats(40), stats(60)],
             block_centroids: vec![vec![1.0, 1.0], vec![2.0, 2.0]],
             block_radii: vec![0.5, 1.5],
+            rabitq_off: 0,
+            rabitq_len: 0,
         };
         let out = pax_write_outcome(&meta);
         assert_eq!(out.index_entries.len(), 2);

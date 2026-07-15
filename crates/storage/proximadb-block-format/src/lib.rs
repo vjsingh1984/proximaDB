@@ -70,6 +70,7 @@
 //! (via the `parquet` crate) backed by Iceberg manifests over decoupled Object Storage,
 //! driven by the DataFusion execution engine.
 
+pub mod coalesced_rabitq;
 pub mod header;
 pub mod prune;
 pub mod ranged;
@@ -83,6 +84,10 @@ pub mod writer;
 
 // ---- Top-level re-exports ----
 
+pub use coalesced_rabitq::{
+    CoalescedRaBitQHeader, RABITQ_SEED_BASE, REGION_FIXED_HEADER_LEN, RaBitQRegion, encode_region,
+    region_header_len, region_len,
+};
 pub use header::{
     BLOCK_MAGIC, BlockCompression, BlockHeader, BlockMode, FORMAT_VERSION, HEADER_SIZE, flags,
     fnv1a_hash,

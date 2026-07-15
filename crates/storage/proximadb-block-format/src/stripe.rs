@@ -374,6 +374,14 @@ pub struct SegmentMeta {
     /// instead of raw centroid distance, so a spread-out block that could still
     /// hold a near neighbour isn't wrongly pruned. Empty unless centroids opted in.
     pub block_radii: Vec<f32>,
+    /// ADR-062 / TD-RDSTRAT-6: byte offset of the coalesced RaBitQ header region
+    /// (the file-level binary index). `(0, 0)` for legacy segments (no coalesced
+    /// region); non-zero for the new scan-then-rerank layout. Threaded into the
+    /// VOE `IndexEntry`/footer so the read path finds the region for the hot scan.
+    #[serde(default)]
+    pub rabitq_off: u64,
+    #[serde(default)]
+    pub rabitq_len: u64,
 }
 
 #[cfg(test)]

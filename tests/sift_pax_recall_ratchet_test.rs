@@ -1154,3 +1154,151 @@ fn ivecs_round_trip_parses_neighbour_indices() {
     let got = read_vec_records_u32(&path, None).unwrap();
     assert_eq!(got, vec![vec![7, 3, 99], vec![0, 1, 2]]);
 }
+
+/// ADR-062 / TD-RDSTRAT-6 PR1 eval: coalesced-RaBitQ **scan-then-rerank** recall
+/// + ranged-GET cost on SIFT1M. The two reviewer PR1 ratchets:
+///   (a) IVF flush opt-in ON (`PROXIMADB_PAX_FLUSH_CLUSTER=ivf`) — rerank
+///       coalescing assumes `cluster_order_pca_ivf` survivor locality.
+///   (b) a SINGLE-FILE collection (one flush batch → one segment) isolates the
+///       per-file "~1 RaBitQ GET" win, NOT conflated with the PR2 GET-budget
+///       compaction (the flush→compaction scheduler is unwired).
+/// Expects recall@10 ≈ 0.99 at the keep=100% RaBitQ scan AND range_gets/query ≪
+/// today's ~370. `#[ignore]` (needs SIFT1M); record into BENCHMARK_EVIDENCE.toml.
+#[tokio::test]
+#[ignore = "SIFT1M eval — set PROXIMADB_SIFT_DATASET_DIR + run with --ignored"]
+async fn sift_coalesced_rabitq_scan_rerank_eval() {
+    unsafe {
+        std::env::set_var("PROXIMADB_PAX_VECTOR_SEGMENTS", "1");
+        std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rabitq");
+        std::env::set_var("PROXIMADB_PAX_BLOCK_CLUSTER", "1");
+        // PR1 reviewer ratchets:
+        std::env::set_var("PROXIMADB_PAX_FLUSH_CLUSTER", "ivf"); // (a) IVF opt-in ON
+        std::env::set_var("PROXIMADB_PAX_COALESCED_RABITQ", "1"); // the layout under test
+        std::env::set_var("PROXIMADB_COUNT_FS_IO", "1");
+    }
+
+    let base_path = match dataset_path("sift_base.fvecs") {
+        Some(p) if p.exists() => p,
+        _ => {
+            eprintln!(
+                "skip: PROXIMADB_SIFT_DATASET_DIR unset/missing — coalesced eval needs SIFT1M"
+            );
+            return;
+        }
+    };
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let subset_n: Option<usize> = std::env::var("PROXIMADB_SIFT_N")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0);
+    let max_queries: usize = std::env::var("PROXIMADB_SIFT_QUERIES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_QUERIES);
+    let recall_floor: f64 = std::env::var("PROXIMADB_SIFT_COALESCED_RECALL_FLOOR")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|f| *f > 0.0)
+        .unwrap_or(0.95);
+    let get_budget: u64 = std::env::var("PROXIMADB_SIFT_COALESCED_GET_BUDGET")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(50);
+
+    let base = read_vec_records_f32(&base_path, subset_n).expect("read sift_base.fvecs");
+    let n = base.len();
+    assert!(n >= TOP_K, "need at least {TOP_K} base vectors, got {n}");
+
+    let query_path = dataset_path("sift_query.fvecs");
+    let queries: Vec<Vec<f32>> = match query_path.as_ref().filter(|p| p.exists()) {
+        Some(p) => read_vec_records_f32(p, Some(max_queries)).expect("read sift_query.fvecs"),
+        None => base.iter().take(max_queries.min(n)).cloned().collect(),
+    };
+    let qcount = queries.len();
+    let gt_path = dataset_path("sift_groundtruth.ivecs");
+    let use_provided_gt = subset_n.is_none() && gt_path.as_ref().is_some_and(|p| p.exists());
+    let ground_truth: Vec<std::collections::HashSet<String>> = if use_provided_gt {
+        let gt = read_vec_records_u32(gt_path.as_ref().unwrap(), Some(qcount)).expect("read gt");
+        gt.into_iter()
+            .map(|row| row.into_iter().take(TOP_K).map(vid).collect())
+            .collect()
+    } else {
+        queries
+            .iter()
+            .map(|q| brute_force_topk(&base, q, TOP_K).into_iter().collect())
+            .collect()
+    };
+
+    // (b) SINGLE-FILE collection: flush the entire base in ONE batch → one segment
+    // file, isolating the per-file "~1 RaBitQ GET" win from the PR2 GET-budget
+    // compaction (the flush→compaction scheduler is unwired).
+    let temp_dir = TempDir::new().unwrap();
+    let collection = collection("sift_coalesced_eval", &temp_dir);
+    let engine = SstEngine::new().await.unwrap().with_directory_cache(Arc::new(
+        proximadb::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
+    ));
+    let batch: Vec<VectorRecord> = base
+        .iter()
+        .enumerate()
+        .map(|(i, v)| vector_record(i as u32, v.clone()))
+        .collect();
+    flush_batch(&engine, &collection, batch).await;
+    eprintln!("[coalesced] single-file collection: N={n} vectors flushed in one batch");
+
+    // Search all queries in ONE io_trace scope; range_gets accumulates over the loop.
+    let (recall, measured, snap) = proximadb::observability::io_trace::scope(async {
+        let mut recall_sum = 0.0f64;
+        let mut measured = 0usize;
+        for (qi, query) in queries.iter().enumerate() {
+            let got = search_topk(&engine, &collection, query.clone()).await;
+            if got.is_empty() {
+                continue;
+            }
+            let got_ids: std::collections::HashSet<String> = got.into_iter().take(TOP_K).collect();
+            recall_sum += got_ids.intersection(&ground_truth[qi]).count() as f64 / TOP_K as f64;
+            measured += 1;
+        }
+        let recall = if measured > 0 {
+            recall_sum / measured as f64
+        } else {
+            0.0
+        };
+        let snap = proximadb::observability::io_trace::snapshot().expect("io_trace scope active");
+        (recall, measured, snap)
+    })
+    .await;
+
+    let per_q_gets = if measured > 0 {
+        snap.range_gets / measured as u64
+    } else {
+        0
+    };
+    let per_q_bytes = if measured > 0 {
+        snap.bytes_read / measured as u64
+    } else {
+        0
+    };
+    eprintln!(
+        "=== ADR-062 coalesced scan-then-rerank (N={n}, {qcount} queries, top-{TOP_K}, IVF ON, single-file) ==="
+    );
+    eprintln!(
+        "  recall@{TOP_K} = {recall:.4}  range_gets/query = {per_q_gets}  bytes_read/query = {per_q_bytes}  (measured={measured}, total_gets={})",
+        snap.range_gets
+    );
+    eprintln!("  vs legacy block-prune ~370 GETs/query — target: < {get_budget} (≪ 370)");
+
+    assert!(
+        measured > 0,
+        "no queries measured — search returned nothing"
+    );
+    assert!(
+        recall >= recall_floor,
+        "coalesced recall@{TOP_K} = {recall:.4} < floor {recall_floor}"
+    );
+    assert!(
+        per_q_gets < get_budget,
+        "coalesced range_gets/query = {per_q_gets} >= budget {get_budget} (not ≪ 370)"
+    );
+}

@@ -43,6 +43,23 @@ date = "2026-05-28"
 version = "v0.2"
 notes = "Non-regression baseline only — explicitly NOT a cost/recall SLA (route is Beta). Cosine, Criterion release profile."
 
+[[claims]]
+id = "coalesced_rabitq_scan_rerank_sift"
+claim = "ADR-062 coalesced-RaBitQ scan-then-rerank reaches the ~0.99 recall regime at ~20 ranged GETs/query — vs the legacy block-centroid-prune ceiling of ~0.87 @ ~370 GETs (an 18.5x GET reduction, moving the dominant per_get cost term)"
+metric = "recall@10 + range_gets_per_query"
+status = "measured"
+asserted_in = [
+  "docs/12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc",
+  "docs/10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_N=100000 PROXIMADB_SIFT_QUERIES=100 cargo test --release --test sift_pax_recall_ratchet_test sift_coalesced_rabitq_scan_rerank_eval -- --ignored --nocapture"
+artifact = "docs/_internal/status/SIFT1M_COALESCED_RABITQ_RECALL_2026_07_15.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), no other workload"
+date = "2026-07-15"
+version = "develop @ 3a703d0d0 (+ ADR-062/TD-RDSTRAT-6 PR1: coalesced_rabitq feature)"
+notes = "Single-file collection (one flush batch) with the IVF flush opt-in ON (PROXIMADB_PAX_FLUSH_CLUSTER=ivf) — isolates the per-file ~1 RaBitQ GET win from the PR2 GET-budget compaction. N=100000 subset, 100 queries, top-10, Euclidean, brute-force ground truth. Measured recall@10 = 0.984, range_gets/query = 20. Indicative dev-machine run, not an SLA; bytes_read/query (31.7 MB) is the deferred post-PR1 lever (clustered SQ8/fp32 compression)."
+
 # ---------------------------------------------------------------------------
 # UNVERIFIED — a bench exists, but no dated artifact backs the claimed number.
 # ---------------------------------------------------------------------------
