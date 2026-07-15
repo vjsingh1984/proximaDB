@@ -81,9 +81,9 @@ use arrow::array::RecordBatch;
 use arrow::datatypes::Schema as ArrowSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::search::{ComparisonOperator, FilterExpression};
-use crate::storage::formats::FileSplit;
-use crate::storage::schema::ProximaSchema;
+use proximadb::core::search::{ComparisonOperator, FilterExpression};
+use proximadb::storage::formats::FileSplit;
+use proximadb::storage::schema::ProximaSchema;
 
 /// Configuration for Spark connector
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -687,7 +687,7 @@ impl SparkError {
 /// DataSource V2 `Table::schema()` consumes this. Returns a small
 /// `{"error":"..."}` JSON envelope on failure so the Java side can
 /// surface the message verbatim without a separate error channel.
-pub fn spark_get_table_schema(emb: &crate::embedded::EmbeddedProximaDB, table: &str) -> String {
+pub fn spark_get_table_schema(emb: &crate::EmbeddedProximaDB, table: &str) -> String {
     match emb.get_collection_schema(table) {
         Ok(Some(json)) => json.to_string(),
         Ok(None) => format!(r#"{{"error":"collection '{table}' not found"}}"#),
@@ -701,7 +701,7 @@ pub fn spark_get_table_schema(emb: &crate::embedded::EmbeddedProximaDB, table: &
 /// [`EmbeddedProximaDB::plan_partitions`] (single-partition fallback —
 /// real shard-aware planning is a follow-up TD).
 pub fn spark_plan_input_partitions(
-    emb: &crate::embedded::EmbeddedProximaDB,
+    emb: &crate::EmbeddedProximaDB,
     table: &str,
     filters_json: &str,
     num_partitions: i32,
@@ -743,7 +743,7 @@ pub fn spark_create_partition_reader(
 /// returning `false`). Updates the reader's cursor + `finished` flag
 /// so the next call resumes where this one left off.
 pub fn spark_read_next_batch(
-    emb: &crate::embedded::EmbeddedProximaDB,
+    emb: &crate::EmbeddedProximaDB,
     reader: &mut SparkPartitionReader,
 ) -> Result<Vec<u8>, SparkError> {
     if reader.finished {
@@ -815,7 +815,7 @@ pub fn spark_create_data_writer(
 /// mode (SharedRead / follower) by returning
 /// `SparkError::WriteRejected` — NEVER a silent `Ok(())`.
 pub fn spark_write_batch(
-    emb: &crate::embedded::EmbeddedProximaDB,
+    emb: &crate::EmbeddedProximaDB,
     writer: &mut SparkDataWriter,
     arrow_bytes: &[u8],
 ) -> Result<(), SparkError> {
@@ -841,7 +841,7 @@ pub fn spark_write_batch(
 /// commit message as JSON (Spark consumes this as the task's
 /// `WriterCommitMessage`).
 pub fn spark_commit_writer(
-    emb: &crate::embedded::EmbeddedProximaDB,
+    emb: &crate::EmbeddedProximaDB,
     writer: SparkDataWriter,
 ) -> Result<String, SparkError> {
     emb.flush().map_err(SparkError::embedded)?;
@@ -1293,7 +1293,7 @@ mod tests {
     // TD-097 (3) B3 — embedded `spark_*` impls (no JVM)
     // ========================================================================
 
-    use crate::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+    use crate::{EmbeddedConfig, EmbeddedProximaDB};
     use proximadb_records::{EmbeddingCell, EmbeddingScalarType, EmbeddingValues, ProximaRecord};
 
     fn build_spark_test_db() -> (EmbeddedProximaDB, tempfile::TempDir) {
@@ -1381,12 +1381,12 @@ mod tests {
     fn test_spark_create_partition_reader_rejects_malformed_split() {
         let bad = SparkInputPartition::from_splits(
             0,
-            vec![crate::storage::formats::FileSplit {
+            vec![proximadb::storage::formats::FileSplit {
                 split_id: "bad".into(),
                 file_path: "file:///not/a/collection".into(),
                 offset: 0,
                 length: 0,
-                split_type: crate::storage::formats::SplitType::ByteRange {
+                split_type: proximadb::storage::formats::SplitType::ByteRange {
                     estimated_records: 0,
                 },
                 statistics: Default::default(),

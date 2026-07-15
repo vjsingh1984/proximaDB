@@ -1008,7 +1008,7 @@ static WAL_MANAGER_REGISTRY: ResettableOnceLock<WriteAheadLogManagerRegistry> =
     ResettableOnceLock::new();
 
 /// Internal helper to reset global singletons (tests/embedded only)
-pub(crate) unsafe fn reset_global_wal_state_for_tests() {
+pub unsafe fn reset_global_wal_state_for_tests() {
     unsafe {
         GLOBAL_CATALOG.reset();
         GLOBAL_WRITE_BUFFER_BEHAVIOR.wal_behavior.reset();

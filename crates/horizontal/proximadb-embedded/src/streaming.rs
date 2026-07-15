@@ -41,8 +41,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-use crate::core::search::SearchMode;
-use crate::services::operations::vectors::UnifiedSearchConfig;
+use proximadb::core::search::SearchMode;
+use proximadb::services::operations::vectors::UnifiedSearchConfig;
 
 /// Search result from streaming search
 #[derive(Debug, Clone)]
@@ -290,7 +290,7 @@ impl StreamingSearchExecutor {
     /// Execute the streaming search and send results through the channel
     pub async fn execute(
         self,
-        vector_operations: Arc<crate::services::operations::vectors::VectorOperationsService>,
+        vector_operations: Arc<proximadb::services::operations::vectors::VectorOperationsService>,
         sender: mpsc::Sender<Result<Vec<StreamingSearchResult>, String>>,
     ) {
         let batch_size = self.config.batch_size;
@@ -351,7 +351,7 @@ impl StreamingSearchExecutor {
                                     ProximaValue::Float64(f) => f.to_string(),
                                     ProximaValue::Int64(i) => i.to_string(),
                                     ProximaValue::Boolean(b) => b.to_string(),
-                                    other => crate::embedded::proxima_value_to_string(other),
+                                    other => crate::proxima_value_to_string(other),
                                 };
                                 (k, val_str)
                             })

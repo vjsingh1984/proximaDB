@@ -93,6 +93,7 @@ pub mod c_ffi;
 pub mod nodejs;
 
 // Streaming search infrastructure
+pub mod spark;
 pub mod streaming;
 
 // Agent memory management with checkpoints
@@ -107,7 +108,7 @@ pub use agent_memory::{
 // Re-export streaming types
 pub use streaming::{EmbeddedSearchIterator, StreamingSearchConfig, StreamingSearchResult};
 
-use crate::core::config::{AdvancedPruneConfig, PruneModeConfig};
+use proximadb::core::config::{AdvancedPruneConfig, PruneModeConfig};
 
 /// Embedded database configuration for multi-disk support
 #[derive(Debug, Clone)]
@@ -487,8 +488,8 @@ pub(crate) fn json_to_proxima_value(
 }
 
 fn collection_engine_name(storage_engine: Option<i32>) -> String {
-    crate::core::conversions::storage_engine_to_string(
-        storage_engine.unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32),
+    proximadb::core::conversions::storage_engine_to_string(
+        storage_engine.unwrap_or(proximadb::proto::proximadb_v1::StorageEngine::Sst as i32),
     )
     .to_string()
 }
@@ -585,8 +586,8 @@ impl EmbeddedGraphNode {
     }
 
     /// Convert to proto Node for storage
-    pub fn to_proto(&self) -> crate::graph::Node {
-        use crate::graph::{Node, PropertyValue, property_value::Value};
+    pub fn to_proto(&self) -> proximadb::graph::Node {
+        use proximadb::graph::{Node, PropertyValue, property_value::Value};
 
         let properties: std::collections::HashMap<String, PropertyValue> = self
             .properties
@@ -612,8 +613,8 @@ impl EmbeddedGraphNode {
     }
 
     /// Create from proto Node
-    pub fn from_proto(node: &crate::graph::Node) -> Self {
-        use crate::graph::model::property_value::Value;
+    pub fn from_proto(node: &proximadb::graph::Node) -> Self {
+        use proximadb::graph::model::property_value::Value;
 
         let properties: std::collections::HashMap<String, String> = node
             .properties
@@ -703,8 +704,8 @@ impl EmbeddedGraphEdge {
     }
 
     /// Convert to proto Edge
-    pub fn to_proto(&self) -> crate::graph::Edge {
-        use crate::graph::{Edge, PropertyValue, property_value::Value};
+    pub fn to_proto(&self) -> proximadb::graph::Edge {
+        use proximadb::graph::{Edge, PropertyValue, property_value::Value};
 
         let properties: std::collections::HashMap<String, PropertyValue> = self
             .properties
@@ -732,8 +733,8 @@ impl EmbeddedGraphEdge {
     }
 
     /// Create from proto Edge
-    pub fn from_proto(edge: &crate::graph::Edge) -> Self {
-        use crate::graph::model::property_value::Value;
+    pub fn from_proto(edge: &proximadb::graph::Edge) -> Self {
+        use proximadb::graph::model::property_value::Value;
 
         let properties: std::collections::HashMap<String, String> = edge
             .properties
@@ -802,9 +803,9 @@ pub struct EmbeddedProximaDB {
     /// Tokio runtime for async operations
     runtime: tokio::runtime::Runtime,
     /// Shared services containing all ProximaDB functionality
-    shared_services: crate::network::multi_server::SharedServices,
+    shared_services: proximadb::network::multi_server::SharedServices,
     /// Embedded catalog manager for pgwire-compatible schema DDL and metadata
-    catalog_manager: std::sync::Arc<crate::catalog::CatalogManager>,
+    catalog_manager: std::sync::Arc<proximadb::catalog::CatalogManager>,
     /// Collection port for collection management (Phase 9: port-typed; concrete still available via `self.shared_services.collection_service` when port surface insufficient — see Task #76 deferral notes)
     collection_port: std::sync::Arc<dyn proximadb_runtime::CollectionPort>,
     /// Path where RL planner policy is persisted (None if RL disabled)
@@ -831,7 +832,7 @@ impl EmbeddedProximaDB {
         // and benchmarks. This is an unsafe workaround for a design limitation
         // where the engine relies on `OnceLock` globals.
         unsafe {
-            crate::storage::persistence::write_ahead_log::reset_global_wal_state_for_tests();
+            proximadb::storage::persistence::write_ahead_log::reset_global_wal_state_for_tests();
             tracing::info!(
                 "🧹 EMBEDDED: Unsafe reset of global state (manifest, write buffer, registry) complete."
             );
@@ -866,11 +867,11 @@ impl EmbeddedProximaDB {
             });
 
             // Initialize RL planner with default config
-            let rl_config = crate::query::rl_planner::RLPlannerConfig::default();
-            crate::query::rl_planner::init_rl_planner(rl_config);
+            let rl_config = proximadb::query::rl_planner::RLPlannerConfig::default();
+            proximadb::query::rl_planner::init_rl_planner(rl_config);
 
             // Try to load existing policy
-            if let Some(planner) = crate::query::rl_planner::get_rl_planner()
+            if let Some(planner) = proximadb::query::rl_planner::get_rl_planner()
                 && std::path::Path::new(&policy_path).exists()
             {
                 runtime.block_on(async {
@@ -908,9 +909,9 @@ impl EmbeddedProximaDB {
         let catalog_manager = shared_services.catalog_manager.clone();
         runtime
             .block_on(async {
-                let ddl_service = crate::services::DdlService::new(catalog_manager.clone());
+                let ddl_service = proximadb::services::DdlService::new(catalog_manager.clone());
                 ddl_service
-                    .execute(crate::services::DdlStatement::CreateNamespace {
+                    .execute(proximadb::services::DdlStatement::CreateNamespace {
                         namespace: vec!["default".to_string()],
                         if_not_exists: true,
                         properties: std::collections::HashMap::new(),
@@ -1009,8 +1010,8 @@ impl EmbeddedProximaDB {
     }
 
     /// Convert EmbeddedConfig to the internal StorageConfig
-    fn to_storage_config(config: &EmbeddedConfig) -> crate::core::config::StorageConfig {
-        use crate::core::config::{StorageConfig, StorageLocation};
+    fn to_storage_config(config: &EmbeddedConfig) -> proximadb::core::config::StorageConfig {
+        use proximadb::core::config::{StorageConfig, StorageLocation};
 
         // Convert storage locations
         let storage_locations: Vec<StorageLocation> = config
@@ -1038,17 +1039,17 @@ impl EmbeddedProximaDB {
 
         // Create optimized SST config for embedded mode
         // Adaptive bloom filters are automatically used by the SST writer
-        let sst_config = crate::core::config::SstConfig {
+        let sst_config = proximadb::core::config::SstConfig {
             // Use default block size (256KB) optimized for NVMe
             block_size_kb: 256,
             // Enable bloom filters with adaptive sizing
-            bloom_filter_config: Some(crate::core::bloom::BloomFilterConfig {
+            bloom_filter_config: Some(proximadb::core::bloom::BloomFilterConfig {
                 enabled: true,
-                strategy: crate::core::bloom::BloomStrategy::ByteAligned,
+                strategy: proximadb::core::bloom::BloomStrategy::ByteAligned,
                 bits_per_key: 10, // Base value, adaptive sizing will optimize this
                 false_positive_rate: Some(0.01), // 1% FPR target
                 expected_items: 10000,
-                hash_algorithm: crate::core::bloom::HashAlgorithm::XXHash,
+                hash_algorithm: proximadb::core::bloom::HashAlgorithm::XXHash,
             }),
             // Enable LZ4 compression for better throughput
             compression: "lz4".to_string(),
@@ -1082,15 +1083,15 @@ impl EmbeddedProximaDB {
             cache_size_mb: config.cache_size_mb as u64,
             sst_config: Some(sst_config),
             // Enable bloom filters globally
-            bloom_filter_config: Some(crate::core::bloom::BloomFilterConfig {
+            bloom_filter_config: Some(proximadb::core::bloom::BloomFilterConfig {
                 enabled: true,
-                strategy: crate::core::bloom::BloomStrategy::ByteAligned,
+                strategy: proximadb::core::bloom::BloomStrategy::ByteAligned,
                 bits_per_key: 10,
                 false_positive_rate: Some(0.01),
                 expected_items: 10000,
-                hash_algorithm: crate::core::bloom::HashAlgorithm::XXHash,
+                hash_algorithm: proximadb::core::bloom::HashAlgorithm::XXHash,
             }),
-            wal_config: crate::core::config::WriteBufferUserConfig {
+            wal_config: proximadb::core::config::WriteBufferUserConfig {
                 enable_wal: config.enable_wal,
                 ..Default::default()
             },
@@ -1101,22 +1102,23 @@ impl EmbeddedProximaDB {
 
     /// Initialize the internal services asynchronously
     async fn init_services(
-        storage_config: crate::core::config::StorageConfig,
+        storage_config: proximadb::core::config::StorageConfig,
     ) -> Result<
         (
-            crate::network::multi_server::SharedServices,
+            proximadb::network::multi_server::SharedServices,
             std::sync::Arc<dyn proximadb_runtime::CollectionPort>,
         ),
         Box<dyn std::error::Error + Send + Sync>,
     > {
-        use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
+        use proximadb::storage::cache::orchestrator::CrossCacheOrchestrator;
         use std::sync::Arc;
 
         // Initialize hardware capabilities
         let _ = proximadb_hardware::hardware_capabilities();
 
         // Log hardware capabilities summary
-        let _hw_summary = crate::core::hardware_capabilities::log_hardware_capabilities_summary();
+        let _hw_summary =
+            proximadb::core::hardware_capabilities::log_hardware_capabilities_summary();
 
         // Initialize global WAL manifest for proper WAL file cleanup
         // This is critical for embedded mode to avoid duplicate data
@@ -1128,13 +1130,13 @@ impl EmbeddedProximaDB {
 
         // Create SharedServices - this sets up all the internal components
         let (shared_services, collection_service) =
-            crate::network::multi_server::SharedServices::new(
+            proximadb::network::multi_server::SharedServices::new(
                 None, // No metrics collector needed for embedded
                 &storage_config,
                 Some(orchestrator),
                 None, // No full config needed
                 // Fused in-process: no Prometheus/billing/scrape background work.
-                crate::network::multi_server::ServiceProfile::Embedded,
+                proximadb::network::multi_server::ServiceProfile::Embedded,
             )
             .await
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
@@ -1144,7 +1146,8 @@ impl EmbeddedProximaDB {
         // Set the global catalog for WAL path resolution. The catalog is the
         // sole authority, so WAL operations resolve collection paths through it.
         if let Some(catalog_manager) = collection_service.catalog_manager() {
-            crate::storage::persistence::write_ahead_log::set_global_catalog(catalog_manager).await;
+            proximadb::storage::persistence::write_ahead_log::set_global_catalog(catalog_manager)
+                .await;
             tracing::debug!("✅ Embedded: Global catalog set for WAL/recovery resolution");
         }
 
@@ -1155,10 +1158,10 @@ impl EmbeddedProximaDB {
 
     /// Initialize the global WAL manifest for proper WAL file cleanup
     async fn init_global_manifest(
-        storage_config: &crate::core::config::StorageConfig,
+        storage_config: &proximadb::core::config::StorageConfig,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        use crate::storage::persistence::write_ahead_log::config::WALConfig;
-        use crate::storage::persistence::write_ahead_log::manifest;
+        use proximadb::storage::persistence::write_ahead_log::config::WALConfig;
+        use proximadb::storage::persistence::write_ahead_log::manifest;
 
         // In embedded mode, always reset the manifest to support multiple database instances
         // with different storage locations in the same process
@@ -1285,18 +1288,20 @@ impl EmbeddedProximaDB {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Check write access before creating collection
         self.check_write_access()?;
-        use crate::proto::proximadb_v1::{CollectionConfig, CompressionAlgorithm, StorageConfig};
+        use proximadb::proto::proximadb_v1::{
+            CollectionConfig, CompressionAlgorithm, StorageConfig,
+        };
 
         let requested_engine = engine.unwrap_or(&self.config.default_engine);
-        let storage_engine = crate::core::conversions::parse_storage_engine(requested_engine)
+        let storage_engine = proximadb::core::conversions::parse_storage_engine(requested_engine)
             .map_err(|_| -> Box<dyn std::error::Error + Send + Sync> {
-                format!("Unknown storage engine: {}", requested_engine).into()
-            })?;
+            format!("Unknown storage engine: {}", requested_engine).into()
+        })?;
 
         let collection_config = CollectionConfig {
             name: name.to_string(),
             dimension,
-            distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32),
+            distance_metric: Some(proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32),
             storage_engine: Some(storage_engine as i32),
             storage_config: Some(StorageConfig {
                 compression: Some(CompressionAlgorithm::CompressionLz4 as i32),
@@ -1331,9 +1336,9 @@ impl EmbeddedProximaDB {
             // Register the collection in the global cache for EventLog consumer
             // This enables AXIS index building when flush events occur
             if let Some(collection) = response.collection {
-                crate::services::events::log::register_collection_in_cache(std::sync::Arc::new(
-                    collection,
-                ));
+                proximadb::services::events::log::register_collection_in_cache(
+                    std::sync::Arc::new(collection),
+                );
                 tracing::info!(
                     "📦 EMBEDDED: Registered collection '{}' in global cache for AXIS indexing",
                     name
@@ -1363,16 +1368,16 @@ impl EmbeddedProximaDB {
         engine: Option<&str>,
         index_type: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        use crate::proto::proximadb_v1::{
+        use proximadb::proto::proximadb_v1::{
             CollectionConfig, CompressionAlgorithm, HnswConfig, IndexConfig, IndexingAlgorithm,
             IvfConfig, LshConfig, StorageConfig,
         };
 
         let requested_engine = engine.unwrap_or(&self.config.default_engine);
-        let storage_engine = crate::core::conversions::parse_storage_engine(requested_engine)
+        let storage_engine = proximadb::core::conversions::parse_storage_engine(requested_engine)
             .map_err(|_| -> Box<dyn std::error::Error + Send + Sync> {
-                format!("Unknown storage engine: {}", requested_engine).into()
-            })?;
+            format!("Unknown storage engine: {}", requested_engine).into()
+        })?;
 
         // Build index config based on requested type
         let index_configs = match index_type.to_lowercase().as_str() {
@@ -1465,7 +1470,7 @@ impl EmbeddedProximaDB {
 
             // Register the collection in the global cache for EventLog consumer
             if let Some(collection) = response.collection {
-                crate::services::events::log::register_collection_in_cache(
+                proximadb::services::events::log::register_collection_in_cache(
                     std::sync::Arc::new(collection)
                 );
                 tracing::info!(
@@ -1518,11 +1523,13 @@ impl EmbeddedProximaDB {
     /// (`EmbeddedConfig::with_tenant`), inserts route through the same tenant-scoped
     /// path the networked server uses, making the boundary contract uniform
     /// (co-design tenet 3). Non-breaking: embedded vector storage is collection-keyed.
-    fn embedded_tenant_context(&self) -> Option<crate::storage::tenant::context::TenantContext> {
+    fn embedded_tenant_context(
+        &self,
+    ) -> Option<proximadb::storage::tenant::context::TenantContext> {
         self.config
             .tenant_id
             .clone()
-            .map(crate::storage::tenant::context::TenantContext::for_tenant_id)
+            .map(proximadb::storage::tenant::context::TenantContext::for_tenant_id)
     }
 
     /// Insert vectors into a collection
@@ -1744,25 +1751,27 @@ impl EmbeddedProximaDB {
             // Build SqlValue filter map for the query adapter.
             let filter_map: std::collections::HashMap<
                 String,
-                crate::proto::proximadb_v1::SqlValue,
+                proximadb::proto::proximadb_v1::SqlValue,
             > = predicates
                 .iter()
                 .map(|(k, v)| {
                     (
                         k.clone(),
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                v.clone(),
-                            )),
+                        proximadb::proto::proximadb_v1::SqlValue {
+                            value: Some(
+                                proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                                    v.clone(),
+                                ),
+                            ),
                         },
                     )
                 })
                 .collect();
 
             let result = self.runtime.block_on(async {
-                let request = crate::proto::proximadb_v1::VectorSearchRequest {
+                let request = proximadb::proto::proximadb_v1::VectorSearchRequest {
                     collection_id: collection.to_string(),
-                    queries: vec![crate::proto::proximadb_v1::SearchQuery {
+                    queries: vec![proximadb::proto::proximadb_v1::SearchQuery {
                         vector: query_vector,
                         filters: filter_map,
                         advanced_filter: None,
@@ -1797,7 +1806,7 @@ impl EmbeddedProximaDB {
                                     .into_iter()
                                     .map(|(k, v)| {
                                         // gRPC path: v is SqlValue — convert to ProximaValue first
-                                        use crate::core::search::results::sql_value_to_proxima_value;
+                                        use proximadb::core::search::results::sql_value_to_proxima_value;
                                         let val_str = proxima_value_to_string(
                                             sql_value_to_proxima_value(v),
                                         );
@@ -1820,8 +1829,8 @@ impl EmbeddedProximaDB {
             return result;
         }
 
-        use crate::core::search::SearchMode;
-        use crate::services::operations::vectors::UnifiedSearchConfig;
+        use proximadb::core::search::SearchMode;
+        use proximadb::services::operations::vectors::UnifiedSearchConfig;
 
         // Start timing for metrics
         let start = std::time::Instant::now();
@@ -2026,7 +2035,7 @@ impl EmbeddedProximaDB {
     }
 
     /// Get the shared services
-    pub fn shared_services(&self) -> &crate::network::multi_server::SharedServices {
+    pub fn shared_services(&self) -> &proximadb::network::multi_server::SharedServices {
         &self.shared_services
     }
 
@@ -2106,7 +2115,7 @@ impl EmbeddedProximaDB {
 
     /// Scan one page of records via the same canonical pipeline used
     /// by the REST `scanRecords` handler — `UnifiedHandlers::handle_record_scan_for_tenant`
-    /// then [`apply_scan_cursor`](crate::services::scan_cursor::apply_scan_cursor)
+    /// then [`apply_scan_cursor`](proximadb::services::scan_cursor::apply_scan_cursor)
     /// for stable-sorted, cursor-paginated output. Returns
     /// `(records, next_cursor)`: the cursor is `None` when the page is
     /// short (definite end-of-scan).
@@ -2114,7 +2123,7 @@ impl EmbeddedProximaDB {
     /// `cursor`: opaque continuation token from the previous call; pass
     /// `None` to start at the beginning. Stale cursors (>24h) and
     /// collection-mismatched cursors error out via
-    /// [`ScanCursorDecodeError`](crate::services::scan_cursor::ScanCursorDecodeError).
+    /// [`ScanCursorDecodeError`](proximadb::services::scan_cursor::ScanCursorDecodeError).
     pub fn scan_records(
         &self,
         collection: &str,
@@ -2136,7 +2145,7 @@ impl EmbeddedProximaDB {
         collection: &str,
         cursor: Option<String>,
         limit: usize,
-        filter: Option<&crate::core::search::FilterExpression>,
+        filter: Option<&proximadb::core::search::FilterExpression>,
     ) -> Result<
         (Vec<proximadb_records::ProximaRecord>, Option<String>),
         Box<dyn std::error::Error + Send + Sync>,
@@ -2147,9 +2156,9 @@ impl EmbeddedProximaDB {
             .unwrap_or(0);
 
         let inbound_cursor = match cursor.as_deref() {
-            Some(raw) if !raw.is_empty() => Some(crate::services::scan_cursor::ScanCursor::decode(
-                raw, collection, now_ns,
-            )?),
+            Some(raw) if !raw.is_empty() => Some(
+                proximadb::services::scan_cursor::ScanCursor::decode(raw, collection, now_ns)?,
+            ),
             _ => None,
         };
 
@@ -2191,7 +2200,7 @@ impl EmbeddedProximaDB {
     }
 
     /// Plan input partitions for parallel reads. Returns a list of
-    /// [`SparkInputPartition`](crate::connectors::spark::SparkInputPartition)
+    /// [`SparkInputPartition`](crate::spark::SparkInputPartition)
     /// — each carries `FileSplit`s that subsequent
     /// `create_partition_reader` calls consume.
     ///
@@ -2208,12 +2217,10 @@ impl EmbeddedProximaDB {
         &self,
         collection: &str,
         _num_partitions: u32,
-    ) -> Result<
-        Vec<crate::connectors::spark::SparkInputPartition>,
-        Box<dyn std::error::Error + Send + Sync>,
-    > {
-        use crate::connectors::spark::SparkInputPartition;
-        use crate::storage::formats::FileSplit;
+    ) -> Result<Vec<crate::spark::SparkInputPartition>, Box<dyn std::error::Error + Send + Sync>>
+    {
+        use crate::spark::SparkInputPartition;
+        use proximadb::storage::formats::FileSplit;
 
         // Validate the collection exists before producing splits, so
         // a typo on the JNI side fails fast (vs. emitting a "ghost"
@@ -2243,7 +2250,7 @@ impl EmbeddedProximaDB {
         // Explicitly typed as Result<u64, E> to capture bytes written for metrics
         let result: Result<u64, Box<dyn std::error::Error + Send + Sync>> =
             self.runtime.block_on(async {
-                use crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
+                use proximadb::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
 
                 tracing::info!("🛑 EMBEDDED: Flushing all unflushed data to storage engines...");
 
@@ -2305,7 +2312,7 @@ impl EmbeddedProximaDB {
                     let mut collection_name = collection_id.clone();
                     let mut base_location_for_flush = base_storage_url.clone();
                     let mut storage_engine_type =
-                        crate::proto::proximadb_v1::StorageEngine::Sst as i32;
+                        proximadb::proto::proximadb_v1::StorageEngine::Sst as i32;
                     let mut collection_dimension: u32 = 0;
 
                     if let Ok(Some(coll)) = &collection_metadata {
@@ -2315,7 +2322,7 @@ impl EmbeddedProximaDB {
                             collection_dimension = cfg.dimension;
                             storage_engine_type = cfg
                                 .storage_engine
-                                .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32);
+                                .unwrap_or(proximadb::proto::proximadb_v1::StorageEngine::Sst as i32);
                         }
 
                         // Prefer the persisted storage assignment path so we flush into the same directory
@@ -2336,7 +2343,7 @@ impl EmbeddedProximaDB {
                     // helper (engine factory + flush() funnel + WAL cleanup + A6 fence).
                     // Embedded is single-pod: it passes no fence and reuses the running
                     // unified SST engine as the create-failure fallback.
-                    let plan = crate::storage::flush_materializer::CollectionFlushPlan {
+                    let plan = proximadb::storage::flush_materializer::CollectionFlushPlan {
                         wal_key: collection_id.clone(),
                         canonical_id: canonical_collection_id.clone(),
                         base_location: base_location_for_flush.clone(),
@@ -2355,7 +2362,7 @@ impl EmbeddedProximaDB {
                         .shared_services
                         .vector_operations_service
                         .axis_index_manager();
-                    match crate::storage::flush_materializer::materialize_collection(
+                    match proximadb::storage::flush_materializer::materialize_collection(
                         &write_buffer,
                         &plan,
                         None,
@@ -2492,7 +2499,7 @@ impl EmbeddedProximaDB {
         vector_id: &str,
     ) -> Result<Option<proximadb_records::ProximaRecord>, Box<dyn std::error::Error + Send + Sync>>
     {
-        use crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
+        use proximadb::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
 
         self.runtime.block_on(async {
             // Step 1: Check WAL/memtable for unflushed data using MVCC-aware lookup.
@@ -2875,7 +2882,7 @@ impl EmbeddedProximaDB {
         // Try to get WAL stats from the global write buffer
         self.runtime.block_on(async {
             if let Some(write_buffer) =
-                crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior()
+                proximadb::storage::persistence::write_ahead_log::get_global_write_buffer_behavior()
             {
                 let collections = write_buffer.list_collections_with_unflushed_data().await;
                 let mut total_pending_bytes = 0u64;
@@ -2921,7 +2928,7 @@ impl EmbeddedProximaDB {
     pub fn close(&self) {
         // Persist RL planner policy if enabled
         if let Some(ref policy_path) = self.rl_policy_path
-            && let Some(planner) = crate::query::rl_planner::get_rl_planner()
+            && let Some(planner) = proximadb::query::rl_planner::get_rl_planner()
         {
             self.runtime.block_on(async {
                 match planner.save_policy(policy_path).await {
@@ -2989,7 +2996,7 @@ impl EmbeddedProximaDB {
 
             // Get current LSN from global manifest
             let current_lsn =
-                match crate::storage::persistence::write_ahead_log::manifest::get_service() {
+                match proximadb::storage::persistence::write_ahead_log::manifest::get_service() {
                     Some(svc) => svc.current_lsn().await,
                     None => 0,
                 };
@@ -3084,7 +3091,7 @@ impl EmbeddedProximaDB {
             // For now, we implement a simplified restore that uses PITR if available,
             // or logs a warning if full PITR is not set up
 
-            if let Some(manifest_service) = crate::storage::persistence::write_ahead_log::manifest::get_service() {
+            if let Some(manifest_service) = proximadb::storage::persistence::write_ahead_log::manifest::get_service() {
                 // Use the manifest to mark entries after checkpoint as rolled back
                 match manifest_service.mark_entries_after_lsn_rolled_back(checkpoint_info.checkpoint_lsn).await {
                     Ok(rolled_back) => {
@@ -3103,7 +3110,7 @@ impl EmbeddedProximaDB {
             }
 
             // Clear the write buffer for affected collections
-            if let Some(write_buffer) = crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior() {
+            if let Some(write_buffer) = proximadb::storage::persistence::write_ahead_log::get_global_write_buffer_behavior() {
                 for collection_name in &checkpoint_info.collections {
                     if let Err(e) = write_buffer.clear_flushed(collection_name).await {
                         tracing::warn!(
@@ -3147,7 +3154,7 @@ impl EmbeddedProximaDB {
         // Check write access before saving delta (requires flushing)
         self.check_write_access()?;
 
-        use crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
+        use proximadb::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
 
         self.runtime.block_on(async {
             // Get the last checkpoint LSN
@@ -3156,7 +3163,7 @@ impl EmbeddedProximaDB {
 
             // Get current LSN
             let end_lsn =
-                match crate::storage::persistence::write_ahead_log::manifest::get_service() {
+                match proximadb::storage::persistence::write_ahead_log::manifest::get_service() {
                     Some(svc) => svc.current_lsn().await,
                     None => start_lsn,
                 };
@@ -3269,7 +3276,7 @@ impl EmbeddedProximaDB {
                         if let Some(vector_data) = entry.vector_data {
                             // Deserialize legacy VectorRecord delta data and convert to canonical
                             // ProximaRecord envelopes at this storage migration boundary.
-                            let vr_records: Vec<crate::proto::proximadb_v1::VectorRecord> =
+                            let vr_records: Vec<proximadb::proto::proximadb_v1::VectorRecord> =
                                 bincode::deserialize(&vector_data).map_err(
                                     |e| -> Box<dyn std::error::Error + Send + Sync> {
                                         Box::new(std::io::Error::other(e.to_string()))
@@ -3365,7 +3372,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
-            let engine_config = engine.map(|e| crate::proto::proximadb_v1::GraphEngineConfig {
+            let engine_config = engine.map(|e| proximadb::proto::proximadb_v1::GraphEngineConfig {
                 engine_type: e.to_string(),
                 memory_pool_size_mb: 0,
                 csr_cache_size_mb: 0,
@@ -3374,7 +3381,7 @@ impl EmbeddedProximaDB {
                 advanced_config: std::collections::HashMap::new(),
             });
 
-            let request = crate::proto::proximadb_v1::CreateGraphRequest {
+            let request = proximadb::proto::proximadb_v1::CreateGraphRequest {
                 graph_id: graph_id.to_string(),
                 name: Some(graph_id.to_string()),
                 description: None,
@@ -3517,7 +3524,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
-            let node_query = crate::graph::NodeQuery {
+            let node_query = proximadb::graph::NodeQuery {
                 labels,
                 ..Default::default()
             };
@@ -3551,7 +3558,7 @@ impl EmbeddedProximaDB {
             let proto_nodes = graph_service
                 .query_nodes(
                     graph_id,
-                    crate::graph::NodeQuery {
+                    proximadb::graph::NodeQuery {
                         graph_id: graph_id.to_string(),
                         labels: labels.unwrap_or_default(),
                         filters: properties
@@ -3584,7 +3591,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
-            let edge_query = crate::graph::EdgeQuery {
+            let edge_query = proximadb::graph::EdgeQuery {
                 from_node_id: Some(node_id.to_string()),
                 to_node_id: None,
                 edge_types: edge_types.unwrap_or_default(),
@@ -3615,7 +3622,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
-            let edge_query = crate::graph::EdgeQuery {
+            let edge_query = proximadb::graph::EdgeQuery {
                 from_node_id: None,
                 to_node_id: Some(node_id.to_string()),
                 edge_types: edge_types.unwrap_or_default(),
@@ -3693,14 +3700,14 @@ impl EmbeddedProximaDB {
                 .graph_service
                 .traverse(
                     graph_id,
-                    crate::graph::TraversalRequest {
+                    proximadb::graph::TraversalRequest {
                         graph_id: graph_id.to_string(),
                         start_node_id: start_node_id.to_string(),
                         max_depth,
                         edge_types: edge_types.unwrap_or_default(),
                         node_labels: Vec::new(),
                         filters: Vec::new(),
-                        algorithm: crate::graph::TraversalAlgorithm::Bfs as i32,
+                        algorithm: proximadb::graph::TraversalAlgorithm::Bfs as i32,
                         limit,
                         timeout_ms: None,
                         max_frontier: None,
@@ -3729,8 +3736,8 @@ impl EmbeddedProximaDB {
         limit: usize,
     ) -> Result<EmbeddedGraphTraversalResult, Box<dyn std::error::Error + Send + Sync>> {
         let dir = match direction {
-            "backward" => crate::graph::ImpactDirection::Backward,
-            _ => crate::graph::ImpactDirection::Forward,
+            "backward" => proximadb::graph::ImpactDirection::Backward,
+            _ => proximadb::graph::ImpactDirection::Forward,
         };
         self.runtime.block_on(async {
             let response = self
@@ -3774,14 +3781,14 @@ impl EmbeddedProximaDB {
         document_weight: Option<f32>,
     ) -> Result<
         (
-            Vec<crate::core::search::cross_modal_fusion::FusedItem>,
-            crate::core::search::cross_modal_fusion::FusionStats,
+            Vec<proximadb::core::search::cross_modal_fusion::FusedItem>,
+            proximadb::core::search::cross_modal_fusion::FusionStats,
         ),
         Box<dyn std::error::Error + Send + Sync>,
     > {
         self.runtime.block_on(async {
-            use crate::core::search::cross_modal_fusion::FusionPolicy;
-            use crate::services::fusion_service::{
+            use proximadb::core::search::cross_modal_fusion::FusionPolicy;
+            use proximadb::services::fusion_service::{
                 DocumentFusionSpec, FusionOidKey, FusionService, GraphFusionParams, GraphGrain,
             };
 
@@ -3870,7 +3877,9 @@ impl EmbeddedProximaDB {
         name: &str,
         indexes: Option<Vec<String>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        use crate::proto::proximadb_v1::{DocIndexType, DocumentCollectionConfig, IndexDefinition};
+        use proximadb::proto::proximadb_v1::{
+            DocIndexType, DocumentCollectionConfig, IndexDefinition,
+        };
 
         self.runtime.block_on(async {
             let doc_service = self.shared_services.document_service.clone();
@@ -3978,7 +3987,7 @@ impl EmbeddedProximaDB {
                 })?;
 
             Ok(record.map(|r| {
-                Self::sql_object_to_json(&crate::storage::document::proxima_tree_to_sql_object(
+                Self::sql_object_to_json(&proximadb::storage::document::proxima_tree_to_sql_object(
                     &r.props,
                 ))
             }))
@@ -4008,8 +4017,8 @@ impl EmbeddedProximaDB {
         filter: Option<&str>,
         limit: u32,
     ) -> Result<Vec<(String, serde_json::Value)>, Box<dyn std::error::Error + Send + Sync>> {
-        use crate::proto::proximadb_v1::DocumentFilter;
-        use crate::storage::document::DocumentQueryParams;
+        use proximadb::proto::proximadb_v1::DocumentFilter;
+        use proximadb::storage::document::DocumentQueryParams;
 
         self.runtime.block_on(async {
             let doc_service = self.shared_services.document_service.clone();
@@ -4047,7 +4056,7 @@ impl EmbeddedProximaDB {
                 .documents
                 .into_iter()
                 .map(|r| {
-                    let obj = crate::storage::document::proxima_tree_to_sql_object(&r.props);
+                    let obj = proximadb::storage::document::proxima_tree_to_sql_object(&r.props);
                     (r.id, Self::sql_object_to_json(&obj))
                 })
                 .collect())
@@ -4077,7 +4086,7 @@ impl EmbeddedProximaDB {
         // Check write access before updating document
         self.check_write_access()?;
 
-        use crate::proto::proximadb_v1::{DocumentUpdate, UpdateOperation};
+        use proximadb::proto::proximadb_v1::{DocumentUpdate, UpdateOperation};
 
         self.runtime.block_on(async {
             let doc_service = self.shared_services.document_service.clone();
@@ -4209,13 +4218,13 @@ impl EmbeddedProximaDB {
             });
         }
 
-        if crate::services::CatalogIntrospectionService::is_catalog_query(trimmed) {
+        if proximadb::services::CatalogIntrospectionService::is_catalog_query(trimmed) {
             let start_time = std::time::Instant::now();
             let catalog_manager = self.catalog_manager.clone();
             if let Some(result) = self
                 .runtime
                 .block_on(async {
-                    crate::services::CatalogIntrospectionService::new(catalog_manager)
+                    proximadb::services::CatalogIntrospectionService::new(catalog_manager)
                         .execute_select(trimmed)
                         .await
                 })
@@ -4251,7 +4260,7 @@ impl EmbeddedProximaDB {
             }
         }
 
-        let ddl_parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_parser = proximadb::query::sql_frontend::SqlFrontendParser::new();
         match ddl_parser.parse_ddl(trimmed) {
             Ok(Some(statement)) => {
                 let start_time = std::time::Instant::now();
@@ -4260,7 +4269,7 @@ impl EmbeddedProximaDB {
                 let result = self
                     .runtime
                     .block_on(async {
-                        let ddl_service = crate::services::DdlService::new(catalog_manager);
+                        let ddl_service = proximadb::services::DdlService::new(catalog_manager);
                         ddl_service.execute(statement).await
                     })
                     .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
@@ -4305,7 +4314,7 @@ impl EmbeddedProximaDB {
             Err(_) => {}
         }
 
-        let dml_parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let dml_parser = proximadb::query::sql_frontend::SqlFrontendParser::new();
         match dml_parser.parse_dml(trimmed) {
             Ok(Some(statement)) => {
                 let start_time = std::time::Instant::now();
@@ -4316,7 +4325,7 @@ impl EmbeddedProximaDB {
                     .runtime
                     .block_on(async {
                         let dml_service =
-                            crate::services::DmlService::new(catalog_manager, vector_ops);
+                            proximadb::services::DmlService::new(catalog_manager, vector_ops);
                         dml_service.execute(statement).await
                     })
                     .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
@@ -4362,8 +4371,8 @@ impl EmbeddedProximaDB {
         }
 
         self.runtime.block_on(async {
-            let proto_params: Option<Vec<crate::proto::proximadb_v1::SqlValue>> =
-                parameters.map(|values| {
+            let proto_params: Option<Vec<proximadb::proto::proximadb_v1::SqlValue>> = parameters
+                .map(|values| {
                     values
                         .into_iter()
                         .map(|value| Self::json_to_sql_value(&value))
@@ -4451,13 +4460,15 @@ impl EmbeddedProximaDB {
         let start = std::time::Instant::now();
 
         let mut records =
-            crate::network::arrow_ipc::codec::ArrowProtoCodec::batches_to_proxima_records(batches)
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(format!(
-                        "Failed to convert Arrow batches to ProximaRecords: {}",
-                        e
-                    )))
-                })?;
+            proximadb::network::arrow_ipc::codec::ArrowProtoCodec::batches_to_proxima_records(
+                batches,
+            )
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                Box::new(std::io::Error::other(format!(
+                    "Failed to convert Arrow batches to ProximaRecords: {}",
+                    e
+                )))
+            })?;
 
         if let Some(tid) = tenant_id {
             for record in &mut records {
@@ -4512,9 +4523,9 @@ impl EmbeddedProximaDB {
 
     fn ensure_catalog_vector_backing_collection(
         &self,
-        statement: &crate::services::DdlStatement,
+        statement: &proximadb::services::DdlStatement,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let crate::services::DdlStatement::CreateTable { table_name, .. } = statement else {
+        let proximadb::services::DdlStatement::CreateTable { table_name, .. } = statement else {
             return Ok(());
         };
         self.ensure_vector_backing_collection_for_table(table_name)
@@ -4522,7 +4533,7 @@ impl EmbeddedProximaDB {
 
     fn ensure_dml_vector_backing_collection(
         &self,
-        statement: &crate::services::DmlStatement,
+        statement: &proximadb::services::DmlStatement,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.ensure_vector_backing_collection_for_table(statement.target_table_name())
     }
@@ -4789,8 +4800,8 @@ impl EmbeddedProximaDB {
     // ========================================================================
 
     /// Convert serde_json::Value to SqlObject
-    fn json_to_sql_object(value: &serde_json::Value) -> crate::proto::proximadb_v1::SqlObject {
-        use crate::proto::proximadb_v1::SqlObject;
+    fn json_to_sql_object(value: &serde_json::Value) -> proximadb::proto::proximadb_v1::SqlObject {
+        use proximadb::proto::proximadb_v1::SqlObject;
 
         let mut fields = std::collections::HashMap::new();
         if let serde_json::Value::Object(map) = value {
@@ -4802,14 +4813,14 @@ impl EmbeddedProximaDB {
     }
 
     /// Convert serde_json::Value to SqlValue
-    fn json_to_sql_value(value: &serde_json::Value) -> crate::proto::proximadb_v1::SqlValue {
-        crate::core::search::results::proxima_value_to_sql_value(json_to_proxima_value(
+    fn json_to_sql_value(value: &serde_json::Value) -> proximadb::proto::proximadb_v1::SqlValue {
+        proximadb::core::search::results::proxima_value_to_sql_value(json_to_proxima_value(
             value.clone(),
         ))
     }
 
     /// Convert SqlObject to serde_json::Value
-    fn sql_object_to_json(obj: &crate::proto::proximadb_v1::SqlObject) -> serde_json::Value {
+    fn sql_object_to_json(obj: &proximadb::proto::proximadb_v1::SqlObject) -> serde_json::Value {
         let mut map = serde_json::Map::new();
         for (key, value) in &obj.fields {
             map.insert(key.clone(), Self::sql_value_to_json(value));
@@ -4818,8 +4829,8 @@ impl EmbeddedProximaDB {
     }
 
     /// Convert SqlValue to serde_json::Value
-    fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> serde_json::Value {
-        use crate::proto::proximadb_v1::sql_value::Value;
+    fn sql_value_to_json(value: &proximadb::proto::proximadb_v1::SqlValue) -> serde_json::Value {
+        use proximadb::proto::proximadb_v1::sql_value::Value;
 
         match &value.value {
             None | Some(Value::NullValue(_)) => serde_json::Value::Null,
@@ -4841,8 +4852,10 @@ impl EmbeddedProximaDB {
     }
 
     /// Parse a simple filter expression into DocumentFilter conditions
-    fn parse_document_filter(filter: &str) -> Vec<crate::proto::proximadb_v1::DocFilterCondition> {
-        use crate::proto::proximadb_v1::{DocFilterCondition, DocFilterOperator};
+    fn parse_document_filter(
+        filter: &str,
+    ) -> Vec<proximadb::proto::proximadb_v1::DocFilterCondition> {
+        use proximadb::proto::proximadb_v1::{DocFilterCondition, DocFilterOperator};
 
         let mut conditions = Vec::new();
         if filter.trim().is_empty() {
@@ -4890,8 +4903,8 @@ impl EmbeddedProximaDB {
     }
 
     /// Parse a value string into SqlValue
-    fn parse_filter_value(value_str: &str) -> crate::proto::proximadb_v1::SqlValue {
-        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
+    fn parse_filter_value(value_str: &str) -> proximadb::proto::proximadb_v1::SqlValue {
+        use proximadb::proto::proximadb_v1::{SqlValue, sql_value::Value};
 
         let value_str = value_str.trim();
 
@@ -4940,8 +4953,8 @@ impl EmbeddedProximaDB {
 
     fn property_filters_from_map(
         properties: &std::collections::HashMap<String, String>,
-    ) -> Vec<crate::graph::PropertyFilter> {
-        use crate::graph::{PropertyFilter, PropertyFilterOperator, PropertyValue};
+    ) -> Vec<proximadb::graph::PropertyFilter> {
+        use proximadb::graph::{PropertyFilter, PropertyFilterOperator, PropertyValue};
 
         properties
             .iter()
@@ -4949,7 +4962,7 @@ impl EmbeddedProximaDB {
                 key: key.clone(),
                 operator: PropertyFilterOperator::Equals as i32,
                 value: Some(PropertyValue {
-                    value: Some(crate::graph::model::property_value::Value::StringValue(
+                    value: Some(proximadb::graph::model::property_value::Value::StringValue(
                         value.clone(),
                     )),
                 }),
@@ -4960,8 +4973,8 @@ impl EmbeddedProximaDB {
     fn observability_namespace_config(
         name: &str,
         retention_hours: Option<u64>,
-    ) -> crate::proto::proximadb_v1::ObservabilityNamespaceConfig {
-        use crate::proto::proximadb_v1::{ObservabilityNamespaceConfig, RetentionConfig};
+    ) -> proximadb::proto::proximadb_v1::ObservabilityNamespaceConfig {
+        use proximadb::proto::proximadb_v1::{ObservabilityNamespaceConfig, RetentionConfig};
 
         let retention_hours_val = retention_hours.unwrap_or(720);
         let retention_days = retention_hours_val / 24;
@@ -4979,7 +4992,7 @@ impl EmbeddedProximaDB {
     }
 
     fn traversal_response_to_embedded(
-        response: crate::graph::TraversalResponse,
+        response: proximadb::graph::TraversalResponse,
     ) -> EmbeddedGraphTraversalResult {
         let nodes = response
             .nodes
@@ -5012,61 +5025,63 @@ impl EmbeddedProximaDB {
     }
 
     fn trace_kind_to_string(kind: i32) -> String {
-        match crate::proto::proximadb_v1::SpanKind::try_from(kind)
-            .unwrap_or(crate::proto::proximadb_v1::SpanKind::Unspecified)
+        match proximadb::proto::proximadb_v1::SpanKind::try_from(kind)
+            .unwrap_or(proximadb::proto::proximadb_v1::SpanKind::Unspecified)
         {
-            crate::proto::proximadb_v1::SpanKind::Internal => "INTERNAL",
-            crate::proto::proximadb_v1::SpanKind::Server => "SERVER",
-            crate::proto::proximadb_v1::SpanKind::Client => "CLIENT",
-            crate::proto::proximadb_v1::SpanKind::Producer => "PRODUCER",
-            crate::proto::proximadb_v1::SpanKind::Consumer => "CONSUMER",
-            crate::proto::proximadb_v1::SpanKind::Unspecified => "UNSPECIFIED",
+            proximadb::proto::proximadb_v1::SpanKind::Internal => "INTERNAL",
+            proximadb::proto::proximadb_v1::SpanKind::Server => "SERVER",
+            proximadb::proto::proximadb_v1::SpanKind::Client => "CLIENT",
+            proximadb::proto::proximadb_v1::SpanKind::Producer => "PRODUCER",
+            proximadb::proto::proximadb_v1::SpanKind::Consumer => "CONSUMER",
+            proximadb::proto::proximadb_v1::SpanKind::Unspecified => "UNSPECIFIED",
         }
         .to_string()
     }
 
     fn trace_kind_from_string(kind: &str) -> i32 {
         match kind.to_uppercase().as_str() {
-            "INTERNAL" => crate::proto::proximadb_v1::SpanKind::Internal as i32,
-            "SERVER" => crate::proto::proximadb_v1::SpanKind::Server as i32,
-            "CLIENT" => crate::proto::proximadb_v1::SpanKind::Client as i32,
-            "PRODUCER" => crate::proto::proximadb_v1::SpanKind::Producer as i32,
-            "CONSUMER" => crate::proto::proximadb_v1::SpanKind::Consumer as i32,
-            _ => crate::proto::proximadb_v1::SpanKind::Unspecified as i32,
+            "INTERNAL" => proximadb::proto::proximadb_v1::SpanKind::Internal as i32,
+            "SERVER" => proximadb::proto::proximadb_v1::SpanKind::Server as i32,
+            "CLIENT" => proximadb::proto::proximadb_v1::SpanKind::Client as i32,
+            "PRODUCER" => proximadb::proto::proximadb_v1::SpanKind::Producer as i32,
+            "CONSUMER" => proximadb::proto::proximadb_v1::SpanKind::Consumer as i32,
+            _ => proximadb::proto::proximadb_v1::SpanKind::Unspecified as i32,
         }
     }
 
     fn span_status_code_to_string(code: i32) -> String {
-        match crate::proto::proximadb_v1::SpanStatusCode::try_from(code)
-            .unwrap_or(crate::proto::proximadb_v1::SpanStatusCode::Unset)
+        match proximadb::proto::proximadb_v1::SpanStatusCode::try_from(code)
+            .unwrap_or(proximadb::proto::proximadb_v1::SpanStatusCode::Unset)
         {
-            crate::proto::proximadb_v1::SpanStatusCode::Ok => "OK",
-            crate::proto::proximadb_v1::SpanStatusCode::Error => "ERROR",
-            crate::proto::proximadb_v1::SpanStatusCode::Unset => "UNSET",
+            proximadb::proto::proximadb_v1::SpanStatusCode::Ok => "OK",
+            proximadb::proto::proximadb_v1::SpanStatusCode::Error => "ERROR",
+            proximadb::proto::proximadb_v1::SpanStatusCode::Unset => "UNSET",
         }
         .to_string()
     }
 
     fn span_status_code_from_string(code: &str) -> i32 {
         match code.to_uppercase().as_str() {
-            "OK" => crate::proto::proximadb_v1::SpanStatusCode::Ok as i32,
-            "ERROR" => crate::proto::proximadb_v1::SpanStatusCode::Error as i32,
-            _ => crate::proto::proximadb_v1::SpanStatusCode::Unset as i32,
+            "OK" => proximadb::proto::proximadb_v1::SpanStatusCode::Ok as i32,
+            "ERROR" => proximadb::proto::proximadb_v1::SpanStatusCode::Error as i32,
+            _ => proximadb::proto::proximadb_v1::SpanStatusCode::Unset as i32,
         }
     }
 
-    fn embedded_trace_to_proto(trace: EmbeddedTraceSpan) -> crate::proto::proximadb_v1::TraceData {
+    fn embedded_trace_to_proto(
+        trace: EmbeddedTraceSpan,
+    ) -> proximadb::proto::proximadb_v1::TraceData {
         let attributes = trace
             .attributes
             .into_iter()
             .map(|(key, value)| (key, Self::json_to_sql_value(&value)))
             .collect();
-        let status = Some(crate::proto::proximadb_v1::SpanStatus {
+        let status = Some(proximadb::proto::proximadb_v1::SpanStatus {
             code: Self::span_status_code_from_string(&trace.status_code),
             message: trace.status_message.filter(|msg| !msg.is_empty()),
         });
 
-        crate::proto::proximadb_v1::TraceData {
+        proximadb::proto::proximadb_v1::TraceData {
             trace_id: trace.trace_id,
             span_id: trace.span_id,
             parent_span_id: trace.parent_span_id.filter(|id| !id.is_empty()),
@@ -5081,7 +5096,9 @@ impl EmbeddedProximaDB {
         }
     }
 
-    fn proto_trace_to_embedded(trace: crate::proto::proximadb_v1::TraceData) -> EmbeddedTraceSpan {
+    fn proto_trace_to_embedded(
+        trace: proximadb::proto::proximadb_v1::TraceData,
+    ) -> EmbeddedTraceSpan {
         let service = trace
             .attributes
             .get("service.name")
@@ -5117,7 +5134,7 @@ impl EmbeddedProximaDB {
     }
 
     fn sql_response_to_embedded(
-        response: crate::proto::proximadb_v1::ExecuteQueryResponse,
+        response: proximadb::proto::proximadb_v1::ExecuteQueryResponse,
     ) -> EmbeddedSqlQueryResult {
         let rows = response
             .rows
@@ -5201,7 +5218,7 @@ impl EmbeddedProximaDB {
         namespace: &str,
         logs: Vec<EmbeddedLogEntry>,
     ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-        use crate::proto::proximadb_v1::{LogEntry, Severity};
+        use proximadb::proto::proximadb_v1::{LogEntry, Severity};
 
         self.runtime.block_on(async {
             let proto_logs: Vec<LogEntry> = logs
@@ -5275,8 +5292,8 @@ impl EmbeddedProximaDB {
         query: Option<&str>,
         limit: u32,
     ) -> Result<Vec<EmbeddedLogEntry>, Box<dyn std::error::Error + Send + Sync>> {
-        use crate::observability::LogQueryParams;
-        use crate::proto::proximadb_v1::Severity;
+        use proximadb::observability::LogQueryParams;
+        use proximadb::proto::proximadb_v1::Severity;
 
         self.runtime.block_on(async {
             let params = LogQueryParams {
@@ -5355,7 +5372,7 @@ impl EmbeddedProximaDB {
         namespace: &str,
         metrics: Vec<EmbeddedMetricSample>,
     ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-        use crate::proto::proximadb_v1::MetricSample;
+        use proximadb::proto::proximadb_v1::MetricSample;
 
         self.runtime.block_on(async {
             let proto_metrics: Vec<MetricSample> = metrics
@@ -5414,7 +5431,7 @@ impl EmbeddedProximaDB {
         end_time: Option<&str>,
         step_seconds: u32,
     ) -> Result<Vec<EmbeddedDataPoint>, Box<dyn std::error::Error + Send + Sync>> {
-        use crate::observability::{MetricAggParams, MetricAggregation};
+        use proximadb::observability::{MetricAggParams, MetricAggregation};
 
         self.runtime.block_on(async {
             let start_ns = Self::parse_time_to_nanos(start_time).unwrap_or(0);
@@ -5508,7 +5525,7 @@ impl EmbeddedProximaDB {
         limit: u32,
     ) -> Result<Vec<EmbeddedTraceSpan>, Box<dyn std::error::Error + Send + Sync>> {
         self.runtime.block_on(async {
-            let params = crate::observability::TraceQueryParams {
+            let params = proximadb::observability::TraceQueryParams {
                 start_time_ns,
                 end_time_ns,
                 trace_id: trace_id.map(str::to_string),
@@ -5646,7 +5663,7 @@ impl EmbeddedProximaDB {
         &self,
         sql: &str,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        use crate::query::prepared::{PreparedStatementCache, PreparedStatementConfig};
+        use proximadb::query::prepared::{PreparedStatementCache, PreparedStatementConfig};
 
         // Use a global cache stored in the shared services
         // For now, create a cache per call (in production, this would be stored in shared_services)
@@ -5672,7 +5689,7 @@ impl EmbeddedProximaDB {
         sql: &str,
         ttl_seconds: u64,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        use crate::query::prepared::{PreparedStatementCache, PreparedStatementConfig};
+        use proximadb::query::prepared::{PreparedStatementCache, PreparedStatementConfig};
         use std::time::Duration;
 
         let cache = PreparedStatementCache::new(PreparedStatementConfig::default());
@@ -5709,7 +5726,7 @@ impl EmbeddedProximaDB {
         statement_id: &str,
         params: &[&str],
     ) -> Result<Vec<UnifiedQueryRecord>, Box<dyn std::error::Error + Send + Sync>> {
-        use crate::query::prepared::{
+        use proximadb::query::prepared::{
             ParameterValue, PreparedStatementCache, PreparedStatementConfig,
         };
 
@@ -5748,7 +5765,7 @@ impl EmbeddedProximaDB {
         statement_id: &str,
         params: &[serde_json::Value],
     ) -> Result<Vec<UnifiedQueryRecord>, Box<dyn std::error::Error + Send + Sync>> {
-        use crate::query::prepared::{
+        use proximadb::query::prepared::{
             ParameterValue, PreparedStatementCache, PreparedStatementConfig,
         };
 
@@ -5787,7 +5804,7 @@ impl EmbeddedProximaDB {
         &self,
         statement_id: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        use crate::query::prepared::{PreparedStatementCache, PreparedStatementConfig};
+        use proximadb::query::prepared::{PreparedStatementCache, PreparedStatementConfig};
 
         let cache = PreparedStatementCache::new(PreparedStatementConfig::default());
 
@@ -5799,8 +5816,10 @@ impl EmbeddedProximaDB {
     }
 
     /// Convert JSON value to ParameterValue
-    fn json_to_parameter_value(v: &serde_json::Value) -> crate::query::prepared::ParameterValue {
-        use crate::query::prepared::ParameterValue;
+    fn json_to_parameter_value(
+        v: &serde_json::Value,
+    ) -> proximadb::query::prepared::ParameterValue {
+        use proximadb::query::prepared::ParameterValue;
 
         match v {
             serde_json::Value::String(s) => ParameterValue::String(s.clone()),

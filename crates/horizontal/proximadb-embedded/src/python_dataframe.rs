@@ -3,7 +3,7 @@
 //! Provides a Rust-native distributed execution engine based on DataFusion
 //! with a Python front-end via PyO3.
 
-use crate::embedded::EmbeddedProximaDB;
+use crate::EmbeddedProximaDB;
 use arrow::pyarrow::ToPyArrow;
 use datafusion::logical_expr::{Expr, ExprSchemable};
 use datafusion::prelude::*;
@@ -293,7 +293,7 @@ impl PyDataFusionSession {
         table_name: &str,
         dimension: u32,
     ) -> PyResult<arrow::datatypes::SchemaRef> {
-        use crate::datafusion::infer_schema_from_collection;
+        use proximadb::datafusion::infer_schema_from_collection;
         use proximadb_storage_common::proxima_schema::ProximaSchema;
 
         let proxima_schema = self.db.runtime().block_on(async {
@@ -354,8 +354,8 @@ impl PyDataFusionSession {
 
     /// Register all ProximaDB collections as tables in the DataFusion session
     fn refresh_tables(&self, _py: Python<'_>) -> PyResult<()> {
-        use crate::datafusion::CollectionInfo;
-        use crate::datafusion::ProximaDataFusionTable;
+        use proximadb::datafusion::CollectionInfo;
+        use proximadb::datafusion::ProximaDataFusionTable;
         use std::sync::Arc;
 
         let collections = self
@@ -377,9 +377,9 @@ impl PyDataFusionSession {
                 table_name.clone(),
                 info.dimension as usize,
                 match info.engine.as_str() {
-                    "viper" => crate::datafusion::EngineType::Viper,
-                    "helix" => crate::datafusion::EngineType::Helix,
-                    _ => crate::datafusion::EngineType::Sst,
+                    "viper" => proximadb::datafusion::EngineType::Viper,
+                    "helix" => proximadb::datafusion::EngineType::Helix,
+                    _ => proximadb::datafusion::EngineType::Sst,
                 },
             );
 
@@ -396,33 +396,34 @@ impl PyDataFusionSession {
             );
 
             let table: Arc<dyn datafusion::datasource::TableProvider> = match df_info.engine_type {
-                crate::datafusion::EngineType::Sst => {
-                    Arc::new(crate::datafusion::engine_adapters::SstTableProvider::new(
+                proximadb::datafusion::EngineType::Sst => Arc::new(
+                    proximadb::datafusion::engine_adapters::SstTableProvider::new(
                         df_info.clone(),
                         base_path.clone(),
                         filesystem_factory.clone(),
-                    ))
-                }
-                crate::datafusion::EngineType::Viper => {
-                    Arc::new(crate::datafusion::engine_adapters::ViperTableProvider::new(
+                    ),
+                ),
+                proximadb::datafusion::EngineType::Viper => Arc::new(
+                    proximadb::datafusion::engine_adapters::ViperTableProvider::new(
                         df_info.clone(),
                         base_path.clone(),
                         filesystem_factory.clone(),
-                    ))
-                }
-                crate::datafusion::EngineType::Helix => {
-                    Arc::new(crate::datafusion::engine_adapters::HelixTableProvider::new(
+                    ),
+                ),
+                proximadb::datafusion::EngineType::Helix => Arc::new(
+                    proximadb::datafusion::engine_adapters::HelixTableProvider::new(
                         df_info.clone(),
                         base_path.clone(),
                         filesystem_factory.clone(),
-                    ))
-                }
+                    ),
+                ),
                 _ => {
-                    let reader =
-                        Arc::new(crate::datafusion::proxima_scan_exec::NullSplitReader::new(
+                    let reader = Arc::new(
+                        proximadb::datafusion::proxima_scan_exec::NullSplitReader::new(
                             schema.clone(),
                             df_info.engine_type.clone(),
-                        ));
+                        ),
+                    );
                     Arc::new(ProximaDataFusionTable::new(
                         table_name.clone(),
                         df_info,

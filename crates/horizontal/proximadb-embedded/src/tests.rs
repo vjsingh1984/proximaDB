@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::embedded::*;
+    use crate::*;
     use std::collections::HashMap;
 
     // ========================================================================
@@ -162,12 +162,12 @@ mod tests {
         assert!(
             indexes
                 .iter()
-                .any(|index| index.index_type == crate::catalog::CatalogIndexType::Gin)
+                .any(|index| index.index_type == proximadb::catalog::CatalogIndexType::Gin)
         );
         assert!(
             indexes
                 .iter()
-                .any(|index| index.index_type == crate::catalog::CatalogIndexType::Hnsw)
+                .any(|index| index.index_type == proximadb::catalog::CatalogIndexType::Hnsw)
         );
 
         let tables = db
@@ -379,11 +379,15 @@ mod tests {
     #[test]
     fn test_collection_engine_name_uses_storage_engine_strings() {
         assert_eq!(
-            collection_engine_name(Some(crate::proto::proximadb_v1::StorageEngine::Tst as i32)),
+            collection_engine_name(Some(
+                proximadb::proto::proximadb_v1::StorageEngine::Tst as i32
+            )),
             "tst"
         );
         assert_eq!(
-            collection_engine_name(Some(crate::proto::proximadb_v1::StorageEngine::Sst as i32)),
+            collection_engine_name(Some(
+                proximadb::proto::proximadb_v1::StorageEngine::Sst as i32
+            )),
             "sst"
         );
     }
@@ -1189,7 +1193,7 @@ mod tests {
 
     #[test]
     fn test_scan_records_rejects_stale_cursor() {
-        use crate::services::scan_cursor::ScanCursor;
+        use proximadb::services::scan_cursor::ScanCursor;
         let (db, _td) = build_test_db();
         db.create_collection("stale_col", 4, None).expect("create");
 
