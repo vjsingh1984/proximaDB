@@ -77,7 +77,7 @@ pub use coordination::{
 pub mod python;
 
 // Python DataFrame API via DataFusion
-#[cfg(all(feature = "python", feature = "datafusion-integration"))]
+#[cfg(feature = "python")]
 pub mod python_dataframe;
 
 // Java bindings via JNI
@@ -3472,6 +3472,7 @@ impl EmbeddedProximaDB {
     }
 
     /// Create a single edge in the graph.
+    #[allow(dead_code)]
     pub fn create_edge(
         &self,
         graph_id: &str,
@@ -3762,6 +3763,7 @@ impl EmbeddedProximaDB {
     /// Vector-seed → graph-expand → fuse-by-`oid` (TD-137/TD-131). Constructs the SAME `FusionService`
     /// core the REST endpoint uses (`FusionService::new(vector, graph)`), so embedded results are
     /// identical to the server path by construction. `rrf` selects the rank-based fallback policy;
+    #[allow(dead_code)]
     /// `grain` = `"nodes"` | `"edges"` | `"both"`. Returns `(FusedItem, FusionStats)`.
     pub fn fusion_search(
         &self,
@@ -5510,6 +5512,7 @@ impl EmbeddedProximaDB {
             Ok(result.ingested)
         })
     }
+    #[allow(dead_code)]
 
     /// Query trace spans across one or more traces in a namespace.
     pub fn query_traces(
