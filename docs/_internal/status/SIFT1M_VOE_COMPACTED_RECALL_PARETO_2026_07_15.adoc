@@ -4,6 +4,17 @@
 
 toc::[]
 
+[NOTE]
+====
+**Retired 2026-07-15 (#1024):** the eval fn that produced this data
+(`sift_voe_centroid_prune_compacted_recall_at_10_eval`) was removed when coalesced
+scan-then-rerank became the canonical PAX RaBitQ path (ADR-062) — block-centroid-prune
+is superseded. This document stays as the **historical grounding** for ADR-062's
+GET-capped finding; the data below is the recorded measurement (not re-runnable). The
+canonical coalesced recall/GET measurement is
+link:SIFT1M_COALESCED_RABITQ_RECALL_2026_07_15.adoc[SIFT1M_COALESCED_RABITQ_RECALL_2026_07_15.adoc].
+====
+
 == Why this run
 
 The WS8 qa-gate `sift_voe_centroid_prune_recall_at_10_ratchet` is fail-closed (pruned

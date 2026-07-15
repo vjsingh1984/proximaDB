@@ -3,6 +3,15 @@
 = TD-WLP-9: WS8 VOE centroid-prune recall ratchet — intentional fail-closed qa-gate (not a regression)
 :toc: macro
 
+[NOTE]
+====
+**Retired 2026-07-15 (#1024):** the `sift_voe_centroid_prune_recall_at_10_ratchet` and the VOE
+block-centroid-prune path it gated are superseded by the canonical coalesced scan-then-rerank
+path (ADR-062 / TD-RDSTRAT-6) — coalesced reaches the ~0.99 recall regime block-prune structurally
+could not, dissolving the WS8 GET ceiling this gate flagged. The gate + its ratchet were removed in
+#1024. This TD remains as the historical record of the WS8 fail-closed gate.
+====
+
 [cols="1,3", options="header"]
 |===
 | Field | Value

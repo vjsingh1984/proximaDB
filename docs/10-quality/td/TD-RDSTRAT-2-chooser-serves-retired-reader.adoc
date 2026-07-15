@@ -10,7 +10,7 @@
 | Component | SST vector-search read path: `search/mod.rs` (PAX cascade `try_pax_cascade`), `segment_format.rs` (RaBitQ segment reader); the (inert) coalescing/chooser in `sst_query_engine.rs` + `sst_io_layer.rs`.
 | Governs | link:TD-RDSTRAT-1-read-strategy-chooser.adoc[TD-RDSTRAT-1] (the chooser this TD finds unreachable) + link:../../12-design/adr/ADR-034-objectstore-access-path-codesign.adoc[ADR-034] (GET-count measurement mandate) + link:../../12-design/adr/ADR-052-analytics-execution-competitiveness-codesign.adoc[ADR-052] (bytes-scanned/GET-cost thesis).
 | Relates | link:../../12-design/adr/ADR-049-v1-to-v2-migration-to-native-model.adoc[ADR-049] M1-3 (ProximaBlocks `.sst` streaming write retired → all non-Arrow flushes emit `.pax`); TD-151 (the always-coalesce baseline, same retired reader).
-| Surfaced by | The ADR-034 "measurement mandate" follow-up: measure the read-strategy chooser's GET-count reduction on a representative trace to decide the observe→flip. The measurement (`tests/rdstrat_get_count_measurement_test.rs`) instead revealed the chooser never runs on real data.
+| Surfaced by | The ADR-034 "measurement mandate" follow-up: measure the read-strategy chooser's GET-count reduction on a representative trace to decide the observe→flip. The measurement (`tests/rdstrat_get_count_measurement_test.rs`, retired #1024 — striped-read superseded by the canonical coalesced path, ADR-062) instead revealed the chooser never runs on real data.
 |===
 
 == Summary
@@ -67,7 +67,7 @@ Two facts make the chooser irrelevant here:
 
 == Evidence (measured)
 
-`tests/rdstrat_get_count_measurement_test.rs` builds a synthetic SST collection, runs searches through
+`tests/rdstrat_get_count_measurement_test.rs` (retired #1024 — striped-read dormant under the canonical coalesced path, ADR-062) builds a synthetic SST collection, runs searches through
 `SstEngine::search_vectors_unified` under an `io_trace::scope`, and snapshots `range_gets` /
 `bytes_read` across four arms: `default`, `obj-economy` (hint), `chooser-env`
 (`PROXIMADB_READ_STRATEGY_CHOOSER=1`), `scan-kill-env` (`PROXIMADB_DISABLE_SST_SCAN_COALESCE=1`).
