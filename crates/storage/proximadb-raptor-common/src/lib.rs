@@ -494,10 +494,10 @@ pub enum MetadataData {
     Map(Box<MetadataData>, Box<MetadataData>),
 }
 
-// Use proto-generated SqlValue instead of duplicate MetadataValue
-pub use proximadb_proto::proximadb_v1::SqlValue as MetadataValue;
-
-// PartialOrd for SqlValue is handled by proto-generated implementation
+// Metadata values use the v2-canonical ProximaValue (ADR-024 / TD-V1SUNSET-3).
+// Predicate pushdown + column stats (min/max/default_value) carry ProximaValue;
+// SqlValue↔ProximaValue bridging lives in proximadb-records::conversions.
+pub use proximadb_data_model::ProximaValue as MetadataValue;
 
 // ====== Proxima Encoding Schemes (shared) ======
 

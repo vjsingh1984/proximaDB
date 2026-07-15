@@ -51,5 +51,9 @@ experimental-engines = []
 # resulting `unexpected_cfgs` lint is silenced crate-wide in lib.rs. See
 # ROOT_CRATE_DECOMPOSITION_ENGINES_EXTRACTION doc.
 
+[dev-dependencies]
+# consolidated_reader tests (experimental-engines feature) encode/decode vectors via base64.
+base64 = "0.22"
+
 [lints]
 workspace = true
