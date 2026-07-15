@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Part 1 (execution wiring) Implemented 2026-07-15; Part 2 (VOE emission + `pca_model_ref`) still open. **Part 1:** `Compaction::run_due_compaction` (synchronous `check_compaction_needed` → `perform_compaction_enhanced`, no background workers ⇒ deterministic; atomic-swap path for ADR-046) wired into `flush_implementation` after `should_trigger_compaction` (best-effort — records `compaction_error` + `engine_metrics["compaction_ran"]`, never fails the flush). Fixed TWO stacked bugs that kept compaction dark: (a) the trigger was an unwired stub, (b) `check_compaction_needed` discovered extension `"sst"` while flush writes `.pax` (ADR-049 M1-3) so it found nothing — now `"pax"`; and threaded the per-collection `l0_threshold:` through so the executor agrees with the arming gate. TDD: `tests/sst_compaction_execution_test.rs` (armed AppendBulk flush executes compaction inline; Churn + global hard-disable never do). **Part 2 (still open, follow-up):** compaction output does not yet emit the VOE directory entry (compaction.rs write sites call `write_pax_segment_compacted` but not `emit_after_flush`), so the read-side centroid prune can't use the re-clustered segment's centroids; and `retrain_pca_model_for_compaction` persists `__model/pca_model.bin` but never attaches `pca_model_ref` to the directory. These are cleanly separable and tested on their own.
+| Status | Part 1 (execution wiring) **Implemented 2026-07-15** (#1012); Part 2 (VOE emission + `pca_model_ref`) **Superseded 2026-07-15 by link:../../12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] / link:TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6]** — do NOT implement as filed. **Part 1 (done):** `Compaction::run_due_compaction` (synchronous `check_compaction_needed` → `perform_compaction_enhanced`, no background workers ⇒ deterministic; atomic-swap path for ADR-046) wired into `flush_implementation` after `should_trigger_compaction` (best-effort — records `compaction_error` + `engine_metrics["compaction_ran"]`, never fails the flush). Fixed TWO stacked bugs that kept compaction dark: (a) the trigger was an unwired stub, (b) `check_compaction_needed` discovered extension `"sst"` while flush writes `.pax` (ADR-049 M1-3) so it found nothing — now `"pax"`; and threaded the per-collection `l0_threshold:` through so the executor agrees with the arming gate. TDD: `tests/sst_compaction_execution_test.rs` (armed AppendBulk flush executes compaction inline; Churn + global hard-disable never do). Part 1 is **not** superseded — ADR-062 D6 elevates it: the compaction scheduler is reframed as *the* vector-query GET-cost lever (file-count = GET-count; compaction merges N→1 and re-clusters). **Part 2 (SUPERSEDED — kept for provenance):** Part 2 would have emitted the VOE directory entry (compaction.rs write sites call `write_pax_segment_compacted` but not `emit_after_flush`) + attached `pca_model_ref`, *so the read-side block-centroid prune could consult re-clustered centroids and prune in PCA space (TD-WLP-6)*. That consumer is exactly the path ADR-062 supersedes: (1) block-centroid prune is measured **GET-capped at ~0.87** (SIFT1M eval `SIFT1M_VOE_COMPACTED_RECALL_PARETO_2026_07_15`, shipped #1015) — a structural ceiling, not a tuning gap; (2) `radius_k` is **not the lever** (≤0.02 effect) — the re-measurement Part 2 was meant to "unblock" is done and negative; (3) the VOE **sidecar** itself is replaced by ADR-062's in-file self-describing **footer-index** (D1 no-sidecar, D4 footer = metadata hub). Any residual value (persisting the compaction-trained cluster model / centroids) is folded into **TD-RDSTRAT-6 PR1** (the ADR-062 writer/footer), not a WLP-7 follow-up. Net WLP-7 outcome: Part 1 shipped and elevated; Part 2 retired.
 | Priority | P1b — completes the ADR-061 D3 arc: without execution wiring, the armed-by-default trigger only sets `FlushResult.compaction_triggered`; nothing runs the compactor in production.
 | Severity | Medium — background execution plumbing (test-hygiene sensitive: no non-daemon threads) + model persistence/reuse.
 | Component | `src/storage/engines/sst/flush/coordinator.rs` (`post_flush_operations` — the historical "Compaction would be triggered here" stub); `src/storage/engines/sst/compaction.rs` (`schedule_compaction`/`perform_compaction_enhanced`); `src/storage/engines/sst/compactor_impl.rs` (`retrain_pca_model_for_compaction` — the persistence pattern to reuse); `object_economy_directory.rs` (`pca_model_ref` + `with_pca_model_ref`, currently write-only in tests)
@@ -25,29 +25,39 @@ armed compaction by default for `AppendBulk`, but two seams were deferred:
    stub — `compaction_triggered=true` feeds tiering accounting but never schedules the compactor.
    The armed default is only real end-to-end once the trigger schedules
    (`schedule_compaction` → `perform_compaction_enhanced`) in production code.
-2. **Persisted model + directory ref.** The WLP-4 write-time PCA is batch-local and discarded.
+2. **Persisted model + directory ref.** [.line-through]#The WLP-4 write-time PCA is batch-local and discarded.
    Persist an `EnhancedPCAModel` at compaction (reuse `retrain_pca_model_for_compaction`'s
    `{collection_dir}/__model/pca_model.bin` pattern) and populate the VOE directory's
    `pca_model_ref` `ObjectRef`, so cold queries load the projection in one round trip and the
-   read side can prune in PCA space (TD-WLP-6).
+   read side can prune in PCA space (TD-WLP-6).# **← SUPERSEDED by ADR-062/TD-RDSTRAT-6.** The
+   consumer (read-side block-centroid prune in PCA space) is the path ADR-062 retires; the VOE
+   sidecar is replaced by the in-file footer-index. Any residual (persist the compaction cluster
+   model) folds into TD-RDSTRAT-6 PR1.
 
 == Scope
+
+NOTE: Only the **first** bullet (execution wiring, Part 1) shipped (#1012) and is retained. The
+remaining bullets are **Part 2, superseded by ADR-062/TD-RDSTRAT-6** (see Status) — do not
+implement as filed.
 
 * Wire post-flush triggering to actual background compaction execution — tokio-native (no
   non-daemon threads; deterministic-testable via a synchronous test hook), respecting
   `OrchestratorCompactionConfig::effective_for_collection_tags` and the WLP-2/4 arming cascade.
-* Persist the compaction-trained PCA model and set `pca_model_ref` (url/size/etag) in the VOE
+* [.line-through]#Persist the compaction-trained PCA model and set `pca_model_ref` (url/size/etag) in the VOE
   directory emission for compacted segments; compaction outputs must emit VOE directory entries
-  (today only flush emits).
-* Read-consistency across the atomic segment swap during re-cluster (ADR-046 LSN-coherence) —
-  the TD-WLP-4 gate item that rides on execution wiring.
+  (today only flush emits).# _(superseded — VOE sidecar replaced by ADR-062 footer-index)_
+* [.line-through]#Read-consistency across the atomic segment swap during re-cluster (ADR-046 LSN-coherence) —
+  the TD-WLP-4 gate item that rides on execution wiring.# _(carried by ADR-062 D6 atomicity: Iceberg-style fresh-name + manifest advance)_
 
 == TDD gate
 
-* Integration: a flush that crosses the L0 threshold on an `AppendBulk` collection leads —
+NOTE: Superseded along with Part 2 — the ADR-062 layout is verified by TD-RDSTRAT-6's own gates
+(RaBitQ-scan recall at keep=100%, coalesced-GET count). Retained for provenance.
+
+* [.line-through]#Integration: a flush that crosses the L0 threshold on an `AppendBulk` collection leads —
   without any manual compaction call — to a compacted `.pax` segment whose VOE entry carries
-  populated centroids/radii and `pca_model_ref`; reads during the swap stay consistent.
-* `Churn` collection under the same process: no compaction executes, no model persists.
+  populated centroids/radii and `pca_model_ref`; reads during the swap stay consistent.#
+* [.line-through]#`Churn` collection under the same process: no compaction executes, no model persists.#
 
 == Gating
 
