@@ -175,6 +175,10 @@ Codec parameters needed to decode one PAX block remain in that block's
 `VectorParamBlock`, so a fetched block is self-sufficient and the segment footer does not
 duplicate parameters. The descriptor records semantics and parameter scope; it does not carry
 block-local bases, bit widths, dictionaries, or compressor payloads.
+`rebuild_source_id=0xffff` is reserved for a projection-only object whose canonical authority is
+cataloged outside the file (for example WAL lineage). It is not a stripe descriptor and cannot
+be used to claim exact reconstruction from that object; `0` remains reserved for an in-file
+canonical descriptor itself.
 
 Each immutable file also records the vector field's `metric_epoch`, the metric under which
 estimator-specific tiers were built, and its normalization contract (`none` or enforced

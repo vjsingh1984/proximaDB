@@ -53,8 +53,11 @@ use crate::engine_constants::{
     MAX_TARGET_BLOCK_SIZE_BYTES,
 };
 use crate::segment_layout::{
-    FooterBlockEntry, SEG_HEADER_PREFIX_LEN, SEG_LAYOUT_VERSION, SegmentFooterIndex,
-    SegmentHeaderPrefix, StatsKind, is_coalesced_segment, segment_tail,
+    BlockTierAssignment, EXTERNAL_CANONICAL_SOURCE_ID, FooterBlockEntry, LosslessCompressionTag,
+    LosslessTransformTag, ParameterScope, SEG_HEADER_PREFIX_LEN, SEG_LAYOUT_VERSION,
+    SegmentFooterIndex, SegmentHeaderPrefix, SourceFidelity, SourceRole, StatsKind,
+    StripeEncodingDescriptor, TierRole, VectorTransform, compression_flags, is_coalesced_segment,
+    segment_tail,
 };
 
 /// File extension for PAX segment files.
@@ -509,6 +512,9 @@ pub struct PaxSegmentWriter {
     f32_tier: bool,
     /// Tier-2 rerank quant (default Sq8) — re-applied to every block writer.
     rerank_quant: VectorQuant,
+    /// Exact clustered transform over SQ8 code bytes. Default OFF and selected
+    /// independently per stripe by realized byte size.
+    lossless_clustered: bool,
     /// P-Shred (ADR-055): `(prop_key, user_col_id)` to shred into typed user-columns —
     /// re-applied to every block writer so all blocks in the segment shred uniformly.
     shred_spec: Vec<(String, i32)>,
@@ -538,6 +544,9 @@ pub struct PaxSegmentWriter {
     /// Finalised per-block RMS radius (spread), 1:1 with `block_centroids`
     /// (`0.0` for a block with no Fp32 vector). Empty unless centroids opted in.
     block_radii: Vec<f32>,
+    /// Exact SQ8 transforms selected in each emitted block, by physical column
+    /// ID. Kept 1:1 with `index.blocks` for footer-v2 assignments.
+    block_transformed_sq8_columns: Vec<Vec<i32>>,
 
     /// ADR-062 / TD-RDSTRAT-6: emit the coalesced-RaBitQ layout — a file-level
     /// header region (cluster-ordered, single segment centroid) + self-describing
@@ -594,6 +603,7 @@ impl PaxSegmentWriter {
             quant: VectorQuant::Auto,
             f32_tier: false,
             rerank_quant: VectorQuant::Sq8,
+            lossless_clustered: false,
             shred_spec: Vec::new(),
             current_writer: writer,
             index: SegmentIndex { blocks: Vec::new() },
@@ -606,6 +616,7 @@ impl PaxSegmentWriter {
             cur_centroid_sumsq: 0.0,
             block_centroids: Vec::new(),
             block_radii: Vec::new(),
+            block_transformed_sq8_columns: Vec::new(),
             coalesced_rabitq: false,
             rabitq_vectors: Vec::new(),
             per_row_estimate: 0,
@@ -651,6 +662,18 @@ impl PaxSegmentWriter {
         self
     }
 
+    /// Enable the lossless clustered SQ8 transform for every block.
+    pub fn with_lossless_clustered(mut self, enabled: bool) -> Self {
+        self.lossless_clustered = enabled;
+        self.current_writer = self.fresh_block_writer();
+        self
+    }
+
+    /// Mark the next appended record as the start of a producer-defined cluster.
+    pub fn start_cluster_run(&mut self) {
+        self.current_writer.start_cluster_run();
+    }
+
     /// P-Shred (ADR-055): shred the given props keys `(prop_key, user_col_id)` into
     /// typed user-columns for every block in this segment. Builder form mirroring
     /// [`with_quant`]; empty ⇒ no shredding (byte-for-byte today's output).
@@ -694,6 +717,7 @@ impl PaxSegmentWriter {
         .with_quant(block_quant)
         .with_f32_tier(self.f32_tier)
         .with_rerank_quant(self.rerank_quant)
+        .with_clustered_sq8_lossless(self.lossless_clustered)
         .with_shred_spec(self.shred_spec.clone())
     }
 
@@ -846,6 +870,14 @@ impl PaxSegmentWriter {
         let offset = self.file_buf.len() as u64;
 
         let reader = PaxBlockReader::open(&block_bytes)?;
+        self.block_transformed_sq8_columns.push(
+            reader
+                .vector_params()
+                .transforms
+                .iter()
+                .map(|transform| transform.column_id)
+                .collect(),
+        );
         let stats =
             BlockStats::from_metas(row_count, block_size, min_ts, max_ts, reader.column_metas());
 
@@ -930,6 +962,158 @@ impl PaxSegmentWriter {
         })
     }
 
+    fn footer_encoding_map(
+        &self,
+    ) -> Result<(Vec<StripeEncodingDescriptor>, Vec<BlockTierAssignment>)> {
+        if !self
+            .block_transformed_sq8_columns
+            .iter()
+            .any(|columns| !columns.is_empty())
+        {
+            return Ok((Vec::new(), Vec::new()));
+        }
+
+        let mut descriptors = Vec::new();
+        let mut assignments = Vec::new();
+        let mut next_id = 1u16;
+        for embedding in 0..self.embedding_count {
+            let logical_field_id = col_id::EMBED_BASE + embedding as i32;
+            let physical_column_id = logical_field_id;
+            let canonical_id = if self.f32_tier {
+                let id = take_descriptor_id(&mut next_id)?;
+                let exact_column = col_id::F32_TIER_BASE + embedding as i32;
+                descriptors.push(StripeEncodingDescriptor {
+                    descriptor_id: id,
+                    logical_field_id,
+                    physical_column_id: exact_column,
+                    tier_role: TierRole::Exact,
+                    value_codec_tag: 0x01,
+                    value_codec_version: 1,
+                    transform_tag: LosslessTransformTag::None,
+                    transform_version: 0,
+                    compression_tag: LosslessCompressionTag::None,
+                    compression_version: 0,
+                    compression_flags: compression_flags::LOSSLESS,
+                    parameter_scope: ParameterScope::Block,
+                    vector_transform: VectorTransform::None,
+                    auxiliary_flags: 0,
+                    source_role: SourceRole::Canonical,
+                    source_fidelity: SourceFidelity::ExactBitwise,
+                    rebuild_source_id: 0,
+                    projection_generation: 0,
+                });
+                for block_ordinal in 0..self.index.blocks.len() {
+                    assignments.push(BlockTierAssignment {
+                        block_ordinal: u32::try_from(block_ordinal)
+                            .map_err(|_| anyhow::anyhow!("block ordinal exceeds u32"))?,
+                        physical_column_id: exact_column,
+                        tier_role: TierRole::Exact,
+                        descriptor_id: id,
+                    });
+                }
+                id
+            } else {
+                EXTERNAL_CANONICAL_SOURCE_ID
+            };
+
+            if embedding == 0 {
+                descriptors.push(StripeEncodingDescriptor {
+                    descriptor_id: take_descriptor_id(&mut next_id)?,
+                    logical_field_id,
+                    physical_column_id,
+                    tier_role: TierRole::Index,
+                    value_codec_tag: 0x71,
+                    value_codec_version: 1,
+                    transform_tag: LosslessTransformTag::None,
+                    transform_version: 0,
+                    compression_tag: LosslessCompressionTag::None,
+                    compression_version: 0,
+                    compression_flags: compression_flags::LOSSLESS,
+                    parameter_scope: ParameterScope::Segment,
+                    vector_transform: VectorTransform::CenteredRotated,
+                    auxiliary_flags: 0,
+                    source_role: SourceRole::IndexProjection,
+                    source_fidelity: SourceFidelity::Lossy,
+                    rebuild_source_id: canonical_id,
+                    projection_generation: 1,
+                });
+            }
+
+            let flat_id = take_descriptor_id(&mut next_id)?;
+            descriptors.push(StripeEncodingDescriptor {
+                descriptor_id: flat_id,
+                logical_field_id,
+                physical_column_id,
+                tier_role: TierRole::Rerank,
+                value_codec_tag: 0x05,
+                value_codec_version: 1,
+                transform_tag: LosslessTransformTag::None,
+                transform_version: 0,
+                compression_tag: LosslessCompressionTag::None,
+                compression_version: 0,
+                compression_flags: compression_flags::LOSSLESS,
+                parameter_scope: ParameterScope::Block,
+                vector_transform: VectorTransform::None,
+                auxiliary_flags: 0,
+                source_role: SourceRole::RerankProjection,
+                source_fidelity: SourceFidelity::Lossy,
+                rebuild_source_id: canonical_id,
+                projection_generation: 1,
+            });
+
+            let has_transformed = self
+                .block_transformed_sq8_columns
+                .iter()
+                .any(|columns| columns.contains(&physical_column_id));
+            let transformed_id = if has_transformed {
+                let id = take_descriptor_id(&mut next_id)?;
+                descriptors.push(StripeEncodingDescriptor {
+                    descriptor_id: id,
+                    logical_field_id,
+                    physical_column_id,
+                    tier_role: TierRole::Rerank,
+                    value_codec_tag: 0x05,
+                    value_codec_version: 1,
+                    transform_tag: LosslessTransformTag::ClusteredForBitpackU8,
+                    transform_version: 1,
+                    compression_tag: LosslessCompressionTag::None,
+                    compression_version: 0,
+                    compression_flags: compression_flags::LOSSLESS,
+                    parameter_scope: ParameterScope::MicroChunk,
+                    vector_transform: VectorTransform::None,
+                    auxiliary_flags: 0,
+                    source_role: SourceRole::RerankProjection,
+                    source_fidelity: SourceFidelity::Lossy,
+                    rebuild_source_id: canonical_id,
+                    projection_generation: 1,
+                });
+                Some(id)
+            } else {
+                None
+            };
+
+            for (block_ordinal, transformed_columns) in
+                self.block_transformed_sq8_columns.iter().enumerate()
+            {
+                let descriptor_id = if transformed_columns.contains(&physical_column_id) {
+                    transformed_id.ok_or_else(|| {
+                        anyhow::anyhow!("transformed block has no encoding descriptor")
+                    })?
+                } else {
+                    flat_id
+                };
+                assignments.push(BlockTierAssignment {
+                    block_ordinal: u32::try_from(block_ordinal)
+                        .map_err(|_| anyhow::anyhow!("block ordinal exceeds u32"))?,
+                    physical_column_id,
+                    tier_role: TierRole::Rerank,
+                    descriptor_id,
+                });
+            }
+        }
+        Ok((descriptors, assignments))
+    }
+
     /// ADR-062 / TD-RDSTRAT-6 coalesced layout: `[HEADER-PREFIX][RaBitQ region]
     /// [blocks][FOOTER-INDEX][footer_len][SEGMENT_MAGIC]`. The RaBitQ region is
     /// one ranged GET (keep=100% scan); the footer-index block table carries
@@ -964,6 +1148,7 @@ impl PaxSegmentWriter {
 
         // 3. Footer-index body + header-prefix offsets. The footer sits after the
         //    blocks; its length is known once serialized.
+        let (encoding_map, block_tier_assignments) = self.footer_encoding_map()?;
         let footer = SegmentFooterIndex {
             row_count: self.row_count,
             rabitq_off,
@@ -973,8 +1158,8 @@ impl PaxSegmentWriter {
             embed_quant_tag: 1, // SQ8 (the survivor-rerank data tier)
             has_f32_tier: self.f32_tier,
             blocks,
-            encoding_map: Vec::new(),
-            block_tier_assignments: Vec::new(),
+            encoding_map,
+            block_tier_assignments,
         };
         let footer_body = footer.to_bytes()?;
         let footer_off = data_offset + self.file_buf.len() as u64;
@@ -1056,6 +1241,17 @@ impl PaxSegmentWriter {
             rabitq_len: 0,
         })
     }
+}
+
+fn take_descriptor_id(next_id: &mut u16) -> Result<u16> {
+    if *next_id == EXTERNAL_CANONICAL_SOURCE_ID {
+        bail!("footer encoding descriptor id space exhausted");
+    }
+    let id = *next_id;
+    *next_id = next_id
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("footer encoding descriptor id overflow"))?;
+    Ok(id)
 }
 
 // ── Scanner ───────────────────────────────────────────────────────────────────
@@ -1351,6 +1547,63 @@ mod tests {
             updated_at_ns: ts,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn coalesced_footer_assigns_actual_clustered_sq8_encoding() -> Result<()> {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+        const ROWS_PER_CLUSTER: usize = 256;
+        const DIM: usize = 32;
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("clustered-footer.pax");
+        let mut writer = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            Some(ROWS_PER_CLUSTER * 2 * 1024),
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true)
+        .with_lossless_clustered(true);
+
+        for row in 0..(ROWS_PER_CLUSTER * 2) {
+            if row == ROWS_PER_CLUSTER {
+                writer.start_cluster_run();
+            }
+            let center = if row < ROWS_PER_CLUSTER { -10.0 } else { 10.0 };
+            let values: Vec<f32> = (0..DIM)
+                .map(|lane| center + ((row + lane) % 3) as f32 * 0.01)
+                .collect();
+            let mut record = make_record(&format!("r{row}"), "t", 1_000 + row as i64);
+            record.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: DIM as u32,
+                values: EmbeddingValues::Fp32(values),
+                ..Default::default()
+            });
+            writer.add_record(&record)?;
+        }
+        writer.finish()?;
+
+        let segment = std::fs::read(&path)?;
+        let footer = SegmentFooterIndex::locate_in_segment(&segment)?
+            .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))?;
+        let transformed = footer.encoding_map.iter().find(|descriptor| {
+            descriptor.physical_column_id == col_id::EMBED_BASE
+                && descriptor.transform_tag == LosslessTransformTag::ClusteredForBitpackU8
+        });
+        let transformed =
+            transformed.ok_or_else(|| anyhow::anyhow!("clustered SQ8 descriptor missing"))?;
+        assert!(footer.block_tier_assignments.iter().any(|assignment| {
+            assignment.physical_column_id == col_id::EMBED_BASE
+                && assignment.descriptor_id == transformed.descriptor_id
+        }));
+        assert_eq!(transformed.rebuild_source_id, EXTERNAL_CANONICAL_SOURCE_ID);
+        Ok(())
     }
 
     /// TD-RDSTRAT-5 S1: with `with_block_centroids(true)`, the segment writer

@@ -182,15 +182,15 @@ pub fn write_pax_segment_full(
     // ranks/dedups by distance + OID). Compaction upgrades the ordering to
     // PCA+IVF via `write_pax_segment_compacted`.
     let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
-    let order = if cluster {
+    let plan = if cluster {
         // TD-WLP-4/WLP-9 eval opt-in (`PROXIMADB_PAX_FLUSH_CLUSTER=ivf`): apply
         // the compaction-grade PCA+IVF re-cluster at flush instead of the sign-bit
         // bootstrap, so clustering quality is measurable without the (unwired)
         // flush→compaction scheduler. Default OFF ⇒ bootstrap.
         if crate::storage::engines::sst::block_cluster::flush_cluster_ivf() {
-            crate::storage::engines::sst::block_cluster::cluster_order_pca_ivf(records, 0)
+            crate::storage::engines::sst::block_cluster::cluster_plan_pca_ivf(records, 0)
         } else {
-            crate::storage::engines::sst::block_cluster::cluster_order(records, 0)
+            crate::storage::engines::sst::block_cluster::cluster_plan(records, 0)
         }
     } else {
         None
@@ -205,7 +205,7 @@ pub fn write_pax_segment_full(
         f32_tier,
         target_block,
         cluster,
-        order,
+        plan,
     )
 }
 
@@ -231,8 +231,8 @@ pub fn write_pax_segment_compacted(
     target_block: Option<usize>,
 ) -> Result<SegmentMeta> {
     let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
-    let order = if cluster {
-        crate::storage::engines::sst::block_cluster::cluster_order_pca_ivf(records, 0)
+    let plan = if cluster {
+        crate::storage::engines::sst::block_cluster::cluster_plan_pca_ivf(records, 0)
     } else {
         None
     };
@@ -246,7 +246,7 @@ pub fn write_pax_segment_compacted(
         f32_tier,
         target_block,
         cluster,
-        order,
+        plan,
     )
 }
 
@@ -263,8 +263,9 @@ fn write_pax_segment_ordered(
     f32_tier: bool,
     target_block: Option<usize>,
     cluster: bool,
-    order: Option<Vec<usize>>,
+    plan: Option<crate::storage::engines::sst::block_cluster::ClusterPlan>,
 ) -> Result<SegmentMeta> {
+    let lossless_clustered = lossless_clustered_enabled() && plan.is_some();
     let mut writer = PaxSegmentWriter::new(
         path,
         BlockMode::Pax,
@@ -277,15 +278,25 @@ fn write_pax_segment_ordered(
     .with_quant(quant)
     .with_f32_tier(f32_tier)
     .with_rerank_quant(rerank_quant)
+    .with_lossless_clustered(lossless_clustered)
     .with_block_centroids(cluster)
     // ADR-062 / TD-RDSTRAT-6: hoist the RaBitQ binary tier into a coalesced
     // file-level header region for RaBitQ-quantized writes (default ON per the
     // ADR-061 pre-GA in-place amendment; `PROXIMADB_PAX_COALESCED_RABITQ=0` opts
     // out to the legacy in-block RaBitQ layout for mixed-read / measurement).
     .with_coalesced_rabitq(quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled());
-    match &order {
-        Some(perm) => {
-            for &i in perm {
+    match &plan {
+        Some(plan) => {
+            let mut next_run = 1usize;
+            for (ordered_row, &i) in plan.order.iter().enumerate() {
+                if plan
+                    .runs
+                    .get(next_run)
+                    .is_some_and(|run| run.start_row == ordered_row)
+                {
+                    writer.start_cluster_run();
+                    next_run += 1;
+                }
                 writer.add_record(&records[i])?;
             }
         }
@@ -296,6 +307,18 @@ fn write_pax_segment_ordered(
         }
     }
     writer.finish()
+}
+
+fn lossless_clustered_enabled() -> bool {
+    matches!(
+        std::env::var("PROXIMADB_PAX_LOSSLESS_CLUSTERED")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(|value| value.to_ascii_lowercase())
+            .as_deref(),
+        Some("1") | Some("true") | Some("on") | Some("yes")
+    )
 }
 
 /// True only when every vector row in every input `.pax` segment has an exact

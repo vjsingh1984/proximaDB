@@ -220,6 +220,11 @@ pub mod compression_flags {
     pub const LOSSLESS: u8 = 0b0000_0001;
 }
 
+/// Reserved rebuild-source ID for a projection-only object whose durable
+/// canonical authority is cataloged outside this segment (for example the WAL
+/// lineage). Such a file cannot independently serve exact reconstruction.
+pub const EXTERNAL_CANONICAL_SOURCE_ID: u16 = u16::MAX;
+
 /// One footer-v2 physical stripe descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StripeEncodingDescriptor {
@@ -691,6 +696,9 @@ impl SegmentFooterIndex {
                     }
                 }
                 SourceRole::IndexProjection | SourceRole::RerankProjection => {
+                    if descriptor.rebuild_source_id == EXTERNAL_CANONICAL_SOURCE_ID {
+                        continue;
+                    }
                     let source =
                         descriptors
                             .get(&descriptor.rebuild_source_id)
