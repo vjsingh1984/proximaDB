@@ -292,6 +292,6 @@ mod tests {
 
         let props = create_writer_properties(&config).unwrap();
         // Properties are opaque, but we can verify creation doesn't panic
-        assert_eq!(props.max_row_group_size(), config.row_group_size);
+        assert_eq!(props.max_row_group_row_count(), Some(config.row_group_size));
     }
 }

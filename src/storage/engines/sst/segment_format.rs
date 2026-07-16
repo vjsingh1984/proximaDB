@@ -468,6 +468,15 @@ pub fn coalesced_rabitq_enabled() -> bool {
     )
 }
 
+/// Parse a `u64` env override, or return `default`. Used for the coalesced
+/// read-path tuning knobs (survivor coalesce gap/range, pool mult/min/rate).
+fn env_u64_or(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(default)
+}
+
 /// A coalesced ranged GET over one or more survivor data blocks.
 struct CoalescedFetch {
     start: u64,
@@ -549,6 +558,37 @@ fn canonical_score_from_rank_score(metric: RankMetric, rank_score: f32) -> f32 {
     }
 }
 
+/// Adaptive RaBitQ candidate-pool size for top-`k` over a segment of `n` rows.
+///
+/// `M = max(k · mult, ceil(n · rate), min)` — the survivor pool scales with the
+/// segment size so it stays a roughly constant *fraction* of the corpus (rate,
+/// default 1%) instead of a fixed 1000 that starves recall at scale (0.1% of 1M
+/// → measured recall 0.968; 1% of 100k → 0.991). Env-overridable:
+/// `PROXIMADB_PAX_RABITQ_POOL_MULT` (default 100), `..._MIN` (1000),
+/// `PROXIMADB_PAX_RABITQ_POOL_RATE` (default 0.01).
+pub fn pax_rabitq_pool_for_top_k(k: usize, n: usize) -> usize {
+    static C: std::sync::OnceLock<(usize, usize, f64)> = std::sync::OnceLock::new();
+    let (mult, min, rate) = C.get_or_init(|| {
+        let mult = std::env::var("PROXIMADB_PAX_RABITQ_POOL_MULT")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(100);
+        let min = std::env::var("PROXIMADB_PAX_RABITQ_POOL_MIN")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(1000);
+        let rate = std::env::var("PROXIMADB_PAX_RABITQ_POOL_RATE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|f| *f > 0.0)
+            .unwrap_or(0.01);
+        (mult, min, rate)
+    });
+    let by_k = k.saturating_mul(*mult);
+    let by_n = ((n as f64) * rate).ceil() as usize;
+    by_k.max(by_n).max(*min)
+}
+
 /// ADR-062 / TD-RDSTRAT-6 **scan-then-rerank** over a coalesced-RaBitQ segment
 /// on the engine's own filesystem — the ranged analogue of
 /// [`rabitq_search_segment`] for the new layout:
@@ -556,7 +596,8 @@ fn canonical_score_from_rank_score(metric: RankMetric, rank_score: f32) -> f32 {
 /// 1. **Scan** the coalesced RaBitQ header region (one ranged GET, header-prefix
 ///    coalesced in) — `keep=100%`: rank ALL codes → approximate distance for
 ///    every vector (zero prune loss).
-/// 2. **Select** the top-M survivors (M = `pool`, the adaptive GET-budget).
+/// 2. **Select** the top-M survivors (M = `pax_rabitq_pool_for_top_k(k, n)`,
+///    scaled with the segment's row count so it stays ~1% of the corpus).
 /// 3. **Rerank** survivors: because the segment is cluster-ordered
 ///    (`cluster_order_pca_ivf`), survivors fall in few adjacent blocks → the
 ///    `ObjectRangeCoalescePolicy` plans merged/coalesced ranged GETs → fetch the
@@ -573,7 +614,6 @@ pub async fn rabitq_search_segment_coalesced(
     path: &str,
     query: &[f32],
     k: usize,
-    pool: usize,
     metric: RankMetric,
 ) -> Result<Option<Vec<CascadeHit>>> {
     use proximadb_block_format::{PaxBlockReader, RaBitQRegion, col_id};
@@ -607,6 +647,10 @@ pub async fn rabitq_search_segment_coalesced(
         .await
         .map_err(|e| anyhow::anyhow!("coalesced scan region {path}: {e}"))?;
     let region = RaBitQRegion::from_bytes(&region_bytes)?;
+    // ADR-062 PR2: adaptive survivor pool — scale M with the segment's row count
+    // (region.n_rows()) so it stays ~1% of the corpus instead of a fixed 1000
+    // that starves recall at scale (0.1% of 1M → 0.968 recall).
+    let pool = pax_rabitq_pool_for_top_k(k, region.n_rows());
     let survivors = region.rank(query, metric, pool.max(k));
     if survivors.is_empty() {
         return Ok(Some(Vec::new()));
@@ -644,10 +688,16 @@ pub async fn rabitq_search_segment_coalesced(
         return Ok(Some(Vec::new()));
     }
 
-    // 5. Plan coalesced ranged GETs over the survivor blocks (the GET-win policy).
+    // 5. Plan coalesced ranged GETs over the survivor blocks. PR2: aggressive
+    //    coalescing — bytes are ~free on same-AZ object storage, so merge survivor
+    //    blocks across larger gaps to cut the GET count (the dominant cost term).
+    //    Env-overridable; defaults merge adjacent blocks within 256 KiB gaps up to
+    //    16 MiB per coalesced range (vs the 64 KiB / 8 MiB cross-block default).
     let policy =
-        crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy::default(
-        );
+        crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
+            max_gap_bytes: env_u64_or("PROXIMADB_PAX_COALESCE_GAP", 256 * 1024),
+            max_range_bytes: env_u64_or("PROXIMADB_PAX_COALESCE_RANGE", 16 * 1024 * 1024),
+        };
     let survivor_blocks: Vec<usize> = block_rows.keys().copied().collect();
     let fetches = plan_coalesced_block_ranges(&footer, &survivor_blocks, &policy);
 
@@ -1286,7 +1336,6 @@ mod tests {
         const DIM: usize = 64;
         const N: usize = 400;
         const K: usize = 10;
-        const POOL: usize = 100;
 
         let corpus: Vec<Vec<f32>> = (0..N)
             .map(|i| {
@@ -1317,17 +1366,11 @@ mod tests {
             .unwrap();
 
         let query = corpus[137].clone();
-        let hits = rabitq_search_segment_coalesced(
-            &fs,
-            path.to_str().unwrap(),
-            &query,
-            K,
-            POOL,
-            RankMetric::L2,
-        )
-        .await
-        .unwrap()
-        .expect("coalesced scan-then-rerank must return hits");
+        let hits =
+            rabitq_search_segment_coalesced(&fs, path.to_str().unwrap(), &query, K, RankMetric::L2)
+                .await
+                .unwrap()
+                .expect("coalesced scan-then-rerank must return hits");
         assert!(!hits.is_empty(), "cascade must return top-k");
 
         // Brute-force ground-truth top-k over the f32 corpus.
