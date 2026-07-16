@@ -301,6 +301,20 @@ at the same N=100k single-file IVF-ON SIFT workload. The accepted rerank encodin
 the PR1 byte result while clearing recall and GET gates; losing prototypes do not become
 durable format variants merely because they were implemented for evaluation.
 
+The 2026-07-16 bake-off produced no winner. At N=100k residual SQ6 reached
+recall `0.981` but saved only 7.0% query bytes and was 3.4x slower; TurboQuant4
+and multi-bit RaBitQ4 reached recall `0.921` and `0.917`. At genuine N=1M the
+flat control itself fell to recall `0.968` and `61` GETs/query, while SQ6 reached
+`0.950` with the same GET count. D8 remains a design seam, not an accepted
+encoding. No prototype receives a durable tag.
+
+The N=1M result measures two prerequisites to D6/D8. Top-M is fixed at 1,000
+for top-10 regardless of segment rows; it shrinks from 1% of N=100k to 0.1% of
+N=1M and must become a measured segment-scale/confidence rule. `IopsBudget`
+exists, but PAX still cuts at a 3 MiB threshold using a fixed 1 KiB/row estimate
+(about 3,072 rows/block), rather than realized encoded bytes. Self-derived
+geometry is not implemented until that path is wired for local/cloud targets.
+
 An exact norm is metric auxiliary data, not an exact-vector tier. It can improve magnitude-
 sensitive L2/dot estimates, is algebraically irrelevant to cosine after positive radial
 rescaling, and supplies no L1-specific guarantee. `exact` remains reserved for original f32
@@ -386,6 +400,10 @@ leaving RaBitQ at the header.
   `SIFT1M_COALESCED_RABITQ_RECALL_2026_07_15.adoc` and `BENCHMARK_EVIDENCE.toml`.
 * **TD-RDSTRAT-7 bytes ratchet:** same end-to-end protocol, recall@10 `>= 0.98`, no material
   GET regression, and bytes/query materially below `31.7 MB`. Codec-only ratios are diagnostic.
+* **N=1M scale ratchet (measured 2026-07-16, currently failing):** flat SQ8
+  recall@10 `0.968`, `61` GETs/query, `138,851,704` bytes/query. Restore
+  recall/GET via adaptive M and actual-byte block geometry before accepting
+  another bytes codec. Evidence: `RDSTRAT6_BYTES_BAKEOFF_SIFT_2026_07_16.adoc`.
 * Compaction test: N→1 merge yields fewer RaBitQ GETs/query + re-clustered tighter locality.
 
 == Initial open questions and resolution
@@ -447,3 +465,15 @@ stable physical field IDs with catalog/footer/block authority separation; skippa
 metadata but fail-closed unknown data encodings; auxiliary-region Bloom references; and a
 default-OFF clustered-residual SQ4 rerank encoding that replaces flat SQ8 only for eligible
 blocks. The RaBitQ header decision is unchanged.
+
+== Scale/bake-off amendment (2026-07-16)
+
+The serialized release bake-off rejected residual SQ6, TurboQuant4, and
+multi-bit RaBitQ4; no footer-v2 data encoding ships. A verified full TEXMEX
+N=1M run then showed that the flat control also misses the recall and GET gates.
+D6/D8 sequencing is amended accordingly: adaptive survivor M, realized-byte
+`IopsBudget` geometry, and scalable deterministic cluster fitting precede any
+new compact rerank tag. Higher-dimensional embeddings are evaluated, not
+assumed to help: the mandatory RaBitQ scan grows as
+`N * (ceil(dim/8)+8)`, as do rerank bytes and fitting cost. The header-first and
+Parquet-style footer decisions remain unchanged.

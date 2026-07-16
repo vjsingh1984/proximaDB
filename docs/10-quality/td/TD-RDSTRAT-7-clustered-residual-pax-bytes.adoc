@@ -8,11 +8,13 @@
 | Field | Value
 
 | Status
-| **Proposed implementation design (2026-07-15).** This is the deferred BYTES
-  phase of link:../../12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062]
-  after PR1 (#1019) moved GETs. This document is the required codec/layout audit
-  and implementation contract; code follows in a separate TDD PR after this
-  design lands.
+| **First implementation bake-off rejected (2026-07-16); redesign active.**
+  Residual SQ6 was the only compact arm to clear recall at N=100k, but saved only
+  7.0% query bytes and was 3.4x slower. TurboQuant4 and multi-bit RaBitQ4 missed
+  recall by about six points. At genuine N=1M, flat SQ8 itself measured recall
+  `0.968` and `61` GETs/query; SQ6 fell to `0.950`. No codec/footer-v2 writer from
+  this bake-off ships. Adapt survivor M, wire `IopsBudget`, and scale the cluster
+  producer before evaluating another encoding.
 
 | Severity
 | High — PR1 measured `bytes_read/query = 31.7 MB` at recall@10 `0.984` and
@@ -62,6 +64,10 @@ Kernel compression ratios and codec microbenchmarks are diagnostic only. The
 headline is the end-to-end query counter under the same single-file, IVF-ON
 protocol because range over-read, codebook bytes, footer bytes, and survivor
 locality all contribute to the actual route-cost term.
+
+The 2026-07-16 equal-protocol bake-off and full N=1M follow-up are recorded in
+link:../../_internal/status/RDSTRAT6_BYTES_BAKEOFF_SIFT_2026_07_16.adoc[the dated evidence].
+No arm met this definition of done.
 
 == Settled constraints inherited from ADR-062
 
@@ -413,10 +419,10 @@ The encoding map declares the block's chosen codec; block-local parameters live
 in a versioned `VectorParamBlock` extension. Mixed codec blocks in one segment
 are permitted.
 
-=== Equal-protocol codec bake-off
+=== Equal-protocol codec bake-off — measured, no winner
 
 The first implementation does not earn a permanent format tag merely by
-existing. Three isolated worktrees run the same release-profile SIFT1M N=100k,
+existing. Three isolated worktrees ran the same release-profile SIFT1M N=100k,
 100-query, single-file IVF-ON protocol:
 
 * clustered SQ4/SQ6, including the explicitly declared exact-norm experiment;
@@ -430,6 +436,32 @@ time. Total route cost is also reported under ADR-062's durable weights
 the GET result, and moving bytes materially below `31.7 MB` is eligible. Losing
 experimental codecs are discarded unless independently justified by another
 workload.
+
+Measured result: residual SQ6 + exact squared norm reached recall `0.981` but
+only reduced bytes/query from `32,020,233` to `29,775,220` and increased mean
+query latency from `11,756 us` to `39,688 us`. TurboQuant4 reached recall
+`0.921`; multi-bit RaBitQ4 reached `0.917`. Both 4-bit arms read about
+`25.12 MB/query`. All three are rejected.
+
+At genuine N=1M, flat measured recall `0.968`, `61` GETs/query, and
+`138,851,704` bytes/query; SQ6 measured `0.950`, `61`, and `128,722,140`.
+The fixed pool is 1,000 candidates at both scales (1% of N=100k versus 0.1% of
+N=1M), so the scale gate must be restored before another rerank codec is judged.
+
+=== Prerequisites exposed by N=1M
+
+* **Adaptive survivor M.** Replace the segment-size-independent 1,000-candidate
+  contract with a measured recall/confidence rule and charge its survivor blocks
+  to the GET/byte budget.
+* **Wire the existing budget.** `IopsBudget` declares local 1 MiB and cloud
+  4 MiB targets, but PAX still uses a 3 MiB threshold with a fixed 1 KiB/row
+  proxy, yielding about 3,072 rows/block regardless of encoding or dimension.
+* **Scale the producer.** N=1M IVF flushes took 44-48 minutes at d128; the sampled
+  hot path was `kmeans_clustering_seeded`. Higher dimension requires scalable,
+  deterministic fitting first.
+* **Dimension sweep.** Measure real d128/384/768/1536/3072 L2, cosine, and dot
+  workloads. Better estimator concentration is possible, but the mandatory
+  RaBitQ region, rerank bytes, and fitting work all grow with dimension.
 
 Metric compatibility is evaluated separately from the Euclidean SIFT headline:
 L2, cosine, and dot require ranking/score-domain tests; other public metrics
@@ -546,6 +578,10 @@ survivor-block codec and is not tuned in the bytes PR.
 * All repository format, clippy/check, server-binary, TD uniqueness, attribution,
   and work-commit guards pass before the implementation PR targets `develop`.
 
+The 2026-07-16 bake-off satisfies the evidence requirement but **does not
+satisfy the acceptance gates**. The TD remains active; none of the prototype
+codec tags or footer-v2 writes are accepted for production.
+
 == History
 
 * 2026-07-15 — filed after PR1 #1019 landed. Audit established one shared codec
@@ -553,3 +589,7 @@ survivor-block codec and is not tuned in the bytes PR.
   codebooks local to each PAX block, a clean footer-v2 section layout with v1
   read fallback, typed optional
   Bloom references, and fail-closed unknown encoding behavior.
+* 2026-07-16 — serialized release bake-off rejected residual SQ6, TurboQuant4,
+  and multi-bit RaBitQ4. Genuine N=1M validation also failed the flat control's
+  recall/GET gates and exposed fixed-M, unwired-`IopsBudget`, and k-means scaling
+  prerequisites. No storage-format implementation ships from this phase.

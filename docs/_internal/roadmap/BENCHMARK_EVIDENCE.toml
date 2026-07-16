@@ -45,7 +45,7 @@ notes = "Non-regression baseline only — explicitly NOT a cost/recall SLA (rout
 
 [[claims]]
 id = "coalesced_rabitq_scan_rerank_sift"
-claim = "ADR-062 coalesced-RaBitQ scan-then-rerank reaches the ~0.99 recall regime at ~20 ranged GETs/query — vs the legacy block-centroid-prune ceiling of ~0.87 @ ~370 GETs (an 18.5x GET reduction, moving the dominant per_get cost term)"
+claim = "At N=100k, ADR-062 coalesced-RaBitQ scan-then-rerank reaches the ~0.99 recall regime at ~20 ranged GETs/query — vs the legacy block-centroid-prune ceiling of ~0.87 @ ~370 GETs (an 18.5x GET reduction, moving the dominant per_get cost term)"
 metric = "recall@10 + range_gets_per_query"
 status = "measured"
 asserted_in = [
@@ -59,6 +59,23 @@ hardware = "Local macOS arm64 (Apple Silicon), no other workload"
 date = "2026-07-15"
 version = "develop @ 3a703d0d0 (+ ADR-062/TD-RDSTRAT-6 PR1: coalesced_rabitq feature)"
 notes = "Single-file collection (one flush batch) with the IVF flush opt-in ON (PROXIMADB_PAX_FLUSH_CLUSTER=ivf) — isolates the per-file ~1 RaBitQ GET win from the PR2 GET-budget compaction. N=100000 subset, 100 queries, top-10, Euclidean, brute-force ground truth. Measured recall@10 = 0.984, range_gets/query = 20. Indicative dev-machine run, not an SLA; bytes_read/query (31.7 MB) is the deferred post-PR1 lever (clustered SQ8/fp32 compression)."
+
+[[claims]]
+id = "rdstrat6_bytes_codec_bakeoff_sift"
+claim = "The first deferred-bytes bake-off has no eligible codec: at N=100k SQ6 saves 7.0% query bytes but is 3.4x slower; TQ4/RaBitQ4 fail recall, and at N=1M flat SQ8 and SQ6 both fail the recall/GET gates"
+metric = "recall@10 + range_gets_per_query + bytes_read_per_query + latency + persisted_bytes_per_row"
+status = "measured"
+asserted_in = [
+  "docs/12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc",
+  "docs/10-quality/td/TD-RDSTRAT-7-clustered-residual-pax-bytes.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "N=100k: set PROXIMADB_SIFT_N=100000; N=1M: omit PROXIMADB_SIFT_N; both: PROXIMADB_SIFT_DATASET_DIR=<verified-sift> PROXIMADB_SIFT_QUERIES=100 cargo test --release --test sift_pax_recall_ratchet_test sift_coalesced_rabitq_scan_rerank_eval -- --ignored --nocapture"
+artifact = "docs/_internal/status/RDSTRAT6_BYTES_BAKEOFF_SIFT_2026_07_16.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), serialized release runs, no competing benchmark"
+date = "2026-07-16"
+version = "flat eae1cdf4e; SQ6 base 4f0cccf30 + diff sha256 9bddadab; TQ4 3a091c254; RaBitQ4 b4abf4cbc"
+notes = "N=100k flat/SQ6/TQ4/RaBitQ4 recall = 0.991/0.981/0.921/0.917; bytes/query = 32020233/29775220/25124981/25124830; GETs/query = 19. Verified TEXMEX N=1M: flat recall 0.968, 61 GETs, 138851704 bytes/query; SQ6 recall 0.950, 61 GETs, 128722140 bytes/query. Prototype code intentionally discarded after rejection; artifact records source states and dataset hashes. Indicative dev-machine evidence, not an SLA."
 
 # ---------------------------------------------------------------------------
 # UNVERIFIED — a bench exists, but no dated artifact backs the claimed number.
