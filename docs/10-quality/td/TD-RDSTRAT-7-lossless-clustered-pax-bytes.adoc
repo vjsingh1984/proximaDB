@@ -111,7 +111,11 @@ layout boundary.
   plus realized-size profiles; do not depend on PAX or ProximaBlocks types.
 | SQ8/RaBitQ remain quantizers/search projections. The new layer wraps their
   bytes losslessly; it is not another quantizer and must not receive a lossy
-  `ProximaScheme` tag.
+  `ProximaScheme` tag. Do not gate canonical writes with the current
+  parameter-blind `ProximaScheme::is_lossless()`: conditional bit-width schemes
+  require a type-aware fidelity check (`is_lossy(TypeId)` today, then one
+  canonical checked API). Exclude Gorilla until its fidelity documentation,
+  marker policy, and adversarial bit-round-trip behavior agree.
 
 | ProximaBlocks (row/legacy layout)
 | Row/block compression configuration; block and per-dimension compression;
@@ -458,6 +462,14 @@ parameter with `Result`. PAX and ProximaBlocks retain their own envelopes but
 call these shared APIs. Existing FOR/bitpack/base-XOR primitives are composed,
 not forked.
 
+The shared registry must expose one type-aware fidelity decision for durable
+writes. The current zero-argument `ProximaScheme::is_lossless()` is insufficient
+because it classifies conditional `BitPacked`, `FrameOfReference`, `PForDelta`,
+and `Zigzag` variants without considering their bit width or value type. The
+code PR either replaces that helper or prevents this path from calling it; tests
+cover all conditional widths and types before any scheme may encode canonical
+data.
+
 The writer chooses transformed/compressed bytes only when the complete payload
 (references, bases, widths, directory, checksums, and compressor framing) beats
 the raw representation by a configured minimum. Otherwise that micro-chunk is
@@ -569,7 +581,8 @@ test.
   unknown required codec fail.
 . Shared codec tests: deterministic encode; adversarial bitwise f32 and
   byte-identical u8 round-trip; dimension/run/chunk validation; bit-width edges;
-  realized total-size accounting; raw fallback; corrupt/unknown tag fail closed.
+  type-aware fidelity classification; realized total-size accounting; raw
+  fallback; corrupt/unknown tag fail closed.
 . PAX block tests: transform/compression parameter round-trip; independent
   micro-chunk decode; mixed raw/compressed chunks; ranged reader parity;
   canonical authority reconstruction; unknown required transform fail closed.
