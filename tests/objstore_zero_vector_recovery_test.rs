@@ -14,7 +14,7 @@
 //! an undefined (norm-0) direction — the suspected reason a flush/index build path
 //! would drop it.
 
-use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+use proximadb_embedded::{EmbeddedConfig, EmbeddedProximaDB};
 use std::collections::HashMap;
 
 const COLLECTION: &str = "kv_recovery";
