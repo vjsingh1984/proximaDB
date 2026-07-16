@@ -61,6 +61,23 @@ version = "develop @ 3a703d0d0 (+ ADR-062/TD-RDSTRAT-6 PR1: coalesced_rabitq fea
 notes = "Single-file collection (one flush batch) with the IVF flush opt-in ON (PROXIMADB_PAX_FLUSH_CLUSTER=ivf) — isolates the per-file ~1 RaBitQ GET win from the PR2 GET-budget compaction. N=100000 subset, 100 queries, top-10, Euclidean, brute-force ground truth. Measured recall@10 = 0.984, range_gets/query = 20. Indicative dev-machine run, not an SLA; bytes_read/query (31.7 MB) is the deferred post-PR1 lever (clustered SQ8/fp32 compression)."
 
 [[claims]]
+id = "coalesced_rabitq_adaptive_m_sift1m"
+claim = "ADR-062 PR2: adaptive survivor pool M (scales with N at rate=0.01) lifts recall@10 from 0.968 (fixed M=1000, 0.1% of 1M) to 0.989 at full SIFT1M (N=1,000,000) — clearing the 0.98 gate WITHOUT per-cell RaBitQ (pool-starvation was the sole cause, not centroid distortion). GETs/query=70 (≪370 legacy, 5.3x reduction; target ≤50 pending the cache + block-geometry PRs)"
+metric = "recall@10 + range_gets_per_query"
+status = "measured"
+asserted_in = [
+  "docs/12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc",
+  "docs/10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "PROXIMADB_SIFT_DATASET_DIR=$HOME/sift1m PROXIMADB_SIFT_QUERIES=100 PROXIMADB_PAX_FLUSH_CLUSTER=ivf cargo test --release --test sift_pax_recall_ratchet_test sift_coalesced_rabitq_scan_rerank_eval -- --ignored --nocapture"
+artifact = "docs/_internal/status/SIFT1M_ADAPTIVE_M_RECALL_2026_07_16.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), no other workload"
+date = "2026-07-16"
+version = "develop @ a310a4e87 (+ perf/coalesced-pr2-cost-scale: adaptive-M + coalescing)"
+notes = "Full SIFT1M (1,000,000 vectors, 128d, Euclidean), single-file collection with IVF flush opt-in ON. Provided ground truth (10k queries x 100 neighbors, ANN-benchmarks). Adaptive-M: M = max(k*100, ceil(N*0.01), 1000) = 10,000 at 1M (vs the fixed 1000 = 0.1% that gave 0.968). The single segment-level RaBitQ centroid is NOT the wall — pool-starvation was the sole cause of the 1M recall drop. GETs/query=70 (above the 50 budget due to 10k survivors spanning more blocks — the cache PR + tighter block geometry will close this). Total wall time ~47 min (flush-dominated)."
+
+[[claims]]
 id = "rdstrat6_bytes_codec_bakeoff_sift"
 claim = "The first deferred-bytes bake-off has no eligible codec: at N=100k SQ6 saves 7.0% query bytes but is 3.4x slower; TQ4/RaBitQ4 fail recall, and at N=1M flat SQ8 and SQ6 both fail the recall/GET gates"
 metric = "recall@10 + range_gets_per_query + bytes_read_per_query + latency + persisted_bytes_per_row"
