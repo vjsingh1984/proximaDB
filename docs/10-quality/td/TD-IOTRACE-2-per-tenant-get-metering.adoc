@@ -7,7 +7,7 @@
 |===
 | Field | Value
 | Status | **Open**
-| Severity | Medium — the co-design KOU (outgress / object-store-request dimension) is not metered per-tenant, even though the io-trace now captures it.
+| Severity | **High** (raised 2026-07-16, was Medium) — downstream re-pricing (AnvaiOps ADR-0041) made the per-query physical counters this TD emits (`object_store_gets`, `object_store_bytes_read`) the **billing input for the physical part of the two-part KRU rate** ($/TB physically scanned). Until this lands, that meter bills $0 (downstream under-return rule — never estimated), i.e. this TD is now revenue-blocking, not just an observability gap. Originally: the co-design KOU (outgress / object-store-request dimension) is not metered per-tenant, even though the io-trace now captures it.
 | Component | Metering — `src/observability/metering_event.rs`
 | Tracked-by | link:../../12-design/STORAGE_FORMAT_DECISION_FRAMEWORK_2026_06_29.adoc[Storage-Format Decision Framework] (PR #553)
 | Pillar | COST, SUS

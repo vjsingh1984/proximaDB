@@ -44,9 +44,15 @@ Physical I/O (`bytes_read`, `range_gets`, `get_ops`) is emitted as **separate
 observability fields** on the metering event (that is TD-IOTRACE-2's scope) —
 never as `actual_scan_gb`.
 
-Downstream decision record: AnvaiOps ADR-0039 (KRU bills logical scanned
-bytes; the compression efficiency is operator margin, not a customer
-discount).
+Downstream decision records: AnvaiOps ADR-0039 established the logical/
+physical distinction; **AnvaiOps ADR-0041 (2026-07-16) reassigned billing** —
+the logical `actual_scan_gb` is **no longer priced** (it feeds the pre-query
+cost estimator, fair-use scan envelopes, and observability), and the
+**physical** counters (TD-IOTRACE-2's `object_store_gets` /
+`object_store_bytes_read`) became the billing input for the physical part of
+the two-part KRU rate. This TD's contract is unchanged by that reassignment:
+`actual_scan_gb` stays logical, physical stays separate — the two must never
+be conflated regardless of which one billing consumes.
 
 == Fix approach
 
