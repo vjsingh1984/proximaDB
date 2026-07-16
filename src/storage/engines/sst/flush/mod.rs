@@ -294,6 +294,11 @@ impl SstEngine {
         params: &FlushParameters,
         block_format: BlockFormat,
     ) -> Result<FlushResult> {
+        let recovery_materialization = params
+            .hints
+            .get("recovery_materialization_id")
+            .and_then(|value| value.as_str());
+
         // Begin atomic operation
         let staging_config = StagingConfig {
             base_url: storage_url.to_string(),
@@ -307,16 +312,41 @@ impl SstEngine {
 
         tracing::debug!(storage_url = %storage_url, filename = %filename, "Starting flush operation");
 
-        let atomic_op = self
-            .atomic_coordinator()
-            .begin_atomic_operation(&staging_config)
-            .await
-            .context("Failed to begin atomic flush operation")?;
+        let atomic_op = if recovery_materialization.is_some() {
+            // Recovery publishes directly to the deterministic final object via
+            // write_if_absent. Track it as zero-copy managed so abort only removes
+            // coordinator metadata and never tries to delete an object-store
+            // staging prefix that was intentionally never created.
+            self.atomic_coordinator()
+                .begin_zero_copy_managed_operation(&staging_config)
+                .await
+                .context("Failed to begin recovery publication")?
+        } else {
+            self.atomic_coordinator()
+                .begin_atomic_operation(&staging_config)
+                .await
+                .context("Failed to begin atomic flush operation")?
+        };
 
         tracing::debug!(staging_url = %atomic_op.staging_url, final_url = %atomic_op.final_url, "Atomic operation initialized");
 
-        // Write to staging using appropriate writer based on block format
-        let staging_url = format!("{}/{}", atomic_op.staging_url, filename);
+        // PAX/Arrow writers materialize through a local path. During recovery the
+        // resulting bytes are published directly to the deterministic object name
+        // with write_if_absent, so using the object-store transaction staging URL
+        // here would create a local `adls:/...` path and then try to read an object
+        // that was never uploaded. Keep a scoped local directory alive until the
+        // conditional publication completes. Normal flushes retain their existing
+        // transaction-coordinator staging path.
+        let recovery_staging = if recovery_materialization.is_some() {
+            Some(tempfile::tempdir().context("creating local recovery staging directory")?)
+        } else {
+            None
+        };
+        let staging_url = if let Some(directory) = recovery_staging.as_ref() {
+            format!("file://{}", directory.path().join(filename).display())
+        } else {
+            format!("{}/{}", atomic_op.staging_url, filename)
+        };
         tracing::debug!(staging_path = %staging_url, "Full staging path constructed");
 
         // Count entries for writing
@@ -474,10 +504,6 @@ impl SstEngine {
         });
         let bytes_written = file_metadata.size;
 
-        let recovery_materialization = params
-            .hints
-            .get("recovery_materialization_id")
-            .and_then(|value| value.as_str());
         let mut already_materialized = false;
         if recovery_materialization.is_some() {
             // The deterministic segment object is the recovery commit record.
@@ -518,13 +544,10 @@ impl SstEngine {
             }
             if let Err(error) = self
                 .atomic_coordinator()
-                .abort_atomic_operation(
-                    &atomic_op.operation_id,
-                    "recovery segment published with conditional create",
-                )
+                .finalize_atomic_operation(&atomic_op.operation_id)
                 .await
             {
-                tracing::warn!(%error, "failed to clean recovery staging operation");
+                tracing::warn!(%error, "failed to finalize recovery publication tracking");
             }
         } else {
             tracing::debug!(operation_id = %atomic_op.operation_id, "Committing atomic operation");
@@ -1390,6 +1413,77 @@ mod tests {
             3,
             "the live flush path must index all flushed vectors into AXIS (TD-112)"
         );
+    }
+
+    #[tokio::test]
+    async fn recovery_materialization_is_idempotent() {
+        use crate::proto::proximadb_v1::{
+            Collection, CollectionConfig, StorageAssignment, StorageEngine,
+        };
+        use crate::storage::traits::UnifiedStorageFormat;
+
+        let engine = create_test_engine().await;
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let collection_id = "recovery_idempotence";
+        let collection = Collection {
+            id: collection_id.to_string(),
+            config: Some(CollectionConfig {
+                name: collection_id.to_string(),
+                dimension: 4,
+                storage_engine: Some(StorageEngine::Sst as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(StorageAssignment {
+                base_location: temp_dir.path().to_string_lossy().into_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut hints = std::collections::HashMap::new();
+        hints.insert(
+            "recovery_materialization_id".to_string(),
+            serde_json::Value::String("00000000000000000001-00000000000000000007-digest".into()),
+        );
+        hints.insert(
+            "recovery_content_digest".to_string(),
+            serde_json::Value::String("digest".into()),
+        );
+        hints.insert(
+            "suppress_compaction_until_wal_retired".to_string(),
+            serde_json::Value::Bool(true),
+        );
+        let params = FlushParameters {
+            collection_id: Some(collection_id.to_string()),
+            vector_records: vec![
+                create_test_vector("v0", vec![1.0, 0.0, 0.0, 0.0]),
+                create_test_vector("v1", vec![0.0, 1.0, 0.0, 0.0]),
+            ],
+            force: true,
+            synchronous: true,
+            hints,
+            timeout_ms: None,
+            trigger_compaction: false,
+            batch_ids: vec![],
+            collection_config: Some(collection),
+            estimated_size: 0,
+        };
+
+        let first = engine
+            .do_flush(&params)
+            .await
+            .expect("first materialization");
+        assert_eq!(first.files_created, Some(1));
+
+        let replay = engine.do_flush(&params).await.expect("idempotent replay");
+        assert_eq!(replay.files_created, Some(0));
+        assert_eq!(
+            replay
+                .engine_metrics
+                .get("already_materialized")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(replay.file_paths, first.file_paths);
     }
 
     // ---- Phase C: per-collection PAX opt-out tag + global kill-switch ----
