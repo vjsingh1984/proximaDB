@@ -67,7 +67,7 @@ metric = "recall@10 + range_gets_per_query + bytes_read_per_query + latency + pe
 status = "measured"
 asserted_in = [
   "docs/12-design/adr/ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc",
-  "docs/10-quality/td/TD-RDSTRAT-7-clustered-residual-pax-bytes.adoc",
+  "docs/10-quality/td/TD-RDSTRAT-7-lossless-clustered-pax-bytes.adoc",
 ]
 bench_source = "tests/sift_pax_recall_ratchet_test.rs"
 bench_command = "N=100k: set PROXIMADB_SIFT_N=100000; N=1M: omit PROXIMADB_SIFT_N; both: PROXIMADB_SIFT_DATASET_DIR=<verified-sift> PROXIMADB_SIFT_QUERIES=100 cargo test --release --test sift_pax_recall_ratchet_test sift_coalesced_rabitq_scan_rerank_eval -- --ignored --nocapture"

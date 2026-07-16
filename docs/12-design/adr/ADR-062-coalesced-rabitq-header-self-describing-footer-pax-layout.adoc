@@ -5,7 +5,7 @@
 :status: Accepted (2026-07-15, review-approved)
 :date: 2026-07-15
 :deciders: architecture
-:relates-to: ADR-061 (pre-GA mixed-read/default policy), ADR-052 (round-trips dominate the cost term), ADR-047/046/045 (schema authority / PAX durable-core / mixed-read), ADR-036 (per-object access tier / storage profile), ADR-020 (WAL is the durable authority; the segment/footer is advisory), ADR-026 (PAX canonical vector path), link:../../10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6 (GET phase)], link:../../10-quality/td/TD-RDSTRAT-7-clustered-residual-pax-bytes.adoc[TD-RDSTRAT-7 (bytes/footer phase)], link:../../10-quality/td/TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (the rerank substrate), link:../../10-quality/td/TD-RDSTRAT-4-centroid-block-clustering-and-segment-directory.adoc[TD-RDSTRAT-4]/link:../../10-quality/td/TD-RDSTRAT-5-cache-first-voe-directory-activation-codesign.adoc[5] (block-prune, superseded as the end-state), link:../../10-quality/td/TD-WLP-9-voe-centroid-prune-recall-fail-closed-gate.adoc[TD-WLP-9] (the gate), link:../../_internal/status/SIFT1M_COALESCED_RABITQ_RECALL_2026_07_15.adoc[the PR1 measured eval]
+:relates-to: ADR-061 (pre-GA mixed-read/default policy), ADR-052 (round-trips dominate the cost term), ADR-047/046/045 (schema authority / PAX durable-core / mixed-read), ADR-036 (per-object access tier / storage profile), ADR-020 (WAL is the durable authority; the segment/footer is advisory), ADR-026 (PAX canonical vector path), link:../../10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6 (GET phase)], link:../../10-quality/td/TD-RDSTRAT-7-lossless-clustered-pax-bytes.adoc[TD-RDSTRAT-7 (bytes/footer phase)], link:../../10-quality/td/TD-RDSTRAT-3-pax-cascade-striped-read-chooser-slices.adoc[TD-RDSTRAT-3] (the rerank substrate), link:../../10-quality/td/TD-RDSTRAT-4-centroid-block-clustering-and-segment-directory.adoc[TD-RDSTRAT-4]/link:../../10-quality/td/TD-RDSTRAT-5-cache-first-voe-directory-activation-codesign.adoc[5] (block-prune, superseded as the end-state), link:../../10-quality/td/TD-WLP-9-voe-centroid-prune-recall-fail-closed-gate.adoc[TD-WLP-9] (the gate), link:../../_internal/status/SIFT1M_COALESCED_RABITQ_RECALL_2026_07_15.adoc[the PR1 measured eval]
 :supersedes: the *block-centroid-prune* path (TD-RDSTRAT-4 Lever B / TD-RDSTRAT-5) as the **end-state for the dominant object-storage cost term** (GET round-trips). Block-prune is retained only as an optional coarse pre-filter for monster collections (§Decision D6).
 
 == Status
@@ -155,39 +155,42 @@ The schema snapshot contains the immutable physical facts required to interpret 
 schema fingerprint/version and ordered fields `{ CatalogColumn.id (stable physical field-id),
 physical_column_id, name, physical/logical type, nullable, role }`. Catalog `object_id`,
 defaults, comments, indexes, and mutable properties remain catalog-only. Tier stripes
-(RaBitQ index, residual/SQ8 rerank, exact f32) are physical representations of one logical
+(RaBitQ index, SQ8 rerank projection, exact f32) are physical representations of one logical
 vector field and therefore belong in the encoding map, not as duplicate logical schema
 fields. Full schema-*evolution* reconciliation remains TD-TBL-4 / ADR-047.
 
 The footer encoding map is a descriptor table, not one file-global codec choice. It declares
-`{ descriptor_id, logical_field_id, physical_column_id, tier_role, codec_tag, codec_version,
-compression_tag/version, parameter_scope, vector_transform, auxiliary flags,
-source_fidelity, quantization_generation }`. Each footer block entry carries the compact
+`{ descriptor_id, logical_field_id, physical_column_id, tier_role, value_codec_tag/version,
+transform_tag/version, compression_tag/version, compression_flags, parameter_scope,
+vector_transform, auxiliary_flags, source_role, source_fidelity, rebuild_source_id,
+projection_generation }`. Each footer block entry carries the compact
 descriptor ID selected for each physical tier. This is required because one segment may mix a
-new rerank encoding with write-time SQ8 fallback blocks. It also lets footer-only ranged
+losslessly compressed rerank stripe with a raw SQ8 fallback block. It also lets footer-only ranged
 planning determine row stride and required parameters without first fetching every block
-footer. `codec_tag` is the stable shared `ProximaScheme` marker.
+footer. The tags name three independent layers: semantic value representation, reversible
+statistical transform, and lossless byte compressor. Stable tags come from the shared codec
+registry; they do not couple PAX to the ProximaBlocks wire format.
 
 Codec parameters needed to decode one PAX block remain in that block's
 `VectorParamBlock`, so a fetched block is self-sufficient and the segment footer does not
-duplicate codebooks. The descriptor records semantics and parameter scope; it does not carry
-the centroid/codebook payload.
+duplicate parameters. The descriptor records semantics and parameter scope; it does not carry
+block-local bases, bit widths, dictionaries, or compressor payloads.
 
 Each immutable file also records the vector field's `metric_epoch`, the metric under which
 estimator-specific tiers were built, and its normalization contract (`none` or enforced
 unit-L2). Runtime metric support is derived from the registered
-`(codec_tag, codec_version, vector_transform)` implementation rather than trusting a serialized
+`(value_codec_tag, value_codec_version, vector_transform)` implementation rather than trusting a serialized
 "supported metrics" claim. A catalog distance-metric change advances the metric epoch and
 requires compatibility validation or a rebuild before the file can serve the new estimator
 path.
 
 Compatibility distinguishes legacy metadata from unknown data bytes: a v1 footer uses the PR1
-block-local SQ8 path, but a v2 footer requires its encoding map. An explicitly unknown
-codec/version is never
-reinterpreted as SQ8. The reader may use an independently declared exact tier when the caller
-permits it; otherwise it returns unsupported-encoding. Unknown optional metadata sections may
-be ignored. Because this phase is unreleased, old PR1 binaries are not required to read v2;
-footer-v2 writes stay default-OFF until new readers are deployed.
+block-local SQ8 path, but a v2 footer requires its encoding map. An explicitly unknown value
+codec/version is never reinterpreted as SQ8. An unknown transform or compressor on a canonical
+stripe fails closed; an unknown optional projection may be bypassed only when a declared
+canonical source can satisfy the request. Unknown optional metadata sections may be ignored.
+Because this phase is unreleased, old PR1 binaries are not required to read v2; footer-v2 writes
+stay default-OFF until new readers are deployed.
 
 === D5 — Per-block stats: typed slot in v1; optional OID Bloom activation in PR3
 
@@ -272,61 +275,67 @@ compaction (D6) then merges accumulated files. Graph-edge churn is ORION epoch-r
 WRITE path is churn-tolerant via the memtable buffer + GET-budget compaction, and the layout is
 scoped so it is never on a per-trickle-write or per-graph-edge path.
 
-=== D8 — Clustered statistical encoding moves bytes; clustering alone does not
+=== D8 — Lossless clustered statistical encoding moves bytes; clustering alone does not
 
 PR1 (#1019) validates the separation of levers: SIFT1M N=100k, single-file, IVF-ON measured
 recall@10 `0.984`, `20` range GETs/query (18.5x fewer), but `31.7 MB` read/query. Reordering
-near-max-entropy SQ8/RaBitQ codes makes survivors contiguous but does not compress those codes.
-The bytes term moves through link:../../10-quality/td/TD-RDSTRAT-7-clustered-residual-pax-bytes.adoc[TD-RDSTRAT-7]:
-a per-IVF-cluster-run residual model, encoded by the shared codec and consumed first by PAX.
+near-max-entropy SQ8/RaBitQ codes makes survivors contiguous but does not by itself compress
+them. The bytes term moves through
+link:../../10-quality/td/TD-RDSTRAT-7-lossless-clustered-pax-bytes.adoc[TD-RDSTRAT-7]: reusable,
+reversible transforms over contiguous IVF cluster-runs followed by an existing lossless byte
+compressor, consumed first by PAX.
 
-Under the default-OFF gate, clustered-residual rerank **replaces** flat SQ8 for an eligible
-block; it does not sit beside SQ8 as another permanently fetched tier. The pipeline is
-`RaBitQ header index -> residual rerank -> optional exact f32`. Flat SQ8 remains the legacy and
-write-time fallback. Codebook granularity follows contiguous IVF cluster-runs intersecting a
-PAX block: cluster is the statistical model, block is the IOPS/range-read unit. Each block
-stores the parameters needed for its local run fragments, preserving independent decode.
+The precision boundary and storage encoding are separate. SQ8 and RaBitQ remain declared lossy
+query projections; the lossless wrapper must reproduce every input code byte. A canonical f32
+stripe must reproduce every IEEE-754 bit. Compaction may only regenerate projections from a
+declared canonical source; it never treats SQ8, RaBitQ, TurboQuant, or PQ bytes as canonical and
+never performs lossy-to-lossy transcode. Therefore the lossless wrapper is metric-neutral: it
+does not restrict L2, squared L2, cosine, dot product, or L1 beyond the value codec's existing
+contract.
 
-The initial implementation is versioned four-bit symmetric per-dimension residual
-quantization (centroid + per-dimension scale per run). Small runs, missing IVF plans,
-inconsistent dimensions, non-finite inputs, or insufficient realized byte savings fall back
-to flat SQ8 and are declared as such in the encoding map. Lossy activation requires an
-end-to-end SIFT gate: bytes/query materially below `31.7 MB`, recall@10 `>= 0.98`, and no
-material regression from PR1's GET result. Codec microbenchmarks are not headline evidence.
+The shared codec exposes two initial reversible transform families without importing PAX or
+ProximaBlocks layout types:
 
-The implementation choice is ratcheted by an equal-protocol bake-off, not fixed by the first
-codec prototype. Clustered SQ4/SQ6 (with an explicitly declared optional exact squared-norm
-parameter), clustered TurboQuant-style 4-bit, and clustered multi-bit RaBitQ 4-bit are measured
-at the same N=100k single-file IVF-ON SIFT workload. The accepted rerank encoding must beat
-the PR1 byte result while clearing recall and GET gates; losing prototypes do not become
-durable format variants merely because they were implemented for evaluation.
+* `ClusteredForBitpackU8/v1`: within a cluster-run microchunk, logically transpose SQ8 codes by
+  dimension, store each lane's minimum and bit width, and bit-pack exact unsigned deltas.
+* `ClusteredExactBaseXor/v1`: select an exact f32 reference per run, XOR raw IEEE words, apply a
+  reversible byte/bit-plane arrangement, then losslessly compress the result. Floating
+  `x - centroid` arithmetic is forbidden because it cannot guarantee bit-for-bit reconstruction.
 
-The 2026-07-16 bake-off produced no winner. At N=100k residual SQ6 reached
-recall `0.981` but saved only 7.0% query bytes and was 3.4x slower; TurboQuant4
-and multi-bit RaBitQ4 reached recall `0.921` and `0.917`. At genuine N=1M the
-flat control itself fell to recall `0.968` and `61` GETs/query, while SQ6 reached
-`0.950` with the same GET count. D8 remains a design seam, not an accepted
-encoding. No prototype receives a durable tag.
+This follows the Parquet separation of value encoding, reversible encoding, and compression.
+PAX and ProximaBlocks remain independent envelopes over the same codec engine. Granularity is a
+microchunk contained by a cluster-run and range-read block: the cluster supplies the statistical
+model, the block remains the IOPS unit, and the microchunk bounds independent decode and
+over-read. Each unit falls back to raw bytes unless its complete encoded representation—header,
+parameters, padding, and compressed payload—is smaller. The default-OFF gate is
+`PROXIMADB_PAX_LOSSLESS_CLUSTERED=1`.
 
-The N=1M result measures two prerequisites to D6/D8. Top-M is fixed at 1,000
-for top-10 regardless of segment rows; it shrinks from 1% of N=100k to 0.1% of
-N=1M and must become a measured segment-scale/confidence rule. `IopsBudget`
-exists, but PAX still cuts at a 3 MiB threshold using a fixed 1 KiB/row estimate
-(about 3,072 rows/block), rather than realized encoded bytes. Self-derived
-geometry is not implemented until that path is wired for local/cloud targets.
+The 2026-07-16 bake-off produced no lossy winner. At N=100k residual SQ6 reached recall `0.981`
+but saved only 7.0% query bytes and was 3.4x slower; TurboQuant4 and multi-bit RaBitQ4 reached
+recall `0.921` and `0.917`. At genuine N=1M the flat control itself fell to recall `0.968` and
+`61` GETs/query, while SQ6 reached `0.950` with the same GET count. No prototype receives a
+durable tag. Its evidence sizes survivor and geometry prerequisites; it does not authorize
+another lossy storage tier.
+
+The N=1M result measures two prerequisites to D6/D8. Top-M is fixed at 1,000 for top-10
+regardless of segment rows; it shrinks from 1% of N=100k to 0.1% of N=1M and must become a
+measured segment-scale/confidence rule. `IopsBudget` exists, but PAX still cuts at a 3 MiB
+threshold using a fixed 1 KiB/row estimate (about 3,072 rows/block), rather than realized
+encoded bytes. Self-derived geometry is not implemented until that path is wired for
+local/cloud targets.
 
 An exact norm is metric auxiliary data, not an exact-vector tier. It can improve magnitude-
 sensitive L2/dot estimates, is algebraically irrelevant to cosine after positive radial
 rescaling, and supplies no L1-specific guarantee. `exact` remains reserved for original f32
 values.
 
-Exact-f32 presence is a per-block physical fact plus a catalog durability policy:
-`ExactRetained`, `ExternalAuthority`, or `ApproximateOnly`. Compaction/re-clustering may
-re-encode from original f32 supplied by every input block or the declared external authority.
-Without such a source it must pass blocks through/defer, unless `ApproximateOnly` explicitly
-permits lossy transcoding; that path increments `quantization_generation` and never relabels
-the output exact. Query guarantees follow the weakest live block, not whether any one input
-file has f32.
+Canonical-f32 presence is a per-block physical fact and collection durability policy. A file
+may omit canonical f32 only when its projection descriptor names a durable canonical rebuild
+source outside that file; such a file cannot serve an exact read independently. Compaction and
+re-clustering either decode exact canonical bits from every input, obtain them from the declared
+authority, or preserve/defer the input. There is no `ApproximateOnly` escape hatch for
+reconstructive database operations. Query guarantees follow the weakest live block, not whether
+any one input file happens to contain f32.
 
 == First principles / rationale
 
@@ -365,7 +374,7 @@ may pay a footer-index GET to plan survivor data reads, but the fixed-offset RaB
 depends on that footer GET and can proceed independently.
 
 *Co-design cost-term note:* PR1 moved GETs (dominant). TD-RDSTRAT-7 is the separately gated
-bytes lever; it reuses the same IVF producer for per-cluster-run residual codebooks while
+bytes lever; it reuses the same IVF producer for lossless per-cluster-run transforms while
 leaving RaBitQ at the header.
 
 == Alternatives considered
@@ -385,21 +394,24 @@ leaving RaBitQ at the header.
 * **Unknown encoding -> assume SQ8** — rejected. Absence of the new map means the legacy SQ8
   path; an explicit unknown codec describes bytes the reader cannot safely interpret and must
   fail closed (or use an independently declared exact tier).
-* **Residual beside flat SQ8** — rejected for the normal rerank path because both would be
-  fetched for the same accuracy stage. Eligible blocks replace SQ8; ineligible blocks declare
-  SQ8 as their write-time fallback.
+* **Another lossy residual tier beside or replacing SQ8** — rejected. The measured candidates
+  did not clear the end-to-end gate and would add a second precision/authority boundary. The
+  accepted bytes lever wraps existing SQ8 or canonical f32 losslessly and adds no query tier.
 * **Cap files at 1 (force compaction)** — rejected; LSM-accumulate 3-5, compact on a GET-budget
   (D6), so file-count = the GET-count knob without over-compacting.
 
 == Verification / ratchets
 
-* Round-trip + format-detection unit tests (mirror `write_pax_segment_round_trips_through_reader`).
+* Bit-exact round-trip + format-detection tests (mirror
+  `write_pax_segment_round_trips_through_reader`) across random and adversarial f32 bit patterns,
+  SQ8 bytes, mixed raw/encoded microchunks, corrupt parameters, and unknown tags.
 * `check_td_adr_unique.py` + `check_td_status_consistency.py`.
 * **PR1 result (measured):** SIFT1M N=100k, single-file, IVF-ON reached recall@10 `0.984`,
   `20` range GETs/query, and `31.7 MB` read/query; recorded in
   `SIFT1M_COALESCED_RABITQ_RECALL_2026_07_15.adoc` and `BENCHMARK_EVIDENCE.toml`.
 * **TD-RDSTRAT-7 bytes ratchet:** same end-to-end protocol, recall@10 `>= 0.98`, no material
-  GET regression, and bytes/query materially below `31.7 MB`. Codec-only ratios are diagnostic.
+  GET regression, bytes/query materially below `31.7 MB`, lower persisted bytes, and no material
+  release-profile decode-CPU or p95 latency regression. Codec-only ratios are diagnostic.
 * **N=1M scale ratchet (measured 2026-07-16, currently failing):** flat SQ8
   recall@10 `0.968`, `61` GETs/query, `138,851,704` bytes/query. Restore
   recall/GET via adaptive M and actual-byte block geometry before accepting
@@ -457,14 +469,15 @@ inconsistency, separate cleanup, not a spec error.)
 == Footer/bytes implementation amendment (2026-07-15)
 
 After PR1 #1019 landed and measured recall `0.984`, `20` range GETs/query, and `31.7 MB`
-read/query, link:../../10-quality/td/TD-RDSTRAT-7-clustered-residual-pax-bytes.adoc[TD-RDSTRAT-7]
+read/query, link:../../10-quality/td/TD-RDSTRAT-7-lossless-clustered-pax-bytes.adoc[TD-RDSTRAT-7]
 audited the shared codec, ProximaBlocks prior art, PAX `ColumnMeta`/`VectorParamBlock`, and Bloom
 implementations. D4/D5/D8 now fix the implementation seams: a clean typed footer v2 with a v1
 read fallback;
 stable physical field IDs with catalog/footer/block authority separation; skippable optional
 metadata but fail-closed unknown data encodings; auxiliary-region Bloom references; and a
-default-OFF clustered-residual SQ4 rerank encoding that replaces flat SQ8 only for eligible
-blocks. The RaBitQ header decision is unchanged.
+default-OFF lossless clustered transform/compression layer in the shared codec, consumed first
+by PAX and available to ProximaBlocks through its independent envelope. The RaBitQ header
+decision and precision of existing query projections are unchanged.
 
 == Scale/bake-off amendment (2026-07-16)
 
@@ -477,3 +490,13 @@ new compact rerank tag. Higher-dimensional embeddings are evaluated, not
 assumed to help: the mandatory RaBitQ scan grows as
 `N * (ceil(dim/8)+8)`, as do rerank bytes and fitting cost. The header-first and
 Parquet-style footer decisions remain unchanged.
+
+== Lossless authority amendment (2026-07-16)
+
+Database reconstruction requires canonical values to decode exactly. D4/D8 therefore separate
+the existing lossy query projection from all subsequent storage transforms: SQ8/RaBitQ may be
+quantized once under their declared value-codec contract, while clustered FOR/bit-pack, exact
+base-XOR, byte/bit-plane rearrangement, and entropy compression are strictly reversible. This
+supersedes the earlier residual-SQ4 implementation proposal. The codec-library transforms and
+registry are layout-neutral; PAX is the first measured consumer and ProximaBlocks adoption is a
+follow-on through its separate physical envelope and access granularity.
