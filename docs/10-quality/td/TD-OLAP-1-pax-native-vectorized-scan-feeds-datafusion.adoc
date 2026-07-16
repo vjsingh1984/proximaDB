@@ -23,6 +23,35 @@ NATIVE_OLAP_ENGINE_BLUEPRINT's "NativeOlap route" must therefore be a **scan ope
 a parallel operator engine: own the PAX-native, ANN-co-designed SCAN; reuse DataFusion's
 vectorized operators for everything above it.
 
+== Evidence (measured, in-repo — 2026-07-15)
+
+The "1–2 orders of magnitude" is not just literature here; it is the measured, end-to-end
+per-query gap between the two ProximaDB routes on the **same** TPC-H data (pgwire, warm/
+repeat, `tests/tpc_perf_ledger_e2e.rs`), and — critically — it **widens with scale**, the
+row-wise-per-tuple signature:
+
+[cols="1,1,1,1", options="header"]
+|===
+| scale | native Volcano (row-wise) median | DataFusion (vectorized) median | gap
+| SF 0.001 (~9k rows) | 90 ms | 12 ms | ~7×
+| SF 0.1 (~0.9M rows) | **6,388 ms** | **25 ms** | **~461× (max 770×, Q6)**
+|===
+
+Growth for 100× more data: **native ~71× slower, DataFusion ~2× (near-flat).** At SF 0.1 the
+row-wise route also *times out* on Q21 (60 s budget) while DataFusion serves it in 33 ms.
+This is the co-design case (dimensional cost term = per-tuple CPU × rows, which the row-wise
+model pays and vectorization erases) grounded in a measured trace, per mandate #6 — not a
+kernel microbenchmark. The recent frontend/planner coverage work (TD-REL-LOWER-4/6/7) raised
+native TPC-H coverage to 16–17/22 for *correctness* on **fresh** (non-materialized) data;
+this TD is the lever that makes that same fresh-data path **fast** by feeding PAX blocks into
+DataFusion's vectorized operators instead of the row-wise iterator. Rerun with
+`TPC_PERF_SCALE=0.1 TPC_PERF_BENCHMARK=tpch`.
+
+**Prioritization (2026-07-15):** with the substrate + Slice 1/1.5 landed and this measured
+gap, **Slice 2 (route flip behind the cost crossover, default-off) is the actively-tracked
+next step**, still gated on the TD-OLAP-4 ledger promotion rule (observe → ingest → act,
+ADR-052).
+
 == Rollout (observe → ingest → act; default-off)
 
 . **Substrate (prereq, tracked elsewhere):** TD-162a-2 typed user-column stripes + TD-154
