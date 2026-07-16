@@ -8,6 +8,7 @@
 //! `&[Vec<f32>]`.
 
 use anyhow::Result;
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 /// Inline squared L2 distance (avoids distance-engine overhead in the
 /// clustering inner loops — this is a write-time, low-cardinality path).
@@ -33,13 +34,40 @@ pub fn kmeans_clustering(
     max_iterations: usize,
     convergence_threshold: f32,
 ) -> Result<Vec<Vec<f32>>> {
+    let mut rng = rand::thread_rng();
+    kmeans_clustering_with_rng(vectors, k, max_iterations, convergence_threshold, &mut rng)
+}
+
+/// Deterministic k-means clustering for storage layouts and reproducible evals.
+///
+/// A fixed `seed` produces the same centroids for the same ordered input. This
+/// is intentionally additive: training callers that want stochastic starts
+/// continue to use [`kmeans_clustering`], while durable physical-layout callers
+/// can opt into reproducibility.
+pub fn kmeans_clustering_seeded(
+    vectors: &[Vec<f32>],
+    k: usize,
+    max_iterations: usize,
+    convergence_threshold: f32,
+    seed: u64,
+) -> Result<Vec<Vec<f32>>> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    kmeans_clustering_with_rng(vectors, k, max_iterations, convergence_threshold, &mut rng)
+}
+
+fn kmeans_clustering_with_rng<R: Rng + ?Sized>(
+    vectors: &[Vec<f32>],
+    k: usize,
+    max_iterations: usize,
+    convergence_threshold: f32,
+    rng: &mut R,
+) -> Result<Vec<Vec<f32>>> {
     use rand::seq::SliceRandom;
 
     if vectors.is_empty() || k == 0 {
         anyhow::bail!("Invalid input for k-means");
     }
 
-    let mut rng = rand::thread_rng();
     let n = vectors.len();
     let dimension = vectors[0].len();
 
@@ -56,7 +84,7 @@ pub fn kmeans_clustering(
     let mut centroids = Vec::with_capacity(k);
 
     let first_centroid = vectors
-        .choose(&mut rng)
+        .choose(rng)
         .ok_or_else(|| anyhow::anyhow!("k-means requires at least one vector"))?
         .clone();
     centroids.push(first_centroid);
@@ -77,13 +105,13 @@ pub fn kmeans_clustering(
         let total_dist: f32 = distances.iter().sum();
         if total_dist <= 0.0 {
             // All points are at distance 0 — just pick a random one.
-            if let Some(v) = vectors.choose(&mut rng) {
+            if let Some(v) = vectors.choose(rng) {
                 centroids.push(v.clone());
             }
             continue;
         }
         let mut cumulative = 0.0;
-        let threshold = rand::random::<f32>() * total_dist;
+        let threshold = rng.r#gen::<f32>() * total_dist;
 
         for (i, &dist) in distances.iter().enumerate() {
             cumulative += dist;
@@ -230,5 +258,16 @@ mod tests {
     fn kmeans_rejects_empty_input_and_zero_k() {
         assert!(kmeans_clustering(&[], 3, 10, 1e-3).is_err());
         assert!(kmeans_clustering(&[vec![1.0]], 0, 10, 1e-3).is_err());
+    }
+
+    #[test]
+    fn seeded_kmeans_is_reproducible() -> Result<()> {
+        let vectors: Vec<Vec<f32>> = (0..128)
+            .map(|i| vec![i as f32, (i % 11) as f32, (i % 7) as f32])
+            .collect();
+        let first = kmeans_clustering_seeded(&vectors, 8, 20, 1e-3, 0x5041_585F_4956_4631)?;
+        let second = kmeans_clustering_seeded(&vectors, 8, 20, 1e-3, 0x5041_585F_4956_4631)?;
+        assert_eq!(first, second);
+        Ok(())
     }
 }
