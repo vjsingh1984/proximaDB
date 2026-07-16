@@ -162,6 +162,8 @@ pub struct PaxBlockWriter {
     /// its realized payload is smaller. Default OFF; readers key off the
     /// VectorParamBlock transform trailer rather than inspecting payload magic.
     clustered_sq8_lossless: bool,
+    /// Apply exact all-null elision and shared LZ4 to scalar stripes when smaller.
+    lossless_scalar: bool,
     /// Row offsets at which a new producer-defined cluster starts. Row zero is
     /// implicit. These boundaries are block-local and reset by [`Self::clear`].
     cluster_run_starts: Vec<usize>,
@@ -225,6 +227,7 @@ impl PaxBlockWriter {
             include_f32_tier: false,
             rerank_quant: VectorQuant::Sq8,
             clustered_sq8_lossless: false,
+            lossless_scalar: false,
             cluster_run_starts: Vec::new(),
             oids: Vec::new(),
             tenant_ids: Vec::new(),
@@ -286,6 +289,12 @@ impl PaxBlockWriter {
     /// still stores flat SQ8 unless the complete encoded payload is smaller.
     pub fn with_clustered_sq8_lossless(mut self, enabled: bool) -> Self {
         self.clustered_sq8_lossless = enabled;
+        self
+    }
+
+    /// Enable exact Parquet-style all-null pages and post-codec scalar LZ4.
+    pub fn with_lossless_scalar(mut self, enabled: bool) -> Self {
+        self.lossless_scalar = enabled;
         self
     }
 
@@ -787,6 +796,8 @@ impl PaxBlockWriter {
     ) -> ColumnStripe {
         let scheme = select_str_scheme(role, nullable, vals);
         let (data, null_count) = encode_str_with_scheme(vals, &scheme);
+        let (data, is_lz4_compressed) =
+            self.encode_lossless_scalar(data, null_count as usize, vals.len());
         let stats = string_stats(vals);
         let meta = ColumnMeta {
             column_id: id,
@@ -796,6 +807,7 @@ impl PaxBlockWriter {
             nullable,
             has_bloom: false,
             is_sorted: false,
+            is_lz4_compressed,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -872,6 +884,7 @@ impl PaxBlockWriter {
             nullable: true,
             has_bloom: false,
             is_sorted: false,
+            is_lz4_compressed: false,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -930,6 +943,7 @@ impl PaxBlockWriter {
             nullable: true,
             has_bloom: false,
             is_sorted: false,
+            is_lz4_compressed: false,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -1008,6 +1022,7 @@ impl PaxBlockWriter {
             nullable: true,
             has_bloom: false,
             is_sorted: false,
+            is_lz4_compressed: false,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -1071,6 +1086,7 @@ impl PaxBlockWriter {
             nullable: true,
             has_bloom: false,
             is_sorted: false,
+            is_lz4_compressed: false,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -1103,6 +1119,8 @@ impl PaxBlockWriter {
         let (raw_values, null_count) = flatten_f64_values(vals);
         let scheme = select_f64_scheme(role, nullable, vals);
         let data = encode_f64_with_scheme(&raw_values, &scheme)?;
+        let (data, is_lz4_compressed) =
+            self.encode_lossless_scalar(data, null_count as usize, vals.len());
         let mut meta = ColumnMeta {
             column_id: id,
             role,
@@ -1111,6 +1129,7 @@ impl PaxBlockWriter {
             nullable,
             has_bloom: false,
             is_sorted: false,
+            is_lz4_compressed,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -1198,6 +1217,8 @@ impl PaxBlockWriter {
         let (raw_values, null_count) = flatten_i64_values(vals);
         let scheme = select_i64_scheme(role, nullable, vals);
         let data = encode_i64_with_scheme(&raw_values, &scheme)?;
+        let (data, is_lz4_compressed) =
+            self.encode_lossless_scalar(data, null_count as usize, vals.len());
         let mut meta = ColumnMeta {
             column_id: id,
             role,
@@ -1206,6 +1227,7 @@ impl PaxBlockWriter {
             nullable,
             has_bloom: false,
             is_sorted: is_i64_sorted(vals),
+            is_lz4_compressed,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -1249,6 +1271,8 @@ impl PaxBlockWriter {
                 }
             }
         }
+        let (data, is_lz4_compressed) =
+            self.encode_lossless_scalar(data, null_count as usize, vals.len());
         let _ = refs; // suppress warning
         let meta = ColumnMeta {
             column_id: id,
@@ -1258,6 +1282,7 @@ impl PaxBlockWriter {
             nullable: true,
             has_bloom: false,
             is_sorted: false,
+            is_lz4_compressed,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
@@ -1268,6 +1293,28 @@ impl PaxBlockWriter {
             bloom_len: 0,
         };
         ColumnStripe::new(meta, data)
+    }
+
+    /// Apply the exact post-codec storage layer selected for this block.
+    /// All-null pages use the existing `null_count` as their definition level
+    /// and need no value payload. Other pages retain the encoded bytes unless
+    /// shared LZ4 clears the realized-size threshold.
+    fn encode_lossless_scalar(
+        &self,
+        data: Vec<u8>,
+        null_count: usize,
+        row_count: usize,
+    ) -> (Vec<u8>, bool) {
+        if !self.lossless_scalar {
+            return (data, false);
+        }
+        if row_count > 0 && null_count == row_count {
+            return (Vec::new(), false);
+        }
+        match functions::lossless_compression::compress_lz4_if_smaller(&data, 8) {
+            Ok(Some(compressed)) => (compressed, true),
+            Ok(None) | Err(_) => (data, false),
+        }
     }
 }
 

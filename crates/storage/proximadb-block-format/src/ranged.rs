@@ -35,7 +35,7 @@ use crate::{
     writer::{BLOCK_FOOTER_SIZE, BlockFooter},
 };
 use proximadb_codec::functions::rabitq;
-use proximadb_codec::{RaBitQCode, RaBitQParams};
+use proximadb_codec::{RaBitQCode, RaBitQParams, functions};
 
 /// Byte range of the trailing [`BlockFooter`] for an object of `object_size`.
 pub fn footer_tail_range(object_size: u64) -> Result<Range<u64>> {
@@ -205,7 +205,16 @@ impl BlockLayout {
         let m = self
             .meta(column_id)
             .ok_or_else(|| anyhow::anyhow!("column {column_id} not in block"))?;
-        decode_i64_with_encoding(stripe_bytes, m.encoding_id, self.footer.n_rows as usize)
+        let row_count = self.footer.n_rows as usize;
+        if m.stripe_len == 0 && m.null_count as usize == row_count {
+            return Ok(vec![i64::MIN; row_count]);
+        }
+        let payload = if m.is_lz4_compressed {
+            functions::lossless_compression::decompress_lz4(stripe_bytes)?
+        } else {
+            stripe_bytes.to_vec()
+        };
+        decode_i64_with_encoding(&payload, m.encoding_id, row_count)
     }
 
     /// Decode an f32 vector column from its (range-fetched) stripe bytes.
@@ -235,7 +244,16 @@ impl BlockLayout {
         stripe_bytes: &[u8],
     ) -> Option<Vec<Option<String>>> {
         let meta = self.meta(column_id)?;
-        decode_str_with_encoding(stripe_bytes, meta.encoding_id, self.footer.n_rows as usize).ok()
+        let row_count = self.footer.n_rows as usize;
+        if meta.stripe_len == 0 && meta.null_count as usize == row_count {
+            return Some(vec![None; row_count]);
+        }
+        let payload = if meta.is_lz4_compressed {
+            functions::lossless_compression::decompress_lz4(stripe_bytes).ok()?
+        } else {
+            stripe_bytes.to_vec()
+        };
+        decode_str_with_encoding(&payload, meta.encoding_id, row_count).ok()
     }
 
     // ── Ranged RaBitQ cascade (ADR-057 / TD-RDSTRAT-3 S1b) ──────────────────────

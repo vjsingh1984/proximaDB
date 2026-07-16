@@ -266,6 +266,7 @@ fn write_pax_segment_ordered(
     plan: Option<crate::storage::engines::sst::block_cluster::ClusterPlan>,
 ) -> Result<SegmentMeta> {
     let lossless_clustered = lossless_clustered_enabled() && plan.is_some();
+    let lossless_scalar = lossless_scalar_enabled();
     let mut writer = PaxSegmentWriter::new(
         path,
         BlockMode::Pax,
@@ -279,6 +280,7 @@ fn write_pax_segment_ordered(
     .with_f32_tier(f32_tier)
     .with_rerank_quant(rerank_quant)
     .with_lossless_clustered(lossless_clustered)
+    .with_lossless_scalar(lossless_scalar)
     .with_block_centroids(cluster)
     // ADR-062 / TD-RDSTRAT-6: hoist the RaBitQ binary tier into a coalesced
     // file-level header region for RaBitQ-quantized writes (default ON per the
@@ -312,6 +314,18 @@ fn write_pax_segment_ordered(
 fn lossless_clustered_enabled() -> bool {
     matches!(
         std::env::var("PROXIMADB_PAX_LOSSLESS_CLUSTERED")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(|value| value.to_ascii_lowercase())
+            .as_deref(),
+        Some("1") | Some("true") | Some("on") | Some("yes")
+    )
+}
+
+fn lossless_scalar_enabled() -> bool {
+    matches!(
+        std::env::var("PROXIMADB_PAX_LOSSLESS_SCALAR")
             .ok()
             .as_deref()
             .map(str::trim)

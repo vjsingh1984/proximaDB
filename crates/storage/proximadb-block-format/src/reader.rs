@@ -399,7 +399,11 @@ impl<'a> PaxBlockReader<'a> {
         let raw = self.read_stripe_raw(column_id)?;
         let meta = self.columns.iter().find(|m| m.column_id == column_id)?;
         let n = self.row_count() as usize;
-        let decoded = decode_i64_with_encoding(raw, meta.encoding_id, n).ok()?;
+        if meta.stripe_len == 0 && meta.null_count as usize == n {
+            return Some(vec![None; n]);
+        }
+        let payload = decode_scalar_payload(meta, raw).ok()?;
+        let decoded = decode_i64_with_encoding(&payload, meta.encoding_id, n).ok()?;
         Some(
             decoded
                 .into_iter()
@@ -413,7 +417,11 @@ impl<'a> PaxBlockReader<'a> {
         let raw = self.read_stripe_raw(column_id)?;
         let n = self.row_count() as usize;
         let meta = self.columns.iter().find(|m| m.column_id == column_id)?;
-        decode_str_with_encoding(raw, meta.encoding_id, n).ok()
+        if meta.stripe_len == 0 && meta.null_count as usize == n {
+            return Some(vec![None; n]);
+        }
+        let payload = decode_scalar_payload(meta, raw).ok()?;
+        decode_str_with_encoding(&payload, meta.encoding_id, n).ok()
     }
 
     /// Decode all f64 values from a scalar double column stripe.
@@ -421,7 +429,11 @@ impl<'a> PaxBlockReader<'a> {
         let raw = self.read_stripe_raw(column_id)?;
         let meta = self.columns.iter().find(|m| m.column_id == column_id)?;
         let n = self.row_count() as usize;
-        let decoded = decode_f64_with_encoding(raw, meta.encoding_id, n).ok()?;
+        if meta.stripe_len == 0 && meta.null_count as usize == n {
+            return Some(vec![None; n]);
+        }
+        let payload = decode_scalar_payload(meta, raw).ok()?;
+        let decoded = decode_f64_with_encoding(&payload, meta.encoding_id, n).ok()?;
         Some(
             decoded
                 .into_iter()
@@ -716,6 +728,12 @@ impl<'a> PaxBlockReader<'a> {
     pub fn decode_bytes_stripe(&self, column_id: i32) -> Option<Vec<Option<Vec<u8>>>> {
         let raw = self.read_stripe_raw(column_id)?;
         let n = self.row_count() as usize;
+        let meta = self.columns.iter().find(|m| m.column_id == column_id)?;
+        if meta.stripe_len == 0 && meta.null_count as usize == n {
+            return Some(vec![None; n]);
+        }
+        let payload = decode_scalar_payload(meta, raw).ok()?;
+        let raw = payload.as_ref();
         let mut out = Vec::with_capacity(n);
         let mut pos = 0usize;
         for _ in 0..n {
@@ -737,6 +755,16 @@ impl<'a> PaxBlockReader<'a> {
             pos = val_end;
         }
         Some(out)
+    }
+}
+
+fn decode_scalar_payload<'a>(meta: &ColumnMeta, raw: &'a [u8]) -> Result<Cow<'a, [u8]>> {
+    if meta.is_lz4_compressed {
+        Ok(Cow::Owned(functions::lossless_compression::decompress_lz4(
+            raw,
+        )?))
+    } else {
+        Ok(Cow::Borrowed(raw))
     }
 }
 
@@ -1138,6 +1166,65 @@ mod tests {
     }
 
     #[test]
+    fn lossless_scalar_pages_compress_in_place_and_round_trip() -> Result<()> {
+        const ROWS: usize = 1024;
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 0)
+            .with_lossless_scalar(true);
+        for row in 0..ROWS {
+            writer.add_record(&make_record(
+                &format!("record-{row:08}"),
+                "tenant",
+                1_000 + row as i64,
+            ))?;
+        }
+        let block = writer.flush()?;
+        let reader = PaxBlockReader::open(&block)?;
+
+        let oid_meta = reader
+            .column_metas()
+            .iter()
+            .find(|meta| meta.column_id == col_id::OID)
+            .ok_or_else(|| anyhow::anyhow!("OID metadata missing"))?;
+        assert!(oid_meta.is_lz4_compressed);
+        let actor_meta = reader
+            .column_metas()
+            .iter()
+            .find(|meta| meta.column_id == col_id::ACTOR)
+            .ok_or_else(|| anyhow::anyhow!("actor metadata missing"))?;
+        assert_eq!(actor_meta.null_count as usize, ROWS);
+        assert_eq!(actor_meta.stripe_len, 0);
+
+        let oids = reader
+            .decode_str_stripe(col_id::OID)
+            .ok_or_else(|| anyhow::anyhow!("compressed OID decode failed"))?;
+        assert_eq!(
+            oids.first().and_then(Option::as_deref),
+            Some("record-00000000")
+        );
+        assert_eq!(
+            oids.last().and_then(Option::as_deref),
+            Some("record-00001023")
+        );
+        assert_eq!(
+            reader.decode_str_stripe(col_id::ACTOR),
+            Some(vec![None; ROWS])
+        );
+        assert_eq!(
+            reader.decode_i64_stripe(col_id::VALID_FROM),
+            Some(vec![None; ROWS])
+        );
+        assert_eq!(
+            reader.decode_f64_stripe(col_id::EDGE_WEIGHT),
+            Some(vec![None; ROWS])
+        );
+        assert_eq!(
+            reader.decode_bytes_stripe(col_id::PROPS),
+            Some(vec![None; ROWS])
+        );
+        Ok(())
+    }
+
+    #[test]
     fn reader_pruning() {
         let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 0);
         writer
@@ -1454,9 +1541,15 @@ mod tests {
         let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
             .with_quant(crate::writer::VectorQuant::Sq8)
             .with_clustered_sq8_lossless(true);
+        let mut state = 0x9e37_79b9u32;
         for row in 0..8usize {
             let embedding: Vec<f32> = (0..DIM)
-                .map(|lane| ((row * DIM + lane) % 256) as f32)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 17;
+                    state ^= state << 5;
+                    (state & 0xff) as f32
+                })
                 .collect();
             writer.add_record(&make_record_with_embedding(
                 &format!("r{row}"),

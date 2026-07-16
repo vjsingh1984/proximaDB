@@ -515,6 +515,8 @@ pub struct PaxSegmentWriter {
     /// Exact clustered transform over SQ8 code bytes. Default OFF and selected
     /// independently per stripe by realized byte size.
     lossless_clustered: bool,
+    /// Exact scalar all-null elision and post-codec LZ4. Default OFF.
+    lossless_scalar: bool,
     /// P-Shred (ADR-055): `(prop_key, user_col_id)` to shred into typed user-columns —
     /// re-applied to every block writer so all blocks in the segment shred uniformly.
     shred_spec: Vec<(String, i32)>,
@@ -604,6 +606,7 @@ impl PaxSegmentWriter {
             f32_tier: false,
             rerank_quant: VectorQuant::Sq8,
             lossless_clustered: false,
+            lossless_scalar: false,
             shred_spec: Vec::new(),
             current_writer: writer,
             index: SegmentIndex { blocks: Vec::new() },
@@ -669,6 +672,13 @@ impl PaxSegmentWriter {
         self
     }
 
+    /// Enable exact scalar all-null elision and post-codec LZ4 for every block.
+    pub fn with_lossless_scalar(mut self, enabled: bool) -> Self {
+        self.lossless_scalar = enabled;
+        self.current_writer = self.fresh_block_writer();
+        self
+    }
+
     /// Mark the next appended record as the start of a producer-defined cluster.
     pub fn start_cluster_run(&mut self) {
         self.current_writer.start_cluster_run();
@@ -718,6 +728,7 @@ impl PaxSegmentWriter {
         .with_f32_tier(self.f32_tier)
         .with_rerank_quant(self.rerank_quant)
         .with_clustered_sq8_lossless(self.lossless_clustered)
+        .with_lossless_scalar(self.lossless_scalar)
         .with_shred_spec(self.shred_spec.clone())
     }
 
