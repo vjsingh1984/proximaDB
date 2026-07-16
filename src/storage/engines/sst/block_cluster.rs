@@ -231,7 +231,16 @@ pub fn cluster_order_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Ve
 
     // IVF: k-means over the projections.
     let k = (usable.len() / ROWS_PER_CELL).clamp(2, 1024);
-    let Ok(centroids) = proximadb_clustering_kernel::kmeans_clustering(&coords, k, 15, 1e-3) else {
+    // A physical layout must not depend on thread-local RNG state: identical
+    // input should produce identical IVF cells, byte counts, and eval results.
+    const PAX_IVF_KMEANS_SEED: u64 = 0x5041_585F_4956_4631;
+    let Ok(centroids) = proximadb_clustering_kernel::kmeans_clustering_seeded(
+        &coords,
+        k,
+        15,
+        1e-3,
+        PAX_IVF_KMEANS_SEED,
+    ) else {
         return cluster_order(records, idx);
     };
     let assignments = proximadb_clustering_kernel::kmeans_assign(&coords, &centroids);
@@ -532,6 +541,11 @@ mod tests {
         assert_eq!(
             transitions, 1,
             "two clusters must form two contiguous runs, got {labels:?}"
+        );
+        assert_eq!(
+            cluster_order_pca_ivf(&recs, 0),
+            Some(order),
+            "identical input must produce an identical persisted order"
         );
         // Small batch → bootstrap fallback, still a permutation.
         let small: Vec<ProximaRecord> = recs.iter().take(4).cloned().collect();
