@@ -19,6 +19,7 @@
 //! `0x02..=0x0E` — disjoint from `PBLK`, so the legacy path is never mis-routed.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Result;
 use proximadb_block_format::{
@@ -267,7 +268,7 @@ fn write_pax_segment_ordered(
     let mut writer = PaxSegmentWriter::new(
         path,
         BlockMode::Pax,
-        BlockCompression::None,
+        BlockCompression::Zstd,
         collection_id,
         0, // schema_fingerprint — derived from the catalog schema in a later phase
         embedding_count.max(1),
@@ -468,6 +469,15 @@ pub fn coalesced_rabitq_enabled() -> bool {
     )
 }
 
+/// Parse a `u64` env override, or return `default`. Used for the coalesced
+/// read-path tuning knobs (survivor coalesce gap/range, pool mult/min/rate).
+fn env_u64_or(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(default)
+}
+
 /// A coalesced ranged GET over one or more survivor data blocks.
 struct CoalescedFetch {
     start: u64,
@@ -549,6 +559,88 @@ fn canonical_score_from_rank_score(metric: RankMetric, rank_score: f32) -> f32 {
     }
 }
 
+/// Adaptive RaBitQ candidate-pool size for top-`k` over a segment of `n` rows.
+///
+/// `M = max(k · mult, ceil(n · rate), min)` — the survivor pool scales with the
+/// segment size so it stays a roughly constant *fraction* of the corpus (rate,
+/// default 1%) instead of a fixed 1000 that starves recall at scale (0.1% of 1M
+/// → measured recall 0.968; 1% of 100k → 0.991). Env-overridable:
+/// `PROXIMADB_PAX_RABITQ_POOL_MULT` (default 100), `..._MIN` (1000),
+/// `PROXIMADB_PAX_RABITQ_POOL_RATE` (default 0.01).
+pub fn pax_rabitq_pool_for_top_k(k: usize, n: usize) -> usize {
+    static C: std::sync::OnceLock<(usize, usize, f64)> = std::sync::OnceLock::new();
+    let (mult, min, rate) = C.get_or_init(|| {
+        let mult = std::env::var("PROXIMADB_PAX_RABITQ_POOL_MULT")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(100);
+        let min = std::env::var("PROXIMADB_PAX_RABITQ_POOL_MIN")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(1000);
+        let rate = std::env::var("PROXIMADB_PAX_RABITQ_POOL_RATE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|f| *f > 0.0)
+            .unwrap_or(0.01);
+        (mult, min, rate)
+    });
+    let by_k = k.saturating_mul(*mult);
+    let by_n = ((n as f64) * rate).ceil() as usize;
+    by_k.max(by_n).max(*min)
+}
+
+/// Cached per-file-invariant bytes for a coalesced segment: header-prefix,
+/// RaBitQ region, footer-index. Hot queries skip the 3 `read_range` calls →
+/// 3 GETs → 0 (the GET counter fires inside `read_range`, so eliding the call
+/// is the only way to reduce it — caching parsed structs downstream doesn't help).
+pub struct SegmentInvariants {
+    pub header_bytes: Vec<u8>,
+    pub region_bytes: Arc<[u8]>,
+    pub footer_bytes: Vec<u8>,
+}
+
+/// Per-segment invariants cache. Keyed by segment path. Simple `Mutex<HashMap>`
+/// with a global entry cap (simple eviction for PR2; per-tenant fairness is a
+/// follow-up). Thread-safe; the lock is held only briefly during get/put.
+pub struct SegmentInvariantsCache {
+    inner: std::sync::Mutex<std::collections::HashMap<String, Arc<SegmentInvariants>>>,
+    cap: usize,
+}
+
+impl SegmentInvariantsCache {
+    pub fn new(cap: usize) -> Self {
+        Self {
+            inner: std::sync::Mutex::new(std::collections::HashMap::new()),
+            cap,
+        }
+    }
+
+    /// On hit, return the cached invariants (Arc clone — refcount bump only).
+    pub fn get(&self, path: &str) -> Option<Arc<SegmentInvariants>> {
+        self.inner.lock().ok()?.get(path).cloned()
+    }
+
+    /// Insert; evict an arbitrary entry if over cap.
+    pub fn put(&self, path: String, inv: Arc<SegmentInvariants>) {
+        if let Ok(mut map) = self.inner.lock() {
+            if map.len() >= self.cap
+                && let Some(key) = map.keys().next().cloned()
+            {
+                map.remove(&key);
+            }
+            map.insert(path, inv);
+        }
+    }
+
+    /// Remove a path (call from flush/compaction when a segment is rewritten).
+    pub fn invalidate(&self, path: &str) {
+        if let Ok(mut map) = self.inner.lock() {
+            map.remove(path);
+        }
+    }
+}
+
 /// ADR-062 / TD-RDSTRAT-6 **scan-then-rerank** over a coalesced-RaBitQ segment
 /// on the engine's own filesystem — the ranged analogue of
 /// [`rabitq_search_segment`] for the new layout:
@@ -556,7 +648,8 @@ fn canonical_score_from_rank_score(metric: RankMetric, rank_score: f32) -> f32 {
 /// 1. **Scan** the coalesced RaBitQ header region (one ranged GET, header-prefix
 ///    coalesced in) — `keep=100%`: rank ALL codes → approximate distance for
 ///    every vector (zero prune loss).
-/// 2. **Select** the top-M survivors (M = `pool`, the adaptive GET-budget).
+/// 2. **Select** the top-M survivors (M = `pax_rabitq_pool_for_top_k(k, n)`,
+///    scaled with the segment's row count so it stays ~1% of the corpus).
 /// 3. **Rerank** survivors: because the segment is cluster-ordered
 ///    (`cluster_order_pca_ivf`), survivors fall in few adjacent blocks → the
 ///    `ObjectRangeCoalescePolicy` plans merged/coalesced ranged GETs → fetch the
@@ -573,51 +666,81 @@ pub async fn rabitq_search_segment_coalesced(
     path: &str,
     query: &[f32],
     k: usize,
-    pool: usize,
     metric: RankMetric,
+    cache: Option<&SegmentInvariantsCache>,
 ) -> Result<Option<Vec<CascadeHit>>> {
     use proximadb_block_format::{PaxBlockReader, RaBitQRegion, col_id};
     use proximadb_storage_common::segment_layout::{
         SEG_HEADER_PREFIX_LEN, SegmentFooterIndex, SegmentHeaderPrefix,
     };
 
-    let size = fs
-        .metadata(path)
-        .await
-        .map_err(|e| anyhow::anyhow!("coalesced scan stat {path}: {e}"))?
-        .size;
-    if size < (SEG_HEADER_PREFIX_LEN as u64 + SEGMENT_MAGIC.len() as u64) {
-        return Ok(None);
-    }
+    // PR2: check the per-segment invariants cache. On hit, skip the 3
+    // read_range calls (header + region + footer) → 3 GETs → 0 (hot path).
+    let cached = cache.and_then(|c| c.get(path));
 
-    // 1. Header-prefix → RaBitQ region + footer extents (one tiny GET). A bad
-    //    magic means this is a legacy segment → caller falls back.
-    let header_bytes = fs
-        .read_range(path, 0, SEG_HEADER_PREFIX_LEN as u64)
-        .await
-        .map_err(|e| anyhow::anyhow!("coalesced scan header {path}: {e}"))?;
+    // 1. Header-prefix → region/footer extents. From cache (hot) or read (cold).
+    let header_bytes: Vec<u8> = if let Some(inv) = cached.as_ref() {
+        inv.header_bytes.clone()
+    } else {
+        let size = fs
+            .metadata(path)
+            .await
+            .map_err(|e| anyhow::anyhow!("coalesced scan stat {path}: {e}"))?
+            .size;
+        if size < (SEG_HEADER_PREFIX_LEN as u64 + SEGMENT_MAGIC.len() as u64) {
+            return Ok(None);
+        }
+        fs.read_range(path, 0, SEG_HEADER_PREFIX_LEN as u64)
+            .await
+            .map_err(|e| anyhow::anyhow!("coalesced scan header {path}: {e}"))?
+    };
     let header = match SegmentHeaderPrefix::parse(&header_bytes) {
         Ok(h) => h,
-        Err(_) => return Ok(None),
+        Err(_) => return Ok(None), // not coalesced → don't cache
     };
 
-    // 2. Scan the RaBitQ region (one GET) + rank ALL codes → top-M survivors.
-    let region_bytes = fs
-        .read_range(path, header.rabitq_off, header.rabitq_len)
-        .await
-        .map_err(|e| anyhow::anyhow!("coalesced scan region {path}: {e}"))?;
+    // 2. Scan the RaBitQ region (cold: 1 GET; hot: 0 — Arc clone, no data copy).
+    let region_bytes: Arc<[u8]> = if let Some(inv) = cached.as_ref() {
+        inv.region_bytes.clone()
+    } else {
+        Arc::from(
+            fs.read_range(path, header.rabitq_off, header.rabitq_len)
+                .await
+                .map_err(|e| anyhow::anyhow!("coalesced scan region {path}: {e}"))?,
+        )
+    };
     let region = RaBitQRegion::from_bytes(&region_bytes)?;
+    // ADR-062 PR2: adaptive survivor pool — scale M with the segment's row count.
+    let pool = pax_rabitq_pool_for_top_k(k, region.n_rows());
     let survivors = region.rank(query, metric, pool.max(k));
     if survivors.is_empty() {
         return Ok(Some(Vec::new()));
     }
 
-    // 3. Footer-index → block table (absolute offsets + per-block row counts).
-    let footer_bytes = fs
-        .read_range(path, header.footer_off, header.footer_len)
-        .await
-        .map_err(|e| anyhow::anyhow!("coalesced scan footer {path}: {e}"))?;
+    // 3. Footer-index → block table. From cache (hot) or read (cold).
+    let footer_bytes: Vec<u8> = if let Some(inv) = cached.as_ref() {
+        inv.footer_bytes.clone()
+    } else {
+        fs.read_range(path, header.footer_off, header.footer_len)
+            .await
+            .map_err(|e| anyhow::anyhow!("coalesced scan footer {path}: {e}"))?
+    };
     let footer = SegmentFooterIndex::parse(&footer_bytes)?;
+
+    // PR2: populate the cache on miss (the invariants parsed successfully →
+    // worth caching for hot repeat queries).
+    if cached.is_none()
+        && let Some(c) = cache
+    {
+        c.put(
+            path.to_string(),
+            Arc::new(SegmentInvariants {
+                header_bytes,
+                region_bytes,
+                footer_bytes,
+            }),
+        );
+    }
 
     // 4. Map survivor global rows → blocks via cumulative row counts; collect the
     //    per-block local row indices that need SQ8 rerank.
@@ -644,10 +767,16 @@ pub async fn rabitq_search_segment_coalesced(
         return Ok(Some(Vec::new()));
     }
 
-    // 5. Plan coalesced ranged GETs over the survivor blocks (the GET-win policy).
+    // 5. Plan coalesced ranged GETs over the survivor blocks. PR2: aggressive
+    //    coalescing — bytes are ~free on same-AZ object storage, so merge survivor
+    //    blocks across larger gaps to cut the GET count (the dominant cost term).
+    //    Env-overridable; defaults merge adjacent blocks within 256 KiB gaps up to
+    //    16 MiB per coalesced range (vs the 64 KiB / 8 MiB cross-block default).
     let policy =
-        crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy::default(
-        );
+        crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
+            max_gap_bytes: env_u64_or("PROXIMADB_PAX_COALESCE_GAP", 256 * 1024),
+            max_range_bytes: env_u64_or("PROXIMADB_PAX_COALESCE_RANGE", 16 * 1024 * 1024),
+        };
     let survivor_blocks: Vec<usize> = block_rows.keys().copied().collect();
     let fetches = plan_coalesced_block_ranges(&footer, &survivor_blocks, &policy);
 
@@ -1286,7 +1415,6 @@ mod tests {
         const DIM: usize = 64;
         const N: usize = 400;
         const K: usize = 10;
-        const POOL: usize = 100;
 
         let corpus: Vec<Vec<f32>> = (0..N)
             .map(|i| {
@@ -1322,8 +1450,8 @@ mod tests {
             path.to_str().unwrap(),
             &query,
             K,
-            POOL,
             RankMetric::L2,
+            None,
         )
         .await
         .unwrap()
@@ -1345,7 +1473,7 @@ mod tests {
         let recall = truth.iter().filter(|o| got.contains(*o)).count() as f32 / K as f32;
         assert!(
             recall >= 0.90,
-            "coalesced scan-then-rerank recall@{K} = {recall:.2} (N={N}, pool={POOL})"
+            "coalesced scan-then-rerank recall@{K} = {recall:.2} (N={N})"
         );
 
         // The nearest neighbour (r137 is the query itself) must be ranked first.
