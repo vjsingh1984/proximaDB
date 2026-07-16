@@ -6770,6 +6770,7 @@ dependencies = [
  "proximadb-kernel",
  "proximadb-mcp",
  "proximadb-metrics",
+ "proximadb-mongodb-parser",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
  "proximadb-object-store",
@@ -7468,6 +7469,16 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "proximadb-mongodb-parser"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "nom 7.1.3",
+ "proximadb-proto",
+ "serde_json",
 ]
 
 [[package]]
