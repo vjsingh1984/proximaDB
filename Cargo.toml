@@ -6,8 +6,8 @@ autobenches = false
 authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
 description = "ProximaDB - Cloud-native vector database engineered for AI-first applications"
 license = "Apache-2.0"
-repository = "https://github.com/vjsingh1984/proximadb"
-homepage = "https://github.com/vjsingh1984/proximadb"
+repository = "https://github.com/anvai-labs/proximaDB"
+homepage = "https://github.com/anvai-labs/proximaDB"
 keywords = ["vector", "database", "ai", "ml", "proximity", "similarity-search"]
 categories = ["database-implementations", "science"]
 rust-version = "1.88"
@@ -128,8 +128,8 @@ edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
 authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
-repository = "https://github.com/vjsingh1984/proximadb"
-homepage = "https://github.com/vjsingh1984/proximadb"
+repository = "https://github.com/anvai-labs/proximaDB"
+homepage = "https://github.com/anvai-labs/proximaDB"
 
 [workspace.lints.rust]
 # Edition-2024 migration for x86_64 SIMD: many `#[target_feature] unsafe fn`s call

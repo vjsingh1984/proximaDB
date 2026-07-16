@@ -10,9 +10,9 @@ keywords:
   - embeddings
   - machine-learning
   - graph-database
-home: https://github.com/vjsingh1984/proximadb
+home: https://github.com/anvai-labs/proximaDB
 sources:
-  - https://github.com/vjsingh1984/proximadb
+  - https://github.com/anvai-labs/proximaDB
 maintainers:
   - name: Vijaykumar Singh
     email: singhvjd@gmail.com
@@ -23,7 +23,7 @@ icon: https://proximadb.com/logo.png
 annotations:
   artifacthub.io/links: |
     - name: support
-      url: https://github.com/vjsingh1984/proximadb/issues
+      url: https://github.com/anvai-labs/proximaDB/issues
     - name: documentation
       url: https://proximadb.com/docs
   artifacthub.io/operator: "true"

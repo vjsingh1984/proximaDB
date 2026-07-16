@@ -27,7 +27,7 @@ This guide covers installing ProximaDB v0.2.0 using native platform packages on 
 
 ```bash
 # Download the RPM package
-wget https://github.com/vjsingh1984/proximadb/releases/download/v0.2.0/proximadb-0.2.0-1.el8.x86_64.rpm
+wget https://github.com/anvai-labs/proximaDB/releases/download/v0.2.0/proximadb-0.2.0-1.el8.x86_64.rpm
 
 # Install the package
 sudo rpm -ivh proximadb-0.2.0-1.el8.x86_64.rpm
@@ -88,7 +88,7 @@ sudo rm -rf /var/lib/proximadb /var/log/proximadb
 
 ```bash
 # Download the DEB package
-wget https://github.com/vjsingh1984/proximadb/releases/download/v0.2.0/proximadb_0.2.0_amd64.deb
+wget https://github.com/anvai-labs/proximaDB/releases/download/v0.2.0/proximadb_0.2.0_amd64.deb
 
 # Install the package
 sudo dpkg -i proximadb_0.2.0_amd64.deb
@@ -441,8 +441,8 @@ MemoryMax=2G
 
 ### Community
 
-- GitHub Issues: https://github.com/vjsingh1984/proximadb/issues
-- Discussions: https://github.com/vjsingh1984/proximadb/discussions
+- GitHub Issues: https://github.com/anvai-labs/proximaDB/issues
+- Discussions: https://github.com/anvai-labs/proximaDB/discussions
 
 ### Debug Information
 

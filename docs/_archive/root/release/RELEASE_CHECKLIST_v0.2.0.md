@@ -28,7 +28,7 @@ git push origin v0.2.0
 
 **Option A: Automatic (via GitHub Actions)**
 - Tag push will automatically trigger `release.yml` workflow
-- Monitor the workflow: https://github.com/vjsingh1984/proximadb/actions
+- Monitor the workflow: https://github.com/anvai-labs/proximaDB/actions
 
 **Option B: Manual Dispatch**
 ```bash
@@ -57,7 +57,7 @@ gh workflow run release.yml -f version=0.2.0 -f prerelease=false
 After the workflow completes, verify:
 
 **GitHub Release:**
-- [ ] Release created at https://github.com/vjsingh1984/proximadb/releases/tag/v0.2.0
+- [ ] Release created at https://github.com/anvai-labs/proximaDB/releases/tag/v0.2.0
 - [ ] Release notes displayed correctly
 - [ ] All artifacts uploaded:
   - [ ] Binaries (Linux .tar.gz, Windows .zip)
@@ -78,7 +78,7 @@ After the workflow completes, verify:
 **Test RPM (CentOS/RHEL):**
 ```bash
 # Download RPM
-wget https://github.com/vjsingh1984/proximadb/releases/download/v0.2.0/proximadb-0.2.0-1.el8.x86_64.rpm
+wget https://github.com/anvai-labs/proximaDB/releases/download/v0.2.0/proximadb-0.2.0-1.el8.x86_64.rpm
 
 # Install
 sudo rpm -ivh proximadb-0.2.0-1.el8.x86_64.rpm
@@ -91,7 +91,7 @@ systemctl status proximadb
 **Test DEB (Ubuntu/Debian):**
 ```bash
 # Download DEB
-wget https://github.com/vjsingh1984/proximadb/releases/download/v0.2.0/proximadb_0.2.0_amd64.deb
+wget https://github.com/anvai-labs/proximaDB/releases/download/v0.2.0/proximadb_0.2.0_amd64.deb
 
 # Install
 sudo dpkg -i proximadb_0.2.0_amd64.deb
@@ -142,7 +142,7 @@ If critical issues are discovered:
 ## Contact Information
 
 For release issues:
-- GitHub Issues: https://github.com/vjsingh1984/proximadb/issues
+- GitHub Issues: https://github.com/anvai-labs/proximaDB/issues
 - Maintainer: vjsingh1984
 
 ## Notes

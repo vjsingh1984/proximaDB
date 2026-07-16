@@ -239,14 +239,14 @@ and [`release-notes/v0.2.0.adoc`](./release-notes/v0.2.0.adoc) for the release c
 - Multi-model query engine
 - PostgreSQL wire protocol
 
-**Release Notes**: [GitHub Releases](https://github.com/vjsingh1984/proximadb/releases)
+**Release Notes**: [GitHub Releases](https://github.com/anvai-labs/proximaDB/releases)
 
 ---
 
 ## Community
 
-- **Issues**: [GitHub Issues](https://github.com/vjsingh1984/proximadb/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/vjsingh1984/proximadb/discussions)
+- **Issues**: [GitHub Issues](https://github.com/anvai-labs/proximaDB/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/anvai-labs/proximaDB/discussions)
 - **Documentation**: [docs/](./)
 
 ---

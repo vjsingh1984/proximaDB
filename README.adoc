@@ -154,7 +154,7 @@ docker run -it --rm \
 
 [source,bash]
 ----
-git clone https://github.com/vjsingh1984/proximaDB
+git clone https://github.com/anvai-labs/proximaDB
 cd proximaDB
 cargo run --release --bin proximadb-server
 ----

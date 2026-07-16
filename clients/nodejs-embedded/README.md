@@ -157,5 +157,5 @@ Apache License 2.0
 
 ## Links
 
-- [ProximaDB Repository](https://github.com/vjsingh1984/proximadb)
-- [Documentation](https://github.com/vjsingh1984/proximadb#readme)
+- [ProximaDB Repository](https://github.com/anvai-labs/proximaDB)
+- [Documentation](https://github.com/anvai-labs/proximaDB#readme)

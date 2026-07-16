@@ -15,7 +15,7 @@
 # Publishing uses PyPI Trusted Publishing (OIDC) — NO API token secret. Configure one
 # trusted publisher PER PyPI project (one-time):
 #   https://pypi.org/manage/account/publishing/ -> add a GitHub publisher with
-#     owner=vjsingh1984  repo=proximaDB  workflow=release-python.yml  environment=pypi
+#     owner=anvai-labs  repo=proximaDB  workflow=release-python.yml  environment=pypi
 #   Repeat for projects `proximadb` and `proximadb_embedded` (and environment `testpypi`).
 # TestPyPI is advisory/optional (continue-on-error) — PyPI never waits on it.
 

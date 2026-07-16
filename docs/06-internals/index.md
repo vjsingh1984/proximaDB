@@ -49,10 +49,10 @@ flowchart TB
 ### 1. Fork and Clone
 
 ```bash
-# Fork https://github.com/vjsingh1984/proximadb
+# Fork https://github.com/anvai-labs/proximaDB
 git clone https://github.com/YOUR_USERNAME/proximadb.git
 cd proximadb
-git remote add upstream https://github.com/vjsingh1984/proximadb.git
+git remote add upstream https://github.com/anvai-labs/proximaDB.git
 ```
 
 ### 2. Development Setup
@@ -475,4 +475,4 @@ mod tests {
 
 *Ready to contribute?* Start with [Contributing](./contributing.md)
 
-*Need help?* [GitHub Issues](https://github.com/vjsingh1984/proximadb/issues) or [Discussions](https://github.com/vjsingh1984/proximadb/discussions)
+*Need help?* [GitHub Issues](https://github.com/anvai-labs/proximaDB/issues) or [Discussions](https://github.com/anvai-labs/proximaDB/discussions)

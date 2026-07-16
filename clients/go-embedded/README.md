@@ -14,7 +14,7 @@ cargo build --release --features c_ffi
 Then add to your Go project:
 
 ```bash
-go get github.com/vjsingh1984/proximadb/clients/go-embedded
+go get github.com/anvai-labs/proximaDB/clients/go-embedded
 ```
 
 ## Quick Start
@@ -26,7 +26,7 @@ import (
     "fmt"
     "log"
 
-    proximadb "github.com/vjsingh1984/proximadb/clients/go-embedded"
+    proximadb "github.com/anvai-labs/proximaDB/clients/go-embedded"
 )
 
 func main() {
