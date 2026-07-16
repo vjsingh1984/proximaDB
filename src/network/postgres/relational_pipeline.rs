@@ -38,7 +38,7 @@ use proximadb_relational_engine::{
     EngineReaderFactory, InMemoryRelationalEngine, RelationalWriter,
 };
 use proximadb_relational_executor::{ExecError, NodeMetric, ReaderFactory};
-use proximadb_relational_frontend::{CatalogLookup, lower_sql};
+use proximadb_relational_frontend::{CatalogLookup, LoweringDecline, lower_sql};
 use proximadb_relational_planner::{
     CapabilityResolver, PhysicalPlan, Planner, StaticCapabilities, explain_physical,
     measure_geometry, stack_probe,
@@ -2070,6 +2070,29 @@ pub fn classify_select_route(
 ///
 /// Field vocabulary mirrors `table_write_plan::RouteDecisionMetadata` so read and
 /// write EXPLAIN share one contract (ADR-004 unified EXPLAIN).
+/// Native-lowering disclosure for the `EXPLAIN` trace (ADR-064 / TD-TRACE-1).
+/// Layered onto [`SelectRouteExplanation`] so a query that declines native
+/// lowering surfaces the real reason rather than silence (or a text-guessed
+/// mask). Default/empty for queries that lowered or routed elsewhere.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct LoweringTrace {
+    /// Named lowering rules that fired. Populated once the ADR-064 lowering
+    /// rule-seam lands (Phase 2 / TD-REL-LOWER-5); empty today.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub rules_fired: Vec<String>,
+    /// Structured `{node, why}` decline reasons when native lowering could not
+    /// serve the shape. Empty when the query lowered (or was not routed native).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub declines: Vec<LoweringDecline>,
+}
+
+impl LoweringTrace {
+    /// True when there is nothing to disclose (skips the field in EXPLAIN JSON).
+    fn is_empty(&self) -> bool {
+        self.rules_fired.is_empty() && self.declines.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SelectRouteExplanation {
     /// Selected physical engine label (e.g. `Native(Volcano)`, `DataFusionLocal`).
@@ -2084,6 +2107,18 @@ pub struct SelectRouteExplanation {
     pub freshness_sla: String,
     /// Human-readable reason for the choice.
     pub reason: String,
+    /// Structured, axis-tagged routing reasons (ADR-058
+    /// eligibility→selection→trust) behind the chosen route (ADR-064 /
+    /// TD-TRACE-1). Always non-empty for a real route; the machine-readable
+    /// record the cost model and tooling read instead of parsing `reason`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub routing_reasons: Vec<crate::query::compute_scheduler::RouteReason>,
+    /// Native-lowering trace: which rules fired and, on a decline, the REAL
+    /// structured `{node, why}` reason — so a declining query discloses *why* in
+    /// EXPLAIN instead of the pgwire path re-guessing it from SQL text
+    /// (ADR-064 Decision 3 / TD-TRACE-1). Omitted when empty.
+    #[serde(skip_serializing_if = "LoweringTrace::is_empty")]
+    pub lowering: LoweringTrace,
     /// Typed read-route contract that future split-aware DataFusion/Ballista
     /// execution will consume. Kept nested so existing top-level fields remain
     /// stable while ADR-004 diagnostics converge on `RoutedReadPlan`.
@@ -2134,6 +2169,8 @@ fn decision_to_explanation(
         policy_boundary: read_route.policy_boundary.clone(),
         freshness_sla: read_route.freshness_sla.clone(),
         reason: decision.reason.clone(),
+        routing_reasons: decision.reasons.clone(),
+        lowering: LoweringTrace::default(),
         read_route,
         // Populated by the catalog-aware EXPLAIN once the plan is built; the
         // catalog-free route disclosure has no plan to render. ANALYZE metrics are
@@ -2239,6 +2276,23 @@ async fn prepare_select_plan(
     dml: &Arc<DmlService>,
     tenant: Option<&str>,
 ) -> Option<(SnapshotCatalog, PhysicalPlan)> {
+    let snapshot = build_snapshot(query, dml, tenant).await?;
+    match plan_over_snapshot(sql, &snapshot)? {
+        Ok(physical) => Some((snapshot, physical)),
+        Err(_) => None,
+    }
+}
+
+/// Resolve every table a SELECT references into a [`SnapshotCatalog`] under the
+/// connection tenant. `None` if any referenced schema can't be resolved. Split
+/// out of [`prepare_select_plan`] so the EXPLAIN path can build the snapshot once
+/// and, on a lowering decline, re-lower to disclose the REAL structured reason
+/// (ADR-064 / TD-TRACE-1) instead of leaving EXPLAIN silent.
+async fn build_snapshot(
+    query: &SqlQuery,
+    dml: &Arc<DmlService>,
+    tenant: Option<&str>,
+) -> Option<SnapshotCatalog> {
     let mut names = Vec::new();
     collect_table_names(query, &mut names);
     let mut tables: HashMap<String, PreparedTable> = HashMap::new();
@@ -2252,17 +2306,13 @@ async fn prepare_select_plan(
         let schema = dml.resolve_relational_schema(raw, tenant).await.ok()?;
         tables.insert(key, PreparedTable::from_catalog(raw, &schema));
     }
-    let snapshot = SnapshotCatalog {
+    Some(SnapshotCatalog {
         dml: dml.clone(),
         tables,
         tenant: tenant
             .filter(|t| !t.is_empty())
             .map(TenantContext::for_tenant_id),
-    };
-    match plan_over_snapshot(sql, &snapshot)? {
-        Ok(physical) => Some((snapshot, physical)),
-        Err(_) => None,
-    }
+    })
 }
 
 /// Catalog-free `EXPLAIN SELECT` route (shape only). Reports the Volcano/Native route;
@@ -2411,20 +2461,37 @@ async fn route_and_plan_select(
             decision.backend,
             crate::query::table_write_plan::ComputeBackend::Native
         )
-        && let Some((snapshot, physical)) = prepare_select_plan(sql, query, dml, tenant).await
     {
-        let base_lines = explain_physical(&physical);
-        if analyze {
-            // EXPLAIN ANALYZE: run the query (read-only) and record actuals —
-            // whole-query totals plus per-operator rows/time annotated onto the
-            // plan lines (metrics are pre-order aligned with `base_lines`).
-            let started = std::time::Instant::now();
-            let (result, node_metrics) = execute_physical_metered(physical, &snapshot).await?;
-            explanation.execution_rows = Some(result.rows.len() as u64);
-            explanation.execution_elapsed_us = Some(started.elapsed().as_micros() as u64);
-            explanation.physical_plan = Some(annotate_plan_lines(base_lines, &node_metrics));
-        } else {
-            explanation.physical_plan = Some(base_lines);
+        match prepare_select_plan(sql, query, dml, tenant).await {
+            Some((snapshot, physical)) => {
+                let base_lines = explain_physical(&physical);
+                if analyze {
+                    // EXPLAIN ANALYZE: run the query (read-only) and record actuals —
+                    // whole-query totals plus per-operator rows/time annotated onto the
+                    // plan lines (metrics are pre-order aligned with `base_lines`).
+                    let started = std::time::Instant::now();
+                    let (result, node_metrics) =
+                        execute_physical_metered(physical, &snapshot).await?;
+                    explanation.execution_rows = Some(result.rows.len() as u64);
+                    explanation.execution_elapsed_us = Some(started.elapsed().as_micros() as u64);
+                    explanation.physical_plan =
+                        Some(annotate_plan_lines(base_lines, &node_metrics));
+                } else {
+                    explanation.physical_plan = Some(base_lines);
+                }
+            }
+            None => {
+                // No native plan was produced. If the tables resolve but native
+                // LOWERING declined, disclose the REAL structured `{node, why}`
+                // reason (ADR-064 / TD-TRACE-1) — the same decline the legacy path
+                // otherwise re-guesses from SQL text. A re-lower here is cheap and
+                // EXPLAIN is a cold, diagnostic path (never the hot query path).
+                if let Some(snapshot) = build_snapshot(query, dml, tenant).await
+                    && let Err(e) = lower_sql(sql, &snapshot)
+                {
+                    explanation.lowering.declines.push(e.decline());
+                }
+            }
         }
     }
     Ok(explanation)
@@ -2563,6 +2630,40 @@ mod route_explain_tests {
         assert!(
             !json.contains("physical_plan"),
             "None physical_plan is skipped in JSON: {json}"
+        );
+    }
+
+    #[test]
+    fn explain_carries_structured_routing_reasons() {
+        // ADR-064 / TD-TRACE-1: EXPLAIN discloses the structured, axis-tagged
+        // routing reasons (not just the flat `reason` string) so tooling/cost
+        // model read them without parsing prose.
+        use crate::query::compute_scheduler::RouteAxis;
+        let expl =
+            explain_select_route("SELECT id, name FROM users WHERE id = 1").expect("routable");
+        assert!(
+            !expl.routing_reasons.is_empty(),
+            "routing_reasons must be populated"
+        );
+        assert!(
+            expl.routing_reasons
+                .iter()
+                .any(|r| matches!(r.axis, RouteAxis::Selection)),
+            "a Selection reason is always present: {:?}",
+            expl.routing_reasons
+        );
+        // The structured reasons serialize into the EXPLAIN JSON.
+        let json = serde_json::to_string(&expl).unwrap();
+        assert!(
+            json.contains("routing_reasons") && json.contains("Selection"),
+            "routing_reasons surface in EXPLAIN JSON: {json}"
+        );
+        // No native lowering was attempted (catalog-free), so no declines and the
+        // empty `lowering` trace is omitted from the JSON.
+        assert!(expl.lowering.is_empty());
+        assert!(
+            !json.contains("lowering"),
+            "empty lowering trace is skipped: {json}"
         );
     }
 

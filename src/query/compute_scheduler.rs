@@ -352,6 +352,37 @@ impl RouteSource {
     }
 }
 
+/// Which of ADR-058's three routing axes a [`RouteReason`] explains. The router
+/// decides in this order — a backend must be *eligible* (can serve the shape
+/// soundly) before it is *selected* (cheapest by the cost cells), and an
+/// external/Parquet route additionally passes a *trust* gate (are the catalog
+/// statistics trusted enough to route here, ADR-058 D5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum RouteAxis {
+    /// Soundness — this backend *can* serve the shape (ADR-058: eligibility
+    /// precedes selection).
+    Eligibility,
+    /// Cost — why this eligible backend was chosen (static rule or cost-model
+    /// override/explore).
+    Selection,
+    /// Statistics trust — the external/Parquet route trusts the catalog
+    /// base-snapshot (ADR-058 D5).
+    Trust,
+}
+
+/// One structured reason behind a [`SelectRouteDecision`], tagged by the axis it
+/// explains. Replaces the single flat `reason` string as the machine-readable
+/// record the ADR-064 query trace and `EXPLAIN` consume — the `reason` string is
+/// retained as the concatenated human one-liner (ADR-064 Decision 1 /
+/// TD-TRACE-1).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RouteReason {
+    /// Which routing axis this reason explains.
+    pub axis: RouteAxis,
+    /// Human-readable detail for the axis.
+    pub detail: String,
+}
+
 /// A materialized read-route decision: the engine, the workload it was
 /// classified as, and a human-readable reason. Emitted to telemetry and, once a
 /// SELECT `EXPLAIN` surface exists, surfaced there via [`Self::explain_line`].
@@ -361,13 +392,29 @@ pub struct SelectRouteDecision {
     pub backend: ComputeBackend,
     /// Workload classification this route was based on.
     pub workload_profile: CatalogWorkloadProfile,
-    /// Human-readable reason for the choice.
+    /// Human-readable reason for the choice (the concatenation of [`Self::reasons`]
+    /// details, kept for the one-line telemetry/`EXPLAIN` form).
     pub reason: String,
+    /// Structured, axis-tagged reasons behind the decision (ADR-058
+    /// eligibility→selection→trust). The machine-readable record the ADR-064
+    /// query trace consumes; never empty for a real decision (a static Selection
+    /// reason is always seeded).
+    pub reasons: Vec<RouteReason>,
     /// What produced this decision (static rule vs cost-model override/explore).
     pub source: RouteSource,
 }
 
 impl SelectRouteDecision {
+    /// Append a structured, axis-tagged reason (ADR-064 / TD-TRACE-1). Does not
+    /// touch the human `reason` string — callers that also want the one-liner
+    /// updated do that separately so the two never silently diverge.
+    fn push_reason(&mut self, axis: RouteAxis, detail: impl Into<String>) {
+        self.reasons.push(RouteReason {
+            axis,
+            detail: detail.into(),
+        });
+    }
+
     /// Stable one-line `EXPLAIN`/telemetry form, e.g.
     /// `Compute Route: Native(Volcano) (workload=Olap, reason="...")`.
     pub fn explain_line(&self) -> String {
@@ -509,13 +556,14 @@ impl ComputeScheduler {
     /// wrap it (the latter may override the backend before stamping, so the
     /// stamp reflects the FINAL engine — see [`finalize_route`]).
     fn route_select_inner(&self, shape: QueryShape) -> SelectRouteDecision {
-        match (shape.engages_relational, shape.parquet_backed) {
+        let mut decision = match (shape.engages_relational, shape.parquet_backed) {
             // P1: OLAP shape over Parquet-backed (object-store) table(s) → DataFusion.
             (true, true) => SelectRouteDecision {
                 backend: ComputeBackend::DataFusionLocal,
                 workload_profile: CatalogWorkloadProfile::Olap,
                 reason: "OLAP shape over Parquet-backed table(s) — DataFusion over object storage"
                     .to_string(),
+                reasons: Vec::new(),
                 source: RouteSource::Static,
             },
             // OLAP shape on native storage — Volcano serves it from WAL+RecordStorage
@@ -529,6 +577,7 @@ impl ComputeScheduler {
                         workload_profile: CatalogWorkloadProfile::Olap,
                         reason: "OLAP shape on PAX-backed table(s) — DataFusion via PaxSplitReader"
                             .to_string(),
+                        reasons: Vec::new(),
                         source: RouteSource::Static,
                     }
                 } else {
@@ -538,6 +587,7 @@ impl ComputeScheduler {
                         reason:
                             "OLAP shape (join/group-by/aggregate/set-op) on native storage — Volcano"
                                 .to_string(),
+                        reasons: Vec::new(),
                         source: RouteSource::Static,
                     }
                 }
@@ -546,9 +596,12 @@ impl ComputeScheduler {
                 backend: ComputeBackend::Native,
                 workload_profile: CatalogWorkloadProfile::Oltp,
                 reason: "OLTP shape (point/simple select) — Volcano".to_string(),
+                reasons: Vec::new(),
                 source: RouteSource::Static,
             },
-        }
+        };
+        seed_static_route_reasons(&mut decision, shape);
+        decision
     }
 
     /// Route a relational `SELECT` and materialize the typed read-route plan.
@@ -645,6 +698,13 @@ impl ComputeScheduler {
                     decision.reason,
                     backend_label(target)
                 );
+                decision.push_reason(
+                    RouteAxis::Selection,
+                    format!(
+                        "cost-model EXPLORE {prev}→{} (gathering cost history){cells_note}",
+                        backend_label(target)
+                    ),
+                );
                 decision.backend = target.clone();
                 decision.source = RouteSource::OverrideExplore;
                 return finalize_route(decision, shape);
@@ -677,6 +737,13 @@ impl ComputeScheduler {
                         decision.reason,
                         backend_label(&within.backend)
                     );
+                    decision.push_reason(
+                        RouteAxis::Selection,
+                        format!(
+                            "cost-model OVERRIDE {prev}→{} (RTT budget {budget:.0} exceeded){cells_note}",
+                            backend_label(&within.backend)
+                        ),
+                    );
                     decision.backend = within.backend.clone();
                     decision.source = RouteSource::OverrideExploit;
                     return finalize_route(decision, shape);
@@ -698,6 +765,15 @@ impl ComputeScheduler {
                         backend_label(&challenger.backend),
                         challenger.score,
                         static_choice.score
+                    );
+                    decision.push_reason(
+                        RouteAxis::Selection,
+                        format!(
+                            "cost-model OVERRIDE {prev}→{} (score {:.1} vs {:.1}){cells_note}",
+                            backend_label(&challenger.backend),
+                            challenger.score,
+                            static_choice.score
+                        ),
                     );
                     decision.backend = challenger.backend.clone();
                     decision.source = RouteSource::OverrideExploit;
@@ -724,6 +800,13 @@ impl ComputeScheduler {
                      ineligible (no multi-table native-over-parquet scan; TD-ROUTE-1){cells_note}",
                     decision.reason
                 );
+                decision.push_reason(
+                    RouteAxis::Eligibility,
+                    format!(
+                        "Native suppressed as flip target — join-bearing plan is ineligible \
+                         (no multi-table native-over-parquet scan; TD-ROUTE-1){cells_note}"
+                    ),
+                );
                 return finalize_route(decision, shape);
             }
         }
@@ -749,6 +832,43 @@ impl ComputeScheduler {
         }
 
         finalize_route(decision, shape)
+    }
+}
+
+/// Seed the structured, axis-tagged reasons (ADR-058 eligibility→selection→trust)
+/// on a decision produced by the static shape rule (ADR-064 / TD-TRACE-1). Every
+/// decision records at least one `Eligibility` + one `Selection` reason; the
+/// Parquet/PAX (external, base-snapshot) route additionally records a `Trust`
+/// reason. The cost-model advised path appends further reasons when it overrides.
+fn seed_static_route_reasons(decision: &mut SelectRouteDecision, shape: QueryShape) {
+    // Eligibility — why the chosen backend can serve this shape SOUNDLY.
+    let eligibility = match &decision.backend {
+        ComputeBackend::DataFusionLocal if shape.parquet_backed => {
+            "DataFusionLocal eligible: OLAP shape over Parquet-backed object-store table(s)"
+        }
+        ComputeBackend::DataFusionLocal => {
+            "DataFusionLocal eligible: OLAP shape over PAX-backed segment(s) via PaxSplitReader"
+        }
+        ComputeBackend::Native if shape.engages_relational => {
+            "Native(Volcano) eligible: OLAP shape on native storage (WAL+RecordStorage; \
+             no external scan required)"
+        }
+        ComputeBackend::Native => "Native(Volcano) eligible: point/OLTP shape",
+        _ => "route eligible for this shape (ADR-058 soundness gate)",
+    };
+    decision.push_reason(RouteAxis::Eligibility, eligibility);
+
+    // Selection — the static rule's cost rationale (the human one-liner).
+    let selection = decision.reason.clone();
+    decision.push_reason(RouteAxis::Selection, selection);
+
+    // Trust — the external Parquet/PAX route trusts the catalog base-snapshot
+    // statistics (ADR-058 D5); native storage is synchronous with no trust gate.
+    if shape.parquet_backed || (shape.pax_backed && pax_reader_enabled()) {
+        decision.push_reason(
+            RouteAxis::Trust,
+            "trusts object-store catalog base-snapshot statistics (ADR-058 D5)",
+        );
     }
 }
 
@@ -807,6 +927,50 @@ mod tests {
         assert_eq!(d.backend, ComputeBackend::DataFusionLocal);
         assert_eq!(d.workload_profile, CatalogWorkloadProfile::Olap);
         assert_eq!(d.compute_route_label(), "DataFusionLocal");
+    }
+
+    #[test]
+    fn decision_records_structured_eligibility_selection_trust_reasons() {
+        // ADR-064 / TD-TRACE-1: a route decision records structured, axis-tagged
+        // reasons (not just a flat string). The Parquet route exercises all three
+        // ADR-058 axes: eligibility (soundness), selection (cost), trust (stats).
+        let d = ComputeScheduler::new().route_select(QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            ..Default::default()
+        });
+        let axes: Vec<RouteAxis> = d.reasons.iter().map(|r| r.axis).collect();
+        assert!(
+            axes.contains(&RouteAxis::Eligibility),
+            "missing Eligibility reason: {:?}",
+            d.reasons
+        );
+        assert!(axes.contains(&RouteAxis::Selection));
+        assert!(
+            axes.contains(&RouteAxis::Trust),
+            "Parquet route must record a stats-trust reason (ADR-058 D5)"
+        );
+        // The Selection reason mirrors the human one-liner (never diverges).
+        assert!(
+            d.reasons
+                .iter()
+                .any(|r| r.axis == RouteAxis::Selection && r.detail == d.reason),
+        );
+
+        // Native-storage OLAP: eligible + selected, but NO trust gate (synchronous
+        // native storage, not an external base-snapshot).
+        let n = ComputeScheduler::new().route_select(QueryShape {
+            engages_relational: true,
+            parquet_backed: false,
+            ..Default::default()
+        });
+        assert_eq!(n.backend, ComputeBackend::Native);
+        assert!(n.reasons.iter().any(|r| r.axis == RouteAxis::Eligibility));
+        assert!(
+            !n.reasons.iter().any(|r| r.axis == RouteAxis::Trust),
+            "native storage has no external stats-trust gate: {:?}",
+            n.reasons
+        );
     }
 
     #[test]

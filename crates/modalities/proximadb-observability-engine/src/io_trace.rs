@@ -1215,6 +1215,27 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn floor_fall_through_attributes_route_to_the_floor_not_the_primary() {
+        // ADR-064 / TD-TRACE-1: when a primary engine declines and the DataFusion
+        // FLOOR serves the query, the dispatch re-stamps the route
+        // (relational_pipeline.rs "last write wins") so the cost cell learns the
+        // engine that ACTUALLY served — never the primary that declined. This
+        // pins that attribution contract against the future TD-ROUTE-3 dispatch
+        // refactor (which must preserve it).
+        let snap = scope(async {
+            record_route("olap/parquet", "Native(Volcano)"); // primary attempt
+            record_route("olap/parquet", "DataFusionLocal"); // floor served → re-stamp
+            IO_TRACE.try_with(|t| t.snapshot()).unwrap()
+        })
+        .await;
+        assert_eq!(
+            snap.route,
+            Some(("olap/parquet".to_string(), "DataFusionLocal".to_string())),
+            "floor fall-through must attribute to the floor, not the declined primary"
+        );
+    }
+
     /// TD-WLP-6: the storage-profile stamp round-trips in scope (and into the
     /// snapshot), no-ops outside a scope.
     #[tokio::test]

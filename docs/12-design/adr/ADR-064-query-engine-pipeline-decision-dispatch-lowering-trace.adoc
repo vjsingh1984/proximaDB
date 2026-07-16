@@ -41,9 +41,11 @@ ProximaDB has the right *macro* shape (pgwire → shared `LogicalNode` → `Comp
   native-over-parquet, then DuckDB, then PAX, then a DataFusion floor, and **re-stamps the route
   "last-write-wins"** (`:729-732`). The decision is not authoritative; the dispatch is a God-`if`.
 * **LOWER has no rule seam.** `lower_sql` (`crates/query/proximadb-relational-frontend/src/lib.rs:117`)
-  + the planner passes (`push_predicates:939`, `push_projections:1888`) are hand-written; every query
-  shape is a bespoke `if let SqlExpr::X` arm. Declines fall through a silent `None` → the legacy path,
-  which emits a **masking** error ("comma-separated FROM") that hides the real cause.
+  + the planner passes (`crates/query/proximadb-relational-planner/src/lib.rs` `push_predicates:939`,
+  `push_projections:1888`) are hand-written; every query shape is a bespoke `if let SqlExpr::X` arm.
+  Declines fall through a silent `None` → the legacy path, which then re-guesses a **masking** reason from
+  the raw SQL text (`relational_pipeline.rs`/`protocol.rs` `legacy_unsupported_from_shape` →
+  "a comma-separated table list") that hides the real cause.
 * **METER records counts, not reasons.** `IoTraceSnapshot`
   (`crates/modalities/proximadb-observability-engine/src/io_trace.rs:535-594`) captures
   `bytes_read`/`range_gets`/`compute_ms` + a single `route` stamp — but **no structured record of
