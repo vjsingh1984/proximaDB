@@ -2,17 +2,36 @@
 // SPDX-License-Identifier: Apache-2.0
 = ADR-065: Clustered tier regions (column families) within the single atomic segment — extend ADR-062's hoisted-region pattern to SQ8 / fp32 / row data
 
-:status: Proposed (2026-07-16 — awaiting co-design + first-principles review; see the tier-regions handoff)
+:status: Accepted (2026-07-16 — co-design review complete; gated IVF-ordering question resolved by a decisive no-IVF SIFT1M measurement)
 :date: 2026-07-16
 :deciders: architecture
 :relates-to: link:ADR-062-coalesced-rabitq-header-self-describing-footer-pax-layout.adoc[ADR-062] (extends D2; upholds D1), ADR-052 (round-trips dominate), ADR-020 (WAL authority; manifest-level atomicity), ADR-036 (per-object access tier), ADR-055 (P-Shred user columns → the row-data family), link:../../10-quality/td/TD-RDSTRAT-6-coalesced-binary-tier-rerank-driven-io.adoc[TD-RDSTRAT-6] (PR2 measured baseline), link:../../10-quality/td/TD-RDSTRAT-7-clustered-residual-pax-bytes.adoc[TD-RDSTRAT-7] (bytes phase; codec bake-off rejected)
 
 == Status
 
-**Proposed.** Drafted from the post-PR2 measured evidence (#1060 stack: recall
-0.987/0.990, GETs 8/36 at 100k/1M) and a downstream cost analysis. Needs the
-co-design review round before acceptance; the open questions are owned by the
-tier-regions handoff document.
+**Accepted (2026-07-16).** Drafted from the post-PR2 measured evidence (#1060
+stack: recall 0.987/0.990, GETs 8/36 at 100k/1M) and a downstream cost
+analysis, then taken through the co-design review round.
+
+**Co-design review (2026-07-16) — open questions resolved inline below:** Q1
+(reuse the #1061 recovery staging seam), Q3 (a `FileSystem`-layer read-through
+range cache, NOT `SstTieringIntegration` — the coalesced reader bypasses
+tiering), and io-trace visibility (the two-class trace system already exists:
+ADR-027/030/TD-160 — PR3 measures bytes/query from day one). Q2/Q4/Q5 are
+refined and deferred to PR3/PR4 implementation.
+
+**Gated question RESOLVED — the coalesced layout does NOT need
+`cluster_order_pca_ivf` ordering.** The decisive no-IVF SIFT1M run (production
+flush path = sign-bit bootstrap; eval knob `PROXIMADB_SIFT_IVF_FLUSH=0`)
+measured **recall@10 = 0.985, GETs/query = 40, flush = 35 s** — both gates
+cleared (≥0.98 recall, ≤50 GETs), and the flush dropped ~80× (47 min → 35 s).
+IVF's only benefit was the bytes term (250 MB with IVF vs 430 MB without — it
+co-locates survivors into tighter coalesced ranges), but that bytes bloat is
+*exactly the block dead weight this ADR's Region B (SQ8 hoist) removes via
+density, not ordering*. **Decision: drop IVF from the coalesced path; regions
+are written in sign-bit (cheap) row order; PR3 = Region B restores the bytes
+term to ~25–43 MB via SQ8 density.** The `PROXIMADB_PAX_FLUSH_CLUSTER=ivf` opt-in
+remains available for IVF-quality A/B but is no longer the eval default.
 
 == Context — the remaining cost term is block dead weight, not GETs
 
@@ -93,23 +112,76 @@ bound in practice.
 3. Region D becomes the pure result store (synergy: ADR-055 P-Shred user
    columns and OLAP scans get a props-contiguous layout for free).
 
-== Open questions (handoff-owned)
+== Open questions — resolution status (2026-07-16 co-design review)
 
-1. Writer buffering: regions are written sequentially in one PUT — memory
-   budget for buffering B/C during flush at large segments; streaming
-   multi-part upload interaction.
-2. Region ↔ block row-order coupling and the footer region table shape
-   (self-describing invariants from ADR-062 must extend cleanly).
-3. Cache tiering engagement: the RAM LRU (PR2) covers A(+B); local NVMe/SSD
-   for larger regions — `SstTieringIntegration` exists but is whole-file
-   *placement* tiering (opt-in, off): is it the right seam for a
-   read-through range cache for PAX regions, or does that need a new
-   `FileSystem`-layer cache? (Downstream cost model: blended COGS =
-   miss-rate × cloud GET price — AnvaiOps ADR-0043.)
-4. Result-store block sizing once vectors leave the blocks (row-data blocks
-   can shrink toward result-read granularity).
-5. Mixed legacy/coalesced/region segments in one collection — chooser +
-   mixed-read policy (ADR-061/045 pattern).
+=== Resolved in this review
+
+* **Q1 — Writer buffering → reuse the #1061 recovery staging.** #1061
+  (`fix(wal): object-store recovery restartable`, in flight) already adds
+  temp-local staging + a create-only `write_if_absent` publication in the flush
+  path (`sst/flush/mod.rs`). The region writer stages Regions B/C to temp-local,
+  emits the single segment object (HEADER-prefix → A → B → C → D → footer →
+  magic) in one PUT, and publishes via the same `write_if_absent` seam. No new
+  commit protocol; #1061's idempotent publication is the vehicle. PR3 rebases
+  onto #1061 and reuses its staging. (Multi-part upload is a backend
+  optimization under the same seam — deferred.)
+* **Q3 — Cache tiering → a `FileSystem`-layer read-through range cache, NOT
+  `SstTieringIntegration`.** Evidence: the coalesced reader
+  (`rabitq_search_segment_coalesced`) reads straight from one
+  `fs: &dyn FileSystem` resolved by URL scheme at `sst/search/mod.rs:265`; it
+  **bypasses `SstTieringIntegration` entirely** — tiering only decides
+  placement-at-rest (flush/compaction time) and records access *after* reads
+  (`sst/search/coordinator.rs:84`, observational). It never redirects reads, so
+  it cannot serve a hot-tier NVMe range cache. The right seam is a ranged-cache
+  wrapper in the `FileSystem` resolution chain (the existing
+  `CachingFileSystem` + decompression cache are the closer primitives). Regions
+  make this ~10× more effective per byte: A+B are small, hot, and text-free.
+  Hit/miss counters feed ADR-0043's T2 trigger and the blended-COGS model
+  (miss-rate × cloud GET price).
+
+* **io-trace visibility → already implemented; PR3 measures bytes/query from
+  day one.** The two-class trace system is in place: ADR-027 (strategy), ADR-030
+  (one I/O boundary → route-cost / cache / billing observers), TD-160 (the
+  `io-trace` cargo feature, default OFF, gates *perf emission* only; billing is
+  always-on). Per-query GET/bytes/cache-hit/latency already live in
+  `IoTraceSnapshot` (`observability-engine/src/io_trace.rs:535`). **No need to
+  build a trace system before PR3** — enable the feature in the eval. The real
+  gaps are *billing accuracy*, not measurement: TD-IOTRACE-2 (wire physical
+  GET/bytes into the KRU billing event — Open, revenue-blocking) and
+  TD-IOTRACE-3 (pin `actual_scan_gb` to LOGICAL bytes so coalesced-RaBitQ
+  compression doesn't under-bill ~21–30×). Both land parallel to PR3
+  (customer-visible meter; not a PR3 gate).
+
+=== Refined — deferred to PR3/PR4 implementation
+
+* **Q2 — Footer region table.** Extend `SegmentFooterIndex` with a region
+  table `(offset, len, kind)` beside the existing block table; layout-version
+  bump. Self-describing invariants extend cleanly (ADR-062 footer pattern).
+  Exact encoding is a PR3 detail.
+* **Q4 — Result-store (Region D) sizing.** Tension: vector-reads want small D
+  blocks; OLAP/P-Shred scans (ADR-055) want big contiguous props runs.
+  Resolution sketch: D tuned for result-reads; OLAP goes through the PAX-native
+  scan / DataFusion path (a separate read shape). To be validated in PR4.
+* **Q5 — Mixed segments.** Legacy/coalesced/region layouts in one collection:
+  extend the `SEG_HEADER_MAGIC` presence-field chooser
+  (`is_coalesced_segment`) to detect the region layout (new magic `PXH2`, or a
+  region-count in the header prefix); migration via normal compaction
+  (mixed-read-safe, ADR-061/045).
+
+=== Resolved — the IVF-ordering question (decisive measurement, 2026-07-16)
+
+* **The coalesced layout does NOT need `cluster_order_pca_ivf` ordering.**
+  Recall is driven by adaptive-M + scan-then-rerank (ordering-independent), and
+  the bytes/GET win comes from Region B *density* (pure SQ8 → the coalescing gap
+  absorbs ~10× more survivors per range), **not** from IVF co-location. The
+  decisive no-IVF SIFT1M run (production flush path = sign-bit bootstrap; eval
+  knob `PROXIMADB_SIFT_IVF_FLUSH=0`) measured **recall@10 = 0.985, GETs/query =
+  40, flush = 35 s** — both gates cleared, flush down ~80× (47 min → 35 s).
+  IVF's only benefit was the bytes term (250 MB with IVF vs 430 MB without);
+  that is precisely the block dead weight Region B removes via density.
+  *Result: drop IVF from the coalesced path; regions in sign-bit row order; PR3
+  = Region B restores bytes via SQ8 density. Recorded in
+  link:../../_internal/status/SIFT1M_NOIVF_DECISIVE_2026_07_16.adoc[the artifact].*
 
 == Consequences
 
