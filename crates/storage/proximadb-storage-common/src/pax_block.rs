@@ -973,8 +973,10 @@ impl PaxSegmentWriter {
             embed_quant_tag: 1, // SQ8 (the survivor-rerank data tier)
             has_f32_tier: self.f32_tier,
             blocks,
+            encoding_map: Vec::new(),
+            block_tier_assignments: Vec::new(),
         };
-        let footer_body = footer.to_bytes();
+        let footer_body = footer.to_bytes()?;
         let footer_off = data_offset + self.file_buf.len() as u64;
         let footer_len = footer_body.len() as u64;
 
