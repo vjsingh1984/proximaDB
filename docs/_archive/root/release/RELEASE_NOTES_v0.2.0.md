@@ -150,9 +150,9 @@ No breaking configuration changes in this release. Existing `config.toml` files 
 
 ## 🔗 Links
 
-- [GitHub Repository](https://github.com/vjsingh1984/proximadb)
-- [Documentation](https://github.com/vjsingh1984/proximadb/tree/main/docs)
-- [Issue Tracker](https://github.com/vjsingh1984/proximadb/issues)
+- [GitHub Repository](https://github.com/anvai-labs/proximaDB)
+- [Documentation](https://github.com/anvai-labs/proximaDB/tree/main/docs)
+- [Issue Tracker](https://github.com/anvai-labs/proximaDB/issues)
 
 ## ⚠️ Important Notes
 

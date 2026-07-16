@@ -10,7 +10,7 @@ package proximadb.explain.v1;
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/vjsingh1984/proximadb/proto/proximadb/explain/v1;explain";
+option go_package = "github.com/anvai-labs/proximaDB/proto/proximadb/explain/v1;explain";
 
 // ExplainPlan provides a unified explain format across all APIs
 message ExplainPlan {

@@ -496,4 +496,4 @@ graph.par_bfs(|node| {
 
 ---
 
-*Need help?* [GitHub Issues](https://github.com/vjsingh1984/proximadb/issues)
+*Need help?* [GitHub Issues](https://github.com/anvai-labs/proximaDB/issues)

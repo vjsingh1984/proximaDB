@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage = "https://github.com/vjsingh1984/proximadb"
+homepage = "https://github.com/anvai-labs/proximaDB"
 description = "ProximaDB schema migration tool"
 
 [[bin]]

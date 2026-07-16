@@ -581,4 +581,4 @@ RUST_LOG=debug cargo test -- --test-threads=1 --nocapture
 
 ---
 
-*Need help?* [GitHub Issues](https://github.com/vjsingh1984/proximadb/issues)
+*Need help?* [GitHub Issues](https://github.com/anvai-labs/proximaDB/issues)

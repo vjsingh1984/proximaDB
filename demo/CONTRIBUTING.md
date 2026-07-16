@@ -22,7 +22,7 @@ Thank you for your interest in contributing demos to ProximaDB! This guide will 
 
 ```bash
 # Clone and setup repository
-git clone https://github.com/vjsingh1984/proximaDB
+git clone https://github.com/anvai-labs/proximaDB
 cd proximaDB
 
 # Install Python SDK in development mode
@@ -690,7 +690,7 @@ if __name__ == "__main__":
 
 ### Questions?
 
-- Open an issue: https://github.com/vjsingh1984/proximaDB/issues
+- Open an issue: https://github.com/anvai-labs/proximaDB/issues
 - Check existing demos for patterns
 - Run health check: `python3 demo/check_demo_health.py --verbose`
 

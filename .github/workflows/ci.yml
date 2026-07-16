@@ -311,6 +311,15 @@ jobs:
       - name: Validate deterministic guard wiring
         run: python3 scripts/check_deterministic_commit_contract.py
 
+  repository-identity:
+    name: Canonical Repository Identity
+    runs-on: ubuntu-latest
+    needs: changes
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject stale pre-organization URLs and publish gates
+        run: python3 scripts/check_repository_identity.py
+
   docs-authority:
     name: Docs Authority (no retired/engine drift)
     runs-on: ubuntu-latest

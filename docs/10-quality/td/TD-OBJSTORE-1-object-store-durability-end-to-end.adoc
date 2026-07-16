@@ -9,7 +9,7 @@
 | Status | **In progress — batch 3 is the active durability blocker.** Catalog and real-vector recovery now pass on the live object-store deployment, but dim-1 records written with `vector: [0.0]` are not recovered after restart. The deferred items below remain outside the single-VM MVP unless their triggering scale, multi-writer, or feature conditions are introduced.
 | Severity | Critical — with `storage.metadata_url = adls://…` (or `s3://`, `gcs://`) the server constructs invalid `file://adls://…` URLs and/or drives `std::fs`/`tokio::fs` at object-store URLs; metrics, document WAL, audit/event-log, and timeseries subsystems fail at startup or silently write to wrong local paths. Blocks the ADR-0028 anvaiops object-store deployment (issue #960).
 | Component | `src/network/shared_services.rs` (subsystem path wiring), `src/storage/persistence/write_ahead_log/wal_operations.rs` (unified WAL), `src/storage/engines/eventlog/*` (audit event log), `src/audit/*` (security audit storage), `crates/control/proximadb-catalog/src/delta.rs`, defensive: disk caches + tantivy log index.
-| Tracked-by | https://github.com/vjsingh1984/proximaDB/issues/960[#960]; deploy consumer: anvaiops ADR-0028.
+| Tracked-by | https://github.com/anvai-labs/proximaDB/issues/960[#960]; deploy consumer: anvaiops ADR-0028.
 | Pillar | REL, COST (durability on VM loss; object-store at-rest tiering per ADR-036)
 |===
 

@@ -43,10 +43,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/vjsingh1984/proximadb"
-Documentation = "https://github.com/vjsingh1984/proximadb#readme"
-Repository = "https://github.com/vjsingh1984/proximadb"
-Issues = "https://github.com/vjsingh1984/proximadb/issues"
+Homepage = "https://github.com/anvai-labs/proximaDB"
+Documentation = "https://github.com/anvai-labs/proximaDB#readme"
+Repository = "https://github.com/anvai-labs/proximaDB"
+Issues = "https://github.com/anvai-labs/proximaDB/issues"
 
 [tool.maturin]
 # Canonical embedded wheel configuration.

@@ -1,6 +1,6 @@
 [Unit]
 Description=ProximaDB Vector Database Server (Docker Optimized)
-Documentation=https://github.com/vjsingh1984/proximadb
+Documentation=https://github.com/anvai-labs/proximaDB
 After=network-online.target
 Wants=network-online.target
 StartLimitInterval=60s

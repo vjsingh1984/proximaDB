@@ -562,7 +562,7 @@ Before deploying to production:
 ## Support
 
 ### Getting Help
-- **GitHub Issues**: https://github.com/vjsingh1984/proximadb/issues
+- **GitHub Issues**: https://github.com/anvai-labs/proximaDB/issues
 - **Discord**: https://discord.gg/proximadb
 - **Documentation**: https://docs.proximadb.com
 - **Email**: support@proximadb.com

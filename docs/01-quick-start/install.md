@@ -29,7 +29,7 @@ flowchart LR
 
 ```bash
 # Download
-wget https://github.com/vjsingh1984/proximadb/releases/download/v0.2.0/proximadb-0.2.0-1.el8.x86_64.rpm
+wget https://github.com/anvai-labs/proximaDB/releases/download/v0.2.0/proximadb-0.2.0-1.el8.x86_64.rpm
 
 # Install
 sudo rpm -ivh proximadb-0.2.0-1.el8.x86_64.rpm
@@ -53,7 +53,7 @@ curl http://localhost:5678/health
 
 ```bash
 # Download
-wget https://github.com/vjsingh1984/proximadb/releases/download/v0.2.0/proximadb_0.2.0_amd64.deb
+wget https://github.com/anvai-labs/proximaDB/releases/download/v0.2.0/proximadb_0.2.0_amd64.deb
 
 # Install
 sudo dpkg -i proximadb_0.2.0_amd64.deb
@@ -70,7 +70,7 @@ curl http://localhost:5678/health
 
 ```powershell
 # Download from GitHub Releases
-# https://github.com/vjsingh1984/proximadb/releases/tag/v0.2.0
+# https://github.com/anvai-labs/proximaDB/releases/tag/v0.2.0
 
 # Double-click proximadb-0.2.0-x64.msi
 # Or install via command line:
@@ -163,7 +163,7 @@ sudo apt-get update
 sudo apt-get install -y pkg-config libssl-dev build-essential
 
 # Clone repository
-git clone https://github.com/vjsingh1984/proximadb.git
+git clone https://github.com/anvai-labs/proximaDB.git
 cd proximadb
 
 # Build release
@@ -180,7 +180,7 @@ cargo build --release
 brew install openssl@3 pkg-config
 
 # Clone and build
-git clone https://github.com/vjsingh1984/proximadb.git
+git clone https://github.com/anvai-labs/proximaDB.git
 cd proximadb
 
 # Set OpenSSL environment variables
@@ -202,7 +202,7 @@ cargo build --release
 # Install Visual Studio Build Tools
 
 # Clone and build
-git clone https://github.com/vjsingh1984/proximadb.git
+git clone https://github.com/anvai-labs/proximaDB.git
 cd proximadb
 
 # Build
@@ -364,4 +364,4 @@ rm -rf /usr/local/var/proximadb
 
 ---
 
-*Need help?* [GitHub Issues](https://github.com/vjsingh1984/proximadb/issues)
+*Need help?* [GitHub Issues](https://github.com/anvai-labs/proximaDB/issues)

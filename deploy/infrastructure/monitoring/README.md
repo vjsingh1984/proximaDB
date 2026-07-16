@@ -338,7 +338,7 @@ kubectl port-forward svc/prometheus-operated 9090:9090 -n monitoring &
 
 ## Support
 
-- **GitHub Issues**: https://github.com/vjsingh1984/proximadb/issues
+- **GitHub Issues**: https://github.com/anvai-labs/proximaDB/issues
 - **Discord**: https://discord.gg/proximadb
 - **Documentation**: https://docs.proximadb.com
 

@@ -97,7 +97,7 @@ jobs:
             -v "$VERSION" \
             --epoch 1 \
             --description "ProximaDB - Cloud-native vector database" \
-            --url "https://github.com/vjsingh1984/proximadb" \
+            --url "https://github.com/anvai-labs/proximaDB" \
             --license "Apache-2.0" \
             --vendor "ProximaDB" \
             --rpm-dist "el8" \
@@ -174,7 +174,7 @@ jobs:
             -n proximadb \
             -v "$VERSION" \
             --description "ProximaDB - Cloud-native vector database" \
-            --url "https://github.com/vjsingh1984/proximadb" \
+            --url "https://github.com/anvai-labs/proximaDB" \
             --license "Apache-2.0" \
             --vendor "ProximaDB" \
             --deb-priority "optional" \

@@ -27,7 +27,7 @@ ProximaDB's intelligent storage engines automatically optimize for your specific
 == Storage Engine Intelligence in Action
 
 .ProximaDB automatically selects the optimal storage engine for your workload
-image::https://raw.githubusercontent.com/vjsingh1984/proximadb/main/docs/assets/storage-engines-hero.svg[Storage Engine Selection,700,align=center]
+image::https://raw.githubusercontent.com/anvai-labs/proximaDB/main/docs/assets/storage-engines-hero.svg[Storage Engine Selection,700,align=center]
 
 [source,mermaid]
 ----
